@@ -29,6 +29,7 @@ interface MemberState extends MemberRuntime {
  */
 export async function runSupervisor(manifest: TeamManifest, manifestPath: string): Promise<void> {
   const name = manifest.name;
+  const meshName = manifest.mesh ?? manifest.name;
   const pidPath = pidFilePath(name);
 
   // CC-3: acquire exclusive PID file before doing anything else.
@@ -144,7 +145,16 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
 
     const child = spawn(
       process.argv[0] ?? 'node',
-      [process.argv[1] ?? '', 'serve', '--port', String(m.port), '--personality', personality],
+      [
+        process.argv[1] ?? '',
+        'serve',
+        '--port',
+        String(m.port),
+        '--personality',
+        personality,
+        '--mesh',
+        meshName,
+      ],
       { stdio: ['ignore', 'pipe', 'pipe'], detached: false },
     );
 

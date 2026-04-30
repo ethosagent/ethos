@@ -12,7 +12,7 @@
     "dev": "tsx apps/ethos/src/index.ts",
     "dev:web": "pnpm --filter @ethosagent/web dev",
     "test": "vitest run",
-    "test:concurrent": "vitest run --pool=threads extensions/team-supervisor/src/__tests__/concurrent",
+    "test:concurrent": "vitest run --pool=threads extensions/team-supervisor/src/__tests__/concurrent extensions/agent-mesh/src/__tests__/concurrent",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json && pnpm --filter @ethosagent/web typecheck",
     "lint": "biome check .",

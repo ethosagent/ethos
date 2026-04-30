@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join, resolve as pathResolve } from 'node:path';
 import { AcpServer } from '@ethosagent/acp-server';
-import { AgentMesh } from '@ethosagent/agent-mesh';
+import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
 import { CronScheduler } from '@ethosagent/cron';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
@@ -35,6 +35,8 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   const personalityOverride = parseFlagValue(args, ['--personality']);
   if (personalityOverride) config = { ...config, personality: personalityOverride };
 
+  const meshName = parseFlagValue(args, ['--mesh']) ?? 'default';
+
   const dir = ethosDir();
   // The web surface owns the `before_tool_call` approval flow, so when
   // --web-experimental is on the loop is built without the synchronous
@@ -44,7 +46,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   const loopProfile = webEnabled ? 'web' : 'cli';
   const loop = await createAgentLoop(config, { profile: loopProfile });
   const session = new SQLiteSessionStore(join(dir, 'sessions.db'));
-  const mesh = new AgentMesh();
+  const mesh = new AgentMesh(meshRegistryPath(meshName));
 
   // ACP server (existing behavior — kept first so any breakage is obvious).
   const acpServer = new AcpServer({ runner: loop, session, mesh });
@@ -70,6 +72,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   console.log(`ethos ACP server listening on http://localhost:${acpPort}`);
   console.log(`  agent:        ${agentId}`);
   console.log(`  personality:  ${config.personality ?? 'default'}`);
+  console.log(`  mesh:         ${meshName}`);
   console.log(`  capabilities: ${capabilities.length > 0 ? capabilities.join(', ') : '(none)'}`);
   console.log(`  WebSocket:    ws://localhost:${acpPort}/ws`);
 
