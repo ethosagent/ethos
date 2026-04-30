@@ -30,6 +30,12 @@ export async function writeKeys(storage: Storage, keys: KeyProfile[]): Promise<v
   });
 }
 
+export interface ActiveContext {
+  /** 'personality' = single agent; 'team' = coordinator against a named mesh */
+  type: 'personality' | 'team';
+  name: string;
+}
+
 export interface EthosConfig {
   provider: string;
   model: string;
@@ -40,6 +46,12 @@ export interface EthosConfig {
   baseUrl?: string;
   // Per-personality model overrides: maps personality ID → model ID string
   modelRouting?: Record<string, string>;
+  /**
+   * Active chat target. Managed by `ethos set` — do not hand-edit.
+   * Takes precedence over `personality` for `ethos chat` and `ethos serve`.
+   * @internal
+   */
+  activeContext?: ActiveContext;
   // Platform tokens
   telegramToken?: string;
   discordToken?: string;
@@ -82,6 +94,10 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       lines.push(`modelRouting.${id}: ${model}`);
     }
   }
+  if (config.activeContext) {
+    lines.push(`activeContext.type: ${config.activeContext.type}`);
+    lines.push(`activeContext.name: ${config.activeContext.name}`);
+  }
   if (config.telegramToken) lines.push(`telegramToken: ${config.telegramToken}`);
   if (config.discordToken) lines.push(`discordToken: ${config.discordToken}`);
   if (config.slackBotToken) lines.push(`slackBotToken: ${config.slackBotToken}`);
@@ -94,6 +110,7 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
 function parseConfigYaml(src: string): EthosConfig {
   const kv: Record<string, string> = {};
   const modelRouting: Record<string, string> = {};
+  const activeContextKv: Record<string, string> = {};
   for (const line of src.split('\n')) {
     // modelRouting.<personality>: <model>
     const mr = line.match(/^modelRouting\.(\S+):\s*(.+)$/);
@@ -101,9 +118,23 @@ function parseConfigYaml(src: string): EthosConfig {
       modelRouting[mr[1].trim()] = mr[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // activeContext.type / activeContext.name
+    const ac = line.match(/^activeContext\.(\S+):\s*(.+)$/);
+    if (ac) {
+      activeContextKv[ac[1].trim()] = ac[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     const m = line.match(/^(\w+):\s*(.+)$/);
     if (m) kv[m[1].trim()] = m[2].trim().replace(/^["']|["']$/g, '');
   }
+
+  const activeContextType = activeContextKv.type;
+  const activeContextName = activeContextKv.name;
+  const activeContext: ActiveContext | undefined =
+    (activeContextType === 'personality' || activeContextType === 'team') && activeContextName
+      ? { type: activeContextType, name: activeContextName }
+      : undefined;
+
   return {
     provider: kv.provider ?? 'anthropic',
     model: kv.model ?? 'claude-opus-4-7',
@@ -112,6 +143,7 @@ function parseConfigYaml(src: string): EthosConfig {
     memory: kv.memory === 'vector' ? 'vector' : kv.memory === 'markdown' ? 'markdown' : undefined,
     baseUrl: kv.baseUrl,
     modelRouting: Object.keys(modelRouting).length > 0 ? modelRouting : undefined,
+    activeContext,
     telegramToken: kv.telegramToken,
     discordToken: kv.discordToken,
     slackBotToken: kv.slackBotToken,

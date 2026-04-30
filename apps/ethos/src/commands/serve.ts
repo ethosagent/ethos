@@ -9,7 +9,7 @@ import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { type ChatService, createWebApi, WebTokenRepository } from '@ethosagent/web-api';
 import { createDangerPredicate } from '@ethosagent/wiring';
 import { type EthosConfig, ethosDir } from '../config';
-import { createAgentLoop } from '../wiring';
+import { createAgentLoop, createTeamAgentLoop } from '../wiring';
 import { hasFlag, parseFlagValue, parsePort } from './serve-helpers';
 import { listenWithFallback } from './serve-listen';
 
@@ -35,21 +35,35 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   const personalityOverride = parseFlagValue(args, ['--personality']);
   if (personalityOverride) config = { ...config, personality: personalityOverride };
 
+  const teamFlag = parseFlagValue(args, ['--team']);
   const meshName = parseFlagValue(args, ['--mesh']) ?? 'default';
 
   const dir = ethosDir();
-  // The web surface owns the `before_tool_call` approval flow, so when
-  // --web-experimental is on the loop is built without the synchronous
-  // terminal guard and the web-api re-registers a hook against the same
-  // registry. ACP shares this loop too — for now both surfaces inherit the
-  // web posture when web is enabled (interactive approval over hard block).
   const loopProfile = webEnabled ? 'web' : 'cli';
-  const loop = await createAgentLoop(config, {
-    profile: loopProfile,
-    meshRegistryPath: meshRegistryPath(meshName),
-  });
+
+  let loop: Awaited<ReturnType<typeof createAgentLoop>>;
+  let activeMeshName: string;
+  let activePersonality: string;
+
+  if (teamFlag) {
+    const {
+      loop: teamLoop,
+      coordinatorPersonality,
+      meshName: teamMesh,
+    } = await createTeamAgentLoop(config, teamFlag, { profile: loopProfile });
+    loop = teamLoop;
+    activeMeshName = teamMesh;
+    activePersonality = coordinatorPersonality;
+  } else {
+    activeMeshName = meshName;
+    activePersonality = config.personality;
+    loop = await createAgentLoop(config, {
+      profile: loopProfile,
+      meshRegistryPath: meshRegistryPath(activeMeshName),
+    });
+  }
   const session = new SQLiteSessionStore(join(dir, 'sessions.db'));
-  const mesh = new AgentMesh(meshRegistryPath(meshName));
+  const mesh = new AgentMesh(meshRegistryPath(activeMeshName));
 
   // ACP server (existing behavior — kept first so any breakage is obvious).
   const acpServer = new AcpServer({ runner: loop, session, mesh });
@@ -57,10 +71,10 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
 
   const personalities = await createPersonalityRegistry({ userPersonalitiesDir: dir });
   await personalities.loadFromDirectory(join(dir, 'personalities'));
-  const personalityConfig = personalities.get(config.personality ?? 'researcher');
+  const personalityConfig = personalities.get(activePersonality);
   const capabilities = personalityConfig?.capabilities ?? [];
 
-  const agentId = `${config.personality ?? 'default'}:${process.pid}:${randomUUID().slice(0, 8)}`;
+  const agentId = `${activePersonality}:${process.pid}:${randomUUID().slice(0, 8)}`;
   await mesh.register({
     agentId,
     capabilities,
@@ -72,10 +86,11 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   });
   const stopHeartbeat = mesh.startHeartbeat(agentId, () => acpServer.activeSessionCount);
 
+  const serveLabel = teamFlag ? `team:${teamFlag}` : activePersonality;
   console.log(`ethos ACP server listening on http://localhost:${acpPort}`);
   console.log(`  agent:        ${agentId}`);
-  console.log(`  personality:  ${config.personality ?? 'default'}`);
-  console.log(`  mesh:         ${meshName}`);
+  console.log(`  personality:  ${serveLabel}`);
+  console.log(`  mesh:         ${activeMeshName}`);
   console.log(`  capabilities: ${capabilities.length > 0 ? capabilities.join(', ') : '(none)'}`);
   console.log(`  WebSocket:    ws://localhost:${acpPort}/ws`);
 

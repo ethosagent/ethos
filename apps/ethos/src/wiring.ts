@@ -1,6 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { join, resolve as resolvePath } from 'node:path';
+import { meshRegistryPath } from '@ethosagent/agent-mesh';
 import type { AgentLoop } from '@ethosagent/core';
 import { FsStorage } from '@ethosagent/storage-fs';
-import type { LLMProvider, Storage } from '@ethosagent/types';
+import { parseTeamManifest, teamsDir } from '@ethosagent/team-supervisor';
+import type { LLMProvider, Storage, TeamManifest } from '@ethosagent/types';
 import {
   createAgentLoop as packageCreateAgentLoop,
   createLLM as packageCreateLLM,
@@ -46,4 +50,77 @@ export async function createAgentLoop(
     logger,
     meshRegistryPath: opts.meshRegistryPath,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Team helpers
+// ---------------------------------------------------------------------------
+
+export interface TeamLoopInfo {
+  loop: AgentLoop;
+  /** Personality the coordinator runs as. */
+  coordinatorPersonality: string;
+  /** Mesh name (team name unless manifest.mesh overrides it). */
+  meshName: string;
+}
+
+/** Resolve a team manifest by name (local ./team.yaml or ~/.ethos/teams/<n>.yaml). */
+export function loadTeamManifest(teamName: string): TeamManifest {
+  const local = resolvePath('./team.yaml');
+  try {
+    const src = readFileSync(local, 'utf-8');
+    const m = parseTeamManifest(src);
+    if (m.name === teamName) return m;
+  } catch {
+    // not present or name mismatch
+  }
+  return parseTeamManifest(readFileSync(join(teamsDir(), `${teamName}.yaml`), 'utf-8'));
+}
+
+/**
+ * Build an AgentLoop wired to a team's named mesh.
+ * The coordinator personality is taken from manifest.coordinator, falling back
+ * to the first member, then to config.personality.
+ */
+export async function createTeamAgentLoop(
+  config: EthosConfig,
+  teamName: string,
+  opts: { profile?: WiringProfile } = {},
+): Promise<TeamLoopInfo> {
+  const manifest = loadTeamManifest(teamName);
+  const coordinatorPersonality =
+    manifest.coordinator ?? manifest.members[0]?.personality ?? config.personality;
+  const meshName = manifest.mesh ?? manifest.name;
+
+  const loop = await createAgentLoop(
+    { ...config, personality: coordinatorPersonality },
+    { profile: opts.profile ?? 'cli', meshRegistryPath: meshRegistryPath(meshName) },
+  );
+  return { loop, coordinatorPersonality, meshName };
+}
+
+/**
+ * Resolve the active chat target from config and return a ready AgentLoop.
+ * Dispatches to team or personality mode based on config.activeContext.
+ */
+export interface ActiveLoop {
+  loop: AgentLoop;
+  /** Personality ID to pass per-turn (the coordinator for teams). */
+  personalityId: string;
+  /** Human-readable label for the banner: "researcher" or "team:myteam". */
+  displayName: string;
+}
+
+export async function resolveActiveLoop(
+  config: EthosConfig,
+  opts: { profile?: WiringProfile } = {},
+): Promise<ActiveLoop> {
+  if (config.activeContext?.type === 'team') {
+    const teamName = config.activeContext.name;
+    const { loop, coordinatorPersonality } = await createTeamAgentLoop(config, teamName, opts);
+    return { loop, personalityId: coordinatorPersonality, displayName: `team:${teamName}` };
+  }
+  const personalityId = config.activeContext?.name ?? config.personality;
+  const loop = await createAgentLoop({ ...config, personality: personalityId }, opts);
+  return { loop, personalityId, displayName: personalityId };
 }

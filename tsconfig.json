@@ -13,6 +13,7 @@
       "@ethosagent/personalities": ["./extensions/personalities/src"],
       "@ethosagent/session-sqlite": ["./extensions/session-sqlite/src"],
       "@ethosagent/agent-mesh": ["./extensions/agent-mesh/src"],
+      "@ethosagent/team-supervisor": ["./extensions/team-supervisor/src"],
       "@ethosagent/acp-server": ["./extensions/acp-server/src"],
       "@ethosagent/cron": ["./extensions/cron/src"],
       "@ethosagent/tools-cron": ["./extensions/tools-cron/src"],

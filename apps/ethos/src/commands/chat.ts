@@ -2,7 +2,7 @@ import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
 import type { EthosConfig } from '../config';
-import { createAgentLoop } from '../wiring';
+import { resolveActiveLoop } from '../wiring';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
 
 // ---------------------------------------------------------------------------
@@ -36,13 +36,13 @@ interface ChatState {
 // ---------------------------------------------------------------------------
 
 export async function runChat(config: EthosConfig): Promise<void> {
-  const loop = await createAgentLoop(config);
+  const { loop, personalityId, displayName } = await resolveActiveLoop(config);
 
   if (process.stdout.isTTY && process.stdin.isTTY) {
     const { runTUI } = await import('@ethosagent/tui');
     await runTUI(loop, {
       model: config.model,
-      personality: config.personality,
+      personality: displayName,
       verbose: config.verbose ?? false,
     });
     return;
@@ -56,7 +56,7 @@ export async function runChat(config: EthosConfig): Promise<void> {
 
   const state: ChatState = {
     sessionKey: `cli:${basename(process.cwd())}`,
-    personalityId: config.personality,
+    personalityId,
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
   };
 
@@ -80,9 +80,7 @@ export async function runChat(config: EthosConfig): Promise<void> {
   rl.on('close', () => process.exit(0));
 
   // Welcome
-  out(
-    `${c.bold}ethos${c.reset}  ${c.dim}${config.model} · ${state.personalityId} · /help${c.reset}\n\n`,
-  );
+  out(`${c.bold}ethos${c.reset}  ${c.dim}${config.model} · ${displayName} · /help${c.reset}\n\n`);
 
   // REPL loop
   for (;;) {
