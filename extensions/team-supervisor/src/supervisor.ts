@@ -3,6 +3,8 @@ import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { TeamManifest } from '@ethosagent/types';
+import { startHealthProbeLoop } from './health';
+import { logSupervisorEvent } from './logger';
 import { acquirePidFile } from './pid';
 import { allocatePorts } from './ports';
 import type { MemberRuntime, MemberStatus } from './runtime';
@@ -57,6 +59,14 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
   const startedAt = new Date().toISOString();
   let shuttingDown = false;
 
+  function log(
+    personality: string,
+    event: Parameters<typeof logSupervisorEvent>[0]['event'],
+    data?: Record<string, unknown>,
+  ): void {
+    logSupervisorEvent({ ts: new Date().toISOString(), team: name, personality, event, data });
+  }
+
   function persist(): void {
     writeRuntime({
       name,
@@ -69,6 +79,9 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
 
   persist();
 
+  // Probe loop stop handle — assigned after the loop starts below.
+  let stopProbeLoop: () => void = () => {};
+
   // ---------------------------------------------------------------------------
   // Graceful shutdown
   // ---------------------------------------------------------------------------
@@ -77,6 +90,7 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
     if (shuttingDown) return;
     shuttingDown = true;
 
+    stopProbeLoop();
     console.log(`[team-supervisor] Stopping team "${name}"…`);
 
     // Send SIGTERM to all live children.
@@ -142,6 +156,7 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
     m.status = 'running';
     persist();
 
+    log(personality, 'spawn', { port: m.port, pid: m.pid });
     console.log(`[team-supervisor] Spawned ${personality} on port ${m.port} (PID ${m.pid ?? '?'})`);
 
     child.on('exit', (code, signal) => {
@@ -150,6 +165,8 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
       logStream.end();
       m.child = null;
       m.pid = null;
+
+      log(personality, 'exit', { code, signal });
 
       const autoRestart = member.auto_restart ?? false;
       if (!autoRestart) {
@@ -169,6 +186,10 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
 
       if (m.recentFailures.length >= MAX_FAILURES_PER_MINUTE) {
         m.status = 'failed';
+        log(personality, 'give_up', {
+          failureCount: m.failureCount,
+          windowMs: FAILURE_WINDOW_MS,
+        });
         console.error(
           `[team-supervisor] ${personality}: giving up — ${MAX_FAILURES_PER_MINUTE} failures in ${FAILURE_WINDOW_MS / 1000}s`,
         );
@@ -181,6 +202,7 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
         BACKOFF_CAP_MS,
       );
       m.status = 'restarting';
+      log(personality, 'restart', { backoffMs: backoff, attempt: m.recentFailures.length });
       persist();
       console.log(`[team-supervisor] ${personality}: restarting in ${backoff}ms`);
 
@@ -189,6 +211,56 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
       }, backoff);
     });
   }
+
+  // ---------------------------------------------------------------------------
+  // Health probe loop (CC — liveness, catches hung-but-alive processes)
+  // ---------------------------------------------------------------------------
+
+  stopProbeLoop = startHealthProbeLoop({
+    getMembers: () =>
+      [...memberMap.values()].map(({ personality, port, status, pid }) => ({
+        personality,
+        port,
+        status,
+        pid,
+      })),
+    onDegraded: (personality) => {
+      const m = memberMap.get(personality);
+      if (!m) return;
+      m.status = 'degraded';
+      log(personality, 'degraded', { port: m.port });
+      persist();
+    },
+    onRecovered: (personality) => {
+      const m = memberMap.get(personality);
+      if (!m) return;
+      m.status = 'running';
+      log(personality, 'probe_ok', { port: m.port });
+      persist();
+    },
+    onHung: (personality) => {
+      const m = memberMap.get(personality);
+      const member = manifest.members.find((mm) => mm.personality === personality);
+      if (!m || !member) return;
+      log(personality, 'probe_fail', {
+        port: m.port,
+        action: member.auto_restart ? 'respawn' : 'mark_failed',
+      });
+      if (member.auto_restart) {
+        // Kill the hung process so the exit handler fires and triggers respawn.
+        if (m.pid) {
+          try {
+            process.kill(m.pid, 'SIGKILL');
+          } catch {
+            /* already dead */
+          }
+        }
+      } else {
+        m.status = 'failed';
+        persist();
+      }
+    },
+  });
 
   // Spawn all members at startup.
   for (const personality of memberMap.keys()) {

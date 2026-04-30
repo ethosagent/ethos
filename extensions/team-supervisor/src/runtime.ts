@@ -2,7 +2,13 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-export type MemberStatus = 'starting' | 'running' | 'restarting' | 'failed' | 'stopped';
+export type MemberStatus =
+  | 'starting'
+  | 'running'
+  | 'degraded'
+  | 'restarting'
+  | 'failed'
+  | 'stopped';
 
 export interface MemberRuntime {
   personality: string;
