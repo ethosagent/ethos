@@ -12,4 +12,5 @@ export * from './plugin';
 export * from './session';
 export * from './skill';
 export * from './storage';
+export * from './team';
 export * from './tool';

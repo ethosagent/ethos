@@ -53,6 +53,8 @@ export type EthosErrorCode =
   | 'SKILL_EXISTS'
   // Plugins (Phase 30.6 surface)
   | 'PLUGIN_CONTRACT_INCOMPATIBLE'
+  // Team manifest (Teamwork Core)
+  | 'TEAM_MANIFEST_INVALID'
   // Web API (Phase 26)
   | 'UNAUTHORIZED'
   | 'SESSION_NOT_FOUND'

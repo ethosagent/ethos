@@ -258,6 +258,7 @@ If you see a code below, the action printed by the CLI is your first move. The t
 | `PERSONALITY_EXISTS` | The id passed to `personalities.create` or `personalities.duplicate` is already in use. | Pick a different id; existing personalities are visible in `personalities.list`. |
 | `PERSONALITY_READ_ONLY` | The id refers to a built-in personality, which cannot be edited or deleted directly. | Use `personalities.duplicate` to clone the built-in into `~/.ethos/personalities/<new-id>/`, then edit the copy. |
 | `PLUGIN_CONTRACT_INCOMPATIBLE` | A plugin declares a `pluginContractMajor` that's not supported by this CLI. | Upgrade the plugin (or the CLI), per `packages/plugin-contract/MIGRATIONS.md`. |
+| `TEAM_MANIFEST_INVALID` | `team.yaml` failed to parse or failed schema validation. The offending field is named in the cause. | Fix the named field in `team.yaml` and re-run `ethos team start`. |
 | `INTERNAL` | An unexpected error escaped to the surface. | Re-run. If it repeats, file an issue with the printed `details`. |
 
 For the recent errors hitting *your* install specifically, run `ethos doctor --recent-errors` (Phase 30.10).
