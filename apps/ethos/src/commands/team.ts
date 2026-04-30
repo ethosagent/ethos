@@ -1,8 +1,14 @@
 import { spawn } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve as resolvePath } from 'node:path';
 import type { MemberRuntime } from '@ethosagent/team-supervisor';
-import { parseTeamManifest, readRuntime, teamsDir } from '@ethosagent/team-supervisor';
+import {
+  parseTeamManifest,
+  readRuntime,
+  teamsDir,
+  validateForStart,
+} from '@ethosagent/team-supervisor';
+import type { TeamManifest } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 
 const c = {
@@ -20,28 +26,63 @@ const c = {
 // ---------------------------------------------------------------------------
 
 function resolveManifestPath(name: string): string {
-  // Project-scoped: ./team.yaml, only when name matches or is implied.
+  // Project-scoped: ./team.yaml, only when name matches.
   const local = resolvePath('./team.yaml');
   try {
     const src = readFileSync(local, 'utf-8');
-    const { parseTeamManifest: p } = require('@ethosagent/team-supervisor');
-    const m = p(src);
+    const m = parseTeamManifest(src);
     if (m.name === name) return local;
   } catch {
     /* not present or name mismatch */
   }
 
   const user = join(teamsDir(), `${name}.yaml`);
-  try {
-    readFileSync(user); // existence check
-    return user;
-  } catch {
-    throw new EthosError({
-      code: 'FILE_NOT_FOUND',
-      cause: `No team manifest found for "${name}"`,
-      action: `Create ~/.ethos/teams/${name}.yaml or place a team.yaml in the current directory.`,
-    });
+  if (existsSync(user)) return user;
+
+  throw new EthosError({
+    code: 'FILE_NOT_FOUND',
+    cause: `No team manifest found for "${name}"`,
+    action: `Create one with: ethos team create ${name}`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// YAML serialiser (hand-written — avoids adding yaml dep to the CLI)
+// ---------------------------------------------------------------------------
+
+function serializeTeamManifest(manifest: TeamManifest): string {
+  const lines: string[] = [
+    `name: ${manifest.name}`,
+    `description: ${manifest.description || `${manifest.name} team`}`,
+  ];
+
+  if (manifest.domain_capabilities.length === 0) {
+    lines.push('domain_capabilities: []');
+  } else {
+    lines.push('domain_capabilities:');
+    for (const cap of manifest.domain_capabilities) lines.push(`  - ${cap}`);
   }
+
+  if (manifest.dispatch_mode) lines.push(`dispatch_mode: ${manifest.dispatch_mode}`);
+  if (manifest.coordinator) lines.push(`coordinator: ${manifest.coordinator}`);
+  if (manifest.mesh) lines.push(`mesh: ${manifest.mesh}`);
+
+  if (manifest.members.length === 0) {
+    lines.push('members: []');
+  } else {
+    lines.push('members:');
+    for (const m of manifest.members) {
+      lines.push(`  - personality: ${m.personality}`);
+      if (m.auto_restart !== undefined) lines.push(`    auto_restart: ${m.auto_restart}`);
+      if (m.port !== undefined) lines.push(`    port: ${m.port}`);
+      if (m.capabilities?.length) {
+        lines.push('    capabilities:');
+        for (const cap of m.capabilities) lines.push(`      - ${cap}`);
+      }
+    }
+  }
+
+  return `${lines.join('\n')}\n`;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,8 +133,8 @@ async function runTeamStart(name: string | undefined): Promise<void> {
 
   const manifestPath = resolveManifestPath(name);
   const src = readFileSync(manifestPath, 'utf-8');
-  // Validate manifest before launching supervisor (fail fast with clear error).
   const manifest = parseTeamManifest(src);
+  validateForStart(manifest);
 
   console.log(
     `\n${c.bold}Starting team "${manifest.name}"${c.reset} (${manifest.members.length} members)`,
@@ -218,6 +259,130 @@ async function runTeamStatus(name: string | undefined): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// create
+// ---------------------------------------------------------------------------
+
+async function runTeamCreate(name: string | undefined): Promise<void> {
+  if (!name) {
+    console.error('Usage: ethos team create <name>');
+    process.exit(1);
+  }
+
+  const dir = teamsDir();
+  const dest = join(dir, `${name}.yaml`);
+
+  if (existsSync(dest)) {
+    console.error(`Team "${name}" already exists at ${dest}`);
+    process.exit(1);
+  }
+
+  // Check local ./team.yaml doesn't already match this name
+  try {
+    const localSrc = readFileSync(resolvePath('./team.yaml'), 'utf-8');
+    const localManifest = parseTeamManifest(localSrc);
+    if (localManifest.name === name) {
+      console.error(`Team "${name}" already exists (./team.yaml)`);
+      process.exit(1);
+    }
+  } catch {
+    /* no local team.yaml */
+  }
+
+  mkdirSync(dir, { recursive: true });
+
+  const draft: TeamManifest = {
+    name,
+    description: `${name} team`,
+    domain_capabilities: [],
+    dispatch_mode: 'self-routing',
+    members: [],
+  };
+
+  writeFileSync(dest, serializeTeamManifest(draft), 'utf-8');
+  console.log(`\n${c.bold}Created team "${name}"${c.reset}  ${c.dim}${dest}${c.reset}`);
+  console.log(`${c.dim}Add personalities:  ethos team ${name} add <personality>${c.reset}\n`);
+}
+
+// ---------------------------------------------------------------------------
+// <name> add / remove
+// ---------------------------------------------------------------------------
+
+async function runTeamMemberAdd(teamName: string, personality: string | undefined): Promise<void> {
+  if (!personality) {
+    console.error(`Usage: ethos team ${teamName} add <personality>`);
+    process.exit(1);
+  }
+
+  const manifestPath = resolveManifestPath(teamName);
+  const manifest = parseTeamManifest(readFileSync(manifestPath, 'utf-8'));
+
+  if (manifest.members.some((m) => m.personality === personality)) {
+    console.log(`${c.dim}${personality} is already a member of team ${teamName}${c.reset}`);
+    return;
+  }
+
+  // Look up personality capabilities to auto-populate domain_capabilities.
+  const { createPersonalityRegistry } = await import('@ethosagent/personalities');
+  const { ethosDir } = await import('../config');
+  const reg = await createPersonalityRegistry({ userPersonalitiesDir: ethosDir() });
+  await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
+  const personalityConfig = reg.get(personality);
+  if (!personalityConfig) {
+    console.error(`Unknown personality: ${personality}`);
+    console.error(`Run 'ethos personality list' to see available personalities.`);
+    process.exit(1);
+  }
+
+  const personalityCapabilities = personalityConfig.capabilities ?? [];
+  const updatedManifest: TeamManifest = {
+    ...manifest,
+    domain_capabilities: [
+      ...new Set([...manifest.domain_capabilities, ...personalityCapabilities]),
+    ],
+    members: [...manifest.members, { personality, auto_restart: true }],
+  };
+
+  writeFileSync(manifestPath, serializeTeamManifest(updatedManifest), 'utf-8');
+  console.log(`${c.green}✓${c.reset} Added ${c.bold}${personality}${c.reset} to team ${teamName}`);
+  if (personalityCapabilities.length > 0) {
+    console.log(`${c.dim}  capabilities: ${personalityCapabilities.join(', ')}${c.reset}`);
+  }
+}
+
+async function runTeamMemberRemove(
+  teamName: string,
+  personality: string | undefined,
+): Promise<void> {
+  if (!personality) {
+    console.error(`Usage: ethos team ${teamName} remove <personality>`);
+    process.exit(1);
+  }
+
+  const manifestPath = resolveManifestPath(teamName);
+  const manifest = parseTeamManifest(readFileSync(manifestPath, 'utf-8'));
+
+  if (!manifest.members.some((m) => m.personality === personality)) {
+    console.error(`${personality} is not a member of team ${teamName}`);
+    process.exit(1);
+  }
+
+  const updatedManifest: TeamManifest = {
+    ...manifest,
+    members: manifest.members.filter((m) => m.personality !== personality),
+  };
+
+  writeFileSync(manifestPath, serializeTeamManifest(updatedManifest), 'utf-8');
+  console.log(
+    `${c.green}✓${c.reset} Removed ${c.bold}${personality}${c.reset} from team ${teamName}`,
+  );
+  if (updatedManifest.members.length === 0) {
+    console.log(
+      `${c.dim}  Team has no members — add one before starting: ethos team ${teamName} add <personality>${c.reset}`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // logs
 // ---------------------------------------------------------------------------
 
@@ -279,6 +444,9 @@ export async function runTeamCommand(sub: string, args: string[]): Promise<void>
     case '':
       await runTeamList();
       break;
+    case 'create':
+      await runTeamCreate(args[0]);
+      break;
     case 'start':
       await runTeamStart(args[0]);
       break;
@@ -291,9 +459,18 @@ export async function runTeamCommand(sub: string, args: string[]): Promise<void>
     case 'logs':
       await runTeamLogs(args[0], args.slice(1));
       break;
-    default:
-      console.log(
-        'Usage: ethos team [list | start <name> | stop <name> | status <name> | logs <name> [--member <personality>]]',
-      );
+    default: {
+      // `ethos team <name> add|remove <personality>`
+      const action = args[0] ?? '';
+      if (action === 'add') {
+        await runTeamMemberAdd(sub, args[1]);
+      } else if (action === 'remove') {
+        await runTeamMemberRemove(sub, args[1]);
+      } else {
+        console.log(
+          'Usage: ethos team [list | create <name> | start <name> | stop <name> | status <name> | logs <name> | <name> add <personality> | <name> remove <personality>]',
+        );
+      }
+    }
   }
 }

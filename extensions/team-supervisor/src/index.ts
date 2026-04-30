@@ -14,5 +14,5 @@ export {
   teamsDir,
   writeRuntime,
 } from './runtime';
-export { parseTeamManifest } from './schema';
+export { parseTeamManifest, validateForStart } from './schema';
 export { runSupervisor } from './supervisor';

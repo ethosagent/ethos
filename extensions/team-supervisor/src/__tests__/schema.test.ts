@@ -1,6 +1,6 @@
 import { EthosError } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
-import { parseTeamManifest } from '../schema';
+import { parseTeamManifest, validateForStart } from '../schema';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -226,21 +226,15 @@ members:
     }
   });
 
-  it('throws TEAM_MANIFEST_INVALID when members list is empty', () => {
+  it('parses (does not throw) when members list is empty — draft state', () => {
     const yaml = `
 name: empty-members
-description: No members
+description: Draft team
 domain_capabilities: [x]
 members: []
 `;
-    expect(() => parseTeamManifest(yaml)).toThrow(EthosError);
-    try {
-      parseTeamManifest(yaml);
-    } catch (err) {
-      const e = err as EthosError;
-      expect(e.code).toBe('TEAM_MANIFEST_INVALID');
-      expect(e.cause).toContain('members');
-    }
+    const result = parseTeamManifest(yaml);
+    expect(result.members).toHaveLength(0);
   });
 
   it('throws TEAM_MANIFEST_INVALID when members is absent', () => {
@@ -294,6 +288,36 @@ members:
       expect(e.code).toBe('TEAM_MANIFEST_INVALID');
       // Path should reference the members array
       expect(e.cause).toMatch(/member|personality/i);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateForStart
+// ---------------------------------------------------------------------------
+
+describe('validateForStart', () => {
+  it('passes when manifest has at least one member', () => {
+    const manifest = parseTeamManifest(VALID_MINIMAL);
+    expect(() => validateForStart(manifest)).not.toThrow();
+  });
+
+  it('throws TEAM_MANIFEST_INVALID when members list is empty', () => {
+    const yaml = `
+name: empty-members
+description: Draft team
+domain_capabilities: [x]
+members: []
+`;
+    const manifest = parseTeamManifest(yaml);
+    expect(() => validateForStart(manifest)).toThrow(EthosError);
+    try {
+      validateForStart(manifest);
+    } catch (err) {
+      const e = err as EthosError;
+      expect(e.code).toBe('TEAM_MANIFEST_INVALID');
+      expect(e.cause).toContain('no members');
+      expect(e.action).toContain('ethos team empty-members add');
     }
   });
 });

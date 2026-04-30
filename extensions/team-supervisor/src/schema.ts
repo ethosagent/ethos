@@ -13,12 +13,15 @@ const TeamMemberSchema: z.ZodType<TeamMember> = z.object({
 const TeamManifestSchema: z.ZodType<TeamManifest> = z
   .object({
     name: z.string().min(1),
-    description: z.string().min(1),
-    domain_capabilities: z.array(z.string()).min(1),
+    // Allow empty string so draft manifests (created by `ethos team create`)
+    // pass parse; validate non-empty at start time via validateForStart().
+    description: z.string(),
+    // Same: allow empty array in drafts; validateForStart() enforces non-empty.
+    domain_capabilities: z.array(z.string()),
     dispatch_mode: z.enum(['coordinator', 'self-routing', 'broadcast']).optional(),
     coordinator: z.string().optional(),
     mesh: z.string().optional(),
-    members: z.array(TeamMemberSchema).min(1),
+    members: z.array(TeamMemberSchema),
   })
   .superRefine((val, ctx) => {
     const mode =
@@ -83,4 +86,20 @@ export function parseTeamManifest(yamlContent: string): TeamManifest {
   }
 
   return manifest;
+}
+
+/**
+ * Validate a parsed manifest is ready to be started.
+ * `parseTeamManifest` allows draft manifests (empty members/capabilities);
+ * this function enforces the runtime constraints that the supervisor needs.
+ * Called by `ethos team start` before spawning the supervisor.
+ */
+export function validateForStart(manifest: TeamManifest): void {
+  if (manifest.members.length === 0) {
+    throw new EthosError({
+      code: 'TEAM_MANIFEST_INVALID',
+      cause: `Team "${manifest.name}" has no members`,
+      action: `Add at least one personality: ethos team ${manifest.name} add <personality>`,
+    });
+  }
 }
