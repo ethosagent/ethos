@@ -61,6 +61,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/team-supervisor':
+        specifier: workspace:*
+        version: link:../../extensions/team-supervisor
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
