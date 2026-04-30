@@ -62,6 +62,8 @@ export class AcpServer {
   private readonly abortControllers = new Map<Id, AbortController>();
   // tracks which sessionKeys have an active prompt
   private readonly busySessions = new Set<string>();
+  private readonly startedAt = Date.now();
+  private lastTurnAt: number | null = null;
 
   constructor(config: {
     runner: AgentRunner;
@@ -127,7 +129,14 @@ export class AcpServer {
   private async handleHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, activeSessions: this.busySessions.size }));
+      res.end(
+        JSON.stringify({
+          status: 'ok',
+          uptime_s: Math.floor((Date.now() - this.startedAt) / 1000),
+          active_sessions: this.busySessions.size,
+          last_turn_at: this.lastTurnAt ? new Date(this.lastTurnAt).toISOString() : null,
+        }),
+      );
       return;
     }
 
@@ -201,6 +210,7 @@ export class AcpServer {
               p.sessionKey,
               p.personalityId,
             );
+            this.lastTurnAt = Date.now();
             return { jsonrpc: '2.0', id, result: { text, turnCount } };
           } finally {
             this.busySessions.delete(p.sessionKey);
@@ -322,6 +332,7 @@ export class AcpServer {
                 sendStream(event);
               }
             }
+            this.lastTurnAt = Date.now();
             sendResult({ text: fullText, turnCount });
           } finally {
             controllers.delete(id);

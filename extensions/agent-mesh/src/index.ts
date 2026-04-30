@@ -1,3 +1,4 @@
+import { statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
@@ -17,9 +18,54 @@ export interface MeshEntry {
 
 const STALE_MS = 30_000;
 const MAX_ENTRIES = 100;
+const LOCK_TTL_MS = 5_000;
+const LOCK_RETRY_MS = 10;
+
+export function meshesDir(): string {
+  return join(homedir(), '.ethos', 'meshes');
+}
+
+export function meshRegistryPath(meshName: string): string {
+  return join(meshesDir(), meshName, 'registry.json');
+}
 
 export function defaultRegistryPath(): string {
-  return join(homedir(), '.ethos', 'mesh-registry.json');
+  return meshRegistryPath('default');
+}
+
+async function acquireRegistryLock(lockPath: string): Promise<() => void> {
+  const deadline = Date.now() + LOCK_TTL_MS;
+  while (Date.now() < deadline) {
+    try {
+      writeFileSync(lockPath, '', { flag: 'wx' });
+      return () => {
+        try {
+          unlinkSync(lockPath);
+        } catch {
+          /* already gone */
+        }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      // Stale lock detection: if the lock file is older than TTL, assume the holder crashed.
+      try {
+        const stat = statSync(lockPath);
+        if (Date.now() - stat.mtimeMs > LOCK_TTL_MS) {
+          try {
+            unlinkSync(lockPath);
+          } catch {
+            /* race: another holder already cleaned it up */
+          }
+          continue;
+        }
+      } catch {
+        /* lock file disappeared between check and stat — retry immediately */
+        continue;
+      }
+      await new Promise<void>((r) => setTimeout(r, LOCK_RETRY_MS));
+    }
+  }
+  throw new Error(`Failed to acquire registry lock at ${lockPath} within ${LOCK_TTL_MS}ms`);
 }
 
 export interface AgentMeshOptions {
@@ -34,6 +80,19 @@ export class AgentMesh {
   constructor(registryPath: string = defaultRegistryPath(), opts: AgentMeshOptions = {}) {
     this.path = registryPath;
     this.storage = opts.storage ?? new FsStorage();
+  }
+
+  private lockPath(): string {
+    return this.path.replace(/\.json$/, '.lock');
+  }
+
+  private async withLock<T>(fn: () => Promise<T>): Promise<T> {
+    const release = await acquireRegistryLock(this.lockPath());
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
   }
 
   private async read(): Promise<MeshEntry[]> {
@@ -59,34 +118,40 @@ export class AgentMesh {
   }
 
   async register(entry: Omit<MeshEntry, 'registeredAt' | 'lastHeartbeatAt'>): Promise<void> {
-    const entries = await this.read();
-    const now = Date.now();
-    const idx = entries.findIndex((e) => e.agentId === entry.agentId);
-    if (idx >= 0) {
-      // preserve original registeredAt on re-registration
-      entries[idx] = {
-        ...entry,
-        registeredAt: entries[idx].registeredAt,
-        lastHeartbeatAt: now,
-      };
-    } else {
-      entries.push({ ...entry, registeredAt: now, lastHeartbeatAt: now });
-    }
-    await this.write(entries);
+    await this.withLock(async () => {
+      const entries = await this.read();
+      const now = Date.now();
+      const idx = entries.findIndex((e) => e.agentId === entry.agentId);
+      if (idx >= 0) {
+        // preserve original registeredAt on re-registration
+        entries[idx] = {
+          ...entry,
+          registeredAt: entries[idx].registeredAt,
+          lastHeartbeatAt: now,
+        };
+      } else {
+        entries.push({ ...entry, registeredAt: now, lastHeartbeatAt: now });
+      }
+      await this.write(entries);
+    });
   }
 
   async heartbeat(agentId: string, activeSessions: number): Promise<void> {
-    const entries = await this.read();
-    const idx = entries.findIndex((e) => e.agentId === agentId);
-    if (idx >= 0) {
-      entries[idx] = { ...entries[idx], lastHeartbeatAt: Date.now(), activeSessions };
-      await this.write(entries);
-    }
+    await this.withLock(async () => {
+      const entries = await this.read();
+      const idx = entries.findIndex((e) => e.agentId === agentId);
+      if (idx >= 0) {
+        entries[idx] = { ...entries[idx], lastHeartbeatAt: Date.now(), activeSessions };
+        await this.write(entries);
+      }
+    });
   }
 
   async unregister(agentId: string): Promise<void> {
-    const entries = await this.read();
-    await this.write(entries.filter((e) => e.agentId !== agentId));
+    await this.withLock(async () => {
+      const entries = await this.read();
+      await this.write(entries.filter((e) => e.agentId !== agentId));
+    });
   }
 
   // Returns least-busy live agent advertising the given capability.
@@ -125,3 +190,6 @@ export class AgentMesh {
     return () => clearInterval(id);
   }
 }
+
+export type { MeshJournalEntry } from './journal';
+export { appendMeshJournal, meshJournalPath } from './journal';
