@@ -37,12 +37,13 @@ export async function createLLM(config: EthosConfig): Promise<LLMProvider> {
 
 export async function createAgentLoop(
   config: EthosConfig,
-  opts: { profile?: WiringProfile } = {},
+  opts: { profile?: WiringProfile; meshRegistryPath?: string } = {},
 ): Promise<AgentLoop> {
   return packageCreateAgentLoop(await withRotation(config), {
     dataDir: ethosDir(),
     workingDir: process.cwd(),
     profile: opts.profile ?? 'cli',
     logger,
+    meshRegistryPath: opts.meshRegistryPath,
   });
 }

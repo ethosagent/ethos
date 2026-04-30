@@ -307,8 +307,7 @@ export function createRouteToAgentTool(registryPath = defaultRegistryPath()): To
     name: 'route_to_agent',
     description:
       'Route a task to the best available mesh agent advertising a given capability. ' +
-      'The mesh registry is read from ~/.ethos/mesh-registry.json. ' +
-      'Agents register via `ethos serve`. ' +
+      "Agents register via `ethos serve`; routing is scoped to the caller's mesh. " +
       "Returns the remote agent's full response. " +
       'Does not fall back to local execution if no matching agent is found.',
     toolset: 'delegation',

@@ -44,7 +44,10 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   // registry. ACP shares this loop too — for now both surfaces inherit the
   // web posture when web is enabled (interactive approval over hard block).
   const loopProfile = webEnabled ? 'web' : 'cli';
-  const loop = await createAgentLoop(config, { profile: loopProfile });
+  const loop = await createAgentLoop(config, {
+    profile: loopProfile,
+    meshRegistryPath: meshRegistryPath(meshName),
+  });
   const session = new SQLiteSessionStore(join(dir, 'sessions.db'));
   const mesh = new AgentMesh(meshRegistryPath(meshName));
 

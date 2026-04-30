@@ -68,8 +68,11 @@ async function runTeamList(): Promise<void> {
   for (const file of files) {
     const teamName = basename(file, '.yaml');
     const rt = readRuntime(teamName);
-    const status = rt ? `${c.green}running${c.reset}` : `${c.dim}stopped${c.reset}`;
-    const members = rt ? `${rt.members.length} member${rt.members.length === 1 ? '' : 's'}` : '';
+    const liveMembers = rt?.members.filter((m) => m.status !== 'stopped' && m.status !== 'failed');
+    const isRunning = (liveMembers?.length ?? 0) > 0;
+    const status = isRunning ? `${c.green}running${c.reset}` : `${c.dim}stopped${c.reset}`;
+    const memberCount = liveMembers?.length ?? 0;
+    const members = isRunning ? `${memberCount} member${memberCount === 1 ? '' : 's'}` : '';
     console.log(
       `  ${c.bold}${teamName.padEnd(20)}${c.reset} ${status}  ${c.dim}${members}${c.reset}`,
     );
@@ -226,7 +229,9 @@ async function runTeamLogs(name: string | undefined, args: string[]): Promise<vo
 
   const rt = readRuntime(name);
   if (!rt) {
-    console.error(`Team "${name}" does not appear to be running.`);
+    console.error(
+      `No log history found for team "${name}" — start it first with 'ethos team start ${name}'.`,
+    );
     process.exit(1);
   }
 

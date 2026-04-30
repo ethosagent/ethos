@@ -70,6 +70,11 @@ export interface CreateAgentLoopOptions {
   /** Optional log sink for non-fatal warnings (e.g. Docker missing, skill
    *  skipped). Defaults to a no-op so the package stays headless. */
   logger?: WiringLogger;
+  /** Absolute path to the mesh registry file this agent belongs to.
+   *  Controls which peers route_to_agent and broadcast_to_agents can see.
+   *  Defaults to the 'default' mesh (~/.ethos/meshes/default/registry.json).
+   *  Set by ethos serve --mesh <name> so team members route within their mesh. */
+  meshRegistryPath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +221,8 @@ export async function createAgentLoop(
 
   // Delegation tools need the loop reference; register after loop creation.
   // The registry is shared by reference, so the loop sees them on next turn.
-  for (const tool of createDelegationTools(loop)) tools.register(tool);
+  // meshRegistryPath scopes routing to the caller's mesh (CC — mesh isolation).
+  for (const tool of createDelegationTools(loop, opts.meshRegistryPath)) tools.register(tool);
 
   return loop;
 }
