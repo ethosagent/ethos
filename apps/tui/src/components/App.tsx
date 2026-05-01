@@ -526,6 +526,12 @@ export function App({
       }
     };
 
+    // Phase 5: update status bar when effective model differs from the
+    // initial config (e.g. per-personality routing, team overrides).
+    const onRunStart = (_provider: string, resolvedModel: string) => {
+      setCurrentModel(resolvedModel);
+    };
+
     bridge.on('text_delta', onTextDelta);
     bridge.on('thinking_delta', onThinkingDelta);
     bridge.on('done', onDone);
@@ -536,6 +542,7 @@ export function App({
     bridge.on('error', onError);
     bridge.on('queued', onQueued);
     bridge.on('idle', onIdle);
+    bridge.on('run_start', onRunStart);
 
     return () => {
       bridge.off('text_delta', onTextDelta);
@@ -548,6 +555,7 @@ export function App({
       bridge.off('error', onError);
       bridge.off('queued', onQueued);
       bridge.off('idle', onIdle);
+      bridge.off('run_start', onRunStart);
     };
   }, [bridge]);
 

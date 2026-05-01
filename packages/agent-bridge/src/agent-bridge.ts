@@ -34,6 +34,12 @@ interface BridgeEventMap {
   done: [text: string, turnCount: number];
   idle: [];
   queued: [input: string, queueDepth: number];
+  /** Phase 5 — emitted once per turn with the resolved provider/model and routing source. */
+  run_start: [
+    provider: string,
+    model: string,
+    source: 'team-coordinator' | 'team-personality' | 'personality' | 'global',
+  ];
 }
 
 interface QueuedSend {
@@ -152,6 +158,9 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
           case 'error':
             this.flushText();
             this.emit('error', event.error, event.code);
+            break;
+          case 'run_start':
+            this.emit('run_start', event.provider, event.model, event.source);
             break;
         }
       }

@@ -183,6 +183,11 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
         personalityId: state.personalityId,
         abortSignal: abort.signal,
       })) {
+        // Phase 5: surface resolved model + source in verbose mode at turn start.
+        if (event.type === 'run_start' && verbose.active) {
+          out(`\r${c.dim}↳ ${event.provider}/${event.model} (${event.source})${c.reset}\n`);
+        }
+
         // Timing bookkeeping + spinner transitions
         if (event.type === 'text_delta' && firstTextDeltaAt === null) {
           firstTextDeltaAt = Date.now();
@@ -357,6 +362,14 @@ function renderEvent(
 
     case 'done':
       // Nothing to render — verbose summary handled in the turn loop
+      break;
+
+    case 'run_start':
+      // Handled inline in the turn loop (verbose mode only); silent here.
+      break;
+
+    case 'context_meta':
+      // Internal metadata from context injectors; not surfaced in the CLI.
       break;
   }
 }
