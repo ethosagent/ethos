@@ -48,7 +48,8 @@
       "@ethosagent/agent-bridge": ["./packages/agent-bridge/src"],
       "@ethosagent/wiring": ["./packages/wiring/src"],
       "@ethosagent/web-contracts": ["./packages/web-contracts/src"],
-      "@ethosagent/web-api": ["./extensions/web-api/src"]
+      "@ethosagent/web-api": ["./extensions/web-api/src"],
+      "@ethosagent/mcp-server": ["./extensions/mcp-server/src"]
     }
   },
   "include": [

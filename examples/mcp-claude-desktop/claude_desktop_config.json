@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ethos": {
+      "command": "/usr/local/bin/node",
+      "args": ["/path/to/ethos/apps/ethos/src/index.ts", "mcp", "serve"]
+    }
+  }
+}

@@ -4,6 +4,7 @@
 import { join } from 'node:path';
 import { formatError, toEthosError } from '@ethosagent/types';
 import { runAcp } from './commands/acp';
+import { runBackup, runImport } from './commands/backup';
 import { runBatch } from './commands/batch';
 import { runChat } from './commands/chat';
 import { runClaw } from './commands/claw';
@@ -14,6 +15,7 @@ import { runEvolve } from './commands/evolve';
 import { runGatewaySetup, runGatewayStart } from './commands/gateway';
 import { runKeys } from './commands/keys';
 import { runLogs } from './commands/logs';
+import { runMcp } from './commands/mcp';
 import { runMeshCommand } from './commands/mesh';
 import { runPlugin } from './commands/plugin';
 import { runServe } from './commands/serve';
@@ -32,7 +34,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [setup | chat | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | claw | doctor | upgrade] [--version | --help]';
+  'Usage: ethos [setup | chat | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | claw | doctor | upgrade | mcp | backup | import] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -365,6 +367,21 @@ try {
 
     case 'logs': {
       await runLogs(args.slice(1));
+      break;
+    }
+
+    case 'mcp': {
+      await runMcp(args.slice(1));
+      break;
+    }
+
+    case 'backup': {
+      await runBackup(args.slice(1));
+      break;
+    }
+
+    case 'import': {
+      await runImport(args.slice(1));
       break;
     }
 

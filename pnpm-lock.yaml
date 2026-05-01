@@ -110,6 +110,9 @@ importers:
       '@ethosagent/cron':
         specifier: workspace:*
         version: link:../../extensions/cron
+      '@ethosagent/mcp-server':
+        specifier: workspace:*
+        version: link:../../extensions/mcp-server
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
@@ -434,6 +437,19 @@ importers:
       openai:
         specifier: ^4.87.0
         version: 4.104.0(ws@8.20.0)(zod@4.3.6)
+
+  extensions/mcp-server:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.0.0
+        version: 1.29.0(zod@4.3.6)
+    devDependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
 
   extensions/memory-markdown:
     dependencies:
