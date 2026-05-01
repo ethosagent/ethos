@@ -13,6 +13,18 @@ export interface SkinConfig {
   toolPrefix: string;
 }
 
+const PERSONALITY_ACCENTS: Record<string, string> = {
+  researcher: '#4A9EFF',
+  engineer: '#4ADE80',
+  reviewer: '#F59E0B',
+  coach: '#E879F9',
+  operator: '#94A3B8',
+};
+
+export function personalityAccent(personality: string): string {
+  return PERSONALITY_ACCENTS[personality] ?? '#4A9EFF';
+}
+
 export const SKINS: Record<string, SkinConfig> = {
   default: {
     name: 'default',

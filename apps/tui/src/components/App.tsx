@@ -3,12 +3,19 @@ import type { AgentBridge } from '@ethosagent/agent-bridge';
 import type { Session } from '@ethosagent/types';
 import { Box, Text, useApp, useInput } from 'ink';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { SKINS, type SkinConfig, SkinContext } from '../skin';
+import { personalityAccent, SKINS, type SkinConfig, SkinContext } from '../skin';
 import { AccordionSection, type DetailsMode } from './AccordionSection';
 import { type ChatMessage, ChatPane } from './ChatPane';
 import { CompletionPanel, getMatches } from './CompletionPanel';
+import { ConsoleHeader } from './ConsoleHeader';
+import { ContextPanel } from './ContextPanel';
+import { ExecutionTimeline, type TimelineEvent } from './ExecutionTimeline';
+import { type FileActivity, FileActivityPanel } from './FileActivityPanel';
+import { IdentityPanel } from './IdentityPanel';
 import { InputBox } from './InputBox';
+import { KeymapOverlay } from './KeymapOverlay';
 import { ModelPickerModal } from './ModelPickerModal';
+import { SafetyLane, type SafetyTag } from './SafetyLane';
 import { SessionPickerModal } from './SessionPickerModal';
 import { type AgentStatus, StatusBar } from './StatusBar';
 import { type DelegationRecord, SubagentsPane } from './SubagentsPane';
@@ -88,6 +95,7 @@ function resolveMode(section: DetailsMode | null, global: DetailsMode): DetailsM
 }
 
 type Modal = 'sessions' | 'models' | null;
+type FocusPane = 'identity' | 'context' | 'safety' | 'files' | 'timeline' | 'input';
 
 export function App({
   bridge,
@@ -103,7 +111,7 @@ export function App({
   const [input, setInput] = useState('');
   const [activeTools, setActiveTools] = useState<ActiveTool[]>([]);
   const [completedTools, setCompletedTools] = useState<CompletedTool[]>([]);
-  const [delegations] = useState<DelegationRecord[]>([]);
+  const [delegations, setDelegations] = useState<DelegationRecord[]>([]);
   const [running, setRunning] = useState(false);
   const [interrupted, setInterrupted] = useState(false);
   const [personality, setPersonality] = useState(initialPersonality);
@@ -115,6 +123,16 @@ export function App({
   const [skin, setSkin] = useState<SkinConfig>(SKINS.default);
   const [modal, setModal] = useState<Modal>(null);
   const [completionIndex, setCompletionIndex] = useState(0);
+  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  const [historyDraft, setHistoryDraft] = useState('');
+  const [columns, setColumns] = useState(process.stdout.columns ?? 120);
+  const [focusPane, setFocusPane] = useState<FocusPane>('input');
+  const [showKeymap, setShowKeymap] = useState(false);
+  const [fileActivity, setFileActivity] = useState<FileActivity[]>([]);
+  const [selectedPatchIndex, setSelectedPatchIndex] = useState(0);
+  const [readonlyMode, setReadonlyMode] = useState(false);
 
   // Verbose mode — session-scoped toggle
   const verboseRef = useRef(initialVerbose);
@@ -126,6 +144,11 @@ export function App({
   const turnToolDurationsRef = useRef<number[]>([]);
   const turnUsageRef = useRef<TurnTiming['turnUsage']>(null);
   const [turnElapsed, setTurnElapsed] = useState(0);
+  const fileByToolCallRef = useRef(
+    new Map<string, { action: FileActivity['action']; path: string }>(),
+  );
+  const activityByToolCallRef = useRef(new Map<string, string>());
+  const delegationByToolCallRef = useRef(new Map<string, string>());
 
   const idRef = useRef(0);
   const nextId = () => String(++idRef.current);
@@ -142,6 +165,132 @@ export function App({
 
   const currentTool =
     activeTools.length > 0 ? activeTools[activeTools.length - 1]?.toolName : undefined;
+  const accentColor = useMemo(() => personalityAccent(personality), [personality]);
+  const showIdentityPane = columns >= 90;
+  const showTimelinePane = columns >= 125;
+
+  const focusOrder = useMemo(() => {
+    const panes: FocusPane[] = [];
+    if (showIdentityPane) panes.push('identity');
+    panes.push('context');
+    panes.push('safety');
+    panes.push('files');
+    if (showTimelinePane) panes.push('timeline');
+    panes.push('input');
+    return panes;
+  }, [showIdentityPane, showTimelinePane]);
+
+  const pushTimeline = (level: TimelineEvent['level'], text: string) => {
+    const at = new Date().toISOString().slice(11, 19);
+    setTimelineEvents((prev) => [...prev, { id: nextId(), at, level, text }]);
+  };
+
+  const extractPath = (args: unknown): string | null => {
+    if (!args || typeof args !== 'object') return null;
+    const obj = args as Record<string, unknown>;
+    const raw = obj.filePath ?? obj.path ?? obj.filename;
+    if (typeof raw !== 'string' || raw.trim().length === 0) return null;
+    return raw;
+  };
+
+  const inferFileAction = (toolName: string): FileActivity['action'] | null => {
+    if (toolName === 'read_file') return 'read';
+    if (toolName === 'write_file') return 'write';
+    if (toolName.includes('patch')) return 'patch';
+    return null;
+  };
+
+  const pendingPatchEntries = useMemo(
+    () => fileActivity.filter((e) => e.status === 'approval_required'),
+    [fileActivity],
+  );
+  const selectedPatchEntry = pendingPatchEntries[selectedPatchIndex] ?? null;
+
+  const safetyTags = useMemo(() => {
+    const tags: SafetyTag[] = [];
+    const mark = (toolName: string) => {
+      if (toolName === 'read_file') {
+        tags.push('READ_ONLY');
+        return;
+      }
+      if (toolName === 'write_file' || toolName.includes('patch')) {
+        tags.push('APPROVAL_REQUIRED');
+        return;
+      }
+      if (toolName === 'terminal') {
+        tags.push('DESTRUCTIVE');
+        return;
+      }
+      tags.push('SUGGESTED');
+    };
+    for (const tool of activeTools) mark(tool.toolName);
+    for (const tool of completedTools.slice(-20)) mark(tool.toolName);
+    for (const patch of pendingPatchEntries) {
+      if (patch.status === 'approval_required') tags.push('APPROVAL_REQUIRED');
+    }
+    return tags;
+  }, [activeTools, completedTools, pendingPatchEntries]);
+
+  const appendFileActivity = (
+    action: FileActivity['action'],
+    path: string,
+    status: FileActivity['status'],
+  ): string => {
+    const id = nextId();
+    const at = new Date().toISOString().slice(11, 19);
+    setFileActivity((prev) => [...prev, { id, at, action, path, status }]);
+    return id;
+  };
+
+  const updateFileActivityStatus = (id: string, status: FileActivity['status']) => {
+    const at = new Date().toISOString().slice(11, 19);
+    setFileActivity((prev) =>
+      prev.map((entry) => (entry.id === id ? { ...entry, status, at } : entry)),
+    );
+  };
+
+  const delegationLabel = (toolName: string, args: unknown): string => {
+    const a = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
+    if (toolName === 'delegate_task') {
+      const personality = typeof a.personality === 'string' ? ` -> ${a.personality}` : '';
+      const label = typeof a.label === 'string' ? ` (${a.label})` : '';
+      return `delegate_task${personality}${label}`;
+    }
+    if (toolName === 'route_to_agent') {
+      const capability = typeof a.capability === 'string' ? ` cap=${a.capability}` : '';
+      return `route_to_agent${capability}`;
+    }
+    if (toolName === 'dispatch_team') {
+      const tasks = Array.isArray(a.tasks) ? a.tasks.length : 0;
+      return `dispatch_team tasks=${tasks}`;
+    }
+    if (toolName === 'mixture_of_agents') {
+      const agents = Array.isArray(a.agents) ? a.agents.length : 0;
+      return `mixture_of_agents agents=${agents}`;
+    }
+    if (toolName === 'broadcast_to_agents') {
+      const capability = typeof a.capability === 'string' ? ` cap=${a.capability}` : '';
+      return `broadcast_to_agents${capability}`;
+    }
+    return toolName;
+  };
+
+  const pushDelegation = (id: string, capability: string) => {
+    setDelegations((prev) => [...prev, { id, capability, status: 'pending' }]);
+  };
+
+  const updateDelegation = (id: string, patch: Partial<DelegationRecord>) => {
+    setDelegations((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
+  };
+
+  const cycleFocus = (dir: 1 | -1) => {
+    const idx = focusOrder.indexOf(focusPane);
+    const current = idx === -1 ? focusOrder.length - 1 : idx;
+    const next = (current + dir + focusOrder.length) % focusOrder.length;
+    const pane = focusOrder[next] ?? 'input';
+    setFocusPane(pane);
+    setStatusMsg(`[focus: ${pane}]`);
+  };
 
   // Reset completion index when matches change
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — reset when match count changes
@@ -152,17 +301,85 @@ export function App({
   // Ctrl+C: abort turn if running, exit if idle
   useInput(
     (ch, key) => {
+      if (showKeymap) {
+        if (key.escape || ch === '?') {
+          setShowKeymap(false);
+        }
+        return;
+      }
+
       if (key.ctrl && ch === 'c') {
         if (running) {
           bridge.abortTurn();
           setInterrupted(true);
+          pushTimeline('warning', 'turn aborted by user');
         } else {
           exit();
         }
+        return;
+      }
+
+      if (key.tab) {
+        if (focusPane === 'input' && completionVisible && !key.shift) {
+          return;
+        }
+        cycleFocus(key.shift ? -1 : 1);
+        return;
+      }
+
+      if (focusPane === 'files') {
+        if (key.upArrow) {
+          setSelectedPatchIndex((i) => Math.max(0, i - 1));
+          return;
+        }
+        if (key.downArrow) {
+          setSelectedPatchIndex((i) => Math.min(pendingPatchEntries.length - 1, i + 1));
+          return;
+        }
+        if (ch === 'a' && selectedPatchEntry) {
+          updateFileActivityStatus(selectedPatchEntry.id, 'approved');
+          pushTimeline('success', `patch approved: ${selectedPatchEntry.path}`);
+          setStatusMsg(`[approved] ${selectedPatchEntry.path}`);
+          return;
+        }
+        if (ch === 'd' && selectedPatchEntry) {
+          updateFileActivityStatus(selectedPatchEntry.id, 'denied');
+          pushTimeline('error', `patch denied: ${selectedPatchEntry.path}`);
+          setStatusMsg(`[denied] ${selectedPatchEntry.path}`);
+          return;
+        }
+      }
+
+      if (ch === '?' && (focusPane !== 'input' || input.length === 0)) {
+        setShowKeymap(true);
       }
     },
     { isActive: modal === null },
   );
+
+  useEffect(() => {
+    if (!focusOrder.includes(focusPane)) {
+      setFocusPane('input');
+    }
+  }, [focusPane, focusOrder]);
+
+  useEffect(() => {
+    if (pendingPatchEntries.length === 0) {
+      setSelectedPatchIndex(0);
+      return;
+    }
+    if (selectedPatchIndex >= pendingPatchEntries.length) {
+      setSelectedPatchIndex(pendingPatchEntries.length - 1);
+    }
+  }, [pendingPatchEntries.length, selectedPatchIndex]);
+
+  useEffect(() => {
+    const onResize = () => setColumns(process.stdout.columns ?? 120);
+    process.stdout.on('resize', onResize);
+    return () => {
+      process.stdout.off('resize', onResize);
+    };
+  }, []);
 
   // Live elapsed timer — ticks every second while agent is thinking
   useEffect(() => {
@@ -209,22 +426,76 @@ export function App({
       setStreamingText('');
       setThinkingText('');
       setRunning(false);
+      pushTimeline('success', 'turn complete');
     };
 
-    const onToolStart = (toolCallId: string, toolName: string) => {
+    const onToolStart = (toolCallId: string, toolName: string, args: unknown) => {
       setActiveTools((prev) => [...prev, { toolCallId, toolName }]);
+      pushTimeline('info', `tool start: ${toolName}`);
+
+      const isDelegationTool =
+        toolName === 'delegate_task' ||
+        toolName === 'mixture_of_agents' ||
+        toolName === 'route_to_agent' ||
+        toolName === 'dispatch_team' ||
+        toolName === 'broadcast_to_agents';
+      if (isDelegationTool) {
+        const delegationId = nextId();
+        delegationByToolCallRef.current.set(toolCallId, delegationId);
+        pushDelegation(delegationId, delegationLabel(toolName, args));
+      }
+
+      const action = inferFileAction(toolName);
+      const path = extractPath(args);
+      if (action && path) {
+        fileByToolCallRef.current.set(toolCallId, { action, path });
+        const activityId = appendFileActivity(action, path, 'active');
+        activityByToolCallRef.current.set(toolCallId, activityId);
+      }
     };
 
     const onToolProgress = (toolName: string, message: string, percent: number | undefined) => {
       setActiveTools((prev) =>
         prev.map((t) => (t.toolName === toolName ? { ...t, message, percent } : t)),
       );
+      if (message) {
+        const suffix = percent !== undefined ? ` (${percent}%)` : '';
+        pushTimeline('info', `${toolName}: ${message}${suffix}`);
+      }
     };
 
-    const onToolEnd = (toolCallId: string, toolName: string, ok: boolean, durationMs: number) => {
+    const onToolEnd = (
+      toolCallId: string,
+      toolName: string,
+      ok: boolean,
+      durationMs: number,
+      result?: string,
+    ) => {
       setActiveTools((prev) => prev.filter((t) => t.toolCallId !== toolCallId));
       setCompletedTools((prev) => [...prev, { id: toolCallId, toolName, ok, durationMs }]);
       turnToolDurationsRef.current.push(durationMs);
+      const preview = result ? ` -> ${result.replace(/\s+/g, ' ').slice(0, 56)}` : '';
+      pushTimeline(ok ? 'success' : 'error', `tool end: ${toolName} (${durationMs}ms)${preview}`);
+
+      const fileMeta = fileByToolCallRef.current.get(toolCallId);
+      const activityId = activityByToolCallRef.current.get(toolCallId);
+      if (fileMeta && activityId) {
+        const finalStatus: FileActivity['status'] =
+          ok && fileMeta.action !== 'read' ? 'approval_required' : ok ? 'done' : 'error';
+        updateFileActivityStatus(activityId, finalStatus);
+        fileByToolCallRef.current.delete(toolCallId);
+        activityByToolCallRef.current.delete(toolCallId);
+      }
+
+      const delegationId = delegationByToolCallRef.current.get(toolCallId);
+      if (delegationId) {
+        updateDelegation(delegationId, {
+          status: ok ? 'done' : 'failed',
+          durationMs,
+          ...(ok ? {} : { error: result?.slice(0, 200) }),
+        });
+        delegationByToolCallRef.current.delete(toolCallId);
+      }
     };
 
     const onUsage = (inputTokens: number, outputTokens: number, estimatedCostUsd: number) => {
@@ -244,6 +515,17 @@ export function App({
       setStreamingText('');
       setThinkingText('');
       setRunning(false);
+      pushTimeline('error', `[${code}] ${error}`);
+    };
+
+    const onQueued = (_input: string, queueDepth: number) => {
+      pushTimeline('warning', `input queued (depth=${queueDepth})`);
+    };
+
+    const onIdle = () => {
+      if (bridge.queueDepth > 0) {
+        pushTimeline('info', `draining queue (remaining=${bridge.queueDepth})`);
+      }
     };
 
     bridge.on('text_delta', onTextDelta);
@@ -254,6 +536,8 @@ export function App({
     bridge.on('tool_end', onToolEnd);
     bridge.on('usage', onUsage);
     bridge.on('error', onError);
+    bridge.on('queued', onQueued);
+    bridge.on('idle', onIdle);
 
     return () => {
       bridge.off('text_delta', onTextDelta);
@@ -264,6 +548,8 @@ export function App({
       bridge.off('tool_end', onToolEnd);
       bridge.off('usage', onUsage);
       bridge.off('error', onError);
+      bridge.off('queued', onQueued);
+      bridge.off('idle', onIdle);
     };
   }, [bridge]);
 
@@ -278,6 +564,13 @@ export function App({
     if (!value.trim()) return;
     setStatusMsg('');
     setInterrupted(false);
+    setHistoryIndex(null);
+    setHistoryDraft('');
+    setHistory((prev) => {
+      if (value.trim().length === 0) return prev;
+      if (prev.at(-1) === value) return prev;
+      return [...prev, value];
+    });
 
     if (value.startsWith('/')) {
       setInput('');
@@ -287,8 +580,15 @@ export function App({
 
     if (running) return;
 
+    if (readonlyMode) {
+      setStatusMsg('[readonly mode] execution blocked; use /readonly to disable');
+      pushTimeline('warning', 'blocked prompt while readonly mode enabled');
+      return;
+    }
+
     setInput('');
     setMessages((prev) => [...prev, { id: nextId(), role: 'user', text: value }]);
+    pushTimeline('info', `user: ${value.slice(0, 80)}`);
     setCompletedTools([]);
     setRunning(true);
 
@@ -320,6 +620,7 @@ export function App({
               '/sessions                     open session picker\n' +
               '/memory                       show ~/.ethos/MEMORY.md\n' +
               '/usage                        token + cost stats\n' +
+              `/readonly                     toggle readonly mode (now: ${readonlyMode ? 'on' : 'off'})\n` +
               `/verbose                      toggle per-turn timing (now: ${verboseDisplay ? 'on' : 'off'})\n` +
               '/details [hidden|collapsed|expanded] [section]\n' +
               '/skin [list|<name>]           switch UI theme\n' +
@@ -333,6 +634,9 @@ export function App({
         setSessionKey(`cli:${basename(process.cwd())}:${Date.now()}`);
         setMessages([]);
         setCompletedTools([]);
+        setDelegations([]);
+        setTimelineEvents([]);
+        setFileActivity([]);
         setStatusMsg('[new session started]');
         break;
 
@@ -393,6 +697,14 @@ export function App({
           },
         ]);
         break;
+
+      case 'readonly': {
+        const next = !readonlyMode;
+        setReadonlyMode(next);
+        setStatusMsg(`readonly: ${next ? 'on' : 'off'}`);
+        pushTimeline(next ? 'warning' : 'info', `readonly mode ${next ? 'enabled' : 'disabled'}`);
+        break;
+      }
 
       case 'verbose': {
         verboseRef.current = !verboseRef.current;
@@ -518,43 +830,103 @@ export function App({
   return (
     <SkinContext.Provider value={skin}>
       <Box flexDirection="column">
-        <StatusBar
+        <ConsoleHeader
           model={currentModel}
           personality={personality}
-          inputTokens={usage.inputTokens}
-          outputTokens={usage.outputTokens}
-          costUsd={usage.costUsd}
-          status={agentStatus}
-          currentTool={currentTool}
-          elapsedSecs={agentStatus === 'thinking' ? turnElapsed : undefined}
+          sessionKey={sessionKey}
+          accentColor={accentColor}
         />
 
-        <ChatPane messages={messages} streamingText={streamingText} />
+        <Box flexDirection="row" marginBottom={1}>
+          {showIdentityPane && (
+            <Box width={28}>
+              <IdentityPanel
+                personality={personality}
+                status={agentStatus}
+                delegationCount={delegations.length}
+                accentColor={accentColor}
+                focused={focusPane === 'identity'}
+              />
+            </Box>
+          )}
 
-        {thinkingText && (
-          <AccordionSection title="thinking" mode={resolveMode(details.thinking, details.global)}>
-            <ThinkingPane text={thinkingText} />
-          </AccordionSection>
-        )}
+          <Box flexGrow={1} flexDirection="column">
+            <ContextPanel
+              activeTools={activeTools}
+              completedTools={completedTools}
+              queueDepth={bridge.queueDepth}
+              messageCount={messages.length}
+              pendingPatchCount={pendingPatchEntries.length}
+              focused={focusPane === 'context'}
+            />
 
-        {(activeTools.length > 0 || completedTools.length > 0) && (
-          <AccordionSection
-            title="tools"
-            mode={resolveMode(details.tools, details.global)}
-            count={activeTools.length + completedTools.length}
-          >
-            <ToolSpinner activeTools={activeTools} completedTools={completedTools} />
-          </AccordionSection>
-        )}
+            <SafetyLane
+              readonlyMode={readonlyMode}
+              tags={safetyTags}
+              focused={focusPane === 'safety'}
+            />
 
-        {delegations.length > 0 && (
-          <AccordionSection
-            title="subagents"
-            mode={resolveMode(details.subagents, details.global)}
-            count={delegations.length}
-          >
-            <SubagentsPane delegations={delegations} />
-          </AccordionSection>
+            <FileActivityPanel
+              entries={fileActivity}
+              focused={focusPane === 'files'}
+              selectedId={selectedPatchEntry?.id}
+            />
+
+            <ChatPane messages={messages} streamingText={streamingText} />
+
+            {thinkingText && (
+              <AccordionSection
+                title="thinking"
+                mode={resolveMode(details.thinking, details.global)}
+              >
+                <ThinkingPane text={thinkingText} />
+              </AccordionSection>
+            )}
+
+            {(activeTools.length > 0 || completedTools.length > 0) && (
+              <AccordionSection
+                title="tools"
+                mode={resolveMode(details.tools, details.global)}
+                count={activeTools.length + completedTools.length}
+              >
+                <ToolSpinner activeTools={activeTools} completedTools={completedTools} />
+              </AccordionSection>
+            )}
+
+            {!showTimelinePane &&
+              resolveMode(details.activity, details.global) !== 'hidden' &&
+              timelineEvents.length > 0 && (
+                <AccordionSection
+                  title="activity"
+                  mode={resolveMode(details.activity, details.global)}
+                  count={timelineEvents.length}
+                >
+                  <ExecutionTimeline events={timelineEvents} focused={focusPane === 'timeline'} />
+                </AccordionSection>
+              )}
+
+            {delegations.length > 0 && (
+              <AccordionSection
+                title="subagents"
+                mode={resolveMode(details.subagents, details.global)}
+                count={delegations.length}
+              >
+                <SubagentsPane delegations={delegations} />
+              </AccordionSection>
+            )}
+          </Box>
+
+          {showTimelinePane && (
+            <Box width={46}>
+              <ExecutionTimeline events={timelineEvents} focused={focusPane === 'timeline'} />
+            </Box>
+          )}
+        </Box>
+
+        {showKeymap && (
+          <Box marginBottom={1}>
+            <KeymapOverlay focusPane={focusPane} running={running} />
+          </Box>
         )}
 
         {statusMsg && (
@@ -570,23 +942,63 @@ export function App({
         <InputBox
           value={input}
           disabled={running}
-          isActive={modal === null}
+          isActive={modal === null && !showKeymap && focusPane === 'input'}
           onChange={setInput}
           onSubmit={handleSubmit}
           onTabComplete={applyCompletion}
           onArrowUp={() => {
             if (completionVisible) {
               setCompletionIndex((i) => Math.max(0, i - 1));
+              return;
             }
+            if (history.length === 0) return;
+            if (historyIndex === null) {
+              setHistoryDraft(input);
+              const nextIndex = history.length - 1;
+              setHistoryIndex(nextIndex);
+              setInput(history[nextIndex] ?? '');
+              return;
+            }
+            const nextIndex = Math.max(0, historyIndex - 1);
+            setHistoryIndex(nextIndex);
+            setInput(history[nextIndex] ?? '');
           }}
           onArrowDown={() => {
             if (completionVisible) {
               setCompletionIndex((i) => Math.min(completionMatches.length - 1, i + 1));
+              return;
             }
+            if (historyIndex === null) return;
+            const nextIndex = historyIndex + 1;
+            if (nextIndex >= history.length) {
+              setHistoryIndex(null);
+              setInput(historyDraft);
+              return;
+            }
+            setHistoryIndex(nextIndex);
+            setInput(history[nextIndex] ?? '');
           }}
           onEscape={() => {
-            if (completionVisible) setInput('');
+            if (completionVisible) {
+              setInput('');
+              return;
+            }
+            setHistoryIndex(null);
           }}
+        />
+
+        <StatusBar
+          model={currentModel}
+          personality={personality}
+          accentColor={accentColor}
+          inputTokens={usage.inputTokens}
+          outputTokens={usage.outputTokens}
+          costUsd={usage.costUsd}
+          status={agentStatus}
+          currentTool={currentTool}
+          elapsedSecs={agentStatus === 'thinking' ? turnElapsed : undefined}
+          readonlyMode={readonlyMode}
+          backgroundCount={delegations.filter((d) => d.status === 'pending').length}
         />
       </Box>
     </SkinContext.Provider>

@@ -6,6 +6,7 @@ export type AgentStatus = 'idle' | 'thinking' | 'running' | 'interrupted';
 interface StatusBarProps {
   model: string;
   personality: string;
+  accentColor?: string;
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
@@ -13,6 +14,8 @@ interface StatusBarProps {
   currentTool?: string;
   /** Live elapsed seconds — shown only while thinking (always-on timer). */
   elapsedSecs?: number;
+  readonlyMode?: boolean;
+  backgroundCount?: number;
 }
 
 function StatusIndicator({
@@ -50,12 +53,15 @@ function StatusIndicator({
 export function StatusBar({
   model,
   personality,
+  accentColor,
   inputTokens,
   outputTokens,
   costUsd,
   status,
   currentTool,
   elapsedSecs,
+  readonlyMode = false,
+  backgroundCount = 0,
 }: StatusBarProps) {
   const skin = useSkin();
   return (
@@ -63,16 +69,16 @@ export function StatusBar({
       <Text bold color={skin.bannerColor}>
         ethos
       </Text>
-      <Text color={skin.modelColor}>
-        {' '}
-        {model} · {personality}
-      </Text>
+      <Text color={skin.modelColor}> {model} ·</Text>
+      <Text color={accentColor}>{` ${personality}`}</Text>
+      {readonlyMode && <Text color="green"> {' [READ-ONLY]'}</Text>}
       <StatusIndicator status={status} currentTool={currentTool} elapsedSecs={elapsedSecs} />
       <Text color={skin.modelColor}>
         {'  '}
         {inputTokens.toLocaleString()} in · {outputTokens.toLocaleString()} out $
         {costUsd.toFixed(5)}
       </Text>
+      {backgroundCount > 0 && <Text color="yellow"> {` bg:${backgroundCount}`}</Text>}
     </Box>
   );
 }
