@@ -61,6 +61,14 @@ export async function runMcp(argv: string[]): Promise<void> {
 async function runServe(): Promise<void> {
   const storage = getStorage();
   const config = await readConfig(storage);
+  if (!config) {
+    // Must go to stderr — stdout must remain pure JSON-RPC
+    process.stderr.write(
+      JSON.stringify({ level: 'error', msg: 'No ~/.ethos/config.yaml found. Run: ethos setup' }) +
+        '\n',
+    );
+    process.exit(1);
+  }
   const loop = await createAgentLoop(config);
   const server = new EthosMcpServer({ loop, dataDir: ethosDir(), logger: mcpLogger });
   await server.start();

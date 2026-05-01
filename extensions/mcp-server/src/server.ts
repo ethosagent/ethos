@@ -1,4 +1,4 @@
-import type { AgentLoop } from '@ethosagent/types';
+import type { AgentLoop } from '@ethosagent/core';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {

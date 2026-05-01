@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentLoop } from '@ethosagent/types';
+import type { AgentEvent, AgentLoop } from '@ethosagent/core';
 
 export interface AskPersonalityArgs {
   personality_id: string;
