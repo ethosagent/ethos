@@ -217,6 +217,7 @@ describe('McpManager', () => {
 
     const echoTool = manager.getTools().find((t) => t.name === 'mcp__srv__echo');
     expect(echoTool).toBeDefined();
+    if (!echoTool) throw new Error('Expected echo tool to exist');
 
     const ctx = {
       sessionId: 'test',
@@ -230,7 +231,7 @@ describe('McpManager', () => {
       resultBudgetChars: 80_000,
     };
 
-    const result = await echoTool?.execute({ message: 'world' }, ctx);
+    const result = await echoTool.execute({ message: 'world' }, ctx);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toBe('world');
 

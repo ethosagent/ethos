@@ -80,7 +80,8 @@ describe('session continuity across personality switches', () => {
     const sess = await session.getSessionByKey(sessionKey);
     expect(sess).not.toBeNull();
 
-    const messages = await session.getMessages(sess?.id, { limit: 100 });
+    if (!sess) throw new Error('Expected session to exist');
+    const messages = await session.getMessages(sess.id, { limit: 100 });
     const userMessages = messages.filter((m) => m.role === 'user');
 
     // Both user messages are in one session — no fork, no per-personality sessions

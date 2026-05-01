@@ -321,7 +321,8 @@ describe('AcpServer', () => {
 
     const forked = await store.getSessionByKey(newKey);
     expect(forked).not.toBeNull();
-    const msgs = await store.getMessages(forked?.id);
+    if (!forked) throw new Error('Expected forked session to exist');
+    const msgs = await store.getMessages(forked.id);
     expect(msgs).toHaveLength(2);
     expect(msgs[0].content).toBe('hello');
     expect(msgs[1].content).toBe('world');
