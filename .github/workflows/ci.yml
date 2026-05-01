@@ -37,6 +37,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Version sync (G1 + G2)
+        run: node scripts/verify-version.js --pr
+
       - name: Typecheck
         run: pnpm typecheck
 

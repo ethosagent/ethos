@@ -6,6 +6,10 @@ PNPM_VERSION  := 10.33.0
 # version, so you never have to remember `nvm use` yourself.
 NVM_EXEC = . $(HOME)/.nvm/nvm.sh && nvm use >/dev/null &&
 
+# Single source of truth for the release version.
+# Never edit package.json versions directly — use make version-set or make version-bump-*.
+VERSION := $(shell cat VERSION 2>/dev/null | tr -d '[:space:]')
+
 .DEFAULT_GOAL := help
 
 help:
@@ -47,16 +51,22 @@ help:
 	@echo "  format             - biome format --write"
 	@echo "  check              - typecheck + lint + test (full CI suite locally)"
 	@echo ""
-	@echo "Publishing (all five public packages: cli, types, core, plugin-sdk, plugin-contract)"
-	@echo "  release            - Bump patch + build + publish + commit + tag + push (one-command release)"
-	@echo "  release-minor      - Same as release but bumps the minor version"
-	@echo "  release-major      - Same as release but bumps the major version"
+	@echo "Versioning (VERSION file is the single source of truth — never edit package.json directly)"
+	@echo "  version            - Print current version"
+	@echo "  version-set        - Set version: make version-set NEW=1.2.3"
+	@echo "  version-bump-patch - 0.2.5 → 0.2.6, sync all package.json"
+	@echo "  version-bump-minor - 0.2.5 → 0.3.0, sync all package.json"
+	@echo "  version-bump-major - 0.2.5 → 1.0.0, sync all package.json"
+	@echo ""
+	@echo "Release (channel: npm only)"
+	@echo "  verify             - Run pre-flight gates G1-G7 (G8 skipped locally)"
+	@echo "  build-npm          - Build CLI binary: tsup → apps/ethos/dist/"
 	@echo "  build-publishable  - Build all five public packages to dist/"
-	@echo "  publish            - Build + publish packages whose local version > npm version"
-	@echo "  publish-dry        - Show what would be published without publishing"
-	@echo "  version-patch      - Bump patch version (0.1.0 → 0.1.1) on all publishable packages"
-	@echo "  version-minor      - Bump minor version (0.1.0 → 0.2.0) on all publishable packages"
-	@echo "  version-major      - Bump major version (0.1.0 → 1.0.0) on all publishable packages"
+	@echo "  release            - Full release: verify → tag → push (triggers CI)"
+	@echo "  release-dry        - Show what release would do; no side effects"
+	@echo "  release-npm        - Publish all five packages to npm (used by CI + recovery)"
+	@echo "  smoke              - Post-publish smoke test (alias for smoke-npm)"
+	@echo "  smoke-npm          - Install published package in sandbox + --version + round-trip"
 	@echo ""
 	@echo "Housekeeping"
 	@echo "  clean              - Remove node_modules and dist output"
@@ -275,31 +285,132 @@ format:
 
 check: typecheck lint test
 
-# ---------- publishing ----------
+# ---------- versioning (VERSION file is the single source of truth) ----------
+#
+# All workspace package.json version fields are derived from ./VERSION.
+# make version-set / version-bump-* are the only correct ways to bump.
+# Never edit package.json versions directly — the CI verify gate will catch it.
 
-# The five public packages on npm. Publish order matters by dependency:
-# types → core → plugin-contract → plugin-sdk → cli
-# (deps before dependents — pnpm publish enforces this implicitly via
-# workspace:* rewrites but the ordered iteration also makes the output readable.)
+version:
+	@cat VERSION
+
+version-set:
+	@if [ -z "$(NEW)" ]; then echo "Usage: make version-set NEW=1.2.3"; exit 1; fi
+	@echo "$(NEW)" > VERSION
+	@$(NVM_EXEC) node scripts/sync-version.js
+	@echo "Version set to $(NEW)."
+
+version-bump-patch:
+	@$(NVM_EXEC) node -e " \
+	  const fs = require('node:fs'); \
+	  const v = fs.readFileSync('VERSION', 'utf8').trim().split('.'); \
+	  v[2] = String(Number(v[2]) + 1); \
+	  fs.writeFileSync('VERSION', v.join('.') + '\n'); \
+	"
+	@$(NVM_EXEC) node scripts/sync-version.js
+	@echo "Bumped to $$(cat VERSION)."
+
+version-bump-minor:
+	@$(NVM_EXEC) node -e " \
+	  const fs = require('node:fs'); \
+	  const v = fs.readFileSync('VERSION', 'utf8').trim().split('.'); \
+	  v[1] = String(Number(v[1]) + 1); v[2] = '0'; \
+	  fs.writeFileSync('VERSION', v.join('.') + '\n'); \
+	"
+	@$(NVM_EXEC) node scripts/sync-version.js
+	@echo "Bumped to $$(cat VERSION)."
+
+version-bump-major:
+	@$(NVM_EXEC) node -e " \
+	  const fs = require('node:fs'); \
+	  const v = fs.readFileSync('VERSION', 'utf8').trim().split('.'); \
+	  v[0] = String(Number(v[0]) + 1); v[1] = '0'; v[2] = '0'; \
+	  fs.writeFileSync('VERSION', v.join('.') + '\n'); \
+	"
+	@$(NVM_EXEC) node scripts/sync-version.js
+	@echo "Bumped to $$(cat VERSION)."
+
+# ---------- verification ----------
+
+# Run all pre-flight gates (G1-G5, G7, G8-if-CI).
+# G7 (tests green) is run here via pnpm check; G8 (NPM_TOKEN) runs only in CI.
+verify:
+	@echo "=== Pre-flight verification for v$(VERSION) ==="
+	@$(NVM_EXEC) node scripts/verify-version.js
+	@echo ""
+	@echo "G7: typecheck + lint + test..."
+	@$(NVM_EXEC) pnpm check
+	@echo ""
+	@echo "All gates passed — v$(VERSION) is ready to release."
+
+# ---------- build ----------
+
+# The five public packages on npm. Publish order: types → core → plugin-contract → plugin-sdk → cli
 PUBLISHABLE := packages/types packages/core packages/plugin-contract packages/plugin-sdk apps/ethos
 
-# Repeated filter list reused by build-publishable + version-* targets.
 PUBLISHABLE_FILTERS := --filter='./packages/types' \
-                      --filter='./packages/core' \
-                      --filter='./packages/plugin-contract' \
-                      --filter='./packages/plugin-sdk' \
-                      --filter='./apps/ethos'
+                       --filter='./packages/core' \
+                       --filter='./packages/plugin-contract' \
+                       --filter='./packages/plugin-sdk' \
+                       --filter='./apps/ethos'
 
+# Build only the CLI binary (tsup → apps/ethos/dist/).
+build-npm:
+	@echo "Building CLI binary..."
+	@$(NVM_EXEC) pnpm --filter '@ethosagent/cli' run build
+	@echo "Build complete."
+
+# Build all five publishable packages.
 build-publishable:
 	@echo "Building all five public packages..."
 	@$(NVM_EXEC) pnpm -r $(PUBLISHABLE_FILTERS) run build
 	@echo "Build complete."
 
-# Publish packages whose local version differs from the version on npm.
-# Workspace deps (workspace:*) are automatically replaced with real versions by pnpm publish.
-# Requires: npm login (or NPM_TOKEN env var for CI)
-publish: build-publishable
-	@echo "Checking and publishing packages..."
+# ---------- release ----------
+
+# Full release: verify (G1-G7) → tag → push → CI takes over.
+# Bump version first: make version-bump-{patch,minor,major}
+# Then commit: git commit -am "release: v$(make version)"
+# Then: make release
+release:
+	@echo "Starting release for v$(VERSION)..."
+	@$(MAKE) verify
+	@echo ""
+	@echo "Tagging v$(VERSION) and pushing to origin..."
+	@git tag "v$(VERSION)" && \
+	git push origin main "v$(VERSION)" && \
+	echo "" && \
+	echo "✓ Tagged v$(VERSION) and pushed. CI release workflow is now running." && \
+	echo "  Monitor: https://github.com/ethosagent/ethos/actions" && \
+	echo "  Verify:  make smoke (in ~30s after CI completes)"
+
+# Show what make release would do without any side effects.
+release-dry:
+	@echo "=== Release dry run for v$(VERSION) ==="
+	@echo ""
+	@echo "Steps that would run:"
+	@echo "  1. make verify  — pre-flight gates G1-G7"
+	@echo "  2. git tag v$(VERSION)"
+	@echo "  3. git push origin main v$(VERSION)"
+	@echo "  4. CI release.yml: preflight → publish → smoke"
+	@echo ""
+	@echo "Packages that would publish:"
+	@for dir in $(PUBLISHABLE); do \
+		name=$$($(NVM_EXEC) node -p "require('./$$dir/package.json').name"); \
+		local=$$($(NVM_EXEC) node -p "require('./$$dir/package.json').version"); \
+		remote=$$(npm view "$$name" version 2>/dev/null || echo "unpublished"); \
+		if [ "$$local" = "$$remote" ]; then \
+			echo "  ✓  $$name@$$local — already on npm, would skip"; \
+		else \
+			echo "  →  $$name@$$local  (npm has: $$remote)  ← would publish"; \
+		fi; \
+	done
+
+# Publish all five packages to npm. Idempotent: skips packages already at the correct version.
+# Used by the CI release workflow and for manual recovery.
+# Requires: npm login, or NODE_AUTH_TOKEN / NPM_TOKEN set.
+release-npm:
+	@echo "Publishing packages for v$(VERSION)..."
 	@for dir in $(PUBLISHABLE); do \
 		name=$$($(NVM_EXEC) node -p "require('./$$dir/package.json').name"); \
 		local=$$($(NVM_EXEC) node -p "require('./$$dir/package.json').version"); \
@@ -313,86 +424,43 @@ publish: build-publishable
 	done
 	@echo "Done."
 
-# Dry run — shows what would be published without actually publishing.
-publish-dry: build-publishable
-	@echo "Dry run — packages that would be published:"
-	@for dir in $(PUBLISHABLE); do \
-		name=$$($(NVM_EXEC) node -p "require('./$$dir/package.json').name"); \
-		local=$$($(NVM_EXEC) node -p "require('./$$dir/package.json').version"); \
-		remote=$$(npm view "$$name" version 2>/dev/null || echo "unpublished"); \
-		if [ "$$local" = "$$remote" ]; then \
-			echo "  ✓  $$name@$$local — up to date"; \
+# ---------- smoke ----------
+
+smoke: smoke-npm
+
+# Verify the published package end-to-end:
+#   1. npm install @ethosagent/cli@VERSION in a fresh temp dir
+#   2. ethos --version must report VERSION
+#   3. real LLM round-trip (skipped when ANTHROPIC_API_KEY is unset)
+smoke-npm:
+	@echo "Smoke testing @ethosagent/cli@$(VERSION)..."
+	@tmpdir=$$(mktemp -d); \
+	trap "rm -rf $$tmpdir" EXIT; \
+	echo '{"name":"smoke-test"}' > "$$tmpdir/package.json"; \
+	echo "  Installing @ethosagent/cli@$(VERSION)..."; \
+	npm install --prefix "$$tmpdir" "@ethosagent/cli@$(VERSION)" --silent 2>&1 | tail -3; \
+	echo "  Checking --version..."; \
+	got=$$($$tmpdir/node_modules/.bin/ethos --version 2>&1 | head -1); \
+	echo "  Got: $$got"; \
+	if echo "$$got" | grep -qF "$(VERSION)"; then \
+		echo "  ✓ version matches $(VERSION)"; \
+	else \
+		echo "  ✗ version mismatch — expected $(VERSION), got: $$got"; \
+		exit 1; \
+	fi; \
+	if [ -n "$$ANTHROPIC_API_KEY" ]; then \
+		echo "  Running LLM round-trip..."; \
+		reply=$$($$tmpdir/node_modules/.bin/ethos chat -q "reply with exactly: ok" 2>&1 | tail -5); \
+		if echo "$$reply" | grep -qi "ok"; then \
+			echo "  ✓ LLM round-trip passed"; \
 		else \
-			echo "  →  $$name@$$local  (npm has: $$remote)  ← would publish"; \
+			echo "  ✗ LLM round-trip unexpected output: $$reply"; \
+			exit 1; \
 		fi; \
-	done
-
-# Version bump targets — update package.json version in all publishable packages.
-# Lockstep: all five packages bump to the same version. Run one of these, then
-# commit, then make publish. Or use `make release` to do everything in one shot.
-version-patch:
-	@$(NVM_EXEC) pnpm -r $(PUBLISHABLE_FILTERS) exec npm version patch --no-git-tag-version
-	@echo "Patch versions bumped. Review with 'git diff', commit, then run: make publish"
-
-version-minor:
-	@$(NVM_EXEC) pnpm -r $(PUBLISHABLE_FILTERS) exec npm version minor --no-git-tag-version
-	@echo "Minor versions bumped. Review with 'git diff', commit, then run: make publish"
-
-version-major:
-	@$(NVM_EXEC) pnpm -r $(PUBLISHABLE_FILTERS) exec npm version major --no-git-tag-version
-	@echo "Major versions bumped. Review with 'git diff', commit, then run: make publish"
-
-# ---------- one-command release ----------
-#
-# Bump patch (or minor / major), build, publish, commit, tag, push.
-# Confirmation gate before any side effects beyond the version bump.
-#
-# BUMP comes from $@ (release / release-minor / release-major). Sub-make is
-# what gives us "the var differs per target" without per-target variable hacks.
-release:
-	@$(MAKE) _release-impl BUMP=patch
-
-release-minor:
-	@$(MAKE) _release-impl BUMP=minor
-
-release-major:
-	@$(MAKE) _release-impl BUMP=major
-
-_release-impl:
-	@if [ -z "$(BUMP)" ]; then echo "Internal: BUMP not set"; exit 2; fi
-	@if ! git diff --quiet || ! git diff --cached --quiet; then \
-		echo "✗ Working tree is dirty. Commit or stash before releasing."; \
-		git status --short; \
-		exit 1; \
-	fi
-	@echo "Bumping $(BUMP) version on all five public packages..."
-	@$(MAKE) version-$(BUMP) >/dev/null
-	@version=$$($(NVM_EXEC) node -p "require('./apps/ethos/package.json').version"); \
-	echo ""; \
-	echo "Version bumped to: v$$version"; \
-	echo ""; \
-	echo "Diff:"; \
-	git diff --stat; \
-	echo ""; \
-	printf "Continue with build + publish + tag + push? [y/N] "; \
-	read answer; \
-	if [ "$$answer" != "y" ] && [ "$$answer" != "Y" ]; then \
-		echo "Aborted. Run 'git checkout .' to revert version bumps."; \
-		exit 1; \
-	fi
-	@$(MAKE) build-publishable
-	@$(MAKE) publish
-	@version=$$($(NVM_EXEC) node -p "require('./apps/ethos/package.json').version"); \
-	echo ""; \
-	echo "Committing release: v$$version"; \
-	git add . && \
-	git commit -m "release: v$$version" && \
-	git tag "v$$version" && \
-	echo "" && \
-	echo "Pushing main + tag v$$version..." && \
-	git push --follow-tags && \
-	echo "" && \
-	echo "✓ Released v$$version. Verify: npm view @ethosagent/cli version"
+	else \
+		echo "  (ANTHROPIC_API_KEY not set — LLM round-trip skipped)"; \
+	fi; \
+	echo "Smoke test passed for v$(VERSION)."
 
 # ---------- housekeeping ----------
 
@@ -407,6 +475,9 @@ clean:
         start-gateway-daemon stop-gateway-daemon delete-gateway-daemon status-gateway-daemon \
         docs docs-build \
         test typecheck lint format check \
-        build-publishable publish publish-dry version-patch version-minor version-major \
-        release release-minor release-major _release-impl \
+        version version-set version-bump-patch version-bump-minor version-bump-major \
+        verify \
+        build-npm build-publishable \
+        release release-dry release-npm \
+        smoke smoke-npm \
         clean
