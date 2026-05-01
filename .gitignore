@@ -2,6 +2,7 @@ node_modules
 .pnpm-store
 dist
 .env
+.claude/worktrees/
 .env.local
 .env.*.local
 !.env.example
