@@ -322,6 +322,13 @@ If you see a code below, the action printed by the CLI is your first move. The t
 
 For the recent errors hitting *your* install specifically, run `ethos doctor --recent-errors` (Phase 30.10).
 
+For a consolidated diagnostics view (and a shareable local bundle), use:
+
+```bash
+ethos logs summary
+ethos logs bundle
+```
+
 ## Getting help
 
 - **GitHub Issues**: [github.com/MiteshSharma/ethos/issues](https://github.com/MiteshSharma/ethos/issues)

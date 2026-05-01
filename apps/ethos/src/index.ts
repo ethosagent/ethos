@@ -13,6 +13,7 @@ import { runEval } from './commands/eval';
 import { runEvolve } from './commands/evolve';
 import { runGatewaySetup, runGatewayStart } from './commands/gateway';
 import { runKeys } from './commands/keys';
+import { runLogs } from './commands/logs';
 import { runMeshCommand } from './commands/mesh';
 import { runPlugin } from './commands/plugin';
 import { runServe } from './commands/serve';
@@ -31,13 +32,42 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [setup | chat | serve | set | team | mesh | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | claw | doctor | upgrade] [--version | --help]';
+  'Usage: ethos [setup | chat | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | claw | doctor | upgrade] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
+const inferredChatFromQueryFlag =
+  command === '-q' || command === '--query' || command.startsWith('--query=');
+const effectiveCommand = inferredChatFromQueryFlag ? 'chat' : command;
+
+function extractSingleQuery(argv: string[]): {
+  query?: string;
+  rest: string[];
+  queryFlagUsed: boolean;
+} {
+  const rest: string[] = [];
+  let query: string | undefined;
+  let queryFlagUsed = false;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i] ?? '';
+    if (a === '-q' || a === '--query') {
+      queryFlagUsed = true;
+      query = argv[i + 1];
+      i++;
+      continue;
+    }
+    if (a.startsWith('--query=')) {
+      queryFlagUsed = true;
+      query = a.slice('--query='.length);
+      continue;
+    }
+    rest.push(a);
+  }
+  return { query, rest, queryFlagUsed };
+}
 
 try {
-  switch (command) {
+  switch (effectiveCommand) {
     case '--version':
     case '-v': {
       console.log(`@ethosagent/cli ${ETHOS_VERSION}`);
@@ -59,13 +89,26 @@ try {
     case '': {
       const chatArgs = args.slice(command === 'chat' ? 1 : 0);
       const verboseFlag = chatArgs.includes('--verbose');
+      const { query, queryFlagUsed } = extractSingleQuery(chatArgs);
+      if (queryFlagUsed && (!query || query.trim().length === 0)) {
+        console.error('Usage: ethos chat -q "<prompt>"');
+        process.exit(1);
+      }
       const config = await readConfig(getStorage());
       if (!config) {
         console.log('No config found. Running setup first...\n');
         const fresh = await runSetup();
-        if (fresh) await runChat(verboseFlag ? { ...fresh, verbose: true } : fresh);
+        if (fresh) {
+          await runChat(verboseFlag ? { ...fresh, verbose: true } : fresh, {
+            ...(query ? { singleQuery: query } : {}),
+          });
+          if (query) process.exit(0);
+        }
       } else {
-        await runChat(verboseFlag ? { ...config, verbose: true } : config);
+        await runChat(verboseFlag ? { ...config, verbose: true } : config, {
+          ...(query ? { singleQuery: query } : {}),
+        });
+        if (query) process.exit(0);
       }
       break;
     }
@@ -320,6 +363,11 @@ try {
       break;
     }
 
+    case 'logs': {
+      await runLogs(args.slice(1));
+      break;
+    }
+
     // Internal command - launched by `ethos team start` as a detached background
     // supervisor process. Not listed in USAGE; not user-facing.
     case '_supervisor': {
@@ -347,7 +395,7 @@ try {
   const e = toEthosError(err);
   process.stderr.write(`\n${formatError(e, { color: process.stderr.isTTY })}\n`);
   // Phase 30.10 - append to ~/.ethos/logs/errors.jsonl for local diagnostics.
-  appendErrorLog(e, { command });
+  appendErrorLog(e, { command: effectiveCommand });
   process.exit(1);
 }
 

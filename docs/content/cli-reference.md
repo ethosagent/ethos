@@ -17,6 +17,7 @@ Comprehensive reference for the `ethos` command-line interface — every subcomm
 |---|---|
 | `ethos setup` | First-time interactive config wizard |
 | `ethos chat` *(or just `ethos`)* | Interactive REPL chat — the default |
+| `ethos -q "<prompt>"` | Single-query mode (one turn, then exit) |
 | `ethos set team <name>` | Route chat/serve to a team coordinator |
 | `ethos set personality <id>` | Route chat/serve to a single personality |
 | `ethos team start <name>` | Boot supervisor + all team members |
@@ -37,6 +38,8 @@ Comprehensive reference for the `ethos` command-line interface — every subcomm
 | `ethos evolve --list-pending` | Show evolved skills awaiting review |
 | `ethos plugin install <pkg>` | Install an npm plugin |
 | `ethos skills install <slug>` | Install a ClawHub-compatible skill |
+| `ethos logs summary` | Show consolidated local log signal |
+| `ethos logs bundle` | Write a support bundle with log tails |
 | `ethos keys add <api-key>` | Add a key to the rotation pool |
 | `ethos claw migrate` | Import an OpenClaw install into Ethos |
 | `ethos upgrade` | Upgrade to the latest published version |
@@ -88,6 +91,7 @@ Interactive REPL with streaming output and slash commands. Sessions persist acro
 ethos chat
 ethos                       # same — chat is the default
 ethos chat --verbose        # show per-turn timing summary after every response
+ethos -q "summarize this repo"  # one query, stream answer, exit
 ```
 
 When invoked without an existing config, runs `setup` first.
@@ -102,6 +106,7 @@ Session key defaults to `cli:<basename of cwd>`, so different working directorie
 | Flag | Default | Description |
 |---|---|---|
 | `--verbose` | off | Print a timing summary after every turn: LLM time, TTFT, tool wall-clock, total, tokens, cost. Can also be set persistently via `verbose: true` in `~/.ethos/config.yaml` or toggled mid-session with `/verbose`. |
+| `-q`, `--query` | off | Run a single prompt and exit (no interactive REPL). Accepts `--query="..."` or `-q "..."`. |
 
 ---
 
@@ -600,6 +605,39 @@ See [Migrate from OpenClaw](./guides/migrate-from-openclaw) for the full guide.
 
 ---
 
+### `logs`
+
+Inspect and package local diagnostics from `~/.ethos/logs/`.
+
+```
+ethos logs
+ethos logs list
+ethos logs summary
+ethos logs note
+ethos logs bundle [--out <path>] [--lines <n>]
+ethos logs tail [--lines <n>] [--interval-ms <n>]
+```
+
+| Subcommand | Description |
+|---|---|
+| `list` *(default)* | Show canonical log paths and whether each exists |
+| `summary` | Group error codes (`errors.jsonl`) and supervisor events (`mesh-supervisor.log`) |
+| `note` | Append a periodic one-line operational note to `~/.ethos/logs/notes.log` |
+| `bundle` | Write a support bundle with grouped counts + log tails for quick bug triage |
+| `tail` | Live-follow all known log files in one stream (includes team member logs) |
+
+**Examples:**
+
+```bash
+ethos logs summary
+ethos logs note
+ethos logs bundle --lines 200
+ethos logs bundle --out ~/Desktop/ethos-support.txt
+ethos logs tail --lines 30 --interval-ms 1000
+```
+
+---
+
 ### `upgrade`
 
 Check npm for a newer published `@ethosagent/cli` and install it. Detects whether you're running from npm-global or a local source clone and prints the right instructions.
@@ -768,7 +806,12 @@ Read at startup; override values in `config.yaml`.
 ├── skills-pending/         ← evolved skills awaiting review (`ethos evolve`)
 ├── plugins/                ← manual plugin manifests
 ├── logs/                   ← daemon/supervisor/member logs
+│   ├── errors.jsonl
+│   ├── errors.jsonl.1
+│   ├── notes.log
 │   ├── mesh-supervisor.log
+│   ├── bundles/
+│   │   └── ethos-support-<timestamp>.txt
 │   └── team/
 │       └── <name>/
 │           └── <personality>.log

@@ -31,12 +31,25 @@ interface ChatState {
   usage: { inputTokens: number; outputTokens: number; costUsd: number };
 }
 
+interface RunChatOptions {
+  singleQuery?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Main chat entry point
 // ---------------------------------------------------------------------------
 
-export async function runChat(config: EthosConfig): Promise<void> {
+export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): Promise<void> {
   const { loop, personalityId, displayName } = await resolveActiveLoop(config);
+
+  if (opts.singleQuery) {
+    await runSingleQuery(loop, config, {
+      query: opts.singleQuery,
+      sessionKey: `cli:${basename(process.cwd())}`,
+      personalityId,
+    });
+    return;
+  }
 
   if (process.stdout.isTTY && process.stdin.isTTY) {
     const { runTUI } = await import('@ethosagent/tui');
@@ -185,6 +198,54 @@ export async function runChat(config: EthosConfig): Promise<void> {
       out('\n\n');
     }
   }
+}
+
+async function runSingleQuery(
+  loop: AgentLoop,
+  config: EthosConfig,
+  input: { query: string; sessionKey: string; personalityId: string },
+): Promise<void> {
+  const turnStart = Date.now();
+  let firstTextDeltaAt: number | null = null;
+  const toolDurations: number[] = [];
+  let turnUsage: TurnTiming['turnUsage'] = null;
+  const toolTimers = new Map<string, number>();
+  let hasText = false;
+
+  for await (const event of loop.run(input.query, {
+    sessionKey: input.sessionKey,
+    personalityId: input.personalityId,
+  })) {
+    if (event.type === 'text_delta' && firstTextDeltaAt === null) {
+      firstTextDeltaAt = Date.now();
+      out(`${c.bold}ethos${c.reset} > `);
+    }
+    if (event.type === 'tool_end') {
+      toolDurations.push(event.durationMs);
+    }
+    if (event.type === 'usage') {
+      turnUsage = {
+        inputTokens: event.inputTokens,
+        outputTokens: event.outputTokens,
+        estimatedCostUsd: event.estimatedCostUsd,
+      };
+    }
+
+    renderEvent(event, toolTimers, { inputTokens: 0, outputTokens: 0, costUsd: 0 }, hasText);
+    if (event.type === 'text_delta') hasText = true;
+
+    if (event.type === 'done' && config.verbose) {
+      const summary = formatVerboseSummary({
+        turnStart,
+        turnEnd: Date.now(),
+        firstTextDeltaAt,
+        toolDurations,
+        turnUsage,
+      });
+      out(`\n${c.dim}${summary}${c.reset}`);
+    }
+  }
+  out('\n');
 }
 
 // ---------------------------------------------------------------------------
