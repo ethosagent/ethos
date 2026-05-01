@@ -1,69 +1,11 @@
 import { checkSsrf } from '@ethosagent/tools-web';
 import type { Tool, ToolResult } from '@ethosagent/types';
-import type { Browser, Page } from 'playwright';
+import type { Page } from 'playwright';
 import { type A11yRef, parseAriaSnapshot } from './a11y';
-
-// ---------------------------------------------------------------------------
-// Availability check (synchronous — just checks package presence)
-// ---------------------------------------------------------------------------
-
-function isPlaywrightInstalled(): boolean {
-  try {
-    // import.meta.resolve is synchronous in Node 22+ and throws if not found
-    import.meta.resolve('playwright');
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Session management: one browser + page per sessionId
-// ---------------------------------------------------------------------------
-
-interface BrowserSession {
-  browser: Browser;
-  page: Page;
-  refs: Map<string, A11yRef>;
-  lastUrl: string;
-}
-
-const sessions = new Map<string, BrowserSession>();
-
-async function getChromium() {
-  const { chromium } = await import('playwright');
-  return chromium;
-}
-
-async function getOrCreateSession(sessionId: string): Promise<BrowserSession> {
-  const existing = sessions.get(sessionId);
-  if (existing) return existing;
-
-  const chromium = await getChromium();
-  const browser = await chromium.launch({
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
-  });
-  const page = await browser.newPage();
-
-  const session: BrowserSession = { browser, page, refs: new Map(), lastUrl: '' };
-  sessions.set(sessionId, session);
-  return session;
-}
-
-async function closeSession(sessionId: string): Promise<void> {
-  const s = sessions.get(sessionId);
-  if (!s) return;
-  sessions.delete(sessionId);
-  await s.browser.close().catch(() => {});
-}
-
-// Cleanup all sessions on process exit
-process.on('SIGTERM', () => {
-  for (const s of sessions.values()) {
-    s.browser.close().catch(() => {});
-  }
-  sessions.clear();
-});
+import { browserScreenshotTool } from './browser-screenshot';
+import { createBrowserVisionClickTool } from './browser-vision-click';
+import { createBrowserVisionTypeTool } from './browser-vision-type';
+import { closeSession, getOrCreateSession, isPlaywrightInstalled, sessions } from './sessions';
 
 // ---------------------------------------------------------------------------
 // Take an accessibility snapshot and format it
@@ -329,8 +271,26 @@ const browserTypeTool: Tool = {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createBrowserTools(): Tool[] {
-  return [browseUrlTool, browserClickTool, browserTypeTool];
+export interface BrowserToolsOptions {
+  visionApiKey?: string;
+  visionProvider?: string;
+  visionModel?: string;
+}
+
+export function createBrowserTools(opts?: BrowserToolsOptions): Tool[] {
+  const visionOpts = {
+    apiKey: opts?.visionApiKey,
+    provider: opts?.visionProvider,
+    model: opts?.visionModel,
+  };
+  return [
+    browseUrlTool,
+    browserClickTool,
+    browserTypeTool,
+    browserScreenshotTool,
+    createBrowserVisionClickTool(visionOpts),
+    createBrowserVisionTypeTool(visionOpts),
+  ];
 }
 
 export type { A11yRef, A11yResult, RawA11yNode } from './a11y';

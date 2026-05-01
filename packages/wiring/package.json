@@ -28,8 +28,10 @@
     "@ethosagent/tools-code": "workspace:*",
     "@ethosagent/tools-delegation": "workspace:*",
     "@ethosagent/tools-file": "workspace:*",
+    "@ethosagent/tools-image": "workspace:*",
     "@ethosagent/tools-mcp": "workspace:*",
     "@ethosagent/tools-memory": "workspace:*",
+    "@ethosagent/tools-process": "workspace:*",
     "@ethosagent/tools-terminal": "workspace:*",
     "@ethosagent/tools-web": "workspace:*",
     "@ethosagent/types": "workspace:*"

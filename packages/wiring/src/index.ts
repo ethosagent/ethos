@@ -19,8 +19,10 @@ import { createBrowserTools } from '@ethosagent/tools-browser';
 import { createCodeTools } from '@ethosagent/tools-code';
 import { createDelegationTools } from '@ethosagent/tools-delegation';
 import { createFileTools } from '@ethosagent/tools-file';
+import { createImageTools } from '@ethosagent/tools-image';
 import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
 import { createMemoryTools } from '@ethosagent/tools-memory';
+import { createProcessTools } from '@ethosagent/tools-process';
 import {
   checkCommand,
   createTerminalGuardHook,
@@ -200,9 +202,16 @@ export async function createAgentLoop(
   for (const tool of createTerminalTools()) tools.register(tool);
   for (const tool of createWebTools()) tools.register(tool);
   for (const tool of createMemoryTools(memory, session)) tools.register(tool);
+  for (const tool of createProcessTools(dataDir)) tools.register(tool);
+  for (const tool of createImageTools()) tools.register(tool);
   if (!opts.disableDocker) {
     for (const tool of createCodeTools(sandbox)) tools.register(tool);
-    for (const tool of createBrowserTools()) tools.register(tool);
+    for (const tool of createBrowserTools({
+      visionApiKey: config.apiKey,
+      visionProvider: config.provider,
+      visionModel: config.model,
+    }))
+      tools.register(tool);
   }
 
   const mcpConfig = await loadMcpConfig();

@@ -1,0 +1,134 @@
+// ---------------------------------------------------------------------------
+// browser_vision_type tool
+// ---------------------------------------------------------------------------
+
+import type { Tool, ToolResult } from '@ethosagent/types';
+import { isPlaywrightInstalled, sessions } from './sessions';
+import type { VisionResolverOptions } from './vision-resolver';
+import { resolveByA11y, resolveByVision } from './vision-resolver';
+
+export function createBrowserVisionTypeTool(visionOpts: VisionResolverOptions): Tool {
+  return {
+    name: 'browser_vision_type',
+    description:
+      'Type text into an element described in natural language. Uses accessibility tree first, falls back to vision model.',
+    toolset: 'browser',
+    maxResultChars: 500,
+    isAvailable: isPlaywrightInstalled,
+    schema: {
+      type: 'object',
+      properties: {
+        description: {
+          type: 'string',
+          description: 'Natural language description of the element to type into',
+        },
+        text: {
+          type: 'string',
+          description: 'Text to type',
+        },
+        submit: {
+          type: 'boolean',
+          description: 'Press Enter after typing (default false)',
+        },
+      },
+      required: ['description', 'text'],
+    },
+    async execute(args, ctx): Promise<ToolResult> {
+      const {
+        description,
+        text,
+        submit = false,
+      } = args as {
+        description: string;
+        text: string;
+        submit?: boolean;
+      };
+
+      if (!description) {
+        return { ok: false, error: 'description is required', code: 'input_invalid' };
+      }
+      if (text === undefined) {
+        return { ok: false, error: 'text is required', code: 'input_invalid' };
+      }
+
+      const session = sessions.get(ctx.sessionId);
+      if (!session) {
+        return {
+          ok: false,
+          error: 'No active browser session. Call browse_url first.',
+          code: 'execution_failed',
+        };
+      }
+
+      try {
+        // 1. Try a11y snapshot first
+        const yaml = await session.page.locator('body').ariaSnapshot();
+        const matchedName = resolveByA11y(yaml, description);
+
+        if (matchedName) {
+          await session.page
+            .getByText(matchedName, { exact: false })
+            .first()
+            .click({ timeout: 10_000 });
+          await session.page.keyboard.type(text);
+          if (submit) {
+            await session.page.keyboard.press('Enter');
+          }
+          return {
+            ok: true,
+            value: JSON.stringify({
+              typed: true,
+              strategy: 'a11y',
+            }),
+          };
+        }
+
+        // 2. Fall back to vision if apiKey available
+        if (visionOpts.apiKey) {
+          const screenshot = await session.page.screenshot({ type: 'png' });
+          const b64 = screenshot.toString('base64');
+          const coords = await resolveByVision(b64, description, undefined, visionOpts);
+
+          if (coords) {
+            await session.page.mouse.click(coords.x, coords.y);
+            await session.page.keyboard.type(text);
+            if (submit) {
+              await session.page.keyboard.press('Enter');
+            }
+            return {
+              ok: true,
+              value: JSON.stringify({
+                typed: true,
+                strategy: 'vision',
+              }),
+            };
+          }
+
+          // Both a11y and vision failed
+          return {
+            ok: true,
+            value: JSON.stringify({
+              typed: false,
+              strategy: 'failed',
+            }),
+          };
+        }
+
+        // No apiKey — a11y only mode
+        return {
+          ok: true,
+          value: JSON.stringify({
+            typed: false,
+            strategy: 'a11y_only',
+          }),
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+          code: 'execution_failed',
+        };
+      }
+    },
+  };
+}

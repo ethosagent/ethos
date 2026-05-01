@@ -440,16 +440,15 @@ importers:
 
   extensions/mcp-server:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.29.0(zod@4.3.6)
-    devDependencies:
-      '@ethosagent/core':
-        specifier: workspace:*
-        version: link:../../packages/core
 
   extensions/memory-markdown:
     dependencies:
@@ -667,6 +666,16 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/tools-image:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    optionalDependencies:
+      openai:
+        specifier: '*'
+        version: 4.104.0(ws@8.20.0)(zod@4.3.6)
+
   extensions/tools-mcp:
     dependencies:
       '@ethosagent/storage-fs':
@@ -687,6 +696,12 @@ importers:
       '@ethosagent/session-sqlite':
         specifier: workspace:*
         version: link:../session-sqlite
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
+  extensions/tools-process:
+    dependencies:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -861,12 +876,18 @@ importers:
       '@ethosagent/tools-file':
         specifier: workspace:*
         version: link:../../extensions/tools-file
+      '@ethosagent/tools-image':
+        specifier: workspace:*
+        version: link:../../extensions/tools-image
       '@ethosagent/tools-mcp':
         specifier: workspace:*
         version: link:../../extensions/tools-mcp
       '@ethosagent/tools-memory':
         specifier: workspace:*
         version: link:../../extensions/tools-memory
+      '@ethosagent/tools-process':
+        specifier: workspace:*
+        version: link:../../extensions/tools-process
       '@ethosagent/tools-terminal':
         specifier: workspace:*
         version: link:../../extensions/tools-terminal
