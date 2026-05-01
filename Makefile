@@ -339,7 +339,7 @@ verify:
 	@$(NVM_EXEC) node scripts/verify-version.js
 	@echo ""
 	@echo "G7: typecheck + lint + test..."
-	@$(NVM_EXEC) pnpm check
+	@$(MAKE) check
 	@echo ""
 	@echo "All gates passed — v$(VERSION) is ready to release."
 
