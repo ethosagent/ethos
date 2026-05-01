@@ -1,4 +1,5 @@
 import { Box, Text } from 'ink';
+import { DESIGN, GLYPHS } from '../skin';
 
 export interface DelegationRecord {
   id: string;
@@ -22,8 +23,16 @@ export function SubagentsPane({ delegations }: SubagentsPaneProps) {
       {visible.map((d) => (
         <Box key={d.id} flexDirection="column">
           <Box gap={1}>
-            <Text color={d.status === 'done' ? 'green' : d.status === 'failed' ? 'red' : 'yellow'}>
-              {d.status === 'done' ? '✓' : d.status === 'failed' ? '✗' : '…'}
+            <Text
+              color={
+                d.status === 'done'
+                  ? DESIGN.success
+                  : d.status === 'failed'
+                    ? DESIGN.error
+                    : DESIGN.warning
+              }
+            >
+              {d.status === 'done' ? GLYPHS.toolOk : d.status === 'failed' ? GLYPHS.toolFail : '…'}
             </Text>
             <Text dimColor>
               {d.capability}
@@ -31,7 +40,7 @@ export function SubagentsPane({ delegations }: SubagentsPaneProps) {
             </Text>
           </Box>
           {d.status === 'failed' && d.error && (
-            <Text color="red"> reason: {d.error.slice(0, 96)}</Text>
+            <Text color={DESIGN.error}> reason: {d.error.slice(0, 96)}</Text>
           )}
         </Box>
       ))}
