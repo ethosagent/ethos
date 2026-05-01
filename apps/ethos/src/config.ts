@@ -168,7 +168,7 @@ function parseConfigYaml(src: string): EthosConfig {
     .map(Number)
     .sort((a, b) => a - b);
   const providers: ProviderConfig[] = sortedProviderIdxs
-    .map((i) => {
+    .map((i): ProviderConfig | null => {
       const p = providersKv[i];
       if (!p?.provider) return null;
       return {
@@ -176,7 +176,7 @@ function parseConfigYaml(src: string): EthosConfig {
         apiKey: p.apiKey ?? '',
         model: p.model,
         baseUrl: p.baseUrl,
-      } satisfies ProviderConfig;
+      };
     })
     .filter((p): p is ProviderConfig => p !== null);
 
