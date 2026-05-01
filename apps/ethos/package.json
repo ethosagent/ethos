@@ -44,7 +44,6 @@
   },
   "dependencies": {
     "@ethosagent/core": "workspace:*",
-    "@ethosagent/team-supervisor": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@anthropic-ai/sdk": "^0.39.0",
     "@hono/node-server": "^2.0.0",
@@ -65,6 +64,7 @@
   "devDependencies": {
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
+    "@ethosagent/team-supervisor": "workspace:*",
     "@ethosagent/web-api": "workspace:*",
     "@ethosagent/wiring": "workspace:*"
   },

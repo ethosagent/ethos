@@ -368,31 +368,46 @@ build-publishable:
 
 # ---------- release ----------
 
-# Full release: verify (G1-G7) → tag → push → CI takes over.
+# Full LOCAL release: verify (G1-G7) → build → publish → tag → push → smoke.
+# Everything runs on your machine — no CI workflow involved.
 # Bump version first: make version-bump-{patch,minor,major}
 # Then commit: git commit -am "release: v$(make version)"
 # Then: make release
+#
+# Order is publish-then-tag: if publish fails, no tag is pushed (no orphan tags
+# pointing at versions that never shipped). release-npm is idempotent, so a
+# partial-publish failure is recoverable by re-running `make release`.
 release:
 	@echo "Starting release for v$(VERSION)..."
 	@$(MAKE) verify
+	@echo ""
+	@echo "Building publishable packages..."
+	@$(MAKE) build-publishable
+	@echo ""
+	@echo "Publishing to npm..."
+	@$(MAKE) release-npm
 	@echo ""
 	@echo "Tagging v$(VERSION) and pushing to origin..."
 	@git tag "v$(VERSION)" && \
 	git push origin main "v$(VERSION)" && \
 	echo "" && \
-	echo "✓ Tagged v$(VERSION) and pushed. CI release workflow is now running." && \
-	echo "  Monitor: https://github.com/ethosagent/ethos/actions" && \
-	echo "  Verify:  make smoke (in ~30s after CI completes)"
+	echo "Waiting 20s for npm registry propagation before smoke..." && \
+	sleep 20 && \
+	$(MAKE) smoke && \
+	echo "" && \
+	echo "✓ Released v$(VERSION). All five packages live on npm."
 
 # Show what make release would do without any side effects.
 release-dry:
 	@echo "=== Release dry run for v$(VERSION) ==="
 	@echo ""
-	@echo "Steps that would run:"
-	@echo "  1. make verify  — pre-flight gates G1-G7"
-	@echo "  2. git tag v$(VERSION)"
-	@echo "  3. git push origin main v$(VERSION)"
-	@echo "  4. CI release.yml: preflight → publish → smoke"
+	@echo "Steps that would run (all local — no CI):"
+	@echo "  1. make verify              — pre-flight gates G1-G7"
+	@echo "  2. make build-publishable   — build all 5 packages"
+	@echo "  3. make release-npm         — publish to npm (lockstep, idempotent)"
+	@echo "  4. git tag v$(VERSION)"
+	@echo "  5. git push origin main v$(VERSION)"
+	@echo "  6. sleep 20 + make smoke    — fresh install + version check + LLM round-trip"
 	@echo ""
 	@echo "Packages that would publish:"
 	@for dir in $(PUBLISHABLE); do \
