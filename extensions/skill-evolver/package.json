@@ -1,6 +1,6 @@
 {
   "name": "@ethosagent/skill-evolver",
-  "version": "0.2.5",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "exports": {

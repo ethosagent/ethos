@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Reads VERSION and syncs the version field in every workspace package.json.
+// Reads VERSION and syncs the version field in the five public package.json files.
 // Idempotent — files already at the correct version are left untouched.
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const root = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
@@ -12,24 +12,26 @@ if (!version || !/^\d+\.\d+\.\d+/.test(version)) {
   process.exit(1);
 }
 
-const dirs = ['apps', 'packages', 'extensions'];
+const PUBLIC_PACKAGES = [
+  'apps/ethos',
+  'packages/types',
+  'packages/core',
+  'packages/plugin-contract',
+  'packages/plugin-sdk',
+];
+
 let updated = 0;
 
-for (const dir of dirs) {
-  const dirPath = join(root, dir);
-  if (!existsSync(dirPath)) continue;
-  for (const sub of readdirSync(dirPath)) {
-    const pkgPath = join(dirPath, sub, 'package.json');
-    if (!existsSync(pkgPath)) continue;
-    const raw = readFileSync(pkgPath, 'utf8');
-    const pkg = JSON.parse(raw);
-    if (pkg.version === version) continue;
-    const old = pkg.version;
-    pkg.version = version;
-    writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
-    console.log(`  ${dir}/${sub}/package.json  ${old} → ${version}`);
-    updated++;
-  }
+for (const pkg of PUBLIC_PACKAGES) {
+  const pkgPath = join(root, pkg, 'package.json');
+  const raw = readFileSync(pkgPath, 'utf8');
+  const json = JSON.parse(raw);
+  if (json.version === version) continue;
+  const old = json.version;
+  json.version = version;
+  writeFileSync(pkgPath, `${JSON.stringify(json, null, 2)}\n`);
+  console.log(`  ${pkg}/package.json  ${old} → ${version}`);
+  updated++;
 }
 
 console.log(`sync-version: ${version} · ${updated} file(s) updated`);
