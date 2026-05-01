@@ -44,6 +44,7 @@ fs_reach.write: ${ETHOS_HOME}/personalities/${self}/, ${CWD}
 mcp_servers:  # allowed MCP server names (default-deny; omit or leave empty = no MCP access)
 plugins:      # allowed plugin ids (default-deny; omit or leave empty = no plugin access)
 skills:       # global skill pool filter (capability | explicit | tags | none; default: capability)
+budgetCapUsd: 1.00  # per-session spending cap in USD; turns are refused with BUDGET_EXCEEDED once crossed
 ```
 
 The `fs_reach` keys scope filesystem access for the read_file / write_file tools to a per-personality allowlist of absolute path prefixes — closing the cross-personality leak gap.
@@ -57,6 +58,7 @@ The `fs_reach` keys scope filesystem access for the read_file / write_file tools
 - `mcp_servers` — space-separated list of MCP server names this personality may use. Default-deny: omit or leave empty to disable all MCP tools for this personality.
 - `plugins` — space-separated list of plugin ids this personality may activate. Default-deny: omit or leave empty to disable all plugins for this personality.
 - `skills` — filter rules for skills discovered by the universal scanner. The per-personality `skills/` folder is always loaded unfiltered; this controls what flows in from the global pool. Default mode is `capability` (only skills whose `required_tools` are a subset of this personality's effective tool reach are included). Set `skills.global_ingest.mode` to `explicit`, `tags`, or `none` to change the filter strategy.
+- `budgetCapUsd` — per-session spending cap in USD. When the running cost for the current session key crosses this value, the next turn is refused with a `BUDGET_EXCEEDED` error. Session-scoped: resets on `/new`. Absent = no cap.
 
 ## Step 4 — Define the toolset
 

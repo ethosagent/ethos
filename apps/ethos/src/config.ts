@@ -36,6 +36,13 @@ export interface ActiveContext {
   name: string;
 }
 
+export interface ProviderConfig {
+  provider: string;
+  apiKey: string;
+  model?: string;
+  baseUrl?: string;
+}
+
 export interface EthosConfig {
   provider: string;
   model: string;
@@ -46,6 +53,18 @@ export interface EthosConfig {
   baseUrl?: string;
   // Per-personality model overrides: maps personality ID → model ID string
   modelRouting?: Record<string, string>;
+  /**
+   * Fallback provider chain. When 2+ entries are present, `createLLM` wraps
+   * them in a `ChainedProvider` with automatic cooldown-based failover.
+   * The primary `provider`/`apiKey`/`model` fields are used when absent or
+   * when only one entry is present. Config format:
+   *   providers.0.provider: anthropic
+   *   providers.0.apiKey: sk-ant-...
+   *   providers.0.model: claude-opus-4-7
+   *   providers.1.provider: openrouter
+   *   providers.1.apiKey: sk-or-...
+   */
+  providers?: ProviderConfig[];
   /**
    * Active chat target. Managed by `ethos set` — do not hand-edit.
    * Takes precedence over `personality` for `ethos chat` and `ethos serve`.
@@ -111,7 +130,17 @@ function parseConfigYaml(src: string): EthosConfig {
   const kv: Record<string, string> = {};
   const modelRouting: Record<string, string> = {};
   const activeContextKv: Record<string, string> = {};
+  const providersKv: Record<number, Record<string, string>> = {};
   for (const line of src.split('\n')) {
+    // providers.<index>.<field>: <value>
+    const prov = line.match(/^providers\.(\d+)\.(\S+):\s*(.+)$/);
+    if (prov) {
+      const idx = Number(prov[1]);
+      providersKv[idx] ??= {};
+      const field = prov[2]?.trim() ?? '';
+      if (field) providersKv[idx][field] = prov[3].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     // modelRouting.<personality>: <model>
     const mr = line.match(/^modelRouting\.(\S+):\s*(.+)$/);
     if (mr) {
@@ -135,6 +164,22 @@ function parseConfigYaml(src: string): EthosConfig {
       ? { type: activeContextType, name: activeContextName }
       : undefined;
 
+  const sortedProviderIdxs = Object.keys(providersKv)
+    .map(Number)
+    .sort((a, b) => a - b);
+  const providers: ProviderConfig[] = sortedProviderIdxs
+    .map((i) => {
+      const p = providersKv[i];
+      if (!p?.provider) return null;
+      return {
+        provider: p.provider,
+        apiKey: p.apiKey ?? '',
+        model: p.model,
+        baseUrl: p.baseUrl,
+      } satisfies ProviderConfig;
+    })
+    .filter((p): p is ProviderConfig => p !== null);
+
   return {
     provider: kv.provider ?? 'anthropic',
     model: kv.model ?? 'claude-opus-4-7',
@@ -144,6 +189,7 @@ function parseConfigYaml(src: string): EthosConfig {
     baseUrl: kv.baseUrl,
     modelRouting: Object.keys(modelRouting).length > 0 ? modelRouting : undefined,
     activeContext,
+    providers: providers.length > 0 ? providers : undefined,
     telegramToken: kv.telegramToken,
     discordToken: kv.discordToken,
     slackBotToken: kv.slackBotToken,

@@ -182,6 +182,8 @@ export class AgentLoop {
   private readonly modelRouting: Record<string, string>;
   private readonly storage?: Storage;
   private readonly dataDir?: string;
+  /** Per-session accumulated spend in USD. Keyed by sessionKey. Reset via resetSessionCost(). */
+  private readonly sessionCosts = new Map<string, number>();
 
   constructor(config: AgentLoopConfig) {
     this.llm = config.llm;
@@ -215,6 +217,24 @@ export class AgentLoop {
     return this.personalities.list().map((p) => p.id);
   }
 
+  /** Returns the budget cap for the given personality (undefined = no cap). */
+  getPersonalityBudgetCap(personalityId?: string): number | undefined {
+    const p =
+      (personalityId ? this.personalities.get(personalityId) : null) ??
+      this.personalities.getDefault();
+    return p.budgetCapUsd;
+  }
+
+  /** Returns accumulated session spend in USD (0 if no spend recorded yet). */
+  getSessionCost(sessionKey: string): number {
+    return this.sessionCosts.get(sessionKey) ?? 0;
+  }
+
+  /** Resets the session spend counter — call after /new or /personality switch. */
+  resetSessionCost(sessionKey: string): void {
+    this.sessionCosts.delete(sessionKey);
+  }
+
   async *run(text: string, opts: RunOptions = {}): AsyncGenerator<AgentEvent> {
     const abortSignal = opts.abortSignal ?? new AbortController().signal;
     const sessionKey = opts.sessionKey ?? `${this.platform}:default`;
@@ -244,6 +264,19 @@ export class AgentLoop {
     const personality =
       (opts.personalityId ? this.personalities.get(opts.personalityId) : null) ??
       this.personalities.getDefault();
+
+    // Budget cap check — refuse before any LLM work when the session has already
+    // exceeded the personality's per-session spending limit.
+    const currentSpend = this.sessionCosts.get(sessionKey) ?? 0;
+    if (personality.budgetCapUsd != null && currentSpend >= personality.budgetCapUsd) {
+      yield {
+        type: 'error',
+        error: `Budget cap of $${personality.budgetCapUsd.toFixed(2)} exceeded for this session ($${currentSpend.toFixed(4)} spent). Use /budget reset to start a new budget window.`,
+        code: 'BUDGET_EXCEEDED',
+      };
+      yield { type: 'done', text: '', turnCount: 0 };
+      return;
+    }
 
     // Resolve effective model: explicit per-personality routing > LLM base model.
     // personality.model is intentionally skipped — those IDs are Anthropic-specific
@@ -479,10 +512,18 @@ export class AgentLoop {
           if (abortSignal.aborted) break;
           if (watchdogController.signal.aborted) break;
           armWatchdog();
-          yield* this.handleChunk(chunk, pendingToolCalls, (t) => {
+          for (const event of this.handleChunk(chunk, pendingToolCalls, (t) => {
             chunkText += t;
             fullText += t;
-          });
+          })) {
+            if (event.type === 'usage') {
+              this.sessionCosts.set(
+                sessionKey,
+                (this.sessionCosts.get(sessionKey) ?? 0) + event.estimatedCostUsd,
+              );
+            }
+            yield event;
+          }
         }
         disarmWatchdog();
 

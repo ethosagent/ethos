@@ -80,6 +80,13 @@ export interface PersonalityConfig {
    * are a subset of this personality's effective tool reach are included).
    */
   skills?: import('./skill').SkillIngestConfig;
+  /**
+   * Per-session spending cap in USD. When the running cost for the current
+   * session key crosses this value, the next turn is refused with a typed
+   * `BUDGET_EXCEEDED` error. Session-scoped only in v1 (resets on `/new`).
+   * Absent = no cap (default behavior).
+   */
+  budgetCapUsd?: number;
   /** @internal Free-form passthrough for adapter-specific metadata. */
   metadata?: Record<string, unknown>;
 }

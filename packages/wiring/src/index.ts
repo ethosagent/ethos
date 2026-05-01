@@ -1,5 +1,10 @@
 import { join } from 'node:path';
-import { AgentLoop, DefaultHookRegistry, DefaultToolRegistry } from '@ethosagent/core';
+import {
+  AgentLoop,
+  ChainedProvider,
+  DefaultHookRegistry,
+  DefaultToolRegistry,
+} from '@ethosagent/core';
 import { AnthropicProvider, AuthRotatingProvider } from '@ethosagent/llm-anthropic';
 import { OpenAICompatProvider } from '@ethosagent/llm-openai-compat';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
@@ -34,6 +39,13 @@ export interface RotationKey {
   label?: string;
 }
 
+export interface WiringProviderConfig {
+  provider: string;
+  apiKey: string;
+  model?: string;
+  baseUrl?: string;
+}
+
 export interface WiringConfig {
   provider: string;
   model: string;
@@ -45,6 +57,12 @@ export interface WiringConfig {
   modelRouting?: Record<string, string>;
   /** Anthropic key rotation pool. Empty / absent = single-key provider. */
   rotationKeys?: RotationKey[];
+  /**
+   * Fallback provider chain. When 2+ entries are provided, `createLLM` wraps
+   * them in a `ChainedProvider` with cooldown-based automatic failover.
+   * Takes precedence over `provider`/`apiKey`/`model` when present.
+   */
+  providers?: WiringProviderConfig[];
 }
 
 export type WiringProfile = 'cli' | 'tui' | 'web' | 'acp';
@@ -81,7 +99,38 @@ export interface CreateAgentLoopOptions {
 // LLM provider construction
 // ---------------------------------------------------------------------------
 
+function createSingleProvider(cfg: {
+  provider: string;
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+}): LLMProvider {
+  if (cfg.provider === 'anthropic') {
+    return new AnthropicProvider({ apiKey: cfg.apiKey, model: cfg.model });
+  }
+  return new OpenAICompatProvider({
+    name: cfg.provider,
+    model: cfg.model,
+    apiKey: cfg.apiKey,
+    baseUrl: cfg.baseUrl ?? 'https://openrouter.ai/api/v1',
+  });
+}
+
 export async function createLLM(config: WiringConfig): Promise<LLMProvider> {
+  // Multi-provider chain: 2+ entries → ChainedProvider with automatic failover.
+  if (config.providers && config.providers.length >= 2) {
+    const instances = config.providers.map((p) =>
+      createSingleProvider({
+        provider: p.provider,
+        model: p.model ?? config.model,
+        apiKey: p.apiKey,
+        baseUrl: p.baseUrl,
+      }),
+    );
+    return new ChainedProvider(instances);
+  }
+
+  // Single provider (legacy path + rotation keys).
   if (config.provider === 'anthropic') {
     const rotation = config.rotationKeys ?? [];
     if (rotation.length > 0) {

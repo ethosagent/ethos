@@ -8,6 +8,11 @@ export interface UpdateStatus {
   latest: string;
 }
 
+export interface BudgetState {
+  spent: number;
+  cap: number;
+}
+
 interface StatusBarProps {
   model: string;
   personality: string;
@@ -22,6 +27,7 @@ interface StatusBarProps {
   readonlyMode?: boolean;
   backgroundCount?: number;
   updateStatus?: UpdateStatus | null;
+  budgetState?: BudgetState | null;
 }
 
 function padTime(secs: number): string {
@@ -61,6 +67,16 @@ function StatusIndicator({
   }
 }
 
+function BudgetIndicator({ budgetState }: { budgetState: BudgetState }) {
+  const ratio = budgetState.cap > 0 ? budgetState.spent / budgetState.cap : 0;
+  const color = ratio >= 1 ? DESIGN.error : ratio >= 0.8 ? DESIGN.warning : DESIGN.textSecondary;
+  return (
+    <Text
+      color={color}
+    >{` budget $${budgetState.spent.toFixed(4)}/$${budgetState.cap.toFixed(2)}`}</Text>
+  );
+}
+
 export function StatusBar({
   model,
   personality,
@@ -74,6 +90,7 @@ export function StatusBar({
   readonlyMode = false,
   backgroundCount = 0,
   updateStatus,
+  budgetState,
 }: StatusBarProps) {
   return (
     <Box marginBottom={1}>
@@ -89,6 +106,7 @@ export function StatusBar({
         {inputTokens.toLocaleString()} in · {outputTokens.toLocaleString()} out $
         {costUsd.toFixed(5)}
       </Text>
+      {budgetState && <BudgetIndicator budgetState={budgetState} />}
       {backgroundCount > 0 && <Text color={DESIGN.warning}>{` bg:${backgroundCount}`}</Text>}
       {updateStatus && updateStatus.behind > 0 && (
         <Text color={DESIGN.warning}>

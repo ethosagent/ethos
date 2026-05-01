@@ -6,4 +6,6 @@ export { DefaultPersonalityRegistry } from './defaults/noop-personality';
 export { DefaultHookRegistry } from './hook-registry';
 export type { PluginFactory } from './plugin-registry';
 export { PluginRegistry } from './plugin-registry';
+export type { ChainedProviderOptions } from './providers/chained-provider';
+export { ChainedProvider } from './providers/chained-provider';
 export { DefaultToolRegistry } from './tool-registry';

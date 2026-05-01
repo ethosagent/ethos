@@ -103,6 +103,21 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
     return dropped;
   }
 
+  /** Returns accumulated spend for the session key (0 if no spend recorded). */
+  getSessionCost(sessionKey: string): number {
+    return this.loop.getSessionCost(sessionKey);
+  }
+
+  /** Resets the session spend counter — call after /new. */
+  resetSessionCost(sessionKey: string): void {
+    this.loop.resetSessionCost(sessionKey);
+  }
+
+  /** Returns the budget cap for the personality (undefined = no cap). */
+  getPersonalityBudgetCap(personalityId?: string): number | undefined {
+    return this.loop.getPersonalityBudgetCap(personalityId);
+  }
+
   /**
    * Swap the underlying AgentLoop on the next idle tick.
    * If a turn is in flight, it finishes with the old loop; subsequent turns

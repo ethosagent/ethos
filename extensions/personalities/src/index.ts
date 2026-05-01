@@ -435,6 +435,11 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     const mcpServers = cfg.mcp_servers ? cfg.mcp_servers.split(/\s+/).filter(Boolean) : undefined;
     const plugins = cfg.plugins ? cfg.plugins.split(/\s+/).filter(Boolean) : undefined;
 
+    const budgetCapUsd =
+      cfg.budgetCapUsd && /^\d+(\.\d+)?$/.test(cfg.budgetCapUsd)
+        ? Number.parseFloat(cfg.budgetCapUsd)
+        : undefined;
+
     const config: PersonalityConfig = {
       id,
       name: cfg.name ?? titleCase(id),
@@ -451,6 +456,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       ...(fsReach ? { fs_reach: fsReach } : {}),
       ...(mcpServers !== undefined ? { mcp_servers: mcpServers } : {}),
       ...(plugins !== undefined ? { plugins } : {}),
+      ...(budgetCapUsd !== undefined ? { budgetCapUsd } : {}),
     };
 
     return config;

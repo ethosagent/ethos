@@ -720,6 +720,14 @@ baseUrl: https://openrouter.ai/api/v1
 # ── Memory mode ─────────────────────────────────────────────────────────────
 memory: markdown                     # markdown (default) | vector
 
+# ── Fallback provider chain (2+ entries → automatic failover on errors) ─────
+providers:                               # list of provider entries; 2+ enables ChainedProvider failover
+providers.0.provider: anthropic
+providers.0.apiKey: sk-ant-...
+providers.0.model: claude-opus-4-7
+providers.1.provider: openrouter
+providers.1.apiKey: sk-or-...
+
 # ── Per-personality model routing ───────────────────────────────────────────
 modelRouting:
   researcher: anthropic/claude-opus-4-7

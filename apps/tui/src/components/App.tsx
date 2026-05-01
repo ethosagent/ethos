@@ -20,7 +20,7 @@ import { ModelPickerModal } from './ModelPickerModal';
 import { SafetyLane, type SafetyTag } from './SafetyLane';
 import { SessionPickerModal } from './SessionPickerModal';
 import { Splash, type SplashInventory } from './Splash';
-import { type AgentStatus, StatusBar } from './StatusBar';
+import { type AgentStatus, type BudgetState, StatusBar } from './StatusBar';
 import { type DelegationRecord, SubagentsPane } from './SubagentsPane';
 import { ThinkingPane } from './ThinkingPane';
 import { type ActiveTool, type CompletedTool, ToolSpinner } from './ToolSpinner';
@@ -147,6 +147,9 @@ export function App({
   const [selectedPatchIndex, setSelectedPatchIndex] = useState(0);
   const [readonlyMode, setReadonlyMode] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [budgetCapUsd, setBudgetCapUsd] = useState<number | null>(
+    () => bridge.getPersonalityBudgetCap(initialPersonality) ?? null,
+  );
 
   const verboseRef = useRef(initialVerbose);
   const [verboseDisplay, setVerboseDisplay] = useState(initialVerbose);
@@ -619,6 +622,8 @@ export function App({
               '/sessions                     open session picker\n' +
               '/memory                       show ~/.ethos/MEMORY.md\n' +
               '/usage                        token + cost stats\n' +
+              '/budget                       show session spend vs cap\n' +
+              '/budget reset                 reset budget counter\n' +
               `/readonly                     toggle readonly mode (now: ${readonlyMode ? 'on' : 'off'})\n` +
               `/verbose                      toggle timing (now: ${verboseDisplay ? 'on' : 'off'})\n` +
               '/details [hidden|collapsed|expanded] [section]\n' +
@@ -630,15 +635,20 @@ export function App({
         ]);
         break;
       case 'new':
-      case 'reset':
-        setSessionKey(`cli:${basename(process.cwd())}:${Date.now()}`);
+      case 'reset': {
+        const oldKey = sessionKey;
+        const newKey = `cli:${basename(process.cwd())}:${Date.now()}`;
+        bridge.resetSessionCost(oldKey);
+        setSessionKey(newKey);
         setMessages([]);
         setCompletedTools([]);
         setDelegations([]);
         setTimelineEvents([]);
         setFileActivity([]);
+        setUsage({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
         setStatusMsg('[new session started]');
         break;
+      }
       case 'personality':
         if (args.length === 0) {
           setStatusMsg(`personality: ${personality}`);
@@ -652,8 +662,10 @@ export function App({
             },
           ]);
         } else {
-          setPersonality(args[0] ?? personality);
-          setStatusMsg(`[personality: ${args[0]}]`);
+          const newPersonality = args[0] ?? personality;
+          setPersonality(newPersonality);
+          setBudgetCapUsd(bridge.getPersonalityBudgetCap(newPersonality) ?? null);
+          setStatusMsg(`[personality: ${newPersonality}]`);
         }
         break;
       case 'model':
@@ -692,6 +704,27 @@ export function App({
           },
         ]);
         break;
+      case 'budget': {
+        if (args[0] === 'reset') {
+          bridge.resetSessionCost(sessionKey);
+          setUsage({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
+          setStatusMsg('[budget counter reset]');
+          break;
+        }
+        const cap = budgetCapUsd;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextId(),
+            role: 'assistant',
+            text:
+              cap != null
+                ? `Session spend: $${usage.costUsd.toFixed(5)} / $${cap.toFixed(2)} cap`
+                : `Session spend: $${usage.costUsd.toFixed(5)} (no cap set for this personality)`,
+          },
+        ]);
+        break;
+      }
       case 'readonly': {
         const next = !readonlyMode;
         setReadonlyMode(next);
@@ -1025,6 +1058,11 @@ export function App({
           readonlyMode={readonlyMode}
           backgroundCount={delegations.filter((d) => d.status === 'pending').length}
           updateStatus={updateStatus}
+          budgetState={
+            budgetCapUsd != null
+              ? ({ spent: usage.costUsd, cap: budgetCapUsd } satisfies BudgetState)
+              : null
+          }
         />
       </Box>
     </SkinContext.Provider>

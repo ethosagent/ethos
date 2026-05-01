@@ -382,7 +382,7 @@ async function handleSlashCommand(
   raw: string,
   state: ChatState,
   verbose: { active: boolean },
-  _loop: AgentLoop,
+  loop: AgentLoop,
   rl: ReturnType<typeof createInterface>,
   _config: EthosConfig,
 ): Promise<void> {
@@ -401,6 +401,8 @@ async function handleSlashCommand(
           `  /model <name>         switch model for this session\n` +
           `  /memory               show ~/.ethos/MEMORY.md and USER.md\n` +
           `  /usage                show token and cost stats\n` +
+          `  /budget               show session spend against cap\n` +
+          `  /budget reset         reset the session budget counter\n` +
           `  /verbose              toggle per-turn timing summary (on/off)\n` +
           `  /exit                 quit\n` +
           `${c.reset}\n`,
@@ -409,6 +411,7 @@ async function handleSlashCommand(
 
     case 'new':
     case 'reset':
+      loop.resetSessionCost(state.sessionKey);
       state.sessionKey = `cli:${basename(process.cwd())}:${Date.now()}`;
       out(`${c.dim}[new session started]${c.reset}\n`);
       break;
@@ -466,6 +469,20 @@ async function handleSlashCommand(
           `${c.reset}`,
       );
       break;
+
+    case 'budget': {
+      if (arg === 'reset') {
+        loop.resetSessionCost(state.sessionKey);
+        out(`${c.dim}[budget counter reset]${c.reset}\n`);
+        break;
+      }
+      const spent = loop.getSessionCost(state.sessionKey);
+      out(
+        `${c.dim}Session spend: $${spent.toFixed(5)}\n` +
+          `Use /budget reset to clear the counter.\n${c.reset}`,
+      );
+      break;
+    }
 
     case 'verbose': {
       verbose.active = !verbose.active;

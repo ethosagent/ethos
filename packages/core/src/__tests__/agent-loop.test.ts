@@ -815,4 +815,88 @@ describe('AgentLoop', () => {
     await collect(loop.run('hello', { personalityId: 'personality-b', sessionKey: 'session-b' }));
     expect(hookFireCount).toBe(1);
   });
+
+  describe('budget cap (budgetCapUsd)', () => {
+    it('allows the turn when no cap is set', async () => {
+      const loop = new AgentLoop({ llm: makeMockLLM(['ok']) });
+      const events = await collect(loop.run('hi', { sessionKey: 'no-cap' }));
+      expect(events.find((e) => e.type === 'done')).toBeDefined();
+      expect(events.find((e) => e.type === 'error')).toBeUndefined();
+    });
+
+    it('allows the turn when spend is below the cap', async () => {
+      const { DefaultPersonalityRegistry } = await import('../defaults/noop-personality');
+      const personalities = new DefaultPersonalityRegistry();
+      vi.spyOn(personalities, 'getDefault').mockReturnValue({
+        id: 'default',
+        name: 'Default',
+        budgetCapUsd: 1.0,
+      });
+      const loop = new AgentLoop({ llm: makeMockLLM(['ok']), personalities });
+      // makeMockLLM emits 0.0001 per turn, well below $1.00
+      const events = await collect(loop.run('hi', { sessionKey: 'under-cap' }));
+      expect(events.find((e) => e.type === 'done')).toBeDefined();
+      expect(events.find((e) => e.type === 'error')).toBeUndefined();
+    });
+
+    it('refuses the turn when accumulated spend meets or exceeds the cap', async () => {
+      const { DefaultPersonalityRegistry } = await import('../defaults/noop-personality');
+      const personalities = new DefaultPersonalityRegistry();
+      vi.spyOn(personalities, 'getDefault').mockReturnValue({
+        id: 'default',
+        name: 'Default',
+        budgetCapUsd: 0.00005, // tighter than the 0.0001 mock emits
+      });
+      const loop = new AgentLoop({ llm: makeMockLLM(['ok']), personalities });
+      const sk = 'over-cap';
+
+      // First turn — cost 0.0001 USD, which exceeds 0.00005
+      await collect(loop.run('hi', { sessionKey: sk }));
+
+      // Second turn — now sessionCosts[sk] = 0.0001 >= 0.00005 cap
+      const events = await collect(loop.run('hi', { sessionKey: sk }));
+      const err = events.find((e) => e.type === 'error') as
+        | Extract<AgentEvent, { type: 'error' }>
+        | undefined;
+      expect(err).toBeDefined();
+      expect(err?.code).toBe('BUDGET_EXCEEDED');
+      expect(err?.error).toMatch(/\$0\.00/);
+    });
+
+    it('allows the turn again after resetSessionCost()', async () => {
+      const { DefaultPersonalityRegistry } = await import('../defaults/noop-personality');
+      const personalities = new DefaultPersonalityRegistry();
+      vi.spyOn(personalities, 'getDefault').mockReturnValue({
+        id: 'default',
+        name: 'Default',
+        budgetCapUsd: 0.00005,
+      });
+      const loop = new AgentLoop({ llm: makeMockLLM(['ok']), personalities });
+      const sk = 'reset-cap';
+
+      // Run once to exceed cap
+      await collect(loop.run('hi', { sessionKey: sk }));
+
+      // Reset
+      loop.resetSessionCost(sk);
+
+      // Now should succeed again
+      const events = await collect(loop.run('hi', { sessionKey: sk }));
+      expect(events.find((e) => e.type === 'done')).toBeDefined();
+      expect(events.find((e) => e.type === 'error')).toBeUndefined();
+    });
+
+    it('getSessionCost() returns 0 before any turns and accumulates correctly', async () => {
+      const loop = new AgentLoop({ llm: makeMockLLM(['ok']) });
+      const sk = 'cost-tracking';
+      expect(loop.getSessionCost(sk)).toBe(0);
+
+      await collect(loop.run('hi', { sessionKey: sk }));
+      // makeMockLLM emits 0.0001 per turn
+      expect(loop.getSessionCost(sk)).toBeCloseTo(0.0001);
+
+      await collect(loop.run('hi', { sessionKey: sk }));
+      expect(loop.getSessionCost(sk)).toBeCloseTo(0.0002);
+    });
+  });
 });
