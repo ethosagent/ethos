@@ -19,6 +19,7 @@ Your conversations persist across restarts. The same agent runs on the CLI, Tele
 - **Want to understand the design?** → [Why Ethos?](/docs/getting-started/why-ethos) — honest comparison with LangChain, CrewAI, AutoGen.
 - **Building on top?** → [Tutorial](/docs/tutorial/build-your-first-agent) — walk through your first custom personality.
 - **Extending the framework?** → [Extending Ethos](/docs/extending-ethos/overview) — add LLM providers, tools, platform adapters, plugins.
+- **Want Ethos in Claude Desktop / Cursor / OpenCode?** → [MCP Server](/docs/core-concepts/mcp-server) — expose Ethos personalities to any MCP-compatible client.
 
 ## What makes a personality structural
 

@@ -31,6 +31,11 @@ Comprehensive reference for the `ethos` command-line interface — every subcomm
 | `ethos gateway start` | Run all configured platform bots — long-running |
 | `ethos cron list` | List scheduled jobs |
 | `ethos cron create --name … --schedule "…" --prompt "…"` | Create a cron job |
+| `ethos mcp serve` | Run as a Model Context Protocol server over stdio (for Claude Desktop, Cursor, …) |
+| `ethos mcp install --client <name>` | Auto-write MCP entry into a client's config (`claude-desktop`, `cursor`, `opencode`, `continue`, `zed`) |
+| `ethos mcp doctor` | Diagnose MCP-server config + handshake |
+| `ethos backup [path]` | Snapshot `~/.ethos/` to a tarball |
+| `ethos import <path>` | Restore a backup |
 | `ethos serve` | Web UI + API on `:3000` *(in development)* — long-running |
 | `ethos acp` | Agent Control Protocol mesh server — long-running |
 | `ethos batch <tasks.jsonl>` | Run tasks in parallel from a JSONL file |
@@ -362,6 +367,69 @@ ethos mesh destroy <name>
 
 ---
 
+### `mcp`
+
+Expose Ethos to MCP-compatible clients (Claude Desktop, Cursor, OpenCode, Continue, Zed) over stdio. See [MCP server](./core-concepts/mcp-server.md) for the full overview.
+
+```
+ethos mcp serve                       # run as MCP server over stdio (used by clients, not humans)
+ethos mcp install --client <name>     # auto-write MCP entry into client's config
+ethos mcp init                        # interactive walkthrough — pick client + personalities
+ethos mcp doctor                      # diagnostic: config valid, handshake works, tools resolve
+ethos mcp inspect                     # interactive debugger: list tools, invoke one, see raw response
+```
+
+| Form | Description |
+|---|---|
+| `ethos mcp serve` | Long-running stdio MCP server. Writes JSON-RPC frames to stdout, logs to stderr. Spawned by clients — you rarely run it directly. |
+| `ethos mcp install --client claude-desktop` | Edits Claude Desktop's `claude_desktop_config.json` to register Ethos as an MCP server |
+| `ethos mcp install --client cursor` | Same for Cursor |
+| `ethos mcp install --client opencode` | Same for OpenCode |
+| `ethos mcp install --client continue` | Same for Continue |
+| `ethos mcp install --client zed` | Same for Zed |
+| `ethos mcp init` | Interactive: which client, which personalities to expose, then writes config |
+| `ethos mcp doctor` | Spawns the server, sends `initialize`, asserts response. Run before filing an issue. |
+| `ethos mcp inspect` | Connect to a running server, list tools, invoke one with arbitrary JSON args |
+
+**Tools exposed:** `ask_personality`, `list_personalities`, `search_memory`. Each personality's toolset surfaces as MCP-resolvable invocations. See [MCP server](./core-concepts/mcp-server.md).
+
+---
+
+### `backup`
+
+Snapshot `~/.ethos/` to a portable tarball (config, personalities, memory, sessions, team manifests). Excludes secrets — handle API keys via env or `ethos keys`.
+
+```
+ethos backup                          # writes ./ethos-backup-<timestamp>.tar.gz
+ethos backup ~/snapshots/             # write to a specific directory
+ethos backup ~/snapshots/dev.tar.gz   # explicit filename
+```
+
+| Form | Description |
+|---|---|
+| `ethos backup` | Tarball to current directory with timestamped name |
+| `ethos backup <path>` | Write to a specific path (directory or filename) |
+
+---
+
+### `import`
+
+Restore a backup tarball into `~/.ethos/`.
+
+```
+ethos import ./ethos-backup-2026-05-01.tar.gz
+ethos import <path> --merge           # union: keep newer mtime per personality, append to MEMORY.md/USER.md
+ethos import <path> --force           # nuke existing ~/.ethos/ first
+```
+
+| Form | Description |
+|---|---|
+| `ethos import <path>` | Refuses if `~/.ethos/` already has content |
+| `ethos import <path> --merge` | Union by personality id (newer mtime wins), appends to MEMORY.md / USER.md |
+| `ethos import <path> --force` | Removes existing `~/.ethos/` first |
+
+---
+
 ### `acp`
 
 Run the **Agent Control Protocol** server. ACP is a JSON-RPC stdin/stdout protocol used to compose multiple Ethos agents into a mesh. **Long-running.**
@@ -681,6 +749,8 @@ Type these inside `ethos chat`. They run synchronously and don't count as a turn
 | Command | Description |
 |---|---|
 | `/usage` | Token usage and estimated cost for this session |
+| `/budget` | Show running spend vs `budgetCapUsd` for the active personality |
+| `/budget reset` | Clear the session's running cost counter (lets the next turn proceed past the cap) |
 | `/tools` | List the tools available to the current personality |
 | `/model` | Show the active model |
 | `/memory` | Print current `MEMORY.md` and `USER.md` contents |
@@ -732,6 +802,12 @@ providers.1.apiKey: sk-or-...
 modelRouting:
   researcher: anthropic/claude-opus-4-7
   engineer: moonshotai/kimi-k2.6
+
+# ── Per-personality budget cap (hard stop) ──────────────────────────────────
+# Optional; absent = no cap. When set, agent refuses next turn once session
+# cost crosses the cap. Use `/budget reset` to override knowingly.
+# Set in personality config.yaml, not here, e.g.:
+#   budgetCapUsd: 1.00
 
 # ── Active platform adapters ────────────────────────────────────────────────
 adapters:

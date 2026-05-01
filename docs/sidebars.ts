@@ -50,6 +50,7 @@ const sidebars: SidebarsConfig = {
         'core-concepts/tool-registry',
         'core-concepts/memory-system',
         'core-concepts/teams-and-meshes',
+        'core-concepts/mcp-server',
       ],
     },
     {
