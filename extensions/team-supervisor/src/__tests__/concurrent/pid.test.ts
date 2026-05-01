@@ -4,7 +4,7 @@
 // owns the team. Tested by calling acquirePidFile twice for the same path:
 // first call succeeds; second call sees EEXIST + a live PID and throws.
 
-import { rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';

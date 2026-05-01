@@ -11,7 +11,7 @@
  */
 
 import { AgentLoop, InMemorySessionStore } from '@ethosagent/core';
-import type { CompletionChunk, LLMProvider, Message } from '@ethosagent/types';
+import type { CompletionChunk, LLMProvider } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 
 function makeMockLLM(): LLMProvider {
@@ -80,7 +80,7 @@ describe('session continuity across personality switches', () => {
     const sess = await session.getSessionByKey(sessionKey);
     expect(sess).not.toBeNull();
 
-    const messages = await session.getMessages(sess!.id, { limit: 100 });
+    const messages = await session.getMessages(sess?.id, { limit: 100 });
     const userMessages = messages.filter((m) => m.role === 'user');
 
     // Both user messages are in one session — no fork, no per-personality sessions
@@ -101,6 +101,6 @@ describe('session continuity across personality switches', () => {
     const sessionAfterSwitch = await session.getSessionByKey(sessionKey);
 
     // session_id is unchanged after the personality switch
-    expect(sessionAfterFirst!.id).toBe(sessionAfterSwitch!.id);
+    expect(sessionAfterFirst?.id).toBe(sessionAfterSwitch?.id);
   });
 });

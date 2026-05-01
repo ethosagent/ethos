@@ -161,7 +161,12 @@ export class AcpBridge extends EventEmitter {
   // ---------------------------------------------------------------------------
 
   private wireStdout(): void {
-    const rl = createInterface({ input: this.proc.stdout!, terminal: false });
+    const stdout = this.proc.stdout;
+    if (!stdout) {
+      this.emit('error', 'ACP process stdout unavailable', 'ACP_ERROR');
+      return;
+    }
+    const rl = createInterface({ input: stdout, terminal: false });
     rl.on('line', (line) => {
       if (!line.trim()) return;
       let msg: RpcResponse;

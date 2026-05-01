@@ -7,7 +7,6 @@ import type {
   PersonalityConfig,
   PersonalityRegistry,
   PromptContext,
-  Skill,
   Storage,
 } from '@ethosagent/types';
 import { filterSkill, warnMissingAllowList } from './ingest-filter';
@@ -104,7 +103,7 @@ export class SkillsInjector implements ContextInjector {
     const allow = personality.skills?.global_ingest?.allow ?? [];
     if (allow.length > 0) {
       warnMissingAllowList(personality.id, allow, globalPool, (msg) =>
-        process.stdout.write(msg + '\n'),
+        process.stdout.write(`${msg}\n`),
       );
     }
 
@@ -122,7 +121,7 @@ export class SkillsInjector implements ContextInjector {
       if (perPersonalityDirs.some((d) => skill.filePath.startsWith(d))) continue;
 
       const result = filterSkill(skill, personality, toolNames, (msg) =>
-        process.stdout.write(msg + '\n'),
+        process.stdout.write(`${msg}\n`),
       );
       if (!result.include) {
         this.onSkip?.(skill.qualifiedName, result.reason);

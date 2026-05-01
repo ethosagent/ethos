@@ -43,7 +43,10 @@ describe('CC-2: concurrent port allocation', () => {
     const addr = server.address();
     const port = typeof addr === 'object' && addr !== null ? addr.port : null;
     expect(port).not.toBeNull();
-    const inUse = await isPortInUse(port!);
+    if (port === null) {
+      throw new Error('server did not return a port');
+    }
+    const inUse = await isPortInUse(port);
     expect(inUse).toBe(true);
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });

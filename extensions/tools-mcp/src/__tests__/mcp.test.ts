@@ -230,7 +230,7 @@ describe('McpManager', () => {
       resultBudgetChars: 80_000,
     };
 
-    const result = await echoTool!.execute({ message: 'world' }, ctx);
+    const result = await echoTool?.execute({ message: 'world' }, ctx);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toBe('world');
 

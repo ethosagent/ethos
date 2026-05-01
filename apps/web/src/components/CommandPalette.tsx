@@ -156,7 +156,7 @@ export function CommandPalette({ open, onClose, onToggleDrawer }: CommandPalette
         run: () => navigate(path),
       };
     }
-    function pageDisabled(label: string, path: string, hint: string): CommandItem {
+    function _pageDisabled(label: string, path: string, hint: string): CommandItem {
       return {
         id: `page:${path}`,
         group: 'Pages',

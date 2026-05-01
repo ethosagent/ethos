@@ -7,7 +7,6 @@ import {
   Collapse,
   Empty,
   Skeleton,
-  Switch,
   Table,
   Tabs,
   Tag,

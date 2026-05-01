@@ -165,7 +165,6 @@ export function App({
   );
 
   // Live elapsed timer — ticks every second while agent is thinking
-  // biome-ignore lint/correctness/useExhaustiveDependencies: turnStartRef is a stable ref
   useEffect(() => {
     if (!running) {
       setTurnElapsed(0);

@@ -176,7 +176,7 @@ describe('DefaultToolRegistry', () => {
   // ---------------------------------------------------------------------------
 
   describe('filterOpts gating', () => {
-    const makePluginTool = (name: string, pluginId?: string) => ({
+    const _makePluginTool = (name: string, pluginId?: string) => ({
       name,
       description: `tool ${name}`,
       schema: { type: 'object' },

@@ -27,6 +27,8 @@ export interface ParsedFrontmatter {
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 const META_KEYS = ['openclaw', 'clawdbot', 'clawdis'] as const;
+const ETHOS_SKILL_DIR_TOKEN = '$' + '{ETHOS_SKILL_DIR}';
+const ETHOS_SESSION_ID_TOKEN = '$' + '{ETHOS_SESSION_ID}';
 
 const OS_ALIASES: Record<string, string> = {
   macos: 'darwin',
@@ -124,8 +126,8 @@ export function shouldInject(
  */
 export function applySubstitutions(content: string, skillDir: string, sessionId: string): string {
   return content
-    .replaceAll('${ETHOS_SKILL_DIR}', skillDir)
-    .replaceAll('${ETHOS_SESSION_ID}', sessionId);
+    .replaceAll(ETHOS_SKILL_DIR_TOKEN, skillDir)
+    .replaceAll(ETHOS_SESSION_ID_TOKEN, sessionId);
 }
 
 // ---------------------------------------------------------------------------

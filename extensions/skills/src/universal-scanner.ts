@@ -145,7 +145,7 @@ export class UniversalScanner {
     if (!raw) return null;
 
     const sourceDir =
-      this.sources.find((s) => filePath.startsWith(s.dir + '/'))?.dir ?? dirname(filePath);
+      this.sources.find((s) => filePath.startsWith(`${s.dir}/`))?.dir ?? dirname(filePath);
     const name = this.skillNameFor(filePath, sourceDir);
     const qualifiedName = `${sourceLabel}/${name}`;
 

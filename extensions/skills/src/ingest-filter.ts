@@ -65,8 +65,6 @@ export function filterSkill(
         }
       );
     }
-
-    case 'capability':
     default:
       return capabilityCheck(
         skill,

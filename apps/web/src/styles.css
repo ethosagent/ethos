@@ -991,14 +991,6 @@ body,
   }
 }
 
-/* Pending-approval chip variant — distinct from running, ok, failed.
-   Uses the warning amber from the semantic palette since it signals
-   "waiting on you" rather than "running" or "done". */
-
-.tool-chip-pending-approval .tool-chip-status {
-  color: #f59e0b;
-}
-
 .tool-chip-pending-approval {
   border-color: rgba(245, 158, 11, 0.4);
   background: rgba(245, 158, 11, 0.06);
@@ -1061,6 +1053,13 @@ body,
 
 .tool-chip-failed .tool-chip-status {
   color: #f87171;
+}
+
+/* Pending-approval chip variant — distinct from running, ok, failed.
+   Uses the warning amber from the semantic palette since it signals
+   "waiting on you" rather than "running" or "done". */
+.tool-chip-pending-approval .tool-chip-status {
+  color: #f59e0b;
 }
 
 .tool-chip-name {

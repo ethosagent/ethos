@@ -38,6 +38,13 @@ function makeScanner(storage: InMemoryStorage) {
   });
 }
 
+function must<T>(value: T | undefined, message: string): T {
+  if (value === undefined) {
+    throw new Error(message);
+  }
+  return value;
+}
+
 // Markdown for each test skill
 const SUMMARIZE_DOC = `---
 name: Summarize Document
@@ -89,7 +96,7 @@ describe('Step 2 — ethos global skill visible to default personality', () => {
   it('scanner discovers the skill with qualified name ethos/summarize-doc', async () => {
     const pool = await makeScanner(storage).scan();
     expect(pool.has('ethos/summarize-doc')).toBe(true);
-    const skill = pool.get('ethos/summarize-doc')!;
+    const skill = must(pool.get('ethos/summarize-doc'), 'missing ethos/summarize-doc');
     expect(skill.name).toBe('Summarize Document');
     expect(skill.required_tools).toEqual(['read_file']);
     expect(skill.dialect).toBe('agentskills');
@@ -143,8 +150,8 @@ describe('Step 3 — capability filtering (researcher vs engineer)', () => {
     const researcher = makePersonality({ id: 'researcher', toolset: ['read_file', 'search_web'] });
     const toolNames = new Set(['read_file', 'search_web']);
 
-    const summarize = pool.get('ethos/summarize-doc')!;
-    const deploy = pool.get('ethos/deploy-prod')!;
+    const summarize = must(pool.get('ethos/summarize-doc'), 'missing ethos/summarize-doc');
+    const deploy = must(pool.get('ethos/deploy-prod'), 'missing ethos/deploy-prod');
 
     expect(filterSkill(summarize, researcher, toolNames).include).toBe(true);
     expect(filterSkill(deploy, researcher, toolNames).include).toBe(false);
@@ -157,10 +164,10 @@ describe('Step 3 — capability filtering (researcher vs engineer)', () => {
       id: 'engineer',
       toolset: ['read_file', 'write_file', 'run_shell', 'search_web', 'ssh_connect'],
     });
-    const toolNames = new Set(engineer.toolset!);
+    const toolNames = new Set(engineer.toolset ?? []);
 
-    const summarize = pool.get('ethos/summarize-doc')!;
-    const deploy = pool.get('ethos/deploy-prod')!;
+    const summarize = must(pool.get('ethos/summarize-doc'), 'missing ethos/summarize-doc');
+    const deploy = must(pool.get('ethos/deploy-prod'), 'missing ethos/deploy-prod');
 
     expect(filterSkill(summarize, engineer, toolNames).include).toBe(true);
     expect(filterSkill(deploy, engineer, toolNames).include).toBe(true);
@@ -169,7 +176,7 @@ describe('Step 3 — capability filtering (researcher vs engineer)', () => {
   it('reject reason names the missing tool', async () => {
     const pool = await scanner.scan();
     const researcher = makePersonality({ toolset: ['read_file'] });
-    const deploy = pool.get('ethos/deploy-prod')!;
+    const deploy = must(pool.get('ethos/deploy-prod'), 'missing ethos/deploy-prod');
     const result = filterSkill(deploy, researcher, new Set(['read_file']));
     expect(result.include).toBe(false);
     expect(result.reason).toMatch(/run_shell|ssh_connect/);
@@ -200,8 +207,8 @@ describe('Step 4 — explicit mode allow list', () => {
     });
     const toolNames = new Set(['read_file', 'search_web']);
 
-    const summarize = pool.get('ethos/summarize-doc')!;
-    const deploy = pool.get('ethos/deploy-prod')!;
+    const summarize = must(pool.get('ethos/summarize-doc'), 'missing ethos/summarize-doc');
+    const deploy = must(pool.get('ethos/deploy-prod'), 'missing ethos/deploy-prod');
 
     expect(filterSkill(summarize, researcher, toolNames).include).toBe(true);
     expect(filterSkill(deploy, researcher, toolNames).include).toBe(false);
@@ -252,7 +259,10 @@ describe('Step 5 — cross-source discovery from ~/.claude/skills/', () => {
   it('discovers citation-formatter from claude-code source', async () => {
     const pool = await scanner.scan();
     expect(pool.has('claude-code/citation-formatter')).toBe(true);
-    const skill = pool.get('claude-code/citation-formatter')!;
+    const skill = must(
+      pool.get('claude-code/citation-formatter'),
+      'missing claude-code/citation-formatter',
+    );
     expect(skill.name).toBe('Citation Formatter');
     expect(skill.source).toBe('claude-code');
     expect(skill.tags).toContain('research');
@@ -290,7 +300,7 @@ describe('Step 5b — OpenClaw dialect from ~/.openclaw/skills/', () => {
 
     const pool = await makeScanner(storage).scan();
     expect(pool.has('openclaw/bash-helper')).toBe(true);
-    const skill = pool.get('openclaw/bash-helper')!;
+    const skill = must(pool.get('openclaw/bash-helper'), 'missing openclaw/bash-helper');
     expect(skill.dialect).toBe('openclaw');
     expect(skill.name).toBe('Bash Helper');
   });
@@ -359,8 +369,8 @@ Claude body.`;
     // Both get separate qualified names (ethos/ vs claude-code/)
     expect(pool.has('ethos/summarize-doc')).toBe(true);
     expect(pool.has('claude-code/summarize-doc')).toBe(true);
-    expect(pool.get('ethos/summarize-doc')!.name).toBe('From Ethos');
-    expect(pool.get('claude-code/summarize-doc')!.name).toBe('From Claude');
+    expect(pool.get('ethos/summarize-doc')?.name).toBe('From Ethos');
+    expect(pool.get('claude-code/summarize-doc')?.name).toBe('From Claude');
   });
 });
 
@@ -388,12 +398,12 @@ describe('mtime cache — scanner re-reads only when file changes', () => {
 
     const scanner = makeScanner(storage);
     const pool1 = await scanner.scan();
-    const firstSkill = pool1.get('ethos/summarize-doc')!;
+    const firstSkill = must(pool1.get('ethos/summarize-doc'), 'missing ethos/summarize-doc');
 
     // Overwrite changes mtime in InMemoryStorage
-    await storage.write(`${ETHOS_SKILLS}/summarize-doc.md`, SUMMARIZE_DOC + '\nUpdated.');
+    await storage.write(`${ETHOS_SKILLS}/summarize-doc.md`, `${SUMMARIZE_DOC}\nUpdated.`);
     const pool2 = await scanner.scan();
-    const secondSkill = pool2.get('ethos/summarize-doc')!;
+    const secondSkill = must(pool2.get('ethos/summarize-doc'), 'missing ethos/summarize-doc');
 
     expect(secondSkill).not.toBe(firstSkill);
     expect(secondSkill.body).toContain('Updated');
@@ -412,7 +422,7 @@ describe('Legacy plain-markdown skills (no frontmatter)', () => {
 
     const pool = await makeScanner(storage).scan();
     expect(pool.has('ethos/old-style')).toBe(true);
-    const skill = pool.get('ethos/old-style')!;
+    const skill = must(pool.get('ethos/old-style'), 'missing ethos/old-style');
     expect(skill.dialect).toBe('legacy');
     expect(skill.required_tools).toBeUndefined();
   });

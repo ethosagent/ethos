@@ -33,7 +33,11 @@ describe('logSupervisorEvent', () => {
     const logPath = supervisorLogPath();
     const lines = readFileSync(logPath, 'utf-8').trim().split('\n');
     expect(lines).toHaveLength(1);
-    const entry = JSON.parse(lines[0]!);
+    const firstLine = lines[0];
+    if (firstLine === undefined) {
+      throw new Error('expected one log line');
+    }
+    const entry = JSON.parse(firstLine);
     expect(entry.team).toBe('analytics');
     expect(entry.personality).toBe('researcher');
     expect(entry.event).toBe('spawn');
@@ -50,7 +54,11 @@ describe('logSupervisorEvent', () => {
     const lines = readFileSync(logPath, 'utf-8').trim().split('\n');
     expect(lines).toHaveLength(3);
     for (let i = 0; i < 3; i++) {
-      const entry = JSON.parse(lines[i]!);
+      const line = lines[i];
+      if (line === undefined) {
+        throw new Error(`expected log line at index ${i}`);
+      }
+      const entry = JSON.parse(line);
       expect(entry.event).toBe(events[i]);
     }
   });

@@ -367,7 +367,7 @@ async function walkAndSearch(
     const lines = text.split('\n');
     for (let i = 0; i < lines.length && matches.length < maxMatches; i++) {
       const line = lines[i];
-      if (line && line.includes(pattern)) {
+      if (line?.includes(pattern)) {
         matches.push({ file: fullPath, line: i + 1, content: line.trim() });
       }
     }

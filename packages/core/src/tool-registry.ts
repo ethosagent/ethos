@@ -122,12 +122,12 @@ export class DefaultToolRegistry implements ToolRegistry {
       } else if (isMcp) {
         const server = mcpServerName(name);
         const allowed = personality.mcp_servers;
-        if (server && allowed && allowed.includes(server)) {
+        if (server && allowed?.includes(server)) {
           reach.add(name);
         }
       } else if (isPlugin) {
         const allowed = personality.plugins;
-        if (entry.pluginId && allowed && allowed.includes(entry.pluginId)) {
+        if (entry.pluginId && allowed?.includes(entry.pluginId)) {
           reach.add(name);
         }
       }

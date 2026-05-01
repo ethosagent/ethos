@@ -201,10 +201,6 @@
   margin-bottom: 24px;
 }
 
-.sectionHeading .sectionLabel {
-  margin-bottom: 0;
-}
-
 .sectionChevron {
   font-family: var(--ifm-font-family-monospace);
   color: var(--ifm-color-primary);
@@ -236,6 +232,10 @@
   letter-spacing: 0.08em;
   color: var(--ethos-text-tertiary);
   margin-bottom: 24px;
+}
+
+.sectionHeading .sectionLabel {
+  margin-bottom: 0;
 }
 
 .pathRows {
