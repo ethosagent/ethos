@@ -98,7 +98,7 @@ if (!prOnly) {
   const tag = `v${version}`;
   let tagExistsLocally = false;
   try {
-    exec(`git rev-parse ${tag}`);
+    execSync(`git rev-parse ${tag}`, { cwd: root, stdio: 'pipe' });
     tagExistsLocally = true;
   } catch {
     // expected — tag doesn't exist yet
