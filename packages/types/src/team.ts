@@ -25,6 +25,14 @@ export interface TeamManifest {
   dispatch_mode?: DispatchMode;
   /** The personality that acts as the leader when dispatch_mode is 'coordinator'. Required iff dispatch_mode is 'coordinator'. */
   coordinator?: string;
+  /** Model override for the coordinator. Beats global config; global modelRouting is not consulted for the coordinator. */
+  coordinator_model?: string;
+  /**
+   * Per-member personality model overrides.
+   * Maps personality ID → model ID. Beats globalModelRouting for that personality;
+   * falls through to globalModelRouting if absent, then to global model.
+   */
+  personality_models?: Record<string, string>;
   /** Which mesh this team joins. Defaults to the team's name (isolated mesh per team). */
   mesh?: string;
   /** Agents to boot as part of this team. */

@@ -323,6 +323,123 @@ members: []
 });
 
 // ---------------------------------------------------------------------------
+// Model routing fields — coordinator_model + personality_models
+// ---------------------------------------------------------------------------
+
+describe('parseTeamManifest — model routing fields', () => {
+  it('parses coordinator_model when present', () => {
+    const yaml = `
+name: alpha
+description: Test
+domain_capabilities: [x]
+coordinator: researcher
+coordinator_model: claude-haiku-4-5
+members:
+  - personality: researcher
+  - personality: engineer
+`;
+    const result = parseTeamManifest(yaml);
+    expect(result.coordinator_model).toBe('claude-haiku-4-5');
+  });
+
+  it('parses personality_models map when present', () => {
+    const yaml = `
+name: alpha
+description: Test
+domain_capabilities: [x]
+members:
+  - personality: researcher
+  - personality: engineer
+personality_models:
+  researcher: claude-sonnet-4-6
+  engineer: claude-haiku-4-5
+`;
+    const result = parseTeamManifest(yaml);
+    expect(result.personality_models).toEqual({
+      researcher: 'claude-sonnet-4-6',
+      engineer: 'claude-haiku-4-5',
+    });
+  });
+
+  it('leaves coordinator_model and personality_models undefined when absent', () => {
+    const result = parseTeamManifest(`
+name: minimal
+description: x
+domain_capabilities: [x]
+members:
+  - personality: worker
+`);
+    expect(result.coordinator_model).toBeUndefined();
+    expect(result.personality_models).toBeUndefined();
+  });
+});
+
+describe('validateForStart — model routing warnings', () => {
+  it('warns when personality_models contains a key not matching any member', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const yaml = `
+name: alpha
+description: Test
+domain_capabilities: [x]
+members:
+  - personality: researcher
+personality_models:
+  engineer: claude-haiku-4-5
+`;
+    const manifest = parseTeamManifest(yaml);
+    validateForStart(manifest);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('engineer'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('personality_models'));
+    warnSpy.mockRestore();
+  });
+
+  it('does not warn when all personality_models keys match members', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const yaml = `
+name: alpha
+description: Test
+domain_capabilities: [x]
+members:
+  - personality: researcher
+  - personality: engineer
+personality_models:
+  researcher: claude-sonnet-4-6
+  engineer: claude-haiku-4-5
+`;
+    const manifest = parseTeamManifest(yaml);
+    validateForStart(manifest);
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// supervisor launch args — model override passthrough
+// ---------------------------------------------------------------------------
+
+describe('buildMemberLaunchArgs', () => {
+  // Use dynamic import to avoid pulling in supervisor side-effects
+  it('includes --model when modelOverride is provided', async () => {
+    const { buildMemberLaunchArgs } = await import('../supervisor');
+    const args = buildMemberLaunchArgs(
+      '/usr/bin/ethos',
+      3001,
+      'engineer',
+      'alpha',
+      'claude-haiku-4-5',
+    );
+    expect(args).toContain('--model');
+    expect(args).toContain('claude-haiku-4-5');
+  });
+
+  it('omits --model when no override provided', async () => {
+    const { buildMemberLaunchArgs } = await import('../supervisor');
+    const args = buildMemberLaunchArgs('/usr/bin/ethos', 3001, 'engineer', 'alpha');
+    expect(args).not.toContain('--model');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // YAML parse errors
 // ---------------------------------------------------------------------------
 

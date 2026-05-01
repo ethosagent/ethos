@@ -81,6 +81,8 @@ export function loadTeamManifest(teamName: string): TeamManifest {
  * Build an AgentLoop wired to a team's named mesh.
  * The coordinator personality is taken from manifest.coordinator, falling back
  * to the first member, then to config.personality.
+ *
+ * Phase 2: applies coordinator model override from manifest.coordinator_model.
  */
 export async function createTeamAgentLoop(
   config: EthosConfig,
@@ -92,8 +94,14 @@ export async function createTeamAgentLoop(
     manifest.coordinator ?? manifest.members[0]?.personality ?? config.personality;
   const meshName = manifest.mesh ?? manifest.name;
 
+  // Coordinator model: manifest.coordinator_model beats global config.model.
+  // Coordinator does NOT use personality-level modelRouting (see plan doc).
+  const coordinatorConfig = manifest.coordinator_model
+    ? { ...config, model: manifest.coordinator_model }
+    : config;
+
   const loop = await createAgentLoop(
-    { ...config, personality: coordinatorPersonality },
+    { ...coordinatorConfig, personality: coordinatorPersonality },
     { profile: opts.profile ?? 'cli', meshRegistryPath: meshRegistryPath(meshName) },
   );
 

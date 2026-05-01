@@ -260,3 +260,7 @@ export function createDangerPredicate(
     return null;
   };
 }
+
+export type { ModelSource, ModelTarget, ResolveModelInput } from './model-resolver';
+// Re-export the resolver so callers don't need a separate import.
+export { resolveModelTarget } from './model-resolver';

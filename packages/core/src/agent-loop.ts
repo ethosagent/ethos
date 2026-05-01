@@ -66,7 +66,19 @@ export type AgentEvent =
   | { type: 'error'; error: string; code: string }
   | { type: 'done'; text: string; turnCount: number }
   // Emitted once after context injectors run; carries any metadata they wrote to PromptContext.meta.
-  | { type: 'context_meta'; data: Record<string, unknown> };
+  | { type: 'context_meta'; data: Record<string, unknown> }
+  /**
+   * Emitted once at the very start of each turn, before any LLM call.
+   * Carries the resolved provider/model and the routing source so consumers
+   * (TUI status bar, CLI verbose mode, telemetry) can show the effective model.
+   * `source` reflects which routing rule selected the model (see model_update.md).
+   */
+  | {
+      type: 'run_start';
+      provider: string;
+      model: string;
+      source: 'team-coordinator' | 'team-personality' | 'personality' | 'global';
+    };
 
 // ---------------------------------------------------------------------------
 // Config
@@ -237,8 +249,19 @@ export class AgentLoop {
     // personality.model is intentionally skipped — those IDs are Anthropic-specific
     // and break non-Anthropic providers (OpenRouter, Gemini, Ollama, etc.).
     // Configure overrides via modelRouting in ~/.ethos/config.yaml instead.
-    const effectiveModel = this.modelRouting[personality.id] ?? this.llm.model;
+    const personalityOverride = this.modelRouting[personality.id];
+    const effectiveModel = personalityOverride ?? this.llm.model;
     const modelOverride = effectiveModel !== this.llm.model ? effectiveModel : undefined;
+
+    // Phase 5: emit run_start trace so consumers (TUI, CLI verbose, telemetry)
+    // can surface the resolved provider/model and routing source.
+    yield {
+      type: 'run_start',
+      provider: this.llm.name,
+      model: effectiveModel,
+      source: personalityOverride ? 'personality' : 'global',
+    };
+
     // Allowed tool names for this personality (undefined = no restriction)
     const allowedTools = personality.toolset?.length ? personality.toolset : undefined;
     // Per-personality plugin + MCP gate (default-deny: missing field = no access)

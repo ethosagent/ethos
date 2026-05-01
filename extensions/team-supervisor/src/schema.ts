@@ -20,6 +20,8 @@ const TeamManifestSchema: z.ZodType<TeamManifest> = z
     domain_capabilities: z.array(z.string()),
     dispatch_mode: z.enum(['coordinator', 'self-routing', 'broadcast']).optional(),
     coordinator: z.string().optional(),
+    coordinator_model: z.string().optional(),
+    personality_models: z.record(z.string(), z.string()).optional(),
     mesh: z.string().optional(),
     members: z.array(TeamMemberSchema),
   })
@@ -101,5 +103,18 @@ export function validateForStart(manifest: TeamManifest): void {
       cause: `Team "${manifest.name}" has no members`,
       action: `Add at least one personality: ethos team ${manifest.name} add <personality>`,
     });
+  }
+
+  // Phase 4: warn on unknown personality_models keys (explicit invalid override).
+  if (manifest.personality_models) {
+    const knownPersonalities = new Set(manifest.members.map((m) => m.personality));
+    for (const key of Object.keys(manifest.personality_models)) {
+      if (!knownPersonalities.has(key)) {
+        console.warn(
+          `[team] Warning: personality_models key "${key}" does not match any team member personality. ` +
+            `Known personalities: ${[...knownPersonalities].join(', ') || '(none)'}`,
+        );
+      }
+    }
   }
 }

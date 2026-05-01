@@ -35,6 +35,9 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   const personalityOverride = parseFlagValue(args, ['--personality']);
   if (personalityOverride) config = { ...config, personality: personalityOverride };
 
+  const modelOverride = parseFlagValue(args, ['--model']);
+  if (modelOverride) config = { ...config, model: modelOverride };
+
   const teamFlag = parseFlagValue(args, ['--team']);
   const meshName = parseFlagValue(args, ['--mesh']) ?? 'default';
 
@@ -78,7 +81,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   await mesh.register({
     agentId,
     capabilities,
-    model: config.model,
+    model: config.model, // Phase 3: already reflects any --model override applied above
     pid: process.pid,
     host: 'localhost',
     port: acpPort,

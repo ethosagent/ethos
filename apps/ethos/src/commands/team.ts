@@ -67,6 +67,13 @@ function serializeTeamManifest(manifest: TeamManifest): string {
 
   if (manifest.dispatch_mode) lines.push(`dispatch_mode: ${manifest.dispatch_mode}`);
   if (manifest.coordinator) lines.push(`coordinator: ${manifest.coordinator}`);
+  if (manifest.coordinator_model) lines.push(`coordinator_model: ${manifest.coordinator_model}`);
+  if (manifest.personality_models && Object.keys(manifest.personality_models).length > 0) {
+    lines.push('personality_models:');
+    for (const [id, model] of Object.entries(manifest.personality_models)) {
+      lines.push(`  ${id}: ${model}`);
+    }
+  }
   if (manifest.mesh) lines.push(`mesh: ${manifest.mesh}`);
 
   if (manifest.members.length === 0) {

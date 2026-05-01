@@ -21,31 +21,12 @@ export function buildMemberLaunchArgs(
   port: number,
   personality: string,
   meshName: string,
+  modelOverride?: string,
 ): string[] {
+  const base = ['serve', '--port', String(port), '--personality', personality, '--mesh', meshName];
+  if (modelOverride) base.push('--model', modelOverride);
   const needsTsxLoader = entryPoint.endsWith('.ts') || entryPoint.endsWith('.tsx');
-  return needsTsxLoader
-    ? [
-        '--import',
-        'tsx',
-        entryPoint,
-        'serve',
-        '--port',
-        String(port),
-        '--personality',
-        personality,
-        '--mesh',
-        meshName,
-      ]
-    : [
-        entryPoint,
-        'serve',
-        '--port',
-        String(port),
-        '--personality',
-        personality,
-        '--mesh',
-        meshName,
-      ];
+  return needsTsxLoader ? ['--import', 'tsx', entryPoint, ...base] : [entryPoint, ...base];
 }
 
 interface MemberState extends MemberRuntime {
@@ -179,7 +160,14 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
     if (!entryPoint) {
       throw new Error('Cannot determine CLI entry point for member launch');
     }
-    const childArgs = buildMemberLaunchArgs(entryPoint, m.port, personality, meshName);
+    const modelOverride = manifest.personality_models?.[personality];
+    const childArgs = buildMemberLaunchArgs(
+      entryPoint,
+      m.port,
+      personality,
+      meshName,
+      modelOverride,
+    );
 
     const child = spawn(process.execPath, childArgs, {
       stdio: ['ignore', 'pipe', 'pipe'],
