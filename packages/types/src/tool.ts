@@ -1,5 +1,5 @@
 export type ToolResult =
-  | { ok: true; value: string }
+  | { ok: true; value: string; cost_usd?: number }
   | { ok: false; error: string; code: 'input_invalid' | 'not_available' | 'execution_failed' };
 
 export interface ToolProgressEvent {

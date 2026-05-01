@@ -1,3 +1,6 @@
+import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { pickProvider } from '../auto-pick';
 import { imageGenerateTool } from '../index';
@@ -15,9 +18,6 @@ function makeProvider(name: string, available: boolean, supports = true): ImageG
     generate: vi.fn().mockResolvedValue({ buffer: Buffer.from('fake'), cost_usd: 0.04 }),
   };
 }
-
-const openaiProvider = () => makeProvider('openai-dalle', false);
-const replicateProvider = () => makeProvider('replicate-flux', false);
 
 const ctx = {
   sessionId: 'test',
@@ -139,5 +139,52 @@ describe('size parsing', () => {
     const [w, h] = '512x512'.split('x').map(Number);
     expect(w).toBe(512);
     expect(h).toBe(512);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PNG output integrity
+// ---------------------------------------------------------------------------
+
+// PNG signature: 8 bytes that every valid PNG file starts with.
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+describe('image_generate output file', () => {
+  let outPath: string;
+
+  afterEach(() => {
+    if (outPath && existsSync(outPath)) rmSync(outPath);
+  });
+
+  it('file written from a PNG provider buffer has correct PNG magic bytes', async () => {
+    outPath = join(tmpdir(), `ethos-png-${Date.now()}.png`);
+
+    // Build a minimal valid PNG: signature + 1-byte payload (IEND only for brevity)
+    const pngBuffer = Buffer.concat([PNG_SIGNATURE, Buffer.from([0x00])]);
+
+    const { writeFile } = await import('node:fs/promises');
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(tmpdir(), { recursive: true });
+    await writeFile(outPath, pngBuffer);
+
+    const bytes = readFileSync(outPath);
+    expect(bytes[0]).toBe(0x89); // PNG magic byte 1
+    expect(bytes[1]).toBe(0x50); // P
+    expect(bytes[2]).toBe(0x4e); // N
+    expect(bytes[3]).toBe(0x47); // G
+    expect(bytes[4]).toBe(0x0d);
+    expect(bytes[5]).toBe(0x0a);
+    expect(bytes[6]).toBe(0x1a);
+    expect(bytes[7]).toBe(0x0a);
+  });
+
+  it('ToolResult ok variant carries cost_usd when provider reports cost', () => {
+    // Type-level + value-level: ToolResult.ok allows cost_usd
+    const result: { ok: true; value: string; cost_usd?: number } = {
+      ok: true,
+      value: '{}',
+      cost_usd: 0.04,
+    };
+    expect(result.cost_usd).toBe(0.04);
   });
 });

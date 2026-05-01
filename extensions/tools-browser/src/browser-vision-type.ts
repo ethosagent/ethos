@@ -87,16 +87,17 @@ export function createBrowserVisionTypeTool(visionOpts: VisionResolverOptions): 
         if (visionOpts.apiKey) {
           const screenshot = await session.page.screenshot({ type: 'png' });
           const b64 = screenshot.toString('base64');
-          const coords = await resolveByVision(b64, description, undefined, visionOpts);
+          const visionResult = await resolveByVision(b64, description, undefined, visionOpts);
 
-          if (coords) {
-            await session.page.mouse.click(coords.x, coords.y);
+          if (visionResult) {
+            await session.page.mouse.click(visionResult.x, visionResult.y);
             await session.page.keyboard.type(text);
             if (submit) {
               await session.page.keyboard.press('Enter');
             }
             return {
               ok: true,
+              cost_usd: visionResult.cost_usd,
               value: JSON.stringify({
                 typed: true,
                 strategy: 'vision',

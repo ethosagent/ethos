@@ -141,6 +141,7 @@ export const imageGenerateTool: Tool = {
     const { width, height } = parseSize(size);
     return {
       ok: true,
+      cost_usd,
       value: JSON.stringify({
         path: outPath,
         dimensions: { width, height },

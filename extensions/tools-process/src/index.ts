@@ -16,6 +16,7 @@ const MAX_CONCURRENT = 8;
 const DEFAULT_LOG_LINES = 200;
 const DEFAULT_WAIT_TIMEOUT_S = 30;
 const WAIT_POLL_MS = 200;
+const SIGTERM_GRACE_MS = 5_000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -291,8 +292,33 @@ function makeProcessStop(dataDir: string): Tool {
         };
       }
 
+      // For SIGTERM, wait up to 5s for graceful exit then escalate to SIGKILL.
+      if (sig === 'SIGTERM') {
+        const deadline = Date.now() + SIGTERM_GRACE_MS;
+        while (Date.now() < deadline) {
+          await sleep(WAIT_POLL_MS);
+          if (!isAlive(entry.pid)) break;
+        }
+        if (isAlive(entry.pid)) {
+          try {
+            process.kill(entry.pid, 'SIGKILL');
+          } catch {
+            // ESRCH means it exited just before SIGKILL — fine
+          }
+        }
+      }
+
+      // Read exit_code if the spawn exit handler already recorded it
+      const finalEntry = loadRegistry(dataDir)[id];
+      const exitCode = finalEntry?.exitCode;
       updateEntry(dataDir, id, { status: 'killed' });
-      return { ok: true, value: JSON.stringify({ stopped: true }) };
+      return {
+        ok: true,
+        value: JSON.stringify({
+          stopped: true,
+          ...(exitCode !== undefined && { exit_code: exitCode }),
+        }),
+      };
     },
   };
 }

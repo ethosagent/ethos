@@ -69,12 +69,13 @@ export function createBrowserVisionClickTool(visionOpts: VisionResolverOptions):
         if (visionOpts.apiKey) {
           const screenshot = await session.page.screenshot({ type: 'png' });
           const b64 = screenshot.toString('base64');
-          const coords = await resolveByVision(b64, description, context, visionOpts);
+          const visionResult = await resolveByVision(b64, description, context, visionOpts);
 
-          if (coords) {
-            await session.page.mouse.click(coords.x, coords.y);
+          if (visionResult) {
+            await session.page.mouse.click(visionResult.x, visionResult.y);
             return {
               ok: true,
+              cost_usd: visionResult.cost_usd,
               value: JSON.stringify({
                 clicked: true,
                 element_description: description,

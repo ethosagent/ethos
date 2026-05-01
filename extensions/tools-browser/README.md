@@ -13,8 +13,11 @@ Headless Chromium tools for navigating, clicking, and typing on web pages, expos
 | `browse_url` | `browser` | Navigate to a URL and return the page's accessibility tree with `@e{n}` refs. |
 | `browser_click` | `browser` | Click an element by its `@e{n}` reference and return the updated tree. |
 | `browser_type` | `browser` | Type text (optionally pressing Enter) into an element by `@e{n}`. |
+| `browser_screenshot` | `browser` | Capture a base64 PNG screenshot of the current page. |
+| `browser_vision_click` | `browser` | Click an element described in natural language (a11y-first, vision fallback). |
+| `browser_vision_type` | `browser` | Type into an element described in natural language (a11y-first, vision fallback). |
 
-Factory: `createBrowserTools()`. Also re-exports `parseAriaSnapshot`, `buildA11yTree`, and the `A11yRef` / `A11yResult` / `RawA11yNode` types from `src/a11y.ts`.
+Factory: `createBrowserTools(opts?)`. `opts.visionApiKey`, `opts.visionProvider`, `opts.visionModel` enable the vision fallback for `browser_vision_click` and `browser_vision_type`. Also re-exports `parseAriaSnapshot`, `buildA11yTree`, and the `A11yRef` / `A11yResult` / `RawA11yNode` types from `src/a11y.ts`.
 
 ## How it works
 
@@ -37,10 +40,29 @@ After every navigation, click, or type, `snapshotPage` calls Playwright's `page.
 - The `--no-sandbox` flags are required for some container/CI environments and broaden the trust boundary — do not point this at hostile pages on a privileged host.
 - `parseAriaSnapshot` is a regex over YAML, not a YAML parser. Roles whose accessible name contains an unescaped `"` will not be tagged.
 
+## Vision tools
+
+`browser_vision_click` and `browser_vision_type` accept a natural-language `description` instead of an `@e{n}` ref. They use a hybrid strategy:
+
+1. **A11y-first** — Playwright's `ariaSnapshot()` is scanned for a node whose accessible name scores >0.7 against the description (exact match → contains → Jaccard word overlap). If found, the element is clicked/typed with zero LLM calls.
+2. **Vision fallback** — If the a11y tree doesn't yield a confident match and `visionApiKey` is configured, a screenshot is sent to the vision model (`claude-haiku-4-5-20251001` for Anthropic, `gpt-4o` for OpenAI). The model returns `{"x":N,"y":N}` coordinates; the tool clicks/types at those pixel coords.
+3. **Graceful degradation** — If no `visionApiKey` is set, the tool reports `strategy: 'a11y_only'` and returns `clicked/typed: false` without error.
+
+The `strategy` field in every response tells you which path ran: `'a11y'` | `'vision'` | `'a11y_only'` | `'failed'`.
+
+Vision calls incur cost. The cost is reported as `cost_usd` on the `ToolResult` and aggregated into the session's running spend (visible via `/usage`).
+
+`browser_screenshot` returns `{ image_base64, dimensions, url }` — useful when you want to pass the current page state to a vision-capable model outside the browser tool loop.
+
 ## Files
 
 | File | Purpose |
 |---|---|
 | `src/index.ts` | Session map, `browse_url`/`browser_click`/`browser_type`, `createBrowserTools()`. |
+| `src/sessions.ts` | `BrowserSession` interface, `sessions` Map, `getOrCreateSession`, `closeSession`, `isPlaywrightInstalled`. |
 | `src/a11y.ts` | `INTERACTIVE_ROLES`, `parseAriaSnapshot`, `buildA11yTree`. |
+| `src/vision-resolver.ts` | `resolveByA11y` (text-similarity scoring), `resolveByVision` (LLM vision call + cost). |
+| `src/browser-screenshot.ts` | `browser_screenshot` tool. |
+| `src/browser-vision-click.ts` | `browser_vision_click` tool factory. |
+| `src/browser-vision-type.ts` | `browser_vision_type` tool factory. |
 | `src/__tests__/` | Tests for snapshot parsing, ref injection, and tree building. |

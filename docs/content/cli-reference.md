@@ -767,6 +767,51 @@ Type these inside `ethos chat`. They run synchronously and don't count as a turn
 
 ---
 
+## Agent tools
+
+Tools the LLM can call during a turn. Which tools are visible depends on the active personality's `toolset.yaml`. Use `/tools` inside chat to list what the current personality can see.
+
+### `process` toolset
+
+Background process management. Add `process` to a personality's `toolset.yaml` to enable.
+
+| Tool | Args | Returns |
+|---|---|---|
+| `process_start` | `command`, `cwd?`, `env?`, `name?` | `{ id, pid, name, started_at }` |
+| `process_list` | — | Array of `{ id, name, pid, status, started_at, exit_code?, duration_ms }` |
+| `process_logs` | `id`, `lines?` (default 200), `stream?` (`stdout`/`stderr`/`both`) | Last N log lines as a string |
+| `process_stop` | `id`, `signal?` (`SIGTERM`/`SIGKILL`, default `SIGTERM`) | `{ stopped, exit_code? }` — SIGTERM waits 5 s then escalates to SIGKILL |
+| `process_wait` | `id`, `timeout_s?` (default 30) | `{ exited, exit_code? }` |
+
+**Limits:** max 8 concurrent processes. `process_start` returns `PROCESS_CAP_EXCEEDED` when at capacity. Stale orphan entries (dead >24 h) are reaped automatically on the next `process_list`.
+
+### `image` toolset
+
+Image generation. Requires `OPENAI_API_KEY` or `REPLICATE_API_TOKEN`. Add `image_generate` to `toolset.yaml`.
+
+| Tool | Args | Returns |
+|---|---|---|
+| `image_generate` | `prompt`, `output_path?`, `size?`, `quality?`, `provider?` | `{ path, dimensions, cost_usd, provider }` |
+
+**Providers:** `openai-dalle` (DALL-E 3, $0.04–$0.12/image), `replicate-flux` (Flux Schnell, $0.003/image), `auto` (default — picks DALL-E when both keys are set). Cost is aggregated into the session spend and counts toward `budgetCapUsd`.
+
+### `browser` toolset
+
+Headless Chromium browsing. Requires Playwright (`npx playwright install chromium`). Add `browser` tools to `toolset.yaml`.
+
+| Tool | Args | Returns |
+|---|---|---|
+| `browse_url` | `url` | Accessibility tree with `@e{n}` refs |
+| `browser_click` | `ref` (`@e{n}`), `description?` | Updated accessibility tree |
+| `browser_type` | `ref` (`@e{n}`), `text`, `submit?` | Updated accessibility tree |
+| `browser_screenshot` | — | `{ image_base64, dimensions, url }` |
+| `browser_vision_click` | `description`, `context?` | `{ clicked, element_description, strategy }` |
+| `browser_vision_type` | `description`, `text`, `submit?` | `{ typed, strategy }` |
+
+**Vision tools** (`browser_vision_click` / `browser_vision_type`) use the personality's model for a vision fallback when the accessibility tree doesn't match the description. `strategy` values: `a11y` (free, no LLM call), `vision` (one LLM vision call, cost reported), `a11y_only` (vision disabled — no vision-capable model configured), `failed` (neither matched).
+
+---
+
 ## Config file — `~/.ethos/config.yaml`
 
 Created by `ethos setup`. Every field is optional unless marked **required**.
@@ -899,6 +944,12 @@ Read at startup; override values in `config.yaml`.
 │   └── team/
 │       └── <name>/
 │           └── <personality>.log
+├── generated/              ← image_generate output (PNG files)
+├── processes/              ← process tool registry + per-process log files
+│   ├── registry.json
+│   └── <id>/
+│       ├── stdout.log
+│       └── stderr.log
 ├── allowlist.json          ← tool-call approval grants (web UI)
 ├── web-token               ← web UI auth token (chmod 600)
 └── whatsapp-auth/          ← WhatsApp gateway auth state

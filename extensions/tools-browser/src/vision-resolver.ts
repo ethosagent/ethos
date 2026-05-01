@@ -15,6 +15,12 @@ export interface ResolveResult {
   elementDescription?: string;
 }
 
+export interface VisionCoords {
+  x: number;
+  y: number;
+  cost_usd: number;
+}
+
 // Score an a11y node name against the description (0–1)
 function scoreMatch(nodeName: string, description: string): number {
   const a = nodeName.toLowerCase().trim();
@@ -56,13 +62,13 @@ export function resolveByA11y(snapshotText: string, description: string): string
   return bestScore > 0.7 ? bestName : null;
 }
 
-// Call vision model with screenshot + description, return {x, y} or null.
+// Call vision model with screenshot + description, return coords + cost or null.
 export async function resolveByVision(
   screenshotB64: string,
   description: string,
   context: string | undefined,
   opts: VisionResolverOptions,
-): Promise<{ x: number; y: number } | null> {
+): Promise<VisionCoords | null> {
   if (!opts.apiKey) return null;
 
   const provider = opts.provider ?? 'anthropic';
@@ -91,7 +97,12 @@ export async function resolveByVision(
 
       const textBlock = response.content.find((b) => b.type === 'text');
       if (!textBlock || textBlock.type !== 'text') return null;
-      return parseCoords(textBlock.text);
+      const coords = parseCoords(textBlock.text);
+      if (!coords) return null;
+      // Haiku pricing: $0.80/1M input, $4.00/1M output
+      const cost_usd =
+        response.usage.input_tokens * 0.0000008 + response.usage.output_tokens * 0.000004;
+      return { ...coords, cost_usd };
     }
 
     if (provider === 'openai') {
@@ -116,7 +127,14 @@ export async function resolveByVision(
 
       const text = response.choices[0]?.message?.content;
       if (!text) return null;
-      return parseCoords(text);
+      const coords = parseCoords(text);
+      if (!coords) return null;
+      // gpt-4o pricing: $2.50/1M input, $10.00/1M output
+      const usage = response.usage;
+      const cost_usd = usage
+        ? (usage.prompt_tokens ?? 0) * 0.0000025 + (usage.completion_tokens ?? 0) * 0.00001
+        : 0;
+      return { ...coords, cost_usd };
     }
   } catch {
     return null;

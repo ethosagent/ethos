@@ -737,6 +737,20 @@ export class AgentLoop {
             durationMs,
             result: result.ok ? result.value : result.error,
           };
+          // Aggregate tool-incurred costs (e.g. image generation, vision LLM calls)
+          // into the session budget so /usage and budgetCapUsd see them.
+          if (result.ok && result.cost_usd) {
+            this.sessionCosts.set(
+              sessionKey,
+              (this.sessionCosts.get(sessionKey) ?? 0) + result.cost_usd,
+            );
+            yield {
+              type: 'usage',
+              inputTokens: 0,
+              outputTokens: 0,
+              estimatedCostUsd: result.cost_usd,
+            };
+          }
           await this.hooks.fireVoid(
             'after_tool_call',
             {
