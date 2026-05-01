@@ -17,7 +17,7 @@ afterEach(async () => {
 
 describe('FilePersonalityRegistry', () => {
   describe('built-ins via createPersonalityRegistry()', () => {
-    it('loads all 5 built-in personalities', async () => {
+    it('loads built-in personalities including coordinator', async () => {
       const registry = await createPersonalityRegistry();
       const ids = registry.list().map((p) => p.id);
       expect(ids).toContain('researcher');
@@ -25,6 +25,7 @@ describe('FilePersonalityRegistry', () => {
       expect(ids).toContain('reviewer');
       expect(ids).toContain('coach');
       expect(ids).toContain('operator');
+      expect(ids).toContain('coordinator');
     });
 
     it('researcher has ethosFile and toolset', async () => {

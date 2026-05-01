@@ -1,0 +1,5 @@
+name: Coordinator
+description: Plans, dispatches, and synthesizes work across specialist teammates.
+model: claude-opus-4-7
+memoryScope: global
+capabilities: coordination, planning, synthesis

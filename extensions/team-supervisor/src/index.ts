@@ -9,10 +9,11 @@ export type { MemberRuntime, MemberStatus, TeamRuntime } from './runtime';
 export {
   pidFilePath,
   readRuntime,
+  removeRuntime,
   runtimePath,
   teamLogDir,
   teamsDir,
   writeRuntime,
 } from './runtime';
 export { parseTeamManifest, validateForStart } from './schema';
-export { runSupervisor } from './supervisor';
+export { buildMemberLaunchArgs, runSupervisor } from './supervisor';

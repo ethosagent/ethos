@@ -205,6 +205,35 @@ personality: engineer
 
 ---
 
+## 7. Run a team (multi-agent)
+
+Create a team manifest, add members, and boot it:
+
+```bash
+ethos team create demo
+ethos team demo add researcher
+ethos team demo add engineer
+ethos team start demo
+ethos team status demo
+```
+
+To use that team in chat:
+
+```bash
+ethos set team demo
+ethos chat
+```
+
+To return to single-personality chat:
+
+```bash
+ethos set personality researcher
+```
+
+See [Teams and Meshes](/docs/core-concepts/teams-and-meshes) for the full model (manifest fields, mesh isolation, runtime logs, and troubleshooting).
+
+---
+
 ## What's next
 
 import DocCardList from '@theme/DocCardList';

@@ -5,11 +5,13 @@ import type { MemberRuntime } from '@ethosagent/team-supervisor';
 import {
   parseTeamManifest,
   readRuntime,
+  removeRuntime,
   teamsDir,
   validateForStart,
 } from '@ethosagent/team-supervisor';
 import type { TeamManifest } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
+import { runtimeHealth } from './team-runtime';
 
 const c = {
   reset: '\x1b[0m',
@@ -109,7 +111,12 @@ async function runTeamList(): Promise<void> {
   for (const file of files) {
     const teamName = basename(file, '.yaml');
     const rt = readRuntime(teamName);
-    const liveMembers = rt?.members.filter((m) => m.status !== 'stopped' && m.status !== 'failed');
+    const health = runtimeHealth(rt);
+    if (health === 'stale') removeRuntime(teamName);
+    const liveRt = health === 'running' ? rt : null;
+    const liveMembers = liveRt?.members.filter(
+      (m) => m.status !== 'stopped' && m.status !== 'failed',
+    );
     const isRunning = (liveMembers?.length ?? 0) > 0;
     const status = isRunning ? `${c.green}running${c.reset}` : `${c.dim}stopped${c.reset}`;
     const memberCount = liveMembers?.length ?? 0;
@@ -136,20 +143,41 @@ async function runTeamStart(name: string | undefined): Promise<void> {
   const manifest = parseTeamManifest(src);
   validateForStart(manifest);
 
+  const existingRuntime = readRuntime(name);
+  const existingHealth = runtimeHealth(existingRuntime);
+  if (existingHealth === 'running') {
+    console.error(
+      `Team ${name} already running (PID ${existingRuntime?.supervisorPid}). Use 'ethos team status ${name}' for details.`,
+    );
+    process.exit(1);
+  }
+  if (existingHealth === 'stale') {
+    removeRuntime(name);
+    console.log(`${c.yellow}Cleaning up stale runtime state before start.${c.reset}`);
+  }
+
   console.log(
     `\n${c.bold}Starting team "${manifest.name}"${c.reset} (${manifest.members.length} members)`,
   );
 
   // Spawn the supervisor as a detached background process.
-  const child = spawn(
-    process.argv[0] ?? 'node',
-    [process.argv[1] ?? '', '_supervisor', name, manifestPath],
-    {
-      detached: true,
-      stdio: 'ignore',
-      env: process.env,
-    },
-  );
+  // In source mode (`tsx apps/ethos/src/index.ts ...`), Node cannot execute
+  // TypeScript directly, so we must re-launch with `--import tsx`.
+  const entryPoint = process.argv[1];
+  if (!entryPoint) {
+    throw new EthosError({
+      code: 'INTERNAL',
+      cause: 'Cannot determine CLI entry point for team supervisor launch',
+      action: 'Re-run `ethos team start <name>`; if it repeats, file an issue.',
+    });
+  }
+  const launchArgs = buildSupervisorLaunchArgs(entryPoint, name, manifestPath);
+
+  const child = spawn(process.execPath, launchArgs, {
+    detached: true,
+    stdio: 'ignore',
+    env: process.env,
+  });
   child.unref();
 
   const pid = child.pid;
@@ -182,9 +210,24 @@ async function runTeamStop(name: string | undefined): Promise<void> {
   }
 
   const rt = readRuntime(name);
-  if (!rt) {
+  const rtHealth = runtimeHealth(rt);
+  if (rtHealth === 'missing') {
     console.error(`Team "${name}" does not appear to be running (no runtime file).`);
     process.exit(1);
+  }
+
+  if (rtHealth === 'stale') {
+    removeRuntime(name);
+    console.error(`Team "${name}" is already stopped (stale runtime cleaned up).`);
+    process.exit(1);
+  }
+
+  if (!rt) {
+    throw new EthosError({
+      code: 'INTERNAL',
+      cause: `Runtime unexpectedly missing for team "${name}" after liveness checks`,
+      action: `Re-run 'ethos team stop ${name}'. If this repeats, file an issue.`,
+    });
   }
 
   const { supervisorPid } = rt;
@@ -232,9 +275,24 @@ async function runTeamStatus(name: string | undefined): Promise<void> {
   }
 
   const rt = readRuntime(name);
-  if (!rt) {
+  const rtHealth = runtimeHealth(rt);
+  if (rtHealth === 'missing') {
     console.log(`Team "${name}": ${c.dim}stopped${c.reset} (no runtime file)`);
     return;
+  }
+
+  if (rtHealth === 'stale') {
+    removeRuntime(name);
+    console.log(`Team "${name}": ${c.dim}stopped${c.reset} (cleaned stale runtime)`);
+    return;
+  }
+
+  if (!rt) {
+    throw new EthosError({
+      code: 'INTERNAL',
+      cause: `Runtime unexpectedly missing for team "${name}" after liveness checks`,
+      action: `Re-run 'ethos team status ${name}'. If this repeats, file an issue.`,
+    });
   }
 
   const uptime = Math.floor((Date.now() - new Date(rt.startedAt).getTime()) / 1000);
@@ -473,4 +531,15 @@ export async function runTeamCommand(sub: string, args: string[]): Promise<void>
       }
     }
   }
+}
+
+export function buildSupervisorLaunchArgs(
+  entryPoint: string,
+  teamName: string,
+  manifestPath: string,
+): string[] {
+  const needsTsxLoader = entryPoint.endsWith('.ts') || entryPoint.endsWith('.tsx');
+  return needsTsxLoader
+    ? ['--import', 'tsx', entryPoint, '_supervisor', teamName, manifestPath]
+    : [entryPoint, '_supervisor', teamName, manifestPath];
 }

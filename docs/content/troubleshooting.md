@@ -90,6 +90,65 @@ The agent uses `getMessages(sessionId, { limit: 50 })` by default. For very long
 
 ## Tool errors
 
+## Team mode issues
+
+**`ethos team start <name>` succeeds, but `team status` shows `restarting` or `failed`**
+
+Inspect member logs first:
+
+```bash
+ethos team logs <name> --member <personality>
+```
+
+Useful runtime files:
+
+```bash
+cat ~/.ethos/teams/<name>.runtime.json
+cat ~/.ethos/logs/mesh-supervisor.log
+```
+
+Common causes:
+
+1. Source-mode child launch mismatch (fixed in recent releases)
+2. Missing provider key/config for member process
+3. Port conflicts from existing local services
+
+Check configured ports and pids:
+
+```bash
+ethos team status <name>
+ethos mesh status <mesh-name>
+```
+
+**`ethos team add <personality>` shows usage error**
+
+Use the team-name form:
+
+```bash
+ethos team <name> add <personality>
+```
+
+Not:
+
+```bash
+ethos team add <personality>
+```
+
+**`ethos chat` still looks like single personality after `team start`**
+
+Starting a team does not switch chat context automatically.
+
+```bash
+ethos set team <name>
+ethos chat
+```
+
+You can switch back with:
+
+```bash
+ethos set personality <id>
+```
+
 **`Tool 'X' not found`**
 
 The tool isn't registered. Check:

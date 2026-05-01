@@ -1,4 +1,4 @@
-import { mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 function isProcessAlive(pid: number): boolean {
@@ -29,10 +29,6 @@ export function acquirePidFile(pidPath: string): () => void {
       // O_CREAT | O_EXCL | O_WRONLY — atomic, fails with EEXIST if file exists
       const fd = openSync(pidPath, 'wx');
       writeFileSync(fd, String(process.pid));
-      // fd auto-closes when the write completes because writeFileSync takes a fd
-      // but we still need to close explicitly via the low-level fd.
-      // Use the fs module to close properly.
-      const { closeSync } = require('node:fs');
       closeSync(fd);
       return true;
     } catch (err) {

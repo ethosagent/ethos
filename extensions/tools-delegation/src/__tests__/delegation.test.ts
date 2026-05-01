@@ -1,7 +1,18 @@
+import { mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { AgentMesh } from '@ethosagent/agent-mesh';
 import type { AgentEvent } from '@ethosagent/core';
 import type { ToolContext } from '@ethosagent/types';
-import { describe, expect, it } from 'vitest';
-import { createDelegateTaskTool, createDelegationTools, createMixtureOfAgentsTool } from '../index';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  createDelegateTaskTool,
+  createDelegationTools,
+  createDispatchTeamTool,
+  createListTeamTool,
+  createMixtureOfAgentsTool,
+  createRouteToAgentTool,
+} from '../index';
 
 // ---------------------------------------------------------------------------
 // Mock AgentLoop
@@ -35,6 +46,26 @@ function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     resultBudgetChars: 80_000,
     ...overrides,
   };
+}
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+function makeRegistryPath(): string {
+  const dir = join(
+    tmpdir(),
+    `ethos-delegation-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+  mkdirSync(dir, { recursive: true });
+  tempDirs.push(dir);
+  return join(dir, 'registry.json');
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +302,10 @@ describe('createDelegationTools', () => {
     const names = tools.map((t) => t.name);
     expect(names).toContain('delegate_task');
     expect(names).toContain('mixture_of_agents');
+    expect(names).toContain('list_team');
+    expect(names).toContain('dispatch_team');
+    expect(names).toContain('route_to_agent');
+    expect(names).toContain('broadcast_to_agents');
   });
 
   it('both tools belong to delegation toolset', () => {
@@ -278,5 +313,145 @@ describe('createDelegationTools', () => {
     for (const tool of tools) {
       expect(tool.toolset).toBe('delegation');
     }
+  });
+});
+
+describe('mesh orchestration tools', () => {
+  it('list_team excludes current process by default', async () => {
+    const registryPath = makeRegistryPath();
+    const mesh = new AgentMesh(registryPath);
+    await mesh.register({
+      agentId: `coordinator:${process.pid}:self`,
+      capabilities: ['coordination'],
+      model: 'm',
+      pid: process.pid,
+      host: '127.0.0.1',
+      port: 5010,
+      activeSessions: 0,
+    });
+    await mesh.register({
+      agentId: 'researcher:999:other',
+      capabilities: ['research'],
+      model: 'm',
+      pid: 999,
+      host: '127.0.0.1',
+      port: 5011,
+      activeSessions: 0,
+    });
+
+    const tool = createListTeamTool(registryPath);
+    const result = await tool.execute({}, makeCtx());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const rows = JSON.parse(result.value) as Array<{ personality: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.personality).toBe('researcher');
+  });
+
+  it('route_to_agent retries alternate candidate on failure', async () => {
+    const registryPath = makeRegistryPath();
+    const mesh = new AgentMesh(registryPath);
+    await mesh.register({
+      agentId: 'researcher:111:first',
+      capabilities: ['research'],
+      model: 'm',
+      pid: 111,
+      host: '127.0.0.1',
+      port: 6101,
+      activeSessions: 0,
+    });
+    await mesh.register({
+      agentId: 'researcher:222:second',
+      capabilities: ['research'],
+      model: 'm',
+      pid: 222,
+      host: '127.0.0.1',
+      port: 6102,
+      activeSessions: 1,
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const payload = JSON.parse(String(init?.body)) as { method: string };
+        if (payload.method === 'new_session') {
+          return {
+            json: async () => ({ result: { sessionKey: 'acp:test' } }),
+          };
+        }
+        if (String(url).includes(':6101/')) {
+          throw new Error('network down');
+        }
+        return {
+          json: async () => ({ result: { text: 'fallback response' } }),
+        };
+      }),
+    );
+
+    const tool = createRouteToAgentTool(registryPath);
+    const result = await tool.execute(
+      { capability: 'research', prompt: 'analyze', retries: 2, timeout_s: 5 },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toContain('researcher:222:second');
+    expect(result.value).toContain('fallback response');
+  });
+
+  it('dispatch_team returns structured per-task records', async () => {
+    const registryPath = makeRegistryPath();
+    const mesh = new AgentMesh(registryPath);
+    await mesh.register({
+      agentId: 'researcher:301:r',
+      capabilities: ['research'],
+      model: 'm',
+      pid: 301,
+      host: '127.0.0.1',
+      port: 6201,
+      activeSessions: 0,
+    });
+    await mesh.register({
+      agentId: 'engineer:302:e',
+      capabilities: ['code'],
+      model: 'm',
+      pid: 302,
+      host: '127.0.0.1',
+      port: 6202,
+      activeSessions: 0,
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const payload = JSON.parse(String(init?.body)) as {
+          method: string;
+          params?: { text?: string };
+        };
+        if (payload.method === 'new_session') {
+          return { json: async () => ({ result: { sessionKey: 'acp:test' } }) };
+        }
+        return { json: async () => ({ result: { text: `ok:${payload.params?.text}` } }) };
+      }),
+    );
+
+    const tool = createDispatchTeamTool(registryPath);
+    const result = await tool.execute(
+      {
+        tasks: [
+          { capability: 'research', prompt: 'task A' },
+          { capability: 'code', prompt: 'task B' },
+        ],
+      },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const rows = JSON.parse(result.value) as Array<{ task: number; ok: boolean; text?: string }>;
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.ok).toBe(true);
+    expect(rows[1]?.ok).toBe(true);
+    expect(rows[0]?.text).toContain('task A');
+    expect(rows[1]?.text).toContain('task B');
   });
 });

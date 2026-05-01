@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -60,7 +60,6 @@ export function readRuntime(name: string): TeamRuntime | null {
 
 export function removeRuntime(name: string): void {
   try {
-    const { unlinkSync } = require('node:fs');
     unlinkSync(runtimePath(name));
   } catch {
     /* ignore */

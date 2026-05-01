@@ -49,6 +49,7 @@ const sidebars: SidebarsConfig = {
         'core-concepts/hook-registry',
         'core-concepts/tool-registry',
         'core-concepts/memory-system',
+        'core-concepts/teams-and-meshes',
       ],
     },
     {

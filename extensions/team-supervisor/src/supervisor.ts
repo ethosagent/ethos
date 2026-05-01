@@ -16,6 +16,38 @@ const MAX_FAILURES_PER_MINUTE = 5;
 const FAILURE_WINDOW_MS = 60_000;
 const SHUTDOWN_GRACE_MS = 5_000;
 
+export function buildMemberLaunchArgs(
+  entryPoint: string,
+  port: number,
+  personality: string,
+  meshName: string,
+): string[] {
+  const needsTsxLoader = entryPoint.endsWith('.ts') || entryPoint.endsWith('.tsx');
+  return needsTsxLoader
+    ? [
+        '--import',
+        'tsx',
+        entryPoint,
+        'serve',
+        '--port',
+        String(port),
+        '--personality',
+        personality,
+        '--mesh',
+        meshName,
+      ]
+    : [
+        entryPoint,
+        'serve',
+        '--port',
+        String(port),
+        '--personality',
+        personality,
+        '--mesh',
+        meshName,
+      ];
+}
+
 interface MemberState extends MemberRuntime {
   child: ChildProcess | null;
   /** Unix timestamps (ms) of recent crash events, for rate-limiting restarts. */
@@ -143,20 +175,16 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
 
     const logStream = createWriteStream(m.logFile, { flags: 'a' });
 
-    const child = spawn(
-      process.argv[0] ?? 'node',
-      [
-        process.argv[1] ?? '',
-        'serve',
-        '--port',
-        String(m.port),
-        '--personality',
-        personality,
-        '--mesh',
-        meshName,
-      ],
-      { stdio: ['ignore', 'pipe', 'pipe'], detached: false },
-    );
+    const entryPoint = process.argv[1];
+    if (!entryPoint) {
+      throw new Error('Cannot determine CLI entry point for member launch');
+    }
+    const childArgs = buildMemberLaunchArgs(entryPoint, m.port, personality, meshName);
+
+    const child = spawn(process.execPath, childArgs, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: false,
+    });
 
     child.stdout?.pipe(logStream);
     child.stderr?.pipe(logStream);

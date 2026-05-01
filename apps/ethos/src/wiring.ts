@@ -96,7 +96,29 @@ export async function createTeamAgentLoop(
     { ...config, personality: coordinatorPersonality },
     { profile: opts.profile ?? 'cli', meshRegistryPath: meshRegistryPath(meshName) },
   );
+
+  const coordinatorSystem = buildCoordinatorTeamPrompt(manifest);
+  loop.hooks.registerModifying('before_prompt_build', async (payload) => {
+    if (payload.personalityId !== coordinatorPersonality) return null;
+    return { prependSystem: coordinatorSystem };
+  });
+
   return { loop, coordinatorPersonality, meshName };
+}
+
+function buildCoordinatorTeamPrompt(manifest: TeamManifest): string {
+  const members = manifest.members.map((m) => m.personality);
+  const teamName = manifest.name;
+  const memberText = members.length > 0 ? members.join(', ') : 'none';
+  return [
+    `## Team Identity`,
+    `You are the coordinator of team "${teamName}".`,
+    `Your name is "${teamName}".`,
+    `If asked your name, answer with "${teamName}".`,
+    `If asked who you are, say you are the coordinator of this team and list your member personalities: ${memberText}.`,
+    `For simple conversational questions (greetings, identity, coordination metadata), reply directly without any tool call.`,
+    `Delegate only when specialist execution is required.`,
+  ].join('\n');
 }
 
 /**

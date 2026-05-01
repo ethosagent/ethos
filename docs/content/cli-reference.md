@@ -17,6 +17,11 @@ Comprehensive reference for the `ethos` command-line interface — every subcomm
 |---|---|
 | `ethos setup` | First-time interactive config wizard |
 | `ethos chat` *(or just `ethos`)* | Interactive REPL chat — the default |
+| `ethos set team <name>` | Route chat/serve to a team coordinator |
+| `ethos set personality <id>` | Route chat/serve to a single personality |
+| `ethos team start <name>` | Boot supervisor + all team members |
+| `ethos team status <name>` | Show team member health, ports, and pids |
+| `ethos mesh list` | List meshes and live member counts |
 | `ethos personality list` | List built-in + custom personalities |
 | `ethos personality set <id>` | Change the default personality |
 | `ethos memory show` | Print current memory contents |
@@ -89,6 +94,11 @@ When invoked without an existing config, runs `setup` first.
 
 Session key defaults to `cli:<basename of cwd>`, so different working directories get separate conversation histories. See [slash commands](#slash-commands-inside-chat) for in-chat actions.
 
+`chat` uses active context from config:
+
+- `activeContext: team:<name>` → team coordinator against that mesh
+- `activeContext: personality:<id>` (or unset) → single-personality mode
+
 | Flag | Default | Description |
 |---|---|---|
 | `--verbose` | off | Print a timing summary after every turn: LLM time, TTFT, tool wall-clock, total, tokens, cost. Can also be set persistently via `verbose: true` in `~/.ethos/config.yaml` or toggled mid-session with `/verbose`. |
@@ -118,6 +128,29 @@ To create a new personality from scratch, drop a directory into `~/.ethos/person
 ethos personality                      # See what's available
 ethos personality set engineer         # Make engineer the default
 ```
+
+---
+
+### `set`
+
+Set or inspect the active context for `chat` and `serve`.
+
+```
+ethos set
+ethos set personality <id>
+ethos set team <name>
+```
+
+| Form | Description |
+|---|---|
+| `ethos set` | Print current active context |
+| `ethos set personality <id>` | Target a single personality |
+| `ethos set team <name>` | Target a team coordinator |
+
+Notes:
+
+- `ethos set team <name>` does not start processes, it only changes routing context.
+- Start the team separately with `ethos team start <name>`.
 
 ---
 
@@ -249,12 +282,16 @@ Start the Ethos web UI + API on a local port. **In development — not yet stabl
 
 ```
 ethos serve [--port <n>] [--bind <addr>]
+ethos serve --team <name>
+ethos serve --mesh <name>
 ```
 
 | Flag | Default | Description |
 |---|---|---|
 | `--port` | `3000` | HTTP port |
 | `--bind` | `127.0.0.1` | Bind address. `--bind 0.0.0.0` exposes to LAN (still token-protected). |
+| `--team` | off | Resolve loop using `<name>` team coordinator and mesh |
+| `--mesh` | `default` | Explicit mesh name when not using `--team` |
 
 On first run, prints a `http://localhost:3000?t=<token>` URL with a one-time token; that token rotates into an httpOnly cookie on first browser visit.
 
@@ -265,6 +302,58 @@ ethos serve                            # localhost:3000
 ethos serve --port 8080
 ethos serve --bind 0.0.0.0             # LAN-accessible (still token-required)
 ```
+
+---
+
+### `team`
+
+Manage team manifests and supervisor lifecycle.
+
+```
+ethos team
+ethos team list
+ethos team create <name>
+ethos team <name> add <personality>
+ethos team <name> remove <personality>
+ethos team start <name>
+ethos team stop <name>
+ethos team status <name>
+ethos team logs <name> [--member <personality>]
+```
+
+| Form | Description |
+|---|---|
+| `ethos team list` | List manifests under `~/.ethos/teams/` |
+| `ethos team create <name>` | Create draft team manifest |
+| `ethos team <name> add <personality>` | Add member to manifest |
+| `ethos team <name> remove <personality>` | Remove member from manifest |
+| `ethos team start <name>` | Spawn detached supervisor and team members |
+| `ethos team stop <name>` | Ask supervisor to stop members gracefully |
+| `ethos team status <name>` | Show member table (port/status/pid/failures) |
+| `ethos team logs <name> [--member <personality>]` | Tail member logs |
+
+Important: add/remove syntax is `ethos team <name> add|remove <personality>`, not `ethos team add <personality>`.
+
+---
+
+### `mesh`
+
+Inspect mesh-level runtime state.
+
+```
+ethos mesh
+ethos mesh list
+ethos mesh status <name>
+ethos mesh create <name>
+ethos mesh destroy <name>
+```
+
+| Form | Description |
+|---|---|
+| `ethos mesh list` | List meshes in `~/.ethos/meshes/` with live member counts |
+| `ethos mesh status <name>` | Show live members in one mesh |
+| `ethos mesh create <name>` | Create mesh directory |
+| `ethos mesh destroy <name>` | Remove mesh directory if no live members remain |
 
 ---
 
@@ -583,6 +672,10 @@ apiKey: sk-ant-...                   # API key
 # ── Default personality ─────────────────────────────────────────────────────
 personality: researcher              # built-in id or custom dir name
 
+# ── Active context (managed by `ethos set`) ─────────────────────────────────
+activeContext.type: team             # team | personality
+activeContext.name: demo
+
 # ── Provider endpoint (required for non-Anthropic providers) ────────────────
 baseUrl: https://openrouter.ai/api/v1
 
@@ -652,6 +745,13 @@ Read at startup; override values in `config.yaml`.
 ~/.ethos/
 ├── config.yaml             ← provider, model, key, personality, platform tokens
 ├── keys.json               ← API key rotation pool (managed by `ethos keys`, chmod 600)
+├── teams/                  ← team manifests + runtime state
+│   ├── <name>.yaml
+│   ├── <name>.runtime.json
+│   └── <name>.pid
+├── meshes/                 ← mesh-scoped peer registries
+│   └── <mesh>/
+│       └── registry.json
 ├── MEMORY.md               ← rolling project context (markdown mode)
 ├── USER.md                 ← who you are (markdown mode)
 ├── memory.db               ← vector memory (vector mode only)
@@ -667,7 +767,11 @@ Read at startup; override values in `config.yaml`.
 │   └── <skill>.md
 ├── skills-pending/         ← evolved skills awaiting review (`ethos evolve`)
 ├── plugins/                ← manual plugin manifests
-├── logs/                   ← daemon logs
+├── logs/                   ← daemon/supervisor/member logs
+│   ├── mesh-supervisor.log
+│   └── team/
+│       └── <name>/
+│           └── <personality>.log
 ├── allowlist.json          ← tool-call approval grants (web UI)
 ├── web-token               ← web UI auth token (chmod 600)
 └── whatsapp-auth/          ← WhatsApp gateway auth state
@@ -705,6 +809,7 @@ Specific commands may print diagnostic output to stderr before exiting non-zero.
 ## See also
 
 - [Quickstart](./getting-started/quickstart) — first-time install + chat
+- [Teams and Meshes](./core-concepts/teams-and-meshes) — supervisor lifecycle, manifests, mesh isolation
 - [Run as a Daemon](./guides/run-as-daemon) — keep `gateway start` / `cron` / `serve` alive in the background
 - [Platforms](./platforms/overview) — Telegram / Slack / Discord / Email setup
 - [Create your own personality](./personality/create-your-own) — custom personalities

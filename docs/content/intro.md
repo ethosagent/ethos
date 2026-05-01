@@ -14,6 +14,7 @@ Your conversations persist across restarts. The same agent runs on the CLI, Tele
 ## Pick your starting point
 
 - **Just want to use it?** → [Quickstart](/docs/getting-started/quickstart) — install + first chat in five minutes.
+- **Need multi-agent collaboration?** → [Teams and Meshes](/docs/core-concepts/teams-and-meshes) — boot and manage a team with one command.
 - **Already have a Claude Code or OpenClaw library?** → [Skills](/docs/skills/overview) — the universal scanner picks them up automatically; each personality only sees what's relevant to its role.
 - **Want to understand the design?** → [Why Ethos?](/docs/getting-started/why-ethos) — honest comparison with LangChain, CrewAI, AutoGen.
 - **Building on top?** → [Tutorial](/docs/tutorial/build-your-first-agent) — walk through your first custom personality.

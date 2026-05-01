@@ -1,4 +1,9 @@
-import { AgentMesh, defaultRegistryPath } from '@ethosagent/agent-mesh';
+import {
+  AgentMesh,
+  appendMeshJournal,
+  defaultRegistryPath,
+  type MeshEntry,
+} from '@ethosagent/agent-mesh';
 import type { AgentLoop } from '@ethosagent/core';
 import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
@@ -7,6 +12,7 @@ import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
 // ---------------------------------------------------------------------------
 
 const MAX_SPAWN_DEPTH = 3;
+const MAX_ROUTE_RETRIES = 2;
 
 function getDepth(ctx: ToolContext): number {
   const raw = ctx.agentId ?? '';
@@ -268,6 +274,7 @@ async function callMeshAgent(
   host: string,
   port: number,
   prompt: string,
+  personalityId?: string,
   signal?: AbortSignal,
 ): Promise<string> {
   const base = `http://${host}:${port}/rpc`;
@@ -276,7 +283,12 @@ async function callMeshAgent(
   const sessionRes = await fetch(base, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'new_session', params: {} }),
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'new_session',
+      params: personalityId ? { personalityId } : {},
+    }),
     signal,
   });
   const sessionData = (await sessionRes.json()) as { result?: { sessionKey?: string } };
@@ -290,7 +302,9 @@ async function callMeshAgent(
       jsonrpc: '2.0',
       id: 2,
       method: 'prompt',
-      params: { sessionKey, text: prompt },
+      params: personalityId
+        ? { sessionKey, text: prompt, personalityId }
+        : { sessionKey, text: prompt },
     }),
     signal,
   });
@@ -300,6 +314,109 @@ async function callMeshAgent(
   };
   if (promptData.error) throw new Error(promptData.error.message ?? 'Remote agent error');
   return promptData.result?.text ?? '';
+}
+
+function personalityFromAgentId(agentId: string): string {
+  const idx = agentId.indexOf(':');
+  return idx > 0 ? agentId.slice(0, idx) : agentId;
+}
+
+function selectCandidates(entries: MeshEntry[], capability: string): MeshEntry[] {
+  return entries
+    .filter((e) => e.capabilities.includes(capability))
+    .sort((a, b) =>
+      a.activeSessions !== b.activeSessions
+        ? a.activeSessions - b.activeSessions
+        : a.registeredAt - b.registeredAt,
+    );
+}
+
+function withTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+interface RoutedCall {
+  ok: boolean;
+  agent?: MeshEntry;
+  text?: string;
+  attempts: number;
+  errors: string[];
+}
+
+async function routeWithFailover(params: {
+  entries: MeshEntry[];
+  capability: string;
+  prompt: string;
+  retries?: number;
+  timeoutMs: number;
+  abortSignal?: AbortSignal;
+  personalityId?: string;
+}): Promise<RoutedCall> {
+  const candidates = selectCandidates(params.entries, params.capability);
+  if (candidates.length === 0)
+    return { ok: false, attempts: 0, errors: ['no matching candidates'] };
+
+  const maxAttempts = Math.min(candidates.length, (params.retries ?? MAX_ROUTE_RETRIES) + 1);
+  const errors: string[] = [];
+
+  for (let i = 0; i < maxAttempts; i++) {
+    const agent = candidates[i];
+    if (!agent) break;
+    try {
+      const signal = withTimeout(params.abortSignal, params.timeoutMs);
+      const text = await callMeshAgent(
+        agent.host,
+        agent.port,
+        params.prompt,
+        params.personalityId,
+        signal,
+      );
+      return { ok: true, agent, text, attempts: i + 1, errors };
+    } catch (err) {
+      errors.push(`${agent.agentId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return { ok: false, attempts: maxAttempts, errors };
+}
+
+export function createListTeamTool(registryPath = defaultRegistryPath()): Tool {
+  return {
+    name: 'list_team',
+    description:
+      'List live mesh peers with personality, capabilities, and load. ' +
+      'Use before dispatch planning to decide which specialist should handle each task.',
+    toolset: 'delegation',
+    maxResultChars: 20_000,
+    schema: {
+      type: 'object',
+      properties: {
+        include_self: {
+          type: 'boolean',
+          description: 'Include current process in output (default false).',
+        },
+      },
+    },
+    async execute(args): Promise<ToolResult> {
+      const { include_self = false } = (args ?? {}) as { include_self?: boolean };
+      const mesh = new AgentMesh(registryPath);
+      const peers = await mesh.list();
+
+      const filtered = include_self ? peers : peers.filter((p) => p.pid !== process.pid);
+      const roster = filtered.map((p) => ({
+        agentId: p.agentId,
+        personality: personalityFromAgentId(p.agentId),
+        capabilities: p.capabilities,
+        host: p.host,
+        port: p.port,
+        activeSessions: p.activeSessions,
+        model: p.model,
+      }));
+
+      return { ok: true, value: JSON.stringify(roster, null, 2) };
+    },
+  };
 }
 
 export function createRouteToAgentTool(registryPath = defaultRegistryPath()): Tool {
@@ -323,34 +440,167 @@ export function createRouteToAgentTool(registryPath = defaultRegistryPath()): To
           type: 'string',
           description: 'Task prompt for the remote agent',
         },
+        timeout_s: {
+          type: 'number',
+          description: 'Per-attempt timeout in seconds (default: 60)',
+        },
+        retries: {
+          type: 'number',
+          description: 'Retry count across alternate peers (default: 2, max: 5)',
+        },
       },
       required: ['capability', 'prompt'],
     },
     async execute(args, ctx): Promise<ToolResult> {
-      const { capability, prompt } = args as { capability: string; prompt: string };
+      const { capability, prompt, timeout_s, retries } = args as {
+        capability: string;
+        prompt: string;
+        timeout_s?: number;
+        retries?: number;
+      };
       if (!capability) return { ok: false, error: 'capability is required', code: 'input_invalid' };
       if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
 
       const mesh = new AgentMesh(registryPath);
-      const agent = await mesh.route(capability);
-      if (!agent) {
+      const peers = await mesh.list();
+      const timeoutMs = Math.max(1, timeout_s ?? 60) * 1000;
+      const retryCount = Math.min(Math.max(0, retries ?? MAX_ROUTE_RETRIES), 5);
+
+      const routed = await routeWithFailover({
+        entries: peers,
+        capability,
+        prompt,
+        retries: retryCount,
+        timeoutMs,
+        abortSignal: ctx.abortSignal,
+      });
+
+      if (!routed.ok || !routed.agent || routed.text === undefined) {
+        appendMeshJournal({
+          ts: new Date().toISOString(),
+          event: 'route_to_agent_failed',
+          capability,
+          attempts: routed.attempts,
+          errors: routed.errors,
+        });
         return {
           ok: false,
-          error: `no agent available for capability: ${capability}`,
+          error:
+            routed.errors.length > 0
+              ? `no successful agent for capability: ${capability}; attempts=${routed.attempts}; ${routed.errors.join('; ')}`
+              : `no agent available for capability: ${capability}`,
           code: 'execution_failed',
         };
       }
 
-      try {
-        const text = await callMeshAgent(agent.host, agent.port, prompt, ctx.abortSignal);
-        return { ok: true, value: `[${agent.agentId}]\n\n${text}` };
-      } catch (err) {
+      appendMeshJournal({
+        ts: new Date().toISOString(),
+        event: 'route_to_agent',
+        capability,
+        callee: routed.agent.agentId,
+        attempts: routed.attempts,
+      });
+
+      return { ok: true, value: `[${routed.agent.agentId}]\n\n${routed.text}` };
+    },
+  };
+}
+
+export function createDispatchTeamTool(registryPath = defaultRegistryPath()): Tool {
+  return {
+    name: 'dispatch_team',
+    description:
+      'Dispatch multiple capability-scoped tasks across mesh peers in parallel. ' +
+      'Each task picks the best available specialist and retries alternate peers on failure.',
+    toolset: 'delegation',
+    maxResultChars: 60_000,
+    schema: {
+      type: 'object',
+      properties: {
+        tasks: {
+          type: 'array',
+          description: 'Parallel tasks to dispatch',
+          items: {
+            type: 'object',
+            properties: {
+              capability: { type: 'string' },
+              prompt: { type: 'string' },
+              timeout_s: { type: 'number' },
+              retries: { type: 'number' },
+            },
+            required: ['capability', 'prompt'],
+          },
+        },
+      },
+      required: ['tasks'],
+    },
+    async execute(args, ctx): Promise<ToolResult> {
+      const { tasks } = args as {
+        tasks: Array<{ capability: string; prompt: string; timeout_s?: number; retries?: number }>;
+      };
+      if (!tasks || tasks.length === 0) {
         return {
           ok: false,
-          error: `Agent ${agent.agentId} failed: ${err instanceof Error ? err.message : String(err)}`,
-          code: 'execution_failed',
+          error: 'tasks is required and must not be empty',
+          code: 'input_invalid',
         };
       }
+      if (tasks.length > 12) {
+        return {
+          ok: false,
+          error: 'Maximum 12 tasks per dispatch_team call',
+          code: 'input_invalid',
+        };
+      }
+
+      const mesh = new AgentMesh(registryPath);
+      const peers = await mesh.list();
+
+      const results = await Promise.all(
+        tasks.map(async (task, i) => {
+          const timeoutMs = Math.max(1, task.timeout_s ?? 60) * 1000;
+          const retryCount = Math.min(Math.max(0, task.retries ?? MAX_ROUTE_RETRIES), 5);
+          const routed = await routeWithFailover({
+            entries: peers,
+            capability: task.capability,
+            prompt: task.prompt,
+            retries: retryCount,
+            timeoutMs,
+            abortSignal: ctx.abortSignal,
+          });
+
+          if (!routed.ok || !routed.agent || routed.text === undefined) {
+            return {
+              task: i,
+              capability: task.capability,
+              ok: false,
+              attempts: routed.attempts,
+              error:
+                routed.errors.length > 0
+                  ? routed.errors.join('; ')
+                  : `no agent available for capability: ${task.capability}`,
+            };
+          }
+          return {
+            task: i,
+            capability: task.capability,
+            ok: true,
+            attempts: routed.attempts,
+            agentId: routed.agent.agentId,
+            text: routed.text,
+          };
+        }),
+      );
+
+      appendMeshJournal({
+        ts: new Date().toISOString(),
+        event: 'dispatch_team',
+        taskCount: tasks.length,
+        okCount: results.filter((r) => r.ok).length,
+        failCount: results.filter((r) => !r.ok).length,
+      });
+
+      return { ok: true, value: JSON.stringify(results, null, 2) };
     },
   };
 }
@@ -385,7 +635,13 @@ export function createBroadcastToAgentsTool(registryPath = defaultRegistryPath()
 
       const results = await Promise.allSettled(
         agents.map(async (agent) => {
-          const text = await callMeshAgent(agent.host, agent.port, prompt, ctx.abortSignal);
+          const text = await callMeshAgent(
+            agent.host,
+            agent.port,
+            prompt,
+            undefined,
+            ctx.abortSignal,
+          );
           return { agentId: agent.agentId, text };
         }),
       );
@@ -426,6 +682,8 @@ export function createDelegationTools(loop: AgentLoop, registryPath?: string): T
   return [
     createDelegateTaskTool(loop),
     createMixtureOfAgentsTool(loop),
+    createListTeamTool(registryPath),
+    createDispatchTeamTool(registryPath),
     createRouteToAgentTool(registryPath),
     createBroadcastToAgentsTool(registryPath),
   ];

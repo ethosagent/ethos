@@ -1,4 +1,4 @@
-import { statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
@@ -34,6 +34,7 @@ export function defaultRegistryPath(): string {
 }
 
 async function acquireRegistryLock(lockPath: string): Promise<() => void> {
+  mkdirSync(dirname(lockPath), { recursive: true });
   const deadline = Date.now() + LOCK_TTL_MS;
   while (Date.now() < deadline) {
     try {
