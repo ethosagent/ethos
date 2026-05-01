@@ -2,7 +2,7 @@
   "name": "ethos-vscode",
   "displayName": "Ethos",
   "description": "AI agent sidebar — file editing, web search, terminal, and memory right inside VS Code",
-  "version": "0.2.5",
+  "version": "0.1.0",
   "private": true,
   "engines": {
     "vscode": "^1.74.0"

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Pre-flight gates for releasing Ethos.
-// G1  version sync  — every package.json version == VERSION
-// G2  no 0.0.0      — no workspace package left at the default placeholder
+// G1  version sync  — all five public package.json versions == VERSION
+// G2  no 0.0.0      — none of the five public packages at the placeholder version
 // G3  clean tree    — git status --porcelain is empty
 // G4  on main       — HEAD == origin/main
 // G5  no tag yet    — v{VERSION} doesn't exist locally or on remote
@@ -10,7 +10,7 @@
 // Pass --pr to run only G1 + G2 (pull-request gate in ci.yml).
 // G7 (tests green) is NOT in this script; make verify runs `pnpm check` separately.
 import { execSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const prOnly = process.argv.includes('--pr');
@@ -31,24 +31,21 @@ function exec(cmd) {
   return execSync(cmd, { cwd: root, encoding: 'utf8' }).trim();
 }
 
-// Collect all workspace package.json files
-const dirs = ['apps', 'packages', 'extensions'];
-const allPkgs = [];
-for (const dir of dirs) {
-  const dirPath = join(root, dir);
-  if (!existsSync(dirPath)) continue;
-  for (const sub of readdirSync(dirPath)) {
-    const pkgPath = join(dirPath, sub, 'package.json');
-    if (!existsSync(pkgPath)) continue;
-    allPkgs.push({
-      path: `${dir}/${sub}/package.json`,
-      pkg: JSON.parse(readFileSync(pkgPath, 'utf8')),
-    });
-  }
-}
+const PUBLIC_PACKAGES = [
+  'apps/ethos',
+  'packages/types',
+  'packages/core',
+  'packages/plugin-contract',
+  'packages/plugin-sdk',
+];
 
-// G1: all versions == VERSION
-const drifted = allPkgs.filter(({ pkg }) => pkg.version !== version);
+const pkgs = PUBLIC_PACKAGES.map((dir) => ({
+  path: `${dir}/package.json`,
+  pkg: JSON.parse(readFileSync(join(root, dir, 'package.json'), 'utf8')),
+}));
+
+// G1: all public package versions == VERSION
+const drifted = pkgs.filter(({ pkg }) => pkg.version !== version);
 if (drifted.length > 0) {
   for (const { path, pkg } of drifted)
     fail(
@@ -56,11 +53,11 @@ if (drifted.length > 0) {
       `${path} has ${pkg.version}, expected ${version} — run: make version-set NEW=${version}`,
     );
 } else {
-  pass('G1', `all ${allPkgs.length} package.json files == ${version}`);
+  pass('G1', `all ${pkgs.length} public package.json files == ${version}`);
 }
 
 // G2: no 0.0.0
-const zeroes = allPkgs.filter(({ pkg }) => pkg.version === '0.0.0');
+const zeroes = pkgs.filter(({ pkg }) => pkg.version === '0.0.0');
 if (zeroes.length > 0) {
   for (const { path } of zeroes)
     fail('G2', `0.0.0 not allowed: ${path} — run: make version-set NEW=${version}`);
