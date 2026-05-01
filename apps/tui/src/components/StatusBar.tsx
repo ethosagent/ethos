@@ -1,7 +1,12 @@
 import { Box, Text } from 'ink';
-import { useSkin } from '../skin';
+import { DESIGN } from '../skin';
 
 export type AgentStatus = 'idle' | 'thinking' | 'running' | 'interrupted';
+
+export interface UpdateStatus {
+  behind: number;
+  latest: string;
+}
 
 interface StatusBarProps {
   model: string;
@@ -16,6 +21,12 @@ interface StatusBarProps {
   elapsedSecs?: number;
   readonlyMode?: boolean;
   backgroundCount?: number;
+  updateStatus?: UpdateStatus | null;
+}
+
+function padTime(secs: number): string {
+  const s = `${secs}s`;
+  return s.padEnd(5);
 }
 
 function StatusIndicator({
@@ -30,21 +41,21 @@ function StatusIndicator({
   switch (status) {
     case 'thinking':
       return (
-        <Text color="yellow">
-          {' thinking'}
-          {elapsedSecs !== undefined && elapsedSecs > 0 ? ` ${elapsedSecs}s` : '…'}
+        <Text color={DESIGN.warning}>
+          {' thinking '}
+          {elapsedSecs !== undefined && elapsedSecs > 0 ? padTime(elapsedSecs) : '…    '}
         </Text>
       );
     case 'running':
       return (
-        <Text color="cyan">
+        <Text color={DESIGN.info}>
           {' running'}
           {currentTool ? `: ${currentTool}` : ''}
           {'…'}
         </Text>
       );
     case 'interrupted':
-      return <Text color="red"> interrupted</Text>;
+      return <Text color={DESIGN.error}> interrupted</Text>;
     default:
       return null;
   }
@@ -62,23 +73,28 @@ export function StatusBar({
   elapsedSecs,
   readonlyMode = false,
   backgroundCount = 0,
+  updateStatus,
 }: StatusBarProps) {
-  const skin = useSkin();
   return (
     <Box marginBottom={1}>
-      <Text bold color={skin.bannerColor}>
+      <Text bold color={DESIGN.textPrimary}>
         ethos
       </Text>
-      <Text color={skin.modelColor}> {model} ·</Text>
+      <Text color={DESIGN.textSecondary}> {model} ·</Text>
       <Text color={accentColor}>{` ${personality}`}</Text>
-      {readonlyMode && <Text color="green"> {' [READ-ONLY]'}</Text>}
+      {readonlyMode && <Text color={DESIGN.success}> [READ-ONLY]</Text>}
       <StatusIndicator status={status} currentTool={currentTool} elapsedSecs={elapsedSecs} />
-      <Text color={skin.modelColor}>
+      <Text color={DESIGN.textSecondary}>
         {'  '}
         {inputTokens.toLocaleString()} in · {outputTokens.toLocaleString()} out $
         {costUsd.toFixed(5)}
       </Text>
-      {backgroundCount > 0 && <Text color="yellow"> {` bg:${backgroundCount}`}</Text>}
+      {backgroundCount > 0 && <Text color={DESIGN.warning}>{` bg:${backgroundCount}`}</Text>}
+      {updateStatus && updateStatus.behind > 0 && (
+        <Text color={DESIGN.warning}>
+          {` ! ${updateStatus.behind} version${updateStatus.behind === 1 ? '' : 's'} behind — pnpm dlx ethos upgrade`}
+        </Text>
+      )}
     </Box>
   );
 }

@@ -97,6 +97,17 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
     return dropped;
   }
 
+  /**
+   * Swap the underlying AgentLoop on the next idle tick.
+   * If a turn is in flight, it finishes with the old loop; subsequent turns
+   * use the new one. Pending queued sends are cleared (they were addressed to
+   * the old loop's context).
+   */
+  replaceLoop(newLoop: AgentLoop): void {
+    this.loop = newLoop;
+    this.clearQueue();
+  }
+
   // -------------------------------------------------------------------------
   // Internals
   // -------------------------------------------------------------------------

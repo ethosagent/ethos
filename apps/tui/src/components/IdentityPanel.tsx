@@ -1,4 +1,5 @@
 import { Box, Text } from 'ink';
+import { DESIGN } from '../skin';
 import { PersonalityMark } from './PersonalityMark';
 
 type PanelStatus = 'idle' | 'thinking' | 'running' | 'interrupted';
@@ -34,7 +35,7 @@ export function IdentityPanel({
   return (
     <Box
       borderStyle="single"
-      borderColor={focused ? 'cyan' : undefined}
+      borderColor={focused ? DESIGN.info : DESIGN.borderSubtle}
       paddingX={1}
       paddingY={1}
       flexDirection="column"

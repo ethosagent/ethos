@@ -1,9 +1,40 @@
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
+import type { SplashInventory } from '@ethosagent/tui';
 import type { EthosConfig } from '../config';
 import { resolveActiveLoop } from '../wiring';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
+
+async function buildInventory(loop: AgentLoop, _config: EthosConfig): Promise<SplashInventory> {
+  const tools = loop.getAvailableTools();
+  let personalities: string[];
+  try {
+    personalities = loop.getPersonalityIds();
+    if (personalities.length === 0)
+      personalities = ['researcher', 'engineer', 'reviewer', 'coach', 'operator'];
+  } catch {
+    personalities = ['researcher', 'engineer', 'reviewer', 'coach', 'operator'];
+  }
+
+  const groupMap = new Map<string, string[]>();
+  for (const tool of tools) {
+    const ts = tool.toolset ?? 'general';
+    const names = groupMap.get(ts) ?? [];
+    names.push(tool.name);
+    groupMap.set(ts, names);
+  }
+
+  const toolGroups = [...groupMap.entries()].map(([toolset, names]) => ({ toolset, names }));
+
+  return {
+    tools: toolGroups,
+    totalTools: tools.length,
+    personalities,
+    skills: [],
+    mcpServers: [],
+  };
+}
 
 // ---------------------------------------------------------------------------
 // ANSI helpers
@@ -53,10 +84,16 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
 
   if (process.stdout.isTTY && process.stdin.isTTY) {
     const { runTUI } = await import('@ethosagent/tui');
+    const inventory = await buildInventory(loop, config);
     await runTUI(loop, {
       model: config.model,
       personality: displayName,
       verbose: config.verbose ?? false,
+      inventory,
+      rebuildLoop: async (modelId: string) => {
+        const { loop: newLoop } = await resolveActiveLoop({ ...config, model: modelId });
+        return newLoop;
+      },
     });
     return;
   }

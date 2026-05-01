@@ -1,4 +1,5 @@
 import { Box, Text } from 'ink';
+import { DESIGN } from '../skin';
 
 export interface FileActivity {
   id: string;
@@ -6,6 +7,7 @@ export interface FileActivity {
   action: 'read' | 'write' | 'patch';
   path: string;
   status: 'active' | 'done' | 'error' | 'approval_required' | 'approved' | 'denied';
+  diff?: string;
 }
 
 interface FileActivityPanelProps {
@@ -19,18 +21,55 @@ const MAX_ENTRIES = 20;
 function colorFor(status: FileActivity['status']): string {
   switch (status) {
     case 'approval_required':
-      return 'yellow';
+      return DESIGN.warning;
     case 'approved':
-      return 'green';
+      return DESIGN.success;
     case 'denied':
-      return 'red';
+      return DESIGN.error;
     case 'done':
-      return 'green';
+      return DESIGN.success;
     case 'error':
-      return 'red';
+      return DESIGN.error;
     default:
-      return 'yellow';
+      return DESIGN.warning;
   }
+}
+
+function actionGlyph(action: FileActivity['action']): string {
+  switch (action) {
+    case 'write':
+      return '✎';
+    case 'patch':
+      return '✏';
+    default:
+      return '◎';
+  }
+}
+
+function InlineDiff({ diff, maxLines = 8 }: { diff: string; maxLines?: number }) {
+  const lines = diff
+    .split('\n')
+    .filter((l) => l.startsWith('+') || l.startsWith('-') || l.startsWith('@'));
+  const visible = lines.slice(0, maxLines);
+  const truncated = lines.length > maxLines;
+  return (
+    <Box flexDirection="column" paddingLeft={2}>
+      {visible.map((line, i) => {
+        const color = line.startsWith('+')
+          ? DESIGN.success
+          : line.startsWith('-')
+            ? DESIGN.error
+            : DESIGN.textSecondary;
+        return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: stable diff lines
+          <Text key={i} color={color}>
+            {line.slice(0, 100)}
+          </Text>
+        );
+      })}
+      {truncated && <Text dimColor>({lines.length - maxLines} more lines)</Text>}
+    </Box>
+  );
 }
 
 export function FileActivityPanel({
@@ -42,26 +81,32 @@ export function FileActivityPanel({
   const pendingPatches = visible.filter((e) => e.status === 'approval_required').length;
 
   return (
-    <Box
-      borderStyle="single"
-      borderColor={focused ? 'cyan' : undefined}
-      paddingX={1}
-      marginBottom={1}
-      flexDirection="column"
-    >
-      <Text bold>file activity</Text>
-      <Text dimColor>pending patches: {pendingPatches}</Text>
-      <Text dimColor>a=approve d=deny (files focus)</Text>
+    <Box marginBottom={1} flexDirection="column">
+      <Text dimColor color={focused ? DESIGN.info : undefined}>
+        {'─── '}
+        <Text bold color={focused ? DESIGN.info : DESIGN.textPrimary}>
+          file activity
+        </Text>
+        {' ───'}
+      </Text>
+      {pendingPatches > 0 && (
+        <Text color={DESIGN.warning} dimColor>
+          {pendingPatches} pending · a=approve d=deny
+        </Text>
+      )}
       {visible.length === 0 ? (
         <Text dimColor>no file activity yet</Text>
       ) : (
         visible.map((entry) => (
-          <Box key={entry.id}>
-            <Text dimColor>{entry.at}</Text>
-            <Text> </Text>
-            <Text color={colorFor(entry.status)} inverse={entry.id === selectedId}>
-              {entry.action} {entry.path} [{entry.status}]
-            </Text>
+          <Box key={entry.id} flexDirection="column">
+            <Box>
+              <Text dimColor>{entry.at}</Text>
+              <Text> </Text>
+              <Text color={colorFor(entry.status)} inverse={entry.id === selectedId}>
+                {actionGlyph(entry.action)} {entry.action} {entry.path} [{entry.status}]
+              </Text>
+            </Box>
+            {entry.diff && entry.id === selectedId && <InlineDiff diff={entry.diff} />}
           </Box>
         ))
       )}

@@ -1,4 +1,5 @@
 import { Box, Text } from 'ink';
+import { DESIGN } from '../skin';
 import type { ActiveTool, CompletedTool } from './ToolSpinner';
 
 interface ContextPanelProps {
@@ -21,24 +22,20 @@ export function ContextPanel({
   const activeNames = activeTools.slice(-3).map((t) => t.toolName);
 
   return (
-    <Box
-      borderStyle="single"
-      borderColor={focused ? 'cyan' : undefined}
-      paddingX={1}
-      marginBottom={1}
-      flexDirection="column"
-    >
-      <Text bold>context</Text>
-      <Text dimColor>messages: {messageCount}</Text>
-      <Text dimColor>queue: {queueDepth}</Text>
-      <Text dimColor>active tools: {activeTools.length}</Text>
-      {activeNames.length > 0 ? (
-        <Text dimColor>now: {activeNames.join(', ')}</Text>
-      ) : (
-        <Text dimColor>now: none</Text>
-      )}
-      <Text dimColor>completed tools: {completedTools.length}</Text>
-      <Text dimColor>pending approvals: {pendingPatchCount}</Text>
+    <Box marginBottom={1} flexDirection="column">
+      <Text dimColor color={focused ? DESIGN.info : undefined}>
+        {'─── '}
+        <Text bold color={focused ? DESIGN.info : DESIGN.textPrimary}>
+          context
+        </Text>
+        {' ───'}
+      </Text>
+      <Text dimColor>
+        messages: {messageCount} · queue: {queueDepth} · active: {activeTools.length} · completed:{' '}
+        {completedTools.length}
+        {pendingPatchCount > 0 ? ` · pending: ${pendingPatchCount}` : ''}
+      </Text>
+      {activeNames.length > 0 && <Text dimColor>now: {activeNames.join(', ')}</Text>}
     </Box>
   );
 }

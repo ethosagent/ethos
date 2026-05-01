@@ -193,6 +193,16 @@ export class AgentLoop {
     if (config.dataDir) this.dataDir = config.dataDir;
   }
 
+  /** Returns all available tools for inventory display (e.g. TUI splash screen). */
+  getAvailableTools(): import('@ethosagent/types').Tool[] {
+    return this.tools.getAvailable();
+  }
+
+  /** Returns all registered personalities for inventory display. */
+  getPersonalityIds(): string[] {
+    return this.personalities.list().map((p) => p.id);
+  }
+
   async *run(text: string, opts: RunOptions = {}): AsyncGenerator<AgentEvent> {
     const abortSignal = opts.abortSignal ?? new AbortController().signal;
     const sessionKey = opts.sessionKey ?? `${this.platform}:default`;

@@ -1,6 +1,6 @@
 import { Box, Text, useInput } from 'ink';
 import { useState } from 'react';
-import { useSkin } from '../skin';
+import { DESIGN, useSkin } from '../skin';
 
 interface InputBoxProps {
   value: string;
@@ -168,7 +168,7 @@ export function InputBox({
   const lineCount = lines.length;
 
   return (
-    <Box borderStyle={skin.borderStyle} paddingX={1} flexDirection="column">
+    <Box borderStyle="single" borderColor={DESIGN.borderSubtle} paddingX={1} flexDirection="column">
       <Box>
         <Text color={skin.promptColor} bold>
           You

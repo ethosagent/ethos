@@ -4,14 +4,22 @@ import type { AgentLoop } from '@ethosagent/core';
 import { render } from 'ink';
 import { createElement } from 'react';
 import { App } from './components/App';
+import type { SplashInventory } from './components/Splash';
 
 export type { BridgeOpts } from '@ethosagent/agent-bridge';
 export { AgentBridge } from '@ethosagent/agent-bridge';
+export type { SplashInventory } from './components/Splash';
 
 export interface TUIOptions {
   model: string;
   personality: string;
   verbose?: boolean;
+  /** Called when the user switches model via /model picker. Returns a new AgentLoop. */
+  rebuildLoop?: (modelId: string) => Promise<AgentLoop>;
+  /** Capability inventory shown on the splash screen before first message. */
+  inventory?: SplashInventory;
+  /** Current package version — used for update notifier. */
+  version?: string;
 }
 
 export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
@@ -25,6 +33,9 @@ export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
       initialPersonality: opts.personality,
       initialSessionKey: sessionKey,
       initialVerbose: opts.verbose ?? false,
+      rebuildLoop: opts.rebuildLoop,
+      inventory: opts.inventory,
+      version: opts.version,
     }),
   );
 

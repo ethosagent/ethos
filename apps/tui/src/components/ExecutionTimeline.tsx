@@ -1,4 +1,5 @@
 import { Box, Text } from 'ink';
+import { DESIGN } from '../skin';
 
 export interface TimelineEvent {
   id: string;
@@ -17,27 +18,27 @@ const MAX_EVENTS = 24;
 function colorFor(level: TimelineEvent['level']): string {
   switch (level) {
     case 'success':
-      return 'green';
+      return DESIGN.success;
     case 'warning':
-      return 'yellow';
+      return DESIGN.warning;
     case 'error':
-      return 'red';
+      return DESIGN.error;
     default:
-      return 'cyan';
+      return DESIGN.info;
   }
 }
 
 export function ExecutionTimeline({ events, focused = false }: ExecutionTimelineProps) {
   const visible = events.slice(-MAX_EVENTS);
   return (
-    <Box
-      borderStyle="single"
-      borderColor={focused ? 'cyan' : undefined}
-      paddingX={1}
-      flexDirection="column"
-      marginLeft={1}
-    >
-      <Text bold>execution</Text>
+    <Box flexDirection="column" marginLeft={1}>
+      <Text dimColor color={focused ? DESIGN.info : undefined}>
+        {'─── '}
+        <Text bold color={focused ? DESIGN.info : DESIGN.textPrimary}>
+          execution
+        </Text>
+        {' ───'}
+      </Text>
       {visible.length === 0 ? (
         <Text dimColor>no activity yet</Text>
       ) : (

@@ -1,4 +1,5 @@
 import { Box, Text } from 'ink';
+import { DESIGN } from '../skin';
 
 export type SafetyTag = 'READ_ONLY' | 'SUGGESTED' | 'APPROVAL_REQUIRED' | 'DESTRUCTIVE';
 
@@ -11,13 +12,13 @@ interface SafetyLaneProps {
 function colorFor(tag: SafetyTag): string {
   switch (tag) {
     case 'DESTRUCTIVE':
-      return 'red';
+      return DESIGN.error;
     case 'APPROVAL_REQUIRED':
-      return 'yellow';
+      return DESIGN.warning;
     case 'SUGGESTED':
-      return 'cyan';
+      return DESIGN.info;
     default:
-      return 'green';
+      return DESIGN.success;
   }
 }
 
@@ -32,23 +33,30 @@ export function SafetyLane({ readonlyMode, tags, focused = false }: SafetyLanePr
     counts.set(tag, (counts.get(tag) ?? 0) + 1);
   }
 
+  const activeTags = (
+    ['READ_ONLY', 'SUGGESTED', 'APPROVAL_REQUIRED', 'DESTRUCTIVE'] as const
+  ).filter((tag) => (counts.get(tag) ?? 0) > 0);
+
   return (
-    <Box
-      borderStyle="single"
-      borderColor={focused ? 'cyan' : undefined}
-      paddingX={1}
-      marginBottom={1}
-      flexDirection="column"
-    >
-      <Text bold>safety</Text>
-      <Text color={readonlyMode ? 'green' : 'yellow'}>
-        mode: {readonlyMode ? 'READ-ONLY' : 'EXECUTION'}
-      </Text>
-      {(['READ_ONLY', 'SUGGESTED', 'APPROVAL_REQUIRED', 'DESTRUCTIVE'] as const).map((tag) => (
-        <Text key={tag} color={colorFor(tag)}>
-          {tag}: {counts.get(tag) ?? 0}
+    <Box marginBottom={1} flexDirection="column">
+      <Text dimColor color={focused ? DESIGN.info : undefined}>
+        {'─── '}
+        <Text bold color={focused ? DESIGN.info : DESIGN.textPrimary}>
+          safety
         </Text>
-      ))}
+        {' ───'}
+      </Text>
+      <Box gap={2}>
+        <Text color={readonlyMode ? DESIGN.success : DESIGN.textSecondary}>
+          {readonlyMode ? 'READ-ONLY' : 'execution'}
+        </Text>
+        {activeTags.map((tag) => (
+          <Text key={tag} color={colorFor(tag)}>
+            {tag.toLowerCase().replace(/_/g, '-')}: {counts.get(tag) ?? 0}
+          </Text>
+        ))}
+        {activeTags.length === 0 && <Text dimColor>no active flags</Text>}
+      </Box>
       <Text dimColor>/readonly toggles execution lock</Text>
     </Box>
   );
