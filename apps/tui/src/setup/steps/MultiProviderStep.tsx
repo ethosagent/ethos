@@ -71,7 +71,7 @@ export function MultiProviderStep() {
         setApiKey((k) => k.slice(0, -1));
         return;
       }
-      if (!key.ctrl && !key.meta && input && input.length === 1) {
+      if (!key.ctrl && !key.meta && input) {
         setApiKey((k) => k + input);
       }
     }

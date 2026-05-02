@@ -49,7 +49,7 @@ export function KeyRotationStep() {
         setInput((v) => v.slice(0, -1));
         return;
       }
-      if (!key.ctrl && !key.meta && inputChar && inputChar.length === 1) {
+      if (!key.ctrl && !key.meta && inputChar) {
         setInput((v) => v + inputChar);
       }
     }
