@@ -7,6 +7,10 @@
     ".": {
       "import": "./src/index.ts",
       "types": "./src/index.ts"
+    },
+    "./validate": {
+      "import": "./src/validate.ts",
+      "types": "./src/validate.ts"
     }
   },
   "scripts": {

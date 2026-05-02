@@ -12,7 +12,7 @@ import { runCronCommand } from './commands/cron';
 import { runDoctor } from './commands/doctor';
 import { runEval } from './commands/eval';
 import { runEvolve } from './commands/evolve';
-import { runGatewaySetup, runGatewayStart } from './commands/gateway';
+import { runGatewayStart } from './commands/gateway';
 import { runKeys } from './commands/keys';
 import { runLogs } from './commands/logs';
 import { runMcp } from './commands/mcp';
@@ -94,7 +94,10 @@ try {
         keys: 'key-rotation',
       };
       const startAtStep = setupSub ? sectionStepMap[setupSub] : undefined;
-      await runSetup(startAtStep);
+      const setupResult = await runSetup(startAtStep);
+      if (setupResult?.launchChat) {
+        await runChat(setupResult.config);
+      }
       break;
     }
 
@@ -110,8 +113,9 @@ try {
       const config = await readConfig(getStorage());
       if (!config) {
         console.log('No config found. Running setup first...\n');
-        const fresh = await runSetup();
-        if (fresh) {
+        const setupResult = await runSetup();
+        if (setupResult) {
+          const { config: fresh } = setupResult;
           await runChat(verboseFlag ? { ...fresh, verbose: true } : fresh, {
             ...(query ? { singleQuery: query } : {}),
           });
@@ -257,7 +261,9 @@ try {
     case 'gateway': {
       const sub = args[1] ?? '';
       if (sub === 'setup') {
-        await runGatewaySetup();
+        // Alias: open the TUI wizard at the messaging step (TTY), else legacy readline setup.
+        const gwResult = await runSetup('messaging');
+        if (gwResult?.launchChat) await runChat(gwResult.config);
       } else if (sub === 'start') {
         const config = await readConfig(getStorage());
         if (!config) {

@@ -17,7 +17,12 @@ function ask(rl: ReturnType<typeof createInterface>, question: string): Promise<
   return new Promise((resolve) => rl.question(question, resolve));
 }
 
-export async function runSetup(startAtStep?: WizardStepId): Promise<EthosConfig | null> {
+export interface SetupResult {
+  config: EthosConfig;
+  launchChat: boolean;
+}
+
+export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult | null> {
   const storage = getStorage();
   const existingConfig = await readConfig(storage);
 
@@ -79,10 +84,11 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<EthosConfig 
       await writeKeys(storage, answers.rotationKeys);
     }
 
-    return config;
+    return { config, launchChat: result.launchChat };
   }
 
-  return runReadlineFallback({ storage, existing: existingConfig });
+  const config = await runReadlineFallback({ storage, existing: existingConfig });
+  return config ? { config, launchChat: false } : null;
 }
 
 async function scaffoldEthosDir(storage: ReturnType<typeof getStorage>) {
