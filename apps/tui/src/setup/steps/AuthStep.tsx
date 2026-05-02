@@ -12,13 +12,16 @@ export function AuthStep() {
   const provider = PROVIDER_CATALOG.find((p) => p.id === answers.provider);
   const isSelfHosted = provider?.authType === 'self-hosted';
 
+  // Alias to avoid shadowing by the `key` parameter in useInput below
+  const apiKeyValue = key;
+
   useInput((input, key: import('ink').Key) => {
     if (key.escape) {
       dispatch({ type: 'back' });
       return;
     }
     if (key.return) {
-      if (!isSelfHosted && !setKey && !key) {
+      if (!isSelfHosted && !apiKeyValue) {
         setError('API key is required');
         return;
       }
@@ -30,14 +33,11 @@ export function AuthStep() {
       setError('');
       return;
     }
-    if (!key.ctrl && !key.meta && input && input.length === 1) {
+    if (!key.ctrl && !key.meta && input) {
       setKey((k) => k + input);
       setError('');
     }
   });
-
-  // capture variable for useInput closure
-  const apiKeyValue = key;
 
   const signupNote = provider?.signupUrl ? `Get a key at ${provider.signupUrl}` : '';
 
