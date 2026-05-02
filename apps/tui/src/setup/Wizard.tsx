@@ -30,6 +30,10 @@ interface WizardState {
   mode: WizardMode;
   answers: WizardAnswers;
   aborted: boolean;
+  /** When true, complete after the first 'next' dispatch — section-scoped re-entry. */
+  singleStep: boolean;
+  /** Set when singleStep fires — carries the merged answers ready for completion. */
+  singleStepDone: WizardAnswers | null;
 }
 
 function reducer(state: WizardState, action: WizardAction): WizardState {
@@ -39,6 +43,9 @@ function reducer(state: WizardState, action: WizardAction): WizardState {
 
   if (action.type === 'next') {
     const merged: WizardAnswers = { ...state.answers, ...action.patch };
+    if (state.singleStep) {
+      return { ...state, mode, answers: merged, singleStepDone: merged };
+    }
     const next = nextStep(state.step, mode);
     return { ...state, mode, answers: merged, step: next ?? state.step };
   }
@@ -54,15 +61,21 @@ function reducer(state: WizardState, action: WizardAction): WizardState {
 interface WizardProps {
   existing: WizardAnswers | null;
   startAtStep?: WizardStepId;
+  /** When true, exit immediately after the first step confirms — section re-entry. */
+  singleStep?: boolean;
   onComplete: (result: { answers: WizardAnswers; launchChat: boolean } | null) => void;
 }
 
-export function Wizard({ existing, startAtStep, onComplete }: WizardProps) {
+export function Wizard({ existing, startAtStep, singleStep, onComplete }: WizardProps) {
+  const initialMode: WizardMode = startAtStep && isFullOnlyStep(startAtStep) ? 'full' : 'quick';
+
   const [state, dispatch] = useReducer<Reducer<WizardState, WizardAction>>(reducer, {
     step: startAtStep ?? 'entry',
-    mode: 'quick',
+    mode: initialMode,
     answers: existing ?? {},
     aborted: false,
+    singleStep: singleStep ?? false,
+    singleStepDone: null,
   });
 
   const accent = state.answers.personality
@@ -72,6 +85,12 @@ export function Wizard({ existing, startAtStep, onComplete }: WizardProps) {
   // Handle abort → propagate null up
   if (state.aborted) {
     onComplete(null);
+    return null;
+  }
+
+  // Handle singleStep completion — exit immediately after the step confirms
+  if (state.singleStepDone) {
+    onComplete({ answers: state.singleStepDone, launchChat: false });
     return null;
   }
 
@@ -95,9 +114,11 @@ export function Wizard({ existing, startAtStep, onComplete }: WizardProps) {
       <Box flexDirection="column" paddingTop={1} paddingLeft={2}>
         <StepRouter step={state.step} onComplete={onComplete} dispatch={dispatch} />
         {fullOnlyHint}
-        <Box marginTop={1}>
-          <Text color={DESIGN.textTertiary}>{`  step ${currentIdx} of ${totalSteps}`}</Text>
-        </Box>
+        {!state.singleStep && (
+          <Box marginTop={1}>
+            <Text color={DESIGN.textTertiary}>{`  step ${currentIdx} of ${totalSteps}`}</Text>
+          </Box>
+        )}
       </Box>
     </WizardContext.Provider>
   );

@@ -156,6 +156,9 @@ export async function runDoctor(args: string[] = []): Promise<void> {
     console.log(
       `      ${c.dim}Run ${c.reset}${c.cyan}ethos setup${c.reset}${c.dim} to create one.${c.reset}`,
     );
+    console.log(
+      `      ${c.dim}Or: ${c.reset}${c.cyan}ethos doctor --fix${c.reset}${c.dim} → ${c.cyan}ethos setup auth${c.reset}${c.dim} → ${c.cyan}ethos setup model${c.reset}`,
+    );
   } else {
     console.log(`  ${c.green}✓${c.reset}  ${cfgPath}`);
     console.log(`     provider:    ${config.provider ?? '(not set)'}`);
@@ -228,6 +231,9 @@ export async function runDoctor(args: string[] = []): Promise<void> {
     console.log(`${c.red}✗ Configured channels with missing SDKs: ${list}${c.reset}`);
     console.log(
       `${c.dim}  Install the listed packages globally, or remove the channel from ~/.ethos/config.yaml.${c.reset}`,
+    );
+    console.log(
+      `${c.dim}  Or try: ${c.reset}${c.cyan}ethos doctor --fix${c.reset}${c.dim} → ${c.cyan}ethos setup auth${c.reset}${c.dim} → ${c.cyan}ethos setup model${c.reset}`,
     );
     process.exit(1);
   }

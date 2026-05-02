@@ -8,6 +8,8 @@ export type { WizardAnswers, WizardStepId };
 export interface RunSetupWizardOpts {
   existing: WizardAnswers | null;
   startAtStep?: WizardStepId;
+  /** Exit after confirming a single step — used for section-scoped re-entry. */
+  singleStep?: boolean;
 }
 
 export interface RunSetupWizardResult {
@@ -21,6 +23,7 @@ export function runSetupWizard(opts: RunSetupWizardOpts): Promise<RunSetupWizard
       createElement(Wizard, {
         existing: opts.existing,
         startAtStep: opts.startAtStep,
+        singleStep: opts.singleStep,
         onComplete: (result) => {
           unmount();
           resolve(result);

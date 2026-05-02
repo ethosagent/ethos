@@ -52,7 +52,11 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult 
         }
       : null;
 
-    const result = await runSetupWizard({ existing: existingAnswers, startAtStep });
+    const result = await runSetupWizard({
+      existing: existingAnswers,
+      startAtStep,
+      singleStep: !!startAtStep,
+    });
     if (!result) return null;
 
     const { answers } = result;
