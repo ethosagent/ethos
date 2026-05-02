@@ -5,6 +5,7 @@ export interface ProviderCatalogEntry {
   authType: 'api-key' | 'self-hosted';
   costType: 'api-billing' | 'pay-per-use' | 'local';
   recommended?: boolean;
+  comingSoon?: boolean;
   signupUrl?: string;
   defaultBaseUrl?: string;
 }
@@ -39,13 +40,14 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     signupUrl: 'https://openrouter.ai',
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
   },
-  // API Key
+  // Coming soon
   {
     id: 'gemini',
     label: 'Google Gemini',
     description: 'Gemini models via OpenAI-compatible API',
     authType: 'api-key',
     costType: 'api-billing',
+    comingSoon: true,
     signupUrl: 'https://aistudio.google.com',
     defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
   },
@@ -55,6 +57,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     description: 'Fast inference — LLaMA, Mixtral, and more',
     authType: 'api-key',
     costType: 'api-billing',
+    comingSoon: true,
     signupUrl: 'https://console.groq.com',
     defaultBaseUrl: 'https://api.groq.com/openai/v1',
   },
@@ -64,16 +67,17 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     description: 'Competitive with Claude and GPT at lower cost',
     authType: 'api-key',
     costType: 'api-billing',
+    comingSoon: true,
     signupUrl: 'https://platform.deepseek.com',
     defaultBaseUrl: 'https://api.deepseek.com/v1',
   },
-  // Self-hosted
   {
     id: 'ollama',
     label: 'Local Models (Ollama)',
     description: 'Run models locally — no API key required',
     authType: 'self-hosted',
     costType: 'local',
+    comingSoon: true,
     defaultBaseUrl: 'http://localhost:11434/v1',
   },
 ];
