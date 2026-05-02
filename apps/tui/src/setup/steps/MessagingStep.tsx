@@ -147,7 +147,7 @@ export function MessagingStep() {
         }));
         return;
       }
-      if (!key.ctrl && !key.meta && input && input.length === 1) {
+      if (!key.ctrl && !key.meta && input) {
         setFieldValues((v) => ({ ...v, [currentFieldKey]: (v[currentFieldKey] ?? '') + input }));
       }
     } else if (phase === 'validated') {
