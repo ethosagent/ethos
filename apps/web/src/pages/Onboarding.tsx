@@ -1,405 +1,299 @@
-import { type Personality, type ProviderId, personalityAccent } from '@ethosagent/web-contracts';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { App as AntApp, Button, Input, Select, Spin } from 'antd';
-import { useState } from 'react';
+import type { ProviderId } from '@ethosagent/web-contracts';
+import { useQueryClient } from '@tanstack/react-query';
+import { App as AntApp, Button, ConfigProvider } from 'antd';
+import { useCallback, useEffect, useReducer, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PersonalityMark } from '../components/ui/PersonalityMark';
+import { personalityTheme } from '../lib/theme';
+import { type CatalogProviderId, getCatalogEntry } from '../onboarding/catalog/providers';
+import { clearDraft, type DraftState, loadDraft, saveDraft } from '../onboarding/draft';
+import {
+  FULL_ONLY,
+  initialState,
+  STEP_COUNT,
+  stepIndex,
+  type WizardStepId,
+  wizardReducer,
+} from '../onboarding/reducer';
+import { AuthStep } from '../onboarding/steps/AuthStep';
+import { DaemonHintStep } from '../onboarding/steps/DaemonHintStep';
+import { KeyRotationStep } from '../onboarding/steps/KeyRotationStep';
+import { MemoryStep } from '../onboarding/steps/MemoryStep';
+import { MessagingStep } from '../onboarding/steps/MessagingStep';
+import { ModelStep } from '../onboarding/steps/ModelStep';
+import { MultiProviderStep } from '../onboarding/steps/MultiProviderStep';
+import { PersonalityStep } from '../onboarding/steps/PersonalityStep';
+import { ProviderStep } from '../onboarding/steps/ProviderStep';
+import { SetupEntryStep } from '../onboarding/steps/SetupEntryStep';
+import { SummaryStep } from '../onboarding/steps/SummaryStep';
 import { rpc } from '../rpc';
 
-// First-run setup. Three steps stacked vertically; no Antd Steps chrome
-// (DESIGN.md spec: "each onboarding step is one composition — one
-// headline, one supporting line, one input or one CTA, one piece of
-// context"). Max-width 520px, centered.
-//
-// Step 1 — Welcome:    value prop + trust line + Continue.
-// Step 2 — Provider:   pick provider + key, validate against the
-//                      provider's models endpoint, then pick a model.
-// Step 3 — Personality: stacked rows (NOT a card grid; DESIGN.md
-//                      anti-slop rule #2). Selecting one finishes onboarding.
-//
-// Integrations (Telegram/Slack/Discord/Email) are intentionally skipped
-// at this milestone — they live in later phases. Users add channels via
-// CLI for now; the web UI surfaces them in v1.
-
-type Step = 'welcome' | 'provider' | 'personality';
-
-interface ProviderDraft {
-  provider: ProviderId;
-  apiKey: string;
-  baseUrl: string;
-  model: string;
-  /** Models returned by the provider's catalog after validation. */
-  models: string[];
-}
-
-const PROVIDER_OPTIONS: Array<{ value: ProviderId; label: string; hint: string }> = [
-  {
-    value: 'anthropic',
-    label: 'Anthropic',
-    hint: 'Direct Claude API. Best with the latest Claude models.',
-  },
-  {
-    value: 'openrouter',
-    label: 'OpenRouter',
-    hint: 'Pay-as-you-go gateway covering hundreds of models.',
-  },
-  {
-    value: 'openai-compat',
-    label: 'OpenAI-compat',
-    hint: 'Any provider that speaks the OpenAI API (Groq, Together, vLLM…).',
-  },
-  {
-    value: 'ollama',
-    label: 'Ollama',
-    hint: 'Local models on your machine. No API key needed.',
-  },
+// Ordered list of Full-only steps for the "X of 4 advanced steps" hint
+const FULL_ONLY_ORDERED: WizardStepId[] = [
+  'multi-provider',
+  'key-rotation',
+  'memory',
+  'daemon-hint',
 ];
 
-export function Onboarding() {
-  const [step, setStep] = useState<Step>('welcome');
-  const [provider, setProvider] = useState<ProviderDraft>({
-    provider: 'anthropic',
-    apiKey: '',
-    baseUrl: '',
-    model: '',
-    models: [],
-  });
-
-  return (
-    <div className="onboarding">
-      <div className="onboarding-progress" aria-hidden="true">
-        <span className={`onboarding-dot${step === 'welcome' ? ' active' : ''}`} />
-        <span className={`onboarding-dot${step === 'provider' ? ' active' : ''}`} />
-        <span className={`onboarding-dot${step === 'personality' ? ' active' : ''}`} />
-      </div>
-      {step === 'welcome' ? (
-        <WelcomeStep onContinue={() => setStep('provider')} />
-      ) : step === 'provider' ? (
-        <ProviderStep
-          draft={provider}
-          onChange={setProvider}
-          onContinue={() => setStep('personality')}
-        />
-      ) : (
-        <PersonalityStep provider={provider} />
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Step 1 — Welcome
-// ---------------------------------------------------------------------------
-
-function WelcomeStep({ onContinue }: { onContinue: () => void }) {
-  return (
-    <section className="onboarding-step">
-      <h1 className="onboarding-headline">Set up your agent.</h1>
-      <p className="onboarding-supporting">
-        Pick a model API and a personality. Three steps. Takes a minute.
-      </p>
-      <p className="onboarding-trust">
-        Your config, history, and memory live on this machine — nothing leaves unless you explicitly
-        route it through a cloud model.
-      </p>
-      <div className="onboarding-actions">
-        <Button type="primary" onClick={onContinue}>
-          Continue
-        </Button>
-      </div>
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Step 2 — Provider
-// ---------------------------------------------------------------------------
-
-function ProviderStep({
-  draft,
-  onChange,
-  onContinue,
-}: {
-  draft: ProviderDraft;
-  onChange: (next: ProviderDraft) => void;
-  onContinue: () => void;
-}) {
-  const [validating, setValidating] = useState(false);
-  const [validateError, setValidateError] = useState<string | null>(null);
-
-  const requiresKey = draft.provider !== 'ollama';
-  const showsBaseUrl = draft.provider === 'openai-compat' || draft.provider === 'ollama';
-  const validated = draft.models.length > 0;
-
-  const validate = async () => {
-    setValidating(true);
-    setValidateError(null);
-    try {
-      const result = await rpc.onboarding.validateProvider({
-        provider: draft.provider,
-        apiKey: draft.apiKey || 'no-key', // ollama doesn't need one; server tolerates
-        ...(draft.baseUrl ? { baseUrl: draft.baseUrl } : {}),
-      });
-      if (!result.ok) {
-        setValidateError(result.error ?? 'Validation failed');
-        onChange({ ...draft, models: [] });
-        return;
-      }
-      const models = result.models ?? [];
-      // Default-pick the first model so the user can hit Continue without
-      // a second click. They can change it from the dropdown if they want.
-      onChange({ ...draft, models, model: models[0] ?? '' });
-    } catch (err) {
-      setValidateError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setValidating(false);
-    }
-  };
-
-  return (
-    <section className="onboarding-step">
-      <h1 className="onboarding-headline">Pick a model API.</h1>
-      <p className="onboarding-supporting">We'll validate the credentials before moving on.</p>
-
-      <div className="onboarding-providers">
-        {PROVIDER_OPTIONS.map((opt) => (
-          <label
-            key={opt.value}
-            className={`onboarding-provider${draft.provider === opt.value ? ' active' : ''}`}
-          >
-            <input
-              type="radio"
-              name="provider"
-              value={opt.value}
-              checked={draft.provider === opt.value}
-              onChange={() => onChange({ ...draft, provider: opt.value, models: [], model: '' })}
-            />
-            <span className="onboarding-provider-label">{opt.label}</span>
-            <span className="onboarding-provider-hint">{opt.hint}</span>
-          </label>
-        ))}
-      </div>
-
-      {requiresKey ? (
-        <div className="onboarding-field">
-          <label htmlFor="onboarding-key" className="onboarding-field-label">
-            API key
-          </label>
-          <Input.Password
-            id="onboarding-key"
-            value={draft.apiKey}
-            onChange={(e) => onChange({ ...draft, apiKey: e.target.value, models: [] })}
-            placeholder={draft.provider === 'anthropic' ? 'sk-ant-...' : 'sk-...'}
-            autoComplete="off"
-          />
-        </div>
-      ) : null}
-
-      {showsBaseUrl ? (
-        <div className="onboarding-field">
-          <label htmlFor="onboarding-baseurl" className="onboarding-field-label">
-            Base URL{draft.provider === 'ollama' ? ' (default: http://localhost:11434)' : ''}
-          </label>
-          <Input
-            id="onboarding-baseurl"
-            value={draft.baseUrl}
-            onChange={(e) => onChange({ ...draft, baseUrl: e.target.value, models: [] })}
-            placeholder={
-              draft.provider === 'ollama' ? 'http://localhost:11434' : 'https://api.example.com/v1'
-            }
-            autoComplete="off"
-          />
-        </div>
-      ) : null}
-
-      {validateError ? (
-        <div className="onboarding-error" role="alert">
-          {validateError}
-        </div>
-      ) : null}
-
-      {validated ? (
-        <div className="onboarding-field">
-          <label htmlFor="onboarding-model" className="onboarding-field-label">
-            Model
-          </label>
-          <Select
-            id="onboarding-model"
-            value={draft.model}
-            onChange={(value) => onChange({ ...draft, model: value })}
-            options={draft.models.map((m) => ({ label: m, value: m }))}
-            showSearch
-            style={{ width: '100%' }}
-          />
-        </div>
-      ) : null}
-
-      <div className="onboarding-actions">
-        {!validated ? (
-          <Button
-            type="primary"
-            onClick={() => void validate()}
-            loading={validating}
-            disabled={requiresKey && draft.apiKey.length === 0}
-          >
-            Validate
-          </Button>
-        ) : (
-          <Button type="primary" onClick={onContinue} disabled={!draft.model}>
-            Continue
-          </Button>
-        )}
-      </div>
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Step 3 — Personality
-// ---------------------------------------------------------------------------
-
-const SAMPLE_TURNS: Record<string, { user: string; reply: string }> = {
-  researcher: {
-    user: 'What changed in HTTP/3?',
-    reply:
-      'Major shifts: QUIC replaces TCP at the transport layer (faster connection setup, fewer head-of-line blocks), and TLS 1.3 is baked in rather than layered on. I can pull the RFC for specifics if you want.',
-  },
-  engineer: {
-    user: 'Refactor this loop to use a Map.',
-    reply:
-      'Yep, here you go. I went with Map.get() over object lookup for O(1) access on string keys. Want me to add a test that proves the behavior matches the original?',
-  },
-  reviewer: {
-    user: 'Should I merge this PR?',
-    reply:
-      "Two flags: the migration runs unguarded on a 50M-row table — that locks for minutes — and the rollback path doesn't restore deleted rows. Want me to spec a safer version?",
-  },
-  coach: {
-    user: "I'm stuck on this debugging session.",
-    reply:
-      "That's normal. What's the smallest change between when it worked and when it broke? Even one line counts. Walk me through the last commit and we'll narrow it.",
-  },
-  operator: {
-    user: 'Schedule a daily report at 9am.',
-    reply:
-      "Done. Cron job `daily-report` runs at 09:00 local, summarizes yesterday's sessions, writes to ~/.ethos/reports. Use `ethos cron pause daily-report` to disable.",
-  },
+// Step names for the resume affordance
+const STEP_LABELS: Partial<Record<WizardStepId, string>> = {
+  'setup-entry': 'Start',
+  provider: 'Provider',
+  'multi-provider': 'Provider chain',
+  auth: 'API key',
+  'key-rotation': 'Key rotation',
+  model: 'Model',
+  memory: 'Memory',
+  personality: 'Personality',
+  messaging: 'Messaging',
+  'daemon-hint': 'Daemon',
+  summary: 'Summary',
 };
 
-function PersonalityStep({ provider }: { provider: ProviderDraft }) {
+export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { notification } = AntApp.useApp();
+  const [state, dispatch] = useReducer(wizardReducer, initialState);
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['personalities'],
-    queryFn: () => rpc.personalities.list(),
-  });
+  // Draft resume affordance: when a non-trivial draft is detected on mount,
+  // show Resume / Start over rather than silently hydrating.
+  const [pendingDraft, setPendingDraft] = useState<DraftState | null>(null);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  useEffect(() => {
+    if (startAtStep) {
+      const draft = loadDraft();
+      if (draft) {
+        dispatch({ type: 'hydrate', draft: draft.answers, step: startAtStep, history: [] });
+      } else {
+        dispatch({ type: 'jumpTo', step: startAtStep });
+      }
+      return;
+    }
+    const draft = loadDraft();
+    if (draft && draft.step !== 'setup-entry') {
+      setPendingDraft(draft);
+      // Don't hydrate yet — let the user choose Resume or Start over
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startAtStep]);
 
-  const completeMut = useMutation({
-    mutationFn: (personalityId: string) =>
-      rpc.onboarding.complete({
-        provider: provider.provider,
-        model: provider.model,
-        apiKey: provider.apiKey || 'no-key',
-        ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
-        personalityId,
-      }),
-    onSuccess: () => {
-      // Invalidate every cache that reads from config or onboarding state
-      // so the auto-redirect in App stops sending us back here.
+  const handleResume = useCallback(() => {
+    if (pendingDraft) {
+      dispatch({
+        type: 'hydrate',
+        draft: pendingDraft.answers,
+        step: pendingDraft.step,
+        history: pendingDraft.history,
+      });
+      setPendingDraft(null);
+    }
+  }, [pendingDraft]);
+
+  const handleStartOver = useCallback(() => {
+    clearDraft();
+    dispatch({ type: 'reset' });
+    setPendingDraft(null);
+  }, []);
+
+  // Auto-save draft when wizard state changes (debounced 250ms in saveDraft)
+  useEffect(() => {
+    if (state.step === 'setup-entry' && state.history.length === 0) return;
+    saveDraft({ answers: state.answers, step: state.step, history: state.history });
+  }, [state.answers, state.step, state.history]);
+
+  const handleBack = useCallback(() => {
+    dispatch({ type: 'back' });
+  }, []);
+
+  // Push a browser history entry on each forward step advance so browser
+  // back fires a popstate (which we intercept to pop one wizard step).
+  const handleNext = useCallback(
+    (patch: Partial<typeof state.answers>) => {
+      window.history.pushState({ onboardingStep: state.step }, '');
+      dispatch({ type: 'next', patch });
+    },
+    [state.step],
+  );
+
+  // Browser back integration: popstate → pop wizard step.
+  // When wizard history is empty, do nothing — the browser will navigate
+  // away from /onboarding naturally.
+  useEffect(() => {
+    const onPopState = () => {
+      if (state.history.length > 0) {
+        dispatch({ type: 'back' });
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [state.history.length]);
+
+  // Global Esc key handler:
+  //   • On a Full-only step: skip to the next mandatory step (advance, not back).
+  //   • On any other step with history: go back one step.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // Don't intercept Esc when focused inside an input/textarea — let the
+      // field handle it (e.g. closing an Antd dropdown).
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('input, textarea, [role="listbox"]')) return;
+      e.preventDefault();
+      if (FULL_ONLY.has(state.step)) {
+        // Skip the rest of the Full-only sub-flow → advance to next mandatory step
+        window.history.pushState({ onboardingStep: state.step }, '');
+        dispatch({ type: 'next', patch: {} });
+      } else if (state.history.length > 0) {
+        dispatch({ type: 'back' });
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [state.step, state.history.length]);
+
+  const mode = state.answers.mode;
+  const totalSteps = STEP_COUNT[mode];
+  const currentIndex = stepIndex(state.step, mode);
+  const showBack = state.history.length > 0 && state.step !== 'setup-entry';
+
+  // Full-only step hint: "1 of 4 advanced steps · Skip rest with Esc"
+  const fullOnlyIdx = FULL_ONLY_ORDERED.indexOf(state.step);
+  const showFullHint = fullOnlyIdx !== -1 && state.answers.mode === 'full';
+
+  const handleComplete = async () => {
+    const { answers } = state;
+    if (!answers.provider || !answers.model || !answers.apiKey || !answers.personalityId) {
+      notification.error({
+        message: 'Incomplete setup',
+        description: 'Please complete all required steps before launching.',
+        placement: 'topRight',
+      });
+      return;
+    }
+    try {
+      const providerId = answers.provider as CatalogProviderId;
+      const catalog = getCatalogEntry(providerId);
+      await rpc.onboarding.complete({
+        provider: catalog.wiresAs as ProviderId,
+        model: answers.model,
+        apiKey: answers.apiKey,
+        ...(answers.baseUrl ? { baseUrl: answers.baseUrl } : {}),
+        personalityId: answers.personalityId,
+      });
+      clearDraft();
       void queryClient.invalidateQueries({ queryKey: ['config'] });
       void queryClient.invalidateQueries({ queryKey: ['onboarding'] });
-      navigate('/chat');
-    },
-    onError: (err) => {
+      // replace: true so browser back from /chat doesn't return to /onboarding
+      navigate('/chat', { replace: true, state: { setupBanner: true } });
+    } catch (err) {
       notification.error({
-        message: 'Could not finish setup',
+        message: 'Setup failed',
         description: err instanceof Error ? err.message : String(err),
         placement: 'topRight',
       });
-    },
-  });
+    }
+  };
 
-  if (isLoading || !data) {
-    return (
-      <section className="onboarding-step">
-        <div style={{ display: 'grid', placeItems: 'center', height: 200 }}>
-          <Spin />
+  const renderStep = () => {
+    switch (state.step) {
+      case 'setup-entry':
+        return <SetupEntryStep onNext={handleNext} />;
+      case 'provider':
+        return <ProviderStep answers={state.answers} onNext={handleNext} />;
+      case 'multi-provider':
+        return (
+          <MultiProviderStep answers={state.answers} onNext={handleNext} onBack={handleBack} />
+        );
+      case 'auth':
+        return <AuthStep answers={state.answers} onNext={handleNext} />;
+      case 'key-rotation':
+        return <KeyRotationStep answers={state.answers} onNext={handleNext} onBack={handleBack} />;
+      case 'model':
+        return <ModelStep answers={state.answers} onNext={handleNext} />;
+      case 'memory':
+        return <MemoryStep answers={state.answers} onNext={handleNext} onBack={handleBack} />;
+      case 'personality':
+        return <PersonalityStep answers={state.answers} onNext={handleNext} />;
+      case 'messaging':
+        return <MessagingStep answers={state.answers} onNext={handleNext} />;
+      case 'daemon-hint':
+        return <DaemonHintStep answers={state.answers} onNext={handleNext} onBack={handleBack} />;
+      case 'summary':
+        return <SummaryStep answers={state.answers} onNext={() => void handleComplete()} />;
+      case 'launch':
+        return null;
+      default:
+        return null;
+    }
+  };
+
+  const personalityId = state.answers.personalityId;
+  const usePersonalityTheme =
+    personalityId &&
+    (state.step === 'messaging' ||
+      state.step === 'daemon-hint' ||
+      state.step === 'summary' ||
+      state.step === 'launch');
+
+  const content = (
+    <div className="onboarding">
+      {/* Resume affordance — shown when a non-trivial draft was detected on mount */}
+      {pendingDraft ? (
+        <div className="onboarding-resume-bar">
+          <span className="onboarding-resume-text">
+            Setup in progress — resume from{' '}
+            <strong>{STEP_LABELS[pendingDraft.step] ?? pendingDraft.step}</strong>?
+          </span>
+          <div className="onboarding-resume-actions">
+            <Button size="small" onClick={handleResume}>
+              Resume
+            </Button>
+            <Button size="small" onClick={handleStartOver}>
+              Start over
+            </Button>
+          </div>
         </div>
-      </section>
-    );
-  }
+      ) : null}
 
-  return (
-    <section className="onboarding-step">
-      <h1 className="onboarding-headline">Pick a personality.</h1>
-      <p className="onboarding-supporting">
-        Each one's a different toolset and voice. You can switch later — and the chat tab auto-forks
-        the session when you do.
-      </p>
-
-      <div className="onboarding-personalities">
-        {data.personalities.map((p) => (
-          <PersonalityRow
-            key={p.id}
-            personality={p}
-            active={selectedId === p.id}
-            onSelect={() => setSelectedId(p.id)}
+      <div className="onboarding-progress" aria-hidden="true">
+        {Array.from({ length: totalSteps }).map((_, i) => (
+          <span
+            // biome-ignore lint/suspicious/noArrayIndexKey: index is position in sequence
+            key={i}
+            className={`onboarding-dot${i === currentIndex ? ' active' : i < currentIndex ? ' visited' : ''}`}
           />
         ))}
       </div>
 
-      <div className="onboarding-actions">
-        <Button
-          type="primary"
-          disabled={!selectedId}
-          loading={completeMut.isPending}
-          onClick={() => {
-            if (selectedId) completeMut.mutate(selectedId);
-          }}
-        >
-          Continue
-        </Button>
-      </div>
-    </section>
-  );
-}
+      {showBack ? (
+        <div className="onboarding-back-row">
+          <button
+            type="button"
+            className="onboarding-back-btn"
+            onClick={handleBack}
+            aria-label="Go back"
+          >
+            ‹ Back
+          </button>
+        </div>
+      ) : null}
 
-function PersonalityRow({
-  personality,
-  active,
-  onSelect,
-}: {
-  personality: Personality;
-  active: boolean;
-  onSelect: () => void;
-}) {
-  const accent = personalityAccent(personality.id);
-  const sample = SAMPLE_TURNS[personality.id];
-  return (
-    <button
-      type="button"
-      className={`onboarding-personality${active ? ' active' : ''}`}
-      style={active ? { borderColor: accent } : undefined}
-      onClick={onSelect}
-      aria-pressed={active}
-    >
-      <PersonalityMark personalityId={personality.id} size={36} />
-      <div className="onboarding-personality-text">
-        <span className="onboarding-personality-name">{personality.name}</span>
-        {personality.description ? (
-          <span className="onboarding-personality-description">{personality.description}</span>
-        ) : null}
-        {sample ? (
-          <div className="onboarding-personality-sample">
-            <span className="onboarding-personality-sample-user">{sample.user}</span>
-            <span className="onboarding-personality-sample-reply">{sample.reply}</span>
-          </div>
-        ) : null}
+      {/* Full-mode advanced steps hint */}
+      {showFullHint ? (
+        <div className="onboarding-full-hint">
+          [{fullOnlyIdx + 1} of 4 advanced steps · Skip rest with Esc]
+        </div>
+      ) : null}
+
+      <div key={state.step} data-dir={state.direction} className="onboarding-step-wrapper">
+        {renderStep()}
       </div>
-    </button>
+    </div>
   );
+
+  if (usePersonalityTheme && personalityId) {
+    return <ConfigProvider theme={personalityTheme(personalityId)}>{content}</ConfigProvider>;
+  }
+  return content;
 }

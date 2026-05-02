@@ -126,7 +126,13 @@ export const OnboardingStepSchema = z.enum([
 ]);
 export type OnboardingStep = z.infer<typeof OnboardingStepSchema>;
 
-export const ProviderIdSchema = z.enum(['anthropic', 'openrouter', 'openai-compat', 'ollama']);
+export const ProviderIdSchema = z.enum([
+  'anthropic',
+  'openai',
+  'openrouter',
+  'openai-compat',
+  'ollama',
+]);
 export type ProviderId = z.infer<typeof ProviderIdSchema>;
 
 // ---------------------------------------------------------------------------

@@ -114,6 +114,14 @@ export function App() {
           <Route path="/batch" element={<Batch />} />
           <Route path="/eval" element={<Eval />} />
           <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="/setup/provider" element={<Onboarding startAtStep="provider" />} />
+          <Route path="/setup/providers" element={<Onboarding startAtStep="multi-provider" />} />
+          <Route path="/setup/auth" element={<Onboarding startAtStep="auth" />} />
+          <Route path="/setup/keys" element={<Onboarding startAtStep="key-rotation" />} />
+          <Route path="/setup/model" element={<Onboarding startAtStep="model" />} />
+          <Route path="/setup/memory" element={<Onboarding startAtStep="memory" />} />
+          <Route path="/setup/personality" element={<Onboarding startAtStep="personality" />} />
+          <Route path="/setup/messaging" element={<Onboarding startAtStep="messaging" />} />
           <Route path="/signing-in" element={<SigningIn />} />
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
@@ -152,7 +160,8 @@ function useOnboardingRedirect(): void {
   useEffect(() => {
     if (isLoading || !data) return;
     if (data.step === 'done') return;
-    if (pathname === '/onboarding' || pathname === '/signing-in') return;
+    if (pathname === '/onboarding' || pathname.startsWith('/setup') || pathname === '/signing-in')
+      return;
     navigate('/onboarding', { replace: true });
   }, [data, isLoading, pathname, navigate]);
 }

@@ -122,6 +122,12 @@ export class OnboardingService {
             input.apiKey,
             controller.signal,
           );
+        case 'openai':
+          return await this.openAiCompatibleModels(
+            input.baseUrl ?? 'https://api.openai.com/v1',
+            input.apiKey,
+            controller.signal,
+          );
         case 'openai-compat':
           if (!input.baseUrl) throw new Error('baseUrl required for openai-compat');
           return await this.openAiCompatibleModels(input.baseUrl, input.apiKey, controller.signal);

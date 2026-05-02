@@ -168,6 +168,12 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@ethosagent/web-contracts':
+        specifier: workspace:*
+        version: link:../../packages/web-contracts
+      '@ethosagent/wiring':
+        specifier: workspace:*
+        version: link:../../packages/wiring
       ink:
         specifier: ^5.0.0
         version: 5.2.1(@types/react@18.3.28)(react@18.3.1)
