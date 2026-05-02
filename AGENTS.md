@@ -201,7 +201,6 @@ biome check --write . auto-fixes import order, formatting, and safe lint issues.
 STRICT SQLite tables — both sessions and messages use STRICT mode. All column types must match exactly.
 better-sqlite3 is synchronous — all SessionStore methods wrap it in async but never actually await I/O. Keep query logic tight; no async operations inside the synchronous db.prepare().run() calls.
 Personality toolset is enforced — DefaultToolRegistry.toDefinitions(allowedTools) filters what the LLM sees, and executeParallel rejects calls outside the allowlist (tool-registry.ts:57). AgentLoop reads personality.toolset and passes it through (agent-loop.ts:140,265,396). Disallowed tools get a tool_result with is_error: true to keep the Anthropic message contract intact.
-Update CHANGELOG.md whenever you ship a user-visible change — add a bullet under [Unreleased] in the matching section (Added / Changed / Fixed / Removed / Security / Deprecated). Cross-reference plan IDs (e.g. IMPROVEMENT.md P0-1) and OpenClaw issue numbers when relevant — that's how future readers, human or LLM, will trace the why. The file follows Keep a Changelog.
 Running the project
 make prepare        # pnpm install
 pnpm dev            # start chat (tsx apps/ethos/src/index.ts)
