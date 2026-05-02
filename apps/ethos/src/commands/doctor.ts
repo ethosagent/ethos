@@ -119,10 +119,13 @@ function printRow(r: RowResult): void {
 }
 
 export async function runDoctor(args: string[] = []): Promise<void> {
-  // Phase 30.10 — `ethos doctor --recent-errors` prints a grouped summary of
-  // the last 50 errors from ~/.ethos/logs/errors.jsonl. Skips the SDK checks.
   if (args.includes('--recent-errors')) {
     runRecentErrorsReport();
+    return;
+  }
+
+  if (args.includes('--fix')) {
+    await runDoctorFix();
     return;
   }
 
@@ -228,7 +231,89 @@ export async function runDoctor(args: string[] = []): Promise<void> {
     );
     process.exit(1);
   }
-  console.log(`${c.green}✓ Healthy.${c.reset}`);
+  if (coreFailures.length === 0 && configuredButMissing.length === 0) {
+    console.log(`${c.green}✓ Healthy.${c.reset}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// --fix: auto-repair common issues
+// ---------------------------------------------------------------------------
+
+async function runDoctorFix(): Promise<void> {
+  const { chmod } = await import('node:fs/promises');
+  const { existsSync } = await import('node:fs');
+  const storage = getStorage();
+  const dir = ethosDir();
+  let exitCode = 0;
+
+  console.log('');
+  console.log(`${c.bold}ethos doctor --fix${c.reset}`);
+  console.log('');
+
+  // 1. Ensure ~/.ethos/personalities/ exists
+  const personalitiesDir = join(dir, 'personalities');
+  if (!(await storage.exists(personalitiesDir))) {
+    await storage.mkdir(personalitiesDir);
+    console.log(`  ${c.green}✓ Fixed:${c.reset}  Created ${personalitiesDir}`);
+  } else {
+    console.log(`  ${c.green}✓${c.reset}  ${personalitiesDir} exists`);
+  }
+
+  // 2. Seed MEMORY.md and USER.md
+  for (const filename of ['MEMORY.md', 'USER.md']) {
+    const path = join(dir, filename);
+    if (!(await storage.exists(path))) {
+      await storage.write(path, '');
+      console.log(`  ${c.green}✓ Fixed:${c.reset}  Created ${path}`);
+    } else {
+      console.log(`  ${c.green}✓${c.reset}  ${path} exists`);
+    }
+  }
+
+  // 3. Fix keys.json permissions (should be 0o600)
+  const keysPath = join(dir, 'keys.json');
+  if (existsSync(keysPath)) {
+    try {
+      await chmod(keysPath, 0o600);
+      console.log(`  ${c.green}✓ Fixed:${c.reset}  Set ${keysPath} to 0600`);
+    } catch {
+      console.log(`  ${c.yellow}⚠${c.reset}  Could not chmod ${keysPath}`);
+      exitCode = 1;
+    }
+  }
+
+  // 4. Validate provider in config
+  const config = await readConfig(storage);
+  if (config) {
+    const { PROVIDER_CATALOG } = await import('@ethosagent/wiring/provider-catalog');
+    const knownIds = PROVIDER_CATALOG.map((p) => p.id);
+    if (!knownIds.includes(config.provider)) {
+      const closest = knownIds.find((id) => id.startsWith(config.provider[0] ?? '')) ?? 'anthropic';
+      console.log(
+        `  ${c.yellow}→ Action needed:${c.reset}  Unknown provider '${config.provider}'. Did you mean '${closest}'?`,
+      );
+      console.log(`  ${c.dim}  Edit ~/.ethos/config.yaml and set provider: ${closest}${c.reset}`);
+      exitCode = 1;
+    } else {
+      console.log(`  ${c.green}✓${c.reset}  Provider '${config.provider}' is valid`);
+    }
+  } else {
+    console.log(
+      `  ${c.yellow}→ Action needed:${c.reset}  No config found. Run: ${c.cyan}ethos setup${c.reset}`,
+    );
+    exitCode = 1;
+  }
+
+  console.log('');
+  if (exitCode === 0) {
+    console.log(`${c.green}✓ All auto-repairs complete.${c.reset}`);
+  } else {
+    console.log(
+      `${c.yellow}⚠ Some issues need manual action. Try: ${c.cyan}ethos doctor --fix → ethos setup auth → ethos setup model${c.reset}`,
+    );
+    process.exit(exitCode);
+  }
 }
 
 // ---------------------------------------------------------------------------

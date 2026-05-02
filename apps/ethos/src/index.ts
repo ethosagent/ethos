@@ -83,7 +83,18 @@ try {
     }
 
     case 'setup': {
-      await runSetup();
+      const setupSub = args[1];
+      const sectionStepMap: Record<string, import('@ethosagent/tui/setup').WizardStepId> = {
+        auth: 'auth',
+        model: 'model',
+        personality: 'personality',
+        messaging: 'messaging',
+        memory: 'memory',
+        providers: 'provider-chain',
+        keys: 'key-rotation',
+      };
+      const startAtStep = setupSub ? sectionStepMap[setupSub] : undefined;
+      await runSetup(startAtStep);
       break;
     }
 

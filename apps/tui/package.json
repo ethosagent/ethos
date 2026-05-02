@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./setup": "./src/setup/index.ts"
   },
   "dependencies": {
     "@ethosagent/agent-bridge": "workspace:*",
@@ -12,6 +13,8 @@
     "@ethosagent/memory-markdown": "workspace:*",
     "@ethosagent/session-sqlite": "workspace:*",
     "@ethosagent/types": "workspace:*",
+    "@ethosagent/web-contracts": "workspace:*",
+    "@ethosagent/wiring": "workspace:*",
     "ink": "^5.0.0",
     "react": "^18.3.0"
   },

@@ -8,6 +8,14 @@
       "import": "./src/index.ts",
       "types": "./src/index.ts",
       "production": "./dist/index.js"
+    },
+    "./provider-catalog": {
+      "import": "./src/provider-catalog.ts",
+      "types": "./src/provider-catalog.ts"
+    },
+    "./model-catalog": {
+      "import": "./src/model-catalog.ts",
+      "types": "./src/model-catalog.ts"
     }
   },
   "scripts": {
