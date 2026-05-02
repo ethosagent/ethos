@@ -13,8 +13,8 @@ export function LaunchStep(_props: LaunchStepProps) {
   const [choice, setChoice] = useState<'yes' | 'no'>('yes');
 
   useInput((input, key) => {
-    if (key.leftArrow || input === 'h' || input === 'n') setChoice('no');
-    if (key.rightArrow || input === 'l' || input === 'y') setChoice('yes');
+    if (key.leftArrow || input === 'h' || input === 'y') setChoice('yes');
+    if (key.rightArrow || input === 'l' || input === 'n') setChoice('no');
     if (key.return) {
       dispatch({ type: 'next', patch: { launchChat: choice === 'yes' } });
     }
