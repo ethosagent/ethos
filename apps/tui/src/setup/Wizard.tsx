@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from 'ink';
-import { type Reducer, useReducer } from 'react';
+import { type Reducer, useEffect, useReducer } from 'react';
 import { DESIGN, personalityAccent } from '../skin';
 import {
   getStepOrder,
@@ -82,25 +82,26 @@ export function Wizard({ existing, startAtStep, singleStep, onComplete }: Wizard
     ? personalityAccent(state.answers.personality)
     : DESIGN.textPrimary;
 
-  // Handle abort → propagate null up
-  if (state.aborted) {
-    onComplete(null);
-    return null;
-  }
+  const isDone =
+    state.aborted ||
+    state.singleStepDone !== null ||
+    (state.step === 'launch' && state.answers.launchChat !== undefined);
 
-  // Handle singleStep completion — exit immediately after the step confirms
-  if (state.singleStepDone) {
-    onComplete({ answers: state.singleStepDone, launchChat: false });
-    return null;
-  }
+  // Defer onComplete out of the render path to avoid nested-update warnings
+  useEffect(() => {
+    if (!isDone) return;
+    if (state.aborted) {
+      onComplete(null);
+    } else if (state.singleStepDone) {
+      onComplete({ answers: state.singleStepDone, launchChat: false });
+    } else {
+      onComplete({ answers: state.answers, launchChat: Boolean(state.answers.launchChat) });
+    }
+  }, [isDone, onComplete, state.aborted, state.singleStepDone, state.answers]);
 
-  // Handle completion: when reducer tries to advance past 'launch', we're done
+  if (isDone) return null;
+
   const order = getStepOrder(state.mode);
-  const isDone = state.step === 'launch' && state.answers.launchChat !== undefined;
-  if (isDone) {
-    onComplete({ answers: state.answers, launchChat: Boolean(state.answers.launchChat) });
-    return null;
-  }
 
   const totalSteps = order.length;
   const currentIdx = order.indexOf(state.step) + 1;
