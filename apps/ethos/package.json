@@ -44,6 +44,7 @@
   },
   "dependencies": {
     "@ethosagent/core": "workspace:*",
+    "@ethosagent/safety-scanner": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@anthropic-ai/sdk": "^0.39.0",
     "@hono/node-server": "^2.0.0",

@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -123,5 +124,77 @@ describe('buildMcpEnv', () => {
     const env = buildMcpEnv('test-server');
     // The env HOME should be the scratch dir, not the parent's HOME
     expect(env.HOME).not.toBe(parentHome);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Integration: actual child process sees minimized env
+// ---------------------------------------------------------------------------
+
+describe('buildMcpEnv — child process isolation', () => {
+  it('child process cannot see ANTHROPIC_API_KEY', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-secret-leaked';
+    const env = buildMcpEnv('isolation-test');
+    const result = spawnSync(
+      process.execPath,
+      ['-e', 'process.stdout.write(process.env.ANTHROPIC_API_KEY ?? "")'],
+      { env, encoding: 'utf8' },
+    );
+    expect(result.stdout).toBe('');
+  });
+
+  it('child process cannot see OPENAI_API_KEY', () => {
+    process.env.OPENAI_API_KEY = 'sk-secret-openai';
+    const env = buildMcpEnv('isolation-test');
+    const result = spawnSync(
+      process.execPath,
+      ['-e', 'process.stdout.write(process.env.OPENAI_API_KEY ?? "")'],
+      { env, encoding: 'utf8' },
+    );
+    expect(result.stdout).toBe('');
+  });
+
+  it('child process cannot see GITHUB_TOKEN (not in passthrough)', () => {
+    process.env.GITHUB_TOKEN = 'ghp-secret';
+    const env = buildMcpEnv('isolation-test');
+    const result = spawnSync(
+      process.execPath,
+      ['-e', 'process.stdout.write(process.env.GITHUB_TOKEN ?? "")'],
+      { env, encoding: 'utf8' },
+    );
+    expect(result.stdout).toBe('');
+  });
+
+  it('child process sees GITHUB_TOKEN when explicitly in passthrough', () => {
+    process.env.GITHUB_TOKEN = 'ghp-allowed';
+    const env = buildMcpEnv('isolation-test', ['GITHUB_TOKEN']);
+    const result = spawnSync(
+      process.execPath,
+      ['-e', 'process.stdout.write(process.env.GITHUB_TOKEN ?? "")'],
+      { env, encoding: 'utf8' },
+    );
+    expect(result.stdout).toBe('ghp-allowed');
+  });
+
+  it('child process HOME points to the scratch dir, not the real home', () => {
+    const env = buildMcpEnv('isolation-test');
+    const result = spawnSync(
+      process.execPath,
+      ['-e', 'process.stdout.write(process.env.HOME ?? "")'],
+      { env, encoding: 'utf8' },
+    );
+    const expected = join(homedir(), '.ethos', 'mcp-runtime', 'isolation-test');
+    expect(result.stdout).toBe(expected);
+  });
+
+  it('child process cannot see arbitrary non-passthrough vars', () => {
+    process.env.MY_CUSTOM_VAR = 'should-not-leak';
+    const env = buildMcpEnv('isolation-test');
+    const result = spawnSync(
+      process.execPath,
+      ['-e', 'process.stdout.write(process.env.MY_CUSTOM_VAR ?? "")'],
+      { env, encoding: 'utf8' },
+    );
+    expect(result.stdout).toBe('');
   });
 });

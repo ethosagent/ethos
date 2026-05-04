@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { mkdir, open, readdir, rename, rm, stat, unlink } from 'node:fs/promises';
+import { mkdir, open, readdir, readFile, rename, rm, stat, unlink } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
+import { canInstall, deriveTier, scanSkillMd, type TrustTier } from '@ethosagent/safety-scanner';
 import { EthosError } from '@ethosagent/types';
 import { ethosDir } from '../config';
 
@@ -87,6 +88,7 @@ async function installSkill(slug: string): Promise<void> {
           });
         }
       },
+      onBeforeCommit: (skillDir) => scanSkillDir(slug, skillDir),
     });
   } catch (err) {
     if (err instanceof EthosError) {
@@ -119,6 +121,7 @@ async function updateOne(slug: string): Promise<void> {
           });
         }
       },
+      onBeforeCommit: (skillDir) => scanSkillDir(slug, skillDir),
     });
   } catch (err) {
     if (err instanceof EthosError) {
@@ -178,6 +181,58 @@ async function listSkills(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Pre-install safety scan
+// ---------------------------------------------------------------------------
+
+function deriveTierFromSlug(slug: string): TrustTier {
+  if (slug.startsWith('/') || slug.startsWith('./') || slug.startsWith('../')) {
+    return 'untrusted';
+  }
+  if (slug.startsWith('github:')) {
+    return deriveTier(`github.com/${slug.slice('github:'.length)}`);
+  }
+  // Short clawhub slug: owner/name
+  return deriveTier(`clawhub/${slug}`);
+}
+
+async function scanSkillDir(slug: string, skillDir: string): Promise<void> {
+  let content: string;
+  try {
+    content = await readFile(join(skillDir, 'SKILL.md'), 'utf8');
+  } catch {
+    return; // No SKILL.md — locateSlugSubpath already verified its presence
+  }
+
+  const result = scanSkillMd(content, join(skillDir, 'SKILL.md'));
+  if (!result.hasRed && !result.hasYellow) return;
+
+  const tier = deriveTierFromSlug(slug);
+  const decision = canInstall(result, tier);
+
+  console.log(`\n${c.bold}Safety scan — ${slug}${c.reset}`);
+  for (const f of result.findings) {
+    const color = f.severity === 'red' ? c.red : c.yellow;
+    const loc = f.line !== undefined ? `:${f.line}` : '';
+    console.log(
+      `  ${color}${f.severity === 'red' ? '✗' : '⚠'} ${f.severity}${c.reset}  ${f.rule}${loc}`,
+    );
+    if (f.message) console.log(`     ${c.dim}${f.message}${c.reset}`);
+    if (f.excerpt) console.log(`     ${c.dim}${f.excerpt}${c.reset}`);
+  }
+
+  if (!decision.allowed) {
+    console.log();
+    throw new EthosError({
+      code: 'SKILL_INSTALL_FAILED',
+      cause: `Skill '${slug}' blocked by safety scan: ${decision.blockedBy}`,
+      action: 'Review the findings above. Remove the flagged content or choose a different skill.',
+    });
+  }
+
+  console.log(`${c.yellow}⚠ Installed with warnings — review findings above.${c.reset}`);
+}
+
+// ---------------------------------------------------------------------------
 // Atomic install
 // ---------------------------------------------------------------------------
 //
@@ -213,12 +268,18 @@ interface AtomicInstallOpts {
    * `SKILL.md` file marks the leaf directory).
    */
   runInstaller: (workdir: string) => Promise<void>;
+  /**
+   * Called with the resolved skill directory after the installer succeeds but
+   * before the rename commits it to the final location. Throw to abort —
+   * the workdir is cleaned up and the destination is left untouched.
+   */
+  onBeforeCommit?: (skillDir: string) => Promise<void>;
   /** Override pid for deterministic tests; defaults to `process.pid`. */
   pid?: number;
 }
 
 export async function atomicInstall(opts: AtomicInstallOpts): Promise<void> {
-  const { slug, skillsRoot, runInstaller } = opts;
+  const { slug, skillsRoot, runInstaller, onBeforeCommit } = opts;
   const pid = opts.pid ?? process.pid;
   const tmpRoot = join(skillsRoot, '.tmp');
   const lockPath = join(skillsRoot, '.lock');
@@ -251,6 +312,9 @@ export async function atomicInstall(opts: AtomicInstallOpts): Promise<void> {
 
     const src = join(tmpDir, slugSubpath);
     const dst = join(skillsRoot, slugSubpath);
+
+    // Pre-commit hook (e.g. safety scan) — throw to abort before any rename.
+    await onBeforeCommit?.(src);
 
     await mkdir(dirname(dst), { recursive: true });
 
