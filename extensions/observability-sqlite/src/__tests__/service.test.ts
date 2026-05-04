@@ -62,6 +62,23 @@ describe('ObservabilityService safety.observability gating', () => {
     expect(spans[0]?.attrs?.args).not.toContain('INTERNAL-DOC-ABCD1234');
   });
 
+  it('storeToolArgs full: args stored without any redaction', () => {
+    const { service, store } = makeService();
+    const awsKey = `AKIA${'A'.repeat(16)}`;
+    const traceId = service.startTrace({ kind: 'turn', obsConfig: { storeToolArgs: 'full' } });
+    const spanId = service.startSpan({
+      traceId,
+      kind: 'tool_call',
+      name: 'bash',
+      attrs: { args: `key=${awsKey}` },
+      obsConfig: { storeToolArgs: 'full' },
+    });
+    service.endSpan(spanId, 'ok');
+    const spans = store.getSpans(traceId);
+    expect(spans[0]?.attrs?.args).toBe(`key=${awsKey}`);
+    expect(spans[0]?.attrs?.args).not.toContain('[REDACTED');
+  });
+
   it('traceConfig flows from startTrace to all spans in that trace', () => {
     const { service, store } = makeService();
     const traceId = service.startTrace({

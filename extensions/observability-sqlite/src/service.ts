@@ -79,14 +79,17 @@ export class ObservabilityService implements ObservabilityWriter {
     const extraRedactPatterns = cfg?.redactPatterns;
 
     let finalAttrs = opts.attrs;
+    let skipRedact = false;
     if (opts.kind === 'tool_call' && finalAttrs?.args !== undefined) {
       if (storeArgs === 'none') {
         // Strip args — keep everything else
         const { args: _dropped, ...rest } = finalAttrs;
         finalAttrs = rest;
+      } else if (storeArgs === 'full') {
+        // Store raw args without any redaction — explicit opt-in by the personality author
+        skipRedact = true;
       }
-      // 'redacted' — current behavior (store.ts applies redaction via redactJson)
-      // 'full' — TODO Wave C: implement redaction bypass; for now treat as 'redacted'
+      // 'redacted' — default: store.ts applies redactJson before write
     }
 
     const spanId = randomUUID();
@@ -99,7 +102,7 @@ export class ObservabilityService implements ObservabilityWriter {
       startTs: Date.now(),
       attrs: finalAttrs,
     };
-    this.store.insertSpan(span, extraRedactPatterns);
+    this.store.insertSpan(span, extraRedactPatterns, skipRedact);
     return spanId;
   }
 
