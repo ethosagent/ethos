@@ -122,7 +122,8 @@ export function checkMessage(
   }
 
   // Step 6: allowlisted sender in group without mention → drop (mention gating, 1c)
-  if (!message.isDm && !message.isGroupMention) {
+  // Owner bypasses mention gate — must be able to run /allow from any channel.
+  if (!message.isDm && !message.isGroupMention && senderId !== config.ownerUserId) {
     return { action: 'drop' };
   }
 
@@ -132,15 +133,14 @@ export function checkMessage(
     (visibility === 'allowlist' || visibility === 'allowlist_quote') &&
     message.replyToId !== undefined
   ) {
-    // The message is a reply/quote. Strip if the replied-to sender is not in the allowlist.
-    // We don't have access to the replied-to sender's ID from InboundMessage alone —
-    // the spec says: if replyToId is set and we're in allowlist mode, strip the quoted portion.
-    // The heuristic: strip unconditionally when replyToId is present (non-allowlisted
-    // context injection is the threat; the message.text may embed quoted text inline).
-    const stripped =
-      '[quoted content from non-allowlisted sender removed]\n' +
-      message.text.replace(/^>.*\n?/gm, '').trim();
-    return { action: 'allow', strippedText: stripped };
+    const replyToUser = message.replyToUserId;
+    const replyAllowed = replyToUser !== undefined && isInAllowlist(allowlist, replyToUser);
+    if (!replyAllowed) {
+      const stripped =
+        '[quoted content from non-allowlisted sender removed]\n' +
+        message.text.replace(/^>.*\n?/gm, '').trim();
+      return { action: 'allow', strippedText: stripped };
+    }
   }
 
   // Step 8: allow

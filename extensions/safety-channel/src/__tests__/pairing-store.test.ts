@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { consumeCode, generateCode, initPairingDb } from '../pairing-store';
+import { clearOwnerPause, consumeCode, generateCode, initPairingDb } from '../pairing-store';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -120,5 +120,54 @@ describe('pairing-store', () => {
       const code = generateCode(db, `user-${i}`, 'telegram');
       expect(code).toMatch(/^[A-Z0-9]{8}$/);
     }
+  });
+
+  it('nonce reuse: two codes with the same nonce value are independently bound to their senders', () => {
+    const code1 = generateCode(db, 'user-1', 'telegram');
+    if (!code1) throw new Error('expected code1');
+    const row1 = db.prepare('SELECT nonce FROM pairing_codes WHERE code = ?').get(code1) as {
+      nonce: string;
+    };
+
+    db.prepare(
+      `INSERT INTO pairing_codes (code, sender_id, platform, issued_at, nonce, status) VALUES ('SAMENC01', 'user-2', 'telegram', ?, ?, 'pending')`,
+    ).run(Date.now(), row1.nonce);
+
+    expect(consumeCode(db, code1, 'user-1', 'telegram').ok).toBe(true);
+    expect(consumeCode(db, 'SAMENC01', 'user-2', 'telegram').ok).toBe(true);
+
+    const swapResult = consumeCode(db, code1, 'user-2', 'telegram');
+    expect(swapResult.ok).toBe(false);
+  });
+
+  it('5 invalid /allow attempts triggers 24h owner pause', () => {
+    for (let i = 0; i < 5; i++) {
+      consumeCode(db, 'BADCODE99', 'user-x', 'telegram', 'owner-1');
+    }
+    const result = consumeCode(db, 'BADCODE99', 'user-x', 'telegram', 'owner-1');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('owner_paused');
+  });
+
+  it('owner pause blocks even valid codes', () => {
+    for (let i = 0; i < 5; i++) {
+      consumeCode(db, 'BADCODE99', 'user-x', 'telegram', 'owner-1');
+    }
+    const code = generateCode(db, 'user-y', 'telegram');
+    if (!code) throw new Error('expected code');
+    const result = consumeCode(db, code, 'user-y', 'telegram', 'owner-1');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('owner_paused');
+  });
+
+  it('clearOwnerPause lifts the 24h pause', () => {
+    for (let i = 0; i < 5; i++) {
+      consumeCode(db, 'BADCODE99', 'user-x', 'telegram', 'owner-1');
+    }
+    clearOwnerPause(db, 'owner-1');
+    const code = generateCode(db, 'user-z', 'telegram');
+    if (!code) throw new Error('expected code');
+    const result = consumeCode(db, code, 'user-z', 'telegram', 'owner-1');
+    expect(result.ok).toBe(true);
   });
 });

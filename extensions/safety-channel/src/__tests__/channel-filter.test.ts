@@ -112,13 +112,53 @@ describe('checkMessage', () => {
       contextVisibility: 'allowlist',
     };
     const result = checkMessage(
-      msg({ userId: 'user-42', isDm: true, replyToId: 'msg-100', text: '> quoted\nmy reply' }),
+      msg({
+        userId: 'user-42',
+        isDm: true,
+        replyToId: 'msg-100',
+        replyToUserId: 'attacker-99',
+        text: '> quoted\nmy reply',
+      }),
       config,
       db,
     );
     expect(result.action).toBe('allow');
     expect(result.strippedText).toBeDefined();
     expect(result.strippedText).toContain('[quoted content from non-allowlisted sender removed]');
+  });
+
+  it('contextVisibility allowlist + reply from allowlisted sender → not stripped', () => {
+    const config: ChannelPlatformConfig = {
+      ownerUserId: 'owner-1',
+      recipientAllowlist: ['user-42', 'trusted-user'],
+      contextVisibility: 'allowlist',
+    };
+    const result = checkMessage(
+      msg({
+        userId: 'user-42',
+        isDm: true,
+        replyToId: 'msg-200',
+        replyToUserId: 'trusted-user',
+        text: '> trusted content\nmy reply',
+      }),
+      config,
+      db,
+    );
+    expect(result.action).toBe('allow');
+    expect(result.strippedText).toBeUndefined();
+  });
+
+  it('owner in group without mention bypasses mention gate', () => {
+    const config: ChannelPlatformConfig = {
+      ownerUserId: 'owner-1',
+      recipientAllowlist: ['user-42'],
+    };
+    const result = checkMessage(
+      msg({ userId: 'owner-1', isDm: false, isGroupMention: false }),
+      config,
+      db,
+    );
+    expect(result.action).toBe('allow');
   });
 
   it('email glob *@domain.com matches user@domain.com', () => {

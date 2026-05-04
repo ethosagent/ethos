@@ -23,6 +23,19 @@ export function initPairingDb(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_pairing_sender
       ON pairing_codes(sender_id, platform, issued_at);
+
+    CREATE TABLE IF NOT EXISTS pairing_consume_attempts (
+      owner_id     TEXT NOT NULL,
+      attempted_at INTEGER NOT NULL,
+      succeeded    INTEGER NOT NULL DEFAULT 0
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS idx_consume_attempts_owner
+      ON pairing_consume_attempts(owner_id, attempted_at);
+
+    CREATE TABLE IF NOT EXISTS pairing_owner_pauses (
+      owner_id     TEXT PRIMARY KEY,
+      paused_until INTEGER NOT NULL
+    ) STRICT;
   `);
 }
 
@@ -79,21 +92,39 @@ export function generateCode(
 
 export type ConsumeResult =
   | { ok: true }
-  | { ok: false; reason: 'not_found' | 'consumed' | 'expired' | 'sender_mismatch' };
+  | {
+      ok: false;
+      reason: 'not_found' | 'consumed' | 'expired' | 'sender_mismatch' | 'owner_paused';
+    };
+
+const LOCKOUT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+const LOCKOUT_THRESHOLD = 5;
+const LOCKOUT_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /**
  * Atomically consume a pairing code.
  * Verifies: code exists, not consumed/expired, sender matches.
  * On success, flips status to 'consumed' atomically.
+ * When ownerId is provided, enforces a 24h pause after 5 failed attempts.
  */
 export function consumeCode(
   db: Database.Database,
   code: string,
   senderId: string,
   platform: string,
+  ownerId?: string,
 ): ConsumeResult {
   const now = Date.now();
   const expiryCutoff = now - CODE_TTL_MS;
+
+  if (ownerId !== undefined) {
+    const pause = db
+      .prepare(`SELECT paused_until FROM pairing_owner_pauses WHERE owner_id = ?`)
+      .get(ownerId) as { paused_until: number } | undefined;
+    if (pause !== undefined && pause.paused_until > now) {
+      return { ok: false, reason: 'owner_paused' };
+    }
+  }
 
   // First look up the row regardless of status/sender to give precise errors
   const row = db
@@ -102,29 +133,68 @@ export function consumeCode(
     | { sender_id: string; platform: string; status: string; issued_at: number }
     | undefined;
 
-  if (!row) return { ok: false, reason: 'not_found' };
-  if (row.status === 'consumed') return { ok: false, reason: 'consumed' };
-  if (row.status === 'expired' || row.issued_at < expiryCutoff)
-    return { ok: false, reason: 'expired' };
-  if (row.sender_id !== senderId || row.platform !== platform)
-    return { ok: false, reason: 'sender_mismatch' };
+  let result: ConsumeResult;
 
-  // Atomic UPDATE — only succeeds if still pending and not yet expired
-  const result = db
-    .prepare(
-      `UPDATE pairing_codes SET status = 'consumed'
-       WHERE code = ? AND status = 'pending' AND sender_id = ? AND platform = ? AND issued_at > ?`,
-    )
-    .run(code, senderId, platform, expiryCutoff);
+  if (!row) {
+    result = { ok: false, reason: 'not_found' };
+  } else if (row.status === 'consumed') {
+    result = { ok: false, reason: 'consumed' };
+  } else if (row.status === 'expired' || row.issued_at < expiryCutoff) {
+    result = { ok: false, reason: 'expired' };
+  } else if (row.sender_id !== senderId || row.platform !== platform) {
+    result = { ok: false, reason: 'sender_mismatch' };
+  } else {
+    // Atomic UPDATE — only succeeds if still pending and not yet expired
+    const updateResult = db
+      .prepare(
+        `UPDATE pairing_codes SET status = 'consumed'
+         WHERE code = ? AND status = 'pending' AND sender_id = ? AND platform = ? AND issued_at > ?`,
+      )
+      .run(code, senderId, platform, expiryCutoff);
 
-  if (result.changes === 1) return { ok: true };
+    if (updateResult.changes === 1) {
+      result = { ok: true };
+    } else {
+      // Another concurrent update beat us — re-read to give the right error
+      const updated = db.prepare(`SELECT status FROM pairing_codes WHERE code = ?`).get(code) as
+        | { status: string }
+        | undefined;
 
-  // Another concurrent update beat us — re-read to give the right error
-  const updated = db.prepare(`SELECT status FROM pairing_codes WHERE code = ?`).get(code) as
-    | { status: string }
-    | undefined;
+      if (!updated) {
+        result = { ok: false, reason: 'not_found' };
+      } else if (updated.status === 'consumed') {
+        result = { ok: false, reason: 'consumed' };
+      } else {
+        result = { ok: false, reason: 'expired' };
+      }
+    }
+  }
 
-  if (!updated) return { ok: false, reason: 'not_found' };
-  if (updated.status === 'consumed') return { ok: false, reason: 'consumed' };
-  return { ok: false, reason: 'expired' };
+  if (ownerId !== undefined && !result.ok) {
+    db.prepare(
+      `INSERT INTO pairing_consume_attempts (owner_id, attempted_at, succeeded) VALUES (?, ?, 0)`,
+    ).run(ownerId, now);
+
+    const windowStart = now - LOCKOUT_WINDOW_MS;
+    const failCount = db
+      .prepare(
+        `SELECT COUNT(*) AS cnt FROM pairing_consume_attempts
+         WHERE owner_id = ? AND succeeded = 0 AND attempted_at >= ?`,
+      )
+      .get(ownerId, windowStart) as { cnt: number };
+
+    if (failCount.cnt >= LOCKOUT_THRESHOLD) {
+      db.prepare(
+        `INSERT OR REPLACE INTO pairing_owner_pauses (owner_id, paused_until) VALUES (?, ?)`,
+      ).run(ownerId, now + LOCKOUT_DURATION_MS);
+    }
+  }
+
+  return result;
+}
+
+/** Clear the 24h owner pause and failure attempt log (used by `ethos security audit --fix`). */
+export function clearOwnerPause(db: Database.Database, ownerId: string): void {
+  db.prepare(`DELETE FROM pairing_owner_pauses WHERE owner_id = ?`).run(ownerId);
+  db.prepare(`DELETE FROM pairing_consume_attempts WHERE owner_id = ?`).run(ownerId);
 }

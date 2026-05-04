@@ -14,6 +14,8 @@ export interface InboundMessage {
   text: string;
   attachments?: Attachment[];
   replyToId?: string;
+  /** Sender ID of the quoted/replied-to message. Set by adapters that can provide it. */
+  replyToUserId?: string;
   isDm: boolean;
   isGroupMention: boolean;
   /**

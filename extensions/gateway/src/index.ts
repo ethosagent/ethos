@@ -131,7 +131,7 @@ export interface GatewayConfig {
 
 const PLATFORM_COMMANDS: Record<
   string,
-  'new' | 'usage' | 'stop' | 'help' | 'personality' | 'allow' | 'deny'
+  'new' | 'usage' | 'stop' | 'help' | 'personality' | 'allow' | 'deny' | 'communications'
 > = {
   '/new': 'new',
   '/reset': 'new',
@@ -141,6 +141,7 @@ const PLATFORM_COMMANDS: Record<
   '/personality': 'personality',
   '/allow': 'allow',
   '/deny': 'deny',
+  '/communications': 'communications',
 };
 
 // ---------------------------------------------------------------------------
@@ -375,10 +376,23 @@ export class Gateway {
         const platformCfg = this.channelFilter[row.platform];
         const isOwner = platformCfg?.ownerUserId && message.userId === platformCfg.ownerUserId;
         if (isOwner) {
-          const result = consumeCode(this.pairingDb, code, row.sender_id, row.platform);
+          const result = consumeCode(
+            this.pairingDb,
+            code,
+            row.sender_id,
+            row.platform,
+            message.userId,
+          );
           if (result.ok) {
             approvedUserId = row.sender_id;
             approvedPlatform = row.platform;
+          } else if (result.reason === 'owner_paused') {
+            await adapter
+              .send(message.chatId, {
+                text: '✗ Too many invalid attempts. Pairing paused for 24h.',
+              })
+              .catch(() => {});
+            return;
           }
         }
       }
@@ -446,6 +460,38 @@ export class Gateway {
           .send(message.chatId, { text: `✗ ${cleanTarget} not found in any allowlist.` })
           .catch(() => {});
       }
+      return;
+    }
+
+    if (cmdType === 'communications') {
+      if (!this.pairingDb || !this.channelFilter) {
+        await adapter.send(message.chatId, { text: 'Pairing not configured.' }).catch(() => {});
+        return;
+      }
+
+      const platformCfg = this.channelFilter[message.platform];
+      const isOwner = platformCfg?.ownerUserId && message.userId === platformCfg.ownerUserId;
+      if (!isOwner) {
+        await adapter
+          .send(message.chatId, { text: '✗ Only the owner may use /communications.' })
+          .catch(() => {});
+        return;
+      }
+
+      const pending = this.pairingDb
+        .prepare(`SELECT code, sender_id, platform FROM pairing_codes WHERE status = 'pending'`)
+        .all() as { code: string; sender_id: string; platform: string }[];
+
+      if (pending.length === 0) {
+        await adapter
+          .send(message.chatId, { text: 'No pending pairing requests.' })
+          .catch(() => {});
+        return;
+      }
+
+      const lines = pending.map((r) => `${r.sender_id} (${r.platform}) — /allow ${r.code}`);
+      const reply = `${pending.length} pending pairing request(s):\n${lines.join('\n')}`;
+      await adapter.send(message.chatId, { text: reply }).catch(() => {});
       return;
     }
 
