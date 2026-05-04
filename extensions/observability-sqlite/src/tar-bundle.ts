@@ -10,11 +10,10 @@ function encodeStr(s: string, buf: Buffer, offset: number, maxLen: number): void
 
 function encodeOctal(n: number, buf: Buffer, offset: number, len: number): void {
   // Right-pad with null, left-pad with zeros; leave room for trailing null.
-  const s =
-    n
-      .toString(8)
-      .padStart(len - 1, '0')
-      .slice(0, len - 1) + '\0';
+  const s = `${n
+    .toString(8)
+    .padStart(len - 1, '0')
+    .slice(0, len - 1)}\0`;
   Buffer.from(s).copy(buf, offset);
 }
 
@@ -40,7 +39,7 @@ function buildHeader(name: string, size: number, mtimeMs: number): Buffer {
     sum += i >= 148 && i < 156 ? 32 : (h[i] ?? 0);
   }
   // Write as 6-digit octal + null + space (POSIX convention).
-  Buffer.from(sum.toString(8).padStart(6, '0') + '\0 ').copy(h, 148);
+  Buffer.from(`${sum.toString(8).padStart(6, '0')}\0 `).copy(h, 148);
 
   return h;
 }
