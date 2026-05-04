@@ -207,3 +207,29 @@ describe('SQLiteSessionStore', () => {
     expect(await store.getSession(fresh.id)).not.toBeNull();
   });
 });
+
+describe('SQLiteSessionStore migration idempotency', () => {
+  it('opening the same db twice does not throw and trace_id column exists exactly once', () => {
+    const { join } = require('node:path');
+    const { tmpdir } = require('node:os');
+    const dbPath = join(tmpdir(), `session-migration-test-${Date.now()}.db`);
+
+    // First open — creates schema + runs migration
+    const s1 = new SQLiteSessionStore(dbPath);
+    s1.close();
+
+    // Second open — migration guard (col exists check) must prevent duplicate ALTER TABLE
+    expect(() => {
+      const s2 = new SQLiteSessionStore(dbPath);
+      s2.close();
+    }).not.toThrow();
+
+    // Confirm the column exists exactly once in the schema
+    const Database = require('better-sqlite3');
+    const db = new Database(dbPath);
+    const cols = db.pragma('table_info(messages)') as Array<{ name: string }>;
+    db.close();
+    const traceIdCols = cols.filter((c) => c.name === 'trace_id');
+    expect(traceIdCols).toHaveLength(1);
+  });
+});
