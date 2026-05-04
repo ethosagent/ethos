@@ -120,8 +120,10 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
   // Spans
   // ---------------------------------------------------------------------------
 
-  insertSpan(span: Span): void {
-    const attrsJson = span.attrs ? JSON.stringify(redactJson(span.attrs)) : null;
+  insertSpan(span: Span, extraRedactPatterns?: string[]): void {
+    const attrsJson = span.attrs
+      ? JSON.stringify(redactJson(span.attrs, extraRedactPatterns))
+      : null;
     this.db
       .prepare(
         `INSERT OR IGNORE INTO spans
@@ -158,9 +160,11 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
   // Events
   // ---------------------------------------------------------------------------
 
-  insertEvent(event: ObsEvent): void {
-    const detailsJson = event.details ? JSON.stringify(redactJson(event.details)) : null;
-    const cause = event.cause ? redactString(event.cause) : null;
+  insertEvent(event: ObsEvent, extraRedactPatterns?: string[]): void {
+    const detailsJson = event.details
+      ? JSON.stringify(redactJson(event.details, extraRedactPatterns))
+      : null;
+    const cause = event.cause ? redactString(event.cause, extraRedactPatterns) : null;
     this.db
       .prepare(
         `INSERT OR IGNORE INTO events

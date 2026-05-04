@@ -5,6 +5,7 @@ import type {
   ObsEvent,
   ObservabilityStore,
   ObservabilityWriter,
+  PersonalityObservabilityConfig,
   PolicySnapshot,
   Span,
   SpanKind,
@@ -27,6 +28,8 @@ import type { BlobStore } from './blob-store';
  * future batching.
  */
 export class ObservabilityService implements ObservabilityWriter {
+  private readonly traceConfigs = new Map<string, PersonalityObservabilityConfig>();
+
   constructor(
     private readonly store: ObservabilityStore,
     private readonly blobStore: BlobStore,
@@ -38,6 +41,7 @@ export class ObservabilityService implements ObservabilityWriter {
     kind: TraceKind;
     personalityId?: string;
     attrs?: Record<string, unknown>;
+    obsConfig?: PersonalityObservabilityConfig;
   }): string {
     const traceId = randomUUID();
     const trace: Trace = {
@@ -49,12 +53,16 @@ export class ObservabilityService implements ObservabilityWriter {
       attrs: opts.attrs,
     };
     this.store.insertTrace(trace);
+    if (opts.obsConfig) {
+      this.traceConfigs.set(traceId, opts.obsConfig);
+    }
     return traceId;
   }
 
   /** Close a trace with a final status. */
   endTrace(traceId: string, status: 'ok' | 'error' | 'aborted'): void {
     this.store.closeTrace(traceId, status);
+    this.traceConfigs.delete(traceId);
   }
 
   /** Start a span inside a trace. Returns the spanId. */
@@ -64,7 +72,23 @@ export class ObservabilityService implements ObservabilityWriter {
     kind: SpanKind;
     name: string;
     attrs?: Record<string, unknown>;
+    obsConfig?: PersonalityObservabilityConfig;
   }): string {
+    const cfg = opts.obsConfig ?? this.traceConfigs.get(opts.traceId);
+    const storeArgs = cfg?.storeToolArgs ?? 'redacted';
+    const extraRedactPatterns = cfg?.redactPatterns;
+
+    let finalAttrs = opts.attrs;
+    if (opts.kind === 'tool_call' && finalAttrs?.args !== undefined) {
+      if (storeArgs === 'none') {
+        // Strip args — keep everything else
+        const { args: _dropped, ...rest } = finalAttrs;
+        finalAttrs = rest;
+      }
+      // 'redacted' — current behavior (store.ts applies redaction via redactJson)
+      // 'full' — TODO Wave C: implement redaction bypass; for now treat as 'redacted'
+    }
+
     const spanId = randomUUID();
     const span: Span = {
       spanId,
@@ -73,9 +97,9 @@ export class ObservabilityService implements ObservabilityWriter {
       kind: opts.kind,
       name: opts.name,
       startTs: Date.now(),
-      attrs: opts.attrs,
+      attrs: finalAttrs,
     };
-    this.store.insertSpan(span);
+    this.store.insertSpan(span, extraRedactPatterns);
     return spanId;
   }
 
@@ -104,7 +128,8 @@ export class ObservabilityService implements ObservabilityWriter {
       eventId: randomUUID(),
       ts: Date.now(),
     };
-    this.store.insertEvent(obsEvent);
+    const cfg = event.traceId ? this.traceConfigs.get(event.traceId) : undefined;
+    this.store.insertEvent(obsEvent, cfg?.redactPatterns);
   }
 
   /** Store a snapshot blob and register it in the snapshots table. */

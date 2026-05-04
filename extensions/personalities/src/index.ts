@@ -3,7 +3,9 @@ import { FsStorage } from '@ethosagent/storage-fs';
 import {
   EthosError,
   type PersonalityConfig,
+  type PersonalityObservabilityConfig,
   type PersonalityRegistry,
+  type PersonalitySafetyConfig,
   type Storage,
 } from '@ethosagent/types';
 
@@ -11,15 +13,117 @@ import {
 // YAML parsers — no external dependency, handles the subset we need
 // ---------------------------------------------------------------------------
 
-function parseConfigYaml(src: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const line of src.split('\n')) {
+const NESTED_BLOCKS = ['safety'] as const;
+type NestedBlockName = (typeof NESTED_BLOCKS)[number];
+
+function parseNestedBlock(
+  lines: string[],
+  startIdx: number,
+): { obj: Record<string, unknown>; endIdx: number } {
+  const obj: Record<string, unknown> = {};
+  const indent = lines[startIdx]?.match(/^(\s+)/)?.[1]?.length ?? 2;
+  let i = startIdx;
+  while (i < lines.length) {
+    const line = lines[i] ?? '';
+    if (line.trim() === '' || line.match(/^\s*#/)) {
+      i++;
+      continue;
+    }
+    const lineIndent = line.match(/^(\s*)/)?.[1]?.length ?? 0;
+    if (lineIndent < indent) break;
+    if (lineIndent === indent) {
+      const m = line.match(/^\s+([\w]+):\s*(.*)$/);
+      if (m) {
+        const key = m[1];
+        const val = m[2].trim();
+        if (val === '' || val === '{}') {
+          const next = lines[i + 1];
+          const nextIndent = next?.match(/^(\s+)/)?.[1]?.length ?? 0;
+          if (next && nextIndent > indent) {
+            const { obj: child, endIdx } = parseNestedBlock(lines, i + 1);
+            obj[key] = child;
+            i = endIdx;
+            continue;
+          }
+          obj[key] = {};
+        } else if (val.startsWith('- ')) {
+          const items: string[] = [val.slice(2)];
+          let j = i + 1;
+          while (j < lines.length) {
+            const al = lines[j] ?? '';
+            const alTrimmed = al.trim();
+            if (!alTrimmed.startsWith('- ')) break;
+            items.push(alTrimmed.slice(2).trim());
+            j++;
+          }
+          obj[key] = items;
+          i = j;
+          continue;
+        } else {
+          obj[key] = val.replace(/^["']|["']$/g, '');
+        }
+      }
+    }
+    i++;
+  }
+  return { obj, endIdx: i };
+}
+
+interface ParsedConfigYaml {
+  flat: Record<string, string>;
+  nested: Partial<Record<NestedBlockName, Record<string, unknown>>>;
+}
+
+function parseConfigYaml(src: string): ParsedConfigYaml {
+  const flat: Record<string, string> = {};
+  const nested: Partial<Record<NestedBlockName, Record<string, unknown>>> = {};
+  const srcLines = src.split('\n');
+
+  // First pass: flat key-value pairs (and detect nested block starts)
+  const nestedBlockStartLines = new Set<number>();
+  for (let i = 0; i < srcLines.length; i++) {
+    const line = srcLines[i] ?? '';
+
+    // Check for top-level nested block declarations
+    let foundNested = false;
+    for (const block of NESTED_BLOCKS) {
+      if (
+        line.match(new RegExp(`^${block}:\\s*$`)) ||
+        line.match(new RegExp(`^${block}:\\s*\\{\\}`))
+      ) {
+        const { obj } = parseNestedBlock(srcLines, i + 1);
+        nested[block] = obj;
+        // Mark lines consumed by the nested block (approximate: mark this start line)
+        nestedBlockStartLines.add(i);
+        foundNested = true;
+        break;
+      }
+    }
+    if (foundNested) continue;
+
+    // Reject non-allowlisted nested blocks
+    const nestedKey = line.match(/^(\w+):\s*$/)?.[1];
+    if (nestedKey && !NESTED_BLOCKS.includes(nestedKey as NestedBlockName) && !line.match(/^#/)) {
+      for (let j = i + 1; j < srcLines.length; j++) {
+        const next = srcLines[j] ?? '';
+        if (next.trim() === '') continue;
+        if (next.match(/^\s+\w+:/)) {
+          throw new Error(
+            `Top-level key "${nestedKey}" cannot be a nested object in personality config. ` +
+              `Only ${NESTED_BLOCKS.join(', ')} may be nested.`,
+          );
+        }
+        break;
+      }
+    }
+
     // Allow dotted keys (e.g. `fs_reach.read`) so nested config can land
     // in the flat parser without escaping.
     const m = line.match(/^([\w.]+):\s*(.+)$/);
-    if (m) out[m[1].trim()] = m[2].trim().replace(/^["']|["']$/g, '');
+    if (m) flat[m[1].trim()] = m[2].trim().replace(/^["']|["']$/g, '');
   }
-  return out;
+
+  return { flat, nested };
 }
 
 function parseToolsetYaml(src: string): string[] {
@@ -403,7 +507,8 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
 
     if (!configSrc && !ethosExists) return null;
 
-    const cfg = configSrc ? parseConfigYaml(configSrc) : {};
+    const parsed = configSrc ? parseConfigYaml(configSrc) : { flat: {}, nested: {} };
+    const cfg = parsed.flat;
 
     const capabilities = cfg.capabilities
       ? cfg.capabilities
@@ -440,6 +545,8 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         ? Number.parseFloat(cfg.budgetCapUsd)
         : undefined;
 
+    const safety = parsed.nested.safety ? buildSafetyConfig(parsed.nested.safety) : undefined;
+
     const config: PersonalityConfig = {
       id,
       name: cfg.name ?? titleCase(id),
@@ -457,6 +564,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       ...(mcpServers !== undefined ? { mcp_servers: mcpServers } : {}),
       ...(plugins !== undefined ? { plugins } : {}),
       ...(budgetCapUsd !== undefined ? { budgetCapUsd } : {}),
+      ...(safety !== undefined ? { safety } : {}),
     };
 
     return config;
@@ -519,6 +627,39 @@ function parseCsv(value: string | undefined): string[] | undefined {
     .map((s) => s.trim())
     .filter(Boolean);
   return items.length > 0 ? items : undefined;
+}
+
+function buildSafetyConfig(raw: Record<string, unknown>): PersonalitySafetyConfig {
+  const obs = raw.observability as Record<string, unknown> | undefined;
+  if (!obs) return {};
+  const validStoreValues = ['none', 'redacted', 'full'] as const;
+  const validLlmValues = ['none', 'metadata', 'full'] as const;
+  const observability: PersonalityObservabilityConfig = {};
+  if (obs.storeToolArgs !== undefined) {
+    if (!validStoreValues.includes(obs.storeToolArgs as (typeof validStoreValues)[number]))
+      throw new Error(`Invalid storeToolArgs: "${obs.storeToolArgs}"`);
+    observability.storeToolArgs =
+      obs.storeToolArgs as PersonalityObservabilityConfig['storeToolArgs'];
+  }
+  if (obs.storeToolBodies !== undefined) {
+    if (!validStoreValues.includes(obs.storeToolBodies as (typeof validStoreValues)[number]))
+      throw new Error(`Invalid storeToolBodies: "${obs.storeToolBodies}"`);
+    observability.storeToolBodies =
+      obs.storeToolBodies as PersonalityObservabilityConfig['storeToolBodies'];
+  }
+  if (obs.storeLlmPayloads !== undefined) {
+    if (!validLlmValues.includes(obs.storeLlmPayloads as (typeof validLlmValues)[number]))
+      throw new Error(`Invalid storeLlmPayloads: "${obs.storeLlmPayloads}"`);
+    observability.storeLlmPayloads =
+      obs.storeLlmPayloads as PersonalityObservabilityConfig['storeLlmPayloads'];
+  }
+  if (Array.isArray(obs.redactPatterns)) {
+    for (const p of obs.redactPatterns) {
+      if (typeof p !== 'string') throw new Error('redactPatterns entries must be strings');
+    }
+    observability.redactPatterns = obs.redactPatterns as string[];
+  }
+  return { observability };
 }
 
 function renderConfigYaml(

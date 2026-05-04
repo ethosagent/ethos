@@ -10,6 +10,7 @@ export * from './observability';
 export * from './personality';
 export * from './platform';
 export * from './plugin';
+export * from './retention';
 export * from './session';
 export * from './skill';
 export * from './storage';

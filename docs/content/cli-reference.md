@@ -884,6 +884,23 @@ plugins:
 
 # ── Verbose mode ─────────────────────────────────────────────────────────────
 verbose: true                        # print per-turn timing summary (llm · tools · total · tokens · cost)
+
+# ── Retention — how long observability data is kept ─────────────────────────
+retention:                           # per-category TTLs for observability data in observability.db
+retention.messages: 365d             # conversation message history TTL (default 365d)
+retention.traces: 90d                # trace TTL (default 90d)
+retention.spans: 90d                 # span TTL (default 90d)
+retention.events.error: 90d         # error event TTL (default 90d)
+retention.events.audit: 365d        # audit event TTL (default 365d)
+retention.events.channel: 365d      # channel event TTL (default 365d)
+retention.events.install: forever   # install event TTL (default forever — never deleted)
+retention.blobs: 7d                  # blob TTL (default 7d)
+retention.archive: 730d             # archive TTL (default 730d / 2 years)
+
+# ── Per-personality retention overrides ─────────────────────────────────────
+personalitiesConfig:                 # per-personality overrides; only retention sub-block is supported
+  engineer-paired:
+    retention.messages: 730d         # engineer-paired keeps messages for 2 years
 ```
 
 The companion `~/.ethos/keys.json` (managed via `ethos keys`) holds the API-key rotation pool. Don't edit it by hand.
