@@ -1,4 +1,4 @@
-import { rmSync, statSync, unlinkSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
@@ -228,30 +228,31 @@ async function runReset(argv: string[]): Promise<void> {
     return;
   }
 
+  const storage = getStorage();
+
   if (!flags.blobsOnly) {
     for (const p of [obsDbPath, obsWalPath, obsShmPath]) {
       try {
-        unlinkSync(p);
+        await storage.remove(p);
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
       }
     }
     try {
-      rmSync(archiveDir, { recursive: true, force: true });
+      await storage.remove(archiveDir, { recursive: true });
     } catch {
       // ignore
     }
   }
 
   try {
-    rmSync(blobsDir, { recursive: true, force: true });
+    await storage.remove(blobsDir, { recursive: true });
   } catch {
     // ignore
   }
 
   if (!flags.blobsOnly) {
     // Recreate the observability.db with all tables
-    const storage = getStorage();
     const blobStore = new BlobStore(join(dir, 'blobs'), storage);
     const store = new SQLiteObservabilityStore(obsDbPath);
     try {
@@ -325,6 +326,6 @@ export async function runData(sub: string, argv: string[]): Promise<void> {
   }
 
   console.log(
-    'Usage: ethos data [stats | prune [--dry-run] | reset [--dry-run] [--blobs-only] | archive list]',
+    'Usage: ethos data [stats | prune [--dry-run] [--personality <id>] | reset [--dry-run] [--blobs-only] | archive list]',
   );
 }
