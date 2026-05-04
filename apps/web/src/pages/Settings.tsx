@@ -12,6 +12,7 @@ import {
   Typography,
 } from 'antd';
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { rpc } from '../rpc';
 
 // Settings tab — read/write surface for ~/.ethos/config.yaml.
@@ -37,6 +38,7 @@ interface FormShape {
 export function Settings() {
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
+  const navigate = useNavigate();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [form] = Form.useForm<FormShape>();
 
@@ -202,6 +204,14 @@ export function Settings() {
           </Button>
         </Form.Item>
       </Form>
+
+      <Card title="Setup wizard" size="small" style={{ maxWidth: 640, marginTop: 8 }}>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 0, marginBottom: 12 }}>
+          Re-run the guided setup to change your provider, model, personality, or messaging
+          credentials.
+        </Typography.Paragraph>
+        <Button onClick={() => navigate('/onboarding')}>Run setup wizard</Button>
+      </Card>
     </div>
   );
 }
