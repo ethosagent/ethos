@@ -8,7 +8,6 @@ import type {
   PolicySnapshot,
   Span,
   SpanKind,
-  Storage,
   Trace,
   TraceKind,
 } from '@ethosagent/types';
@@ -31,9 +30,6 @@ export class ObservabilityService implements ObservabilityWriter {
   constructor(
     private readonly store: ObservabilityStore,
     private readonly blobStore: BlobStore,
-    // Storage is accepted to satisfy the interface contract and may be used
-    // by future snapshot/blob helpers that need Storage access.
-    private readonly _storage: Storage,
   ) {}
 
   /** Start a new trace. Returns the traceId. */
