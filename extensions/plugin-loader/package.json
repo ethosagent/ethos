@@ -17,6 +17,7 @@
     "@ethosagent/openclaw-compat": "workspace:*",
     "@ethosagent/plugin-contract": "workspace:*",
     "@ethosagent/plugin-sdk": "workspace:*",
+    "@ethosagent/safety-scanner": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/types": "workspace:*"
   }

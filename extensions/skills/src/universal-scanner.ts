@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { canInstall, scanSkillMd, type TrustTier } from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { Skill, Storage } from '@ethosagent/types';
 import matter from 'gray-matter';
@@ -23,6 +24,8 @@ export interface UniversalScannerOptions {
    */
   sources?: ScanSource[];
   storage?: Storage;
+  /** Called when a skill is rejected by the safety scan. */
+  onSkip?: (qualifiedName: string, reason: string) => void;
 }
 
 interface CacheEntry {
@@ -63,16 +66,25 @@ export function externalSources(): ScanSource[] {
  * detection, and returns a deduped pool keyed by `qualifiedName`.
  * First source wins on name collisions.
  */
+// Map a source label to a trust tier for scan enforcement.
+// 'ethos' is the user's own skill dir — treat as builtin (warn but never block).
+// All external source dirs are community (red findings block loading).
+function sourceLabelToTier(sourceLabel: string): TrustTier {
+  return sourceLabel === 'ethos' ? 'builtin' : 'community';
+}
+
 export class UniversalScanner {
   private readonly sources: ScanSource[];
   private readonly storage: Storage;
   private readonly cache = new Map<string, CacheEntry>();
+  private readonly onSkip?: (qualifiedName: string, reason: string) => void;
 
   constructor(opts: UniversalScannerOptions = {}) {
     this.storage = opts.storage ?? new FsStorage();
     this.sources = opts.sources
       ? opts.sources
       : [...defaultSources(), ...(opts.extraSources ?? [])];
+    this.onSkip = opts.onSkip;
   }
 
   /**
@@ -150,6 +162,17 @@ export class UniversalScanner {
     const qualifiedName = `${sourceLabel}/${name}`;
 
     const skill = this.parseWithDialect(raw, filePath, sourceLabel, name, qualifiedName, mtimeMs);
+
+    // Gate on safety scan — block red findings from external sources.
+    const scanResult = scanSkillMd(raw, filePath);
+    const tier = sourceLabelToTier(sourceLabel);
+    // builtin tier uses force:true so user's own skills are never silently blocked.
+    const decision = canInstall(scanResult, tier, { force: tier === 'builtin' });
+    if (!decision.allowed) {
+      this.onSkip?.(qualifiedName, `safety scan: ${decision.blockedBy}`);
+      return null;
+    }
+
     this.cache.set(filePath, { mtime: mtimeMs, skill });
     return skill;
   }

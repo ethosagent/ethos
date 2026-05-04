@@ -14,6 +14,7 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/safety-scanner": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "gray-matter": "^4.0.3"

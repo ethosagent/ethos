@@ -13,6 +13,7 @@ import {
 } from '@ethosagent/plugin-contract';
 import type { EthosPlugin, PluginRegistries } from '@ethosagent/plugin-sdk';
 import { PluginApiImpl } from '@ethosagent/plugin-sdk';
+import { canInstall, deriveTier, scanPluginCode } from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { MemoryProvider, PlatformAdapter, Storage } from '@ethosagent/types';
 
@@ -124,6 +125,18 @@ export class PluginLoader {
     const entry = await resolveEntry(this.storage, dir);
     if (!entry) return;
 
+    // Safety scan before executing any plugin code.
+    const src = await this.storage.read(entry);
+    if (src !== null) {
+      const tier = deriveTier(dir);
+      const scanResult = scanPluginCode(src);
+      const decision = canInstall(scanResult, tier);
+      if (!decision.allowed) {
+        console.warn(`[plugin-loader] "${id}" blocked by safety scan: ${decision.blockedBy}`);
+        return;
+      }
+    }
+
     // Dynamic import the plugin module — stays raw `import()`. Per
     // plan/storage_abstraction.md, dynamic import is a process operation,
     // not a fs read; Storage doesn't model it.
@@ -197,6 +210,18 @@ export class PluginLoader {
 
         const entry = resolveNpmEntry(raw, join(nmDir, name));
         if (!entry) continue;
+
+        // Safety scan before executing npm plugin code.
+        const pluginSrc = await this.storage.read(entry);
+        if (pluginSrc !== null) {
+          const tier = deriveTier(name);
+          const scanResult = scanPluginCode(pluginSrc);
+          const decision = canInstall(scanResult, tier);
+          if (!decision.allowed) {
+            console.warn(`[plugin-loader] "${name}" blocked by safety scan: ${decision.blockedBy}`);
+            continue;
+          }
+        }
 
         const mod = await import(entry);
         await this.activatePlugin(name, mod);

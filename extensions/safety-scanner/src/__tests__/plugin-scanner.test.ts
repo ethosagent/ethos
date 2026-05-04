@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { PluginScanPermissions } from '../plugin-scanner';
 import { scanPluginCode } from '../plugin-scanner';
 
 // ---------------------------------------------------------------------------
@@ -8,9 +9,9 @@ import { scanPluginCode } from '../plugin-scanner';
 function findingsByRule(
   content: string,
   rule: string,
-  perms: string[] = [],
+  permissions: PluginScanPermissions = {},
 ): ReturnType<typeof scanPluginCode>['findings'] {
-  return scanPluginCode(content, perms).findings.filter((f) => f.rule === rule);
+  return scanPluginCode(content, permissions).findings.filter((f) => f.rule === rule);
 }
 
 // ---------------------------------------------------------------------------
@@ -64,9 +65,9 @@ describe('scanPluginCode — shell execution', () => {
 
   it('downgrades child_process.exec( to yellow with shell permission', () => {
     const code = "import { exec } from 'child_process';\nexec('ls', cb);";
-    const result = scanPluginCode(code, ['shell']);
+    const result = scanPluginCode(code, { shell: true });
     expect(result.hasRed).toBe(false);
-    const findings = findingsByRule(code, 'shell-exec', ['shell']);
+    const findings = findingsByRule(code, 'shell-exec', { shell: true });
     expect(findings[0]?.severity).toBe('yellow');
   });
 
@@ -99,11 +100,37 @@ describe('scanPluginCode — network access', () => {
     expect(findings[0]?.severity).toBe('yellow');
   });
 
-  it('does NOT flag fetch( when network permission is declared', () => {
+  it('does NOT flag fetch( when network declared with no host restriction', () => {
     const code = 'const resp = await fetch(url);';
-    const result = scanPluginCode(code, ['network']);
-    expect(findingsByRule(code, 'network-access', ['network']).length).toBe(0);
+    const result = scanPluginCode(code, { network: [] });
+    expect(findingsByRule(code, 'network-access', { network: [] }).length).toBe(0);
     expect(result.hasYellow).toBe(false);
+  });
+
+  it('flags fetch to undeclared host when specific hosts are declared', () => {
+    const code = "const resp = await fetch('https://evil.com/data');";
+    const result = scanPluginCode(code, { network: ['api.trusted.com'] });
+    expect(result.hasYellow).toBe(true);
+    const findings = findingsByRule(code, 'network-access', { network: ['api.trusted.com'] });
+    expect(findings[0]?.message).toContain('undeclared host');
+  });
+
+  it('does NOT flag fetch to a declared host', () => {
+    const code = "const resp = await fetch('https://api.trusted.com/endpoint');";
+    expect(findingsByRule(code, 'network-access', { network: ['api.trusted.com'] }).length).toBe(0);
+  });
+
+  it('does NOT flag fetch to a subdomain of a declared host', () => {
+    const code = "const resp = await fetch('https://sub.trusted.com/endpoint');";
+    expect(findingsByRule(code, 'network-access', { network: ['trusted.com'] }).length).toBe(0);
+  });
+
+  it('flags fetch with dynamic URL when specific hosts declared', () => {
+    const code = 'const resp = await fetch(url);';
+    const result = scanPluginCode(code, { network: ['api.trusted.com'] });
+    expect(result.hasYellow).toBe(true);
+    const findings = findingsByRule(code, 'network-access', { network: ['api.trusted.com'] });
+    expect(findings[0]?.message).toContain('dynamic URL');
   });
 
   it('flags http.request( as yellow without network permission', () => {

@@ -1,6 +1,22 @@
 import type { ScanFinding, ScanResult } from './types';
 
 // ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+export interface PluginScanPermissions {
+  /** Plugin is allowed to spawn shell processes. Downgrades shell-exec findings to yellow. */
+  shell?: boolean;
+  /**
+   * Hosts the plugin is permitted to contact.
+   * - `undefined`: no network permission declared → flag all network calls
+   * - `[]`: permission declared, no host restriction → suppress all network findings
+   * - `['api.example.com', ...]`: specific hosts → validate URL literals; flag others
+   */
+  network?: string[];
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -66,9 +82,9 @@ const SHELL_EXEC_PATTERNS: RegExp[] = [
   /\bshelljs\b/,
 ];
 
-function checkShellExec(lines: string[], declaredPermissions: string[]): ScanFinding[] {
+function checkShellExec(lines: string[], permissions: PluginScanPermissions): ScanFinding[] {
   const findings: ScanFinding[] = [];
-  const hasShellPerm = declaredPermissions.includes('shell');
+  const hasShellPerm = permissions.shell === true;
 
   // Heuristic: check if child_process is imported anywhere
   const fullContent = lines.join('\n');
@@ -125,23 +141,61 @@ const NETWORK_ACCESS_PATTERNS: RegExp[] = [
   /\baxios\s*\(/,
 ];
 
-function checkNetworkAccess(lines: string[], declaredPermissions: string[]): ScanFinding[] {
-  if (declaredPermissions.includes('network')) return [];
+// Extracts the hostname from a URL string literal on the same line.
+// Matches fetch('https://api.example.com/...') → 'api.example.com'
+const URL_LITERAL_PATTERN = /['"]https?:\/\/([^/'" ?#\s]+)/i;
+
+function extractHostFromLine(line: string): string | null {
+  const m = URL_LITERAL_PATTERN.exec(line);
+  return m ? (m[1] ?? null) : null;
+}
+
+function checkNetworkAccess(lines: string[], permissions: PluginScanPermissions): ScanFinding[] {
+  const { network } = permissions;
+  // All hosts allowed (declared with no host restriction) — suppress findings
+  if (network !== undefined && network.length === 0) return [];
 
   const findings: ScanFinding[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
+    let matched = false;
     for (const pattern of NETWORK_ACCESS_PATTERNS) {
       if (pattern.test(line)) {
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) continue;
+
+    if (network === undefined) {
+      // No network permission declared
+      findings.push({
+        severity: 'yellow',
+        rule: 'network-access',
+        message: 'Outbound network call without declared network permission',
+        line: i + 1,
+        excerpt: excerptLine(line),
+      });
+    } else {
+      // Specific hosts declared — validate URL literals
+      const host = extractHostFromLine(line);
+      if (host === null) {
         findings.push({
           severity: 'yellow',
           rule: 'network-access',
-          message: 'Outbound network call without declared network permission',
+          message: `Network call to dynamic URL — cannot verify against declared hosts: [${network.join(', ')}]`,
           line: i + 1,
           excerpt: excerptLine(line),
         });
-        break;
+      } else if (!network.some((h) => host === h || host.endsWith(`.${h}`))) {
+        findings.push({
+          severity: 'yellow',
+          rule: 'network-access',
+          message: `Network call to undeclared host '${host}' — declared: [${network.join(', ')}]`,
+          line: i + 1,
+          excerpt: excerptLine(line),
+        });
       }
     }
   }
@@ -318,13 +372,16 @@ function checkExfilShape(lines: string[]): ScanFinding[] {
 // Public API
 // ---------------------------------------------------------------------------
 
-export function scanPluginCode(content: string, declaredPermissions: string[] = []): ScanResult {
+export function scanPluginCode(
+  content: string,
+  permissions: PluginScanPermissions = {},
+): ScanResult {
   const lines = buildLines(content);
 
   const findings: ScanFinding[] = [
     ...checkDynamicCodeExec(lines),
-    ...checkShellExec(lines, declaredPermissions),
-    ...checkNetworkAccess(lines, declaredPermissions),
+    ...checkShellExec(lines, permissions),
+    ...checkNetworkAccess(lines, permissions),
     ...checkCredentialAccess(lines),
     ...checkFsWriteOutsideSafePath(lines),
     ...checkExfilShape(lines),

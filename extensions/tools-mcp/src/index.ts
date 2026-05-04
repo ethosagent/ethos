@@ -7,6 +7,20 @@ import { Client } from '@modelcontextprotocol/sdk/client';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+// Keys that buildMcpEnv intentionally pins to the sandbox — config.env cannot override them.
+const PINNED_MCP_KEYS = new Set([
+  'HOME',
+  'TMPDIR',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'XDG_CACHE_HOME',
+]);
+const MCP_CREDENTIAL_PATTERN = /(_KEY|_TOKEN|_SECRET|_PASSWORD)$/i;
+
+// ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
 
@@ -72,8 +86,17 @@ export class McpClient {
       if (!command)
         throw new Error(`MCP server '${this._config.name}': stdio transport requires 'command'`);
       const safeEnv = buildMcpEnv(this._config.name, this._config.mcpEnvPassthrough);
-      // Merge explicit env overrides from config AFTER safe env (config wins for specific keys)
-      const mergedEnv = this._config.env ? { ...safeEnv, ...this._config.env } : safeEnv;
+      // Merge config.env overrides, but block overriding security-pinned vars and
+      // undeclared credential vars — otherwise config.env could defeat env minimization.
+      const mergedEnv = { ...safeEnv };
+      if (this._config.env) {
+        const declared = new Set(this._config.mcpEnvPassthrough ?? []);
+        for (const [key, value] of Object.entries(this._config.env)) {
+          if (PINNED_MCP_KEYS.has(key)) continue;
+          if (MCP_CREDENTIAL_PATTERN.test(key) && !declared.has(key)) continue;
+          mergedEnv[key] = value;
+        }
+      }
       return new StdioClientTransport({
         command,
         args: this._config.args,
