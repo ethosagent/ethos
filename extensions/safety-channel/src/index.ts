@@ -12,4 +12,5 @@ export {
   generateCode,
   getApprovedSenders,
   initPairingDb,
+  revokeApproval,
 } from './pairing-store';

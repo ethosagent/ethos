@@ -1,6 +1,11 @@
 import type { AgentLoop } from '@ethosagent/core';
 import type { ChannelFilterConfig } from '@ethosagent/safety-channel';
-import { checkMessage, consumeAndAllow, getApprovedSenders } from '@ethosagent/safety-channel';
+import {
+  checkMessage,
+  consumeAndAllow,
+  getApprovedSenders,
+  revokeApproval,
+} from '@ethosagent/safety-channel';
 import type { InboundMessage, ObservabilityWriter, PlatformAdapter } from '@ethosagent/types';
 import type Database from 'better-sqlite3';
 import { MessageDedupCache } from './dedup';
@@ -373,6 +378,24 @@ export class Gateway {
         return;
       }
 
+      // Verify the caller is the configured owner for the code's platform before consuming.
+      // This prevents allowlisted non-owners from approving pairings.
+      const codeRow = this.pairingDb
+        .prepare('SELECT platform FROM pairing_codes WHERE code = ?')
+        .get(code) as { platform: string } | undefined;
+
+      if (codeRow) {
+        const codePlatformCfg = this.channelFilter[codeRow.platform];
+        const isOwner =
+          codePlatformCfg?.ownerUserId && message.userId === codePlatformCfg.ownerUserId;
+        if (!isOwner) {
+          await adapter
+            .send(message.chatId, { text: '✗ Only the owner may approve pairings.' })
+            .catch(() => {});
+          return;
+        }
+      }
+
       const result = consumeAndAllow(this.pairingDb, code, message.userId);
       if (result.ok) {
         // Update in-memory cache
@@ -421,20 +444,29 @@ export class Gateway {
         const isOwner = cfg.ownerUserId && message.userId === cfg.ownerUserId;
         if (!isOwner) continue;
 
+        // Remove from in-memory list.
         const list = cfg.recipientAllowlist;
         if (list) {
           const idx = list.indexOf(cleanTarget);
           if (idx !== -1) {
             list.splice(idx, 1);
             removed = true;
-            this.observability?.recordEvent({
-              category: 'channel.deny',
-              severity: 'info',
-              code: 'channel.allowlist.removed',
-              details: { removedUserId: cleanTarget, platform, byUserId: message.userId },
-            });
-            await this.onAllowlistChange?.(platform, cleanTarget, 'remove');
           }
+        }
+
+        // Revoke from persistent DB — idempotent, catches pairing-approved senders.
+        if (this.pairingDb && revokeApproval(this.pairingDb, cleanTarget, platform)) {
+          removed = true;
+        }
+
+        if (removed) {
+          this.observability?.recordEvent({
+            category: 'channel.deny',
+            severity: 'info',
+            code: 'channel.allowlist.removed',
+            details: { removedUserId: cleanTarget, platform, byUserId: message.userId },
+          });
+          await this.onAllowlistChange?.(platform, cleanTarget, 'remove');
         }
       }
 
@@ -466,12 +498,20 @@ export class Gateway {
       const subCmd = text.split(/\s+/)[1]?.toLowerCase();
 
       if (subCmd === 'approve-all') {
+        // Scope to platforms where the caller is the configured owner.
+        const ownedPlatforms = new Set(
+          Object.entries(this.channelFilter)
+            .filter(([, cfg]) => cfg.ownerUserId && message.userId === cfg.ownerUserId)
+            .map(([p]) => p),
+        );
+
         const pending = this.pairingDb
-          .prepare(`SELECT code FROM pairing_codes WHERE status = 'pending'`)
-          .all() as { code: string }[];
+          .prepare(`SELECT code, platform FROM pairing_codes WHERE status = 'pending'`)
+          .all() as { code: string; platform: string }[];
 
         let approvedCount = 0;
-        for (const { code } of pending) {
+        for (const { code, platform } of pending) {
+          if (!ownedPlatforms.has(platform)) continue;
           const result = consumeAndAllow(this.pairingDb, code, message.userId);
           if (result.ok) {
             approvedCount++;

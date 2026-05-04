@@ -7,6 +7,7 @@ import {
   generateCode,
   getApprovedSenders,
   initPairingDb,
+  revokeApproval,
 } from '../pairing-store';
 
 // ---------------------------------------------------------------------------
@@ -224,5 +225,25 @@ describe('pairing-store', () => {
     if (!code) throw new Error('expected code');
     const result = consumeCode(db, code, 'user-z', 'telegram', 'owner-1');
     expect(result.ok).toBe(true);
+  });
+
+  it('revokeApproval removes sender from allowed_senders', () => {
+    const code = generateCode(db, 'user-revoke', 'telegram');
+    if (!code) throw new Error('expected code');
+    consumeAndAllow(db, code, 'owner-1');
+
+    const before = getApprovedSenders(db, 'telegram');
+    expect(before).toContain('user-revoke');
+
+    const removed = revokeApproval(db, 'user-revoke', 'telegram');
+    expect(removed).toBe(true);
+
+    const after = getApprovedSenders(db, 'telegram');
+    expect(after).not.toContain('user-revoke');
+  });
+
+  it('revokeApproval is idempotent for unknown sender', () => {
+    const removed = revokeApproval(db, 'ghost-user', 'telegram');
+    expect(removed).toBe(false);
   });
 });

@@ -296,3 +296,15 @@ export function clearOwnerPause(db: Database.Database, ownerId: string): void {
   db.prepare(`DELETE FROM pairing_owner_pauses WHERE owner_id = ?`).run(ownerId);
   db.prepare(`DELETE FROM pairing_consume_attempts WHERE owner_id = ?`).run(ownerId);
 }
+
+/**
+ * Remove a sender from `allowed_senders` for a given platform.
+ * Idempotent — no-op if the row doesn't exist.
+ * Returns true if a row was deleted.
+ */
+export function revokeApproval(db: Database.Database, senderId: string, platform: string): boolean {
+  const result = db
+    .prepare('DELETE FROM allowed_senders WHERE sender_id = ? AND platform = ?')
+    .run(senderId, platform);
+  return result.changes > 0;
+}
