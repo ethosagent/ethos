@@ -39,6 +39,7 @@ export interface PruneResult {
   spans: number;
   events: number;
   snapshots: number;
+  messages: number;
 }
 
 /**
@@ -48,10 +49,15 @@ export interface PruneResult {
 export function pruneObservability(
   db: BetterSqlite3.Database,
   config: RetentionConfig,
-  opts: { dryRun?: boolean; now?: number } = {},
+  opts: {
+    dryRun?: boolean;
+    now?: number;
+    sessDb?: BetterSqlite3.Database;
+    personalityId?: string;
+  } = {},
 ): PruneResult {
   const now = opts.now ?? Date.now();
-  const result: PruneResult = { traces: 0, spans: 0, events: 0, snapshots: 0 };
+  const result: PruneResult = { traces: 0, spans: 0, events: 0, snapshots: 0, messages: 0 };
 
   const cutoff = (dur: string | undefined, def: string) => parseDuration(dur ?? def);
 
@@ -60,7 +66,19 @@ export function pruneObservability(
 
   if (traceCutoff !== null) {
     const threshold = now - traceCutoff;
-    if (opts.dryRun) {
+    if (opts.personalityId) {
+      if (opts.dryRun) {
+        result.traces = (
+          db
+            .prepare('SELECT COUNT(*) as n FROM traces WHERE personality_id = ? AND start_ts < ?')
+            .get(opts.personalityId, threshold) as { n: number }
+        ).n;
+      } else {
+        result.traces = db
+          .prepare('DELETE FROM traces WHERE personality_id = ? AND start_ts < ?')
+          .run(opts.personalityId, threshold).changes;
+      }
+    } else if (opts.dryRun) {
       result.traces = (
         db.prepare('SELECT COUNT(*) as n FROM traces WHERE start_ts < ?').get(threshold) as {
           n: number;
@@ -73,7 +91,23 @@ export function pruneObservability(
 
   if (spanCutoff !== null) {
     const threshold = now - spanCutoff;
-    if (opts.dryRun) {
+    if (opts.personalityId) {
+      if (opts.dryRun) {
+        result.spans = (
+          db
+            .prepare(
+              'SELECT COUNT(*) as n FROM spans WHERE trace_id IN (SELECT trace_id FROM traces WHERE personality_id = ? AND start_ts < ?)',
+            )
+            .get(opts.personalityId, threshold) as { n: number }
+        ).n;
+      } else {
+        result.spans = db
+          .prepare(
+            'DELETE FROM spans WHERE trace_id IN (SELECT trace_id FROM traces WHERE personality_id = ? AND start_ts < ?)',
+          )
+          .run(opts.personalityId, threshold).changes;
+      }
+    } else if (opts.dryRun) {
       result.spans = (
         db.prepare('SELECT COUNT(*) as n FROM spans WHERE start_ts < ?').get(threshold) as {
           n: number;
@@ -97,7 +131,23 @@ export function pruneObservability(
     if (ms === null) continue;
     const threshold = now - ms;
     const likeOp = pat.includes('%') ? 'LIKE' : '=';
-    if (opts.dryRun) {
+    if (opts.personalityId) {
+      if (opts.dryRun) {
+        result.events += (
+          db
+            .prepare(
+              `SELECT COUNT(*) as n FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id IN (SELECT trace_id FROM traces WHERE personality_id = ?))`,
+            )
+            .get(pat, threshold, opts.personalityId) as { n: number }
+        ).n;
+      } else {
+        result.events += db
+          .prepare(
+            `DELETE FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id IN (SELECT trace_id FROM traces WHERE personality_id = ?))`,
+          )
+          .run(pat, threshold, opts.personalityId).changes;
+      }
+    } else if (opts.dryRun) {
       result.events += (
         db
           .prepare(`SELECT COUNT(*) as n FROM events WHERE category ${likeOp} ? AND ts < ?`)
@@ -110,13 +160,32 @@ export function pruneObservability(
     }
   }
 
-  // Snapshots: prune orphaned snapshots (no referenced trace)
-  if (!opts.dryRun) {
+  // Snapshots: prune orphaned snapshots (no referenced trace) — global-only
+  if (!opts.personalityId && !opts.dryRun) {
     result.snapshots = db
       .prepare(
         'DELETE FROM snapshots WHERE snapshot_id NOT IN (SELECT DISTINCT snapshot_id FROM traces WHERE snapshot_id IS NOT NULL)',
       )
       .run().changes;
+  }
+
+  // Messages (sessions.db — separate DB, passed in as sessDb)
+  if (opts.sessDb) {
+    const msgCutoff = cutoff(config.messages, '365d');
+    if (msgCutoff !== null) {
+      const threshold = now - msgCutoff;
+      if (opts.dryRun) {
+        result.messages = (
+          opts.sessDb.prepare('SELECT COUNT(*) as n FROM messages WHERE ts < ?').get(threshold) as {
+            n: number;
+          }
+        ).n;
+      } else {
+        result.messages = opts.sessDb
+          .prepare('DELETE FROM messages WHERE ts < ?')
+          .run(threshold).changes;
+      }
+    }
   }
 
   return result;
@@ -130,12 +199,17 @@ export function pruneObservability(
 export function pruneObservabilityByPath(
   dbPath: string,
   config: RetentionConfig,
-  opts: { dryRun?: boolean; now?: number } = {},
+  opts: { dryRun?: boolean; now?: number; sessDbPath?: string; personalityId?: string } = {},
 ): PruneResult {
   const db = new BetterSqlite3(dbPath);
+  let sessDb: BetterSqlite3.Database | undefined;
+  if (opts.sessDbPath) {
+    sessDb = new BetterSqlite3(opts.sessDbPath);
+  }
   try {
-    return pruneObservability(db, config, opts);
+    return pruneObservability(db, config, { ...opts, sessDb });
   } finally {
+    sessDb?.close();
     db.close();
   }
 }

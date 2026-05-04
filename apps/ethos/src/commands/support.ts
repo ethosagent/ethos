@@ -189,11 +189,11 @@ export async function runBundle(argv: string[]): Promise<void> {
     // Memory files (opt-in only)
     let memoryContent: string | null = null;
     if (flags.includeMemory) {
-      const memPath = join(ethosDir(), 'MEMORY.md');
-      const userPath = join(ethosDir(), 'USER.md');
       const parts: string[] = [];
-      if (existsSync(memPath)) parts.push(`# MEMORY.md\n${readFileSync(memPath, 'utf8')}`);
-      if (existsSync(userPath)) parts.push(`# USER.md\n${readFileSync(userPath, 'utf8')}`);
+      const memContent = await storage.read(join(ethosDir(), 'MEMORY.md'));
+      if (memContent !== null) parts.push(`# MEMORY.md\n${memContent}`);
+      const userContent = await storage.read(join(ethosDir(), 'USER.md'));
+      if (userContent !== null) parts.push(`# USER.md\n${userContent}`);
       if (parts.length > 0) memoryContent = parts.join('\n\n');
     }
 
@@ -245,7 +245,7 @@ export async function runBundle(argv: string[]): Promise<void> {
         .filter((r): r is string => r != null);
       if (bodyRefs.length > 0) {
         for (const ref of bodyRefs) {
-          const blobPath = join(blobsDir, ref.slice(0, 2), ref);
+          const blobPath = join(blobsDir, ref.slice(0, 2), `${ref}.gz`);
           if (existsSync(blobPath)) {
             files.set(`blobs/${ref}`, readFileSync(blobPath));
           }
@@ -257,6 +257,16 @@ export async function runBundle(argv: string[]): Promise<void> {
     const outputName = `support-bundle-${bundleId}.tar.gz`;
     writeFileSync(outputName, tarGz);
     const sizeKb = Math.round(tarGz.length / 1024);
+
+    // Audit trail: record that a bundle was generated.
+    store.insertTrace({
+      traceId: bundleId,
+      kind: 'support.bundle',
+      startTs: Date.now(),
+      endTs: Date.now(),
+      status: 'ok',
+      attrs: { outputFile: outputName, traces: traceIds.length, spans: spans.length },
+    });
 
     // Print manifest
     if (traces.length > 0) {

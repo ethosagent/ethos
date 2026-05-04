@@ -1,6 +1,6 @@
 import type { RetentionConfig } from '@ethosagent/types';
 import { Cron } from 'croner';
-import { pruneObservabilityByPath } from './retention';
+import { mergeRetentionConfig, pruneObservabilityByPath } from './retention';
 
 export interface PruneCronOptions {
   /** Absolute path to observability.db */
@@ -9,6 +9,10 @@ export interface PruneCronOptions {
   config?: RetentionConfig;
   /** Cron expression — default '0 3 * * *' (03:00 local) */
   schedule?: string;
+  /** Per-personality configs; personalities with retention overrides get their own prune pass. */
+  personalitiesConfig?: Record<string, { retention?: import('@ethosagent/types').RetentionConfig }>;
+  /** Absolute path to sessions.db for messages pruning. */
+  sessDbPath?: string;
 }
 
 /**
@@ -22,9 +26,24 @@ export function startPruneCron(opts: PruneCronOptions): { stop: () => void } {
 
   const job = new Cron(schedule, { protect: true }, () => {
     try {
-      pruneObservabilityByPath(opts.obsDbPath, effectiveConfig);
+      pruneObservabilityByPath(opts.obsDbPath, effectiveConfig, { sessDbPath: opts.sessDbPath });
     } catch {
       // Prune is best-effort — never crash the process
+    }
+    if (opts.personalitiesConfig) {
+      for (const [personalityId, pCfg] of Object.entries(opts.personalitiesConfig)) {
+        if (pCfg.retention) {
+          try {
+            const merged = mergeRetentionConfig(effectiveConfig, pCfg.retention);
+            pruneObservabilityByPath(opts.obsDbPath, merged, {
+              personalityId,
+              sessDbPath: opts.sessDbPath,
+            });
+          } catch {
+            // Prune is best-effort — never crash the process
+          }
+        }
+      }
     }
   });
 

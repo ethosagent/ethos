@@ -231,6 +231,10 @@ async function runReset(argv: string[]): Promise<void> {
   }
 
   const storage = getStorage();
+  const killSwitchPath = join(dir, '.observability.disabled');
+
+  // Signal active writers to buffer rather than write during the reset window.
+  await storage.writeAtomic(killSwitchPath, `reset started at ${new Date().toISOString()}`);
 
   if (!flags.blobsOnly) {
     for (const p of [obsDbPath, obsWalPath, obsShmPath]) {
@@ -273,6 +277,12 @@ async function runReset(argv: string[]): Promise<void> {
     console.log('  archive/ removed');
   } else {
     console.log('\nReset complete. blobs/ removed.');
+  }
+  // Remove kill-switch — writers may resume.
+  try {
+    await storage.remove(killSwitchPath);
+  } catch {
+    // ignore if already gone
   }
   console.log('  blobs/ removed');
   console.log('  sessions.db untouched');

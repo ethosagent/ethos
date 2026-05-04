@@ -57,9 +57,12 @@ describe('diagnoseBundleLines — customer-debugging integration', () => {
       makeTrace({ startTs: BASE_TS, endTs: BASE_TS + 3000 }),
       makeTrace({ startTs: BASE_TS + 150_000, endTs: BASE_TS + 155_000 }),
     ];
+    const trace0 = traces[0];
+    const trace1 = traces[1];
+    if (!trace0 || !trace1) throw new Error('traces array too short');
     const spans = [
-      makeSpan(traces[0]!.traceId, { name: 'bash', startTs: BASE_TS + 100 }),
-      makeSpan(traces[1]!.traceId, { name: 'bash', startTs: BASE_TS + 151_000 }),
+      makeSpan(trace0.traceId, { name: 'bash', startTs: BASE_TS + 100 }),
+      makeSpan(trace1.traceId, { name: 'bash', startTs: BASE_TS + 151_000 }),
     ];
     const transitionTs = BASE_TS + 120_000;
     const events: ObsEvent[] = [
