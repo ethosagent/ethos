@@ -444,22 +444,25 @@ export class Gateway {
         const isOwner = cfg.ownerUserId && message.userId === cfg.ownerUserId;
         if (!isOwner) continue;
 
+        let removedOnPlatform = false;
+
         // Remove from in-memory list.
         const list = cfg.recipientAllowlist;
         if (list) {
           const idx = list.indexOf(cleanTarget);
           if (idx !== -1) {
             list.splice(idx, 1);
-            removed = true;
+            removedOnPlatform = true;
           }
         }
 
         // Revoke from persistent DB — idempotent, catches pairing-approved senders.
         if (this.pairingDb && revokeApproval(this.pairingDb, cleanTarget, platform)) {
-          removed = true;
+          removedOnPlatform = true;
         }
 
-        if (removed) {
+        if (removedOnPlatform) {
+          removed = true;
           this.observability?.recordEvent({
             category: 'channel.deny',
             severity: 'info',
