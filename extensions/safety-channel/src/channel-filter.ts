@@ -128,13 +128,15 @@ export function checkMessage(
   }
 
   // Step 7: context visibility filter (1d)
+  // Only strip when replyToUserId is explicitly set AND non-allowlisted.
+  // If replyToUserId is absent (adapter can't provide it), do not strip.
   const visibility = config.contextVisibility ?? 'all';
   if (
     (visibility === 'allowlist' || visibility === 'allowlist_quote') &&
-    message.replyToId !== undefined
+    message.replyToId !== undefined &&
+    message.replyToUserId !== undefined
   ) {
-    const replyToUser = message.replyToUserId;
-    const replyAllowed = replyToUser !== undefined && isInAllowlist(allowlist, replyToUser);
+    const replyAllowed = isInAllowlist(allowlist, message.replyToUserId);
     if (!replyAllowed) {
       const stripped =
         '[quoted content from non-allowlisted sender removed]\n' +

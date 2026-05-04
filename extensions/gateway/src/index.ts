@@ -1,6 +1,6 @@
 import type { AgentLoop } from '@ethosagent/core';
 import type { ChannelFilterConfig } from '@ethosagent/safety-channel';
-import { checkMessage, consumeCode } from '@ethosagent/safety-channel';
+import { checkMessage, consumeAndAllow, getApprovedSenders } from '@ethosagent/safety-channel';
 import type { InboundMessage, ObservabilityWriter, PlatformAdapter } from '@ethosagent/types';
 import type Database from 'better-sqlite3';
 import { MessageDedupCache } from './dedup';
@@ -191,6 +191,19 @@ export class Gateway {
     this.pairingDb = config.pairingDb;
     this.observability = config.observability;
     this.onAllowlistChange = config.onAllowlistChange;
+
+    // Seed in-memory allowlists from DB-persisted approved senders
+    if (config.pairingDb && config.channelFilter) {
+      for (const [platform, cfg] of Object.entries(config.channelFilter)) {
+        const approved = getApprovedSenders(config.pairingDb, platform);
+        if (approved.length > 0) {
+          if (!cfg.recipientAllowlist) cfg.recipientAllowlist = [];
+          for (const id of approved) {
+            if (!cfg.recipientAllowlist.includes(id)) cfg.recipientAllowlist.push(id);
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -360,61 +373,33 @@ export class Gateway {
         return;
       }
 
-      // Look up the pending code to learn which (senderId, platform) it was issued for.
-      // consumeCode enforces sender_id + platform binding atomically.
-      const row = this.pairingDb
-        .prepare(
-          `SELECT sender_id, platform FROM pairing_codes WHERE code = ? AND status = 'pending'`,
-        )
-        .get(code) as { sender_id: string; platform: string } | undefined;
-
-      let approvedUserId: string | undefined;
-      let approvedPlatform: string | undefined;
-
-      if (row) {
-        // Verify the caller is the owner for the sender's platform.
-        const platformCfg = this.channelFilter[row.platform];
-        const isOwner = platformCfg?.ownerUserId && message.userId === platformCfg.ownerUserId;
-        if (isOwner) {
-          const result = consumeCode(
-            this.pairingDb,
-            code,
-            row.sender_id,
-            row.platform,
-            message.userId,
-          );
-          if (result.ok) {
-            approvedUserId = row.sender_id;
-            approvedPlatform = row.platform;
-          } else if (result.reason === 'owner_paused') {
-            await adapter
-              .send(message.chatId, {
-                text: '✗ Too many invalid attempts. Pairing paused for 24h.',
-              })
-              .catch(() => {});
-            return;
-          }
-        }
-      }
-
-      if (approvedUserId && approvedPlatform) {
-        // In-memory allowlist update
-        const platformCfg = this.channelFilter[approvedPlatform];
+      const result = consumeAndAllow(this.pairingDb, code, message.userId);
+      if (result.ok) {
+        // Update in-memory cache
+        const platformCfg = this.channelFilter[result.platform];
         if (platformCfg) {
           if (!platformCfg.recipientAllowlist) platformCfg.recipientAllowlist = [];
-          if (!platformCfg.recipientAllowlist.includes(approvedUserId)) {
-            platformCfg.recipientAllowlist.push(approvedUserId);
+          if (!platformCfg.recipientAllowlist.includes(result.senderId)) {
+            platformCfg.recipientAllowlist.push(result.senderId);
           }
         }
         this.observability?.recordEvent({
           category: 'channel.allow',
           severity: 'info',
           code: 'channel.pairing.approved',
-          details: { approvedUserId, approvedPlatform, byUserId: message.userId },
+          details: {
+            approvedUserId: result.senderId,
+            approvedPlatform: result.platform,
+            byUserId: message.userId,
+          },
         });
-        await this.onAllowlistChange?.(approvedPlatform, approvedUserId, 'add');
+        await this.onAllowlistChange?.(result.platform, result.senderId, 'add');
         await adapter
-          .send(message.chatId, { text: `✓ ${approvedUserId} approved.` })
+          .send(message.chatId, { text: `✓ ${result.senderId} approved.` })
+          .catch(() => {});
+      } else if (result.reason === 'owner_paused') {
+        await adapter
+          .send(message.chatId, { text: '✗ Too many invalid attempts. Pairing paused for 24h.' })
           .catch(() => {});
       } else {
         await adapter.send(message.chatId, { text: '✗ Invalid or expired code.' }).catch(() => {});
@@ -478,6 +463,36 @@ export class Gateway {
         return;
       }
 
+      const subCmd = text.split(/\s+/)[1]?.toLowerCase();
+
+      if (subCmd === 'approve-all') {
+        const pending = this.pairingDb
+          .prepare(`SELECT code FROM pairing_codes WHERE status = 'pending'`)
+          .all() as { code: string }[];
+
+        let approvedCount = 0;
+        for (const { code } of pending) {
+          const result = consumeAndAllow(this.pairingDb, code, message.userId);
+          if (result.ok) {
+            approvedCount++;
+            const cfg = this.channelFilter[result.platform];
+            if (cfg) {
+              if (!cfg.recipientAllowlist) cfg.recipientAllowlist = [];
+              if (!cfg.recipientAllowlist.includes(result.senderId)) {
+                cfg.recipientAllowlist.push(result.senderId);
+              }
+            }
+            await this.onAllowlistChange?.(result.platform, result.senderId, 'add');
+          }
+        }
+
+        await adapter
+          .send(message.chatId, { text: `✓ Approved ${approvedCount} sender(s).` })
+          .catch(() => {});
+        return;
+      }
+
+      // Default: list pending codes
       const pending = this.pairingDb
         .prepare(`SELECT code, sender_id, platform FROM pairing_codes WHERE status = 'pending'`)
         .all() as { code: string; sender_id: string; platform: string }[];

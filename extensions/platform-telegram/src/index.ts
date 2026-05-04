@@ -122,6 +122,12 @@ export class TelegramAdapter implements PlatformAdapter {
         isDm: ctx.chat.type === 'private',
         isGroupMention: ctx.message.text?.includes(`@${ctx.me.username}`) ?? false,
         messageId: String(ctx.message.message_id),
+        replyToId: ctx.message.reply_to_message
+          ? String(ctx.message.reply_to_message.message_id)
+          : undefined,
+        replyToUserId: ctx.message.reply_to_message?.from
+          ? String(ctx.message.reply_to_message.from.id)
+          : undefined,
         raw: ctx,
       };
 

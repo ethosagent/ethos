@@ -127,6 +127,21 @@ describe('checkMessage', () => {
     expect(result.strippedText).toContain('[quoted content from non-allowlisted sender removed]');
   });
 
+  it('contextVisibility allowlist + reply with no replyToUserId → not stripped (unknown sender)', () => {
+    const config: ChannelPlatformConfig = {
+      ownerUserId: 'owner-1',
+      recipientAllowlist: ['user-42'],
+      contextVisibility: 'allowlist',
+    };
+    const result = checkMessage(
+      msg({ userId: 'user-42', isDm: true, replyToId: 'msg-100', text: '> quoted\nmy reply' }),
+      config,
+      db,
+    );
+    expect(result.action).toBe('allow');
+    expect(result.strippedText).toBeUndefined();
+  });
+
   it('contextVisibility allowlist + reply from allowlisted sender → not stripped', () => {
     const config: ChannelPlatformConfig = {
       ownerUserId: 'owner-1',

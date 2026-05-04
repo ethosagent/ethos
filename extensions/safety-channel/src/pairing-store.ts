@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type Database from 'better-sqlite3';
 
 // ---------------------------------------------------------------------------
@@ -8,7 +8,7 @@ import type Database from 'better-sqlite3';
 const CODE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 
-/** Create the pairing_codes table if it doesn't exist. Call once at startup. */
+/** Create the pairing tables if they don't exist. Call once at startup. */
 export function initPairingDb(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS pairing_codes (
@@ -36,16 +36,24 @@ export function initPairingDb(db: Database.Database): void {
       owner_id     TEXT PRIMARY KEY,
       paused_until INTEGER NOT NULL
     ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS allowed_senders (
+      sender_id  TEXT NOT NULL,
+      platform   TEXT NOT NULL,
+      added_at   INTEGER NOT NULL,
+      added_by   TEXT,
+      PRIMARY KEY (sender_id, platform)
+    ) STRICT;
   `);
 }
 
-/** Generate an 8-character uppercase alphanumeric code. */
-function makeCode(): string {
+/** Derive an 8-character uppercase alphanumeric code from a nonce via SHA-256. */
+function makeCode(nonce: Buffer): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const bytes = randomBytes(8);
+  const hash = createHash('sha256').update(nonce).digest();
   let result = '';
-  for (const b of bytes) {
-    result += alphabet[b % alphabet.length];
+  for (let i = 0; i < 8; i++) {
+    result += alphabet[(hash[i] ?? 0) % alphabet.length];
   }
   return result;
 }
@@ -79,13 +87,14 @@ export function generateCode(
 
   if (recent.cnt > 0) return null;
 
-  const code = makeCode();
-  const nonce = randomBytes(8).toString('hex');
+  const nonce = randomBytes(8);
+  const nonceHex = nonce.toString('hex');
+  const code = makeCode(nonce);
 
   db.prepare(
     `INSERT INTO pairing_codes (code, sender_id, platform, issued_at, nonce, status)
      VALUES (?, ?, ?, ?, ?, 'pending')`,
-  ).run(code, senderId, platform, now, nonce);
+  ).run(code, senderId, platform, now, nonceHex);
 
   return code;
 }
@@ -97,9 +106,37 @@ export type ConsumeResult =
       reason: 'not_found' | 'consumed' | 'expired' | 'sender_mismatch' | 'owner_paused';
     };
 
+export type ConsumeAndAllowResult =
+  | { ok: true; senderId: string; platform: string }
+  | {
+      ok: false;
+      reason: 'not_found' | 'consumed' | 'expired' | 'sender_mismatch' | 'owner_paused';
+    };
+
 const LOCKOUT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const LOCKOUT_THRESHOLD = 5;
 const LOCKOUT_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/** Record a failed consume attempt for ownerId and trigger lockout if threshold is reached. */
+function recordFailedAttempt(db: Database.Database, ownerId: string, now: number): void {
+  db.prepare(
+    `INSERT INTO pairing_consume_attempts (owner_id, attempted_at, succeeded) VALUES (?, ?, 0)`,
+  ).run(ownerId, now);
+
+  const windowStart = now - LOCKOUT_WINDOW_MS;
+  const failCount = db
+    .prepare(
+      `SELECT COUNT(*) AS cnt FROM pairing_consume_attempts
+       WHERE owner_id = ? AND succeeded = 0 AND attempted_at >= ?`,
+    )
+    .get(ownerId, windowStart) as { cnt: number };
+
+  if (failCount.cnt >= LOCKOUT_THRESHOLD) {
+    db.prepare(
+      `INSERT OR REPLACE INTO pairing_owner_pauses (owner_id, paused_until) VALUES (?, ?)`,
+    ).run(ownerId, now + LOCKOUT_DURATION_MS);
+  }
+}
 
 /**
  * Atomically consume a pairing code.
@@ -171,26 +208,87 @@ export function consumeCode(
   }
 
   if (ownerId !== undefined && !result.ok) {
-    db.prepare(
-      `INSERT INTO pairing_consume_attempts (owner_id, attempted_at, succeeded) VALUES (?, ?, 0)`,
-    ).run(ownerId, now);
-
-    const windowStart = now - LOCKOUT_WINDOW_MS;
-    const failCount = db
-      .prepare(
-        `SELECT COUNT(*) AS cnt FROM pairing_consume_attempts
-         WHERE owner_id = ? AND succeeded = 0 AND attempted_at >= ?`,
-      )
-      .get(ownerId, windowStart) as { cnt: number };
-
-    if (failCount.cnt >= LOCKOUT_THRESHOLD) {
-      db.prepare(
-        `INSERT OR REPLACE INTO pairing_owner_pauses (owner_id, paused_until) VALUES (?, ?)`,
-      ).run(ownerId, now + LOCKOUT_DURATION_MS);
-    }
+    recordFailedAttempt(db, ownerId, now);
   }
 
   return result;
+}
+
+/**
+ * Atomically consume a pairing code and add the sender to `allowed_senders` in one transaction.
+ * Looks up sender_id and platform from the code row itself — no need to pass them separately.
+ * When ownerId is provided, enforces a 24h pause after 5 failed attempts.
+ */
+export function consumeAndAllow(
+  db: Database.Database,
+  code: string,
+  ownerId?: string,
+): ConsumeAndAllowResult {
+  const txn = db.transaction((): ConsumeAndAllowResult => {
+    const now = Date.now();
+    const expiryCutoff = now - CODE_TTL_MS;
+
+    // Check owner pause
+    if (ownerId !== undefined) {
+      const pause = db
+        .prepare('SELECT paused_until FROM pairing_owner_pauses WHERE owner_id = ?')
+        .get(ownerId) as { paused_until: number } | undefined;
+      if (pause !== undefined && pause.paused_until > now) {
+        return { ok: false, reason: 'owner_paused' };
+      }
+    }
+
+    const row = db
+      .prepare('SELECT sender_id, platform, status, issued_at FROM pairing_codes WHERE code = ?')
+      .get(code) as
+      | { sender_id: string; platform: string; status: string; issued_at: number }
+      | undefined;
+
+    if (!row) {
+      if (ownerId !== undefined) recordFailedAttempt(db, ownerId, now);
+      return { ok: false, reason: 'not_found' };
+    }
+    if (row.status === 'consumed') {
+      if (ownerId !== undefined) recordFailedAttempt(db, ownerId, now);
+      return { ok: false, reason: 'consumed' };
+    }
+    if (row.status === 'expired' || row.issued_at < expiryCutoff) {
+      if (ownerId !== undefined) recordFailedAttempt(db, ownerId, now);
+      return { ok: false, reason: 'expired' };
+    }
+
+    const updated = db
+      .prepare(
+        `UPDATE pairing_codes SET status = 'consumed'
+         WHERE code = ? AND status = 'pending' AND issued_at > ?`,
+      )
+      .run(code, expiryCutoff);
+
+    if (updated.changes !== 1) {
+      if (ownerId !== undefined) recordFailedAttempt(db, ownerId, now);
+      return { ok: false, reason: 'consumed' };
+    }
+
+    db.prepare(
+      `INSERT OR IGNORE INTO allowed_senders (sender_id, platform, added_at, added_by)
+       VALUES (?, ?, ?, ?)`,
+    ).run(row.sender_id, row.platform, now, ownerId ?? null);
+
+    return { ok: true, senderId: row.sender_id, platform: row.platform };
+  });
+
+  return txn();
+}
+
+/**
+ * Return all sender IDs that have been approved (via `consumeAndAllow`) for a given platform.
+ */
+export function getApprovedSenders(db: Database.Database, platform: string): string[] {
+  return (
+    db.prepare('SELECT sender_id FROM allowed_senders WHERE platform = ?').all(platform) as {
+      sender_id: string;
+    }[]
+  ).map((r) => r.sender_id);
 }
 
 /** Clear the 24h owner pause and failure attempt log (used by `ethos security audit --fix`). */

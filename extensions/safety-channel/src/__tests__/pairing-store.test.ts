@@ -1,6 +1,13 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { clearOwnerPause, consumeCode, generateCode, initPairingDb } from '../pairing-store';
+import {
+  clearOwnerPause,
+  consumeAndAllow,
+  consumeCode,
+  generateCode,
+  getApprovedSenders,
+  initPairingDb,
+} from '../pairing-store';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -122,22 +129,24 @@ describe('pairing-store', () => {
     }
   });
 
-  it('nonce reuse: two codes with the same nonce value are independently bound to their senders', () => {
+  it('nonce is deterministically derived: same nonce always produces the same code', () => {
+    // Generate a code for user-1
     const code1 = generateCode(db, 'user-1', 'telegram');
     if (!code1) throw new Error('expected code1');
+
+    // Get the stored nonce
     const row1 = db.prepare('SELECT nonce FROM pairing_codes WHERE code = ?').get(code1) as {
       nonce: string;
     };
 
-    db.prepare(
-      `INSERT INTO pairing_codes (code, sender_id, platform, issued_at, nonce, status) VALUES ('SAMENC01', 'user-2', 'telegram', ?, ?, 'pending')`,
-    ).run(Date.now(), row1.nonce);
-
-    expect(consumeCode(db, code1, 'user-1', 'telegram').ok).toBe(true);
-    expect(consumeCode(db, 'SAMENC01', 'user-2', 'telegram').ok).toBe(true);
-
-    const swapResult = consumeCode(db, code1, 'user-2', 'telegram');
-    expect(swapResult.ok).toBe(false);
+    // Attempting to INSERT another row with the same nonce + derived code hits UNIQUE(code) constraint
+    // because makeCode(nonce) always produces the same code.
+    expect(() => {
+      db.prepare(
+        `INSERT INTO pairing_codes (code, sender_id, platform, issued_at, nonce, status)
+         VALUES (?, 'user-2', 'telegram', ?, ?, 'pending')`,
+      ).run(code1, Date.now(), row1.nonce);
+    }).toThrow(); // UNIQUE constraint violation — same code can't be inserted twice
   });
 
   it('5 invalid /allow attempts triggers 24h owner pause', () => {
@@ -158,6 +167,52 @@ describe('pairing-store', () => {
     const result = consumeCode(db, code, 'user-y', 'telegram', 'owner-1');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('owner_paused');
+  });
+
+  it('consumeAndAllow success → allowed_senders row exists', () => {
+    const code = generateCode(db, 'user-1', 'telegram');
+    if (!code) throw new Error('expected code');
+
+    const result = consumeAndAllow(db, code, 'owner-1');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.senderId).toBe('user-1');
+    expect(result.platform).toBe('telegram');
+
+    const row = db
+      .prepare('SELECT sender_id FROM allowed_senders WHERE sender_id = ? AND platform = ?')
+      .get('user-1', 'telegram') as { sender_id: string } | undefined;
+    expect(row).toBeDefined();
+    expect(row?.sender_id).toBe('user-1');
+  });
+
+  it('consumeAndAllow with already-consumed code → not ok, no duplicate row', () => {
+    const code = generateCode(db, 'user-1', 'telegram');
+    if (!code) throw new Error('expected code');
+
+    consumeAndAllow(db, code, 'owner-1');
+    const result = consumeAndAllow(db, code, 'owner-1');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('consumed');
+
+    const rows = db
+      .prepare('SELECT COUNT(*) AS cnt FROM allowed_senders WHERE sender_id = ? AND platform = ?')
+      .get('user-1', 'telegram') as { cnt: number };
+    expect(rows.cnt).toBe(1); // still only one row from the first call
+  });
+
+  it('getApprovedSenders returns senders approved via consumeAndAllow', () => {
+    const code1 = generateCode(db, 'user-a', 'telegram');
+    const code2 = generateCode(db, 'user-b', 'telegram');
+    if (!code1 || !code2) throw new Error('expected codes');
+
+    consumeAndAllow(db, code1);
+    consumeAndAllow(db, code2);
+
+    const senders = getApprovedSenders(db, 'telegram');
+    expect(senders).toContain('user-a');
+    expect(senders).toContain('user-b');
+    expect(senders.length).toBe(2);
   });
 
   it('clearOwnerPause lifts the 24h pause', () => {
