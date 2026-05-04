@@ -25,25 +25,39 @@ export function startPruneCron(opts: PruneCronOptions): { stop: () => void } {
   const effectiveConfig: RetentionConfig = opts.config ?? {};
 
   const job = new Cron(schedule, { protect: true }, () => {
-    try {
-      pruneObservabilityByPath(opts.obsDbPath, effectiveConfig, { sessDbPath: opts.sessDbPath });
-    } catch {
-      // Prune is best-effort — never crash the process
-    }
+    // Compute personalities that have their own prune pass so the global pass
+    // can exclude their rows — prevents a stricter global TTL from deleting rows
+    // that a personality override should retain.
+    const excludePersonalityIds = opts.personalitiesConfig
+      ? Object.entries(opts.personalitiesConfig)
+          .filter(([, pCfg]) => pCfg.retention != null)
+          .map(([id]) => id)
+      : [];
+
+    // Per-personality passes run first so their data is intact when the global
+    // pass evaluates what to exclude.
     if (opts.personalitiesConfig) {
       for (const [personalityId, pCfg] of Object.entries(opts.personalitiesConfig)) {
         if (pCfg.retention) {
           try {
             const merged = mergeRetentionConfig(effectiveConfig, pCfg.retention);
-            pruneObservabilityByPath(opts.obsDbPath, merged, {
-              personalityId,
-              sessDbPath: opts.sessDbPath,
-            });
+            // No sessDbPath: messages are not personality-scoped.
+            pruneObservabilityByPath(opts.obsDbPath, merged, { personalityId });
           } catch {
             // Prune is best-effort — never crash the process
           }
         }
       }
+    }
+
+    // Global pass: excludes rows belonging to personalities that had their own pass.
+    try {
+      pruneObservabilityByPath(opts.obsDbPath, effectiveConfig, {
+        sessDbPath: opts.sessDbPath,
+        excludePersonalityIds: excludePersonalityIds.length > 0 ? excludePersonalityIds : undefined,
+      });
+    } catch {
+      // Prune is best-effort — never crash the process
     }
   });
 

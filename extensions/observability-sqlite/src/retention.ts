@@ -54,6 +54,8 @@ export function pruneObservability(
     now?: number;
     sessDb?: BetterSqlite3.Database;
     personalityId?: string;
+    /** Personality IDs to exclude from the global pass (they have per-personality passes). */
+    excludePersonalityIds?: string[];
   } = {},
 ): PruneResult {
   const now = opts.now ?? Date.now();
@@ -63,6 +65,10 @@ export function pruneObservability(
 
   const traceCutoff = cutoff(config.traces, '90d');
   const spanCutoff = cutoff(config.spans, '90d');
+
+  // Personalities that have their own prune pass — excluded from the global pass
+  // so a stricter global TTL cannot delete rows that a personality should retain.
+  const excluded = opts.excludePersonalityIds ?? [];
 
   if (traceCutoff !== null) {
     const threshold = now - traceCutoff;
@@ -77,6 +83,23 @@ export function pruneObservability(
         result.traces = db
           .prepare('DELETE FROM traces WHERE personality_id = ? AND start_ts < ?')
           .run(opts.personalityId, threshold).changes;
+      }
+    } else if (excluded.length > 0) {
+      const ph = excluded.map(() => '?').join(',');
+      if (opts.dryRun) {
+        result.traces = (
+          db
+            .prepare(
+              `SELECT COUNT(*) as n FROM traces WHERE start_ts < ? AND (personality_id IS NULL OR personality_id NOT IN (${ph}))`,
+            )
+            .get(threshold, ...excluded) as { n: number }
+        ).n;
+      } else {
+        result.traces = db
+          .prepare(
+            `DELETE FROM traces WHERE start_ts < ? AND (personality_id IS NULL OR personality_id NOT IN (${ph}))`,
+          )
+          .run(threshold, ...excluded).changes;
       }
     } else if (opts.dryRun) {
       result.traces = (
@@ -106,6 +129,23 @@ export function pruneObservability(
             'DELETE FROM spans WHERE trace_id IN (SELECT trace_id FROM traces WHERE personality_id = ? AND start_ts < ?)',
           )
           .run(opts.personalityId, threshold).changes;
+      }
+    } else if (excluded.length > 0) {
+      const ph = excluded.map(() => '?').join(',');
+      if (opts.dryRun) {
+        result.spans = (
+          db
+            .prepare(
+              `SELECT COUNT(*) as n FROM spans WHERE start_ts < ? AND trace_id NOT IN (SELECT trace_id FROM traces WHERE personality_id IN (${ph}))`,
+            )
+            .get(threshold, ...excluded) as { n: number }
+        ).n;
+      } else {
+        result.spans = db
+          .prepare(
+            `DELETE FROM spans WHERE start_ts < ? AND trace_id NOT IN (SELECT trace_id FROM traces WHERE personality_id IN (${ph}))`,
+          )
+          .run(threshold, ...excluded).changes;
       }
     } else if (opts.dryRun) {
       result.spans = (
@@ -147,6 +187,23 @@ export function pruneObservability(
           )
           .run(pat, threshold, opts.personalityId).changes;
       }
+    } else if (excluded.length > 0) {
+      const ph = excluded.map(() => '?').join(',');
+      if (opts.dryRun) {
+        result.events += (
+          db
+            .prepare(
+              `SELECT COUNT(*) as n FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id NOT IN (SELECT trace_id FROM traces WHERE personality_id IN (${ph})))`,
+            )
+            .get(pat, threshold, ...excluded) as { n: number }
+        ).n;
+      } else {
+        result.events += db
+          .prepare(
+            `DELETE FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id NOT IN (SELECT trace_id FROM traces WHERE personality_id IN (${ph})))`,
+          )
+          .run(pat, threshold, ...excluded).changes;
+      }
     } else if (opts.dryRun) {
       result.events += (
         db
@@ -169,21 +226,25 @@ export function pruneObservability(
       .run().changes;
   }
 
-  // Messages (sessions.db — separate DB, passed in as sessDb)
-  if (opts.sessDb) {
+  // Messages (sessions.db — separate DB, passed in as sessDb).
+  // Not personality-scoped: messages table has no personality_id column.
+  // Only run in the global pass (not per-personality passes).
+  if (opts.sessDb && !opts.personalityId) {
     const msgCutoff = cutoff(config.messages, '365d');
     if (msgCutoff !== null) {
       const threshold = now - msgCutoff;
+      // messages.timestamp is an ISO-8601 TEXT column; convert threshold to ISO for comparison.
+      const iso = new Date(threshold).toISOString();
       if (opts.dryRun) {
         result.messages = (
-          opts.sessDb.prepare('SELECT COUNT(*) as n FROM messages WHERE ts < ?').get(threshold) as {
-            n: number;
-          }
+          opts.sessDb
+            .prepare('SELECT COUNT(*) as n FROM messages WHERE timestamp < ?')
+            .get(iso) as { n: number }
         ).n;
       } else {
         result.messages = opts.sessDb
-          .prepare('DELETE FROM messages WHERE ts < ?')
-          .run(threshold).changes;
+          .prepare('DELETE FROM messages WHERE timestamp < ?')
+          .run(iso).changes;
       }
     }
   }
@@ -199,7 +260,13 @@ export function pruneObservability(
 export function pruneObservabilityByPath(
   dbPath: string,
   config: RetentionConfig,
-  opts: { dryRun?: boolean; now?: number; sessDbPath?: string; personalityId?: string } = {},
+  opts: {
+    dryRun?: boolean;
+    now?: number;
+    sessDbPath?: string;
+    personalityId?: string;
+    excludePersonalityIds?: string[];
+  } = {},
 ): PruneResult {
   const db = new BetterSqlite3(dbPath);
   let sessDb: BetterSqlite3.Database | undefined;
