@@ -3,7 +3,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 const DEFAULT_PASSTHROUGH = new Set(['PATH', 'USER', 'LANG', 'LC_ALL', 'TERM', 'SHELL']);
-const CREDENTIAL_PATTERN = /(_KEY|_TOKEN|_SECRET|_PASSWORD)$/i;
+// Matches KEY/TOKEN/SECRET/PASSWORD as whole words (separated by _ or string boundaries),
+// e.g. API_KEY, MY_KEY_FILE, PASSWORD_HASH — but not KEYSTONE or MASTODON.
+const CREDENTIAL_PATTERN = /(^|_)(KEY|TOKEN|SECRET|PASSWORD)($|_)/i;
 
 /**
  * Build a minimal environment for an MCP subprocess.

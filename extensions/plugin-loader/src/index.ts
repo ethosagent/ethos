@@ -13,7 +13,13 @@ import {
 } from '@ethosagent/plugin-contract';
 import type { EthosPlugin, PluginRegistries } from '@ethosagent/plugin-sdk';
 import { PluginApiImpl } from '@ethosagent/plugin-sdk';
-import { canInstall, deriveTier, scanPluginCode } from '@ethosagent/safety-scanner';
+import {
+  canInstall,
+  deriveTier,
+  type PluginScanPermissions,
+  type ScanFinding,
+  scanPluginCode,
+} from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { MemoryProvider, PlatformAdapter, Storage } from '@ethosagent/types';
 
@@ -125,16 +131,17 @@ export class PluginLoader {
     const entry = await resolveEntry(this.storage, dir);
     if (!entry) return;
 
-    // Safety scan before executing any plugin code.
-    const src = await this.storage.read(entry);
-    if (src !== null) {
-      const tier = deriveTier(dir);
-      const scanResult = scanPluginCode(src);
-      const decision = canInstall(scanResult, tier);
-      if (!decision.allowed) {
-        console.warn(`[plugin-loader] "${id}" blocked by safety scan: ${decision.blockedBy}`);
-        return;
-      }
+    // Safety scan the entire plugin source tree before executing any code.
+    // Reading package.json again here (small file) to extract declared permissions.
+    const pkgSrc = await this.storage.read(join(dir, 'package.json'));
+    const pkgJson = pkgSrc ? (JSON.parse(pkgSrc) as Record<string, unknown>) : {};
+    const permissions = readPluginPermissions(pkgJson);
+    const tier = deriveTier(dir);
+    const scanResult = await scanPluginTree(this.storage, dir, permissions);
+    const decision = canInstall(scanResult, tier);
+    if (!decision.allowed) {
+      console.warn(`[plugin-loader] "${id}" blocked by safety scan: ${decision.blockedBy}`);
+      return;
     }
 
     // Dynamic import the plugin module — stays raw `import()`. Per
@@ -211,16 +218,14 @@ export class PluginLoader {
         const entry = resolveNpmEntry(raw, join(nmDir, name));
         if (!entry) continue;
 
-        // Safety scan before executing npm plugin code.
-        const pluginSrc = await this.storage.read(entry);
-        if (pluginSrc !== null) {
-          const tier = deriveTier(name);
-          const scanResult = scanPluginCode(pluginSrc);
-          const decision = canInstall(scanResult, tier);
-          if (!decision.allowed) {
-            console.warn(`[plugin-loader] "${name}" blocked by safety scan: ${decision.blockedBy}`);
-            continue;
-          }
+        // Safety scan the entire npm package source tree before executing any code.
+        const permissions = readPluginPermissions(raw as Record<string, unknown>);
+        const tier = deriveTier(name);
+        const scanResult = await scanPluginTree(this.storage, join(nmDir, name), permissions);
+        const decision = canInstall(scanResult, tier);
+        if (!decision.allowed) {
+          console.warn(`[plugin-loader] "${name}" blocked by safety scan: ${decision.blockedBy}`);
+          continue;
         }
 
         const mod = await import(entry);
@@ -332,6 +337,68 @@ export class PluginLoader {
 
 // ---------------------------------------------------------------------------
 // Helpers
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Safety-scan helpers
+// ---------------------------------------------------------------------------
+
+/** Extract declared permissions from an already-parsed package.json object. */
+function readPluginPermissions(pkgJson: Record<string, unknown>): PluginScanPermissions {
+  const ethos = pkgJson.ethos;
+  if (typeof ethos !== 'object' || ethos === null || Array.isArray(ethos)) return {};
+  const perms = (ethos as Record<string, unknown>).permissions;
+  if (typeof perms !== 'object' || perms === null || Array.isArray(perms)) return {};
+  const p = perms as Record<string, unknown>;
+  const result: PluginScanPermissions = {};
+  if (p.shell === true) result.shell = true;
+  if (Array.isArray(p.network)) {
+    result.network = p.network.filter((x): x is string => typeof x === 'string');
+  } else if (p.network === true) {
+    result.network = []; // declared but no host restriction
+  }
+  return result;
+}
+
+/**
+ * Recursively scan all .js/.ts source files under `dir`, aggregating findings.
+ * Skips node_modules to avoid scanning thousands of dependency files.
+ */
+async function scanPluginTree(
+  storage: Storage,
+  dir: string,
+  permissions: PluginScanPermissions,
+): Promise<{ hasRed: boolean; hasYellow: boolean; findings: ScanFinding[] }> {
+  const findings: ScanFinding[] = [];
+  await collectFindings(storage, dir, permissions, findings);
+  return {
+    findings,
+    hasRed: findings.some((f) => f.severity === 'red'),
+    hasYellow: findings.some((f) => f.severity === 'yellow'),
+  };
+}
+
+async function collectFindings(
+  storage: Storage,
+  dir: string,
+  permissions: PluginScanPermissions,
+  out: ScanFinding[],
+): Promise<void> {
+  const entries = await storage.listEntries(dir).catch(() => []);
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDir) {
+      if (entry.name === 'node_modules') continue; // skip dep trees
+      await collectFindings(storage, fullPath, permissions, out);
+    } else if (/\.[jt]s$/.test(entry.name) && !entry.name.endsWith('.d.ts')) {
+      const src = await storage.read(fullPath);
+      if (src) out.push(...scanPluginCode(src, permissions).findings);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Installed plugin manifest discovery
 // ---------------------------------------------------------------------------
 
 /**

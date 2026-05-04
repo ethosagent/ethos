@@ -86,12 +86,12 @@ function checkShellExec(lines: string[], permissions: PluginScanPermissions): Sc
   const findings: ScanFinding[] = [];
   const hasShellPerm = permissions.shell === true;
 
-  // Heuristic: check if child_process is imported anywhere
+  // Heuristic: check if child_process is imported anywhere (with or without node: prefix)
   const fullContent = lines.join('\n');
   const hasChildProcessImport =
-    /require\(['"]child_process['"]\)/.test(fullContent) ||
-    /from\s+['"]child_process['"]/.test(fullContent) ||
-    /import\s+.*child_process/.test(fullContent);
+    /require\(['"](?:node:)?child_process['"]\)/.test(fullContent) ||
+    /from\s+['"](?:node:)?child_process['"]/.test(fullContent) ||
+    /import\s+.*(?:node:)?child_process/.test(fullContent);
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';

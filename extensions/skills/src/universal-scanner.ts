@@ -67,10 +67,14 @@ export function externalSources(): ScanSource[] {
  * First source wins on name collisions.
  */
 // Map a source label to a trust tier for scan enforcement.
-// 'ethos' is the user's own skill dir — treat as builtin (warn but never block).
-// All external source dirs are community (red findings block loading).
+// 'ethos' (~/.ethos/skills/) is user-managed local files, not skills shipped with Ethos.
+// trusted-repo: red blocks without force, yellow auto-acknowledged (not blocked).
+// community: red blocks, yellow also blocks without force.
+// 'ethos' gets trusted-repo so the user's own skills aren't blocked by yellow findings
+// (e.g. a skill that legitimately mentions bash or curl), while prompt injection (red)
+// is still caught and blocked.
 function sourceLabelToTier(sourceLabel: string): TrustTier {
-  return sourceLabel === 'ethos' ? 'builtin' : 'community';
+  return sourceLabel === 'ethos' ? 'trusted-repo' : 'community';
 }
 
 export class UniversalScanner {
@@ -163,11 +167,10 @@ export class UniversalScanner {
 
     const skill = this.parseWithDialect(raw, filePath, sourceLabel, name, qualifiedName, mtimeMs);
 
-    // Gate on safety scan — block red findings from external sources.
+    // Gate on safety scan — block red findings from all sources.
     const scanResult = scanSkillMd(raw, filePath);
     const tier = sourceLabelToTier(sourceLabel);
-    // builtin tier uses force:true so user's own skills are never silently blocked.
-    const decision = canInstall(scanResult, tier, { force: tier === 'builtin' });
+    const decision = canInstall(scanResult, tier);
     if (!decision.allowed) {
       this.onSkip?.(qualifiedName, `safety scan: ${decision.blockedBy}`);
       return null;

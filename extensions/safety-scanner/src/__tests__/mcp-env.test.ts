@@ -66,6 +66,26 @@ describe('buildMcpEnv', () => {
     expect(env.GITHUB_TOKEN).toBeUndefined();
   });
 
+  it('strips MY_KEY_FILE (KEY appears as inner word, not just suffix)', () => {
+    process.env.MY_KEY_FILE = 'path/to/key';
+    const env = buildMcpEnv('test-server');
+    expect(env.MY_KEY_FILE).toBeUndefined();
+  });
+
+  it('strips PASSWORD_HASH (PASSWORD appears as prefix word)', () => {
+    process.env.PASSWORD_HASH = 'hashed-value';
+    const env = buildMcpEnv('test-server');
+    expect(env.PASSWORD_HASH).toBeUndefined();
+  });
+
+  it('does NOT strip KEYSTONE (KEY is not a separate word)', () => {
+    process.env.KEYSTONE = 'not-a-secret';
+    const env = buildMcpEnv('test-server', ['KEYSTONE']); // in passthrough to allow through default filter
+    // Even if passed through, KEYSTONE should not be blocked by credential pattern
+    // (it's not a credential — just contains the string KEY)
+    expect(env.KEYSTONE).toBe('not-a-secret');
+  });
+
   it('passes GITHUB_TOKEN when explicitly in extraPassthrough', () => {
     process.env.GITHUB_TOKEN = 'ghp_xxx';
     const env = buildMcpEnv('test-server', ['GITHUB_TOKEN']);

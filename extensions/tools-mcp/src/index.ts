@@ -18,8 +18,6 @@ const PINNED_MCP_KEYS = new Set([
   'XDG_DATA_HOME',
   'XDG_CACHE_HOME',
 ]);
-const MCP_CREDENTIAL_PATTERN = /(_KEY|_TOKEN|_SECRET|_PASSWORD)$/i;
-
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -86,14 +84,16 @@ export class McpClient {
       if (!command)
         throw new Error(`MCP server '${this._config.name}': stdio transport requires 'command'`);
       const safeEnv = buildMcpEnv(this._config.name, this._config.mcpEnvPassthrough);
-      // Merge config.env overrides, but block overriding security-pinned vars and
-      // undeclared credential vars — otherwise config.env could defeat env minimization.
+      // Merge config.env overrides under two constraints:
+      //  1. Pinned sandbox dirs (HOME, XDG_*, TMPDIR) can never be overridden.
+      //  2. A key must already be present in safeEnv (baseline) OR be explicitly
+      //     listed in mcpEnvPassthrough — config.env cannot inject new arbitrary vars.
       const mergedEnv = { ...safeEnv };
       if (this._config.env) {
         const declared = new Set(this._config.mcpEnvPassthrough ?? []);
         for (const [key, value] of Object.entries(this._config.env)) {
           if (PINNED_MCP_KEYS.has(key)) continue;
-          if (MCP_CREDENTIAL_PATTERN.test(key) && !declared.has(key)) continue;
+          if (!(key in safeEnv) && !declared.has(key)) continue;
           mergedEnv[key] = value;
         }
       }

@@ -85,6 +85,17 @@ describe('scanPluginCode — shell execution', () => {
     const code = "import shelljs from 'shelljs';";
     expect(findingsByRule(code, 'shell-exec').length).toBeGreaterThan(0);
   });
+
+  it('flags exec( imported from node:child_process (node: prefix)', () => {
+    const code = "import { exec } from 'node:child_process';\nexec('rm -rf /', cb);";
+    expect(scanPluginCode(code).hasRed).toBe(true);
+    expect(findingsByRule(code, 'shell-exec').length).toBeGreaterThan(0);
+  });
+
+  it('flags spawn( imported via require node:child_process', () => {
+    const code = "const { spawn } = require('node:child_process');\nspawn('bash', ['-c', cmd]);";
+    expect(scanPluginCode(code).hasRed).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
