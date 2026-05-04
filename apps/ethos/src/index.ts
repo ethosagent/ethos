@@ -4,6 +4,7 @@
 import { join } from 'node:path';
 import { formatError, toEthosError } from '@ethosagent/types';
 import { runAcp } from './commands/acp';
+import { runArchive } from './commands/archive';
 import { runAudit } from './commands/audit';
 import { runBackup, runImport } from './commands/backup';
 import { runBatch } from './commands/batch';
@@ -27,6 +28,7 @@ import { runServe } from './commands/serve';
 import { runSet } from './commands/set';
 import { runSetup } from './commands/setup';
 import { runSkills } from './commands/skills';
+import { runSupport } from './commands/support';
 import { runTail } from './commands/tail';
 import { runTeamCommand } from './commands/team';
 import { runTrace } from './commands/trace';
@@ -41,7 +43,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [setup | chat | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | claw | doctor | upgrade | mcp | backup | import | trace | audit | errors | perf | tail | retention | data] [--version | --help]';
+  'Usage: ethos [setup | chat | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | claw | doctor | upgrade | mcp | backup | import | trace | audit | errors | perf | tail | retention | data | support | archive] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -441,6 +443,16 @@ try {
 
     case 'data': {
       await runData(args[1] ?? 'stats', args.slice(2));
+      break;
+    }
+
+    case 'support': {
+      await runSupport(args[1] ?? 'bundle', args.slice(2));
+      break;
+    }
+
+    case 'archive': {
+      await runArchive(args[1] ?? 'list', args.slice(2));
       break;
     }
 
