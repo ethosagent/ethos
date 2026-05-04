@@ -1,3 +1,14 @@
+export interface PersonalityObservabilityConfig {
+  storeToolArgs?: 'none' | 'redacted' | 'full';
+  storeToolBodies?: 'none' | 'redacted' | 'full';
+  storeLlmPayloads?: 'none' | 'metadata' | 'full';
+  redactPatterns?: string[];
+}
+
+export interface PersonalitySafetyConfig {
+  observability?: PersonalityObservabilityConfig;
+}
+
 // Phase 30.8 — this schema is FROZEN.
 //
 // Adding a top-level field to `PersonalityConfig` requires:
@@ -89,6 +100,11 @@ export interface PersonalityConfig {
   budgetCapUsd?: number;
   /** @internal Free-form passthrough for adapter-specific metadata. */
   metadata?: Record<string, unknown>;
+  /**
+   * Per-personality safety config. Currently carries `observability` sub-block
+   * that controls what gets persisted in observability.db for this personality.
+   */
+  safety?: PersonalitySafetyConfig;
 }
 
 export interface PersonalityRegistry {

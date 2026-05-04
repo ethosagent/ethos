@@ -171,6 +171,87 @@ describe('FilePersonalityRegistry', () => {
     });
   });
 
+  describe('safety.observability config parsing', () => {
+    it('parses safety.observability block from config.yaml', async () => {
+      const dir = join(testDir, 'analyst');
+      await mkdir(dir);
+      await writeFile(
+        join(dir, 'config.yaml'),
+        [
+          'name: Analyst',
+          'model: claude-sonnet-4-6',
+          'memoryScope: global',
+          'safety:',
+          '  observability:',
+          '    storeToolBodies: redacted',
+          '    storeToolArgs: full',
+        ].join('\n'),
+      );
+      await writeFile(join(dir, 'ETHOS.md'), '# Analyst');
+      await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
+      const registry = new FilePersonalityRegistry(undefined, testDir);
+      await registry.loadFromDirectory(testDir);
+      const p = registry.get('analyst');
+      expect(p?.safety?.observability?.storeToolBodies).toBe('redacted');
+      expect(p?.safety?.observability?.storeToolArgs).toBe('full');
+    });
+
+    it('personality without safety block loads with undefined safety', async () => {
+      const dir = join(testDir, 'plain');
+      await mkdir(dir);
+      await writeFile(
+        join(dir, 'config.yaml'),
+        'name: Plain\nmodel: claude-sonnet-4-6\nmemoryScope: global\n',
+      );
+      await writeFile(join(dir, 'ETHOS.md'), '# Plain');
+      await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
+      const registry = new FilePersonalityRegistry(undefined, testDir);
+      await registry.loadFromDirectory(testDir);
+      expect(registry.get('plain')?.safety).toBeUndefined();
+    });
+
+    it('rejects invalid storeToolBodies value', async () => {
+      const dir = join(testDir, 'bad');
+      await mkdir(dir);
+      await writeFile(
+        join(dir, 'config.yaml'),
+        [
+          'name: Bad',
+          'model: claude-sonnet-4-6',
+          'memoryScope: global',
+          'safety:',
+          '  observability:',
+          '    storeToolBodies: invalid-value',
+        ].join('\n'),
+      );
+      await writeFile(join(dir, 'ETHOS.md'), '# Bad');
+      await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
+      const registry = new FilePersonalityRegistry(undefined, testDir);
+      await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(/storeToolBodies/);
+    });
+
+    it('rejects non-allowlisted nested top-level key', async () => {
+      const dir = join(testDir, 'nested');
+      await mkdir(dir);
+      await writeFile(
+        join(dir, 'config.yaml'),
+        [
+          'name: Nested',
+          'model: claude-sonnet-4-6',
+          'memoryScope: global',
+          'customBlock:',
+          '  foo: bar',
+        ].join('\n'),
+      );
+      await writeFile(join(dir, 'ETHOS.md'), '# Nested');
+      await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
+      const registry = new FilePersonalityRegistry(undefined, testDir);
+      await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(
+        /cannot be a nested object/,
+      );
+    });
+  });
+
   describe('define / get / list / setDefault', () => {
     it('define and get round-trip', () => {
       const registry = new FilePersonalityRegistry();
