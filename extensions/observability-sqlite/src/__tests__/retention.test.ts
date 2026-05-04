@@ -280,11 +280,9 @@ describe('pruneObservability', () => {
   it('excludePersonalityIds: global pass does not delete rows belonging to excluded personalities', () => {
     // personality-A trace is 100 days old (past 90d global) but should survive because
     // personality A is excluded from the global pass (it has its own longer-TTL pass).
-    db.prepare(`INSERT INTO traces (trace_id, kind, start_ts, personality_id) VALUES (?, 'turn', ?, ?)`).run(
-      'a-trace',
-      OLD,
-      'personality-a',
-    );
+    db.prepare(
+      `INSERT INTO traces (trace_id, kind, start_ts, personality_id) VALUES (?, 'turn', ?, ?)`,
+    ).run('a-trace', OLD, 'personality-a');
     // Unscoped trace of the same age — no personality, should be pruned by global pass.
     insertTrace('global-trace', OLD);
 
@@ -317,8 +315,12 @@ describe('pruneObservability', () => {
     const veryOld = NOW - 400 * 86_400_000;
     const oldIso = new Date(veryOld).toISOString();
     const recentIso = new Date(RECENT).toISOString();
-    sessDb.prepare('INSERT INTO messages (session_id, content, timestamp) VALUES (?, ?, ?)').run('s1', 'old msg', oldIso);
-    sessDb.prepare('INSERT INTO messages (session_id, content, timestamp) VALUES (?, ?, ?)').run('s1', 'recent msg', recentIso);
+    sessDb
+      .prepare('INSERT INTO messages (session_id, content, timestamp) VALUES (?, ?, ?)')
+      .run('s1', 'old msg', oldIso);
+    sessDb
+      .prepare('INSERT INTO messages (session_id, content, timestamp) VALUES (?, ?, ?)')
+      .run('s1', 'recent msg', recentIso);
 
     const result = pruneObservability(db, RETENTION_DEFAULTS, {
       dryRun: false,
@@ -327,7 +329,8 @@ describe('pruneObservability', () => {
     });
 
     expect(result.messages).toBe(1); // old message pruned
-    const remaining = (sessDb.prepare('SELECT COUNT(*) as n FROM messages').get() as { n: number }).n;
+    const remaining = (sessDb.prepare('SELECT COUNT(*) as n FROM messages').get() as { n: number })
+      .n;
     expect(remaining).toBe(1); // recent message kept
     sessDb.close();
   });
