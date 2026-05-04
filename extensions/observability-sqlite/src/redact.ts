@@ -13,26 +13,38 @@ const PATTERNS: Array<[RegExp, string]> = [
 ];
 
 /** Redact known credential patterns from a string. */
-export function redactString(value: string): string {
+export function redactString(value: string, extraPatterns?: string[]): string {
   let out = value;
   for (const [pattern, replacement] of PATTERNS) {
     out = out.replace(pattern, replacement);
+  }
+  if (extraPatterns) {
+    for (const pat of extraPatterns) {
+      try {
+        out = out.replace(new RegExp(pat, 'g'), '[REDACTED:custom]');
+      } catch {
+        // Invalid regex — skip silently
+      }
+    }
   }
   return out;
 }
 
 /** Redact all string values in a JSON-serialisable object (deep). */
-export function redactJson(obj: Record<string, unknown>): Record<string, unknown> {
-  return redactValue(obj) as Record<string, unknown>;
+export function redactJson(
+  obj: Record<string, unknown>,
+  extraPatterns?: string[],
+): Record<string, unknown> {
+  return redactValue(obj, extraPatterns) as Record<string, unknown>;
 }
 
-function redactValue(v: unknown): unknown {
-  if (typeof v === 'string') return redactString(v);
-  if (Array.isArray(v)) return v.map(redactValue);
+function redactValue(v: unknown, extraPatterns?: string[]): unknown {
+  if (typeof v === 'string') return redactString(v, extraPatterns);
+  if (Array.isArray(v)) return v.map((item) => redactValue(item, extraPatterns));
   if (v !== null && typeof v === 'object') {
     const out: Record<string, unknown> = {};
     for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-      out[k] = redactValue(val);
+      out[k] = redactValue(val, extraPatterns);
     }
     return out;
   }

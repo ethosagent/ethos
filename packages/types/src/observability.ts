@@ -1,3 +1,5 @@
+import type { PersonalityObservabilityConfig } from './personality';
+
 export type TraceKind =
   | 'turn'
   | 'mesh.handshake'
@@ -70,9 +72,9 @@ export interface PolicySnapshot {
 export interface ObservabilityStore {
   insertTrace(trace: Trace): void;
   closeTrace(traceId: string, status: 'ok' | 'error' | 'aborted'): void;
-  insertSpan(span: Span): void;
+  insertSpan(span: Span, extraRedactPatterns?: string[]): void;
   closeSpan(spanId: string, status: 'ok' | 'error' | 'blocked'): void;
-  insertEvent(event: ObsEvent): void;
+  insertEvent(event: ObsEvent, extraRedactPatterns?: string[]): void;
   insertSnapshot(snapshot: PolicySnapshot): void;
   getTrace(traceId: string): Trace | null;
   getSpans(traceId: string): Span[];
@@ -97,6 +99,7 @@ export interface ObservabilityWriter {
     kind: TraceKind;
     personalityId?: string;
     attrs?: Record<string, unknown>;
+    obsConfig?: PersonalityObservabilityConfig;
   }): string;
   endTrace(traceId: string, status: 'ok' | 'error' | 'aborted'): void;
   startSpan(opts: {
@@ -105,6 +108,7 @@ export interface ObservabilityWriter {
     kind: SpanKind;
     name: string;
     attrs?: Record<string, unknown>;
+    obsConfig?: PersonalityObservabilityConfig;
   }): string;
   endSpan(
     spanId: string,

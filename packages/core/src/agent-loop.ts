@@ -274,10 +274,13 @@ export class AgentLoop {
       (opts.personalityId ? this.personalities.get(opts.personalityId) : null) ??
       this.personalities.getDefault();
 
+    const obsConfig = personality?.safety?.observability;
+
     const traceId = this.observability?.startTrace({
       sessionId,
       kind: 'turn',
       personalityId: personality?.id,
+      obsConfig,
     });
 
     // Budget cap check — refuse before any LLM work when the session has already
@@ -738,6 +741,7 @@ export class AgentLoop {
           kind: 'tool_call',
           name: tc.toolName,
           attrs: { args: JSON.stringify(effectiveArgs).slice(0, 4096) },
+          obsConfig,
         });
         spanIds.set(tc.toolCallId, spanId ?? '');
         yield {
