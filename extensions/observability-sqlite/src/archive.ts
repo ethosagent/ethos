@@ -106,6 +106,19 @@ export async function archiveMonth(
     // Storage is UTF-8 text only; base64-encode the binary tarball.
     await storage.writeAtomic(archivePath, tarGz.toString('base64'));
 
+    // Verify the archive was written correctly before deleting live rows.
+    const written = await storage.read(archivePath);
+    if (written === null)
+      throw new Error(`Archive write verification failed: ${archivePath} not found`);
+    const verified = readTarGz(Buffer.from(written, 'base64'));
+    const verifiedTraceCount =
+      verified.get('traces.jsonl')?.toString('utf8').split('\n').filter(Boolean).length ?? 0;
+    if (verifiedTraceCount !== traces.length) {
+      throw new Error(
+        `Archive integrity check failed: expected ${traces.length} traces, archive contains ${verifiedTraceCount}`,
+      );
+    }
+
     // Delete archived rows in a single transaction.
     db.transaction(() => {
       db.prepare(`DELETE FROM events WHERE trace_id IN (${ph})`).run(...traceIds);

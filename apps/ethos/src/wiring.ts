@@ -62,11 +62,16 @@ export function getObservabilityService(): ObservabilityService {
  * Idempotent — calling it more than once is safe; the second call is a no-op.
  * Returns a stop function for clean shutdown.
  */
-export function startNightlyPrune(config?: RetentionConfig): () => void {
+export function startNightlyPrune(
+  config?: RetentionConfig,
+  personalitiesConfig?: Record<string, { retention?: RetentionConfig }>,
+): () => void {
   if (!pruneStop) {
     const handle = startPruneCron({
       obsDbPath: join(ethosDir(), 'observability.db'),
+      sessDbPath: join(ethosDir(), 'sessions.db'),
       config,
+      personalitiesConfig,
     });
     pruneStop = handle.stop;
   }
