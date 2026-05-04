@@ -1,7 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
+import {
+  canInstall,
+  type PluginScanPermissions,
+  type ScanFinding,
+  scanPluginCode,
+} from '@ethosagent/safety-scanner';
 
 const c = {
   reset: '\x1b[0m',
@@ -10,6 +17,7 @@ const c = {
   cyan: '\x1b[36m',
   green: '\x1b[32m',
   red: '\x1b[31m',
+  yellow: '\x1b[33m',
 };
 
 function pluginsDir(): string {
@@ -26,16 +34,7 @@ export async function runPlugin(args: string[]): Promise<void> {
         console.log('Usage: ethos plugin install <package>');
         process.exit(1);
       }
-      const dir = pluginsDir();
-      console.log(
-        `${c.dim}Installing ${c.reset}${c.bold}${pkg}${c.reset}${c.dim} to ${dir}...${c.reset}\n`,
-      );
-      const result = spawnSync('npm', ['install', '--prefix', dir, pkg], { stdio: 'inherit' });
-      if (result.status !== 0) {
-        console.error(`${c.red}Install failed.${c.reset}`);
-        process.exit(result.status ?? 1);
-      }
-      console.log(`\n${c.green}✓ Installed.${c.reset} Restart ethos to load the plugin.`);
+      await installPlugin(pkg);
       break;
     }
 
@@ -64,6 +63,165 @@ export async function runPlugin(args: string[]): Promise<void> {
       console.log('Usage: ethos plugin [install <pkg> | remove <pkg> | list]');
   }
 }
+
+// ---------------------------------------------------------------------------
+// Install: download to temp, scan, prompt, then commit
+// ---------------------------------------------------------------------------
+
+async function installPlugin(pkg: string): Promise<void> {
+  const dir = pluginsDir();
+  const tmpDir = join(dir, `.tmp-scan-${process.pid}`);
+
+  console.log(
+    `${c.dim}Downloading ${c.reset}${c.bold}${pkg}${c.reset}${c.dim} for safety scan...${c.reset}\n`,
+  );
+
+  // Step 1: download without running install scripts so we can scan first
+  const pre = spawnSync(
+    'npm',
+    ['install', '--prefix', tmpDir, '--ignore-scripts', '--no-audit', pkg],
+    { stdio: 'inherit' },
+  );
+  if (pre.status !== 0) {
+    await rm(tmpDir, { recursive: true, force: true });
+    console.error(`${c.red}Download failed.${c.reset}`);
+    process.exit(pre.status ?? 1);
+  }
+
+  try {
+    // Step 2: locate the package directory under node_modules
+    const pkgDir = join(tmpDir, 'node_modules', pkgDirFromArg(pkg));
+
+    // Step 3: read declared permissions from package.json (ethos.permissions)
+    const permissions = await readPluginPermissions(pkgDir);
+
+    // Step 4: recursive scan
+    const findings: ScanFinding[] = [];
+    await walkAndScan(pkgDir, permissions, findings);
+    const hasRed = findings.some((f) => f.severity === 'red');
+    const hasYellow = findings.some((f) => f.severity === 'yellow');
+    const scanResult = { findings, hasRed, hasYellow };
+
+    // Step 5: show tier badge + findings
+    const tier = 'community'; // npm packages are always community
+    if (hasRed || hasYellow) {
+      const tierColor = c.yellow;
+      console.log(`\n${c.bold}Safety scan — ${pkg}${c.reset}  ${tierColor}[${tier}]${c.reset}`);
+      for (const f of findings) {
+        const color = f.severity === 'red' ? c.red : c.yellow;
+        const loc = f.line !== undefined ? `:${f.line}` : '';
+        console.log(
+          `  ${color}${f.severity === 'red' ? '✗' : '⚠'} ${f.severity}${c.reset}  ${f.rule}${loc}`,
+        );
+        if (f.message) console.log(`     ${c.dim}${f.message}${c.reset}`);
+        if (f.excerpt) console.log(`     ${c.dim}${f.excerpt}${c.reset}`);
+      }
+    }
+
+    // Step 6: decide
+    const decision = canInstall(scanResult, tier);
+    if (!decision.allowed) {
+      if (hasRed) {
+        console.log(`\n${c.red}✗ Install blocked:${c.reset} ${decision.blockedBy}`);
+        console.log(`${c.dim}Review the findings above or choose a different package.${c.reset}`);
+        process.exit(1);
+      }
+      // Yellow-only: prompt user to acknowledge
+      const confirmed = await promptConfirm(
+        `\n${c.yellow}⚠ Install '${pkg}' with the warnings above? [y/N]${c.reset} `,
+      );
+      if (!confirmed) {
+        console.log(`${c.dim}Install cancelled.${c.reset}`);
+        process.exit(0);
+      }
+    }
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+
+  // Step 7: approved — run the real install in the plugins dir
+  console.log(
+    `\n${c.dim}Installing ${c.reset}${c.bold}${pkg}${c.reset}${c.dim} to ${dir}...${c.reset}\n`,
+  );
+  const result = spawnSync('npm', ['install', '--prefix', dir, pkg], { stdio: 'inherit' });
+  if (result.status !== 0) {
+    console.error(`${c.red}Install failed.${c.reset}`);
+    process.exit(result.status ?? 1);
+  }
+  console.log(`\n${c.green}✓ Installed.${c.reset} Restart ethos to load the plugin.`);
+}
+
+/** Derive the node_modules subdirectory path from a package arg (strips version, handles scoped). */
+function pkgDirFromArg(pkg: string): string {
+  if (pkg.startsWith('@')) {
+    // @scope/name[@version] → @scope/name
+    const secondAt = pkg.indexOf('@', 1);
+    return secondAt > 0 ? pkg.slice(0, secondAt) : pkg;
+  }
+  const atIdx = pkg.indexOf('@');
+  return atIdx > 0 ? pkg.slice(0, atIdx) : pkg;
+}
+
+async function readPluginPermissions(pkgDir: string): Promise<PluginScanPermissions> {
+  try {
+    const raw = JSON.parse(await readFile(join(pkgDir, 'package.json'), 'utf-8')) as Record<
+      string,
+      unknown
+    >;
+    const ethos = raw.ethos;
+    if (typeof ethos !== 'object' || ethos === null || Array.isArray(ethos)) return {};
+    const perms = (ethos as Record<string, unknown>).permissions;
+    if (typeof perms !== 'object' || perms === null || Array.isArray(perms)) return {};
+    const p = perms as Record<string, unknown>;
+    const result: PluginScanPermissions = {};
+    if (p.shell === true) result.shell = true;
+    if (Array.isArray(p.network)) {
+      result.network = p.network.filter((x): x is string => typeof x === 'string');
+    } else if (p.network === true) {
+      result.network = [];
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+async function walkAndScan(
+  dir: string,
+  permissions: PluginScanPermissions,
+  out: ScanFinding[],
+): Promise<void> {
+  let entries: { name: string; isDirectory(): boolean }[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of entries) {
+    const name = String(e.name);
+    if (e.isDirectory()) {
+      if (name === 'node_modules') continue;
+      await walkAndScan(join(dir, name), permissions, out);
+    } else if (/\.[jt]s$/.test(name) && !name.endsWith('.d.ts')) {
+      const src = await readFile(join(dir, name), 'utf-8').catch(() => null);
+      if (src) out.push(...scanPluginCode(src, permissions).findings);
+    }
+  }
+}
+
+function promptConfirm(question: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (ans) => {
+      rl.close();
+      resolve(ans.trim().toLowerCase() === 'y');
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// List
+// ---------------------------------------------------------------------------
 
 async function listPlugins(): Promise<void> {
   const dir = pluginsDir();

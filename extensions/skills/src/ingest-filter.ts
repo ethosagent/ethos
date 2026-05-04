@@ -31,7 +31,8 @@ export function filterSkill(
   if (allow.includes(skill.qualifiedName)) {
     const reach = checkToolReach(skill, toolNames, onWarn, personality.id);
     if (reach) return reach;
-    checkSkillPermissions(skill, personality.id, onWarn);
+    const permCheck = checkSkillPermissions(skill, personality, onWarn);
+    if (permCheck) return permCheck;
     return { include: true, reason: 'explicit allow' };
   }
 
@@ -58,7 +59,8 @@ export function filterSkill(
       }
       const reach = checkToolReach(skill, toolNames, onWarn, personality.id);
       if (reach) return reach;
-      checkSkillPermissions(skill, personality.id, onWarn);
+      const permCheck = checkSkillPermissions(skill, personality, onWarn);
+      if (permCheck) return permCheck;
       return { include: true, reason: 'tags match' };
     }
     default:
@@ -67,7 +69,7 @@ export function filterSkill(
         toolNames,
         cfg?.fallback_unknown ?? 'allow',
         onWarn,
-        personality.id,
+        personality,
       );
   }
 }
@@ -77,21 +79,23 @@ function capabilityCheck(
   toolNames: Set<string>,
   fallback: string,
   onWarn: ((msg: string) => void) | undefined,
-  personalityId: string,
+  personality: PersonalityConfig,
 ): FilterResult {
-  const required = skill.required_tools;
+  // Merge top-level required_tools with permissions.tools_required
+  const required = [...(skill.required_tools ?? []), ...(skill.permissions?.tools_required ?? [])];
 
-  if (!required || required.length === 0) {
+  if (required.length === 0) {
     // Pure prose — no tool requirements declared
     if (fallback === 'deny') {
       return { include: false, reason: 'no required_tools declared (fallback: deny)' };
     }
     if (fallback === 'warn') {
       onWarn?.(
-        `[boot] ${personalityId}: skill '${skill.qualifiedName}' has no required_tools — loading (fallback: warn)`,
+        `[boot] ${personality.id}: skill '${skill.qualifiedName}' has no required_tools — loading (fallback: warn)`,
       );
     }
-    checkSkillPermissions(skill, personalityId, onWarn);
+    const permCheck = checkSkillPermissions(skill, personality, onWarn);
+    if (permCheck) return permCheck;
     return { include: true, reason: 'no required_tools (pure prose)' };
   }
 
@@ -102,7 +106,8 @@ function capabilityCheck(
       reason: `required_tools not in effective reach: ${missing.join(', ')}`,
     };
   }
-  checkSkillPermissions(skill, personalityId, onWarn);
+  const permCheck = checkSkillPermissions(skill, personality, onWarn);
+  if (permCheck) return permCheck;
   return { include: true, reason: 'capability match' };
 }
 
@@ -113,8 +118,9 @@ function checkToolReach(
   onWarn: ((msg: string) => void) | undefined,
   personalityId: string,
 ): FilterResult | null {
-  const required = skill.required_tools;
-  if (!required || required.length === 0) return null;
+  // Merge top-level required_tools with permissions.tools_required
+  const required = [...(skill.required_tools ?? []), ...(skill.permissions?.tools_required ?? [])];
+  if (required.length === 0) return null;
 
   const missing = required.filter((t) => !toolNames.has(t));
   if (missing.length > 0) {
@@ -131,32 +137,57 @@ function checkToolReach(
 }
 
 /**
- * Emit warnings for any declared permissions on a skill.
- * This is a non-blocking check — it informs operators of what the skill requests.
+ * Check declared skill permissions against the personality's safety policy.
+ * Returns a FilterResult to reject the skill when a policy is configured and
+ * the skill declares a permission not allowed by that policy. When no policy
+ * is configured, warns only (backward compat).
  */
 function checkSkillPermissions(
   skill: Skill,
-  personalityId: string,
+  personality: PersonalityConfig,
   onWarn?: (msg: string) => void,
-): void {
+): FilterResult | null {
   const perms = skill.permissions;
-  if (!perms) return;
+  if (!perms) return null;
+
+  const personalityId = personality.id;
+  const policy = personality.safety?.allowed_skill_permissions;
+  const enforce = policy !== undefined;
 
   if (perms.fs_write && perms.fs_write.length > 0) {
+    if (enforce && !policy.fs_write) {
+      return {
+        include: false,
+        reason: `declares fs_write but personality '${personalityId}' does not allow it`,
+      };
+    }
     onWarn?.(
       `[boot] ${personalityId}: skill '${skill.qualifiedName}' declares fs_write: [${perms.fs_write.join(', ')}]`,
     );
   }
   if (perms.network && perms.network.length > 0) {
+    if (enforce && !policy.network) {
+      return {
+        include: false,
+        reason: `declares network access but personality '${personalityId}' does not allow it`,
+      };
+    }
     onWarn?.(
       `[boot] ${personalityId}: skill '${skill.qualifiedName}' declares network access: [${perms.network.join(', ')}]`,
     );
   }
   if (perms.mcp_env_passthrough && perms.mcp_env_passthrough.length > 0) {
+    if (enforce && !policy.mcp_env_passthrough) {
+      return {
+        include: false,
+        reason: `declares mcp_env_passthrough but personality '${personalityId}' does not allow it`,
+      };
+    }
     onWarn?.(
       `[boot] ${personalityId}: skill '${skill.qualifiedName}' requests MCP env passthrough: [${perms.mcp_env_passthrough.join(', ')}]`,
     );
   }
+  return null;
 }
 
 /**

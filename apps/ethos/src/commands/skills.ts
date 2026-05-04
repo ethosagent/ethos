@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdir, open, readdir, readFile, rename, rm, stat, unlink } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
+import { createInterface } from 'node:readline';
 import { canInstall, deriveTier, scanSkillMd, type TrustTier } from '@ethosagent/safety-scanner';
 import { EthosError } from '@ethosagent/types';
 import { ethosDir } from '../config';
@@ -207,9 +208,10 @@ async function scanSkillDir(slug: string, skillDir: string): Promise<void> {
   if (!result.hasRed && !result.hasYellow) return;
 
   const tier = deriveTierFromSlug(slug);
+  const tierColor = tier === 'untrusted' ? c.red : tier === 'community' ? c.yellow : c.dim;
   const decision = canInstall(result, tier);
 
-  console.log(`\n${c.bold}Safety scan — ${slug}${c.reset}`);
+  console.log(`\n${c.bold}Safety scan — ${slug}${c.reset}  ${tierColor}[${tier}]${c.reset}`);
   for (const f of result.findings) {
     const color = f.severity === 'red' ? c.red : c.yellow;
     const loc = f.line !== undefined ? `:${f.line}` : '';
@@ -221,15 +223,40 @@ async function scanSkillDir(slug: string, skillDir: string): Promise<void> {
   }
 
   if (!decision.allowed) {
-    console.log();
-    throw new EthosError({
-      code: 'SKILL_INSTALL_FAILED',
-      cause: `Skill '${slug}' blocked by safety scan: ${decision.blockedBy}`,
-      action: 'Review the findings above. Remove the flagged content or choose a different skill.',
-    });
+    if (result.hasRed) {
+      console.log();
+      throw new EthosError({
+        code: 'SKILL_INSTALL_FAILED',
+        cause: `Skill '${slug}' blocked by safety scan: ${decision.blockedBy}`,
+        action:
+          'Review the findings above. Remove the flagged content or choose a different skill.',
+      });
+    }
+    // Yellow-only for community/untrusted: prompt user to acknowledge
+    const confirmed = await promptConfirm(
+      `\n${c.yellow}⚠ Install '${slug}' with the warnings above? [y/N]${c.reset} `,
+    );
+    if (!confirmed) {
+      throw new EthosError({
+        code: 'SKILL_INSTALL_FAILED',
+        cause: `Skill '${slug}' install cancelled by user`,
+        action: 'Choose a different skill or contact the skill author to address the findings.',
+      });
+    }
+    return;
   }
 
   console.log(`${c.yellow}⚠ Installed with warnings — review findings above.${c.reset}`);
+}
+
+function promptConfirm(question: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (ans) => {
+      rl.close();
+      resolve(ans.trim().toLowerCase() === 'y');
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------

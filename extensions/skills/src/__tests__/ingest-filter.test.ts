@@ -167,6 +167,97 @@ describe('filterSkill', () => {
       expect(result.reason).toBe('mode: none');
     });
   });
+
+  describe('permissions.tools_required enforcement', () => {
+    it('excludes skill when permissions.tools_required not in toolNames', () => {
+      const skill = makeSkill({
+        required_tools: undefined,
+        permissions: { tools_required: ['run_shell'] },
+      });
+      const result = filterSkill(skill, makePersonality(), new Set(['read_file']));
+      expect(result.include).toBe(false);
+      expect(result.reason).toContain('run_shell');
+    });
+
+    it('includes skill when permissions.tools_required are all in toolNames', () => {
+      const skill = makeSkill({
+        required_tools: ['read_file'],
+        permissions: { tools_required: ['search_web'] },
+      });
+      const result = filterSkill(skill, makePersonality(), new Set(['read_file', 'search_web']));
+      expect(result.include).toBe(true);
+    });
+
+    it('enforces permissions.tools_required in explicit allow list', () => {
+      const personality = makePersonality({
+        skills: {
+          global_ingest: { mode: 'explicit', allow: ['ethos/my-skill'] },
+        },
+      });
+      const skill = makeSkill({ permissions: { tools_required: ['missing_tool'] } });
+      const result = filterSkill(skill, personality, new Set());
+      expect(result.include).toBe(false);
+      expect(result.reason).toContain('missing_tool');
+    });
+  });
+
+  describe('allowed_skill_permissions policy enforcement', () => {
+    it('warns but allows fs_write when no policy is set', () => {
+      const warn = vi.fn();
+      const skill = makeSkill({ permissions: { fs_write: ['/tmp/out'] } });
+      const result = filterSkill(skill, makePersonality(), new Set(), warn);
+      expect(result.include).toBe(true);
+      expect(warn).toHaveBeenCalled();
+    });
+
+    it('blocks skill declaring fs_write when policy does not allow it', () => {
+      const personality = makePersonality({
+        safety: { allowed_skill_permissions: { network: true } },
+      });
+      const skill = makeSkill({ permissions: { fs_write: ['/tmp/out'] } });
+      const result = filterSkill(skill, personality, new Set());
+      expect(result.include).toBe(false);
+      expect(result.reason).toContain('fs_write');
+    });
+
+    it('allows skill declaring fs_write when policy allows it', () => {
+      const personality = makePersonality({
+        safety: { allowed_skill_permissions: { fs_write: true } },
+      });
+      const skill = makeSkill({ permissions: { fs_write: ['/tmp/out'] } });
+      const result = filterSkill(skill, personality, new Set());
+      expect(result.include).toBe(true);
+    });
+
+    it('blocks skill declaring network when policy does not allow it', () => {
+      const personality = makePersonality({
+        safety: { allowed_skill_permissions: {} },
+      });
+      const skill = makeSkill({ permissions: { network: ['api.example.com'] } });
+      const result = filterSkill(skill, personality, new Set());
+      expect(result.include).toBe(false);
+      expect(result.reason).toContain('network');
+    });
+
+    it('blocks skill declaring mcp_env_passthrough when policy does not allow it', () => {
+      const personality = makePersonality({
+        safety: { allowed_skill_permissions: {} },
+      });
+      const skill = makeSkill({ permissions: { mcp_env_passthrough: ['GITHUB_TOKEN'] } });
+      const result = filterSkill(skill, personality, new Set());
+      expect(result.include).toBe(false);
+      expect(result.reason).toContain('mcp_env_passthrough');
+    });
+
+    it('allows mcp_env_passthrough when policy opts in', () => {
+      const personality = makePersonality({
+        safety: { allowed_skill_permissions: { mcp_env_passthrough: true } },
+      });
+      const skill = makeSkill({ permissions: { mcp_env_passthrough: ['GITHUB_TOKEN'] } });
+      const result = filterSkill(skill, personality, new Set());
+      expect(result.include).toBe(true);
+    });
+  });
 });
 
 describe('warnMissingAllowList', () => {

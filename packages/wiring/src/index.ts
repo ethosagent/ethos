@@ -13,7 +13,7 @@ import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { PluginLoader } from '@ethosagent/plugin-loader';
 import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import { createInjectors } from '@ethosagent/skills';
+import { createInjectors, UniversalScanner } from '@ethosagent/skills';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { createBrowserTools } from '@ethosagent/tools-browser';
 import { createCodeTools } from '@ethosagent/tools-code';
@@ -220,7 +220,25 @@ export async function createAgentLoop(
       tools.register(tool);
   }
 
-  const mcpConfig = await loadMcpConfig();
+  // Collect mcp_env_passthrough values declared by skills in the global pool.
+  // These are merged into every MCP server config so that skills can request
+  // env vars without requiring manual mcpEnvPassthrough entries in mcp.json.
+  const skillPool = await new UniversalScanner().scan();
+  const skillPassthrough = new Set<string>();
+  for (const skill of skillPool.values()) {
+    for (const v of skill.permissions?.mcp_env_passthrough ?? []) {
+      skillPassthrough.add(v);
+    }
+  }
+
+  const rawMcpConfig = await loadMcpConfig();
+  const mcpConfig =
+    skillPassthrough.size === 0
+      ? rawMcpConfig
+      : rawMcpConfig.map((cfg) => ({
+          ...cfg,
+          mcpEnvPassthrough: [...new Set([...(cfg.mcpEnvPassthrough ?? []), ...skillPassthrough])],
+        }));
   const mcpManager = new McpManager(mcpConfig);
   await mcpManager.connect();
   for (const tool of mcpManager.getTools()) tools.register(tool);

@@ -7,6 +7,17 @@ export interface PersonalityObservabilityConfig {
 
 export interface PersonalitySafetyConfig {
   observability?: PersonalityObservabilityConfig;
+  /**
+   * Opt-in allowlist for skill-declared permissions. When absent, skills that
+   * declare sensitive permissions are warned about but still loaded (backward
+   * compat). When present, a skill declaring a permission not listed here is
+   * rejected by ingest-filter.
+   */
+  allowed_skill_permissions?: {
+    fs_write?: boolean;
+    network?: boolean;
+    mcp_env_passthrough?: boolean;
+  };
 }
 
 // Phase 30.8 — this schema is FROZEN.
