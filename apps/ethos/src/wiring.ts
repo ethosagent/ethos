@@ -6,10 +6,11 @@ import {
   BlobStore,
   ObservabilityService,
   SQLiteObservabilityStore,
+  startPruneCron,
 } from '@ethosagent/observability-sqlite';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { parseTeamManifest, teamsDir } from '@ethosagent/team-supervisor';
-import type { LLMProvider, Storage, TeamManifest } from '@ethosagent/types';
+import type { LLMProvider, RetentionConfig, Storage, TeamManifest } from '@ethosagent/types';
 import {
   createAgentLoop as packageCreateAgentLoop,
   createLLM as packageCreateLLM,
@@ -37,6 +38,7 @@ export function getStorage(): Storage {
 }
 
 let obsSingleton: ObservabilityService | undefined;
+let pruneStop: (() => void) | undefined;
 
 /**
  * The CLI's process-wide ObservabilityService. Creates the SQLite store and
@@ -53,6 +55,30 @@ export function getObservabilityService(): ObservabilityService {
     setMeshObservabilityService(obsSingleton);
   }
   return obsSingleton;
+}
+
+/**
+ * Start the nightly observability prune cron job (03:00 local time).
+ * Idempotent — calling it more than once is safe; the second call is a no-op.
+ * Returns a stop function for clean shutdown.
+ */
+export function startNightlyPrune(config?: RetentionConfig): () => void {
+  if (!pruneStop) {
+    const handle = startPruneCron({
+      obsDbPath: join(ethosDir(), 'observability.db'),
+      config,
+    });
+    pruneStop = handle.stop;
+  }
+  return pruneStop;
+}
+
+/** Stop the nightly prune cron job if it was started. */
+export function stopNightlyPrune(): void {
+  if (pruneStop) {
+    pruneStop();
+    pruneStop = undefined;
+  }
 }
 
 async function withRotation(config: EthosConfig) {

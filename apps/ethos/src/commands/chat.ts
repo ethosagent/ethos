@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline';
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
 import type { SplashInventory } from '@ethosagent/tui';
 import type { EthosConfig } from '../config';
-import { resolveActiveLoop } from '../wiring';
+import { resolveActiveLoop, startNightlyPrune } from '../wiring';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
 
 async function buildInventory(loop: AgentLoop, _config: EthosConfig): Promise<SplashInventory> {
@@ -71,6 +71,7 @@ interface RunChatOptions {
 // ---------------------------------------------------------------------------
 
 export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): Promise<void> {
+  startNightlyPrune();
   const { loop, personalityId, displayName } = await resolveActiveLoop(config);
 
   if (opts.singleQuery) {

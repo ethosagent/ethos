@@ -16,7 +16,8 @@
   },
   "dependencies": {
     "@ethosagent/types": "workspace:*",
-    "better-sqlite3": "^12.9.0"
+    "better-sqlite3": "^12.9.0",
+    "croner": "^9.0.0"
   },
   "devDependencies": {
     "@ethosagent/storage-fs": "workspace:*",
