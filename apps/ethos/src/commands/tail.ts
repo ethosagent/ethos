@@ -53,6 +53,7 @@ export async function runTail(argv: string[]): Promise<void> {
 
   const store = new SQLiteObservabilityStore(dbPath);
   let lastTs = Date.now();
+  let seenIds = new Set<string>();
 
   const tick = () => {
     // Collect trace IDs for the session filter (if provided)
@@ -67,14 +68,22 @@ export async function runTail(argv: string[]): Promise<void> {
     const asc = events.slice().reverse();
 
     for (const event of asc) {
-      if (event.ts <= lastTs) continue;
+      if (event.ts === lastTs && seenIds.has(event.eventId)) continue;
 
       // Apply filters
       if (categoryFilter && !event.category.includes(categoryFilter)) continue;
       if (severityFilter && event.severity !== severityFilter) continue;
-      if (traceIds && event.traceId && !traceIds.has(event.traceId)) continue;
+      if (traceIds) {
+        if (!event.traceId || !traceIds.has(event.traceId)) continue;
+      }
 
-      lastTs = event.ts;
+      // Update dedup tracking before emitting
+      if (event.ts > lastTs) {
+        lastTs = event.ts;
+        seenIds = new Set([event.eventId]);
+      } else {
+        seenIds.add(event.eventId);
+      }
 
       if (jsonMode) {
         process.stdout.write(`${JSON.stringify(event)}\n`);

@@ -9,6 +9,7 @@ import type {
   MemoryProvider,
   Message,
   MessageContent,
+  ObservabilityWriter,
   PersonalityConfig,
   PersonalityRegistry,
   PromptContext,
@@ -113,11 +114,11 @@ export interface AgentLoopConfig {
    */
   dataDir?: string;
   /**
-   * Optional observability service. When provided, AgentLoop records traces,
+   * Optional observability writer. When provided, AgentLoop records traces,
    * spans, and events for LLM calls, tool calls, and errors. When absent,
    * behaviour is identical to before — no observability writes occur.
    */
-  observability?: import('@ethosagent/observability-sqlite').ObservabilityService;
+  observability?: ObservabilityWriter;
   // Maps personality ID → model ID. Resolution: modelRouting[id] → personality.model → llm.model
   modelRouting?: Record<string, string>;
   options?: {
@@ -188,7 +189,7 @@ export class AgentLoop {
   private readonly modelRouting: Record<string, string>;
   private readonly storage?: Storage;
   private readonly dataDir?: string;
-  private readonly observability?: import('@ethosagent/observability-sqlite').ObservabilityService;
+  private readonly observability?: ObservabilityWriter;
   /** Per-session accumulated spend in USD. Keyed by sessionKey. Reset via resetSessionCost(). */
   private readonly sessionCosts = new Map<string, number>();
 
@@ -446,6 +447,10 @@ export class AgentLoop {
     for (let iteration = 0; iteration < this.maxIterations; iteration++) {
       if (abortSignal.aborted) {
         yield { type: 'error', error: 'Aborted', code: 'aborted' };
+        if (traceId) {
+          this.observability?.endTrace(traceId, 'aborted');
+          this.observability?.flush();
+        }
         return;
       }
 

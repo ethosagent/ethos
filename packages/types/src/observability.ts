@@ -85,3 +85,32 @@ export interface ObservabilityStore {
   getRecentTraces(limit: number): Trace[];
   close(): void;
 }
+
+/**
+ * Minimal write-side interface that AgentLoop and other core components
+ * use to record observability data. Defined here so @ethosagent/core does
+ * not need to depend on the concrete @ethosagent/observability-sqlite package.
+ */
+export interface ObservabilityWriter {
+  startTrace(opts: {
+    sessionId?: string;
+    kind: TraceKind;
+    personalityId?: string;
+    attrs?: Record<string, unknown>;
+  }): string;
+  endTrace(traceId: string, status: 'ok' | 'error' | 'aborted'): void;
+  startSpan(opts: {
+    traceId: string;
+    parentSpanId?: string;
+    kind: SpanKind;
+    name: string;
+    attrs?: Record<string, unknown>;
+  }): string;
+  endSpan(
+    spanId: string,
+    status: 'ok' | 'error' | 'blocked',
+    attrs?: Record<string, unknown>,
+  ): void;
+  recordEvent(event: Omit<ObsEvent, 'eventId' | 'ts'>): void;
+  flush(): void;
+}

@@ -4,6 +4,7 @@ import type {
   EventSeverity,
   ObsEvent,
   ObservabilityStore,
+  ObservabilityWriter,
   PolicySnapshot,
   Span,
   SpanKind,
@@ -26,7 +27,7 @@ import type { BlobStore } from './blob-store';
  * synchronous SQLite store. The flush() method is a no-op hook for
  * future batching.
  */
-export class ObservabilityService {
+export class ObservabilityService implements ObservabilityWriter {
   constructor(
     private readonly store: ObservabilityStore,
     private readonly blobStore: BlobStore,

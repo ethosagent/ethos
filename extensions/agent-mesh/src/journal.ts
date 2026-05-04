@@ -57,10 +57,14 @@ export function appendMeshJournal(entry: MeshJournalEntry): void {
   }
 
   appendFileSync(logPath, `${row}\n`);
-  _obsService?.recordEvent({
-    category: 'install.event',
-    severity: 'info',
-    code: entry.event,
-    cause: JSON.stringify(entry).slice(0, 200),
-  });
+  try {
+    _obsService?.recordEvent({
+      category: 'install.event',
+      severity: 'info',
+      code: entry.event,
+      cause: JSON.stringify(entry).slice(0, 200),
+    });
+  } catch {
+    // Observability is best-effort — never mask the primary journal path.
+  }
 }

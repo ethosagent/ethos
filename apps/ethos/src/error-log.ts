@@ -90,13 +90,17 @@ export function appendErrorLog(err: EthosError, ctx: LogContext = {}): void {
       ...ctx,
     };
     appendFileSync(logPath(), `${JSON.stringify(entry)}\n`);
-    _obsService?.recordEvent({
-      category: 'error',
-      severity: 'error',
-      code: err.code,
-      cause: err.cause,
-      details: { action: err.action, ...ctx },
-    });
+    try {
+      _obsService?.recordEvent({
+        category: 'error',
+        severity: 'error',
+        code: err.code,
+        cause: err.cause,
+        details: { action: err.action, ...ctx },
+      });
+    } catch {
+      // Observability is best-effort — never mask the primary log write.
+    }
   } catch {
     // Disk full, perms, ENOSPC — drop the entry, surface error still prints.
   }

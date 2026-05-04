@@ -28,8 +28,8 @@ export class BlobStore {
 
     await this.storage.mkdir(dir);
     const compressed = gzipSync(Buffer.from(content, 'utf-8'));
-    // Storage.write accepts string; encode binary as latin1 round-trip.
-    await this.storage.write(path, compressed.toString('binary'), { mode: 0o600 });
+    // Base64-encode so the pure-ASCII result is safe through UTF-8 Storage.write.
+    await this.storage.write(path, compressed.toString('base64'), { mode: 0o600 });
     return key;
   }
 
@@ -38,7 +38,7 @@ export class BlobStore {
     const path = this.blobPath(key);
     const raw = await this.storage.read(path);
     if (raw === null) return null;
-    const buf = Buffer.from(raw, 'binary');
+    const buf = Buffer.from(raw, 'base64');
     return gunzipSync(buf).toString('utf-8');
   }
 
