@@ -1,0 +1,26 @@
+{
+  "name": "@ethosagent/observability-sqlite",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts",
+      "production": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ethosagent/types": "workspace:*",
+    "better-sqlite3": "^12.9.0"
+  },
+  "devDependencies": {
+    "@ethosagent/storage-fs": "workspace:*",
+    "@types/better-sqlite3": "^7.6.12",
+    "vitest": "^4.1.5"
+  }
+}
