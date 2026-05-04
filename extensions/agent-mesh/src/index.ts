@@ -193,4 +193,4 @@ export class AgentMesh {
 }
 
 export type { MeshJournalEntry } from './journal';
-export { appendMeshJournal, meshJournalPath } from './journal';
+export { appendMeshJournal, meshJournalPath, setMeshObservabilityService } from './journal';

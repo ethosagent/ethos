@@ -95,6 +95,12 @@ export interface CreateAgentLoopOptions {
    *  Defaults to the 'default' mesh (~/.ethos/meshes/default/registry.json).
    *  Set by ethos serve --mesh <name> so team members route within their mesh. */
   meshRegistryPath?: string;
+  /**
+   * Optional observability service. When provided, passed through to
+   * AgentLoop so LLM calls, tool calls, and hook blocks are recorded.
+   * When absent, no observability writes occur.
+   */
+  observability?: import('@ethosagent/observability-sqlite').ObservabilityService;
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +277,7 @@ export async function createAgentLoop(
     storage: new FsStorage(),
     dataDir,
     modelRouting: config.modelRouting,
+    ...(opts.observability ? { observability: opts.observability } : {}),
     options: {
       platform: profile,
       workingDir,

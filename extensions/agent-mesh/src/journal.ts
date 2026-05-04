@@ -1,6 +1,17 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import type { ObservabilityService } from '@ethosagent/observability-sqlite';
+
+let _obsService: ObservabilityService | undefined;
+
+/**
+ * Wire up the ObservabilityService so mesh events are also written to observability.db.
+ * Call this once during CLI startup after the service is created.
+ */
+export function setMeshObservabilityService(svc: ObservabilityService): void {
+  _obsService = svc;
+}
 
 // CC-4: mesh.jsonl atomic line writes — O_APPEND + 4 KB row cap.
 //
@@ -46,4 +57,10 @@ export function appendMeshJournal(entry: MeshJournalEntry): void {
   }
 
   appendFileSync(logPath, `${row}\n`);
+  _obsService?.recordEvent({
+    category: 'install.event',
+    severity: 'info',
+    code: entry.event,
+    cause: JSON.stringify(entry).slice(0, 200),
+  });
 }

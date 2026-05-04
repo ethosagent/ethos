@@ -112,6 +112,12 @@ export interface AgentLoopConfig {
    * `storage` is set.
    */
   dataDir?: string;
+  /**
+   * Optional observability service. When provided, AgentLoop records traces,
+   * spans, and events for LLM calls, tool calls, and errors. When absent,
+   * behaviour is identical to before — no observability writes occur.
+   */
+  observability?: import('@ethosagent/observability-sqlite').ObservabilityService;
   // Maps personality ID → model ID. Resolution: modelRouting[id] → personality.model → llm.model
   modelRouting?: Record<string, string>;
   options?: {
@@ -182,6 +188,7 @@ export class AgentLoop {
   private readonly modelRouting: Record<string, string>;
   private readonly storage?: Storage;
   private readonly dataDir?: string;
+  private readonly observability?: import('@ethosagent/observability-sqlite').ObservabilityService;
   /** Per-session accumulated spend in USD. Keyed by sessionKey. Reset via resetSessionCost(). */
   private readonly sessionCosts = new Map<string, number>();
 
@@ -205,6 +212,7 @@ export class AgentLoop {
     this.modelRouting = config.modelRouting ?? {};
     if (config.storage) this.storage = config.storage;
     if (config.dataDir) this.dataDir = config.dataDir;
+    if (config.observability) this.observability = config.observability;
   }
 
   /** Returns all available tools for inventory display (e.g. TUI splash screen). */
@@ -265,10 +273,18 @@ export class AgentLoop {
       (opts.personalityId ? this.personalities.get(opts.personalityId) : null) ??
       this.personalities.getDefault();
 
+    const traceId = this.observability?.startTrace({
+      sessionId,
+      kind: 'turn',
+      personalityId: personality?.id,
+    });
+
     // Budget cap check — refuse before any LLM work when the session has already
     // exceeded the personality's per-session spending limit.
     const currentSpend = this.sessionCosts.get(sessionKey) ?? 0;
     if (personality.budgetCapUsd != null && currentSpend >= personality.budgetCapUsd) {
+      if (traceId) this.observability?.endTrace(traceId, 'error');
+      this.observability?.flush();
       yield {
         type: 'error',
         error: `Budget cap of $${personality.budgetCapUsd.toFixed(2)} exceeded for this session ($${currentSpend.toFixed(4)} spent). Use /budget reset to start a new budget window.`,
@@ -495,6 +511,14 @@ export class AgentLoop {
         watchdogTimer = undefined;
       };
 
+      const llmSpanId = this.observability?.startSpan({
+        traceId: traceId ?? '',
+        kind: 'llm_call',
+        name: this.llm.model ?? 'unknown',
+      });
+      let llmInputTokens = 0;
+      let llmOutputTokens = 0;
+
       try {
         armWatchdog();
         const stream = this.llm.complete(
@@ -521,13 +545,21 @@ export class AgentLoop {
                 sessionKey,
                 (this.sessionCosts.get(sessionKey) ?? 0) + event.estimatedCostUsd,
               );
+              llmInputTokens += event.inputTokens;
+              llmOutputTokens += event.outputTokens;
             }
             yield event;
           }
         }
         disarmWatchdog();
+        this.observability?.endSpan(llmSpanId ?? '', 'ok', {
+          inputTokens: llmInputTokens,
+          outputTokens: llmOutputTokens,
+        });
 
         if (watchdogController.signal.aborted && !abortSignal.aborted) {
+          this.observability?.endTrace(traceId ?? '', 'error');
+          this.observability?.flush();
           yield {
             type: 'error',
             error: `LLM stream stalled — no chunk for ${watchdogMs}ms`,
@@ -537,7 +569,10 @@ export class AgentLoop {
         }
       } catch (err) {
         disarmWatchdog();
+        this.observability?.endSpan(llmSpanId ?? '', 'error');
         if (watchdogController.signal.aborted && !abortSignal.aborted) {
+          this.observability?.endTrace(traceId ?? '', 'error');
+          this.observability?.flush();
           yield {
             type: 'error',
             error: `LLM stream stalled — no chunk for ${watchdogMs}ms`,
@@ -546,6 +581,8 @@ export class AgentLoop {
           return;
         }
         const msg = err instanceof Error ? err.message : String(err);
+        this.observability?.endTrace(traceId ?? '', 'error');
+        this.observability?.flush();
         yield { type: 'error', error: msg, code: 'llm_error' };
         return;
       }
@@ -651,6 +688,7 @@ export class AgentLoop {
       // Rejected tools get tool_end ok:false + an error tool_result sent back to LLM
       type Prepped = { toolCallId: string; name: string; args: unknown; rejected?: string };
       const prepped: Prepped[] = [];
+      const spanIds = new Map<string, string>();
 
       for (const tc of completedToolCalls) {
         const beforeResult = await this.hooks.fireModifying(
@@ -665,6 +703,13 @@ export class AgentLoop {
         );
 
         if (beforeResult.error) {
+          this.observability?.recordEvent({
+            traceId,
+            category: 'audit.block',
+            severity: 'warn',
+            code: 'tool_blocked',
+            cause: beforeResult.error,
+          });
           yield {
             type: 'tool_end',
             toolCallId: tc.toolCallId,
@@ -683,6 +728,13 @@ export class AgentLoop {
         }
 
         const effectiveArgs = beforeResult.args ?? tc.args;
+        const spanId = this.observability?.startSpan({
+          traceId: traceId ?? '',
+          kind: 'tool_call',
+          name: tc.toolName,
+          attrs: { args: JSON.stringify(effectiveArgs).slice(0, 4096) },
+        });
+        spanIds.set(tc.toolCallId, spanId ?? '');
         yield {
           type: 'tool_start',
           toolCallId: tc.toolCallId,
@@ -729,6 +781,13 @@ export class AgentLoop {
             error: 'Tool result missing',
             code: 'execution_failed',
           };
+          const sid = spanIds.get(p.toolCallId);
+          if (sid) {
+            this.observability?.endSpan(sid, result.ok ? 'ok' : 'error', {
+              result_size_bytes: result.ok ? result.value.length : undefined,
+              durationMs,
+            });
+          }
           yield {
             type: 'tool_end',
             toolCallId: p.toolCallId,
@@ -797,6 +856,9 @@ export class AgentLoop {
       { sessionId, text: fullText, turnCount },
       allowedPlugins,
     );
+
+    if (traceId) this.observability?.endTrace(traceId, 'ok');
+    this.observability?.flush();
 
     yield { type: 'done', text: fullText, turnCount };
   }
