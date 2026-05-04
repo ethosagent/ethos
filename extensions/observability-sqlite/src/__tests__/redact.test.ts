@@ -37,9 +37,28 @@ describe('redactString', () => {
     expect(redactString(key)).toBe('[REDACTED:stripe-key]');
   });
 
-  it('redacts generic secret param', () => {
-    const line = `password=${'A'.repeat(20)}`;
-    expect(redactString(line)).toBe('[REDACTED:generic-secret]');
+  it('redacts Slack token', () => {
+    const tok = `xoxb-${'1'.repeat(10)}-${'2'.repeat(10)}-${'A'.repeat(24)}`;
+    expect(redactString(tok)).toBe('[REDACTED:slack-token]');
+  });
+
+  it('redacts all generic secret keywords (key=, token=, secret=, password=)', () => {
+    const val = 'A'.repeat(20);
+    expect(redactString(`key=${val}`)).toBe('[REDACTED:generic-secret]');
+    expect(redactString(`token=${val}`)).toBe('[REDACTED:generic-secret]');
+    expect(redactString(`secret=${val}`)).toBe('[REDACTED:generic-secret]');
+    expect(redactString(`password=${val}`)).toBe('[REDACTED:generic-secret]');
+  });
+
+  it('redacts generic secret with quoted value', () => {
+    const val = 'A'.repeat(20);
+    expect(redactString(`key="${val}"`)).toBe('[REDACTED:generic-secret]');
+    expect(redactString(`password='${val}'`)).toBe('[REDACTED:generic-secret]');
+  });
+
+  it('does not redact short values (below 20-char threshold)', () => {
+    expect(redactString('key=short')).toBe('key=short');
+    expect(redactString('password=tooshort')).toBe('password=tooshort');
   });
 
   it('leaves clean strings unchanged', () => {

@@ -79,17 +79,19 @@ export class ObservabilityService implements ObservabilityWriter {
     const extraRedactPatterns = cfg?.redactPatterns;
 
     let finalAttrs = opts.attrs;
-    let skipRedact = false;
+    // 'full' skips extra personality patterns but the 8 built-in floor patterns always apply.
+    let effectiveExtraPatterns = extraRedactPatterns;
     if (opts.kind === 'tool_call' && finalAttrs?.args !== undefined) {
       if (storeArgs === 'none') {
-        // Strip args — keep everything else
+        // Strip args entirely — keep everything else
         const { args: _dropped, ...rest } = finalAttrs;
         finalAttrs = rest;
       } else if (storeArgs === 'full') {
-        // Store raw args without any redaction — explicit opt-in by the personality author
-        skipRedact = true;
+        // Built-in floor patterns still apply (spec: "even 'full' mode redacts these").
+        // Only the personality's extra redactPatterns are skipped.
+        effectiveExtraPatterns = undefined;
       }
-      // 'redacted' — default: store.ts applies redactJson before write
+      // 'redacted' — default: built-in patterns + personality extra patterns both apply
     }
 
     const spanId = randomUUID();
@@ -102,7 +104,7 @@ export class ObservabilityService implements ObservabilityWriter {
       startTs: Date.now(),
       attrs: finalAttrs,
     };
-    this.store.insertSpan(span, extraRedactPatterns, skipRedact);
+    this.store.insertSpan(span, effectiveExtraPatterns);
     return spanId;
   }
 

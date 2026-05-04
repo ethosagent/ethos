@@ -225,4 +225,55 @@ describe('pruneObservability', () => {
     const remaining = (db.prepare('SELECT COUNT(*) as n FROM events').get() as { n: number }).n;
     expect(remaining).toBe(1);
   });
+
+  it('orphaned snapshots are pruned; snapshots referenced by surviving traces are kept', () => {
+    // snap-A is referenced by an old trace that will be pruned
+    // snap-B is referenced by a recent trace that survives
+    // snap-C is orphaned (no trace references it)
+    db.prepare(
+      `INSERT INTO traces (trace_id, kind, start_ts, snapshot_id) VALUES (?, 'turn', ?, ?)`,
+    ).run('old-trace', OLD, 'snap-A');
+    db.prepare(
+      `INSERT INTO traces (trace_id, kind, start_ts, snapshot_id) VALUES (?, 'turn', ?, ?)`,
+    ).run('new-trace', RECENT, 'snap-B');
+    for (const [id] of [['snap-A'], ['snap-B'], ['snap-C']]) {
+      db.prepare(
+        `INSERT INTO snapshots (snapshot_id, taken_at, personality_id, body) VALUES (?, ?, 'eng', '{}')`,
+      ).run(id, RECENT);
+    }
+
+    const result = pruneObservability(db, RETENTION_DEFAULTS, { dryRun: false, now: NOW });
+
+    expect(result.traces).toBe(1); // old-trace pruned
+    expect(result.snapshots).toBe(2); // snap-A (now orphaned) + snap-C (always orphaned)
+
+    const snaps = (
+      db.prepare('SELECT snapshot_id FROM snapshots').all() as { snapshot_id: string }[]
+    ).map((r) => r.snapshot_id);
+    expect(snaps).toEqual(['snap-B']); // only the referenced survivor remains
+  });
+
+  it('per-personality retention override: longer TTL prevents pruning', () => {
+    // OLD trace is 100 days old — past the 90d default but within a 200d override
+    insertTrace('old-trace', OLD);
+
+    const override = mergeRetentionConfig(RETENTION_DEFAULTS, { traces: '200d', spans: '200d' });
+    const result = pruneObservability(db, override, { dryRun: false, now: NOW });
+
+    expect(result.traces).toBe(0); // NOT pruned under 200d TTL
+    const remaining = (db.prepare('SELECT COUNT(*) as n FROM traces').get() as { n: number }).n;
+    expect(remaining).toBe(1);
+  });
+
+  it('per-personality retention override: shorter TTL prunes more aggressively', () => {
+    // RECENT trace is 10 days old — within 90d default but past a 7d override
+    insertTrace('recent-trace', RECENT);
+
+    const override = mergeRetentionConfig(RETENTION_DEFAULTS, { traces: '7d', spans: '7d' });
+    const result = pruneObservability(db, override, { dryRun: false, now: NOW });
+
+    expect(result.traces).toBe(1); // pruned under 7d TTL
+    const remaining = (db.prepare('SELECT COUNT(*) as n FROM traces').get() as { n: number }).n;
+    expect(remaining).toBe(0);
+  });
 });

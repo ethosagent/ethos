@@ -72,7 +72,7 @@ export interface PolicySnapshot {
 export interface ObservabilityStore {
   insertTrace(trace: Trace): void;
   closeTrace(traceId: string, status: 'ok' | 'error' | 'aborted'): void;
-  insertSpan(span: Span, extraRedactPatterns?: string[], skipRedact?: boolean): void;
+  insertSpan(span: Span, extraRedactPatterns?: string[]): void;
   closeSpan(spanId: string, status: 'ok' | 'error' | 'blocked'): void;
   insertEvent(event: ObsEvent, extraRedactPatterns?: string[]): void;
   insertSnapshot(snapshot: PolicySnapshot): void;

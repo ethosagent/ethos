@@ -120,11 +120,9 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
   // Spans
   // ---------------------------------------------------------------------------
 
-  insertSpan(span: Span, extraRedactPatterns?: string[], skipRedact?: boolean): void {
+  insertSpan(span: Span, extraRedactPatterns?: string[]): void {
     const attrsJson = span.attrs
-      ? skipRedact
-        ? JSON.stringify(span.attrs)
-        : JSON.stringify(redactJson(span.attrs, extraRedactPatterns))
+      ? JSON.stringify(redactJson(span.attrs, extraRedactPatterns))
       : null;
     this.db
       .prepare(

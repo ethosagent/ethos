@@ -344,7 +344,7 @@ function severityIcon(severity: string): string {
   return '·';
 }
 
-function diagnoseBundleLines(traces: Trace[], spans: Span[], events: ObsEvent[]): string[] {
+export function diagnoseBundleLines(traces: Trace[], spans: Span[], events: ObsEvent[]): string[] {
   const lines: string[] = [];
 
   const transitions = events

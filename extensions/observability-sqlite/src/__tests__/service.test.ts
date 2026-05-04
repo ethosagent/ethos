@@ -62,7 +62,7 @@ describe('ObservabilityService safety.observability gating', () => {
     expect(spans[0]?.attrs?.args).not.toContain('INTERNAL-DOC-ABCD1234');
   });
 
-  it('storeToolArgs full: args stored without any redaction', () => {
+  it('storeToolArgs full: built-in floor patterns still apply (spec: floor always on)', () => {
     const { service, store } = makeService();
     const awsKey = `AKIA${'A'.repeat(16)}`;
     const traceId = service.startTrace({ kind: 'turn', obsConfig: { storeToolArgs: 'full' } });
@@ -75,8 +75,26 @@ describe('ObservabilityService safety.observability gating', () => {
     });
     service.endSpan(spanId, 'ok');
     const spans = store.getSpans(traceId);
-    expect(spans[0]?.attrs?.args).toBe(`key=${awsKey}`);
-    expect(spans[0]?.attrs?.args).not.toContain('[REDACTED');
+    // Built-in floor patterns always apply — AWS key must be redacted even in 'full' mode
+    expect(spans[0]?.attrs?.args).toContain('[REDACTED:aws-key]');
+    expect(spans[0]?.attrs?.args).not.toContain(awsKey);
+  });
+
+  it('storeToolArgs full: personality extra patterns are skipped (only floor applies)', () => {
+    const { service, store } = makeService();
+    const traceId = service.startTrace({ kind: 'turn', obsConfig: { storeToolArgs: 'full' } });
+    const spanId = service.startSpan({
+      traceId,
+      kind: 'tool_call',
+      name: 'bash',
+      attrs: { args: 'INTERNAL-DOC-ABCD1234' },
+      obsConfig: { storeToolArgs: 'full', redactPatterns: ['INTERNAL-DOC-[A-Z0-9]{8}'] },
+    });
+    service.endSpan(spanId, 'ok');
+    const spans = store.getSpans(traceId);
+    // Personality extra pattern must NOT fire in 'full' mode
+    expect(spans[0]?.attrs?.args).toBe('INTERNAL-DOC-ABCD1234');
+    expect(spans[0]?.attrs?.args).not.toContain('[REDACTED:custom]');
   });
 
   it('traceConfig flows from startTrace to all spans in that trace', () => {
