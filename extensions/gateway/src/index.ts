@@ -1,5 +1,8 @@
 import type { AgentLoop } from '@ethosagent/core';
-import type { InboundMessage, PlatformAdapter } from '@ethosagent/types';
+import type { ChannelFilterConfig } from '@ethosagent/safety-channel';
+import { checkMessage, consumeCode } from '@ethosagent/safety-channel';
+import type { InboundMessage, ObservabilityWriter, PlatformAdapter } from '@ethosagent/types';
+import type Database from 'better-sqlite3';
 import { MessageDedupCache } from './dedup';
 
 export { MessageDedupCache } from './dedup';
@@ -95,19 +98,49 @@ export interface GatewayConfig {
    * lanes are never evicted. Defaults to 4096.
    */
   maxChats?: number;
+  /**
+   * Per-platform sender allowlist + pairing + mention-gate + context-visibility
+   * config (Chapter 1 agent safety). When absent, all messages are allowed
+   * (backward compat). Keys are platform identifiers (e.g. 'telegram').
+   */
+  channelFilter?: ChannelFilterConfig;
+  /**
+   * SQLite database used to store pairing codes when `dmPolicy: 'pairing'` is
+   * configured. Must be initialised with `initPairingDb(db)` before passing.
+   * Required when any platform uses pairing; optional otherwise.
+   */
+  pairingDb?: Database.Database;
+  /**
+   * Optional observability writer for audit events (drops, blocks, context strips).
+   */
+  observability?: ObservabilityWriter;
+  /**
+   * Optional hook called when a sender is approved via `/allow <code>` so the
+   * caller can persist the updated allowlist back to config.yaml.
+   */
+  onAllowlistChange?: (
+    platform: string,
+    userId: string,
+    action: 'add' | 'remove',
+  ) => void | Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
 // Built-in gateway slash commands (handled before the AgentLoop sees the text)
 // ---------------------------------------------------------------------------
 
-const PLATFORM_COMMANDS: Record<string, 'new' | 'usage' | 'stop' | 'help' | 'personality'> = {
+const PLATFORM_COMMANDS: Record<
+  string,
+  'new' | 'usage' | 'stop' | 'help' | 'personality' | 'allow' | 'deny'
+> = {
   '/new': 'new',
   '/reset': 'new',
   '/stop': 'stop',
   '/usage': 'usage',
   '/help': 'help',
   '/personality': 'personality',
+  '/allow': 'allow',
+  '/deny': 'deny',
 };
 
 // ---------------------------------------------------------------------------
@@ -135,6 +168,16 @@ export class Gateway {
   /** Active turns by laneKey — used by graceful shutdown to notify users. */
   private readonly activeTurns = new Map<string, { adapter: PlatformAdapter; chatId: string }>();
   private readonly maxChats: number;
+  /** Chapter 1 safety: per-platform sender allowlist + pairing config. */
+  private readonly channelFilter: ChannelFilterConfig | undefined;
+  /** SQLite DB for pairing codes. */
+  private readonly pairingDb: Database.Database | undefined;
+  /** Observability writer for audit events. */
+  private readonly observability: ObservabilityWriter | undefined;
+  /** Hook called when the allowlist changes via /allow or /deny. */
+  private readonly onAllowlistChange:
+    | ((platform: string, userId: string, action: 'add' | 'remove') => void | Promise<void>)
+    | undefined;
 
   constructor(config: GatewayConfig) {
     this.loop = config.loop;
@@ -143,6 +186,10 @@ export class Gateway {
     this.maxChats = config.maxChats ?? 4096;
     // ttlMs <= 0 disables dedup inside the cache itself (shouldSend always returns true).
     this.outboundDedup = new MessageDedupCache({ ttlMs: config.outboundDedupTtlMs ?? 30_000 });
+    this.channelFilter = config.channelFilter;
+    this.pairingDb = config.pairingDb;
+    this.observability = config.observability;
+    this.onAllowlistChange = config.onAllowlistChange;
   }
 
   /**
@@ -172,6 +219,50 @@ export class Gateway {
     // Drop duplicates BEFORE any work — billing-relevant. See OpenClaw #71761
     // (channel messages injected twice → 2× cost).
     if (this.isDuplicate(message)) return;
+
+    // --- Chapter 1: before_inbound channel safety filter ---
+    if (this.channelFilter) {
+      const platformCfg = this.channelFilter[message.platform];
+      const filterResult = checkMessage(message, platformCfg, this.pairingDb);
+
+      if (filterResult.action === 'drop') {
+        // Emit audit event for observability
+        this.observability?.recordEvent({
+          category: 'audit.block',
+          severity: 'warn',
+          code: message.isDm ? 'channel.allowlist.blocked' : 'channel.mention_gate',
+          details: {
+            platform: message.platform,
+            chatId: message.chatId,
+            userId: message.userId,
+            isDm: message.isDm,
+            isGroupMention: message.isGroupMention,
+          },
+        });
+        return;
+      }
+
+      if (filterResult.action === 'pairing_reply') {
+        await adapter.send(message.chatId, { text: filterResult.reply ?? '' }).catch(() => {});
+        return;
+      }
+
+      // 'allow' — if context was stripped, use stripped text for the turn
+      if (filterResult.strippedText !== undefined) {
+        this.observability?.recordEvent({
+          category: 'audit.block',
+          severity: 'warn',
+          code: 'channel.context_stripped',
+          details: {
+            platform: message.platform,
+            chatId: message.chatId,
+            userId: message.userId,
+            replyToId: message.replyToId,
+          },
+        });
+        message = { ...message, text: filterResult.strippedText };
+      }
+    }
 
     const laneKey = `${message.platform}:${message.chatId}`;
     const lane = this.getOrCreateLane(laneKey);
@@ -256,6 +347,105 @@ export class Gateway {
           text: `Tokens: ${u.inputTokens.toLocaleString()} in / ${u.outputTokens.toLocaleString()} out\nCost: $${u.costUsd.toFixed(5)}`,
         })
         .catch(() => {});
+      return;
+    }
+
+    if (cmdType === 'allow') {
+      const code = text.split(/\s+/)[1]?.toUpperCase() ?? '';
+      if (!code || !this.pairingDb || !this.channelFilter) {
+        await adapter
+          .send(message.chatId, { text: '✗ Pairing not configured or no code given.' })
+          .catch(() => {});
+        return;
+      }
+
+      // Look up the pending code to learn which (senderId, platform) it was issued for.
+      // consumeCode enforces sender_id + platform binding atomically.
+      const row = this.pairingDb
+        .prepare(
+          `SELECT sender_id, platform FROM pairing_codes WHERE code = ? AND status = 'pending'`,
+        )
+        .get(code) as { sender_id: string; platform: string } | undefined;
+
+      let approvedUserId: string | undefined;
+      let approvedPlatform: string | undefined;
+
+      if (row) {
+        // Verify the caller is the owner for the sender's platform.
+        const platformCfg = this.channelFilter[row.platform];
+        const isOwner = platformCfg?.ownerUserId && message.userId === platformCfg.ownerUserId;
+        if (isOwner) {
+          const result = consumeCode(this.pairingDb, code, row.sender_id, row.platform);
+          if (result.ok) {
+            approvedUserId = row.sender_id;
+            approvedPlatform = row.platform;
+          }
+        }
+      }
+
+      if (approvedUserId && approvedPlatform) {
+        // In-memory allowlist update
+        const platformCfg = this.channelFilter[approvedPlatform];
+        if (platformCfg) {
+          if (!platformCfg.recipientAllowlist) platformCfg.recipientAllowlist = [];
+          if (!platformCfg.recipientAllowlist.includes(approvedUserId)) {
+            platformCfg.recipientAllowlist.push(approvedUserId);
+          }
+        }
+        this.observability?.recordEvent({
+          category: 'channel.allow',
+          severity: 'info',
+          code: 'channel.pairing.approved',
+          details: { approvedUserId, approvedPlatform, byUserId: message.userId },
+        });
+        await this.onAllowlistChange?.(approvedPlatform, approvedUserId, 'add');
+        await adapter
+          .send(message.chatId, { text: `✓ ${approvedUserId} approved.` })
+          .catch(() => {});
+      } else {
+        await adapter.send(message.chatId, { text: '✗ Invalid or expired code.' }).catch(() => {});
+      }
+      return;
+    }
+
+    if (cmdType === 'deny') {
+      const targetUserId = text.split(/\s+/)[1] ?? '';
+      const cleanTarget = targetUserId.replace(/^@/, '');
+      if (!cleanTarget || !this.channelFilter) {
+        await adapter.send(message.chatId, { text: '✗ Usage: /deny <userId>' }).catch(() => {});
+        return;
+      }
+
+      let removed = false;
+      for (const [platform, cfg] of Object.entries(this.channelFilter)) {
+        // Only the owner can remove senders.
+        const isOwner = cfg.ownerUserId && message.userId === cfg.ownerUserId;
+        if (!isOwner) continue;
+
+        const list = cfg.recipientAllowlist;
+        if (list) {
+          const idx = list.indexOf(cleanTarget);
+          if (idx !== -1) {
+            list.splice(idx, 1);
+            removed = true;
+            this.observability?.recordEvent({
+              category: 'channel.deny',
+              severity: 'info',
+              code: 'channel.allowlist.removed',
+              details: { removedUserId: cleanTarget, platform, byUserId: message.userId },
+            });
+            await this.onAllowlistChange?.(platform, cleanTarget, 'remove');
+          }
+        }
+      }
+
+      if (removed) {
+        await adapter.send(message.chatId, { text: `✓ ${cleanTarget} removed.` }).catch(() => {});
+      } else {
+        await adapter
+          .send(message.chatId, { text: `✗ ${cleanTarget} not found in any allowlist.` })
+          .catch(() => {});
+      }
       return;
     }
 

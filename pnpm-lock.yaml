@@ -431,9 +431,18 @@ importers:
 
   extensions/gateway:
     dependencies:
+      '@ethosagent/safety-channel':
+        specifier: workspace:*
+        version: link:../safety-channel
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
+      better-sqlite3:
+        specifier: ^12.9.0
+        version: 12.9.0
 
   extensions/llm-anthropic:
     dependencies:
@@ -599,6 +608,18 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+
+  extensions/safety-channel:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
+      better-sqlite3:
+        specifier: ^12.9.0
+        version: 12.9.0
 
   extensions/sandbox-docker:
     dependencies:
