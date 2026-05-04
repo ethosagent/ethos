@@ -75,7 +75,7 @@ describe('SQLiteObservabilityStore', () => {
     };
     store.insertTrace(trace);
     const got = store.getTrace(trace.traceId);
-    expect(got?.attrs?.['apiKey']).toBe('[REDACTED:aws-key]');
+    expect(got?.attrs?.apiKey).toBe('[REDACTED:aws-key]');
   });
 
   it('insertTrace is idempotent (INSERT OR IGNORE)', () => {

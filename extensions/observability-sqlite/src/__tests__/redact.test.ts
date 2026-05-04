@@ -60,22 +60,22 @@ describe('redactJson', () => {
     const key = `AKIA${'A'.repeat(16)}`;
     const obj = { nested: { secret: key } };
     const result = redactJson(obj);
-    expect((result['nested'] as Record<string, unknown>)['secret']).toBe('[REDACTED:aws-key]');
+    expect((result.nested as Record<string, unknown>).secret).toBe('[REDACTED:aws-key]');
   });
 
   it('leaves non-string values unchanged', () => {
     const obj = { count: 42, flag: true, nothing: null };
     const result = redactJson(obj);
-    expect(result['count']).toBe(42);
-    expect(result['flag']).toBe(true);
-    expect(result['nothing']).toBeNull();
+    expect(result.count).toBe(42);
+    expect(result.flag).toBe(true);
+    expect(result.nothing).toBeNull();
   });
 
   it('handles arrays within objects', () => {
     const key = `AKIA${'A'.repeat(16)}`;
     const obj = { keys: [key, 'clean'] };
     const result = redactJson(obj);
-    expect((result['keys'] as string[])[0]).toBe('[REDACTED:aws-key]');
-    expect((result['keys'] as string[])[1]).toBe('clean');
+    expect((result.keys as string[])[0]).toBe('[REDACTED:aws-key]');
+    expect((result.keys as string[])[1]).toBe('clean');
   });
 });

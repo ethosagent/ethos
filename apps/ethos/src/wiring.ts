@@ -48,7 +48,7 @@ export function getObservabilityService(): ObservabilityService {
     const storage = getStorage();
     const store = new SQLiteObservabilityStore(join(dir, 'observability.db'));
     const blobStore = new BlobStore(join(dir, 'blobs'), storage);
-    obsSingleton = new ObservabilityService(store, blobStore, storage);
+    obsSingleton = new ObservabilityService(store, blobStore);
     setObservabilityService(obsSingleton);
     setMeshObservabilityService(obsSingleton);
   }

@@ -68,21 +68,22 @@ export async function runTail(argv: string[]): Promise<void> {
     const asc = events.slice().reverse();
 
     for (const event of asc) {
+      // Advance cursor for every event so the window moves regardless of filters.
+      // Without this, heavy unmatched traffic starves the cursor and matched
+      // events are replayed forever.
       if (event.ts === lastTs && seenIds.has(event.eventId)) continue;
-
-      // Apply filters
-      if (categoryFilter && !event.category.includes(categoryFilter)) continue;
-      if (severityFilter && event.severity !== severityFilter) continue;
-      if (traceIds) {
-        if (!event.traceId || !traceIds.has(event.traceId)) continue;
-      }
-
-      // Update dedup tracking before emitting
       if (event.ts > lastTs) {
         lastTs = event.ts;
         seenIds = new Set([event.eventId]);
       } else {
         seenIds.add(event.eventId);
+      }
+
+      // Apply filters — skip display only, cursor already advanced above
+      if (categoryFilter && !event.category.includes(categoryFilter)) continue;
+      if (severityFilter && event.severity !== severityFilter) continue;
+      if (traceIds) {
+        if (!event.traceId || !traceIds.has(event.traceId)) continue;
       }
 
       if (jsonMode) {
