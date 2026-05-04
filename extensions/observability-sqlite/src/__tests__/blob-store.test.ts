@@ -64,4 +64,18 @@ describe('BlobStore', () => {
     const result = await store.get(key);
     expect(result).toBe(content);
   });
+
+  it('round-trips non-ASCII / high-byte content without corruption', async () => {
+    // Bytes > 0x7F would be corrupted if stored as latin1/binary through UTF-8 I/O.
+    // Base64 encoding ensures all stored bytes are pure ASCII.
+    const content = JSON.stringify({
+      value: 'ÿþýü Latin-1 high bytes: ÿþý',
+      cjk: '日本語テスト',
+      emoji: '🔥💡🎉',
+      surrogate: '😀', // U+1F600 GRINNING FACE
+    });
+    const key = await store.put(content);
+    const result = await store.get(key);
+    expect(result).toBe(content);
+  });
 });
