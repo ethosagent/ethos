@@ -175,16 +175,20 @@ async function runPrune(argv: string[]): Promise<void> {
 
   const dir = ethosDir();
   const obsDbPath = join(dir, 'observability.db');
+  const sessDbPath = join(dir, 'sessions.db');
 
   if (!fileSize(obsDbPath)) {
     console.log('No observability.db found — nothing to prune.');
     return;
   }
 
-  const result = pruneObservabilityByPath(obsDbPath, effectiveConfig, { dryRun: flags.dryRun });
+  const result = pruneObservabilityByPath(obsDbPath, effectiveConfig, {
+    dryRun: flags.dryRun,
+    sessDbPath,
+  });
   const prefix = flags.dryRun ? 'Would prune' : 'Pruned';
   console.log(
-    `${prefix} ${result.traces} trace(s), ${result.spans} span(s), ${result.events} event(s), ${result.snapshots} orphaned snapshot(s).`,
+    `${prefix} ${result.traces} trace(s), ${result.spans} span(s), ${result.events} event(s), ${result.snapshots} orphaned snapshot(s), ${result.messages} message(s).`,
   );
   if (flags.dryRun) {
     console.log('(Dry run — no changes made)');
@@ -233,60 +237,63 @@ async function runReset(argv: string[]): Promise<void> {
   const storage = getStorage();
   const killSwitchPath = join(dir, '.observability.disabled');
 
-  // Signal active writers to buffer rather than write during the reset window.
+  // Signal active writers to skip writes during the reset window.
   await storage.writeAtomic(killSwitchPath, `reset started at ${new Date().toISOString()}`);
 
-  if (!flags.blobsOnly) {
-    for (const p of [obsDbPath, obsWalPath, obsShmPath]) {
+  try {
+    if (!flags.blobsOnly) {
+      for (const p of [obsDbPath, obsWalPath, obsShmPath]) {
+        try {
+          await storage.remove(p);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        }
+      }
       try {
-        await storage.remove(p);
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        await storage.remove(archiveDir, { recursive: true });
+      } catch {
+        // ignore
       }
     }
+
     try {
-      await storage.remove(archiveDir, { recursive: true });
+      await storage.remove(blobsDir, { recursive: true });
     } catch {
       // ignore
     }
-  }
 
-  try {
-    await storage.remove(blobsDir, { recursive: true });
-  } catch {
-    // ignore
-  }
-
-  if (!flags.blobsOnly) {
-    // Recreate the observability.db with all tables
-    const blobStore = new BlobStore(join(dir, 'blobs'), storage);
-    const store = new SQLiteObservabilityStore(obsDbPath);
-    try {
-      const svc = new ObservabilityService(store, blobStore);
-      svc.recordEvent({
-        category: 'install.event',
-        severity: 'info',
-        code: 'data.reset',
-        cause: 'User-initiated reset',
-      });
-    } finally {
-      store.close();
+    if (!flags.blobsOnly) {
+      // Recreate the observability.db with all tables
+      const blobStore = new BlobStore(join(dir, 'blobs'), storage);
+      const store = new SQLiteObservabilityStore(obsDbPath);
+      try {
+        const svc = new ObservabilityService(store, blobStore);
+        svc.recordEvent({
+          category: 'install.event',
+          severity: 'info',
+          code: 'data.reset',
+          cause: 'User-initiated reset',
+        });
+      } finally {
+        store.close();
+      }
+      console.log('\nReset complete. observability.db recreated.');
+      console.log('  observability.db recreated with empty schema');
+      console.log('  archive/ removed');
+    } else {
+      console.log('\nReset complete. blobs/ removed.');
     }
-    console.log('\nReset complete. observability.db recreated.');
-    console.log('  observability.db recreated with empty schema');
-    console.log('  archive/ removed');
-  } else {
-    console.log('\nReset complete. blobs/ removed.');
+    console.log('  blobs/ removed');
+    console.log('  sessions.db untouched');
+    console.log();
+  } finally {
+    // Remove kill-switch regardless of success or failure — writers must resume.
+    try {
+      await storage.remove(killSwitchPath);
+    } catch {
+      // ignore if already gone
+    }
   }
-  // Remove kill-switch — writers may resume.
-  try {
-    await storage.remove(killSwitchPath);
-  } catch {
-    // ignore if already gone
-  }
-  console.log('  blobs/ removed');
-  console.log('  sessions.db untouched');
-  console.log();
 }
 
 async function runArchiveCommand(argv: string[]): Promise<void> {

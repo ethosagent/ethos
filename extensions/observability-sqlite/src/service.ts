@@ -33,6 +33,8 @@ export class ObservabilityService implements ObservabilityWriter {
   constructor(
     private readonly store: ObservabilityStore,
     private readonly blobStore: BlobStore,
+    /** Returns true when writes should be suppressed (e.g. during a data reset). */
+    private readonly isDisabled?: () => boolean,
   ) {}
 
   /** Start a new trace. Returns the traceId. */
@@ -44,6 +46,7 @@ export class ObservabilityService implements ObservabilityWriter {
     obsConfig?: PersonalityObservabilityConfig;
   }): string {
     const traceId = randomUUID();
+    if (this.isDisabled?.()) return traceId; // suppress writes during reset window
     const trace: Trace = {
       traceId,
       sessionId: opts.sessionId,
@@ -61,6 +64,7 @@ export class ObservabilityService implements ObservabilityWriter {
 
   /** Close a trace with a final status. */
   endTrace(traceId: string, status: 'ok' | 'error' | 'aborted'): void {
+    if (this.isDisabled?.()) return;
     this.store.closeTrace(traceId, status);
     this.traceConfigs.delete(traceId);
   }
@@ -95,6 +99,7 @@ export class ObservabilityService implements ObservabilityWriter {
     }
 
     const spanId = randomUUID();
+    if (this.isDisabled?.()) return spanId; // suppress writes during reset window
     const span: Span = {
       spanId,
       traceId: opts.traceId,
@@ -114,6 +119,7 @@ export class ObservabilityService implements ObservabilityWriter {
     status: 'ok' | 'error' | 'blocked',
     attrs?: Record<string, unknown>,
   ): void {
+    if (this.isDisabled?.()) return;
     // Close the span (sets end_ts + status).
     this.store.closeSpan(spanId, status);
     // If extra attrs provided, we'd update — but the store interface only supports closeSpan.
@@ -128,6 +134,7 @@ export class ObservabilityService implements ObservabilityWriter {
       severity: EventSeverity;
     },
   ): void {
+    if (this.isDisabled?.()) return;
     const obsEvent: ObsEvent = {
       ...event,
       eventId: randomUUID(),
@@ -139,6 +146,7 @@ export class ObservabilityService implements ObservabilityWriter {
 
   /** Store a snapshot blob and register it in the snapshots table. */
   async recordSnapshot(opts: { personalityId: string; body: string }): Promise<string> {
+    if (this.isDisabled?.()) return randomUUID(); // suppress writes during reset window
     const snapshotId = await this.blobStore.put(opts.body);
     const snapshot: PolicySnapshot = {
       snapshotId,

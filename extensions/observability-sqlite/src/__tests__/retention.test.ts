@@ -276,4 +276,59 @@ describe('pruneObservability', () => {
     const remaining = (db.prepare('SELECT COUNT(*) as n FROM traces').get() as { n: number }).n;
     expect(remaining).toBe(0);
   });
+
+  it('excludePersonalityIds: global pass does not delete rows belonging to excluded personalities', () => {
+    // personality-A trace is 100 days old (past 90d global) but should survive because
+    // personality A is excluded from the global pass (it has its own longer-TTL pass).
+    db.prepare(`INSERT INTO traces (trace_id, kind, start_ts, personality_id) VALUES (?, 'turn', ?, ?)`).run(
+      'a-trace',
+      OLD,
+      'personality-a',
+    );
+    // Unscoped trace of the same age — no personality, should be pruned by global pass.
+    insertTrace('global-trace', OLD);
+
+    const result = pruneObservability(db, RETENTION_DEFAULTS, {
+      dryRun: false,
+      now: NOW,
+      excludePersonalityIds: ['personality-a'],
+    });
+
+    expect(result.traces).toBe(1); // only global-trace pruned
+    const remaining = (
+      db.prepare('SELECT trace_id FROM traces').all() as { trace_id: string }[]
+    ).map((r) => r.trace_id);
+    expect(remaining).toEqual(['a-trace']); // personality-a row survives
+  });
+
+  it('messages pruning uses ISO timestamp column and prunes old messages', () => {
+    // Create a minimal sessions.db schema in a separate in-memory db.
+    const sessDb = new Database(':memory:');
+    sessDb.exec(`
+      CREATE TABLE messages (
+        id       INTEGER PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        content    TEXT NOT NULL,
+        timestamp  TEXT NOT NULL
+      ) STRICT;
+    `);
+
+    // Messages retention default is 365d. Use 400d-old message to cross the cutoff.
+    const veryOld = NOW - 400 * 86_400_000;
+    const oldIso = new Date(veryOld).toISOString();
+    const recentIso = new Date(RECENT).toISOString();
+    sessDb.prepare('INSERT INTO messages (session_id, content, timestamp) VALUES (?, ?, ?)').run('s1', 'old msg', oldIso);
+    sessDb.prepare('INSERT INTO messages (session_id, content, timestamp) VALUES (?, ?, ?)').run('s1', 'recent msg', recentIso);
+
+    const result = pruneObservability(db, RETENTION_DEFAULTS, {
+      dryRun: false,
+      now: NOW,
+      sessDb,
+    });
+
+    expect(result.messages).toBe(1); // old message pruned
+    const remaining = (sessDb.prepare('SELECT COUNT(*) as n FROM messages').get() as { n: number }).n;
+    expect(remaining).toBe(1); // recent message kept
+    sessDb.close();
+  });
 });

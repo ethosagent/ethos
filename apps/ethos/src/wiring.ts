@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import { meshRegistryPath, setMeshObservabilityService } from '@ethosagent/agent-mesh';
 import type { AgentLoop } from '@ethosagent/core';
@@ -50,7 +50,8 @@ export function getObservabilityService(): ObservabilityService {
     const storage = getStorage();
     const store = new SQLiteObservabilityStore(join(dir, 'observability.db'));
     const blobStore = new BlobStore(join(dir, 'blobs'), storage);
-    obsSingleton = new ObservabilityService(store, blobStore);
+    const killSwitchPath = join(dir, '.observability.disabled');
+    obsSingleton = new ObservabilityService(store, blobStore, () => existsSync(killSwitchPath));
     setObservabilityService(obsSingleton);
     setMeshObservabilityService(obsSingleton);
   }
