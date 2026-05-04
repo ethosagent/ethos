@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { Storage } from '@ethosagent/types';
+import type { RetentionConfig, RetentionEventsConfig, Storage } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Key rotation pool
@@ -86,6 +86,13 @@ export interface EthosConfig {
   emailSmtpPort?: number;
   /** Show per-turn timing summary after every response. */
   verbose?: boolean;
+  /** Global retention settings. Per-category TTLs. */
+  retention?: RetentionConfig;
+  /**
+   * Per-personality overrides. Keyed by personality ID.
+   * Only `retention` sub-block is supported here.
+   */
+  personalitiesConfig?: Record<string, { retention?: RetentionConfig }>;
 }
 
 export function ethosDir(): string {
@@ -123,6 +130,20 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   if (config.slackAppToken) lines.push(`slackAppToken: ${config.slackAppToken}`);
   if (config.slackSigningSecret) lines.push(`slackSigningSecret: ${config.slackSigningSecret}`);
   if (config.verbose) lines.push('verbose: true');
+  if (config.retention) {
+    for (const [key, val] of retentionToLines(config.retention)) {
+      lines.push(`retention.${key}: ${val}`);
+    }
+  }
+  if (config.personalitiesConfig) {
+    for (const [pid, pcfg] of Object.entries(config.personalitiesConfig)) {
+      if (pcfg.retention) {
+        for (const [key, val] of retentionToLines(pcfg.retention)) {
+          lines.push(`personalities.${pid}.retention.${key}: ${val}`);
+        }
+      }
+    }
+  }
   await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`);
 }
 
@@ -131,6 +152,8 @@ function parseConfigYaml(src: string): EthosConfig {
   const modelRouting: Record<string, string> = {};
   const activeContextKv: Record<string, string> = {};
   const providersKv: Record<number, Record<string, string>> = {};
+  const retentionKv: Record<string, string> = {};
+  const personalitiesRetKv: Record<string, Record<string, string>> = {};
   for (const line of src.split('\n')) {
     // providers.<index>.<field>: <value>
     const prov = line.match(/^providers\.(\d+)\.(\S+):\s*(.+)$/);
@@ -139,6 +162,21 @@ function parseConfigYaml(src: string): EthosConfig {
       providersKv[idx] ??= {};
       const field = prov[2]?.trim() ?? '';
       if (field) providersKv[idx][field] = prov[3].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // personalities.<id>.retention.<field>: <value>  (must come before modelRouting)
+    const perp = line.match(/^personalities\.([^.]+)\.retention\.(events\.)?(\w+):\s*(.+)$/);
+    if (perp) {
+      const pid = perp[1];
+      const key = `${perp[2] ?? ''}${perp[3]}`;
+      personalitiesRetKv[pid] ??= {};
+      personalitiesRetKv[pid][key] = perp[4].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // retention.<field>: <value>  or  retention.events.<subfield>: <value>
+    const ret = line.match(/^retention\.(events\.)?(\w+):\s*(.+)$/);
+    if (ret) {
+      retentionKv[`${ret[1] ?? ''}${ret[2]}`] = ret[3].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // modelRouting.<personality>: <model>
@@ -180,6 +218,9 @@ function parseConfigYaml(src: string): EthosConfig {
     })
     .filter((p): p is ProviderConfig => p !== null);
 
+  const retention = buildRetentionConfig(retentionKv);
+  const personalitiesConfig = buildPersonalitiesConfig(personalitiesRetKv);
+
   return {
     provider: kv.provider ?? 'anthropic',
     model: kv.model ?? 'claude-opus-4-7',
@@ -202,5 +243,53 @@ function parseConfigYaml(src: string): EthosConfig {
     emailSmtpHost: kv.emailSmtpHost,
     emailSmtpPort: kv.emailSmtpPort ? Number(kv.emailSmtpPort) : undefined,
     verbose: kv.verbose === 'true' ? true : undefined,
+    retention,
+    personalitiesConfig,
   };
+}
+
+function buildRetentionConfig(kv: Record<string, string>): RetentionConfig | undefined {
+  if (Object.keys(kv).length === 0) return undefined;
+  const cfg: RetentionConfig = {};
+  if (kv.messages) cfg.messages = kv.messages;
+  if (kv.traces) cfg.traces = kv.traces;
+  if (kv.spans) cfg.spans = kv.spans;
+  if (kv.blobs) cfg.blobs = kv.blobs;
+  if (kv.archive) cfg.archive = kv.archive;
+  const ev: RetentionEventsConfig = {};
+  if (kv['events.error']) ev.error = kv['events.error'];
+  if (kv['events.audit']) ev.audit = kv['events.audit'];
+  if (kv['events.channel']) ev.channel = kv['events.channel'];
+  if (kv['events.install']) ev.install = kv['events.install'];
+  if (Object.keys(ev).length > 0) cfg.events = ev;
+  return cfg;
+}
+
+function buildPersonalitiesConfig(
+  kv: Record<string, Record<string, string>>,
+): Record<string, { retention?: RetentionConfig }> | undefined {
+  if (Object.keys(kv).length === 0) return undefined;
+  const out: Record<string, { retention?: RetentionConfig }> = {};
+  for (const [pid, retKv] of Object.entries(kv)) {
+    const retention = buildRetentionConfig(retKv);
+    if (retention) out[pid] = { retention };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Serialize a RetentionConfig to dotted key-value pairs. */
+function retentionToLines(cfg: RetentionConfig): Array<[string, string]> {
+  const lines: Array<[string, string]> = [];
+  if (cfg.messages) lines.push(['messages', cfg.messages]);
+  if (cfg.traces) lines.push(['traces', cfg.traces]);
+  if (cfg.spans) lines.push(['spans', cfg.spans]);
+  if (cfg.blobs) lines.push(['blobs', cfg.blobs]);
+  if (cfg.archive) lines.push(['archive', cfg.archive]);
+  if (cfg.events) {
+    if (cfg.events.error) lines.push(['events.error', cfg.events.error]);
+    if (cfg.events.audit) lines.push(['events.audit', cfg.events.audit]);
+    if (cfg.events.channel) lines.push(['events.channel', cfg.events.channel]);
+    if (cfg.events.install) lines.push(['events.install', cfg.events.install]);
+  }
+  return lines;
 }

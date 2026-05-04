@@ -10,6 +10,7 @@ import { runBatch } from './commands/batch';
 import { runChat } from './commands/chat';
 import { runClaw } from './commands/claw';
 import { runCronCommand } from './commands/cron';
+import { runData } from './commands/data';
 import { runDoctor } from './commands/doctor';
 import { runErrors } from './commands/errors';
 import { runEval } from './commands/eval';
@@ -21,6 +22,7 @@ import { runMcp } from './commands/mcp';
 import { runMeshCommand } from './commands/mesh';
 import { runPerf } from './commands/perf';
 import { runPlugin } from './commands/plugin';
+import { runRetention } from './commands/retention';
 import { runServe } from './commands/serve';
 import { runSet } from './commands/set';
 import { runSetup } from './commands/setup';
@@ -39,7 +41,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [setup | chat | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | claw | doctor | upgrade | mcp | backup | import | trace | audit | errors | perf | tail] [--version | --help]';
+  'Usage: ethos [setup | chat | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | claw | doctor | upgrade | mcp | backup | import | trace | audit | errors | perf | tail | retention | data] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -429,6 +431,16 @@ try {
 
     case 'tail': {
       await runTail(args.slice(1));
+      break;
+    }
+
+    case 'retention': {
+      await runRetention(args[1] ?? 'show', args.slice(2));
+      break;
+    }
+
+    case 'data': {
+      await runData(args[1] ?? 'stats', args.slice(2));
       break;
     }
 
