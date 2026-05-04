@@ -1,4 +1,12 @@
 export type IngestMode = 'capability' | 'tags' | 'explicit' | 'none';
+
+export interface SkillPermissions {
+  fs_read?: string[];
+  fs_write?: string[];
+  network?: string[];
+  tools_required?: string[];
+  mcp_env_passthrough?: string[];
+}
 export type FallbackBehavior = 'deny' | 'warn' | 'allow';
 
 export interface IngestConfig {
@@ -47,4 +55,6 @@ export interface Skill {
   dialect: 'agentskills' | 'openclaw' | 'hermes' | 'legacy';
   /** mtime for cache invalidation. */
   mtimeMs: number;
+  /** Declared permissions from SKILL.md frontmatter `ethos.permissions`. */
+  permissions?: SkillPermissions;
 }

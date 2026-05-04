@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { buildMcpEnv } from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { Storage, Tool, ToolResult } from '@ethosagent/types';
 import { Client } from '@modelcontextprotocol/sdk/client';
@@ -16,6 +17,8 @@ export interface McpServerConfig {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  /** Env vars to pass through to the subprocess beyond the safe defaults. Credential-pattern vars are still stripped unless explicitly listed here. */
+  mcpEnvPassthrough?: string[];
   // sse
   url?: string;
   headers?: Record<string, string>;
@@ -68,10 +71,13 @@ export class McpClient {
       const { command } = this._config;
       if (!command)
         throw new Error(`MCP server '${this._config.name}': stdio transport requires 'command'`);
+      const safeEnv = buildMcpEnv(this._config.name, this._config.mcpEnvPassthrough);
+      // Merge explicit env overrides from config AFTER safe env (config wins for specific keys)
+      const mergedEnv = this._config.env ? { ...safeEnv, ...this._config.env } : safeEnv;
       return new StdioClientTransport({
         command,
         args: this._config.args,
-        env: this._config.env,
+        env: mergedEnv,
         stderr: 'pipe',
       });
     }

@@ -29,12 +29,10 @@ export function filterSkill(
   }
   // Explicit allow always wins (even in non-explicit mode)
   if (allow.includes(skill.qualifiedName)) {
-    return (
-      checkToolReach(skill, toolNames, onWarn, personality.id) ?? {
-        include: true,
-        reason: 'explicit allow',
-      }
-    );
+    const reach = checkToolReach(skill, toolNames, onWarn, personality.id);
+    if (reach) return reach;
+    checkSkillPermissions(skill, personality.id, onWarn);
+    return { include: true, reason: 'explicit allow' };
   }
 
   switch (mode) {
@@ -58,12 +56,10 @@ export function filterSkill(
       if (acceptTags.length > 0 && !skillTags.some((t) => acceptTags.includes(t))) {
         return { include: false, reason: 'no accepted tags' };
       }
-      return (
-        checkToolReach(skill, toolNames, onWarn, personality.id) ?? {
-          include: true,
-          reason: 'tags match',
-        }
-      );
+      const reach = checkToolReach(skill, toolNames, onWarn, personality.id);
+      if (reach) return reach;
+      checkSkillPermissions(skill, personality.id, onWarn);
+      return { include: true, reason: 'tags match' };
     }
     default:
       return capabilityCheck(
@@ -95,6 +91,7 @@ function capabilityCheck(
         `[boot] ${personalityId}: skill '${skill.qualifiedName}' has no required_tools — loading (fallback: warn)`,
       );
     }
+    checkSkillPermissions(skill, personalityId, onWarn);
     return { include: true, reason: 'no required_tools (pure prose)' };
   }
 
@@ -105,6 +102,7 @@ function capabilityCheck(
       reason: `required_tools not in effective reach: ${missing.join(', ')}`,
     };
   }
+  checkSkillPermissions(skill, personalityId, onWarn);
   return { include: true, reason: 'capability match' };
 }
 
@@ -130,6 +128,35 @@ function checkToolReach(
     };
   }
   return null;
+}
+
+/**
+ * Emit warnings for any declared permissions on a skill.
+ * This is a non-blocking check — it informs operators of what the skill requests.
+ */
+function checkSkillPermissions(
+  skill: Skill,
+  personalityId: string,
+  onWarn?: (msg: string) => void,
+): void {
+  const perms = skill.permissions;
+  if (!perms) return;
+
+  if (perms.fs_write && perms.fs_write.length > 0) {
+    onWarn?.(
+      `[boot] ${personalityId}: skill '${skill.qualifiedName}' declares fs_write: [${perms.fs_write.join(', ')}]`,
+    );
+  }
+  if (perms.network && perms.network.length > 0) {
+    onWarn?.(
+      `[boot] ${personalityId}: skill '${skill.qualifiedName}' declares network access: [${perms.network.join(', ')}]`,
+    );
+  }
+  if (perms.mcp_env_passthrough && perms.mcp_env_passthrough.length > 0) {
+    onWarn?.(
+      `[boot] ${personalityId}: skill '${skill.qualifiedName}' requests MCP env passthrough: [${perms.mcp_env_passthrough.join(', ')}]`,
+    );
+  }
 }
 
 /**

@@ -621,6 +621,12 @@ importers:
         specifier: ^12.9.0
         version: 12.9.0
 
+  extensions/safety-scanner:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/sandbox-docker:
     dependencies:
       '@ethosagent/types':
@@ -742,6 +748,9 @@ importers:
 
   extensions/tools-mcp:
     dependencies:
+      '@ethosagent/safety-scanner':
+        specifier: workspace:*
+        version: link:../safety-scanner
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs

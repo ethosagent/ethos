@@ -59,7 +59,8 @@
       "@ethosagent/tools-image": ["./extensions/tools-image/src"],
       "@ethosagent/tools-process": ["./extensions/tools-process/src"],
       "@ethosagent/observability-sqlite": ["./extensions/observability-sqlite/src"],
-      "@ethosagent/safety-channel": ["./extensions/safety-channel/src"]
+      "@ethosagent/safety-channel": ["./extensions/safety-channel/src"],
+      "@ethosagent/safety-scanner": ["./extensions/safety-scanner/src"]
     }
   },
   "include": [

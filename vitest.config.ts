@@ -14,6 +14,7 @@ const srcAliases = {
   '@ethosagent/batch-runner': resolve('./extensions/batch-runner/src'),
   '@ethosagent/eval-harness': resolve('./extensions/eval-harness/src'),
   '@ethosagent/memory-vector': resolve('./extensions/memory-vector/src'),
+  '@ethosagent/safety-scanner': resolve('./extensions/safety-scanner/src'),
 };
 
 export default defineConfig({
