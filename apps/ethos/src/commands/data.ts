@@ -2,8 +2,10 @@ import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
+  archiveMonth,
   BlobStore,
   getSqliteStats,
+  listArchives,
   mergeRetentionConfig,
   ObservabilityService,
   pruneObservabilityByPath,
@@ -277,26 +279,77 @@ async function runReset(argv: string[]): Promise<void> {
   console.log();
 }
 
-async function runArchiveList(): Promise<void> {
+async function runArchiveCommand(argv: string[]): Promise<void> {
   const dir = ethosDir();
   const archiveDir = join(dir, 'archive');
+  const obsDbPath = join(dir, 'observability.db');
   const storage = getStorage();
 
-  const all = await storage.list(archiveDir);
-  const entries = all.filter((f) => f.endsWith('.tar.gz')).sort();
+  const archiveSub = argv[0] ?? 'list';
 
-  if (entries.length === 0) {
-    console.log('No archives found.');
+  if (archiveSub === 'list') {
+    const archives = await listArchives(storage, archiveDir);
+    if (archives.length === 0) {
+      console.log('No archives found.');
+      return;
+    }
+    console.log('\nArchives — ~/.ethos/archive/');
+    console.log('══════════════════════════════');
+    for (const { month, path } of archives) {
+      const size = fileSize(path);
+      console.log(`  ${month.padEnd(10)} ${formatBytes(size)}`);
+    }
+    console.log();
     return;
   }
 
-  console.log('\nArchives — ~/.ethos/archive/');
-  console.log('══════════════════════════════');
-  for (const name of entries) {
-    const size = fileSize(join(archiveDir, name));
-    console.log(`  ${name.padEnd(40)} ${formatBytes(size)}`);
+  // `ethos data archive [--month YYYY-MM]` — create an archive for a given month
+  let month: string | undefined;
+  let dryRun = false;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i] ?? '';
+    if (a === '--month' && argv[i + 1]) {
+      month = argv[i + 1];
+      i++;
+    } else if (a === '--dry-run') {
+      dryRun = true;
+    } else if (!a.startsWith('-') && /^\d{4}-\d{2}$/.test(a)) {
+      month = a;
+    }
   }
-  console.log();
+
+  if (!month) {
+    // Default: archive the previous calendar month
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - 1);
+    month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    console.error(`Invalid month format: "${month}". Use YYYY-MM.`);
+    process.exit(1);
+  }
+
+  if (!fileSize(obsDbPath)) {
+    console.log('No observability.db found — nothing to archive.');
+    return;
+  }
+
+  if (dryRun) {
+    console.log(`Would archive ${month} from observability.db (dry run — no changes made).`);
+    return;
+  }
+
+  console.log(`Archiving ${month}...`);
+  const result = await archiveMonth(obsDbPath, storage, archiveDir, month);
+  if (result.traces === 0) {
+    console.log(`No completed traces found for ${month}.`);
+    return;
+  }
+  console.log(
+    `Archived ${result.traces} trace(s), ${result.spans} span(s), ${result.events} event(s), ${result.snapshots} snapshot(s) → archive/${month}.tar.gz`,
+  );
 }
 
 export async function runData(sub: string, argv: string[]): Promise<void> {
@@ -316,16 +369,11 @@ export async function runData(sub: string, argv: string[]): Promise<void> {
   }
 
   if (sub === 'archive') {
-    const archiveSub = argv[0] ?? 'list';
-    if (archiveSub === 'list') {
-      await runArchiveList();
-    } else {
-      console.log('Usage: ethos data archive list');
-    }
+    await runArchiveCommand(argv);
     return;
   }
 
   console.log(
-    'Usage: ethos data [stats | prune [--dry-run] [--personality <id>] | reset [--dry-run] [--blobs-only] | archive list]',
+    'Usage: ethos data [stats | prune [--dry-run] [--personality <id>] | reset [--dry-run] [--blobs-only] | archive [list | --month YYYY-MM | --dry-run]]',
   );
 }

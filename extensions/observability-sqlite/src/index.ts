@@ -1,3 +1,5 @@
+export type { ArchiveResult } from './archive';
+export { archiveMonth, listArchives, pruneArchives, restoreArchive } from './archive';
 export { BlobStore } from './blob-store';
 export type { PruneCronOptions } from './prune-cron';
 export { startPruneCron } from './prune-cron';
@@ -12,3 +14,4 @@ export {
 } from './retention';
 export { ObservabilityService } from './service';
 export { SQLiteObservabilityStore } from './store';
+export { createTarGz, readTarGz } from './tar-bundle';

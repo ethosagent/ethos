@@ -227,6 +227,73 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
       .run(snapshot.snapshotId, snapshot.takenAt, snapshot.personalityId, snapshot.body);
   }
 
+  getSnapshot(snapshotId: string): PolicySnapshot | null {
+    const row = this.db.prepare('SELECT * FROM snapshots WHERE snapshot_id = ?').get(snapshotId);
+    return row ? rowToSnapshot(row as SnapshotRow) : null;
+  }
+
+  getSnapshotsByIds(ids: string[]): PolicySnapshot[] {
+    if (ids.length === 0) return [];
+    const ph = ids.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(`SELECT * FROM snapshots WHERE snapshot_id IN (${ph})`)
+      .all(...ids);
+    return (rows as SnapshotRow[]).map(rowToSnapshot);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bulk queries (Wave C — support bundle + archive)
+  // ---------------------------------------------------------------------------
+
+  /** Flexible trace query for time-range and session filtering. */
+  getTraces(filter: {
+    since?: number;
+    until?: number;
+    sessionId?: string;
+    limit?: number;
+  }): Trace[] {
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+    if (filter.since !== undefined) {
+      conditions.push('start_ts >= ?');
+      values.push(filter.since);
+    }
+    if (filter.until !== undefined) {
+      conditions.push('start_ts < ?');
+      values.push(filter.until);
+    }
+    if (filter.sessionId !== undefined) {
+      conditions.push('session_id = ?');
+      values.push(filter.sessionId);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const lim = filter.limit ?? 1000;
+    const rows = this.db
+      .prepare(`SELECT * FROM traces ${where} ORDER BY start_ts ASC LIMIT ?`)
+      .all(...values, lim);
+    return (rows as TraceRow[]).map(rowToTrace);
+  }
+
+  /** Fetch all spans belonging to a set of trace IDs. */
+  getSpansByTraceIds(traceIds: string[]): Span[] {
+    if (traceIds.length === 0) return [];
+    const ph = traceIds.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(`SELECT * FROM spans WHERE trace_id IN (${ph}) ORDER BY start_ts ASC`)
+      .all(...traceIds);
+    return (rows as SpanRow[]).map(rowToSpan);
+  }
+
+  /** Fetch all events belonging to a set of trace IDs. */
+  getEventsByTraceIds(traceIds: string[]): ObsEvent[] {
+    if (traceIds.length === 0) return [];
+    const ph = traceIds.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(`SELECT * FROM events WHERE trace_id IN (${ph}) ORDER BY ts ASC`)
+      .all(...traceIds);
+    return (rows as EventRow[]).map(rowToEvent);
+  }
+
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
@@ -315,5 +382,21 @@ function rowToEvent(r: EventRow): ObsEvent {
     code: r.code ?? undefined,
     cause: r.cause ?? undefined,
     details: r.details ? (JSON.parse(r.details) as Record<string, unknown>) : undefined,
+  };
+}
+
+interface SnapshotRow {
+  snapshot_id: string;
+  taken_at: number;
+  personality_id: string;
+  body: string;
+}
+
+function rowToSnapshot(r: SnapshotRow): PolicySnapshot {
+  return {
+    snapshotId: r.snapshot_id,
+    takenAt: r.taken_at,
+    personalityId: r.personality_id,
+    body: r.body,
   };
 }
