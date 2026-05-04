@@ -57,7 +57,8 @@
       "@ethosagent/web-api": ["./extensions/web-api/src"],
       "@ethosagent/mcp-server": ["./extensions/mcp-server/src"],
       "@ethosagent/tools-image": ["./extensions/tools-image/src"],
-      "@ethosagent/tools-process": ["./extensions/tools-process/src"]
+      "@ethosagent/tools-process": ["./extensions/tools-process/src"],
+      "@ethosagent/observability-sqlite": ["./extensions/observability-sqlite/src"]
     }
   },
   "include": [

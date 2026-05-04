@@ -4,12 +4,14 @@
 import { join } from 'node:path';
 import { formatError, toEthosError } from '@ethosagent/types';
 import { runAcp } from './commands/acp';
+import { runAudit } from './commands/audit';
 import { runBackup, runImport } from './commands/backup';
 import { runBatch } from './commands/batch';
 import { runChat } from './commands/chat';
 import { runClaw } from './commands/claw';
 import { runCronCommand } from './commands/cron';
 import { runDoctor } from './commands/doctor';
+import { runErrors } from './commands/errors';
 import { runEval } from './commands/eval';
 import { runEvolve } from './commands/evolve';
 import { runGatewayStart } from './commands/gateway';
@@ -17,12 +19,15 @@ import { runKeys } from './commands/keys';
 import { runLogs } from './commands/logs';
 import { runMcp } from './commands/mcp';
 import { runMeshCommand } from './commands/mesh';
+import { runPerf } from './commands/perf';
 import { runPlugin } from './commands/plugin';
 import { runServe } from './commands/serve';
 import { runSet } from './commands/set';
 import { runSetup } from './commands/setup';
 import { runSkills } from './commands/skills';
+import { runTail } from './commands/tail';
 import { runTeamCommand } from './commands/team';
+import { runTrace } from './commands/trace';
 import { runUpgrade } from './commands/upgrade';
 import { readConfig } from './config';
 import { appendErrorLog } from './error-log';
@@ -399,6 +404,31 @@ try {
 
     case 'import': {
       await runImport(args.slice(1));
+      break;
+    }
+
+    case 'trace': {
+      await runTrace(args.slice(1));
+      break;
+    }
+
+    case 'audit': {
+      await runAudit(args.slice(1));
+      break;
+    }
+
+    case 'errors': {
+      await runErrors(args.slice(1));
+      break;
+    }
+
+    case 'perf': {
+      await runPerf(args.slice(1));
+      break;
+    }
+
+    case 'tail': {
+      await runTail(args.slice(1));
       break;
     }
 

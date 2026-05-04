@@ -62,8 +62,10 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@ethosagent/agent-mesh": "workspace:*",
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/mcp-server": "workspace:*",
+    "@ethosagent/observability-sqlite": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/team-supervisor": "workspace:*",
     "@ethosagent/web-api": "workspace:*",

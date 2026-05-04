@@ -93,6 +93,13 @@ export class SQLiteSessionStore implements SessionStore {
         INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
       END;
     `);
+
+    // Additive migration: soft-reference trace_id column on messages.
+    // Idempotent — only adds the column when it does not already exist.
+    const cols = this.db.pragma('table_info(messages)') as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === 'trace_id')) {
+      this.db.exec('ALTER TABLE messages ADD COLUMN trace_id TEXT');
+    }
   }
 
   // ---------------------------------------------------------------------------

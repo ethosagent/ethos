@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
-import { meshRegistryPath } from '@ethosagent/agent-mesh';
+import { meshRegistryPath, setMeshObservabilityService } from '@ethosagent/agent-mesh';
 import type { AgentLoop } from '@ethosagent/core';
+import {
+  BlobStore,
+  ObservabilityService,
+  SQLiteObservabilityStore,
+} from '@ethosagent/observability-sqlite';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { parseTeamManifest, teamsDir } from '@ethosagent/team-supervisor';
 import type { LLMProvider, Storage, TeamManifest } from '@ethosagent/types';
@@ -11,6 +16,7 @@ import {
   type WiringProfile,
 } from '@ethosagent/wiring';
 import { type EthosConfig, ethosDir, readKeys } from './config';
+import { setObservabilityService } from './error-log';
 import { logger } from './logger';
 
 // CLI-side adapter over @ethosagent/wiring. Resolves the rotation pool, data
@@ -28,6 +34,25 @@ let storageSingleton: Storage | undefined;
 export function getStorage(): Storage {
   if (!storageSingleton) storageSingleton = new FsStorage();
   return storageSingleton;
+}
+
+let obsSingleton: ObservabilityService | undefined;
+
+/**
+ * The CLI's process-wide ObservabilityService. Creates the SQLite store and
+ * blob store on first access, then returns the same instance thereafter.
+ */
+export function getObservabilityService(): ObservabilityService {
+  if (!obsSingleton) {
+    const dir = ethosDir();
+    const storage = getStorage();
+    const store = new SQLiteObservabilityStore(join(dir, 'observability.db'));
+    const blobStore = new BlobStore(join(dir, 'blobs'), storage);
+    obsSingleton = new ObservabilityService(store, blobStore, storage);
+    setObservabilityService(obsSingleton);
+    setMeshObservabilityService(obsSingleton);
+  }
+  return obsSingleton;
 }
 
 async function withRotation(config: EthosConfig) {
@@ -49,6 +74,7 @@ export async function createAgentLoop(
     profile: opts.profile ?? 'cli',
     logger,
     meshRegistryPath: opts.meshRegistryPath,
+    observability: getObservabilityService(),
   });
 }
 
