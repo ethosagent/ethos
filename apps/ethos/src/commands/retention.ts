@@ -1,4 +1,4 @@
-import { parseDuration } from '@ethosagent/observability-sqlite';
+import { mergeRetentionConfig, parseDuration } from '@ethosagent/observability-sqlite';
 import { RETENTION_DEFAULTS, type RetentionConfig } from '@ethosagent/types';
 import { readConfig, writeConfig } from '../config';
 import { getStorage } from '../wiring';
@@ -186,7 +186,9 @@ export async function runRetention(sub: string, argv: string[]): Promise<void> {
       ? config.personalitiesConfig?.[flags.personality]?.retention
       : undefined;
 
-    const effectiveRetention = flags.personality ? personalityRetention : globalRetention;
+    const effectiveRetention = flags.personality
+      ? mergeRetentionConfig(globalRetention ?? RETENTION_DEFAULTS, personalityRetention ?? {})
+      : globalRetention;
 
     console.log('\nRetention settings');
     console.log('══════════════════════');

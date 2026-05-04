@@ -1,4 +1,4 @@
-import { readdirSync, rmSync, statSync, unlinkSync } from 'node:fs';
+import { rmSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
@@ -35,14 +35,15 @@ function fileSize(path: string): number {
   }
 }
 
-function dirSize(path: string): number {
+async function dirSize(path: string): Promise<number> {
+  const storage = getStorage();
   try {
     let total = 0;
-    const entries = readdirSync(path, { withFileTypes: true });
+    const entries = await storage.listEntries(path);
     for (const e of entries) {
       const p = join(path, e.name);
-      if (e.isDirectory()) {
-        total += dirSize(p);
+      if (e.isDir) {
+        total += await dirSize(p);
       } else {
         total += fileSize(p);
       }
@@ -53,14 +54,13 @@ function dirSize(path: string): number {
   }
 }
 
-function countFiles(path: string, ext?: string): number {
+async function countFiles(path: string, ext?: string): Promise<number> {
+  const storage = getStorage();
   try {
-    const entries = readdirSync(path, { withFileTypes: true });
+    const names = await storage.list(path);
     let count = 0;
-    for (const e of entries) {
-      if (!e.isDirectory()) {
-        if (!ext || e.name.endsWith(ext)) count++;
-      }
+    for (const name of names) {
+      if (!ext || name.endsWith(ext)) count++;
     }
     return count;
   } catch {
@@ -73,6 +73,7 @@ function parseFlags(argv: string[]): {
   blobsOnly: boolean;
   category?: string;
   olderThan?: string;
+  personality?: string;
   positional: string[];
 } {
   const positional: string[] = [];
@@ -80,6 +81,7 @@ function parseFlags(argv: string[]): {
   let blobsOnly = false;
   let category: string | undefined;
   let olderThan: string | undefined;
+  let personality: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] ?? '';
     if (a === '--dry-run') {
@@ -92,11 +94,14 @@ function parseFlags(argv: string[]): {
     } else if (a === '--older-than' && argv[i + 1]) {
       olderThan = argv[i + 1];
       i++;
+    } else if ((a === '--personality' || a === '-p') && argv[i + 1]) {
+      personality = argv[i + 1];
+      i++;
     } else if (!a.startsWith('--')) {
       positional.push(a);
     }
   }
-  return { dryRun, blobsOnly, category, olderThan, positional };
+  return { dryRun, blobsOnly, category, olderThan, personality, positional };
 }
 
 async function runStats(): Promise<void> {
@@ -109,10 +114,12 @@ async function runStats(): Promise<void> {
 
   const sessSize = fileSize(sessDbPath);
   const obsSize = fileSize(obsDbPath);
-  const blobsSize = dirSize(blobsDir);
-  const archiveSize = dirSize(archiveDir);
-  const blobCount = countFiles(blobsDir);
-  const archiveCount = countFiles(archiveDir, '.tar.gz');
+  const [blobsSize, archiveSize, blobCount, archiveCount] = await Promise.all([
+    dirSize(blobsDir),
+    dirSize(archiveDir),
+    countFiles(blobsDir),
+    countFiles(archiveDir, '.tar.gz'),
+  ]);
 
   console.log('\nData stats — ~/.ethos/');
   console.log('══════════════════════');
@@ -139,10 +146,13 @@ async function runPrune(argv: string[]): Promise<void> {
   const config = await readConfig(storage);
 
   const globalRetention = config?.retention;
-  const merged = mergeRetentionConfig(
-    { ...RETENTION_DEFAULTS, ...globalRetention },
-    globalRetention,
-  );
+  const baseConfig = mergeRetentionConfig(RETENTION_DEFAULTS, globalRetention ?? {});
+  const personalityRetention = flags.personality
+    ? config?.personalitiesConfig?.[flags.personality]?.retention
+    : undefined;
+  const merged = personalityRetention
+    ? mergeRetentionConfig(baseConfig, personalityRetention)
+    : baseConfig;
 
   // If --older-than and --category, override the specific category for this run
   const effectiveConfig = { ...merged };
@@ -190,8 +200,7 @@ async function runReset(argv: string[]): Promise<void> {
   const archiveDir = join(dir, 'archive');
 
   const obsSize = fileSize(obsDbPath);
-  const blobsSize = dirSize(blobsDir);
-  const archiveSize = dirSize(archiveDir);
+  const [blobsSize, archiveSize] = await Promise.all([dirSize(blobsDir), dirSize(archiveDir)]);
 
   console.log('\nThis will delete:');
   if (!flags.blobsOnly) {
@@ -245,14 +254,17 @@ async function runReset(argv: string[]): Promise<void> {
     const storage = getStorage();
     const blobStore = new BlobStore(join(dir, 'blobs'), storage);
     const store = new SQLiteObservabilityStore(obsDbPath);
-    const svc = new ObservabilityService(store, blobStore);
-    // Record the reset event
-    svc.recordEvent({
-      category: 'install.event',
-      severity: 'info',
-      code: 'data.reset',
-      cause: 'User-initiated reset',
-    });
+    try {
+      const svc = new ObservabilityService(store, blobStore);
+      svc.recordEvent({
+        category: 'install.event',
+        severity: 'info',
+        code: 'data.reset',
+        cause: 'User-initiated reset',
+      });
+    } finally {
+      store.close();
+    }
     console.log('\nReset complete. observability.db recreated.');
     console.log('  observability.db recreated with empty schema');
     console.log('  archive/ removed');
@@ -267,15 +279,10 @@ async function runReset(argv: string[]): Promise<void> {
 async function runArchiveList(): Promise<void> {
   const dir = ethosDir();
   const archiveDir = join(dir, 'archive');
+  const storage = getStorage();
 
-  let entries: string[];
-  try {
-    entries = readdirSync(archiveDir)
-      .filter((f) => f.endsWith('.tar.gz'))
-      .sort();
-  } catch {
-    entries = [];
-  }
+  const all = await storage.list(archiveDir);
+  const entries = all.filter((f) => f.endsWith('.tar.gz')).sort();
 
   if (entries.length === 0) {
     console.log('No archives found.');
