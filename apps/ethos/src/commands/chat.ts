@@ -71,7 +71,7 @@ interface RunChatOptions {
 // ---------------------------------------------------------------------------
 
 export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): Promise<void> {
-  startNightlyPrune();
+  startNightlyPrune(config.retention);
   const { loop, personalityId, displayName } = await resolveActiveLoop(config);
 
   if (opts.singleQuery) {
