@@ -1,8 +1,10 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { RETENTION_DEFAULTS } from '@ethosagent/types';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { BlobStore } from '../blob-store';
 import { mergeRetentionConfig, parseDuration, pruneObservability } from '../retention';
 
 // ---------------------------------------------------------------------------
@@ -333,5 +335,60 @@ describe('pruneObservability', () => {
       .n;
     expect(remaining).toBe(1); // recent message kept
     sessDb.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G4: referenced blobs survive prune
+// ---------------------------------------------------------------------------
+
+describe('pruneObservability — referenced blobs survive', () => {
+  it('prune deletes expired DB rows but does not touch blob files', async () => {
+    // Set up an in-memory blob store with a single blob.
+    const storage = new InMemoryStorage();
+    const blobStore = new BlobStore('/blobs', storage);
+    const blobKey = await blobStore.put('tool result body content');
+
+    // Insert a span (RECENT — within 90d TTL) that references the blob.
+    const dbPath = join(tmpdir(), `obs-blob-survival-${Date.now()}.db`);
+    const obsDb = new Database(dbPath);
+    obsDb.pragma('journal_mode = WAL');
+    obsDb.exec(`
+      CREATE TABLE IF NOT EXISTS traces (trace_id TEXT PRIMARY KEY, kind TEXT NOT NULL, start_ts INTEGER NOT NULL, end_ts INTEGER, status TEXT, personality_id TEXT, snapshot_id TEXT, attrs TEXT) STRICT;
+      CREATE TABLE IF NOT EXISTS spans (span_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, parent_span_id TEXT, kind TEXT NOT NULL, name TEXT NOT NULL, start_ts INTEGER NOT NULL, end_ts INTEGER, status TEXT, attrs TEXT) STRICT;
+      CREATE TABLE IF NOT EXISTS events (event_id TEXT PRIMARY KEY, trace_id TEXT, span_id TEXT, ts INTEGER NOT NULL, category TEXT NOT NULL, severity TEXT NOT NULL, code TEXT, cause TEXT, details TEXT) STRICT;
+      CREATE TABLE IF NOT EXISTS snapshots (snapshot_id TEXT PRIMARY KEY, taken_at INTEGER NOT NULL, personality_id TEXT NOT NULL, body TEXT NOT NULL) STRICT;
+    `);
+
+    // Old trace + span (past 90d TTL) — will be pruned.
+    obsDb
+      .prepare(`INSERT INTO traces (trace_id, kind, start_ts) VALUES ('old-t', 'turn', ?)`)
+      .run(OLD);
+    obsDb
+      .prepare(
+        `INSERT INTO spans (span_id, trace_id, kind, name, start_ts, attrs) VALUES ('old-s', 'old-t', 'tool_call', 'bash', ?, ?)`,
+      )
+      .run(OLD, JSON.stringify({ body_ref: blobKey }));
+
+    // Recent trace + span (within 90d TTL) — survives prune.
+    obsDb
+      .prepare(`INSERT INTO traces (trace_id, kind, start_ts) VALUES ('new-t', 'turn', ?)`)
+      .run(RECENT);
+    obsDb
+      .prepare(
+        `INSERT INTO spans (span_id, trace_id, kind, name, start_ts, attrs) VALUES ('new-s', 'new-t', 'tool_call', 'bash', ?, ?)`,
+      )
+      .run(RECENT, JSON.stringify({ body_ref: blobKey }));
+
+    const result = pruneObservability(obsDb, RETENTION_DEFAULTS, { dryRun: false, now: NOW });
+    obsDb.close();
+
+    // DB rows correctly pruned.
+    expect(result.spans).toBe(1); // old-s pruned
+    expect(result.traces).toBe(1); // old-t pruned
+
+    // Blob file still exists — prune only touches DB rows, never blob files.
+    const blobPath = `/blobs/${blobKey.slice(0, 2)}/${blobKey}.gz`;
+    expect(await storage.exists(blobPath)).toBe(true);
   });
 });
