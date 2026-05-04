@@ -202,12 +202,43 @@ describe('filterSkill', () => {
   });
 
   describe('allowed_skill_permissions policy enforcement', () => {
-    it('warns but allows fs_write when no policy is set', () => {
+    it('warns but allows fs_read/fs_write when no policy is set', () => {
       const warn = vi.fn();
-      const skill = makeSkill({ permissions: { fs_write: ['/tmp/out'] } });
+      const skill = makeSkill({ permissions: { fs_read: ['/data'], fs_write: ['/tmp/out'] } });
       const result = filterSkill(skill, makePersonality(), new Set(), warn);
       expect(result.include).toBe(true);
-      expect(warn).toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledTimes(2);
+    });
+
+    it('blocks skill declaring fs_read when policy does not allow it', () => {
+      const personality = makePersonality({
+        safety: { allowed_skill_permissions: {} },
+      });
+      const skill = makeSkill({ permissions: { fs_read: ['/etc/secret'] } });
+      const result = filterSkill(skill, personality, new Set());
+      expect(result.include).toBe(false);
+      expect(result.reason).toContain('fs_read');
+      expect(result.reason).toContain('/etc/secret');
+    });
+
+    it('allows fs_read when policy is true', () => {
+      const personality = makePersonality({
+        safety: { allowed_skill_permissions: { fs_read: true } },
+      });
+      const skill = makeSkill({ permissions: { fs_read: ['/any/path'] } });
+      expect(filterSkill(skill, personality, new Set()).include).toBe(true);
+    });
+
+    it('allows fs_read paths that are in the allowlist and blocks those that are not', () => {
+      const personality = makePersonality({
+        safety: { allowed_skill_permissions: { fs_read: ['/safe'] } },
+      });
+      const allowed = makeSkill({ permissions: { fs_read: ['/safe'] } });
+      expect(filterSkill(allowed, personality, new Set()).include).toBe(true);
+      const blocked = makeSkill({ permissions: { fs_read: ['/safe', '/unsafe'] } });
+      const r = filterSkill(blocked, personality, new Set());
+      expect(r.include).toBe(false);
+      expect(r.reason).toContain('/unsafe');
     });
 
     it('blocks skill declaring fs_write when policy does not allow it', () => {
@@ -220,13 +251,16 @@ describe('filterSkill', () => {
       expect(result.reason).toContain('fs_write');
     });
 
-    it('allows skill declaring fs_write when policy allows it', () => {
+    it('allows fs_write paths in the allowlist, blocks undeclared ones', () => {
       const personality = makePersonality({
-        safety: { allowed_skill_permissions: { fs_write: true } },
+        safety: { allowed_skill_permissions: { fs_write: ['/tmp/ethos'] } },
       });
-      const skill = makeSkill({ permissions: { fs_write: ['/tmp/out'] } });
-      const result = filterSkill(skill, personality, new Set());
-      expect(result.include).toBe(true);
+      const ok = makeSkill({ permissions: { fs_write: ['/tmp/ethos'] } });
+      expect(filterSkill(ok, personality, new Set()).include).toBe(true);
+      const bad = makeSkill({ permissions: { fs_write: ['/tmp/ethos', '/etc/passwd'] } });
+      const r = filterSkill(bad, personality, new Set());
+      expect(r.include).toBe(false);
+      expect(r.reason).toContain('/etc/passwd');
     });
 
     it('blocks skill declaring network when policy does not allow it', () => {
@@ -236,7 +270,28 @@ describe('filterSkill', () => {
       const skill = makeSkill({ permissions: { network: ['api.example.com'] } });
       const result = filterSkill(skill, personality, new Set());
       expect(result.include).toBe(false);
-      expect(result.reason).toContain('network');
+      expect(result.reason).toContain('api.example.com');
+    });
+
+    it('allows declared network hosts in allowlist, blocks undeclared ones', () => {
+      const personality = makePersonality({
+        safety: { allowed_skill_permissions: { network: ['github.com'] } },
+      });
+      const ok = makeSkill({ permissions: { network: ['github.com'] } });
+      expect(filterSkill(ok, personality, new Set()).include).toBe(true);
+      const bad = makeSkill({ permissions: { network: ['github.com', 'evil.com'] } });
+      const r = filterSkill(bad, personality, new Set());
+      expect(r.include).toBe(false);
+      expect(r.reason).toContain('evil.com');
+      expect(r.reason).not.toContain('github.com');
+    });
+
+    it('allows network: true to pass any host', () => {
+      const personality = makePersonality({
+        safety: { allowed_skill_permissions: { network: true } },
+      });
+      const skill = makeSkill({ permissions: { network: ['any.host.example.com'] } });
+      expect(filterSkill(skill, personality, new Set()).include).toBe(true);
     });
 
     it('blocks skill declaring mcp_env_passthrough when policy does not allow it', () => {
@@ -246,16 +301,27 @@ describe('filterSkill', () => {
       const skill = makeSkill({ permissions: { mcp_env_passthrough: ['GITHUB_TOKEN'] } });
       const result = filterSkill(skill, personality, new Set());
       expect(result.include).toBe(false);
-      expect(result.reason).toContain('mcp_env_passthrough');
+      expect(result.reason).toContain('GITHUB_TOKEN');
     });
 
-    it('allows mcp_env_passthrough when policy opts in', () => {
+    it('allows only listed vars in mcp_env_passthrough allowlist', () => {
+      const personality = makePersonality({
+        safety: { allowed_skill_permissions: { mcp_env_passthrough: ['ALLOWED_VAR'] } },
+      });
+      const ok = makeSkill({ permissions: { mcp_env_passthrough: ['ALLOWED_VAR'] } });
+      expect(filterSkill(ok, personality, new Set()).include).toBe(true);
+      const bad = makeSkill({ permissions: { mcp_env_passthrough: ['ALLOWED_VAR', 'SECRET'] } });
+      const r = filterSkill(bad, personality, new Set());
+      expect(r.include).toBe(false);
+      expect(r.reason).toContain('SECRET');
+    });
+
+    it('allows mcp_env_passthrough when policy is true', () => {
       const personality = makePersonality({
         safety: { allowed_skill_permissions: { mcp_env_passthrough: true } },
       });
       const skill = makeSkill({ permissions: { mcp_env_passthrough: ['GITHUB_TOKEN'] } });
-      const result = filterSkill(skill, personality, new Set());
-      expect(result.include).toBe(true);
+      expect(filterSkill(skill, personality, new Set()).include).toBe(true);
     });
   });
 });

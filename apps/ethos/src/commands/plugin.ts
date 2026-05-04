@@ -9,6 +9,7 @@ import {
   type ScanFinding,
   scanPluginCode,
 } from '@ethosagent/safety-scanner';
+import { EthosError } from '@ethosagent/types';
 
 const c = {
   reset: '\x1b[0m',
@@ -34,7 +35,18 @@ export async function runPlugin(args: string[]): Promise<void> {
         console.log('Usage: ethos plugin install <package>');
         process.exit(1);
       }
-      await installPlugin(pkg);
+      try {
+        await installPlugin(pkg);
+      } catch (err) {
+        if (err instanceof EthosError) {
+          console.error(`${c.red}${err.cause}${c.reset}\n${c.dim}→ ${err.action}${c.reset}`);
+        } else {
+          console.error(
+            `${c.red}Install failed: ${err instanceof Error ? err.message : String(err)}${c.reset}`,
+          );
+        }
+        process.exit(1);
+      }
       break;
     }
 
@@ -89,8 +101,10 @@ async function installPlugin(pkg: string): Promise<void> {
   }
 
   try {
-    // Step 2: locate the package directory under node_modules
-    const pkgDir = join(tmpDir, 'node_modules', pkgDirFromArg(pkg));
+    // Step 2: locate the installed package dir from the manifest npm wrote —
+    // deriving the dir from the argument string fails for tarballs, git URLs,
+    // local paths, and version ranges.
+    const pkgDir = await findInstalledPkgDir(tmpDir, pkg);
 
     // Step 3: read declared permissions from package.json (ethos.permissions)
     const permissions = await readPluginPermissions(pkgDir);
@@ -139,11 +153,18 @@ async function installPlugin(pkg: string): Promise<void> {
     await rm(tmpDir, { recursive: true, force: true });
   }
 
-  // Step 7: approved — run the real install in the plugins dir
+  // Step 7: approved — install into the final plugins dir.
+  // --ignore-scripts is intentional: lifecycle scripts (preinstall/install/
+  // postinstall) are not scanned and can execute arbitrary code. Plugins must
+  // not rely on npm lifecycle scripts for their runtime behaviour.
   console.log(
     `\n${c.dim}Installing ${c.reset}${c.bold}${pkg}${c.reset}${c.dim} to ${dir}...${c.reset}\n`,
   );
-  const result = spawnSync('npm', ['install', '--prefix', dir, pkg], { stdio: 'inherit' });
+  const result = spawnSync(
+    'npm',
+    ['install', '--prefix', dir, '--ignore-scripts', '--no-audit', pkg],
+    { stdio: 'inherit' },
+  );
   if (result.status !== 0) {
     console.error(`${c.red}Install failed.${c.reset}`);
     process.exit(result.status ?? 1);
@@ -151,15 +172,39 @@ async function installPlugin(pkg: string): Promise<void> {
   console.log(`\n${c.green}✓ Installed.${c.reset} Restart ethos to load the plugin.`);
 }
 
-/** Derive the node_modules subdirectory path from a package arg (strips version, handles scoped). */
-function pkgDirFromArg(pkg: string): string {
-  if (pkg.startsWith('@')) {
-    // @scope/name[@version] → @scope/name
-    const secondAt = pkg.indexOf('@', 1);
-    return secondAt > 0 ? pkg.slice(0, secondAt) : pkg;
+/**
+ * Discover the installed package directory from the manifest npm writes into
+ * the temp prefix dir. Fails closed if the manifest is absent or ambiguous —
+ * the caller must not scan or install when this throws.
+ */
+async function findInstalledPkgDir(tmpDir: string, pkgArg: string): Promise<string> {
+  let manifest: { dependencies?: Record<string, string> } = {};
+  try {
+    manifest = JSON.parse(await readFile(join(tmpDir, 'package.json'), 'utf-8')) as typeof manifest;
+  } catch {
+    throw new EthosError({
+      code: 'SKILL_INSTALL_FAILED',
+      cause: `npm did not produce a package manifest — cannot verify what was installed for '${pkgArg}'`,
+      action: 'Try a plain package name (e.g. ethos-plugin-foo) rather than a tarball or git URL.',
+    });
   }
-  const atIdx = pkg.indexOf('@');
-  return atIdx > 0 ? pkg.slice(0, atIdx) : pkg;
+  const names = Object.keys(manifest.dependencies ?? {});
+  if (names.length === 0) {
+    throw new EthosError({
+      code: 'SKILL_INSTALL_FAILED',
+      cause: `npm manifest has no recorded dependencies — cannot locate installed package for '${pkgArg}'`,
+      action: 'Ensure the package name is correct and try again.',
+    });
+  }
+  if (names.length > 1) {
+    throw new EthosError({
+      code: 'SKILL_INSTALL_FAILED',
+      cause: `npm manifest has unexpected multiple dependencies (${names.join(', ')}) — cannot safely identify '${pkgArg}'`,
+      action: 'Install plugins one at a time.',
+    });
+  }
+  const pkgName = names[0];
+  return join(tmpDir, 'node_modules', pkgName);
 }
 
 async function readPluginPermissions(pkgDir: string): Promise<PluginScanPermissions> {

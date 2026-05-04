@@ -10,13 +10,17 @@ export interface PersonalitySafetyConfig {
   /**
    * Opt-in allowlist for skill-declared permissions. When absent, skills that
    * declare sensitive permissions are warned about but still loaded (backward
-   * compat). When present, a skill declaring a permission not listed here is
-   * rejected by ingest-filter.
+   * compat). When present, each category is enforced against declared values:
+   *   true          — any value for that category is allowed
+   *   string[]      — only the listed paths/hosts/vars are allowed; any
+   *                   undeclared value causes the skill to be rejected
+   *   false/absent  — no value for that category is allowed
    */
   allowed_skill_permissions?: {
-    fs_write?: boolean;
-    network?: boolean;
-    mcp_env_passthrough?: boolean;
+    fs_read?: string[] | boolean;
+    fs_write?: string[] | boolean;
+    network?: string[] | boolean;
+    mcp_env_passthrough?: string[] | boolean;
   };
 }
 

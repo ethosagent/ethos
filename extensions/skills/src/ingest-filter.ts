@@ -137,10 +137,26 @@ function checkToolReach(
 }
 
 /**
+ * Returns the subset of `declared` values that are not covered by `policy`.
+ *   policy === undefined/false → all declared values are disallowed
+ *   policy === true            → all declared values are allowed
+ *   policy === string[]        → only values in the list are allowed
+ */
+function disallowedValues(declared: string[], policy: string[] | boolean | undefined): string[] {
+  if (!policy) return [...declared];
+  if (policy === true) return [];
+  return declared.filter((v) => !(policy as string[]).includes(v));
+}
+
+/**
  * Check declared skill permissions against the personality's safety policy.
  * Returns a FilterResult to reject the skill when a policy is configured and
- * the skill declares a permission not allowed by that policy. When no policy
- * is configured, warns only (backward compat).
+ * the skill declares a value not covered by that policy. When no policy is
+ * configured, warns only (backward compat).
+ *
+ * Enforcement is value-scoped: a policy of network: ['github.com'] blocks a
+ * skill that also declares 'evil.com', rather than just blocking the whole
+ * network category.
  */
 function checkSkillPermissions(
   skill: Skill,
@@ -154,34 +170,57 @@ function checkSkillPermissions(
   const policy = personality.safety?.allowed_skill_permissions;
   const enforce = policy !== undefined;
 
+  if (perms.fs_read && perms.fs_read.length > 0) {
+    if (enforce) {
+      const bad = disallowedValues(perms.fs_read, policy.fs_read);
+      if (bad.length > 0) {
+        return {
+          include: false,
+          reason: `declares fs_read for disallowed path(s): ${bad.join(', ')}`,
+        };
+      }
+    }
+    onWarn?.(
+      `[boot] ${personalityId}: skill '${skill.qualifiedName}' declares fs_read: [${perms.fs_read.join(', ')}]`,
+    );
+  }
   if (perms.fs_write && perms.fs_write.length > 0) {
-    if (enforce && !policy.fs_write) {
-      return {
-        include: false,
-        reason: `declares fs_write but personality '${personalityId}' does not allow it`,
-      };
+    if (enforce) {
+      const bad = disallowedValues(perms.fs_write, policy.fs_write);
+      if (bad.length > 0) {
+        return {
+          include: false,
+          reason: `declares fs_write for disallowed path(s): ${bad.join(', ')}`,
+        };
+      }
     }
     onWarn?.(
       `[boot] ${personalityId}: skill '${skill.qualifiedName}' declares fs_write: [${perms.fs_write.join(', ')}]`,
     );
   }
   if (perms.network && perms.network.length > 0) {
-    if (enforce && !policy.network) {
-      return {
-        include: false,
-        reason: `declares network access but personality '${personalityId}' does not allow it`,
-      };
+    if (enforce) {
+      const bad = disallowedValues(perms.network, policy.network);
+      if (bad.length > 0) {
+        return {
+          include: false,
+          reason: `declares network access to disallowed host(s): ${bad.join(', ')}`,
+        };
+      }
     }
     onWarn?.(
       `[boot] ${personalityId}: skill '${skill.qualifiedName}' declares network access: [${perms.network.join(', ')}]`,
     );
   }
   if (perms.mcp_env_passthrough && perms.mcp_env_passthrough.length > 0) {
-    if (enforce && !policy.mcp_env_passthrough) {
-      return {
-        include: false,
-        reason: `declares mcp_env_passthrough but personality '${personalityId}' does not allow it`,
-      };
+    if (enforce) {
+      const bad = disallowedValues(perms.mcp_env_passthrough, policy.mcp_env_passthrough);
+      if (bad.length > 0) {
+        return {
+          include: false,
+          reason: `declares mcp_env_passthrough for disallowed var(s): ${bad.join(', ')}`,
+        };
+      }
     }
     onWarn?.(
       `[boot] ${personalityId}: skill '${skill.qualifiedName}' requests MCP env passthrough: [${perms.mcp_env_passthrough.join(', ')}]`,

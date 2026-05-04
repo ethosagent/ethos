@@ -13,7 +13,7 @@ import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { PluginLoader } from '@ethosagent/plugin-loader';
 import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import { createInjectors, UniversalScanner } from '@ethosagent/skills';
+import { createInjectors, filterSkill, UniversalScanner } from '@ethosagent/skills';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { createBrowserTools } from '@ethosagent/tools-browser';
 import { createCodeTools } from '@ethosagent/tools-code';
@@ -220,12 +220,21 @@ export async function createAgentLoop(
       tools.register(tool);
   }
 
-  // Collect mcp_env_passthrough values declared by skills in the global pool.
-  // These are merged into every MCP server config so that skills can request
-  // env vars without requiring manual mcpEnvPassthrough entries in mcp.json.
+  // Collect mcp_env_passthrough from skills that are actually admitted for the
+  // active personality. Skills rejected by allowed_skill_permissions or the
+  // ingest filter cannot contribute passthrough. Passthrough is then applied
+  // only to MCP servers the personality is allowed to reach (mcp_servers
+  // allowlist), not globally to every server.
+  const activePerson = personalities.getDefault();
   const skillPool = await new UniversalScanner().scan();
+  // Use the personality's declared toolset as an approximation for capability
+  // filtering at boot time (MCP tools aren't registered yet).
+  const bootToolNames = new Set(activePerson.toolset ?? []);
+  const attachedServers = new Set(activePerson.mcp_servers ?? []);
   const skillPassthrough = new Set<string>();
   for (const skill of skillPool.values()) {
+    const decision = filterSkill(skill, activePerson, bootToolNames);
+    if (!decision.include) continue;
     for (const v of skill.permissions?.mcp_env_passthrough ?? []) {
       skillPassthrough.add(v);
     }
@@ -235,10 +244,16 @@ export async function createAgentLoop(
   const mcpConfig =
     skillPassthrough.size === 0
       ? rawMcpConfig
-      : rawMcpConfig.map((cfg) => ({
-          ...cfg,
-          mcpEnvPassthrough: [...new Set([...(cfg.mcpEnvPassthrough ?? []), ...skillPassthrough])],
-        }));
+      : rawMcpConfig.map((cfg) => {
+          // Only grant extra passthrough to servers this personality can reach.
+          if (attachedServers.size > 0 && !attachedServers.has(cfg.name)) return cfg;
+          return {
+            ...cfg,
+            mcpEnvPassthrough: [
+              ...new Set([...(cfg.mcpEnvPassthrough ?? []), ...skillPassthrough]),
+            ],
+          };
+        });
   const mcpManager = new McpManager(mcpConfig);
   await mcpManager.connect();
   for (const tool of mcpManager.getTools()) tools.register(tool);
@@ -247,7 +262,6 @@ export async function createAgentLoop(
   // personality has no mcp_servers allowlist — the tools will be registered but
   // the personality filter will hide them on every turn.
   if (mcpConfig.length > 0) {
-    const activePerson = personalities.getDefault();
     const attached = activePerson.mcp_servers ?? [];
     if (attached.length === 0) {
       const names = mcpConfig.map((s) => s.name).join(', ');
