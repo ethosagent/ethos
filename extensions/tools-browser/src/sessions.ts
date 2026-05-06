@@ -32,14 +32,17 @@ export interface BrowserSession {
 const sessions = new Map<string, BrowserSession>();
 
 /**
+ * @internal
+ *
  * Stable, order-independent hash of the policy alone. Used both as part
  * of the session map key (combined with sessionId) AND stored on the
  * BrowserSession as `policyFingerprint`. Two separate identifiers — see
  * `makeMapKey` below — so the security invariant check in
  * findActiveSession compares policy-to-policy, not key-to-key.
  *
- * Exported so tests can construct adversarial scenarios (right map
- * key + wrong fingerprint, etc.) without re-implementing the hash.
+ * Exported ONLY so tests can construct adversarial scenarios (right
+ * map key + wrong fingerprint, etc.) without re-implementing the hash.
+ * Not stable API — production callers must not depend on the format.
  */
 export function policyFingerprint(policy: NetworkPolicyShape): string {
   const sorted = {
@@ -50,8 +53,13 @@ export function policyFingerprint(policy: NetworkPolicyShape): string {
   return createHash('sha256').update(JSON.stringify(sorted)).digest('hex').slice(0, 16);
 }
 
-/** Map key for the sessions Map. Exported for the same reason as
- *  policyFingerprint — tests need it to construct adversarial fixtures. */
+/**
+ * @internal
+ *
+ * Map key for the sessions Map. Exported for the same reason as
+ * `policyFingerprint` — tests need it to construct adversarial
+ * fixtures. Not stable API.
+ */
 export function makeMapKey(sessionId: string, policy: NetworkPolicyShape): string {
   return `${sessionId}::${policyFingerprint(policy)}`;
 }
