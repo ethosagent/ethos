@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Tool, ToolResult } from '@ethosagent/types';
-import { isPlaywrightInstalled, sessions } from './sessions';
+import { findSessionBySessionId, isPlaywrightInstalled } from './sessions';
 
 export const browserScreenshotTool: Tool = {
   name: 'browser_screenshot',
@@ -13,7 +13,7 @@ export const browserScreenshotTool: Tool = {
   isAvailable: isPlaywrightInstalled,
   schema: { type: 'object', properties: {}, required: [] },
   async execute(_, ctx): Promise<ToolResult> {
-    const session = sessions.get(ctx.sessionId);
+    const session = findSessionBySessionId(ctx.sessionId);
     if (!session) {
       return {
         ok: false,

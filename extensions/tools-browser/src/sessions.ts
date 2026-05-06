@@ -2,61 +2,117 @@
 // Shared browser session state
 // ---------------------------------------------------------------------------
 
-import type { Browser, Page } from 'playwright';
+import { createHash } from 'node:crypto';
+import type { Browser, BrowserContext, Page } from 'playwright';
 import type { A11yRef } from './a11y';
+
+export interface NetworkPolicyShape {
+  allow?: string[];
+  deny?: string[];
+  allow_private_urls?: boolean;
+}
 
 export interface BrowserSession {
   browser: Browser;
+  context: BrowserContext;
   page: Page;
   refs: Map<string, A11yRef>;
   lastUrl: string;
   /**
-   * Ch.7 — mutable network policy ref read by the page-route interceptor.
-   * `browse_url` writes the active personality's policy here on every call;
-   * the route handler installed once per session reads it. Keeping the
-   * handler stable (set-once) avoids the Playwright route-stacking
-   * footgun where calling `page.route` repeatedly accumulates handlers.
+   * Ch.7 — fingerprint of the network policy this session was created
+   * under. The session is keyed by (sessionId, policyFingerprint), so
+   * a personality / policy switch lookups-misses and forces a fresh
+   * session with a fresh route handler + serviceWorkers='block' on
+   * its own BrowserContext. Eliminates the race where browser_click
+   * triggers a navigation gated by a stale policy ref.
    */
-  networkPolicyRef: {
-    current: { allow?: string[]; deny?: string[]; allow_private_urls?: boolean };
-  };
-  /** True once the route interceptor is installed. */
-  routeInstalled?: boolean;
+  policyFingerprint: string;
 }
 
-export const sessions = new Map<string, BrowserSession>();
+const sessions = new Map<string, BrowserSession>();
+
+function makeKey(sessionId: string, policy: NetworkPolicyShape): string {
+  // Stable, order-independent hash — JSON.stringify with sorted keys is
+  // sufficient because the policy shape is small and primitive.
+  const sorted = {
+    allow: [...(policy.allow ?? [])].sort(),
+    deny: [...(policy.deny ?? [])].sort(),
+    allow_private_urls: !!policy.allow_private_urls,
+  };
+  return `${sessionId}::${createHash('sha256').update(JSON.stringify(sorted)).digest('hex').slice(0, 16)}`;
+}
+
+// Back-compat surface — older callers (browser_click etc.) only know the
+// sessionId, so the key-by-policy machinery hides behind getOrCreateSession.
+export { sessions };
+
+/** Look up a session by `sessionId` regardless of which policy fingerprint
+ *  it was created under. Used by browser_click / browser_type which act on
+ *  the page state set up by a prior browse_url call. */
+export function findSessionBySessionId(sessionId: string): BrowserSession | undefined {
+  for (const [k, s] of sessions.entries()) {
+    if (k === sessionId || k.startsWith(`${sessionId}::`)) return s;
+  }
+  return undefined;
+}
 
 export async function getChromium() {
   const { chromium } = await import('playwright');
   return chromium;
 }
 
-export async function getOrCreateSession(sessionId: string): Promise<BrowserSession> {
-  const existing = sessions.get(sessionId);
-  if (existing) return existing;
+export async function getOrCreateSession(
+  sessionId: string,
+  policy: NetworkPolicyShape = {},
+): Promise<BrowserSession> {
+  const fingerprint = makeKey(sessionId, policy);
+
+  // Look up by fingerprint first (Ch.7 strict path).
+  const exact = sessions.get(fingerprint);
+  if (exact) return exact;
+
+  // Look up by sessionId across any prior fingerprint and tear down
+  // on policy mismatch — this is what protects browser_click /
+  // browser_type from operating under a stale policy.
+  for (const [k, s] of sessions.entries()) {
+    if (k.startsWith(`${sessionId}::`) && s.policyFingerprint !== fingerprint) {
+      sessions.delete(k);
+      await s.context.close().catch(() => {});
+      await s.browser.close().catch(() => {});
+    }
+  }
 
   const chromium = await getChromium();
   const browser = await chromium.launch({
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
   });
-  const page = await browser.newPage();
+  // serviceWorkers: 'block' — a registered service worker can intercept
+  // fetches before page.route() sees them (Playwright documents this
+  // behavior). Blocking SW registration at the context level closes
+  // the bypass.
+  const context = await browser.newContext({ serviceWorkers: 'block' });
+  const page = await context.newPage();
 
   const session: BrowserSession = {
     browser,
+    context,
     page,
     refs: new Map(),
     lastUrl: '',
-    networkPolicyRef: { current: {} },
+    policyFingerprint: fingerprint,
   };
-  sessions.set(sessionId, session);
+  sessions.set(fingerprint, session);
   return session;
 }
 
 export async function closeSession(sessionId: string): Promise<void> {
-  const s = sessions.get(sessionId);
-  if (!s) return;
-  sessions.delete(sessionId);
-  await s.browser.close().catch(() => {});
+  for (const [k, s] of sessions.entries()) {
+    if (k.startsWith(`${sessionId}::`) || k === sessionId) {
+      sessions.delete(k);
+      await s.context.close().catch(() => {});
+      await s.browser.close().catch(() => {});
+    }
+  }
 }
 
 export function isPlaywrightInstalled(): boolean {

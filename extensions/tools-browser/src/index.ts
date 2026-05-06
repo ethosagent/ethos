@@ -1,5 +1,5 @@
 import { lookup } from 'node:dns/promises';
-import { validateUrl } from '@ethosagent/safety-network';
+import { type NetworkPolicy, validateUrl } from '@ethosagent/safety-network';
 import { checkSsrf } from '@ethosagent/tools-web';
 import type { Tool, ToolResult } from '@ethosagent/types';
 import type { Page } from 'playwright';
@@ -7,11 +7,49 @@ import { type A11yRef, parseAriaSnapshot } from './a11y';
 import { browserScreenshotTool } from './browser-screenshot';
 import { createBrowserVisionClickTool } from './browser-vision-click';
 import { createBrowserVisionTypeTool } from './browser-vision-type';
-import { closeSession, getOrCreateSession, isPlaywrightInstalled, sessions } from './sessions';
+import {
+  type BrowserSession,
+  closeSession,
+  findSessionBySessionId,
+  getOrCreateSession,
+  isPlaywrightInstalled,
+} from './sessions';
 
 async function resolveHost(host: string): Promise<string[]> {
   const records = await lookup(host, { all: true });
   return records.map((r) => r.address);
+}
+
+// Tracks which sessions have had their context-level route installed.
+// We can't put this on BrowserSession itself without circular imports,
+// and the install-once invariant lives at the call-site anyway.
+const installedRoutes = new WeakSet<BrowserSession>();
+
+async function getOrCreateSessionWithRoute(
+  sessionId: string,
+  policy: NetworkPolicy,
+): Promise<BrowserSession> {
+  const session = await getOrCreateSession(sessionId, policy);
+  if (!installedRoutes.has(session)) {
+    // Context-level route covers every page in the context. Service
+    // workers are blocked at context creation (sessions.ts), so a
+    // page can't register one to bypass this check.
+    await session.context.route('**/*', async (route) => {
+      const reqUrl = route.request().url();
+      if (!reqUrl.startsWith('http://') && !reqUrl.startsWith('https://')) {
+        await route.continue();
+        return;
+      }
+      const check = await validateUrl(reqUrl, policy, resolveHost);
+      if (!check.ok) {
+        await route.abort('failed');
+        return;
+      }
+      await route.continue();
+    });
+    installedRoutes.add(session);
+  }
+  return session;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,28 +136,12 @@ const browseUrlTool: Tool = {
     }
 
     try {
-      const session = await getOrCreateSession(ctx.sessionId);
-      // Update the policy ref BEFORE installing the route so the first
-      // request a new session makes is already gated.
-      session.networkPolicyRef.current = policy;
-      if (!session.routeInstalled) {
-        await session.page.route('**/*', async (route) => {
-          const reqUrl = route.request().url();
-          // chrome:// / about: / data: appear during page bootstrap
-          // and don't need the same gate; let Playwright handle them.
-          if (!reqUrl.startsWith('http://') && !reqUrl.startsWith('https://')) {
-            await route.continue();
-            return;
-          }
-          const check = await validateUrl(reqUrl, session.networkPolicyRef.current, resolveHost);
-          if (!check.ok) {
-            await route.abort('failed');
-            return;
-          }
-          await route.continue();
-        });
-        session.routeInstalled = true;
-      }
+      // Session is keyed by (sessionId, policy fingerprint). A policy
+      // change tears down and rebuilds the BrowserContext so the page-
+      // route handler is fresh and serviceWorkers stay blocked. New
+      // sessions install the route on a context-level handler before
+      // any page navigation.
+      const session = await getOrCreateSessionWithRoute(ctx.sessionId, policy);
       await session.page.goto(url, {
         waitUntil: wait_for,
         timeout: 30_000,
@@ -173,7 +195,7 @@ const browserClickTool: Tool = {
 
     if (!element_ref) return { ok: false, error: 'element_ref is required', code: 'input_invalid' };
 
-    const session = sessions.get(ctx.sessionId);
+    const session = findSessionBySessionId(ctx.sessionId);
     if (!session) {
       return {
         ok: false,
@@ -260,7 +282,7 @@ const browserTypeTool: Tool = {
     if (!element_ref) return { ok: false, error: 'element_ref is required', code: 'input_invalid' };
     if (text === undefined) return { ok: false, error: 'text is required', code: 'input_invalid' };
 
-    const session = sessions.get(ctx.sessionId);
+    const session = findSessionBySessionId(ctx.sessionId);
     if (!session) {
       return {
         ok: false,

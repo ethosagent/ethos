@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Tool, ToolResult } from '@ethosagent/types';
-import { isPlaywrightInstalled, sessions } from './sessions';
+import { findSessionBySessionId, isPlaywrightInstalled } from './sessions';
 import type { VisionResolverOptions } from './vision-resolver';
 import { resolveByA11y, resolveByVision } from './vision-resolver';
 
@@ -36,7 +36,7 @@ export function createBrowserVisionClickTool(visionOpts: VisionResolverOptions):
         return { ok: false, error: 'description is required', code: 'input_invalid' };
       }
 
-      const session = sessions.get(ctx.sessionId);
+      const session = findSessionBySessionId(ctx.sessionId);
       if (!session) {
         return {
           ok: false,
