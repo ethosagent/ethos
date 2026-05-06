@@ -1,0 +1,25 @@
+FROM docker/sandbox-templates:shell
+
+USER root
+
+# Dev tools + Node 24 + pnpm + Codex CLI
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bat \
+    ripgrep \
+    fd-find \
+    tmux \
+    curl \
+    ca-certificates \
+  && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+  && apt-get install -y --no-install-recommends nodejs \
+  && rm -rf /var/lib/apt/lists/* \
+  && ln -sf /usr/bin/batcat /usr/local/bin/bat \
+  && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
+  && corepack enable \
+  && corepack prepare pnpm@10.33.0 --activate \
+  && npm install -g @openai/codex
+
+USER agent
+
+# Claude CLI
+RUN curl -fsSL https://claude.ai/install.sh | bash

@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# codex-review-hook — Claude Code Stop hook for the auto-review loop.
+#
+# Triggered when Claude finishes a turn. Detects code changes, runs Codex,
+# and either:
+#   • approves and lets the turn end (exit 0)
+#   • blocks the stop with review feedback (exit 2) — Claude must continue
+#   • surfaces remaining issues at the iteration cap (exit 0)
+#
+# State (per session, in $TMPDIR/codex-review/):
+#   iter-<session>      iteration counter
+#   last-state-<session> sha256 of last reviewed working-tree state
+
+set -uo pipefail
+
+MAX_ITERATIONS=2
+STATE_DIR="${TMPDIR:-/tmp}/codex-review"
+mkdir -p "$STATE_DIR"
+
+# --- Read hook input ---
+HOOK_INPUT=$(cat)
+SESSION_ID=$(echo "$HOOK_INPUT" | jq -r '.session_id // "default"')
+
+ITER_FILE="$STATE_DIR/iter-$SESSION_ID"
+STATE_FILE="$STATE_DIR/last-state-$SESSION_ID"
+
+# --- Locate repo ---
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$REPO_ROOT"
+
+# --- Skip if user explicitly opted out ---
+if [[ "${SKIP_CODEX_REVIEW:-0}" == "1" ]]; then
+    exit 0
+fi
+
+# --- State key: HEAD sha + working tree status ---
+HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "no-head")
+TREE_HASH=$(git status --porcelain=v1 2>/dev/null | sha256sum | cut -d' ' -f1)
+CURRENT_STATE="$HEAD_SHA:$TREE_HASH"
+LAST_STATE=$(cat "$STATE_FILE" 2>/dev/null || echo "")
+
+# Skip if nothing changed since last review
+if [[ "$CURRENT_STATE" == "$LAST_STATE" ]]; then
+    exit 0
+fi
+
+# Skip if there is literally nothing to review (clean tree, no recent code-writing)
+if [[ -z "$(git status --porcelain=v1 2>/dev/null)" ]] && [[ -z "$LAST_STATE" ]]; then
+    echo "$CURRENT_STATE" > "$STATE_FILE"
+    exit 0
+fi
+
+# --- Increment iteration ---
+ITER=$(($(cat "$ITER_FILE" 2>/dev/null || echo 0) + 1))
+echo "$ITER" > "$ITER_FILE"
+
+# --- Locate review script ---
+REVIEW_SCRIPT="$HOME/.claude/skills/openai-reviewer/scripts/openai-review"
+if [[ ! -x "$REVIEW_SCRIPT" ]]; then
+    exit 0
+fi
+
+# --- Pick mode ---
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+if [[ "$BRANCH" == "main" || "$BRANCH" == "master" ]]; then
+    MODE="uncommitted"
+else
+    MODE="against-main"
+fi
+
+# --- Run review ---
+REVIEW=$("$REVIEW_SCRIPT" "$MODE" 2>/dev/null) || {
+    # Fail-open: don't block on review tool failure
+    rm -f "$ITER_FILE"
+    echo "$CURRENT_STATE" > "$STATE_FILE"
+    exit 0
+}
+
+VERDICT=$(echo "$REVIEW" | jq -r '.verdict // "approved"')
+SUMMARY=$(echo "$REVIEW" | jq -r '.summary // ""')
+BLOCKING=$(echo "$REVIEW" | jq '[.findings[] | select(.severity == "critical" or .severity == "high")] | length')
+
+echo "$CURRENT_STATE" > "$STATE_FILE"
+
+# --- Approved ---
+if [[ "$VERDICT" == "approved" || "$BLOCKING" -eq 0 ]]; then
+    rm -f "$ITER_FILE"
+    echo "[CODEX REVIEW] ✓ approved (iteration $ITER): $SUMMARY"
+    exit 0
+fi
+
+# --- Cap reached — surface, don't block ---
+if [[ "$ITER" -ge "$MAX_ITERATIONS" ]]; then
+    rm -f "$ITER_FILE"
+    echo "[CODEX REVIEW] ⚠ iteration cap ($MAX_ITERATIONS) reached. Remaining issues:"
+    echo "$REVIEW" | jq -c '.findings[] | select(.severity == "critical" or .severity == "high")'
+    exit 0
+fi
+
+# --- Keep going — block stop, hand findings to Claude ---
+{
+    echo "[CODEX REVIEW] iteration $ITER/$MAX_ITERATIONS — please address these findings before stopping:"
+    echo "$REVIEW"
+} >&2
+exit 2

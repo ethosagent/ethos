@@ -1,0 +1,8 @@
+# Claude Code local settings
+.claude/settings.local.json
+
+# OS files
+.DS_Store
+
+# Cache files from sandbox-setup.sh
+.cache/

@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# openai-review — Run Codex CLI on a diff, return findings as JSON.
+#
+# Usage: openai-review [<mode>] [--focus <area>]
+#
+# Modes (default: uncommitted):
+#   uncommitted     - staged + unstaged changes
+#   last-commit     - the most recent commit
+#   against-main    - branch + uncommitted vs main/master
+#   against-origin  - unpushed commits vs origin/<branch>
+#
+# Focus: security | performance | correctness | style | test | all (default)
+#
+# Output: JSON {verdict, summary, findings:[{severity, category, file, line, issue, suggestion}]}
+
+set -euo pipefail
+shopt -s inherit_errexit 2>/dev/null || true
+
+die() {
+    local msg="$1"
+    msg="${msg//\\/\\\\}"
+    msg="${msg//\"/\\\"}"
+    msg="${msg//$'\n'/\\n}"
+    msg="${msg//$'\r'/\\r}"
+    msg="${msg//$'\t'/\\t}"
+    printf '{"verdict":"error","summary":"%s","findings":[]}\n' "$msg"
+    exit 1
+}
+
+main_branch() {
+    git show-ref -q refs/heads/main && { echo "main"; return; }
+    git show-ref -q refs/heads/master && { echo "master"; return; }
+    git show-ref -q refs/remotes/origin/main && { echo "origin/main"; return; }
+    git show-ref -q refs/remotes/origin/master && { echo "origin/master"; return; }
+    die "No main/master branch found"
+}
+
+require_branch() {
+    local branch
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    [[ "$branch" == "HEAD" ]] && die "Detached HEAD — check out a branch first"
+    echo "$branch"
+}
+
+build_diff() {
+    case "$MODE" in
+        uncommitted)
+            git diff HEAD -- ':!*.lock' ':!pnpm-lock.yaml' ':!package-lock.json' ;;
+        last-commit)
+            git show HEAD ;;
+        against-main)
+            local main; main=$(main_branch)
+            local branch; branch=$(require_branch)
+            [[ "$branch" == "${main##*/}" ]] && { build_diff_uncommitted; return; }
+            git diff "$main" -- ':!*.lock' ':!pnpm-lock.yaml' ':!package-lock.json' ;;
+        against-origin)
+            local branch; branch=$(require_branch)
+            git show-ref -q "refs/remotes/origin/$branch" || die "origin/$branch not found — push your branch first"
+            git diff "origin/$branch"...HEAD ;;
+        *) die "Unknown mode: $MODE" ;;
+    esac
+}
+
+build_diff_uncommitted() {
+    git diff HEAD -- ':!*.lock' ':!pnpm-lock.yaml' ':!package-lock.json'
+}
+
+focus_clause() {
+    case "$FOCUS" in
+        security)    echo "Focus on security: injection, auth, data exposure, crypto, input validation." ;;
+        performance) echo "Focus on performance: complexity, memory, N+1, blocking ops, allocations." ;;
+        correctness) echo "Focus on correctness: logic errors, edge cases, null handling, race conditions." ;;
+        style)       echo "Focus on style: naming, organization, DRY, readability." ;;
+        test)        echo "Focus on test quality: coverage gaps, assertion quality, over-mocking, flaky patterns." ;;
+        all)         echo "Review comprehensively: security, correctness, performance, architecture." ;;
+        *) die "Unknown focus: $FOCUS" ;;
+    esac
+}
+
+# --- Args ---
+MODE="uncommitted"
+FOCUS="all"
+
+if [[ $# -gt 0 && "$1" != --* ]]; then
+    MODE="$1"
+    shift
+fi
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --focus)
+            [[ -z "${2:-}" ]] && die "--focus requires an argument"
+            FOCUS="$2"; shift 2 ;;
+        *) die "Unknown option: $1" ;;
+    esac
+done
+
+# --- Validation ---
+command -v codex >/dev/null 2>&1 || die "codex CLI not found — re-run sandbox-setup.sh"
+command -v jq >/dev/null 2>&1 || die "jq not found"
+git rev-parse --git-dir >/dev/null 2>&1 || die "Not a git repository"
+
+# --- Diff ---
+DIFF=$(build_diff)
+if [[ -z "$DIFF" ]]; then
+    printf '{"verdict":"approved","summary":"No changes to review.","findings":[]}\n'
+    exit 0
+fi
+
+# --- Pull project rules so Codex respects them ---
+PROJECT_RULES="No project rules found."
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+if [[ -n "$ROOT" && -f "$ROOT/CLAUDE.md" ]]; then
+    PROJECT_RULES=$(head -c 8192 "$ROOT/CLAUDE.md")
+fi
+
+FOCUS_TEXT=$(focus_clause)
+
+# --- Build prompt ---
+PROMPT=$(cat <<EOF
+Review this diff as Linus Torvalds would — blunt, no hedging, focused on what will break in 5 years.
+
+Look for:
+- Architectural foot-guns and brittle abstractions
+- Hidden coupling that surprises future maintainers
+- API choices that will be hard to evolve
+- "Cleverness" that obscures intent
+- Premature flexibility / speculative generality
+- Things that rot under load, scale, or team turnover
+
+If the code is fine, say so. Do not invent issues for thoroughness.
+
+$FOCUS_TEXT
+
+The project follows these rules — RESPECT them. Do NOT flag things they explicitly permit (e.g. "no error handling for impossible scenarios", "no abstractions for single-use code", "no speculative flexibility"):
+
+---
+$PROJECT_RULES
+---
+
+Output ONLY valid JSON in this exact shape — no markdown fences, no prose around it:
+
+{
+  "verdict": "approved" or "needs_changes",
+  "summary": "one-line summary",
+  "findings": [
+    {
+      "severity": "critical" | "high" | "medium" | "low",
+      "category": "security|performance|correctness|architecture|style|test",
+      "file": "path/to/file",
+      "line": <number or null>,
+      "issue": "what is wrong",
+      "suggestion": "how to fix"
+    }
+  ]
+}
+
+Verdict is "approved" iff there are zero critical and zero high severity findings.
+
+--- DIFF ---
+$DIFF
+--- END DIFF ---
+EOF
+)
+
+# --- Run codex ---
+RAW=$(codex exec --skip-git-repo-check "$PROMPT" 2>/dev/null) || RAW=$(codex exec "$PROMPT" 2>/dev/null) || die "codex exec failed"
+
+# Extract first JSON object from response (codex may wrap in prose)
+JSON=$(echo "$RAW" | awk '
+  /^\{/ { capture=1 }
+  capture { print; depth += gsub(/\{/, "{"); depth -= gsub(/\}/, "}"); if (depth == 0) exit }
+')
+
+# Validate
+if echo "$JSON" | jq -e . >/dev/null 2>&1; then
+    echo "$JSON"
+else
+    # Fail-open to avoid infinite loop in the auto-review hook
+    printf '{"verdict":"approved","summary":"Codex output unparseable; skipping.","findings":[]}\n'
+fi
