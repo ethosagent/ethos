@@ -6,6 +6,7 @@
   "engines": {
     "node": ">=24"
   },
+  "packageManager": "pnpm@10.33.0",
   "scripts": {
     "build": "pnpm -r --filter='./packages/*' --filter='./extensions/*' --filter='./apps/*' run build",
     "build:web": "pnpm --filter @ethosagent/web build",
