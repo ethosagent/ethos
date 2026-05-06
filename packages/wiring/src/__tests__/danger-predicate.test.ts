@@ -15,77 +15,92 @@ function person(approvalMode?: 'manual' | 'smart' | 'off'): PersonalityConfig {
 }
 
 describe('createDangerPredicate — Ch.4b approvalMode', () => {
-  it('manual mode (default) surfaces dangerous reason', () => {
-    const pred = createDangerPredicate({ getPersonality: () => person('manual') });
-    const r = pred(payload('terminal', { command: 'rm -rf /' }));
-    expect(r).toMatch(/recursive force-delete/);
-  });
-
-  it('off mode auto-approves NON-hardline danger by returning null', () => {
-    // checkCommand currently returns hardline-only patterns, so to test
-    // the non-hardline path we need a tool that's flagged via alwaysAsk
-    // (legitimate dangerous, not hardline).
-    const pred = createDangerPredicate({
-      alwaysAsk: ['email_send'],
-      getPersonality: () => person('off'),
+  describe('hardline (terminal checkCommand)', () => {
+    it('manual mode surfaces the hardline reason', () => {
+      const pred = createDangerPredicate({ getPersonality: () => person('manual') });
+      const r = pred(payload('terminal', { command: 'rm -rf /' }));
+      expect(r).toMatch(/recursive force-delete/);
     });
-    // alwaysAsk takes precedence over mode (legitimate UX: user explicitly
-    // opted that tool into "always ask" — off shouldn't unlock it).
-    const r = pred(payload('email_send', { to: 'a@b' }));
-    expect(r).toMatch(/explicit approval/);
-  });
 
-  it('off mode keeps hardline blocking on terminal', () => {
-    // Even with off, the hardline checkCommand reason still surfaces —
-    // belt-and-suspenders alongside the terminalGuardHook hard-block.
-    const pred = createDangerPredicate({ getPersonality: () => person('off') });
-    const r = pred(payload('terminal', { command: 'rm -rf /' }));
-    expect(r).toMatch(/recursive force-delete/);
-  });
-
-  it('smart mode auto-approves when callback returns true', () => {
-    const pred = createDangerPredicate({
-      getPersonality: () => person('smart'),
-      smartApprove: () => true,
+    it('off mode does NOT auto-approve hardline (still surfaces the reason)', () => {
+      // The terminalGuardHook hard-blocks regardless of mode; the
+      // predicate keeps returning the reason so the approval flow's
+      // error message stays meaningful.
+      const pred = createDangerPredicate({ getPersonality: () => person('off') });
+      const r = pred(payload('terminal', { command: 'rm -rf /' }));
+      expect(r).toMatch(/recursive force-delete/);
     });
-    // No hardline pattern → predicate consults smart callback → true → null.
-    // To exercise this, we need a non-hardline danger reason. The current
-    // checkCommand only emits hardline reasons, so test via alwaysAsk —
-    // but alwaysAsk pre-empts the mode logic. Simulate a non-hardline
-    // dangerous shape by mocking through a custom predicate path.
-    // The behavioral assertion is: when the predicate has a non-hardline
-    // dangerous reason and mode=smart and callback=true, return null.
-    // Confirmed indirectly via the off-mode/hardline test above (mode
-    // logic is invoked correctly only when isHardline=false).
-    expect(pred(payload('innocuous'))).toBeNull();
-  });
 
-  it('smart mode without callback degrades to manual', () => {
-    // Without smartApprove wired, smart mode has no fast-path; the
-    // dangerous reason surfaces just like manual.
-    const pred = createDangerPredicate({ getPersonality: () => person('smart') });
-    const r = pred(payload('terminal', { command: 'rm -rf /' }));
-    // Hardline dominates anyway, but the assertion holds — mode does
-    // not silently swallow the reason.
-    expect(r).toMatch(/recursive force-delete/);
-  });
-
-  it('alwaysAsk takes precedence over approvalMode', () => {
-    const pred = createDangerPredicate({
-      alwaysAsk: ['email_send'],
-      getPersonality: () => person('off'),
+    it('smart mode does NOT auto-approve hardline either', () => {
+      const pred = createDangerPredicate({
+        getPersonality: () => person('smart'),
+        smartApprove: () => true,
+      });
+      const r = pred(payload('terminal', { command: 'rm -rf /' }));
+      expect(r).toMatch(/recursive force-delete/);
     });
-    expect(pred(payload('email_send'))).toMatch(/explicit approval/);
   });
 
-  it('returns null for non-dangerous tools', () => {
-    const pred = createDangerPredicate({ getPersonality: () => person('manual') });
-    expect(pred(payload('terminal', { command: 'echo hi' }))).toBeNull();
+  describe('non-hardline (alwaysAsk)', () => {
+    it('manual surfaces the always-ask reason', () => {
+      const pred = createDangerPredicate({
+        alwaysAsk: ['email_send'],
+        getPersonality: () => person('manual'),
+      });
+      const r = pred(payload('email_send', { to: 'a@b' }));
+      expect(r).toMatch(/email_send requires explicit approval/);
+    });
+
+    it('off auto-approves the always-ask tool (cli/cron use case)', () => {
+      const pred = createDangerPredicate({
+        alwaysAsk: ['email_send'],
+        getPersonality: () => person('off'),
+      });
+      expect(pred(payload('email_send', { to: 'a@b' }))).toBeNull();
+    });
+
+    it('smart consults the callback — true → auto-approve', () => {
+      let callbackArgs: { tool?: string; reason?: string } = {};
+      const pred = createDangerPredicate({
+        alwaysAsk: ['email_send'],
+        getPersonality: () => person('smart'),
+        smartApprove: (p, reason) => {
+          callbackArgs = { tool: p.toolName, reason };
+          return true;
+        },
+      });
+      expect(pred(payload('email_send', { to: 'a@b' }))).toBeNull();
+      expect(callbackArgs.tool).toBe('email_send');
+      expect(callbackArgs.reason).toMatch(/explicit approval/);
+    });
+
+    it('smart consults the callback — false → surface the reason', () => {
+      const pred = createDangerPredicate({
+        alwaysAsk: ['email_send'],
+        getPersonality: () => person('smart'),
+        smartApprove: () => false,
+      });
+      expect(pred(payload('email_send', { to: 'a@b' }))).toMatch(/explicit approval/);
+    });
+
+    it('smart without callback degrades to manual', () => {
+      const pred = createDangerPredicate({
+        alwaysAsk: ['email_send'],
+        getPersonality: () => person('smart'),
+      });
+      expect(pred(payload('email_send', { to: 'a@b' }))).toMatch(/explicit approval/);
+    });
   });
 
-  it('without getPersonality, defaults to manual behavior', () => {
-    const pred = createDangerPredicate();
-    expect(pred(payload('terminal', { command: 'rm -rf /' }))).toMatch(/recursive force-delete/);
-    expect(pred(payload('terminal', { command: 'echo hi' }))).toBeNull();
+  describe('non-dangerous tools', () => {
+    it('returns null for benign terminal commands', () => {
+      const pred = createDangerPredicate({ getPersonality: () => person('manual') });
+      expect(pred(payload('terminal', { command: 'echo hi' }))).toBeNull();
+    });
+
+    it('returns null when no getPersonality and no danger', () => {
+      const pred = createDangerPredicate();
+      expect(pred(payload('terminal', { command: 'echo hi' }))).toBeNull();
+    });
   });
 });

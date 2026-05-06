@@ -39,46 +39,45 @@ export interface CreateDangerPredicateOptions {
  * Default danger predicate.
  *
  * Resolution order:
- *   1. Always-ask list   → return reason (drives modal in every mode).
- *   2. Hardline command  → return reason (Ch.4a — non-overridable; the
+ *   1. Hardline command  → return reason (Ch.4a — non-overridable; the
  *                          terminalGuardHook hard-blocks separately so
  *                          this is belt + suspenders).
- *   3. approvalMode      →
- *        manual (default) → return any other dangerous reason as before.
- *        off              → return null for every NON-hardline danger
- *                           (auto-approve — the hardline guard hook
- *                           still blocks, even in `off`).
+ *   2. Always-ask / non-hardline danger → consult approvalMode:
+ *        manual (default) → return the reason (drives the modal).
+ *        off              → return null (auto-approve — hardline still
+ *                           hard-blocks separately).
  *        smart            → consult `smartApprove` callback. true =
  *                           auto-approve, false = surface the reason.
  *                           Without the callback wired, smart degrades
  *                           to manual.
+ *
+ * The plan reserves `off` for trusted local automation (cron, batch);
+ * the load-time check in personality registry rejects `off` + channel
+ * ingress so a remote sender can never drive an auto-approved
+ * dangerous tool.
  */
 export function createDangerPredicate(opts: CreateDangerPredicateOptions = {}): DangerPredicate {
   const alwaysAsk = new Set(opts.alwaysAsk ?? []);
   return (payload) => {
-    if (alwaysAsk.has(payload.toolName)) {
-      return `${payload.toolName} requires explicit approval`;
-    }
-
-    let dangerReason: string | null = null;
-    let isHardline = false;
+    // Hardline command first — non-overridable in every mode.
+    let hardlineReason: string | null = null;
     if (payload.toolName === 'terminal') {
       const args = payload.args as { command?: string } | null | undefined;
       if (args?.command) {
         const result = checkCommand(args.command);
-        if (result.dangerous) {
-          dangerReason = result.reason;
-          isHardline = true; // every checkCommand hit is hardline today
-        }
+        if (result.dangerous) hardlineReason = result.reason;
       }
     }
+    if (hardlineReason) return hardlineReason;
 
+    // Non-hardline danger — alwaysAsk is the only such source today.
+    // Future: per-tool risk classifiers (sql_execute, kubectl, etc.)
+    // would also produce non-hardline reasons that route through here.
+    let dangerReason: string | null = null;
+    if (alwaysAsk.has(payload.toolName)) {
+      dangerReason = `${payload.toolName} requires explicit approval`;
+    }
     if (!dangerReason) return null;
-
-    // Hardline always surfaces — even in `off` mode the guard hook will
-    // hard-block, but the predicate keeps returning the reason so any
-    // intermediate UI still shows it.
-    if (isHardline) return dangerReason;
 
     const mode = opts.getPersonality?.(payload)?.safety?.approvalMode ?? 'manual';
     if (mode === 'off') return null;

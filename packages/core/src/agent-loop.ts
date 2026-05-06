@@ -895,6 +895,21 @@ export class AgentLoop {
         prepped.push({ toolCallId: tc.toolCallId, name: tc.toolName, args: effectiveArgs });
       }
 
+      // Ch.6a — if observe() of any tool_start in this batch produced
+      // a non-allow decision, mark every still-unrejected tool as
+      // rejected and skip executeParallel. The decision was emitted
+      // BEFORE the tool ran; we must not let it run anyway. This is
+      // the bug Codex called out: the iteration-top check would only
+      // fire AFTER the batch executed.
+      const haltDuringBatch = getHalt();
+      if (haltDuringBatch) {
+        for (const p of prepped) {
+          if (p.rejected === undefined) {
+            p.rejected = `Watcher halted before execution: ${haltDuringBatch.reason}`;
+          }
+        }
+      }
+
       // Execute only non-rejected tools; results keyed by toolCallId
       const execInputs = prepped
         .filter((p) => p.rejected === undefined)

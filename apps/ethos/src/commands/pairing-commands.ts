@@ -7,6 +7,15 @@
 // directly. The DB lives at `~/.ethos/pairing.db` by convention; if it
 // doesn't exist, every command returns "no pairing DB yet — start the
 // gateway first" rather than silently no-oping.
+//
+// **CLAUDE.md Storage-abstraction exception (parallel to
+// session-sqlite / memory-vector):** better-sqlite3 opens raw paths
+// and manages WAL/SHM natively, so it cannot be wrapped in the
+// Storage interface used by markdown / config reads. The pairing
+// store therefore reads `~/.ethos/pairing.db` via `node:fs.existsSync`
+// + `new Database(path)` directly. The path is computed via
+// `ethosDir()` (the same function every other command uses) so a
+// future relocation flips one place, not many.
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
