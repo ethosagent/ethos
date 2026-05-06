@@ -115,4 +115,31 @@ describe('createDangerPredicate — Ch.4b approvalMode', () => {
       expect(pred(payload('terminal', { command: 'echo hi' }))).toBeNull();
     });
   });
+
+  // Lock in the contract that the production web caller
+  // (apps/ethos/src/commands/serve.ts → createDangerPredicate())
+  // depends on: no options means hardline still hard-fails, and a
+  // personality with off mode does NOT bypass approval. This guards
+  // against future changes that would accidentally weaken the
+  // option-less default for the web profile.
+  describe('web-profile production-caller contract', () => {
+    it('hardline still surfaces even with empty options', () => {
+      const pred = createDangerPredicate();
+      expect(pred(payload('terminal', { command: 'rm -rf /' }))).toMatch(/recursive force-delete/);
+    });
+
+    it('off mode does NOT bypass approval without the capability flag', () => {
+      // The web profile constructs the predicate without
+      // allowAutoApproveDangerousTools, so a personality config that
+      // says off must STILL surface the danger reason for an
+      // alwaysAsk tool. The registry separately rejects off+channel
+      // ingress at load time; this is the predicate-local
+      // belt-and-suspenders.
+      const pred = createDangerPredicate({
+        alwaysAsk: ['email_send'],
+        getPersonality: () => person('off'),
+      });
+      expect(pred(payload('email_send', { to: 'a@b' }))).toMatch(/explicit approval/);
+    });
+  });
 });

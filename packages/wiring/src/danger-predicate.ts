@@ -37,14 +37,29 @@ export interface CreateDangerPredicateOptions {
    * Capability gate for `approvalMode: 'off'`. Without this set to
    * true, the predicate treats `off` as `manual` — i.e. it will NOT
    * auto-approve any dangerous tool, even when the personality config
-   * declares `off`. Callers (cli / cron / batch wiring) opt in
-   * explicitly when they have already verified the local execution
-   * conditions that make `off` safe (no channel ingress, owner-driven
-   * only). The personality-registry load-time check rejects `off` +
-   * channel ingress, but this flag is the predicate-local guarantee
-   * that survives any future caller bypassing the registry — Codex
-   * flagged the prior cross-module-only invariant as security-rot
-   * shaped.
+   * declares `off`. The personality-registry load-time check rejects
+   * `off` + channel ingress, but this flag is the predicate-local
+   * guarantee that survives any future caller bypassing the registry
+   * (Codex flagged the prior cross-module-only invariant as security-
+   * rot shaped).
+   *
+   * **Today, NO production caller passes this flag.** The only
+   * production user of the predicate is the web-profile approval
+   * modal (`apps/ethos/src/commands/serve.ts` → `createDangerPredicate()`),
+   * which intentionally omits the flag — web has channel ingress, so
+   * `off` mode would be rejected by the registry anyway, and the
+   * predicate refuses to honor it as a second-line check. CLI / TUI
+   * use the synchronous `createTerminalGuardHook` (hard-block, no
+   * approval flow). The cron / batch runners would be the natural
+   * future caller — when they grow an approval flow, they would
+   * construct the predicate with `allowAutoApproveDangerousTools: true`
+   * once they verify trusted-local execution conditions.
+   *
+   * As a result, `approvalMode: 'off'` has no observable runtime
+   * effect today; it is config-only documentation until a caller
+   * opts in. That is intentional: the capability gate is the API
+   * contract that prevents any future caller from accidentally
+   * auto-approving dangerous tools.
    */
   allowAutoApproveDangerousTools?: boolean;
 }
