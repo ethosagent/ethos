@@ -25,6 +25,18 @@ async function resolveHost(host: string): Promise<string[]> {
 // and the install-once invariant lives at the call-site anyway.
 const installedRoutes = new WeakSet<BrowserSession>();
 
+// Ch.7 — schemes the browser route allows through without policy
+// validation. Default-deny: anything not on this list is aborted, which
+// keeps `file:`, `javascript:`, `chrome:`, `chrome-extension:`, `ftp:`,
+// `gopher:`, `dict:`, `ldap:`, `ws:`, `wss:`, `blob:`, `data:` (per
+// Codex Ch.7 follow-up #7), and any future custom scheme out.
+//
+// The two exceptions are Playwright internal pages — `about:blank` and
+// `about:srcdoc` — which are local-only and used by Playwright itself
+// during page setup. Adding any further entry to this set requires a
+// matching validated policy path for the scheme.
+const BROWSER_ALLOWED_NON_HTTP_PREFIXES = ['about:'];
+
 async function getOrCreateSessionWithRoute(
   sessionId: string,
   policy: NetworkPolicy,
@@ -36,8 +48,17 @@ async function getOrCreateSessionWithRoute(
     // page can't register one to bypass this check.
     await session.context.route('**/*', async (route) => {
       const reqUrl = route.request().url();
-      if (!reqUrl.startsWith('http://') && !reqUrl.startsWith('https://')) {
-        await route.continue();
+      const isHttp = reqUrl.startsWith('http://') || reqUrl.startsWith('https://');
+      if (!isHttp) {
+        // Default-deny non-http(s). The narrow exception list keeps
+        // Playwright's about:blank/about:srcdoc internal pages working
+        // without opening a hole for file: / javascript: / data: / etc.
+        const allowed = BROWSER_ALLOWED_NON_HTTP_PREFIXES.some((p) => reqUrl.startsWith(p));
+        if (allowed) {
+          await route.continue();
+          return;
+        }
+        await route.abort('failed');
         return;
       }
       const check = await validateUrl(reqUrl, policy, resolveHost);
