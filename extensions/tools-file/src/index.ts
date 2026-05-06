@@ -115,6 +115,7 @@ export const readFileTool: Tool = {
     'Read a file from the filesystem. Supports line ranges for large files. Paths starting with ~/ are expanded to the home directory.',
   toolset: 'file',
   maxResultChars: 40_000,
+  outputIsUntrusted: true,
   schema: {
     type: 'object',
     properties: {
@@ -380,6 +381,7 @@ export const searchFilesTool: Tool = {
     'Search for a text pattern across files in a directory. Returns file paths, line numbers, and matching lines.',
   toolset: 'file',
   maxResultChars: 20_000,
+  outputIsUntrusted: true,
   schema: {
     type: 'object',
     properties: {

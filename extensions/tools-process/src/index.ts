@@ -180,6 +180,7 @@ function makeProcessLogs(dataDir: string): Tool {
     description: 'Return the last N lines from a process log. Interleaves stdout and stderr.',
     toolset: 'process',
     maxResultChars: 40_000,
+    outputIsUntrusted: true,
     schema: {
       type: 'object',
       properties: {

@@ -1,5 +1,14 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import {
+  DOWNGRADE_REJECTION_MESSAGE,
+  INJECTION_DEFENSE_PRELUDE,
+  type InjectionClassifier,
+  type InjectionVerdict,
+  resolveDowngradedTools,
+  shortPatternCheck,
+  wrapUntrusted,
+} from '@ethosagent/safety-injection';
 import { ScopedStorage } from '@ethosagent/storage-fs';
 import type {
   CompletionChunk,
@@ -119,6 +128,14 @@ export interface AgentLoopConfig {
    * behaviour is identical to before — no observability writes occur.
    */
   observability?: ObservabilityWriter;
+  /**
+   * Ch.3c — Tier-2 LLM injection classifier. When provided, AgentLoop calls
+   * it after wrapping any `outputIsUntrusted` tool result whose Tier-1
+   * pattern check fired, whose content is > 500 chars, or when the active
+   * personality's `safety.injectionDefense.classifier.alwaysCallLLM` is set.
+   * When unset, only Tier-1 (regex) classification runs.
+   */
+  injectionClassifier?: InjectionClassifier;
   // Maps personality ID → model ID. Resolution: modelRouting[id] → personality.model → llm.model
   modelRouting?: Record<string, string>;
   options?: {
@@ -190,6 +207,7 @@ export class AgentLoop {
   private readonly storage?: Storage;
   private readonly dataDir?: string;
   private readonly observability?: ObservabilityWriter;
+  private readonly injectionClassifier?: InjectionClassifier;
   /** Per-session accumulated spend in USD. Keyed by sessionKey. Reset via resetSessionCost(). */
   private readonly sessionCosts = new Map<string, number>();
 
@@ -214,6 +232,7 @@ export class AgentLoop {
     if (config.storage) this.storage = config.storage;
     if (config.dataDir) this.dataDir = config.dataDir;
     if (config.observability) this.observability = config.observability;
+    if (config.injectionClassifier) this.injectionClassifier = config.injectionClassifier;
   }
 
   /** Returns all available tools for inventory display (e.g. TUI splash screen). */
@@ -382,6 +401,13 @@ export class AgentLoop {
 
     const systemParts: string[] = [];
 
+    // Ch.3a — prepend the injection-defense prelude so the model knows how to
+    // read `<untrusted>` blocks before any personality content sets the tone.
+    const injectionDefenseEnabled = personality.safety?.injectionDefense?.enabled !== false;
+    if (injectionDefenseEnabled) {
+      systemParts.push(INJECTION_DEFENSE_PRELUDE);
+    }
+
     // ETHOS.md / personality identity — routes through Storage so ScopedStorage
     // and InMemoryStorage fixtures work correctly. Only runs when storage is
     // wired (production always provides it; tests without a real ethosFile skip).
@@ -446,6 +472,17 @@ export class AgentLoop {
     // Counted across all iterations within a single user turn.
     let totalToolCalls = 0;
     const toolNameCounts = new Map<string, number>();
+
+    // Ch.3d — post-untrusted-read downgrade. After any `outputIsUntrusted`
+    // tool returns, dangerous tools are blocked for the next N iterations.
+    // Counter resets at the start of each `run()` (a fresh user message),
+    // matching the chapter's "counter resets when the user sends a fresh
+    // message" contract.
+    const dgConfig = personality.safety?.injectionDefense?.postReadDowngrade;
+    const dgEnabled = injectionDefenseEnabled && dgConfig?.enabled !== false;
+    const dgTurns = dgConfig?.turns ?? 2;
+    const dgTools = resolveDowngradedTools(dgConfig?.tools);
+    let dgRemaining = 0;
 
     for (let iteration = 0; iteration < this.maxIterations; iteration++) {
       if (abortSignal.aborted) {
@@ -699,6 +736,34 @@ export class AgentLoop {
       const spanIds = new Map<string, string>();
 
       for (const tc of completedToolCalls) {
+        // Ch.3d — refuse downgraded tools while the post-untrusted-read
+        // counter is positive. The user's next message clears the counter
+        // (run() is invoked fresh; dgRemaining resets to 0).
+        if (dgEnabled && dgRemaining > 0 && dgTools.has(tc.toolName)) {
+          this.observability?.recordEvent({
+            traceId,
+            category: 'audit.block',
+            severity: 'warn',
+            code: 'tool_downgraded_post_untrusted_read',
+            cause: tc.toolName,
+          });
+          yield {
+            type: 'tool_end',
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            ok: false,
+            durationMs: 0,
+            result: DOWNGRADE_REJECTION_MESSAGE,
+          };
+          prepped.push({
+            toolCallId: tc.toolCallId,
+            name: tc.toolName,
+            args: tc.args,
+            rejected: DOWNGRADE_REJECTION_MESSAGE,
+          });
+          continue;
+        }
+
         const beforeResult = await this.hooks.fireModifying(
           'before_tool_call',
           {
@@ -775,13 +840,21 @@ export class AgentLoop {
 
       // Persist results + emit tool_end + build tool_result content blocks (original order)
       const toolResultContent: MessageContent[] = [];
+      // Ch.3d — set when any tool we ran this iteration was outputIsUntrusted.
+      // Decremented at the *top* of the next iteration, so a downgraded tool in
+      // the same iteration also catches against the counter we set below.
+      let untrustedReadThisIteration = false;
 
       for (const p of prepped) {
         const durationMs = Date.now() - startedAt;
         let result: ToolResult;
+        // Ch.3a — keep the raw tool value for session/history persistence,
+        // and a possibly-wrapped value for the LLM tool_result block.
+        let llmContent: string;
 
         if (p.rejected !== undefined) {
           result = { ok: false, error: p.rejected, code: 'execution_failed' };
+          llmContent = p.rejected;
           // tool_end already emitted above; no after_tool_call hook for blocked tools
         } else {
           const execResult = execResultMap.get(p.toolCallId);
@@ -829,13 +902,47 @@ export class AgentLoop {
             },
             allowedPlugins,
           );
+
+          llmContent = result.ok ? result.value : result.error;
+
+          // Ch.3a + 3c — provenance wrap + Tier-1 pattern check + optional
+          // Tier-2 LLM classifier. Only applies on success; errors are
+          // framework-authored and skip wrapping.
+          if (injectionDefenseEnabled && result.ok) {
+            const tool = this.tools.get(p.name);
+            if (tool?.outputIsUntrusted) {
+              const verdict = await this.handleUntrustedResult(
+                p.name,
+                p.args,
+                result.value,
+                personality,
+              );
+              llmContent = verdict.wrappedContent;
+              if (verdict.containsInstructions) {
+                this.observability?.recordEvent({
+                  traceId,
+                  category: 'audit.block',
+                  severity: 'warn',
+                  code: 'injection_detected',
+                  cause: verdict.reason ?? 'pattern-hit',
+                });
+                yield {
+                  type: 'tool_progress',
+                  toolName: p.name,
+                  message: `⚠ external content may contain instructions${verdict.reason ? ` (${verdict.reason})` : ''}`,
+                  audience: 'user',
+                };
+              }
+              untrustedReadThisIteration = true;
+            }
+          }
         }
 
         // Persist every result (rejected or not) so history matches what LLM sees
         await this.session.appendMessage({
           sessionId,
           role: 'tool_result',
-          content: result.ok ? result.value : result.error,
+          content: llmContent,
           toolCallId: p.toolCallId,
           toolName: p.name,
         });
@@ -843,9 +950,18 @@ export class AgentLoop {
         toolResultContent.push({
           type: 'tool_result',
           tool_use_id: p.toolCallId,
-          content: result.ok ? result.value : result.error,
+          content: llmContent,
           is_error: !result.ok,
         });
+      }
+
+      // Ch.3d — decrement the prior iteration's counter, then arm a fresh
+      // window if we just read untrusted content. The decrement-then-set
+      // order means an untrusted read in iteration N protects iterations
+      // N+1 .. N+turns.
+      if (dgRemaining > 0) dgRemaining--;
+      if (dgEnabled && untrustedReadThisIteration) {
+        dgRemaining = dgTurns;
       }
 
       // Feed all tool results back to LLM as a single user message with content blocks
@@ -987,6 +1103,61 @@ export class AgentLoop {
   //   write: [<ethosHome>/personalities/<self>/, <cwd>]
   // ---------------------------------------------------------------------------
 
+  // ---------------------------------------------------------------------------
+  // Ch.3a + 3c — provenance wrap + injection classification
+  // ---------------------------------------------------------------------------
+  //
+  // Returns the wrapped content (always — wrap is the floor) plus whether
+  // any defense layer flagged the payload. Tier-1 is always evaluated;
+  // Tier-2 (LLM classifier) fires when Tier-1 hit, content is > 500 chars,
+  // or `injectionDefense.classifier.alwaysCallLLM` is true.
+  private async handleUntrustedResult(
+    toolName: string,
+    args: unknown,
+    rawValue: string,
+    personality: PersonalityConfig,
+  ): Promise<{
+    wrappedContent: string;
+    containsInstructions: boolean;
+    reason?: string;
+  }> {
+    const source = describeSource(toolName, args);
+    const wrapped = wrapUntrusted({
+      content: rawValue,
+      toolName,
+      ...(source ? { source } : {}),
+    });
+    const tier1 = shortPatternCheck(rawValue);
+    const tier1Hit = tier1.containsInstructions || wrapped.strippedTokens > 0;
+
+    const classifierConfig = personality.safety?.injectionDefense?.classifier;
+    const shouldCallLLM =
+      this.injectionClassifier !== undefined &&
+      (classifierConfig?.alwaysCallLLM === true || tier1Hit || rawValue.length > 500);
+
+    let verdict: InjectionVerdict | null = null;
+    if (shouldCallLLM && this.injectionClassifier) {
+      try {
+        verdict = await this.injectionClassifier({ content: rawValue });
+      } catch {
+        verdict = null;
+      }
+    }
+
+    const containsInstructions = tier1Hit || (verdict?.containsInstructions ?? false);
+    const reason = tier1Hit
+      ? wrapped.strippedTokens > 0
+        ? `stripped ${wrapped.strippedTokens} template token${wrapped.strippedTokens === 1 ? '' : 's'}`
+        : (tier1.hits[0]?.rule ?? 'pattern-hit')
+      : verdict?.reason;
+
+    return {
+      wrappedContent: wrapped.content,
+      containsInstructions,
+      ...(reason ? { reason } : {}),
+    };
+  }
+
   private buildScopedStorage(personality: PersonalityConfig): Storage | undefined {
     if (!this.storage) return undefined;
 
@@ -1017,4 +1188,18 @@ function substitute(
     .replace(/\$\{ETHOS_HOME\}/g, vars.ethosHome)
     .replace(/\$\{self\}/g, vars.self)
     .replace(/\$\{CWD\}/g, vars.cwd);
+}
+
+// Best-effort origin label for `<untrusted source="…">`. Picks from common
+// argument shapes: `path` (file tools), `url` (web tools), `command`
+// (terminal). Returns undefined when nothing recognizable is on the args
+// — wrapUntrusted will fall back to "unknown".
+function describeSource(toolName: string, args: unknown): string | undefined {
+  if (!args || typeof args !== 'object') return undefined;
+  const a = args as Record<string, unknown>;
+  if (typeof a.path === 'string') return `${toolName === 'read_file' ? 'file:' : ''}${a.path}`;
+  if (typeof a.url === 'string') return a.url;
+  if (typeof a.command === 'string') return `cmd:${a.command}`;
+  if (typeof a.query === 'string') return `query:${a.query}`;
+  return undefined;
 }

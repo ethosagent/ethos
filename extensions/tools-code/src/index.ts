@@ -31,6 +31,7 @@ function createRunCodeTool(sandbox: DockerSandbox): Tool {
     description: `Run code in an isolated Docker container. Supported runtimes: ${RUNTIME_NAMES}. No network access, 256 MB memory limit.`,
     toolset: 'code',
     maxResultChars: 10_000,
+    outputIsUntrusted: true,
     isAvailable() {
       return sandbox.isAvailable();
     },
@@ -103,6 +104,7 @@ const runTestsTool: Tool = {
     'Run the project test suite. Defaults to "pnpm test" (vitest). Override with the command arg.',
   toolset: 'code',
   maxResultChars: 20_000,
+  outputIsUntrusted: true,
   schema: {
     type: 'object',
     properties: {
@@ -158,6 +160,7 @@ const lintTool: Tool = {
     'Run the project linter. Defaults to "pnpm lint" (Biome). Override with the command arg.',
   toolset: 'code',
   maxResultChars: 10_000,
+  outputIsUntrusted: true,
   schema: {
     type: 'object',
     properties: {

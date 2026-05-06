@@ -627,6 +627,12 @@ importers:
         specifier: ^12.9.0
         version: 12.9.0
 
+  extensions/safety-injection:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/safety-scanner:
     dependencies:
       '@ethosagent/types':
@@ -874,6 +880,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@ethosagent/safety-injection':
+        specifier: workspace:*
+        version: link:../../extensions/safety-injection
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../types

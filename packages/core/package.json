@@ -22,6 +22,7 @@
     "build": "tsup"
   },
   "dependencies": {
+    "@ethosagent/safety-injection": "workspace:*",
     "@ethosagent/types": "workspace:*"
   },
   "devDependencies": {

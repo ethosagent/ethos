@@ -35,6 +35,7 @@ const browseUrlTool: Tool = {
     'Navigate a browser to a URL and return an accessibility tree with @e{n} element references. Use browser_click and browser_type to interact with elements.',
   toolset: 'browser',
   maxResultChars: 20_000,
+  outputIsUntrusted: true,
   isAvailable: isPlaywrightInstalled,
   schema: {
     type: 'object',

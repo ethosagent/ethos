@@ -65,6 +65,17 @@ export interface Tool<TArgs = unknown> {
    * tools that must always be reachable (e.g. `get_skill`).
    */
   alwaysInclude?: boolean;
+  /**
+   * Phase Ch.3a — provenance tagging.
+   *
+   * When true, the tool's success output is treated as adversary-controlled
+   * (file content, web pages, email bodies, subprocess stdout) and AgentLoop
+   * sanitizes chat-template tokens then wraps the result in an
+   * `<untrusted source="..." tool="...">…</untrusted>` block before placing
+   * it into the LLM's context. Falsy = trusted (owner-authored content like
+   * memory files or the agent's own tool listing).
+   */
+  outputIsUntrusted?: boolean;
 }
 
 /** Options for filtering tools beyond the `allowedTools` name list. */

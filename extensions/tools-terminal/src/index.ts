@@ -18,6 +18,7 @@ export const terminalTool: Tool = {
     'Run a shell command and return its output. Commands run in the working directory by default. Use for build commands, tests, git operations, file operations, and anything that needs a shell. Avoid interactive commands that require user input.',
   toolset: 'terminal',
   maxResultChars: 20_000,
+  outputIsUntrusted: true,
   schema: {
     type: 'object',
     properties: {

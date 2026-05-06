@@ -22,6 +22,39 @@ export interface PersonalitySafetyConfig {
     network?: string[] | boolean;
     mcp_env_passthrough?: string[] | boolean;
   };
+  /**
+   * Ch.3 — Prompt-injection runtime defenses. All sub-blocks default to safe
+   * values when absent, so a personality with no `injectionDefense` block
+   * still gets provenance wrapping on `outputIsUntrusted` tools and a 2-turn
+   * post-read downgrade for the default dangerous-tool list.
+   */
+  injectionDefense?: {
+    /** Master switch. Default: true. Setting `false` skips wrapping, pattern
+     *  check, and post-read downgrade — used by tests and headless tooling. */
+    enabled?: boolean;
+    /** Tier-2 LLM classifier policy. Tier-1 regex always runs when enabled. */
+    classifier?: {
+      /**
+       * Force the LLM classifier to fire on every `outputIsUntrusted` result
+       * regardless of length / pattern hits. Default false — Tier-2 only fires
+       * when Tier-1 hits OR content > 500 chars.
+       */
+      alwaysCallLLM?: boolean;
+    };
+    /** Ch.3d — block dangerous tools for N turns after an untrusted read. */
+    postReadDowngrade?: {
+      /** Default true. */
+      enabled?: boolean;
+      /** Iterations the downgrade stays active. Default 2. */
+      turns?: number;
+      /**
+       * Tools to downgrade. `'auto'` uses a built-in dangerous-tool list
+       * (terminal, run_code, write_file, patch_file, web_extract, browse_url).
+       * Explicit list overrides. Default `'auto'`.
+       */
+      tools?: string[] | 'auto';
+    };
+  };
 }
 
 // Phase 30.8 — this schema is FROZEN.
