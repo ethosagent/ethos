@@ -49,6 +49,23 @@ export interface ToolContext {
    * unrestricted fs in that case.
    */
   storage?: import('./storage').Storage;
+  /**
+   * Ch.7 — per-personality network reach policy. URL-capable tools must
+   * thread this through `safeFetch` from `@ethosagent/safety-network`
+   * rather than calling `fetch()` directly so the policy + cloud-metadata
+   * + private-network + redirect-revalidation pipeline runs. Optional —
+   * tests / CLI without a personality leave it undefined and tools apply
+   * the open-public-internet defaults (the always-deny floor still fires).
+   *
+   * The shape is duplicated from PersonalitySafetyConfig.network rather
+   * than re-imported because @ethosagent/types is the lowest level — it
+   * cannot depend on extension types.
+   */
+  networkPolicy?: {
+    allow?: string[];
+    deny?: string[];
+    allow_private_urls?: boolean;
+  };
 }
 
 export interface Tool<TArgs = unknown> {

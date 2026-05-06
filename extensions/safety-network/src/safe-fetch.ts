@@ -1,0 +1,249 @@
+// Ch.7 entrypoint — composes scheme + cloud-metadata + private-network +
+// per-personality allow/deny + manual redirect revalidation.
+//
+// The per-redirect-hop revalidation is the part most implementations miss:
+// without it, an attacker hosts `https://safe.example.com/r` that returns a
+// `302 Location: http://169.254.169.254/...` and exfiltrates IAM credentials
+// in one fetch call. Closed by disabling auto-redirect (`redirect: 'manual'`)
+// and routing every Location target back through the full pipeline before
+// issuing the next request. Cap at 5 hops total.
+
+import { isCloudMetadataHost } from './cloud-metadata';
+import { checkAllowDeny, type NetworkPolicy } from './policy';
+import { checkScheme, type SchemeCheckResult } from './scheme';
+
+export interface SafeFetchOptions {
+  policy: NetworkPolicy;
+  /** Underlying fetch implementation; injected for testability. */
+  fetchImpl?: typeof fetch;
+  /** Async DNS lookup; injected for the rebinding test. */
+  resolveHost?: (hostname: string) => Promise<string[]>;
+  /** Caller-passed RequestInit. `redirect` is forced to `'manual'` and
+   *  cannot be overridden — the security guarantee depends on it. */
+  init?: Omit<RequestInit, 'redirect'>;
+  /** Max redirect hops including the original request. Default 5. */
+  maxRedirects?: number;
+}
+
+export interface SafeFetchError {
+  ok: false;
+  reason: string;
+  hop: number;
+  url: string;
+}
+
+export type SafeFetchResult =
+  | { ok: true; response: Response; finalUrl: string; hops: number }
+  | SafeFetchError;
+
+const DEFAULT_MAX_REDIRECTS = 5;
+
+export async function safeFetch(
+  initialUrl: string,
+  opts: SafeFetchOptions,
+): Promise<SafeFetchResult> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const maxHops = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
+
+  let url = initialUrl;
+  for (let hop = 0; hop < maxHops; hop++) {
+    const policyCheck = await validateUrl(url, opts.policy, opts.resolveHost);
+    if (!policyCheck.ok) {
+      return { ok: false, reason: policyCheck.reason ?? 'blocked', hop, url };
+    }
+
+    let response: Response;
+    try {
+      response = await fetchImpl(url, { ...opts.init, redirect: 'manual' });
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+        hop,
+        url,
+      };
+    }
+
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      if (!location) {
+        return { ok: true, response, finalUrl: url, hops: hop };
+      }
+      url = new URL(location, url).toString();
+      continue;
+    }
+
+    return { ok: true, response, finalUrl: url, hops: hop };
+  }
+
+  return {
+    ok: false,
+    reason: `exceeded ${maxHops} redirect hops; possible loop`,
+    hop: maxHops,
+    url,
+  };
+}
+
+interface ValidateResult {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * Run the full Chapter 7 pipeline on a single URL: scheme → cloud-metadata
+ * (always) → DNS resolution → private-network (unless opted in) →
+ * per-personality allow/deny.
+ *
+ * Exported separately so the wiring `before_tool_call` hook can validate the
+ * initial URL synchronously without paying the redirect-loop overhead.
+ */
+export async function validateUrl(
+  url: string,
+  policy: NetworkPolicy,
+  resolveHost?: (hostname: string) => Promise<string[]>,
+): Promise<ValidateResult> {
+  const scheme = checkScheme(url);
+  if (!scheme.ok) return { ok: false, reason: scheme.reason };
+
+  const parsed = new URL(url);
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+
+  if (isCloudMetadataHost(hostname)) {
+    return { ok: false, reason: `cloud-metadata host '${hostname}' is always denied` };
+  }
+
+  const allowDeny = checkAllowDeny(hostname, policy);
+  if (!allowDeny.allowed) return { ok: false, reason: allowDeny.reason };
+
+  if (!policy.allow_private_urls) {
+    const privateCheck = await checkPrivate(hostname, resolveHost);
+    if (!privateCheck.ok) return privateCheck;
+  } else {
+    // Even with allow_private_urls, the cloud-metadata IP is non-overridable
+    // — the `isCloudMetadataHost` check above caught the literal '169.254.169.254',
+    // and the resolveHost path below catches DNS-rebinding to it.
+    const dnsRebindCheck = await checkResolvesToCloudMetadata(hostname, resolveHost);
+    if (!dnsRebindCheck.ok) return dnsRebindCheck;
+  }
+
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Private-network detection
+// ---------------------------------------------------------------------------
+
+const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+function ip4ToInt(ip: string): number {
+  return (
+    ip
+      .split('.')
+      .reduce((acc: number, octet: string) => (acc << 8) | Number.parseInt(octet, 10), 0) >>> 0
+  );
+}
+
+const PRIVATE_RANGES_V4: Array<{ start: number; end: number; label: string }> = [
+  { start: ip4ToInt('0.0.0.0'), end: ip4ToInt('0.255.255.255'), label: 'unspecified' },
+  { start: ip4ToInt('10.0.0.0'), end: ip4ToInt('10.255.255.255'), label: 'RFC1918' },
+  { start: ip4ToInt('100.64.0.0'), end: ip4ToInt('100.127.255.255'), label: 'shared-address' },
+  { start: ip4ToInt('127.0.0.0'), end: ip4ToInt('127.255.255.255'), label: 'loopback' },
+  {
+    start: ip4ToInt('169.254.0.0'),
+    end: ip4ToInt('169.254.255.255'),
+    label: 'link-local/metadata',
+  },
+  { start: ip4ToInt('172.16.0.0'), end: ip4ToInt('172.31.255.255'), label: 'RFC1918' },
+  { start: ip4ToInt('192.168.0.0'), end: ip4ToInt('192.168.255.255'), label: 'RFC1918' },
+  { start: ip4ToInt('224.0.0.0'), end: ip4ToInt('239.255.255.255'), label: 'multicast' },
+  { start: ip4ToInt('240.0.0.0'), end: ip4ToInt('255.255.255.255'), label: 'reserved' },
+];
+
+function isValidIpv4(s: string): boolean {
+  const m = s.match(IPV4_RE);
+  return m !== null && m.slice(1).every((octet) => Number(octet) <= 255);
+}
+
+function isPrivateIpv4(ip: string): boolean {
+  if (!isValidIpv4(ip)) return false;
+  const n = ip4ToInt(ip);
+  return PRIVATE_RANGES_V4.some(({ start, end }) => n >= start && n <= end);
+}
+
+function isPrivateIpv6(ip: string): boolean {
+  const lower = ip.toLowerCase();
+  if (lower === '::1' || lower === '::') return true;
+  if (lower.startsWith('fe80:') || lower.startsWith('fc') || lower.startsWith('fd')) return true;
+  if (lower.startsWith('ff')) return true; // multicast
+  // IPv4-mapped IPv6 ::ffff:x.x.x.x (textual)
+  const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return isPrivateIpv4(mapped[1]);
+  // IPv4-mapped in normalized hex form ::ffff:c0a8:101
+  const hexMapped = lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hexMapped) {
+    const high = Number.parseInt(hexMapped[1], 16);
+    const low = Number.parseInt(hexMapped[2], 16);
+    const a = (high >> 8) & 0xff;
+    const b = high & 0xff;
+    const c = (low >> 8) & 0xff;
+    const d = low & 0xff;
+    return isPrivateIpv4(`${a}.${b}.${c}.${d}`);
+  }
+  return false;
+}
+
+function isPrivateIp(ip: string): boolean {
+  return isPrivateIpv4(ip) || (ip.includes(':') && isPrivateIpv6(ip));
+}
+
+async function checkPrivate(
+  hostname: string,
+  resolveHost?: (h: string) => Promise<string[]>,
+): Promise<ValidateResult> {
+  if (isPrivateIp(hostname)) {
+    return { ok: false, reason: `host '${hostname}' is in a private/reserved range` };
+  }
+  if (resolveHost && !isLikelyIp(hostname)) {
+    let addrs: string[];
+    try {
+      addrs = await resolveHost(hostname);
+    } catch {
+      return { ok: true };
+    }
+    for (const a of addrs) {
+      if (isPrivateIp(a)) {
+        return {
+          ok: false,
+          reason: `host '${hostname}' resolves to private IP '${a}'`,
+        };
+      }
+    }
+  }
+  return { ok: true };
+}
+
+async function checkResolvesToCloudMetadata(
+  hostname: string,
+  resolveHost?: (h: string) => Promise<string[]>,
+): Promise<ValidateResult> {
+  if (!resolveHost || isLikelyIp(hostname)) return { ok: true };
+  let addrs: string[];
+  try {
+    addrs = await resolveHost(hostname);
+  } catch {
+    return { ok: true };
+  }
+  for (const a of addrs) {
+    if (isCloudMetadataHost(a)) {
+      return {
+        ok: false,
+        reason: `host '${hostname}' resolves to cloud-metadata IP '${a}'`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
+function isLikelyIp(s: string): boolean {
+  return isValidIpv4(s) || s.includes(':');
+}

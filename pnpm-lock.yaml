@@ -633,6 +633,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/safety-network:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/safety-scanner:
     dependencies:
       '@ethosagent/types':
@@ -702,6 +708,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.39.0
         version: 0.39.0
+      '@ethosagent/safety-network':
+        specifier: workspace:*
+        version: link:../safety-network
       '@ethosagent/tools-web':
         specifier: workspace:*
         version: link:../tools-web
@@ -802,6 +811,9 @@ importers:
 
   extensions/tools-web:
     dependencies:
+      '@ethosagent/safety-network':
+        specifier: workspace:*
+        version: link:../safety-network
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types

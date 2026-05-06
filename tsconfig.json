@@ -61,6 +61,7 @@
       "@ethosagent/observability-sqlite": ["./extensions/observability-sqlite/src"],
       "@ethosagent/safety-channel": ["./extensions/safety-channel/src"],
       "@ethosagent/safety-injection": ["./extensions/safety-injection/src"],
+      "@ethosagent/safety-network": ["./extensions/safety-network/src"],
       "@ethosagent/safety-scanner": ["./extensions/safety-scanner/src"]
     }
   },

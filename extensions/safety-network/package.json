@@ -1,5 +1,5 @@
 {
-  "name": "@ethosagent/tools-web",
+  "name": "@ethosagent/safety-network",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,11 +10,7 @@
       "production": "./dist/index.js"
     }
   },
-  "scripts": {
-    "build": "tsup src/index.ts --format esm --dts"
-  },
   "dependencies": {
-    "@ethosagent/safety-network": "workspace:*",
     "@ethosagent/types": "workspace:*"
   }
 }

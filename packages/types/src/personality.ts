@@ -23,6 +23,19 @@ export interface PersonalitySafetyConfig {
     mcp_env_passthrough?: string[] | boolean;
   };
   /**
+   * Ch.7 — Per-personality network reach. Layered with the always-deny
+   * cloud-metadata + private-network floor (non-overridable) and the
+   * scheme allowlist (http/https only). Empty/absent = open public
+   * internet (subject to floor); non-empty `allow` = allowlist mode.
+   */
+  network?: {
+    allow?: string[];
+    deny?: string[];
+    /** Opt-in for RFC1918 / loopback / link-local. Cloud-metadata still
+     *  blocked even when this is true (Ch.7b is non-overridable). */
+    allow_private_urls?: boolean;
+  };
+  /**
    * Ch.3 — Prompt-injection runtime defenses. All sub-blocks default to safe
    * values when absent, so a personality with no `injectionDefense` block
    * still gets provenance wrapping on `outputIsUntrusted` tools and a 2-turn

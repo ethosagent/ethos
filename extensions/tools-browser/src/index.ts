@@ -1,3 +1,5 @@
+import { lookup } from 'node:dns/promises';
+import { validateUrl } from '@ethosagent/safety-network';
 import { checkSsrf } from '@ethosagent/tools-web';
 import type { Tool, ToolResult } from '@ethosagent/types';
 import type { Page } from 'playwright';
@@ -6,6 +8,11 @@ import { browserScreenshotTool } from './browser-screenshot';
 import { createBrowserVisionClickTool } from './browser-vision-click';
 import { createBrowserVisionTypeTool } from './browser-vision-type';
 import { closeSession, getOrCreateSession, isPlaywrightInstalled, sessions } from './sessions';
+
+async function resolveHost(host: string): Promise<string[]> {
+  const records = await lookup(host, { all: true });
+  return records.map((r) => r.address);
+}
 
 // ---------------------------------------------------------------------------
 // Take an accessibility snapshot and format it
@@ -68,6 +75,14 @@ const browseUrlTool: Tool = {
       return { ok: false, error: 'Only http and https URLs are supported', code: 'input_invalid' };
     }
 
+    // Ch.7 — initial URL passes through the full pipeline. Per-redirect-hop
+    // revalidation is not feasible inside Playwright's page.goto; v1 ships
+    // initial-URL enforcement only and the plan's `ethos security audit`
+    // flags this gap.
+    const policyCheck = await validateUrl(url, ctx.networkPolicy ?? {}, resolveHost);
+    if (!policyCheck.ok) {
+      return { ok: false, error: policyCheck.reason ?? 'blocked', code: 'execution_failed' };
+    }
     const ssrf = await checkSsrf(url);
     if (ssrf.blocked) {
       return { ok: false, error: ssrf.reason, code: 'execution_failed' };

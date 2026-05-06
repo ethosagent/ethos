@@ -1,5 +1,11 @@
+import { lookup } from 'node:dns/promises';
+import { type NetworkPolicy, safeFetch } from '@ethosagent/safety-network';
 import type { Tool, ToolResult } from '@ethosagent/types';
-import { checkSsrf } from './ssrf';
+
+async function resolveHost(host: string): Promise<string[]> {
+  const records = await lookup(host, { all: true });
+  return records.map((r) => r.address);
+}
 
 // ---------------------------------------------------------------------------
 // HTML → plain text (no external dep)
@@ -129,53 +135,41 @@ export const webExtractTool: Tool = {
 
     if (!url) return { ok: false, error: 'url is required', code: 'input_invalid' };
 
-    // Basic URL validation
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      return { ok: false, error: `Invalid URL: ${url}`, code: 'input_invalid' };
-    }
-
-    if (!['http:', 'https:'].includes(parsed.protocol)) {
-      return { ok: false, error: 'Only http and https URLs are supported', code: 'input_invalid' };
-    }
-
-    const ssrf = await checkSsrf(url);
-    if (ssrf.blocked) {
-      return { ok: false, error: ssrf.reason, code: 'execution_failed' };
-    }
-
-    try {
-      const response = await fetch(url, {
+    const policy: NetworkPolicy = ctx.networkPolicy ?? {};
+    const result = await safeFetch(url, {
+      policy,
+      resolveHost,
+      init: {
         signal: ctx.abortSignal,
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; Ethos/1.0; +https://github.com/ethos)',
           Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9',
         },
-      });
+      },
+    });
 
-      if (!response.ok) {
-        return {
-          ok: false,
-          error: `HTTP ${response.status} ${response.statusText}`,
-          code: 'execution_failed',
-        };
-      }
-
-      const contentType = response.headers.get('content-type') ?? '';
-      const body = await response.text();
-
-      const text = contentType.includes('html') ? htmlToText(body) : body;
-      const header = `[${url}]\n\n`;
-      return { ok: true, value: header + text };
-    } catch (err) {
+    if (!result.ok) {
       return {
         ok: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: `Network policy blocked '${result.url}' (hop ${result.hop}): ${result.reason}`,
         code: 'execution_failed',
       };
     }
+
+    const { response, finalUrl } = result;
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: `HTTP ${response.status} ${response.statusText}`,
+        code: 'execution_failed',
+      };
+    }
+
+    const contentType = response.headers.get('content-type') ?? '';
+    const body = await response.text();
+    const text = contentType.includes('html') ? htmlToText(body) : body;
+    const header = `[${finalUrl}]\n\n`;
+    return { ok: true, value: header + text };
   },
 };
 

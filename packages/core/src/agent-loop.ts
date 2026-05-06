@@ -727,6 +727,7 @@ export class AgentLoop {
         },
         resultBudgetChars: this.resultBudgetChars,
         ...(scopedStorage ? { storage: scopedStorage } : {}),
+        ...(personality.safety?.network ? { networkPolicy: personality.safety.network } : {}),
       };
 
       // Run before_tool_call hooks; build exec list with effective args

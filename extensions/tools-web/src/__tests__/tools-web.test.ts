@@ -58,15 +58,21 @@ describe('web_extract', () => {
     if (!result.ok) expect(result.code).toBe('input_invalid');
   });
 
-  it('returns input_invalid for malformed url', async () => {
+  it('rejects malformed url via the network policy pipeline', async () => {
     const result = await webExtractTool.execute({ url: 'not-a-url' }, ctx);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe('input_invalid');
+    if (!result.ok) {
+      expect(result.code).toBe('execution_failed');
+      expect(result.error).toMatch(/URL_SCHEME_REJECTED|malformed/);
+    }
   });
 
-  it('returns input_invalid for non-http protocol', async () => {
+  it('rejects non-http protocol at the scheme gate', async () => {
     const result = await webExtractTool.execute({ url: 'ftp://example.com' }, ctx);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe('input_invalid');
+    if (!result.ok) {
+      expect(result.code).toBe('execution_failed');
+      expect(result.error).toMatch(/URL_SCHEME_REJECTED/);
+    }
   });
 });
