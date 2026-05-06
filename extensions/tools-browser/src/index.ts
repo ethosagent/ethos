@@ -10,7 +10,7 @@ import { createBrowserVisionTypeTool } from './browser-vision-type';
 import {
   type BrowserSession,
   closeSession,
-  findSessionBySessionId,
+  findActiveSession,
   getOrCreateSession,
   isPlaywrightInstalled,
 } from './sessions';
@@ -195,7 +195,7 @@ const browserClickTool: Tool = {
 
     if (!element_ref) return { ok: false, error: 'element_ref is required', code: 'input_invalid' };
 
-    const session = findSessionBySessionId(ctx.sessionId);
+    const session = findActiveSession(ctx.sessionId, ctx.networkPolicy ?? {});
     if (!session) {
       return {
         ok: false,
@@ -282,7 +282,7 @@ const browserTypeTool: Tool = {
     if (!element_ref) return { ok: false, error: 'element_ref is required', code: 'input_invalid' };
     if (text === undefined) return { ok: false, error: 'text is required', code: 'input_invalid' };
 
-    const session = findSessionBySessionId(ctx.sessionId);
+    const session = findActiveSession(ctx.sessionId, ctx.networkPolicy ?? {});
     if (!session) {
       return {
         ok: false,

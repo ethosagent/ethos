@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Tool, ToolResult } from '@ethosagent/types';
-import { findSessionBySessionId, isPlaywrightInstalled } from './sessions';
+import { findActiveSession, isPlaywrightInstalled } from './sessions';
 import type { VisionResolverOptions } from './vision-resolver';
 import { resolveByA11y, resolveByVision } from './vision-resolver';
 
@@ -36,11 +36,12 @@ export function createBrowserVisionClickTool(visionOpts: VisionResolverOptions):
         return { ok: false, error: 'description is required', code: 'input_invalid' };
       }
 
-      const session = findSessionBySessionId(ctx.sessionId);
+      const session = findActiveSession(ctx.sessionId, ctx.networkPolicy ?? {});
       if (!session) {
         return {
           ok: false,
-          error: 'No active browser session. Call browse_url first.',
+          error:
+            'No active browser session under the current network policy. Call browse_url first.',
           code: 'execution_failed',
         };
       }

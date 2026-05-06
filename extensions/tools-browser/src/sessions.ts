@@ -46,14 +46,24 @@ function makeKey(sessionId: string, policy: NetworkPolicyShape): string {
 // sessionId, so the key-by-policy machinery hides behind getOrCreateSession.
 export { sessions };
 
-/** Look up a session by `sessionId` regardless of which policy fingerprint
- *  it was created under. Used by browser_click / browser_type which act on
- *  the page state set up by a prior browse_url call. */
-export function findSessionBySessionId(sessionId: string): BrowserSession | undefined {
-  for (const [k, s] of sessions.entries()) {
-    if (k === sessionId || k.startsWith(`${sessionId}::`)) return s;
-  }
-  return undefined;
+/**
+ * Strict session lookup keyed by (sessionId, current policy fingerprint).
+ *
+ * Used by every browser tool that can cause network traffic (click, type,
+ * screenshot, vision-*). Returns the session ONLY when its
+ * policyFingerprint matches the current policy. A mismatch returns
+ * undefined so the caller can refuse with a "no session under current
+ * policy" error rather than navigating under stale rules.
+ *
+ * Tools must NOT use a sessionId-only lookup — that path is the
+ * stale-policy hole Codex called out.
+ */
+export function findActiveSession(
+  sessionId: string,
+  policy: NetworkPolicyShape,
+): BrowserSession | undefined {
+  const key = makeKey(sessionId, policy);
+  return sessions.get(key);
 }
 
 export async function getChromium() {
