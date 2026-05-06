@@ -75,17 +75,12 @@ const browseUrlTool: Tool = {
       return { ok: false, error: 'Only http and https URLs are supported', code: 'input_invalid' };
     }
 
-    // Ch.7 — INITIAL URL ONLY. Once Playwright takes over `page.goto`,
-    // it follows redirects, fetches subresources, and may navigate to
-    // private or cloud-metadata endpoints with no further validation.
-    // Closing that gap requires `page.route` interception with the same
-    // policy applied to every navigation + subresource — plan-tracked
-    // for v2. For v1 this means: a personality with `network.allow_private_urls
-    // = false` is NOT protected against post-load browser navigation
-    // and operators must treat browse_url like any other untrusted-
-    // sandbox tool. The always-deny floor on the initial URL still
-    // fires; everything past page.goto is on its own.
-    const policyCheck = await validateUrl(url, ctx.networkPolicy ?? {}, resolveHost);
+    // Ch.7 — initial-URL gate. The page.route interceptor below enforces
+    // the SAME policy on every redirect target and subresource fetched
+    // by Playwright, so the network boundary covers the full navigation
+    // (not just `page.goto`'s first request).
+    const policy = ctx.networkPolicy ?? {};
+    const policyCheck = await validateUrl(url, policy, resolveHost);
     if (!policyCheck.ok) {
       return { ok: false, error: policyCheck.reason ?? 'blocked', code: 'execution_failed' };
     }
@@ -104,6 +99,27 @@ const browseUrlTool: Tool = {
 
     try {
       const session = await getOrCreateSession(ctx.sessionId);
+      // Update the policy ref BEFORE installing the route so the first
+      // request a new session makes is already gated.
+      session.networkPolicyRef.current = policy;
+      if (!session.routeInstalled) {
+        await session.page.route('**/*', async (route) => {
+          const reqUrl = route.request().url();
+          // chrome:// / about: / data: appear during page bootstrap
+          // and don't need the same gate; let Playwright handle them.
+          if (!reqUrl.startsWith('http://') && !reqUrl.startsWith('https://')) {
+            await route.continue();
+            return;
+          }
+          const check = await validateUrl(reqUrl, session.networkPolicyRef.current, resolveHost);
+          if (!check.ok) {
+            await route.abort('failed');
+            return;
+          }
+          await route.continue();
+        });
+        session.routeInstalled = true;
+      }
       await session.page.goto(url, {
         waitUntil: wait_for,
         timeout: 30_000,

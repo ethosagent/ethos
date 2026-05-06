@@ -10,6 +10,18 @@ export interface BrowserSession {
   page: Page;
   refs: Map<string, A11yRef>;
   lastUrl: string;
+  /**
+   * Ch.7 — mutable network policy ref read by the page-route interceptor.
+   * `browse_url` writes the active personality's policy here on every call;
+   * the route handler installed once per session reads it. Keeping the
+   * handler stable (set-once) avoids the Playwright route-stacking
+   * footgun where calling `page.route` repeatedly accumulates handlers.
+   */
+  networkPolicyRef: {
+    current: { allow?: string[]; deny?: string[]; allow_private_urls?: boolean };
+  };
+  /** True once the route interceptor is installed. */
+  routeInstalled?: boolean;
 }
 
 export const sessions = new Map<string, BrowserSession>();
@@ -29,7 +41,13 @@ export async function getOrCreateSession(sessionId: string): Promise<BrowserSess
   });
   const page = await browser.newPage();
 
-  const session: BrowserSession = { browser, page, refs: new Map(), lastUrl: '' };
+  const session: BrowserSession = {
+    browser,
+    page,
+    refs: new Map(),
+    lastUrl: '',
+    networkPolicyRef: { current: {} },
+  };
   sessions.set(sessionId, session);
   return session;
 }
