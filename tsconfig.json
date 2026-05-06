@@ -62,7 +62,8 @@
       "@ethosagent/safety-channel": ["./extensions/safety-channel/src"],
       "@ethosagent/safety-injection": ["./extensions/safety-injection/src"],
       "@ethosagent/safety-network": ["./extensions/safety-network/src"],
-      "@ethosagent/safety-scanner": ["./extensions/safety-scanner/src"]
+      "@ethosagent/safety-scanner": ["./extensions/safety-scanner/src"],
+      "@ethosagent/safety-watcher": ["./extensions/safety-watcher/src"]
     }
   },
   "include": [

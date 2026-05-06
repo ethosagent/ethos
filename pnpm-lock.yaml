@@ -645,6 +645,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/safety-watcher:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/sandbox-docker:
     dependencies:
       '@ethosagent/types':
