@@ -55,6 +55,12 @@ export { sessions };
  * undefined so the caller can refuse with a "no session under current
  * policy" error rather than navigating under stale rules.
  *
+ * The map-key match is the fast path; the security invariant is the
+ * explicit `session.policyFingerprint === fingerprint` check below. We
+ * do NOT trust that whoever wrote the map-key used `makeKey` correctly
+ * — a stray writer (test, future plugin) could otherwise insert a
+ * BrowserSession under the expected key with a stale fingerprint.
+ *
  * Tools must NOT use a sessionId-only lookup — that path is the
  * stale-policy hole Codex called out.
  */
@@ -62,8 +68,11 @@ export function findActiveSession(
   sessionId: string,
   policy: NetworkPolicyShape,
 ): BrowserSession | undefined {
-  const key = makeKey(sessionId, policy);
-  return sessions.get(key);
+  const fingerprint = makeKey(sessionId, policy);
+  const session = sessions.get(fingerprint);
+  if (!session) return undefined;
+  if (session.policyFingerprint !== fingerprint) return undefined;
+  return session;
 }
 
 export async function getChromium() {
