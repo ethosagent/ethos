@@ -339,7 +339,14 @@ function renderEvent(
       // Framework-emitted budget warnings always tag `audience: 'user'`.
       if (event.audience !== 'user') break;
       if (hasText) out('\n');
-      out(`${c.dim}  · ${event.toolName}: ${event.message}${c.reset}\n`);
+      // Ch.6a — _watcher chips render in yellow so safety-relevant
+      // decisions (rate limit, suspicious sequence, compounding error,
+      // token budget) visually pop next to ordinary tool progress.
+      if (event.toolName === '_watcher') {
+        out(`${c.yellow}  ${event.message}${c.reset}\n`);
+      } else {
+        out(`${c.dim}  · ${event.toolName}: ${event.message}${c.reset}\n`);
+      }
       break;
     }
 

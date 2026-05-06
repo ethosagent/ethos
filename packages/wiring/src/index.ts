@@ -292,6 +292,26 @@ export async function createAgentLoop(
   );
   await pluginLoader.loadAll();
 
+  // Ch.6a — In-process watcher. Built with the default rule set
+  // (rate-limit + token-budget + compounding-error + suspicious-
+  // sequence). When an observability writer is wired, watcher
+  // decisions land as audit.watcher events in observability.db.
+  const { Watcher: WatcherClass, defaultRules: watcherDefaultRules } = await import(
+    '@ethosagent/safety-watcher'
+  );
+  const watcher = new WatcherClass({
+    rules: watcherDefaultRules(),
+    ...(opts.observability ? { observability: opts.observability } : {}),
+  });
+
+  // Ch.3c Tier-2 — LLM injection classifier. Reuses the same LLM
+  // provider as the agent loop. The personality's
+  // safety.injectionDefense.classifier.alwaysCallLLM flag toggles
+  // forced-on; AgentLoop also fires the classifier when content
+  // > 500 chars or the Tier-1 pattern check hits.
+  const { createLLMClassifier } = await import('@ethosagent/safety-injection');
+  const injectionClassifier = createLLMClassifier({ llm });
+
   const loop = new AgentLoop({
     llm,
     tools,
@@ -304,6 +324,8 @@ export async function createAgentLoop(
     storage: new FsStorage(),
     dataDir,
     modelRouting: config.modelRouting,
+    watcher,
+    injectionClassifier,
     ...(opts.observability ? { observability: opts.observability } : {}),
     options: {
       platform: profile,

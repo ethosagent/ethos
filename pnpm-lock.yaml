@@ -979,6 +979,9 @@ importers:
       '@ethosagent/safety-injection':
         specifier: workspace:*
         version: link:../../extensions/safety-injection
+      '@ethosagent/safety-watcher':
+        specifier: workspace:*
+        version: link:../../extensions/safety-watcher
       '@ethosagent/sandbox-docker':
         specifier: workspace:*
         version: link:../../extensions/sandbox-docker
