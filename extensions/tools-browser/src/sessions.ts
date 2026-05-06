@@ -31,15 +31,24 @@ export interface BrowserSession {
 
 const sessions = new Map<string, BrowserSession>();
 
-function makeKey(sessionId: string, policy: NetworkPolicyShape): string {
-  // Stable, order-independent hash — JSON.stringify with sorted keys is
-  // sufficient because the policy shape is small and primitive.
+/**
+ * Stable, order-independent hash of the policy alone. Used both as part
+ * of the session map key (combined with sessionId) AND stored on the
+ * BrowserSession as `policyFingerprint`. Two separate identifiers — see
+ * `makeMapKey` below — so the security invariant check in
+ * findActiveSession compares policy-to-policy, not key-to-key.
+ */
+function policyFingerprint(policy: NetworkPolicyShape): string {
   const sorted = {
     allow: [...(policy.allow ?? [])].sort(),
     deny: [...(policy.deny ?? [])].sort(),
     allow_private_urls: !!policy.allow_private_urls,
   };
-  return `${sessionId}::${createHash('sha256').update(JSON.stringify(sorted)).digest('hex').slice(0, 16)}`;
+  return createHash('sha256').update(JSON.stringify(sorted)).digest('hex').slice(0, 16);
+}
+
+function makeMapKey(sessionId: string, policy: NetworkPolicyShape): string {
+  return `${sessionId}::${policyFingerprint(policy)}`;
 }
 
 // Back-compat surface — older callers (browser_click etc.) only know the
@@ -68,10 +77,12 @@ export function findActiveSession(
   sessionId: string,
   policy: NetworkPolicyShape,
 ): BrowserSession | undefined {
-  const fingerprint = makeKey(sessionId, policy);
-  const session = sessions.get(fingerprint);
+  const fp = policyFingerprint(policy);
+  const session = sessions.get(makeMapKey(sessionId, policy));
   if (!session) return undefined;
-  if (session.policyFingerprint !== fingerprint) return undefined;
+  // Explicit invariant — the map key is the fast path; the recorded
+  // session.policyFingerprint is what actually gates the lookup.
+  if (session.policyFingerprint !== fp) return undefined;
   return session;
 }
 
@@ -84,17 +95,17 @@ export async function getOrCreateSession(
   sessionId: string,
   policy: NetworkPolicyShape = {},
 ): Promise<BrowserSession> {
-  const fingerprint = makeKey(sessionId, policy);
+  const fp = policyFingerprint(policy);
+  const key = makeMapKey(sessionId, policy);
 
-  // Look up by fingerprint first (Ch.7 strict path).
-  const exact = sessions.get(fingerprint);
+  const exact = sessions.get(key);
   if (exact) return exact;
 
-  // Look up by sessionId across any prior fingerprint and tear down
-  // on policy mismatch — this is what protects browser_click /
-  // browser_type from operating under a stale policy.
+  // Tear down any prior session for the same sessionId under a
+  // different policy fingerprint — that's the protection against
+  // browser_click / browser_type running under a stale policy.
   for (const [k, s] of sessions.entries()) {
-    if (k.startsWith(`${sessionId}::`) && s.policyFingerprint !== fingerprint) {
+    if (k.startsWith(`${sessionId}::`) && s.policyFingerprint !== fp) {
       sessions.delete(k);
       await s.context.close().catch(() => {});
       await s.browser.close().catch(() => {});
@@ -118,9 +129,9 @@ export async function getOrCreateSession(
     page,
     refs: new Map(),
     lastUrl: '',
-    policyFingerprint: fingerprint,
+    policyFingerprint: fp,
   };
-  sessions.set(fingerprint, session);
+  sessions.set(key, session);
   return session;
 }
 
