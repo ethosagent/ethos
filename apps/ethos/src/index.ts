@@ -24,6 +24,7 @@ import { runMeshCommand } from './commands/mesh';
 import { runPerf } from './commands/perf';
 import { runPlugin } from './commands/plugin';
 import { runRetention } from './commands/retention';
+import { runSecurityAudit } from './commands/security-audit';
 import { runServe } from './commands/serve';
 import { runSet } from './commands/set';
 import { runSetup } from './commands/setup';
@@ -43,7 +44,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [setup | chat | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | claw | doctor | upgrade | mcp | backup | import | trace | audit | errors | perf | tail | retention | data | support | archive] [--version | --help]';
+  'Usage: ethos [setup | chat | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -418,6 +419,16 @@ try {
 
     case 'audit': {
       await runAudit(args.slice(1));
+      break;
+    }
+
+    case 'security': {
+      // `ethos security audit [--fix] [--json] [--deep]`
+      if (args[1] !== 'audit') {
+        console.error('Usage: ethos security audit [--fix] [--json] [--deep]');
+        process.exit(2);
+      }
+      await runSecurityAudit(args.slice(1));
       break;
     }
 

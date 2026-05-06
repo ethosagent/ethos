@@ -11,6 +11,7 @@ export * from './personality';
 export * from './platform';
 export * from './plugin';
 export * from './retention';
+export * from './sandbox';
 export * from './session';
 export * from './skill';
 export * from './storage';

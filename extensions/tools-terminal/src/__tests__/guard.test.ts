@@ -131,6 +131,43 @@ describe('checkCommand', () => {
       expect(checkCommand('chmod +x script.sh').dangerous).toBe(false);
     });
   });
+
+  // Ch.5 — argv fs-path floor (defense-in-depth on top of ScopedStorage
+  // always-deny). Catches the lazy literal-path attacks; obfuscation
+  // (variable indirection, substitution, eval) is NOT the target — that
+  // requires sandbox attestation per the plan.
+  describe('Ch.5 argv fs-path floor — should be flagged', () => {
+    it.each([
+      ['cat ~/.ssh/id_rsa', /\.ssh/],
+      ['less ~/.ssh/known_hosts', /\.ssh/],
+      ['head /home/u/.ssh/authorized_keys', /\.ssh/],
+      ['cat ~/.aws/credentials', /\.aws/],
+      ['cat /home/u/.aws/credentials', /\.aws/],
+      ['ls ~/.gnupg/', /\.gnupg/],
+      ['cat ~/.netrc', /\.netrc/],
+      ['cat /etc/passwd', /\/etc\//],
+      ['cat /etc/shadow', /\/etc\//],
+      ['less /etc/sudoers', /\/etc\//],
+      ['head ~/.bash_history', /history/],
+      ['cat ~/.zsh_history', /history/],
+      ['cat ~/.psql_history', /history/],
+      ['cat ~/.mysql_history', /history/],
+    ])('blocks: %s', (cmd, expectedPath) => {
+      const result = checkCommand(cmd);
+      expect(result.dangerous).toBe(true);
+      if (result.dangerous) expect(result.reason).toMatch(expectedPath);
+    });
+
+    it.each([
+      'cat .ssh-config-template.md', // benign filename containing .ssh
+      'cat /tmp/aws-credentials.example.json', // not the literal ~/.aws/credentials
+      'echo aws/credentials/template', // no path separator before
+      'cat /etc/passwords.json', // not /etc/passwd
+      'cat .bash_history.example', // not the literal history file
+    ])('does not flag: %s', (cmd) => {
+      expect(checkCommand(cmd).dangerous).toBe(false);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

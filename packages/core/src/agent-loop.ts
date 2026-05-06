@@ -136,6 +136,22 @@ export interface AgentLoopConfig {
    * When unset, only Tier-1 (regex) classification runs.
    */
   injectionClassifier?: InjectionClassifier;
+  /**
+   * Ch.6a — In-process watcher. When provided, AgentLoop forwards every
+   * tool_start / tool_end / usage event into watcher.observe() and acts
+   * on non-`allow` decisions:
+   *   - `terminate` → yield an `error` event and end the turn
+   *   - `pause`     → yield a user-visible `tool_progress` chip and end
+   *                    the turn (the user's next message resumes; the
+   *                    watcher's state is fresh per run via resetTurn())
+   *   - `force_approval` → set a per-iteration flag that promotes the
+   *                    next tool to requiresApproval (TODO — needs the
+   *                    approval-hook plumbing; for v1 we treat it as
+   *                    `pause` to fail safe)
+   * `allow` is the no-op path. Watcher decisions are recorded as
+   * `audit.watcher` events on the optional ObservabilityWriter.
+   */
+  watcher?: import('@ethosagent/safety-watcher').Watcher;
   // Maps personality ID → model ID. Resolution: modelRouting[id] → personality.model → llm.model
   modelRouting?: Record<string, string>;
   options?: {
@@ -208,6 +224,7 @@ export class AgentLoop {
   private readonly dataDir?: string;
   private readonly observability?: ObservabilityWriter;
   private readonly injectionClassifier?: InjectionClassifier;
+  private readonly watcher?: import('@ethosagent/safety-watcher').Watcher;
   /** Per-session accumulated spend in USD. Keyed by sessionKey. Reset via resetSessionCost(). */
   private readonly sessionCosts = new Map<string, number>();
 
@@ -233,6 +250,7 @@ export class AgentLoop {
     if (config.dataDir) this.dataDir = config.dataDir;
     if (config.observability) this.observability = config.observability;
     if (config.injectionClassifier) this.injectionClassifier = config.injectionClassifier;
+    if (config.watcher) this.watcher = config.watcher;
   }
 
   /** Returns all available tools for inventory display (e.g. TUI splash screen). */
@@ -484,6 +502,27 @@ export class AgentLoop {
     const dgTools = resolveDowngradedTools(dgConfig?.tools);
     let dgRemaining = 0;
 
+    // Ch.6a — reset the watcher's per-turn counters on every fresh run().
+    // Cross-turn state (rolling tool-call rate window) intentionally
+    // persists; per-turn state (output token total) resets here.
+    this.watcher?.resetTurn();
+    // Captures the most recent non-`allow` decision so the iteration
+    // boundary check can act on terminate / pause without splitting the
+    // decision logic across every yield site. Typed via a `getHalt`
+    // accessor so TS doesn't narrow the value to `never` after the
+    // closure assigns it inside `observe()`.
+    type HaltDecision = Extract<
+      import('@ethosagent/safety-watcher').WatcherDecision,
+      { action: 'pause' | 'force_approval' | 'terminate' }
+    >;
+    let watcherHaltState: HaltDecision | null = null;
+    const observe = (event: import('@ethosagent/safety-watcher').WatcherEvent): void => {
+      if (!this.watcher) return;
+      const d = this.watcher.observe(event);
+      if (d.action !== 'allow') watcherHaltState = d;
+    };
+    const getHalt = (): HaltDecision | null => watcherHaltState;
+
     for (let iteration = 0; iteration < this.maxIterations; iteration++) {
       if (abortSignal.aborted) {
         yield { type: 'error', error: 'Aborted', code: 'aborted' };
@@ -492,6 +531,35 @@ export class AgentLoop {
           this.observability?.flush();
         }
         return;
+      }
+
+      // Ch.6a — the watcher fired a non-allow decision since the last
+      // boundary check. Pause = stop this turn cleanly with a chip the
+      // user sees. Terminate = error event + return. force_approval is
+      // mapped to pause for v1 until the approval-hook is wired (failing
+      // safe is better than silently continuing under the watcher's
+      // intent to escalate).
+      const halt = getHalt();
+      if (halt) {
+        if (halt.action === 'terminate') {
+          yield {
+            type: 'error',
+            error: `Watcher: ${halt.reason}`,
+            code: `watcher_${halt.rule}`,
+          };
+          if (traceId) {
+            this.observability?.endTrace(traceId, 'aborted');
+            this.observability?.flush();
+          }
+          return;
+        }
+        yield {
+          type: 'tool_progress',
+          toolName: '_watcher',
+          message: `⚠ ${halt.rule}: ${halt.reason}`,
+          audience: 'user',
+        };
+        break;
       }
 
       // Budget guard: bail before the next LLM call if we've already exceeded
@@ -592,6 +660,11 @@ export class AgentLoop {
               );
               llmInputTokens += event.inputTokens;
               llmOutputTokens += event.outputTokens;
+              observe({
+                type: 'usage',
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+              });
             }
             yield event;
           }
@@ -748,6 +821,7 @@ export class AgentLoop {
             code: 'tool_downgraded_post_untrusted_read',
             cause: tc.toolName,
           });
+          observe({ type: 'tool_end', toolName: tc.toolName, ok: false });
           yield {
             type: 'tool_end',
             toolCallId: tc.toolCallId,
@@ -784,6 +858,7 @@ export class AgentLoop {
             code: 'tool_blocked',
             cause: beforeResult.error,
           });
+          observe({ type: 'tool_end', toolName: tc.toolName, ok: false });
           yield {
             type: 'tool_end',
             toolCallId: tc.toolCallId,
@@ -810,6 +885,7 @@ export class AgentLoop {
           obsConfig,
         });
         spanIds.set(tc.toolCallId, spanId ?? '');
+        observe({ type: 'tool_start', toolName: tc.toolName, args: effectiveArgs });
         yield {
           type: 'tool_start',
           toolCallId: tc.toolCallId,
@@ -875,6 +951,7 @@ export class AgentLoop {
               durationMs,
             });
           }
+          observe({ type: 'tool_end', toolName: p.name, ok: result.ok });
           yield {
             type: 'tool_end',
             toolCallId: p.toolCallId,

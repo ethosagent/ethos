@@ -107,6 +107,32 @@ const PATTERNS: Array<{ test: (cmd: string) => boolean; reason: string }> = [
   },
 ];
 
+// Ch.5 — bash argv fs-path floor (defense-in-depth on top of the
+// always-deny ScopedStorage floor). The shell can build paths in many
+// ways the regex doesn't catch (`$HOME/.ssh`, `$(pwd)/.ssh`, `eval`,
+// command substitution, glob), so this is NOT the boundary. The
+// ScopedStorage always-deny list IS. This catalog catches lazy attacks
+// that emit a literal credential path in the command string.
+// Match a credential path no matter where it appears in the command —
+// `cat ~/.ssh/id_rsa`, `cat /home/u/.ssh/id_rsa`, `head < /etc/passwd`,
+// all should fire. Each pattern requires a path-segment boundary
+// (`/` or end of token) AFTER the file portion so suffix collisions
+// like `.bash_history.example` don't false-positive.
+const ARGV_FS_DENY_PATTERNS: Array<{ test: (cmd: string) => boolean; path: string }> = [
+  { test: (cmd) => /\/\.ssh\/(?:id_|authorized|known)/.test(cmd), path: '~/.ssh/...' },
+  { test: (cmd) => /\/\.aws\/credentials(?:[/\s]|$)/.test(cmd), path: '~/.aws/credentials' },
+  { test: (cmd) => /\/\.gnupg(?:[/\s]|$)/.test(cmd), path: '~/.gnupg' },
+  { test: (cmd) => /\/\.netrc(?:[\s]|$)/.test(cmd), path: '~/.netrc' },
+  {
+    test: (cmd) => /\/etc\/(?:passwd|shadow|sudoers)(?:[/\s]|$)/.test(cmd),
+    path: '/etc/passwd|shadow|sudoers',
+  },
+  {
+    test: (cmd) => /(?:^|\s|<|>|\/)\.(?:bash|zsh|psql|mysql)_history(?:[\s]|$)/.test(cmd),
+    path: 'shell history file',
+  },
+];
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -116,6 +142,11 @@ export type DangerResult = { dangerous: false } | { dangerous: true; reason: str
 export function checkCommand(command: string): DangerResult {
   for (const { test, reason } of PATTERNS) {
     if (test(command)) return { dangerous: true, reason };
+  }
+  for (const { test, path } of ARGV_FS_DENY_PATTERNS) {
+    if (test(command)) {
+      return { dangerous: true, reason: `command targets always-deny path '${path}'` };
+    }
   }
   return { dangerous: false };
 }

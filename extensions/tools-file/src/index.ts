@@ -18,9 +18,12 @@ const BLOCKED_WRITE_PATHS = [join(homedir(), '.ethos', 'config.yaml')];
 const BLOCKED_WRITE_PREFIXES = [join(homedir(), '.ethos', 'sessions')];
 
 function expandPath(p: string, cwd: string): string {
-  if (p.startsWith('~/')) return join(homedir(), p.slice(2));
-  if (isAbsolute(p)) return p;
-  return resolve(cwd, p);
+  // Expand ~/ first, then resolve unconditionally so `..` and `.`
+  // segments are normalized. Without `resolve()`, an absolute path like
+  // `/tmp/foo/./../etc/passwd` would skip past the working-dir
+  // allowlist via lexical-but-unnormalized prefix matching.
+  const expanded = p.startsWith('~/') ? join(homedir(), p.slice(2)) : p;
+  return isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded);
 }
 
 /**
