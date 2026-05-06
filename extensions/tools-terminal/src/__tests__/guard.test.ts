@@ -101,6 +101,36 @@ describe('checkCommand', () => {
       if (result.dangerous) expect(result.reason).toMatch(/SQL/);
     });
   });
+
+  // Ch.4a — hardline blocklist expansion
+  describe('Ch.4a hardline expansion — should be blocked', () => {
+    it.each([
+      ['rm -rf ~/.ssh', /SSH key/],
+      ['rm -rf ~/.ssh/known_hosts', /SSH key/],
+      ['gpg --delete-secret-keys 1234', /GPG/],
+      ['gpg --delete-secret-key 1234', /GPG/],
+      ['find / -delete', /find-and-delete/],
+      ['chmod 4755 /tmp/sneaky', /setuid/],
+      ['chmod u+s /tmp/binary', /setuid/],
+      ['chmod g+s /tmp/binary', /setuid/],
+      ['setcap cap_net_raw+ep /usr/bin/foo', /setcap/],
+      ['echo whatever > /etc/sudoers', /system auth file/],
+      ['cat /tmp/x > /etc/passwd', /system auth file/],
+      ['echo bad > /etc/shadow', /system auth file/],
+      ['echo malicious > /boot/grub.cfg', /kernel\/boot/],
+      ['echo 1 > /sys/kernel/debug/foo', /kernel\/boot/],
+      ['echo "key" > ~/.ssh/authorized_keys', /authorized_keys/],
+    ])('blocks: %s', (cmd, expectedReason) => {
+      const result = checkCommand(cmd);
+      expect(result.dangerous).toBe(true);
+      if (result.dangerous) expect(result.reason).toMatch(expectedReason);
+    });
+
+    it('does not flag chmod 755 or chmod +x', () => {
+      expect(checkCommand('chmod 755 script.sh').dangerous).toBe(false);
+      expect(checkCommand('chmod +x script.sh').dangerous).toBe(false);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

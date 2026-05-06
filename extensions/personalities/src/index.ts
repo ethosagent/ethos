@@ -567,6 +567,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       ...(safety !== undefined ? { safety } : {}),
     };
 
+    validateUnsafeCombinations(id, config);
     return config;
   }
 
@@ -630,36 +631,76 @@ function parseCsv(value: string | undefined): string[] | undefined {
 }
 
 function buildSafetyConfig(raw: Record<string, unknown>): PersonalitySafetyConfig {
+  const result: PersonalitySafetyConfig = {};
   const obs = raw.observability as Record<string, unknown> | undefined;
-  if (!obs) return {};
-  const validStoreValues = ['none', 'redacted', 'full'] as const;
-  const validLlmValues = ['none', 'metadata', 'full'] as const;
-  const observability: PersonalityObservabilityConfig = {};
-  if (obs.storeToolArgs !== undefined) {
-    if (!validStoreValues.includes(obs.storeToolArgs as (typeof validStoreValues)[number]))
-      throw new Error(`Invalid storeToolArgs: "${obs.storeToolArgs}"`);
-    observability.storeToolArgs =
-      obs.storeToolArgs as PersonalityObservabilityConfig['storeToolArgs'];
-  }
-  if (obs.storeToolBodies !== undefined) {
-    if (!validStoreValues.includes(obs.storeToolBodies as (typeof validStoreValues)[number]))
-      throw new Error(`Invalid storeToolBodies: "${obs.storeToolBodies}"`);
-    observability.storeToolBodies =
-      obs.storeToolBodies as PersonalityObservabilityConfig['storeToolBodies'];
-  }
-  if (obs.storeLlmPayloads !== undefined) {
-    if (!validLlmValues.includes(obs.storeLlmPayloads as (typeof validLlmValues)[number]))
-      throw new Error(`Invalid storeLlmPayloads: "${obs.storeLlmPayloads}"`);
-    observability.storeLlmPayloads =
-      obs.storeLlmPayloads as PersonalityObservabilityConfig['storeLlmPayloads'];
-  }
-  if (Array.isArray(obs.redactPatterns)) {
-    for (const p of obs.redactPatterns) {
-      if (typeof p !== 'string') throw new Error('redactPatterns entries must be strings');
+  if (obs) {
+    const validStoreValues = ['none', 'redacted', 'full'] as const;
+    const validLlmValues = ['none', 'metadata', 'full'] as const;
+    const observability: PersonalityObservabilityConfig = {};
+    if (obs.storeToolArgs !== undefined) {
+      if (!validStoreValues.includes(obs.storeToolArgs as (typeof validStoreValues)[number]))
+        throw new Error(`Invalid storeToolArgs: "${obs.storeToolArgs}"`);
+      observability.storeToolArgs =
+        obs.storeToolArgs as PersonalityObservabilityConfig['storeToolArgs'];
     }
-    observability.redactPatterns = obs.redactPatterns as string[];
+    if (obs.storeToolBodies !== undefined) {
+      if (!validStoreValues.includes(obs.storeToolBodies as (typeof validStoreValues)[number]))
+        throw new Error(`Invalid storeToolBodies: "${obs.storeToolBodies}"`);
+      observability.storeToolBodies =
+        obs.storeToolBodies as PersonalityObservabilityConfig['storeToolBodies'];
+    }
+    if (obs.storeLlmPayloads !== undefined) {
+      if (!validLlmValues.includes(obs.storeLlmPayloads as (typeof validLlmValues)[number]))
+        throw new Error(`Invalid storeLlmPayloads: "${obs.storeLlmPayloads}"`);
+      observability.storeLlmPayloads =
+        obs.storeLlmPayloads as PersonalityObservabilityConfig['storeLlmPayloads'];
+    }
+    if (Array.isArray(obs.redactPatterns)) {
+      for (const p of obs.redactPatterns) {
+        if (typeof p !== 'string') throw new Error('redactPatterns entries must be strings');
+      }
+      observability.redactPatterns = obs.redactPatterns as string[];
+    }
+    result.observability = observability;
   }
-  return { observability };
+
+  // Ch.4b — approvalMode parsing
+  if (raw.approvalMode !== undefined) {
+    const mode = raw.approvalMode;
+    if (mode !== 'manual' && mode !== 'smart' && mode !== 'off') {
+      throw new Error(`Invalid approvalMode: "${mode}". Expected one of: manual, smart, off`);
+    }
+    result.approvalMode = mode;
+  }
+  return result;
+}
+
+// Ch.4b — load-time refusal of unsafe combinations.
+//
+// Bound to the personality build path so a config that pairs
+// `approvalMode: off` with channel ingress (telegram/discord/slack/
+// whatsapp/email — anywhere a non-owner can drive the agent) fails to
+// load with a concrete error message rather than running with the
+// most-dangerous combination.
+const CHANNEL_INGRESS_PLATFORMS: ReadonlySet<string> = new Set([
+  'telegram',
+  'discord',
+  'slack',
+  'whatsapp',
+  'email',
+]);
+
+function validateUnsafeCombinations(id: string, config: PersonalityConfig): void {
+  const mode = config.safety?.approvalMode;
+  if (mode === 'off' && config.platform && CHANNEL_INGRESS_PLATFORMS.has(config.platform)) {
+    throw new Error(
+      `personality "${id}" has approvalMode: off but is bound to channel "${config.platform}".\n` +
+        '       Remote senders + auto-approve = remote-driven destructive actions.\n' +
+        "       Either: (a) move approvalMode to 'smart' or 'manual', or\n" +
+        '               (b) remove channel bindings from this personality (cli/cron only).\n' +
+        '       This combination is not configurable; it is rejected at config load.',
+    );
+  }
 }
 
 function renderConfigYaml(
