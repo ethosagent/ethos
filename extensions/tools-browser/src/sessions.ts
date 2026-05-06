@@ -37,8 +37,11 @@ const sessions = new Map<string, BrowserSession>();
  * BrowserSession as `policyFingerprint`. Two separate identifiers — see
  * `makeMapKey` below — so the security invariant check in
  * findActiveSession compares policy-to-policy, not key-to-key.
+ *
+ * Exported so tests can construct adversarial scenarios (right map
+ * key + wrong fingerprint, etc.) without re-implementing the hash.
  */
-function policyFingerprint(policy: NetworkPolicyShape): string {
+export function policyFingerprint(policy: NetworkPolicyShape): string {
   const sorted = {
     allow: [...(policy.allow ?? [])].sort(),
     deny: [...(policy.deny ?? [])].sort(),
@@ -47,7 +50,9 @@ function policyFingerprint(policy: NetworkPolicyShape): string {
   return createHash('sha256').update(JSON.stringify(sorted)).digest('hex').slice(0, 16);
 }
 
-function makeMapKey(sessionId: string, policy: NetworkPolicyShape): string {
+/** Map key for the sessions Map. Exported for the same reason as
+ *  policyFingerprint — tests need it to construct adversarial fixtures. */
+export function makeMapKey(sessionId: string, policy: NetworkPolicyShape): string {
   return `${sessionId}::${policyFingerprint(policy)}`;
 }
 
@@ -99,7 +104,16 @@ export async function getOrCreateSession(
   const key = makeMapKey(sessionId, policy);
 
   const exact = sessions.get(key);
-  if (exact) return exact;
+  // The map-key match is the fast path; the security invariant is the
+  // explicit fingerprint comparison. A session inserted under the right
+  // key with a stale `policyFingerprint` (test, plugin, future bug) gets
+  // torn down rather than reused.
+  if (exact && exact.policyFingerprint === fp) return exact;
+  if (exact) {
+    sessions.delete(key);
+    await exact.context.close().catch(() => {});
+    await exact.browser.close().catch(() => {});
+  }
 
   // Tear down any prior session for the same sessionId under a
   // different policy fingerprint — that's the protection against
