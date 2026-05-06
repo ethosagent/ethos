@@ -13,7 +13,7 @@ import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { PluginLoader } from '@ethosagent/plugin-loader';
 import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import { createInjectors, filterSkill, UniversalScanner } from '@ethosagent/skills';
+import { createInjectors, UniversalScanner } from '@ethosagent/skills';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { createBrowserTools } from '@ethosagent/tools-browser';
 import { createCodeTools } from '@ethosagent/tools-code';
@@ -30,6 +30,7 @@ import {
 } from '@ethosagent/tools-terminal';
 import { createWebTools } from '@ethosagent/tools-web';
 import type { BeforeToolCallPayload, ContextInjector, LLMProvider } from '@ethosagent/types';
+import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -164,6 +165,10 @@ export async function createLLM(config: WiringConfig): Promise<LLMProvider> {
   });
 }
 
+// Skill passthrough helpers live in a separate file so tests can import them
+// without pulling in the heavy plugin-loader / docker / mcp dependency chain.
+export { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
+
 // ---------------------------------------------------------------------------
 // AgentLoop assembly
 // ---------------------------------------------------------------------------
@@ -231,29 +236,14 @@ export async function createAgentLoop(
   // filtering at boot time (MCP tools aren't registered yet).
   const bootToolNames = new Set(activePerson.toolset ?? []);
   const attachedServers = new Set(activePerson.mcp_servers ?? []);
-  const skillPassthrough = new Set<string>();
-  for (const skill of skillPool.values()) {
-    const decision = filterSkill(skill, activePerson, bootToolNames);
-    if (!decision.include) continue;
-    for (const v of skill.permissions?.mcp_env_passthrough ?? []) {
-      skillPassthrough.add(v);
-    }
-  }
+  const skillPassthrough = deriveSkillPassthrough(skillPool, activePerson, bootToolNames);
 
   const rawMcpConfig = await loadMcpConfig();
-  const mcpConfig =
-    skillPassthrough.size === 0
-      ? rawMcpConfig
-      : rawMcpConfig.map((cfg) => {
-          // Only grant extra passthrough to servers this personality can reach.
-          if (attachedServers.size > 0 && !attachedServers.has(cfg.name)) return cfg;
-          return {
-            ...cfg,
-            mcpEnvPassthrough: [
-              ...new Set([...(cfg.mcpEnvPassthrough ?? []), ...skillPassthrough]),
-            ],
-          };
-        });
+  const mcpConfig = applySkillPassthrough(
+    rawMcpConfig,
+    skillPassthrough,
+    attachedServers,
+  ) as Awaited<ReturnType<typeof loadMcpConfig>>;
   const mcpManager = new McpManager(mcpConfig);
   await mcpManager.connect();
   for (const tool of mcpManager.getTools()) tools.register(tool);

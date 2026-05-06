@@ -100,6 +100,12 @@ async function installPlugin(pkg: string): Promise<void> {
     process.exit(pre.status ?? 1);
   }
 
+  // Exact name@version resolved during the scan — used for the final install so we
+  // commit exactly what was scanned rather than re-resolving the original spec (which
+  // could yield a different version if a range, dist-tag, git ref, or mutable URL
+  // changed between the scan and the install).
+  let exactSpec = pkg;
+
   try {
     // Step 2: locate the installed package dir from the manifest npm wrote —
     // deriving the dir from the argument string fails for tarballs, git URLs,
@@ -116,7 +122,45 @@ async function installPlugin(pkg: string): Promise<void> {
     const hasYellow = findings.some((f) => f.severity === 'yellow');
     const scanResult = { findings, hasRed, hasYellow };
 
-    // Step 5: show tier badge + findings
+    // Step 5: read display metadata from the installed package.json
+    let author = '(unsigned)';
+    let networkDisplay = '(none declared)';
+    let shellDisplay = '(none declared)';
+    try {
+      const rawMeta = JSON.parse(await readFile(join(pkgDir, 'package.json'), 'utf-8')) as Record<
+        string,
+        unknown
+      >;
+      const rawAuthor = rawMeta.author;
+      if (typeof rawAuthor === 'string' && rawAuthor) {
+        author = rawAuthor;
+      } else if (typeof rawAuthor === 'object' && rawAuthor !== null) {
+        const a = rawAuthor as Record<string, unknown>;
+        if (typeof a.name === 'string' && a.name) author = a.name;
+      }
+      // Pin to the exact resolved version so the final install commits what was scanned.
+      const metaName = typeof rawMeta.name === 'string' ? rawMeta.name : undefined;
+      const metaVersion = typeof rawMeta.version === 'string' ? rawMeta.version : undefined;
+      if (metaName && metaVersion) exactSpec = `${metaName}@${metaVersion}`;
+    } catch {
+      // package.json already verified to exist; malformed JSON is safe to ignore here
+    }
+    if (permissions.network !== undefined) {
+      networkDisplay =
+        permissions.network.length > 0 ? permissions.network.join(' · ') : '(any host)';
+    }
+    if (permissions.shell === true) {
+      shellDisplay = 'yes';
+    }
+
+    const labelW = 20;
+    console.log(`\n${c.bold}Install metadata — ${pkg}${c.reset}`);
+    console.log(`  ${'Source'.padEnd(labelW)}${c.dim}community (npm) · ${pkg}${c.reset}`);
+    console.log(`  ${'Author'.padEnd(labelW)}${author}`);
+    console.log(`  ${'Network access'.padEnd(labelW)}${c.dim}${networkDisplay}${c.reset}`);
+    console.log(`  ${'Shell access'.padEnd(labelW)}${c.dim}${shellDisplay}${c.reset}`);
+
+    // Step 6: show tier badge + findings
     const tier = 'community'; // npm packages are always community
     if (hasRed || hasYellow) {
       const tierColor = c.yellow;
@@ -132,7 +176,7 @@ async function installPlugin(pkg: string): Promise<void> {
       }
     }
 
-    // Step 6: decide
+    // Step 7: decide
     const decision = canInstall(scanResult, tier);
     if (!decision.allowed) {
       if (hasRed) {
@@ -153,16 +197,17 @@ async function installPlugin(pkg: string): Promise<void> {
     await rm(tmpDir, { recursive: true, force: true });
   }
 
-  // Step 7: approved — install into the final plugins dir.
-  // --ignore-scripts is intentional: lifecycle scripts (preinstall/install/
-  // postinstall) are not scanned and can execute arbitrary code. Plugins must
-  // not rely on npm lifecycle scripts for their runtime behaviour.
+  // Step 8: approved — install into the final plugins dir using the exact resolved
+  // spec captured during the scan. --ignore-scripts is intentional: lifecycle
+  // scripts (preinstall/install/postinstall) are not scanned and can execute
+  // arbitrary code. Plugins must not rely on npm lifecycle scripts for their
+  // runtime behaviour.
   console.log(
-    `\n${c.dim}Installing ${c.reset}${c.bold}${pkg}${c.reset}${c.dim} to ${dir}...${c.reset}\n`,
+    `\n${c.dim}Installing ${c.reset}${c.bold}${exactSpec}${c.reset}${c.dim} to ${dir}...${c.reset}\n`,
   );
   const result = spawnSync(
     'npm',
-    ['install', '--prefix', dir, '--ignore-scripts', '--no-audit', pkg],
+    ['install', '--prefix', dir, '--ignore-scripts', '--no-audit', exactSpec],
     { stdio: 'inherit' },
   );
   if (result.status !== 0) {
@@ -177,7 +222,7 @@ async function installPlugin(pkg: string): Promise<void> {
  * the temp prefix dir. Fails closed if the manifest is absent or ambiguous —
  * the caller must not scan or install when this throws.
  */
-async function findInstalledPkgDir(tmpDir: string, pkgArg: string): Promise<string> {
+export async function findInstalledPkgDir(tmpDir: string, pkgArg: string): Promise<string> {
   let manifest: { dependencies?: Record<string, string> } = {};
   try {
     manifest = JSON.parse(await readFile(join(tmpDir, 'package.json'), 'utf-8')) as typeof manifest;
@@ -204,7 +249,18 @@ async function findInstalledPkgDir(tmpDir: string, pkgArg: string): Promise<stri
     });
   }
   const pkgName = names[0];
-  return join(tmpDir, 'node_modules', pkgName);
+  const pkgDir = join(tmpDir, 'node_modules', pkgName);
+  try {
+    await readFile(join(pkgDir, 'package.json'), 'utf-8');
+  } catch {
+    throw new EthosError({
+      code: 'SKILL_INSTALL_FAILED',
+      cause: `Installed package directory not found for '${pkgArg}' — expected package.json at ${join(pkgDir, 'package.json')}`,
+      action:
+        'The package may have installed under a different name. Use a plain npm package name rather than a tarball, git URL, or local path.',
+    });
+  }
+  return pkgDir;
 }
 
 async function readPluginPermissions(pkgDir: string): Promise<PluginScanPermissions> {
