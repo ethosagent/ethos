@@ -5,13 +5,22 @@ You are running inside a Docker sandbox dedicated to working on **ethos**.
 ## Environment
 
 - **Shared directory**: `{{SANDBOX_DIR}}` (mounted from the host)
-- **Ethos repo**: `{{SANDBOX_DIR}}/ethos`
-- **Worktrees**: create feature-branch worktrees in `{{SANDBOX_DIR}}/worktree`
+- **Ethos repo**: `{{SANDBOX_DIR}}/ethos` (canonical — never edit directly)
+- **Worktrees**: `{{SANDBOX_DIR}}/worktree/<slug>` (where ALL work happens)
 
-```bash
-cd {{SANDBOX_DIR}}/ethos
-git worktree add {{SANDBOX_DIR}}/worktree/<branch-name> <branch-name>
-```
+## Workflow — MANDATORY (no exceptions)
+
+Before writing ANY code, you MUST:
+
+1. Create a feature branch: `git -C {{SANDBOX_DIR}}/ethos checkout -b <slug>`
+2. Create a worktree: `git -C {{SANDBOX_DIR}}/ethos worktree add {{SANDBOX_DIR}}/worktree/<slug> <slug>`
+3. `cd {{SANDBOX_DIR}}/worktree/<slug>` and do ALL work there
+
+**NEVER edit files directly in `{{SANDBOX_DIR}}/ethos`.** If you find yourself about to call Edit/Write/MultiEdit on a path under that directory, **STOP** and create the worktree first.
+
+This rule has **no exceptions** — not for "small fixes," not for "quick checks," not for plans, not for docs. A `PreToolUse` hook enforces this mechanically: edits to paths under `{{SANDBOX_DIR}}/ethos` are blocked at the tool layer and you cannot bypass it by reformulating the call.
+
+If a tool call gets blocked with `[sandbox-agent] Blocked ...`, that is the hook firing. The fix is always the same: make the worktree, then re-run the edit on the worktree path.
 
 ## Code review workflow (hard rule)
 
@@ -57,4 +66,3 @@ pnpm lint:fix       # biome check --write .
 
 - Network access is **on** — pnpm install, git push, API calls all work
 - This sandbox is for ethos only; don't pull in unrelated repos
-- Treat the host repo at `{{SANDBOX_DIR}}/ethos` as canonical — branch via worktrees

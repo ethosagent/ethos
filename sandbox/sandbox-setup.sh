@@ -168,6 +168,20 @@ if [ -d "$SKILLS_SRC" ]; then
   echo "  ✅ Skills installed."
 fi
 
+# Install PreToolUse hook (forbid direct edits to canonical ethos checkout)
+HOOKS_SRC="$SCRIPT_DIR/hooks"
+HOOKS_DST="$SANDBOX_DIR/.auth/claude/hooks"
+PRETOOLUSE_HOOK_PATH="$HOOKS_DST/block-non-worktree-edits.sh"
+if [ -f "$HOOKS_SRC/block-non-worktree-edits.sh" ]; then
+  echo "  🚧 Installing PreToolUse hook..."
+  mkdir -p "$HOOKS_DST"
+  sed -e "s|{{ETHOS_DIR}}|$ETHOS_DIR|g" \
+      -e "s|{{WORKTREE_DIR}}|$SANDBOX_DIR/worktree|g" \
+      "$HOOKS_SRC/block-non-worktree-edits.sh" > "$PRETOOLUSE_HOOK_PATH"
+  chmod +x "$PRETOOLUSE_HOOK_PATH"
+  echo "  ✅ Hook installed at $PRETOOLUSE_HOOK_PATH"
+fi
+
 # Configure statusline + Stop hook + review allowlist in a single settings.json patch
 STATUSLINE_PATH=""
 if [ -f "$SCRIPT_DIR/sandbox-statusline.sh" ]; then
@@ -177,12 +191,13 @@ if [ -f "$SCRIPT_DIR/sandbox-statusline.sh" ]; then
   STATUSLINE_PATH="$SANDBOX_DIR/.sandbox-statusline.sh"
 fi
 
-echo "  ⚙️  Patching Claude settings.json (statusline + hook + permissions)..."
+echo "  ⚙️  Patching Claude settings.json (statusline + hooks + permissions)..."
 EXISTING_SETTINGS="$(sandbox_exec "cat /home/agent/.claude/settings.json 2>/dev/null || echo '{}'")"
 echo "$EXISTING_SETTINGS" \
   | jq \
       --arg statusline "$STATUSLINE_PATH" \
-      --arg hookcmd "$HOOK_PATH" '
+      --arg hookcmd "$HOOK_PATH" \
+      --arg pretoolusehook "$PRETOOLUSE_HOOK_PATH" '
     . as $base
     | (if ($statusline | length) > 0
          then . + {"statusLine":{"type":"command","command":$statusline}}
@@ -198,6 +213,11 @@ echo "$EXISTING_SETTINGS" \
     | (if ($hookcmd | length) > 0
          then . + {"hooks": ((.hooks // {}) + {
               "Stop": [{"matcher":"*","hooks":[{"type":"command","command":$hookcmd}]}]
+            })}
+         else . end)
+    | (if ($pretoolusehook | length) > 0
+         then . + {"hooks": ((.hooks // {}) + {
+              "PreToolUse": [{"matcher":"Edit|Write|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":$pretoolusehook}]}]
             })}
          else . end)
   ' > "$SANDBOX_DIR/.claude-settings-tmp.json"
