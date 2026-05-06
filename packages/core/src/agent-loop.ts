@@ -848,8 +848,12 @@ export class AgentLoop {
       for (const p of prepped) {
         const durationMs = Date.now() - startedAt;
         let result: ToolResult;
-        // Ch.3a — keep the raw tool value for session/history persistence,
-        // and a possibly-wrapped value for the LLM tool_result block.
+        // Ch.3a — `result` carries the original raw value for tool_end events
+        // and after_tool_call hooks (the user-visible chip and audit trail
+        // see what the tool actually returned). `llmContent` is the LLM-
+        // facing string — possibly wrapped in `<untrusted>…</untrusted>` —
+        // and is what gets persisted to history so toLLMMessages() replays
+        // the exact bytes the model saw on the prior turn.
         let llmContent: string;
 
         if (p.rejected !== undefined) {
@@ -916,6 +920,7 @@ export class AgentLoop {
                 p.args,
                 result.value,
                 personality,
+                traceId,
               );
               llmContent = verdict.wrappedContent;
               if (verdict.containsInstructions) {
@@ -1116,6 +1121,7 @@ export class AgentLoop {
     args: unknown,
     rawValue: string,
     personality: PersonalityConfig,
+    traceId: string | undefined,
   ): Promise<{
     wrappedContent: string;
     containsInstructions: boolean;
@@ -1139,7 +1145,18 @@ export class AgentLoop {
     if (shouldCallLLM && this.injectionClassifier) {
       try {
         verdict = await this.injectionClassifier({ content: rawValue });
-      } catch {
+      } catch (err) {
+        // Tier-2 failure must not silently disappear — record it so an
+        // operator can see when a configured safety control is offline.
+        // We continue with Tier-1 only (fail-open by design: blocking the
+        // turn on classifier outage would brick every tool call).
+        this.observability?.recordEvent({
+          traceId,
+          category: 'audit.block',
+          severity: 'warn',
+          code: 'injection_classifier_failed',
+          cause: err instanceof Error ? err.message : String(err),
+        });
         verdict = null;
       }
     }

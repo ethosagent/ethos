@@ -307,6 +307,38 @@ describe('AgentLoop — Ch.3c short-pattern check', () => {
     await collect(loop.run('go'));
     expect(classifierCalls).toBe(0);
   });
+
+  it('records an audit event when the Tier-2 classifier throws', async () => {
+    const longContent = 'x'.repeat(600);
+    const tools = new DefaultToolRegistry();
+    tools.register(makeUntrustedTool('read_file', longContent));
+    const llm = makeScriptedLLM([
+      {
+        toolCalls: [{ id: 't1', name: 'read_file', input: { path: '/x' } }],
+        finishReason: 'tool_use',
+      },
+      { text: 'ok', finishReason: 'end_turn' },
+    ]);
+    const events: Array<{ category: string; code?: string }> = [];
+    const observability = {
+      startTrace: () => 'tr1',
+      endTrace: () => {},
+      startSpan: () => 'sp1',
+      endSpan: () => {},
+      recordEvent: (e: { category: string; code?: string }) => events.push(e),
+      flush: () => {},
+    };
+    const loop = new AgentLoop({
+      llm,
+      tools,
+      observability,
+      injectionClassifier: async () => {
+        throw new Error('haiku unreachable');
+      },
+    });
+    await collect(loop.run('go'));
+    expect(events.some((e) => e.code === 'injection_classifier_failed')).toBe(true);
+  });
 });
 
 describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {

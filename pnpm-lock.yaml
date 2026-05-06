@@ -946,6 +946,9 @@ importers:
       '@ethosagent/personalities':
         specifier: workspace:*
         version: link:../../extensions/personalities
+      '@ethosagent/safety-injection':
+        specifier: workspace:*
+        version: link:../../extensions/safety-injection
       '@ethosagent/sandbox-docker':
         specifier: workspace:*
         version: link:../../extensions/sandbox-docker

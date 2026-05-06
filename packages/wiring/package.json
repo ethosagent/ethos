@@ -29,6 +29,7 @@
     "@ethosagent/memory-markdown": "workspace:*",
     "@ethosagent/memory-vector": "workspace:*",
     "@ethosagent/personalities": "workspace:*",
+    "@ethosagent/safety-injection": "workspace:*",
     "@ethosagent/sandbox-docker": "workspace:*",
     "@ethosagent/session-sqlite": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
