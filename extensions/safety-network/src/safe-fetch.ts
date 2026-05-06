@@ -7,16 +7,41 @@
 // in one fetch call. Closed by disabling auto-redirect (`redirect: 'manual'`)
 // and routing every Location target back through the full pipeline before
 // issuing the next request. Cap at 5 hops total.
+//
+// **v1 honesty about DNS rebinding.** This module resolves the hostname,
+// validates every returned address, then calls `fetch(url)` and lets the
+// runtime DNS-resolve a second time at connect. That closes the *naive*
+// "host A resolves to a public IP, host B resolves to a private IP"
+// shape — both lookups go through `node:dns`, share the OS resolver
+// cache, and a TTL-based attacker still flips the answer between our
+// check and the connect. Closing the racy window requires connection-
+// time enforcement via an undici Agent with a custom `lookup` (or a
+// per-request `lookup` on `http.request`) that returns ONLY the address
+// we already authorized. That work is plan-tracked for v2 alongside
+// the third-party HTTP client survey. Until then, treat DNS rebinding
+// as PARTIALLY mitigated: the always-deny floor on cloud-metadata IPs
+// catches the highest-value target literally, but a sufficiently-fast
+// rebind can still reach an arbitrary private IP between the two
+// lookups.
 
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { isCloudMetadataHost } from './cloud-metadata';
 import { checkAllowDeny, type NetworkPolicy } from './policy';
 import { checkScheme, type SchemeCheckResult } from './scheme';
+
+async function defaultResolveHost(host: string): Promise<string[]> {
+  const records = await dnsLookup(host, { all: true });
+  return records.map((r) => r.address);
+}
 
 export interface SafeFetchOptions {
   policy: NetworkPolicy;
   /** Underlying fetch implementation; injected for testability. */
   fetchImpl?: typeof fetch;
-  /** Async DNS lookup; injected for the rebinding test. */
+  /** Async DNS lookup. **Defaults to node:dns/promises#lookup** so callers
+   *  do NOT have to remember to plumb a resolver to get the private-network
+   *  / DNS-rebinding-time-of-check protection. Injected only for tests
+   *  that need deterministic addresses. */
   resolveHost?: (hostname: string) => Promise<string[]>;
   /** Caller-passed RequestInit. `redirect` is forced to `'manual'` and
    *  cannot be overridden — the security guarantee depends on it. */
@@ -43,11 +68,12 @@ export async function safeFetch(
   opts: SafeFetchOptions,
 ): Promise<SafeFetchResult> {
   const fetchImpl = opts.fetchImpl ?? fetch;
+  const resolver = opts.resolveHost ?? defaultResolveHost;
   const maxHops = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
 
   let url = initialUrl;
   for (let hop = 0; hop < maxHops; hop++) {
-    const policyCheck = await validateUrl(url, opts.policy, opts.resolveHost);
+    const policyCheck = await validateUrl(url, opts.policy, resolver);
     if (!policyCheck.ok) {
       return { ok: false, reason: policyCheck.reason ?? 'blocked', hop, url };
     }
@@ -94,13 +120,15 @@ interface ValidateResult {
  * (always) → DNS resolution → private-network (unless opted in) →
  * per-personality allow/deny.
  *
- * Exported separately so the wiring `before_tool_call` hook can validate the
- * initial URL synchronously without paying the redirect-loop overhead.
+ * Exported separately so a `before_tool_call` hook can validate the
+ * initial URL without paying the redirect-loop overhead. `resolveHost`
+ * defaults to node:dns#lookup so callers cannot accidentally weaken the
+ * check by forgetting to inject a resolver.
  */
 export async function validateUrl(
   url: string,
   policy: NetworkPolicy,
-  resolveHost?: (hostname: string) => Promise<string[]>,
+  resolveHost: (hostname: string) => Promise<string[]> = defaultResolveHost,
 ): Promise<ValidateResult> {
   const scheme = checkScheme(url);
   if (!scheme.ok) return { ok: false, reason: scheme.reason };
@@ -198,12 +226,12 @@ function isPrivateIp(ip: string): boolean {
 
 async function checkPrivate(
   hostname: string,
-  resolveHost?: (h: string) => Promise<string[]>,
+  resolveHost: (h: string) => Promise<string[]>,
 ): Promise<ValidateResult> {
   if (isPrivateIp(hostname)) {
     return { ok: false, reason: `host '${hostname}' is in a private/reserved range` };
   }
-  if (resolveHost && !isLikelyIp(hostname)) {
+  if (!isLikelyIp(hostname)) {
     let addrs: string[];
     try {
       addrs = await resolveHost(hostname);
@@ -224,9 +252,9 @@ async function checkPrivate(
 
 async function checkResolvesToCloudMetadata(
   hostname: string,
-  resolveHost?: (h: string) => Promise<string[]>,
+  resolveHost: (h: string) => Promise<string[]>,
 ): Promise<ValidateResult> {
-  if (!resolveHost || isLikelyIp(hostname)) return { ok: true };
+  if (isLikelyIp(hostname)) return { ok: true };
   let addrs: string[];
   try {
     addrs = await resolveHost(hostname);

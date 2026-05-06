@@ -675,13 +675,22 @@ function buildSafetyConfig(raw: Record<string, unknown>): PersonalitySafetyConfi
   return result;
 }
 
-// Ch.4b — load-time refusal of unsafe combinations.
+// Ch.4b — load-time refusal of unsafe combinations (v1 floor).
 //
-// Bound to the personality build path so a config that pairs
-// `approvalMode: off` with channel ingress (telegram/discord/slack/
-// whatsapp/email — anywhere a non-owner can drive the agent) fails to
-// load with a concrete error message rather than running with the
-// most-dangerous combination.
+// `approvalMode: off` paired with a channel-ingress platform is the
+// catastrophic combination — a stranger or allowlisted remote user
+// can drive auto-approved destructive actions. We refuse it at config
+// load.
+//
+// **v1 limitation.** This check matches a hardcoded set of platform
+// strings on `personality.platform`. A new channel adapter or a
+// multi-channel binding wired solely at the gateway layer will not be
+// caught here. The plan-tracked v2 lifts this check up to the wiring
+// layer (which knows which surfaces actually bind the personality)
+// and replaces the string match with a typed "ingress capability"
+// flag. Until then, every channel-adapter package adding a new
+// platform name is responsible for adding it to the set below — the
+// alternative (silent bypass) is the worse failure mode.
 const CHANNEL_INGRESS_PLATFORMS: ReadonlySet<string> = new Set([
   'telegram',
   'discord',

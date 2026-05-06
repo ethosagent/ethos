@@ -75,10 +75,16 @@ const browseUrlTool: Tool = {
       return { ok: false, error: 'Only http and https URLs are supported', code: 'input_invalid' };
     }
 
-    // Ch.7 — initial URL passes through the full pipeline. Per-redirect-hop
-    // revalidation is not feasible inside Playwright's page.goto; v1 ships
-    // initial-URL enforcement only and the plan's `ethos security audit`
-    // flags this gap.
+    // Ch.7 — INITIAL URL ONLY. Once Playwright takes over `page.goto`,
+    // it follows redirects, fetches subresources, and may navigate to
+    // private or cloud-metadata endpoints with no further validation.
+    // Closing that gap requires `page.route` interception with the same
+    // policy applied to every navigation + subresource — plan-tracked
+    // for v2. For v1 this means: a personality with `network.allow_private_urls
+    // = false` is NOT protected against post-load browser navigation
+    // and operators must treat browse_url like any other untrusted-
+    // sandbox tool. The always-deny floor on the initial URL still
+    // fires; everything past page.goto is on its own.
     const policyCheck = await validateUrl(url, ctx.networkPolicy ?? {}, resolveHost);
     if (!policyCheck.ok) {
       return { ok: false, error: policyCheck.reason ?? 'blocked', code: 'execution_failed' };

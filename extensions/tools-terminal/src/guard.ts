@@ -4,14 +4,27 @@ import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/ty
 // Dangerous command patterns
 // ---------------------------------------------------------------------------
 
-// Ch.4a — Hardline blocklist (non-overridable). These patterns ALWAYS
-// block, regardless of personality config, approval mode (including
-// `off`), or user override. Lives in code, not config — the user cannot
-// remove or whitelist any of these. Floor protection: by the time the
-// user reads an approval modal and clicks "approve" out of habit, prod
-// is gone. CVE-2026-29607 in OpenClaw was an approval-bypass that
-// destroyed prod data; a non-overridable floor would have prevented
-// the worst outcome.
+// Ch.4a — Hardline blocklist (non-overridable, best-effort).
+//
+// These patterns ALWAYS block when matched, regardless of personality
+// config, approval mode, or user override. Lives in code, not config —
+// the user cannot remove or whitelist any of these.
+//
+// **Honest scope.** This is regex matching against the raw command
+// string, which means basic shell forms defeat it: `$HOME/.ssh`,
+// command substitution like `$(echo cm0gLXJmIC8K | base64 -d)`, variable
+// indirection (`a=rm; b=-rf; c=/; $a $b $c`), `eval`, `xargs`-piped
+// construction. The plan calls this out explicitly: pattern matching
+// is the v1 floor that catches accidents and lazy attacks; production
+// trust comes from sandbox attestation (Ch.4d), not from this catalog.
+// Do not let future expansions of this list lull anyone into
+// believing it's a sufficient defense.
+//
+// The reason the regex floor is still worth shipping: it bounds the
+// blast radius of an LLM that fluently wrote `rm -rf /` in plain shell.
+// CVE-2026-29607 in OpenClaw was an approval-bypass that destroyed
+// prod data; a non-overridable regex floor would have caught the
+// literal command shape even with approval bypassed.
 const PATTERNS: Array<{ test: (cmd: string) => boolean; reason: string }> = [
   {
     // rm with both recursive (-r/-R) and force (-f) flags targeting / or ~
