@@ -51,12 +51,24 @@ describe('createDangerPredicate — Ch.4b approvalMode', () => {
       expect(r).toMatch(/email_send requires explicit approval/);
     });
 
-    it('off auto-approves the always-ask tool (cli/cron use case)', () => {
+    it('off auto-approves only when allowAutoApproveDangerousTools is set (cli/cron)', () => {
+      const pred = createDangerPredicate({
+        alwaysAsk: ['email_send'],
+        getPersonality: () => person('off'),
+        allowAutoApproveDangerousTools: true,
+      });
+      expect(pred(payload('email_send', { to: 'a@b' }))).toBeNull();
+    });
+
+    it('off WITHOUT the capability flag falls back to manual (returns the reason)', () => {
+      // The personality registry's load-time check rejects off+channel
+      // ingress, but the predicate cannot rely on cross-module invariants.
+      // Without the explicit capability flag, off is treated as manual.
       const pred = createDangerPredicate({
         alwaysAsk: ['email_send'],
         getPersonality: () => person('off'),
       });
-      expect(pred(payload('email_send', { to: 'a@b' }))).toBeNull();
+      expect(pred(payload('email_send', { to: 'a@b' }))).toMatch(/explicit approval/);
     });
 
     it('smart consults the callback — true → auto-approve', () => {

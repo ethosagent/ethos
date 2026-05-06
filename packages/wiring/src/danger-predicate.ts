@@ -33,6 +33,20 @@ export interface CreateDangerPredicateOptions {
   getPersonality?: (payload: BeforeToolCallPayload) => PersonalityConfig | undefined;
   /** Smart-mode callback (see SmartApprovalCallback above). */
   smartApprove?: SmartApprovalCallback;
+  /**
+   * Capability gate for `approvalMode: 'off'`. Without this set to
+   * true, the predicate treats `off` as `manual` — i.e. it will NOT
+   * auto-approve any dangerous tool, even when the personality config
+   * declares `off`. Callers (cli / cron / batch wiring) opt in
+   * explicitly when they have already verified the local execution
+   * conditions that make `off` safe (no channel ingress, owner-driven
+   * only). The personality-registry load-time check rejects `off` +
+   * channel ingress, but this flag is the predicate-local guarantee
+   * that survives any future caller bypassing the registry — Codex
+   * flagged the prior cross-module-only invariant as security-rot
+   * shaped.
+   */
+  allowAutoApproveDangerousTools?: boolean;
 }
 
 /**
@@ -80,7 +94,7 @@ export function createDangerPredicate(opts: CreateDangerPredicateOptions = {}): 
     if (!dangerReason) return null;
 
     const mode = opts.getPersonality?.(payload)?.safety?.approvalMode ?? 'manual';
-    if (mode === 'off') return null;
+    if (mode === 'off' && opts.allowAutoApproveDangerousTools === true) return null;
     if (mode === 'smart' && opts.smartApprove) {
       const approved = opts.smartApprove(payload, dangerReason);
       return approved ? null : dangerReason;
