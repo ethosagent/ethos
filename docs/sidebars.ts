@@ -76,6 +76,18 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Security',
+      collapsed: false,
+      items: [
+        'security/overview',
+        'security/threat-model',
+        'security/controls',
+        'security/security-fixes',
+        'security/responsible-disclosure',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Extending Ethos',
       collapsed: true,
       items: [
