@@ -3,7 +3,7 @@ import { FileContextInjector } from './file-context-injector';
 import { GetSkillTool } from './get-skill-tool';
 import { MemoryGuidanceInjector } from './memory-guidance-injector';
 import { SkillsInjector } from './skills-injector';
-import { UniversalScanner } from './universal-scanner';
+import { type ScanSource, UniversalScanner } from './universal-scanner';
 
 export { FileContextInjector } from './file-context-injector';
 export { GetSkillTool } from './get-skill-tool';
@@ -37,6 +37,20 @@ export interface InjectorConfig {
   globalSkillsDir?: string;
   /** Notified when a skill is skipped because of OpenClaw `requires`/`os` rules. */
   onSkillSkip?: (skillId: string, reason: string) => void;
+  /**
+   * Untrusted extension point — additional skill sources from user config,
+   * plugins, or other caller-controlled sources. Always gated at the
+   * `community` trust tier (red AND yellow safety findings block).
+   */
+  extraSources?: ScanSource[];
+  /**
+   * First-party extension point — skill sources that ship inside Ethos
+   * itself (e.g. `@ethosagent/skills-coding`'s bundled `data/` directory).
+   * Gated at `trusted-repo` so legitimate mentions of `bash`, `gh`, `curl`,
+   * etc. don't block. Reserved for in-repo callers; user config goes via
+   * `extraSources`.
+   */
+  trustedFirstPartySources?: ScanSource[];
 }
 
 /**
@@ -50,7 +64,10 @@ export function createInjectors(
   personalities: PersonalityRegistry,
   config: InjectorConfig = {},
 ): { injectors: import('@ethosagent/types').ContextInjector[]; tools: Tool[] } {
-  const scanner = new UniversalScanner();
+  const scanner = new UniversalScanner({
+    extraSources: config.extraSources,
+    trustedFirstPartySources: config.trustedFirstPartySources,
+  });
   const skillsInjector = new SkillsInjector(personalities, {
     globalSkillsDir: config.globalSkillsDir,
     onSkip: config.onSkillSkip,

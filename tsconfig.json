@@ -26,6 +26,7 @@
       "@ethosagent/platform-telegram/validate": ["./extensions/platform-telegram/src/validate"],
       "@ethosagent/openclaw-compat": ["./extensions/openclaw-compat/src"],
       "@ethosagent/skills": ["./extensions/skills/src"],
+      "@ethosagent/skills-coding": ["./extensions/skills-coding/src"],
       "@ethosagent/tools-file": ["./extensions/tools-file/src"],
       "@ethosagent/tools-terminal": ["./extensions/tools-terminal/src"],
       "@ethosagent/tools-web": ["./extensions/tools-web/src"],

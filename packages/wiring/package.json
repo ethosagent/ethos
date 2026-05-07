@@ -35,6 +35,7 @@
     "@ethosagent/session-sqlite": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/skills": "workspace:*",
+    "@ethosagent/skills-coding": "workspace:*",
     "@ethosagent/tools-browser": "workspace:*",
     "@ethosagent/tools-code": "workspace:*",
     "@ethosagent/tools-delegation": "workspace:*",

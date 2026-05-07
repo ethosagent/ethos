@@ -16,16 +16,39 @@ export interface ScanSource {
 }
 
 export interface UniversalScannerOptions {
-  /** Extra source directories beyond the built-in defaults. */
+  /**
+   * Untrusted extension point — additional source directories beyond the
+   * built-in defaults. Skills loaded from these sources are ALWAYS gated
+   * at the `community` tier (red AND yellow safety findings block) so a
+   * caller cannot escalate trust by passing in a custom directory.
+   */
   extraSources?: ScanSource[];
   /**
-   * Override ALL sources (skips defaultSources). Use in tests to avoid
-   * scanning real ~/.ethos/skills/, ~/.claude/skills/, etc.
+   * First-party extension point — for content shipped inside Ethos itself
+   * (the bundled coding skills package, future bundled skill packs). Skills
+   * loaded from these sources are gated at the `trusted-repo` tier (red
+   * still blocks; yellow is auto-acknowledged) so legitimate mentions of
+   * `bash`, `gh`, `curl`, etc. in skill bodies don't trip the scanner.
+   *
+   * IMPORTANT: only callers that ship code as part of Ethos (i.e. live in
+   * this monorepo) should populate this. User config / plugins / MCP / any
+   * caller-controlled list goes through `extraSources`.
+   */
+  trustedFirstPartySources?: ScanSource[];
+  /**
+   * Override ALL default sources. Use in tests to avoid scanning real
+   * ~/.ethos/skills/, ~/.claude/skills/, etc. Each entry is gated at the
+   * `community` tier — callers that want trusted-tier sources in tests
+   * combine this with `trustedFirstPartySources`.
    */
   sources?: ScanSource[];
   storage?: Storage;
   /** Called when a skill is rejected by the safety scan. */
   onSkip?: (qualifiedName: string, reason: string) => void;
+}
+
+interface ResolvedSource extends ScanSource {
+  trustTier: TrustTier;
 }
 
 interface CacheEntry {
@@ -39,11 +62,18 @@ interface CacheEntry {
  * (~/.claude/skills, ~/.openclaw/skills, etc.) are opt-in via extraSources
  * because they can contain hundreds of files not intended for ethos.
  */
-function defaultSources(): ScanSource[] {
+function defaultTrustedSources(): ScanSource[] {
+  // ~/.ethos/skills/ is user-managed local content. We treat it as
+  // trusted-repo so the user's own skills aren't blocked by yellow findings
+  // (legitimate mentions of bash, curl, etc.). Red findings (prompt
+  // injection) still block.
+  return [{ label: 'ethos', dir: join(homedir(), '.ethos', 'skills') }];
+}
+
+function defaultCommunitySources(): ScanSource[] {
   const home = homedir();
   const cwd = process.cwd();
   return [
-    { label: 'ethos', dir: join(home, '.ethos', 'skills') },
     { label: 'claude-code', dir: join(home, '.claude', 'skills') },
     { label: 'claude-code-project', dir: join(cwd, '.claude', 'skills') },
     { label: 'opencode-project', dir: join(cwd, '.opencode', 'skills') },
@@ -65,29 +95,28 @@ export function externalSources(): ScanSource[] {
  * Scans multiple source directories, parses all skill files using dialect
  * detection, and returns a deduped pool keyed by `qualifiedName`.
  * First source wins on name collisions.
+ *
+ * Trust tier is set by which option a source arrives through, never by
+ * the caller — `extraSources` is always `community`, `trustedFirstParty
+ * Sources` is always `trusted-repo`. There is no way for an untrusted
+ * caller to claim trust by guessing a privileged label.
  */
-// Map a source label to a trust tier for scan enforcement.
-// 'ethos' (~/.ethos/skills/) is user-managed local files, not skills shipped with Ethos.
-// trusted-repo: red blocks without force, yellow auto-acknowledged (not blocked).
-// community: red blocks, yellow also blocks without force.
-// 'ethos' gets trusted-repo so the user's own skills aren't blocked by yellow findings
-// (e.g. a skill that legitimately mentions bash or curl), while prompt injection (red)
-// is still caught and blocked.
-function sourceLabelToTier(sourceLabel: string): TrustTier {
-  return sourceLabel === 'ethos' ? 'trusted-repo' : 'community';
-}
-
 export class UniversalScanner {
-  private readonly sources: ScanSource[];
+  private readonly sources: ResolvedSource[];
   private readonly storage: Storage;
   private readonly cache = new Map<string, CacheEntry>();
   private readonly onSkip?: (qualifiedName: string, reason: string) => void;
 
   constructor(opts: UniversalScannerOptions = {}) {
     this.storage = opts.storage ?? new FsStorage();
-    this.sources = opts.sources
-      ? opts.sources
-      : [...defaultSources(), ...(opts.extraSources ?? [])];
+    const trustedDefaults = opts.sources ? [] : defaultTrustedSources();
+    const communityDefaults = opts.sources ?? defaultCommunitySources();
+    this.sources = [
+      ...trustedDefaults.map((s) => withTier(s, 'trusted-repo')),
+      ...(opts.trustedFirstPartySources ?? []).map((s) => withTier(s, 'trusted-repo')),
+      ...communityDefaults.map((s) => withTier(s, 'community')),
+      ...(opts.extraSources ?? []).map((s) => withTier(s, 'community')),
+    ];
     this.onSkip = opts.onSkip;
   }
 
@@ -101,7 +130,7 @@ export class UniversalScanner {
     for (const source of this.sources) {
       const files = await this.discoverFiles(source.dir);
       for (const filePath of files) {
-        const skill = await this.loadSkill(filePath, source.label);
+        const skill = await this.loadSkill(filePath, source);
         if (!skill) continue;
         // First source wins on name collision
         if (!pool.has(skill.qualifiedName)) {
@@ -150,7 +179,7 @@ export class UniversalScanner {
     return `${basename(grandparent)}/${basename(parentDir)}`;
   }
 
-  private async loadSkill(filePath: string, sourceLabel: string): Promise<Skill | null> {
+  private async loadSkill(filePath: string, source: ResolvedSource): Promise<Skill | null> {
     const mtimeMs = await this.storage.mtime(filePath);
     if (mtimeMs === null) return null;
 
@@ -160,17 +189,16 @@ export class UniversalScanner {
     const raw = await this.storage.read(filePath);
     if (!raw) return null;
 
-    const sourceDir =
-      this.sources.find((s) => filePath.startsWith(`${s.dir}/`))?.dir ?? dirname(filePath);
-    const name = this.skillNameFor(filePath, sourceDir);
-    const qualifiedName = `${sourceLabel}/${name}`;
+    const name = this.skillNameFor(filePath, source.dir);
+    const qualifiedName = `${source.label}/${name}`;
 
-    const skill = this.parseWithDialect(raw, filePath, sourceLabel, name, qualifiedName, mtimeMs);
+    const skill = this.parseWithDialect(raw, filePath, source.label, name, qualifiedName, mtimeMs);
 
-    // Gate on safety scan — block red findings from all sources.
+    // Trust tier is fixed by which option the source arrived through —
+    // `extraSources` always lands on `community`, `trustedFirstParty
+    // Sources` on `trusted-repo`. Callers cannot self-escalate.
     const scanResult = scanSkillMd(raw, filePath);
-    const tier = sourceLabelToTier(sourceLabel);
-    const decision = canInstall(scanResult, tier);
+    const decision = canInstall(scanResult, source.trustTier);
     if (!decision.allowed) {
       this.onSkip?.(qualifiedName, `safety scan: ${decision.blockedBy}`);
       return null;
@@ -216,4 +244,8 @@ export class UniversalScanner {
       mtimeMs,
     };
   }
+}
+
+function withTier(source: ScanSource, trustTier: TrustTier): ResolvedSource {
+  return { ...source, trustTier };
 }
