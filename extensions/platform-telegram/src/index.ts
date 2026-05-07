@@ -134,8 +134,16 @@ export class TelegramAdapter implements PlatformAdapter {
       this.messageHandler(msg);
     });
 
-    // Non-blocking: bot.start() runs the polling loop in the background
-    void this.bot.start({ drop_pending_updates: this.dropPendingUpdates });
+    // Non-blocking: bot.start() runs the polling loop in the background.
+    // grammy's start() rejects on init failure (e.g. invalid token → getMe 404)
+    // and on terminal polling errors. Without a .catch() the rejection becomes
+    // an unhandled promise rejection, which Node 24 treats as fatal — killing
+    // the whole gateway and any other adapters running with it. Attach a
+    // handler so a bad Telegram token degrades to a logged warning instead.
+    this.bot.start({ drop_pending_updates: this.dropPendingUpdates }).catch((err) => {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error(`[telegram] bot polling stopped: ${detail}`);
+    });
   }
 
   async stop(): Promise<void> {
