@@ -1,3 +1,5 @@
+import { lookup } from 'node:dns/promises';
+import { type NetworkPolicy, validateUrl } from '@ethosagent/safety-network';
 import { checkSsrf } from '@ethosagent/tools-web';
 import type { Tool, ToolResult } from '@ethosagent/types';
 import type { Page } from 'playwright';
@@ -5,7 +7,71 @@ import { type A11yRef, parseAriaSnapshot } from './a11y';
 import { browserScreenshotTool } from './browser-screenshot';
 import { createBrowserVisionClickTool } from './browser-vision-click';
 import { createBrowserVisionTypeTool } from './browser-vision-type';
-import { closeSession, getOrCreateSession, isPlaywrightInstalled, sessions } from './sessions';
+import {
+  type BrowserSession,
+  closeSession,
+  findActiveSession,
+  getOrCreateSession,
+  isPlaywrightInstalled,
+} from './sessions';
+
+async function resolveHost(host: string): Promise<string[]> {
+  const records = await lookup(host, { all: true });
+  return records.map((r) => r.address);
+}
+
+// Tracks which sessions have had their context-level route installed.
+// We can't put this on BrowserSession itself without circular imports,
+// and the install-once invariant lives at the call-site anyway.
+const installedRoutes = new WeakSet<BrowserSession>();
+
+// Ch.7 — schemes the browser route allows through without policy
+// validation. Default-deny: anything not on this list is aborted, which
+// keeps `file:`, `javascript:`, `chrome:`, `chrome-extension:`, `ftp:`,
+// `gopher:`, `dict:`, `ldap:`, `ws:`, `wss:`, `blob:`, `data:` (per
+// Codex Ch.7 follow-up #7), and any future custom scheme out.
+//
+// The two exceptions are Playwright internal pages — `about:blank` and
+// `about:srcdoc` — which are local-only and used by Playwright itself
+// during page setup. Adding any further entry to this set requires a
+// matching validated policy path for the scheme.
+const BROWSER_ALLOWED_NON_HTTP_PREFIXES = ['about:'];
+
+async function getOrCreateSessionWithRoute(
+  sessionId: string,
+  policy: NetworkPolicy,
+): Promise<BrowserSession> {
+  const session = await getOrCreateSession(sessionId, policy);
+  if (!installedRoutes.has(session)) {
+    // Context-level route covers every page in the context. Service
+    // workers are blocked at context creation (sessions.ts), so a
+    // page can't register one to bypass this check.
+    await session.context.route('**/*', async (route) => {
+      const reqUrl = route.request().url();
+      const isHttp = reqUrl.startsWith('http://') || reqUrl.startsWith('https://');
+      if (!isHttp) {
+        // Default-deny non-http(s). The narrow exception list keeps
+        // Playwright's about:blank/about:srcdoc internal pages working
+        // without opening a hole for file: / javascript: / data: / etc.
+        const allowed = BROWSER_ALLOWED_NON_HTTP_PREFIXES.some((p) => reqUrl.startsWith(p));
+        if (allowed) {
+          await route.continue();
+          return;
+        }
+        await route.abort('failed');
+        return;
+      }
+      const check = await validateUrl(reqUrl, policy, resolveHost);
+      if (!check.ok) {
+        await route.abort('failed');
+        return;
+      }
+      await route.continue();
+    });
+    installedRoutes.add(session);
+  }
+  return session;
+}
 
 // ---------------------------------------------------------------------------
 // Take an accessibility snapshot and format it
@@ -68,6 +134,15 @@ const browseUrlTool: Tool = {
       return { ok: false, error: 'Only http and https URLs are supported', code: 'input_invalid' };
     }
 
+    // Ch.7 — initial-URL gate. The page.route interceptor below enforces
+    // the SAME policy on every redirect target and subresource fetched
+    // by Playwright, so the network boundary covers the full navigation
+    // (not just `page.goto`'s first request).
+    const policy = ctx.networkPolicy ?? {};
+    const policyCheck = await validateUrl(url, policy, resolveHost);
+    if (!policyCheck.ok) {
+      return { ok: false, error: policyCheck.reason ?? 'blocked', code: 'execution_failed' };
+    }
     const ssrf = await checkSsrf(url);
     if (ssrf.blocked) {
       return { ok: false, error: ssrf.reason, code: 'execution_failed' };
@@ -82,7 +157,12 @@ const browseUrlTool: Tool = {
     }
 
     try {
-      const session = await getOrCreateSession(ctx.sessionId);
+      // Session is keyed by (sessionId, policy fingerprint). A policy
+      // change tears down and rebuilds the BrowserContext so the page-
+      // route handler is fresh and serviceWorkers stay blocked. New
+      // sessions install the route on a context-level handler before
+      // any page navigation.
+      const session = await getOrCreateSessionWithRoute(ctx.sessionId, policy);
       await session.page.goto(url, {
         waitUntil: wait_for,
         timeout: 30_000,
@@ -136,7 +216,7 @@ const browserClickTool: Tool = {
 
     if (!element_ref) return { ok: false, error: 'element_ref is required', code: 'input_invalid' };
 
-    const session = sessions.get(ctx.sessionId);
+    const session = findActiveSession(ctx.sessionId, ctx.networkPolicy ?? {});
     if (!session) {
       return {
         ok: false,
@@ -223,7 +303,7 @@ const browserTypeTool: Tool = {
     if (!element_ref) return { ok: false, error: 'element_ref is required', code: 'input_invalid' };
     if (text === undefined) return { ok: false, error: 'text is required', code: 'input_invalid' };
 
-    const session = sessions.get(ctx.sessionId);
+    const session = findActiveSession(ctx.sessionId, ctx.networkPolicy ?? {});
     if (!session) {
       return {
         ok: false,

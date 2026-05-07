@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@ethosagent/safety-injection": "workspace:*",
+    "@ethosagent/safety-watcher": "workspace:*",
     "@ethosagent/types": "workspace:*"
   },
   "devDependencies": {

@@ -23,6 +23,34 @@ export interface PersonalitySafetyConfig {
     mcp_env_passthrough?: string[] | boolean;
   };
   /**
+   * Ch.4b — Approval mode selector.
+   *
+   *   `manual` (default): every `dangerous` classification surfaces the
+   *     approval modal; `safe` auto-fires; `blocked` (the hardline floor)
+   *     errors out. Use for interactive pairing.
+   *   `smart`:  an auxiliary fast-model call reviews each `dangerous`
+   *     classification and either auto-approves, auto-denies, or escalates
+   *     to manual. Trades latency + $ for reduced approval fatigue.
+   *   `off`:    `dangerous` classifications auto-fire without prompt; the
+   *     hardline floor (Ch.4a) STILL applies. Invalid combination with any
+   *     channel ingress — config rejected at load time when `off` is paired
+   *     with telegram/discord/slack/email/whatsapp/etc bindings.
+   */
+  approvalMode?: 'manual' | 'smart' | 'off';
+  /**
+   * Ch.7 — Per-personality network reach. Layered with the always-deny
+   * cloud-metadata + private-network floor (non-overridable) and the
+   * scheme allowlist (http/https only). Empty/absent = open public
+   * internet (subject to floor); non-empty `allow` = allowlist mode.
+   */
+  network?: {
+    allow?: string[];
+    deny?: string[];
+    /** Opt-in for RFC1918 / loopback / link-local. Cloud-metadata still
+     *  blocked even when this is true (Ch.7b is non-overridable). */
+    allow_private_urls?: boolean;
+  };
+  /**
    * Ch.3 — Prompt-injection runtime defenses. All sub-blocks default to safe
    * values when absent, so a personality with no `injectionDefense` block
    * still gets provenance wrapping on `outputIsUntrusted` tools and a 2-turn

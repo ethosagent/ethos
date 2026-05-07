@@ -133,4 +133,53 @@ describe('ScopedStorage', () => {
       expect((err as BoundaryError).code).toBe('storage-boundary');
     }
   });
+
+  // Ch.5 — universal always-deny floor
+  describe('alwaysDeny floor', () => {
+    beforeEach(async () => {
+      await inner.mkdir('/home');
+      await inner.mkdir('/home/.ssh');
+      await inner.mkdir('/home/proj');
+      await inner.write('/home/.ssh/id_rsa', 'PRIVATE KEY');
+      await inner.write('/home/proj/notes.md', 'project notes');
+    });
+
+    it('blocks reads matching alwaysDeny even when allow grants the parent', async () => {
+      const scoped = new ScopedStorage(inner, {
+        read: ['/home/'],
+        write: ['/home/'],
+        alwaysDeny: ['/home/.ssh'],
+      });
+      await expect(scoped.read('/home/.ssh/id_rsa')).rejects.toBeInstanceOf(BoundaryError);
+      await expect(scoped.read('/home/proj/notes.md')).resolves.toBe('project notes');
+    });
+
+    it('blocks writes matching alwaysDeny even when write grants the parent', async () => {
+      const scoped = new ScopedStorage(inner, {
+        read: ['/home/'],
+        write: ['/home/'],
+        alwaysDeny: ['/home/.ssh'],
+      });
+      await expect(
+        scoped.write('/home/.ssh/authorized_keys', 'attacker-key'),
+      ).rejects.toBeInstanceOf(BoundaryError);
+    });
+
+    it('alwaysDeny error message names the floor', async () => {
+      const scoped = new ScopedStorage(inner, {
+        read: ['/home/'],
+        write: ['/home/'],
+        alwaysDeny: ['/home/.ssh'],
+      });
+      await expect(scoped.read('/home/.ssh/id_rsa')).rejects.toThrow(/always-deny floor/);
+    });
+
+    it('passes through when alwaysDeny is absent', async () => {
+      const scoped = new ScopedStorage(inner, {
+        read: ['/home/'],
+        write: ['/home/'],
+      });
+      await expect(scoped.read('/home/.ssh/id_rsa')).resolves.toBe('PRIVATE KEY');
+    });
+  });
 });

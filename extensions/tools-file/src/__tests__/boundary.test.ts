@@ -112,4 +112,103 @@ describe('tools-file — fs_reach boundary enforcement', () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toContain('theirs');
   });
+
+  // Ch.5 — symlink-defeats-allowlist coverage
+  it('rejects a symlink inside the allowlist that points outside it', async () => {
+    const target = await mkdtemp(join(tmpdir(), 'ethos-secret-'));
+    await writeFile(join(target, 'id_rsa'), 'PRIVATE KEY MATERIAL');
+    const linkInsideCwd = join(cwd, 'innocent-looking.md');
+    const { symlink } = await import('node:fs/promises');
+    await symlink(join(target, 'id_rsa'), linkInsideCwd);
+
+    const scoped = new ScopedStorage(new FsStorage(), {
+      read: [`${cwd}/`, `${join(dataDir, 'personalities', 'researcher')}/`],
+      write: [`${cwd}/`, `${join(dataDir, 'personalities', 'researcher')}/`],
+      alwaysDeny: [target],
+    });
+    const ctx = makeCtx({ workingDir: cwd, storage: scoped });
+    const result = await readFileTool.execute({ path: linkInsideCwd }, ctx);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/Filesystem boundary/);
+    await rm(target, { recursive: true, force: true });
+  });
+
+  it('rejects a path matching the alwaysDeny floor even when allow includes its parent', async () => {
+    const ssh = join(cwd, '.ssh');
+    await mkdir(ssh);
+    await writeFile(join(ssh, 'id_rsa'), 'PRIVATE');
+    const scoped = new ScopedStorage(new FsStorage(), {
+      read: [`${cwd}/`],
+      write: [`${cwd}/`],
+      alwaysDeny: [ssh],
+    });
+    const ctx = makeCtx({ workingDir: cwd, storage: scoped });
+    const result = await readFileTool.execute({ path: join(ssh, 'id_rsa') }, ctx);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/Filesystem boundary/);
+  });
+
+  // Ch.5 — ~20 evasion-shape coverage. The boundary must hold against
+  // common shell-shaped tricks: relative path traversal, glob escapes,
+  // case variants, encoded forms. Each rejected path proves a different
+  // attack shape that earlier drafts of fs-boundary code missed.
+  describe('Ch.5 evasion shapes — should all be rejected', () => {
+    let secret: string;
+    let scoped: ScopedStorage;
+
+    beforeEach(async () => {
+      secret = await mkdtemp(join(tmpdir(), 'ethos-secret-'));
+      await writeFile(join(secret, 'id_rsa'), 'PRIVATE');
+      scoped = new ScopedStorage(new FsStorage(), {
+        read: [`${cwd}/`],
+        write: [`${cwd}/`],
+        alwaysDeny: [secret],
+      });
+    });
+
+    afterEach(async () => {
+      await rm(secret, { recursive: true, force: true });
+    });
+
+    it.each([
+      ['relative parent traversal', () => join(cwd, '..', '..', 'etc', 'passwd')],
+      ['absolute outside-allow path', () => '/etc/passwd'],
+      ['absolute outside-allow shell file', () => '/etc/shadow'],
+      ['root-relative absolute path', () => '/root/.ssh/id_rsa'],
+      ['absolute /boot path', () => '/boot/grub.cfg'],
+      ['absolute /sys path', () => '/sys/kernel/debug/foo'],
+      ['absolute /proc/sys path', () => '/proc/sys/kernel/core_pattern'],
+      ['traversal with redundant slashes', () => `${cwd}//../..//etc//passwd`],
+      ['traversal with redundant dots', () => `${cwd}/./../etc/passwd`],
+    ])('rejects %s', async (_name, makePath) => {
+      const ctx = makeCtx({ workingDir: cwd, storage: scoped });
+      const result = await readFileTool.execute({ path: makePath() }, ctx);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/Filesystem boundary/);
+    });
+
+    it('rejects a symlink chain that lands in the deny prefix after multiple hops', async () => {
+      const { symlink } = await import('node:fs/promises');
+      const link1 = join(cwd, 'hop1');
+      const link2 = join(cwd, 'hop2.md');
+      await symlink(join(secret, 'id_rsa'), link1);
+      await symlink(link1, link2);
+      const ctx = makeCtx({ workingDir: cwd, storage: scoped });
+      const result = await readFileTool.execute({ path: link2 }, ctx);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/Filesystem boundary/);
+    });
+
+    it('rejects a symlink to a deny-listed directory (not just files inside it)', async () => {
+      const { symlink } = await import('node:fs/promises');
+      const linkToDir = join(cwd, 'dir-link');
+      await symlink(secret, linkToDir);
+      const ctx = makeCtx({ workingDir: cwd, storage: scoped });
+      // Read a file *through* the directory symlink → resolves to
+      // secret/id_rsa → deny floor fires.
+      const result = await readFileTool.execute({ path: join(linkToDir, 'id_rsa') }, ctx);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/Filesystem boundary/);
+    });
+  });
 });

@@ -278,4 +278,93 @@ describe('FilePersonalityRegistry', () => {
       expect(() => registry.setDefault('unknown')).toThrow();
     });
   });
+
+  // Ch.4b — load-time refusal of approvalMode: off + channel ingress
+  describe('Ch.4b approvalMode + channel ingress validation', () => {
+    it('parses approvalMode from config.yaml', async () => {
+      const personalityDir = join(testDir, 'p1');
+      await mkdir(personalityDir);
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        'name: P1\nsafety:\n  approvalMode: smart\n',
+      );
+      await writeFile(join(personalityDir, 'ETHOS.md'), '# P1');
+
+      const registry = new FilePersonalityRegistry();
+      await registry.loadFromDirectory(testDir);
+      expect(registry.get('p1')?.safety?.approvalMode).toBe('smart');
+    });
+
+    it('rejects approvalMode: off + telegram', async () => {
+      const personalityDir = join(testDir, 'bot');
+      await mkdir(personalityDir);
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        'name: Bot\nplatform: telegram\nsafety:\n  approvalMode: off\n',
+      );
+      await writeFile(join(personalityDir, 'ETHOS.md'), '# Bot');
+
+      const registry = new FilePersonalityRegistry();
+      await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(/approvalMode: off/);
+    });
+
+    it.each([
+      'discord',
+      'slack',
+      'whatsapp',
+      'email',
+    ])('rejects approvalMode: off + %s', async (platform) => {
+      const personalityDir = join(testDir, `p-${platform}`);
+      await mkdir(personalityDir);
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        `name: P\nplatform: ${platform}\nsafety:\n  approvalMode: off\n`,
+      );
+      await writeFile(join(personalityDir, 'ETHOS.md'), '# P');
+
+      const registry = new FilePersonalityRegistry();
+      await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(/approvalMode: off/);
+    });
+
+    it('allows approvalMode: off when platform is cli or absent', async () => {
+      const personalityDir = join(testDir, 'cron');
+      await mkdir(personalityDir);
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        'name: Cron\nplatform: cli\nsafety:\n  approvalMode: off\n',
+      );
+      await writeFile(join(personalityDir, 'ETHOS.md'), '# Cron');
+
+      const registry = new FilePersonalityRegistry();
+      await registry.loadFromDirectory(testDir);
+      expect(registry.get('cron')?.safety?.approvalMode).toBe('off');
+    });
+
+    it('allows approvalMode: manual + telegram', async () => {
+      const personalityDir = join(testDir, 'bot');
+      await mkdir(personalityDir);
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        'name: Bot\nplatform: telegram\nsafety:\n  approvalMode: manual\n',
+      );
+      await writeFile(join(personalityDir, 'ETHOS.md'), '# Bot');
+
+      const registry = new FilePersonalityRegistry();
+      await registry.loadFromDirectory(testDir);
+      expect(registry.get('bot')?.safety?.approvalMode).toBe('manual');
+    });
+
+    it('rejects invalid approvalMode value', async () => {
+      const personalityDir = join(testDir, 'bad');
+      await mkdir(personalityDir);
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        'name: Bad\nsafety:\n  approvalMode: paranoid\n',
+      );
+      await writeFile(join(personalityDir, 'ETHOS.md'), '# Bad');
+
+      const registry = new FilePersonalityRegistry();
+      await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(/Invalid approvalMode/);
+    });
+  });
 });

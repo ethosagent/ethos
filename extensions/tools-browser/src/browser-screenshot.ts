@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Tool, ToolResult } from '@ethosagent/types';
-import { isPlaywrightInstalled, sessions } from './sessions';
+import { findActiveSession, isPlaywrightInstalled } from './sessions';
 
 export const browserScreenshotTool: Tool = {
   name: 'browser_screenshot',
@@ -13,11 +13,12 @@ export const browserScreenshotTool: Tool = {
   isAvailable: isPlaywrightInstalled,
   schema: { type: 'object', properties: {}, required: [] },
   async execute(_, ctx): Promise<ToolResult> {
-    const session = sessions.get(ctx.sessionId);
+    const session = findActiveSession(ctx.sessionId, ctx.networkPolicy ?? {});
     if (!session) {
       return {
         ok: false,
-        error: 'No active browser session. Call browse_url first.',
+        error:
+          'No active browser session under the current network policy. Call browse_url first (a personality / network policy switch tears down prior sessions).',
         code: 'execution_failed',
       };
     }

@@ -61,6 +61,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/safety-channel':
+        specifier: workspace:*
+        version: link:../../extensions/safety-channel
       '@ethosagent/safety-scanner':
         specifier: workspace:*
         version: link:../../extensions/safety-scanner
@@ -82,6 +85,9 @@ importers:
       '@orpc/server':
         specifier: ^1.14.0
         version: 1.14.0(ws@8.20.0)
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
       better-sqlite3:
         specifier: ^12.9.0
         version: 12.9.0
@@ -122,6 +128,9 @@ importers:
       '@ethosagent/observability-sqlite':
         specifier: workspace:*
         version: link:../../extensions/observability-sqlite
+      '@ethosagent/personalities':
+        specifier: workspace:*
+        version: link:../../extensions/personalities
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
@@ -633,7 +642,19 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/safety-network:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/safety-scanner:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
+  extensions/safety-watcher:
     dependencies:
       '@ethosagent/types':
         specifier: workspace:*
@@ -702,6 +723,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.39.0
         version: 0.39.0
+      '@ethosagent/safety-network':
+        specifier: workspace:*
+        version: link:../safety-network
       '@ethosagent/tools-web':
         specifier: workspace:*
         version: link:../tools-web
@@ -802,6 +826,9 @@ importers:
 
   extensions/tools-web:
     dependencies:
+      '@ethosagent/safety-network':
+        specifier: workspace:*
+        version: link:../safety-network
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -883,6 +910,9 @@ importers:
       '@ethosagent/safety-injection':
         specifier: workspace:*
         version: link:../../extensions/safety-injection
+      '@ethosagent/safety-watcher':
+        specifier: workspace:*
+        version: link:../../extensions/safety-watcher
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../types
@@ -949,6 +979,9 @@ importers:
       '@ethosagent/safety-injection':
         specifier: workspace:*
         version: link:../../extensions/safety-injection
+      '@ethosagent/safety-watcher':
+        specifier: workspace:*
+        version: link:../../extensions/safety-watcher
       '@ethosagent/sandbox-docker':
         specifier: workspace:*
         version: link:../../extensions/sandbox-docker

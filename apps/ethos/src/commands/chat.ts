@@ -4,6 +4,7 @@ import type { AgentEvent, AgentLoop } from '@ethosagent/core';
 import type { SplashInventory } from '@ethosagent/tui';
 import type { EthosConfig } from '../config';
 import { resolveActiveLoop, startNightlyPrune } from '../wiring';
+import { runPairingCommand } from './pairing-commands';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
 
 async function buildInventory(loop: AgentLoop, _config: EthosConfig): Promise<SplashInventory> {
@@ -338,7 +339,14 @@ function renderEvent(
       // Framework-emitted budget warnings always tag `audience: 'user'`.
       if (event.audience !== 'user') break;
       if (hasText) out('\n');
-      out(`${c.dim}  · ${event.toolName}: ${event.message}${c.reset}\n`);
+      // Ch.6a — _watcher chips render in yellow so safety-relevant
+      // decisions (rate limit, suspicious sequence, compounding error,
+      // token budget) visually pop next to ordinary tool progress.
+      if (event.toolName === '_watcher') {
+        out(`${c.yellow}  ${event.message}${c.reset}\n`);
+      } else {
+        out(`${c.dim}  · ${event.toolName}: ${event.message}${c.reset}\n`);
+      }
       break;
     }
 
@@ -405,6 +413,9 @@ async function handleSlashCommand(
           `  /budget               show session spend against cap\n` +
           `  /budget reset         reset the session budget counter\n` +
           `  /verbose              toggle per-turn timing summary (on/off)\n` +
+          `  /allow <code>         approve a pending channel sender by pairing code\n` +
+          `  /deny <platform> <id> revoke an approved channel sender\n` +
+          `  /communications       list approved senders + pending pairing codes\n` +
           `  /exit                 quit\n` +
           `${c.reset}\n`,
       );
@@ -488,6 +499,41 @@ async function handleSlashCommand(
     case 'verbose': {
       verbose.active = !verbose.active;
       out(`${c.dim}verbose: ${verbose.active ? 'on' : 'off'}${c.reset}\n`);
+      break;
+    }
+
+    case 'allow': {
+      // /allow <code>
+      // Consume a pairing code AND mark the sender approved on the
+      // pairing.db that the gateway shares with us.
+      if (!arg) {
+        out(`${c.dim}Usage: /allow <code>${c.reset}\n`);
+        break;
+      }
+      const r = await runPairingCommand('allow', { code: arg });
+      out(`${c.dim}${r}${c.reset}\n`);
+      break;
+    }
+
+    case 'deny': {
+      // /deny <platform> <senderId>
+      const tokens = arg.split(/\s+/).filter(Boolean);
+      if (tokens.length < 2) {
+        out(`${c.dim}Usage: /deny <platform> <senderId>${c.reset}\n`);
+        break;
+      }
+      const r = await runPairingCommand('deny', {
+        platform: tokens[0],
+        senderId: tokens.slice(1).join(' '),
+      });
+      out(`${c.dim}${r}${c.reset}\n`);
+      break;
+    }
+
+    case 'communications':
+    case 'comms': {
+      const r = await runPairingCommand('list', {});
+      out(`${c.dim}${r}${c.reset}\n`);
       break;
     }
 

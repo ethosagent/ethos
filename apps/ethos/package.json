@@ -44,6 +44,7 @@
   },
   "dependencies": {
     "@ethosagent/core": "workspace:*",
+    "@ethosagent/safety-channel": "workspace:*",
     "@ethosagent/safety-scanner": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@anthropic-ai/sdk": "^0.39.0",
@@ -52,6 +53,7 @@
     "@orpc/contract": "^1.14.0",
     "@orpc/openapi": "^1.14.0",
     "@orpc/server": "^1.14.0",
+    "@types/better-sqlite3": "^7.6.12",
     "better-sqlite3": "^12.9.0",
     "croner": "^9.0.0",
     "hono": "^4.12.15",
@@ -67,6 +69,7 @@
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/mcp-server": "workspace:*",
     "@ethosagent/observability-sqlite": "workspace:*",
+    "@ethosagent/personalities": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/team-supervisor": "workspace:*",
     "@ethosagent/web-api": "workspace:*",

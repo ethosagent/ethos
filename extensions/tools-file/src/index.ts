@@ -1,3 +1,4 @@
+import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
@@ -17,9 +18,39 @@ const BLOCKED_WRITE_PATHS = [join(homedir(), '.ethos', 'config.yaml')];
 const BLOCKED_WRITE_PREFIXES = [join(homedir(), '.ethos', 'sessions')];
 
 function expandPath(p: string, cwd: string): string {
-  if (p.startsWith('~/')) return join(homedir(), p.slice(2));
-  if (isAbsolute(p)) return p;
-  return resolve(cwd, p);
+  // Expand ~/ first, then resolve unconditionally so `..` and `.`
+  // segments are normalized. Without `resolve()`, an absolute path like
+  // `/tmp/foo/./../etc/passwd` would skip past the working-dir
+  // allowlist via lexical-but-unnormalized prefix matching.
+  const expanded = p.startsWith('~/') ? join(homedir(), p.slice(2)) : p;
+  return isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded);
+}
+
+/**
+ * Ch.5 — symlink-safe canonicalization for read targets.
+ *
+ * After expandPath, run realpath() to resolve symlinks. This defeats the
+ * classic attack shape: a personality has `read` allow on `~/proj/`, the
+ * attacker plants a symlink at `~/proj/notes.md → ~/.ssh/id_rsa`, and the
+ * naive prefix-match permits the read. Resolving symlinks first means
+ * ScopedStorage sees `~/.ssh/id_rsa` and the always-deny floor fires.
+ *
+ * Returns the original (non-canonicalized) path when realpath fails,
+ * which is the case for files that don't exist yet (write targets) — the
+ * caller's allow/deny check will still run on the lexical path.
+ *
+ * NOTE: this is the v1 floor. Full TOCTOU defense requires the openat /
+ * O_NOFOLLOW dance with held parent dirfds (the plan defers this to a
+ * native helper). Without it, a symlink swapped between resolve and open
+ * can still race; with realpath() alone the race window shrinks but is
+ * not zero.
+ */
+async function canonicalizeForRead(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    return path;
+  }
 }
 
 function isWriteBlocked(abs: string): boolean {
@@ -134,7 +165,12 @@ export const readFileTool: Tool = {
 
     if (!path) return { ok: false, error: 'path is required', code: 'input_invalid' };
 
-    const abs = expandPath(path, ctx.workingDir);
+    const expanded = expandPath(path, ctx.workingDir);
+    // Ch.5 — resolve symlinks so a symlink to ~/.ssh inside an allowed dir
+    // gets rejected by the always-deny floor. Falls back to the lexical
+    // path when the file doesn't exist (then the allow-list check still
+    // runs and gives a sensible "not found" downstream).
+    const abs = await canonicalizeForRead(expanded);
     const storage = storageOf(ctx);
 
     let content: string | null;

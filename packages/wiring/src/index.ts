@@ -29,7 +29,12 @@ import {
   createTerminalTools,
 } from '@ethosagent/tools-terminal';
 import { createWebTools } from '@ethosagent/tools-web';
-import type { BeforeToolCallPayload, ContextInjector, LLMProvider } from '@ethosagent/types';
+import type {
+  BeforeToolCallPayload,
+  ContextInjector,
+  LLMProvider,
+  PersonalityConfig,
+} from '@ethosagent/types';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
 
 // ---------------------------------------------------------------------------
@@ -287,6 +292,26 @@ export async function createAgentLoop(
   );
   await pluginLoader.loadAll();
 
+  // Ch.6a — In-process watcher. Built with the default rule set
+  // (rate-limit + token-budget + compounding-error + suspicious-
+  // sequence). When an observability writer is wired, watcher
+  // decisions land as audit.watcher events in observability.db.
+  const { Watcher: WatcherClass, defaultRules: watcherDefaultRules } = await import(
+    '@ethosagent/safety-watcher'
+  );
+  const watcher = new WatcherClass({
+    rules: watcherDefaultRules(),
+    ...(opts.observability ? { observability: opts.observability } : {}),
+  });
+
+  // Ch.3c Tier-2 — LLM injection classifier. Reuses the same LLM
+  // provider as the agent loop. The personality's
+  // safety.injectionDefense.classifier.alwaysCallLLM flag toggles
+  // forced-on; AgentLoop also fires the classifier when content
+  // > 500 chars or the Tier-1 pattern check hits.
+  const { createLLMClassifier } = await import('@ethosagent/safety-injection');
+  const injectionClassifier = createLLMClassifier({ llm });
+
   const loop = new AgentLoop({
     llm,
     tools,
@@ -299,6 +324,8 @@ export async function createAgentLoop(
     storage: new FsStorage(),
     dataDir,
     modelRouting: config.modelRouting,
+    watcher,
+    injectionClassifier,
     ...(opts.observability ? { observability: opts.observability } : {}),
     options: {
       platform: profile,
@@ -318,35 +345,13 @@ export async function createAgentLoop(
 // Danger predicate (shared between CLI guard + web approval flow)
 // ---------------------------------------------------------------------------
 
-/** Result returned by a danger predicate. `null` = no approval needed. */
-export type DangerReason = string | null;
-export type DangerPredicate = (payload: BeforeToolCallPayload) => DangerReason;
-
-/**
- * Default danger predicate. Returns the human-readable reason when a tool
- * call should require explicit user approval (web profile) or be blocked
- * outright (CLI/TUI fallback path). Today only the `terminal` tool is
- * checked, but `alwaysAsk` lets surfaces opt additional tools into the
- * always-prompt set without baking the list in here.
- */
-export function createDangerPredicate(
-  opts: { alwaysAsk?: ReadonlyArray<string> } = {},
-): DangerPredicate {
-  const alwaysAsk = new Set(opts.alwaysAsk ?? []);
-  return (payload) => {
-    if (alwaysAsk.has(payload.toolName)) {
-      return `${payload.toolName} requires explicit approval`;
-    }
-    if (payload.toolName === 'terminal') {
-      const args = payload.args as { command?: string } | null | undefined;
-      if (args?.command) {
-        const result = checkCommand(args.command);
-        if (result.dangerous) return result.reason;
-      }
-    }
-    return null;
-  };
-}
+export {
+  type CreateDangerPredicateOptions,
+  createDangerPredicate,
+  type DangerPredicate,
+  type DangerReason,
+  type SmartApprovalCallback,
+} from './danger-predicate';
 
 export type { ModelSource, ModelTarget, ResolveModelInput } from './model-resolver';
 // Re-export the resolver so callers don't need a separate import.

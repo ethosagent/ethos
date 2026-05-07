@@ -30,6 +30,7 @@
     "@ethosagent/memory-vector": "workspace:*",
     "@ethosagent/personalities": "workspace:*",
     "@ethosagent/safety-injection": "workspace:*",
+    "@ethosagent/safety-watcher": "workspace:*",
     "@ethosagent/sandbox-docker": "workspace:*",
     "@ethosagent/session-sqlite": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
