@@ -67,6 +67,8 @@
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/mcp-server": "workspace:*",
     "@ethosagent/observability-sqlite": "workspace:*",
+    "@ethosagent/skills": "workspace:*",
+    "@ethosagent/skills-coding": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/team-supervisor": "workspace:*",
     "@ethosagent/web-api": "workspace:*",

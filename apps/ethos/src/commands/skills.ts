@@ -3,7 +3,9 @@ import { mkdir, open, readdir, readFile, rename, rm, stat, unlink } from 'node:f
 import { dirname, join, relative } from 'node:path';
 import { createInterface } from 'node:readline';
 import { canInstall, deriveTier, scanSkillMd, type TrustTier } from '@ethosagent/safety-scanner';
-import { EthosError } from '@ethosagent/types';
+import { UniversalScanner } from '@ethosagent/skills';
+import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
+import { EthosError, type Skill } from '@ethosagent/types';
 import { ethosDir } from '../config';
 
 const c = {
@@ -165,20 +167,46 @@ async function removeSkill(slug: string): Promise<void> {
 }
 
 async function listSkills(): Promise<void> {
-  const root = skillsRoot();
-  const slugs = await listInstalledSlugs();
+  const pool = await new UniversalScanner({
+    trustedFirstPartySources: [bundledCodingSkillsSource()],
+  }).scan();
 
-  if (slugs.length === 0) {
-    console.log(`\n${c.dim}No skills installed.${c.reset}`);
+  const bySource = new Map<string, Skill[]>();
+  for (const skill of pool.values()) {
+    const list = bySource.get(skill.source) ?? [];
+    list.push(skill);
+    bySource.set(skill.source, list);
+  }
+
+  // Stable order: bundled first, then ethos (user), then alphabetical
+  const sourceOrder = (label: string): number => {
+    if (label === 'ethos-bundled') return 0;
+    if (label === 'ethos') return 1;
+    return 2;
+  };
+  const sortedSources = [...bySource.keys()].sort(
+    (a, b) => sourceOrder(a) - sourceOrder(b) || a.localeCompare(b),
+  );
+
+  if (sortedSources.length === 0) {
+    console.log(`\n${c.dim}No skills found.${c.reset}`);
     console.log(`${c.dim}Install one with: ${c.reset}ethos skills install <slug>\n`);
     return;
   }
 
-  console.log(`\n${c.bold}Installed skills${c.reset}  ${c.dim}(${root})${c.reset}`);
-  for (const slug of slugs) {
-    console.log(`  ${c.cyan}${slug}${c.reset}`);
-  }
   console.log();
+  for (const source of sortedSources) {
+    const skills = (bySource.get(source) ?? []).sort((a, b) => a.name.localeCompare(b.name));
+    const root = source === 'ethos' ? `  ${c.dim}(${skillsRoot()})${c.reset}` : '';
+    console.log(`${c.bold}${source}${c.reset}${root}`);
+    for (const skill of skills) {
+      const ethosFm = skill.rawFrontmatter.ethos as { category?: unknown } | undefined;
+      const category = typeof ethosFm?.category === 'string' ? ethosFm.category : undefined;
+      const tag = category ? `  ${c.dim}[${category}]${c.reset}` : '';
+      console.log(`  ${c.cyan}${skill.name}${c.reset}${tag}`);
+    }
+    console.log();
+  }
 }
 
 // ---------------------------------------------------------------------------

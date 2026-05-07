@@ -14,6 +14,7 @@ import { PluginLoader } from '@ethosagent/plugin-loader';
 import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { createInjectors, UniversalScanner } from '@ethosagent/skills';
+import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { createBrowserTools } from '@ethosagent/tools-browser';
 import { createCodeTools } from '@ethosagent/tools-code';
@@ -231,7 +232,10 @@ export async function createAgentLoop(
   // only to MCP servers the personality is allowed to reach (mcp_servers
   // allowlist), not globally to every server.
   const activePerson = personalities.getDefault();
-  const skillPool = await new UniversalScanner().scan();
+  const codingBundleSource = bundledCodingSkillsSource();
+  const skillPool = await new UniversalScanner({
+    trustedFirstPartySources: [codingBundleSource],
+  }).scan();
   // Use the personality's declared toolset as an approximation for capability
   // filtering at boot time (MCP tools aren't registered yet).
   const bootToolNames = new Set(activePerson.toolset ?? []);
@@ -265,6 +269,7 @@ export async function createAgentLoop(
 
   const { injectors, tools: skillTools } = createInjectors(personalities, {
     onSkillSkip: (skillId, reason) => log.warn(`skill ${skillId} skipped: ${reason}`),
+    trustedFirstPartySources: [codingBundleSource],
   });
   for (const tool of skillTools) tools.register(tool);
 

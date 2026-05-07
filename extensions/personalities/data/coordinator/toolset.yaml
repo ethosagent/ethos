@@ -6,3 +6,9 @@
 - memory_read
 - memory_write
 - session_search
+- terminal
+- read_file
+- write_file
+- process_start
+- process_logs
+- process_stop

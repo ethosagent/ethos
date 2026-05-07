@@ -8,12 +8,18 @@
 //   2. The required core SDKs (@anthropic-ai/sdk, openai) are present.
 //   3. ~/.ethos/config.yaml exists and names a provider/model.
 //   4. The personality data directory is reachable.
+//   5. External CLIs declared by bundled skills (gh, git, claude, …) are on PATH.
 //
 // Configured-but-missing channels exit non-zero so this command can be used
-// in CI / health checks. Everything else is informational.
+// in CI / health checks. Everything else is informational (skill-prereq gaps
+// are warn-only — the user opted into the skill, not the doctor).
 
+import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { UniversalScanner } from '@ethosagent/skills';
+import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
+import type { Skill } from '@ethosagent/types';
 import { type EthosConfig, ethosDir, readConfig } from '../config';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { getStorage } from '../wiring';
@@ -214,6 +220,25 @@ export async function runDoctor(args: string[] = []): Promise<void> {
   console.log('');
 
   // -------------------------------------------------------------------------
+  // Skill prerequisites
+  // -------------------------------------------------------------------------
+
+  console.log(
+    `${c.bold}Skill prerequisites${c.reset}  ${c.dim}(external CLIs declared by bundled skills)${c.reset}`,
+  );
+  const skillIssues = await checkSkillPrerequisites();
+  if (skillIssues.length === 0) {
+    console.log(`  ${c.green}✓${c.reset}  All declared external CLIs are reachable.`);
+  } else {
+    for (const issue of skillIssues) {
+      console.log(
+        `  ${c.yellow}⚠${c.reset}  ${c.bold}${issue.skill}${c.reset} needs ${c.cyan}${issue.cli}${c.reset} ${c.dim}(not on PATH)${c.reset}`,
+      );
+    }
+  }
+  console.log('');
+
+  // -------------------------------------------------------------------------
   // Verdict
   // -------------------------------------------------------------------------
 
@@ -371,4 +396,65 @@ function runRecentErrorsReport(): void {
   console.log('');
   console.log(`  ${c.dim}File a bug? Attach the relevant lines from ${errorLogPath()}.${c.reset}`);
   console.log('');
+}
+
+// ---------------------------------------------------------------------------
+// Skill prerequisite check — reads `ethos.prerequisites.external_cli` from
+// each bundled skill's frontmatter and verifies the binary is on PATH.
+// `coding-agent` lists multiple CLI alternatives — at least one must be
+// present (it routes to whichever is installed).
+// ---------------------------------------------------------------------------
+
+interface SkillPrereqIssue {
+  skill: string;
+  cli: string;
+}
+
+function readExternalCliRequirements(skill: Skill): { all: string[]; anyOf: string[] } {
+  const ethos = skill.rawFrontmatter.ethos as
+    | { prerequisites?: { external_cli?: unknown } }
+    | undefined;
+  const raw = ethos?.prerequisites?.external_cli;
+  if (!Array.isArray(raw)) return { all: [], anyOf: [] };
+  const all: string[] = [];
+  const anyOf: string[] = [];
+  for (const item of raw) {
+    if (typeof item === 'string') {
+      all.push(item);
+    } else if (item && typeof item === 'object' && 'any_of' in item) {
+      const list = (item as { any_of: unknown }).any_of;
+      if (Array.isArray(list)) {
+        for (const candidate of list) {
+          if (typeof candidate === 'string') anyOf.push(candidate);
+        }
+      }
+    }
+  }
+  return { all, anyOf };
+}
+
+function isOnPath(bin: string): boolean {
+  return spawnSync('which', [bin], { stdio: 'ignore' }).status === 0;
+}
+
+async function checkSkillPrerequisites(): Promise<SkillPrereqIssue[]> {
+  const issues: SkillPrereqIssue[] = [];
+  const pool = await new UniversalScanner({
+    trustedFirstPartySources: [bundledCodingSkillsSource()],
+  }).scan();
+
+  for (const skill of pool.values()) {
+    if (skill.source !== 'ethos-bundled') continue;
+    const { all, anyOf } = readExternalCliRequirements(skill);
+
+    for (const cli of all) {
+      if (!isOnPath(cli)) issues.push({ skill: skill.name, cli });
+    }
+
+    if (anyOf.length > 0 && !anyOf.some(isOnPath)) {
+      issues.push({ skill: skill.name, cli: `one of ${anyOf.join(' / ')}` });
+    }
+  }
+
+  return issues;
 }

@@ -443,3 +443,57 @@ describe('Legacy plain-markdown skills (no frontmatter)', () => {
     expect(result.reason).toContain('pure prose');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Trust tier — extraSources cannot escalate, trustedFirstPartySources can
+// ---------------------------------------------------------------------------
+
+describe('Trust tier is fixed by option name, not by caller', () => {
+  // A skill body that trips a yellow-tier finding: external URL pattern
+  // (`curl`) outside a code fence. At `community` tier this blocks; at
+  // `trusted-repo` it's auto-acknowledged.
+  const YELLOW_SKILL = `---
+name: fetch-skill
+description: Fetch a remote resource
+required_tools: [terminal]
+---
+Use curl to retrieve the resource from the configured endpoint.`;
+
+  // Default sources reference real-OS dirs (~/.ethos/skills, etc.) that
+  // don't exist under InMemoryStorage, so listEntries returns []. We don't
+  // need to disable them — they contribute nothing to the pool.
+
+  it('skills passed via extraSources are gated at community tier (yellow blocks)', async () => {
+    const storage = makeStorage();
+    const dir = '/home/extra/skills';
+    await storage.mkdir(dir);
+    await storage.write(`${dir}/fetch-skill.md`, YELLOW_SKILL);
+
+    const skipped: string[] = [];
+    const scanner = new UniversalScanner({
+      storage,
+      // even claiming the privileged label cannot escalate trust
+      extraSources: [{ label: 'ethos-bundled', dir }],
+      onSkip: (id, reason) => skipped.push(`${id}: ${reason}`),
+    });
+    const pool = await scanner.scan();
+
+    expect(pool.has('ethos-bundled/fetch-skill')).toBe(false);
+    expect(skipped.some((s) => s.includes('safety scan'))).toBe(true);
+  });
+
+  it('skills passed via trustedFirstPartySources are gated at trusted-repo (yellow allowed)', async () => {
+    const storage = makeStorage();
+    const dir = '/home/first-party/skills';
+    await storage.mkdir(dir);
+    await storage.write(`${dir}/fetch-skill.md`, YELLOW_SKILL);
+
+    const scanner = new UniversalScanner({
+      storage,
+      trustedFirstPartySources: [{ label: 'ethos-bundled', dir }],
+    });
+    const pool = await scanner.scan();
+
+    expect(pool.has('ethos-bundled/fetch-skill')).toBe(true);
+  });
+});

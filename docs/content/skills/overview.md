@@ -12,13 +12,15 @@ This means **your existing skill library works in Ethos with no porting**. Drop 
 
 ## What Ethos does that others don't
 
-Two things, and both matter:
+Three things, and all three matter:
 
 1. **Universal discovery.** Ethos scans every common skill location on your machine — `~/.claude/skills/`, `~/.openclaw/skills/`, `~/.opencode/skills/`, `~/.hermes/skills/`, plus its own `~/.ethos/skills/` and any project-local variants. Three dialect parsers (agentskills.io, OpenClaw, Hermes) handle each format.
 
 2. **Per-personality filter.** The discovered pool is filtered per personality. By default, a skill flows to a personality only if its `required_tools` are reachable by that personality's toolset. Your `researcher` doesn't see deploy skills; your `engineer` doesn't see dietary research skills. Same global library, different visibility per role.
 
-No other framework gives you both. ([why-ethos](../getting-started/why-ethos))
+3. **A bundled set of curated coding skills.** Ten Ethos-native skills ship with the framework — planning, TDD, code review, systematic debugging, GitHub PR workflow, delegation patterns. They appear under the `ethos-bundled` source and are gated by the same per-personality filter as everything else. See [Built-in Coding Skills](./built-in-coding/).
+
+No other framework gives you all three. ([why-ethos](../getting-started/why-ethos))
 
 ---
 
@@ -60,6 +62,7 @@ Ethos scans these paths at startup. Each is parsed with the appropriate dialect;
 
 | Path | Source label | Dialect | When |
 |---|---|---|---|
+| `extensions/skills-coding/data/<name>/SKILL.md` | `ethos-bundled` | agentskills.io | Always — ships inside Ethos |
 | `~/.ethos/skills/<name>/SKILL.md` | `ethos` | agentskills.io | Always |
 | `.ethos/skills/<name>/SKILL.md` | `ethos-project` | agentskills.io | When run inside a project with this dir |
 | `~/.claude/skills/<name>/SKILL.md` | `claude-code` | agentskills.io | When the dir exists |
