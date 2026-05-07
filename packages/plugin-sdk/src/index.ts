@@ -1,4 +1,6 @@
 import type {
+  ContextEngine,
+  ContextEngineRegistry,
   ContextInjector,
   HookRegistry,
   ModifyingHooks,
@@ -46,6 +48,10 @@ export interface EthosPluginApi {
 
   /** Register a custom personality. */
   registerPersonality(config: PersonalityConfig): void;
+
+  /** E4 — register a custom context-compaction engine. The engine becomes
+   *  selectable via `personality.context_engine: <engine.name>`. */
+  registerContextEngine(engine: ContextEngine): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,6 +68,11 @@ export interface PluginRegistries {
    *  Built-in injectors are absent from this map (they always fire). */
   injectorPluginIds: Map<ContextInjector, string>;
   personalities: PersonalityRegistry;
+  /** E4 — Optional context-engine registry. When present, plugins can
+   *  contribute custom engines via `registerContextEngine`. Wiring layers
+   *  that don't expose a registry leave this undefined; calls to
+   *  `registerContextEngine` then no-op with a clear error. */
+  contextEngines?: ContextEngineRegistry;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +121,15 @@ export class PluginApiImpl implements EthosPluginApi {
   registerPersonality(config: PersonalityConfig): void {
     this.registries.personalities.define(config);
     this.registeredPersonalities.push(config.id);
+  }
+
+  registerContextEngine(engine: ContextEngine): void {
+    if (!this.registries.contextEngines) {
+      throw new Error(
+        `Plugin "${this.pluginId}" called registerContextEngine but the host wiring did not expose a ContextEngineRegistry.`,
+      );
+    }
+    this.registries.contextEngines.register(engine);
   }
 
   /** Remove everything this plugin registered. Called by PluginLoader.unload(). */

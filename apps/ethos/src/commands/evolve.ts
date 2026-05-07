@@ -36,11 +36,13 @@ function parseArgs(args: string[]): ParsedArgs {
       evalOutput = args[++i] ?? '';
     } else if (arg === '--list-pending') {
       listPending = true;
-    } else if (arg === '--approve') {
+    } else if (arg === '--approve' || arg === '--accept') {
+      // E3 — `--accept` is the plan's spelling; `--approve` is the original.
+      // Both behave identically.
       approve = args[++i] ?? '';
     } else if (arg === '--reject') {
       reject = args[++i] ?? '';
-    } else if (arg === '--approve-all') {
+    } else if (arg === '--approve-all' || arg === '--accept-all') {
       approveAll = true;
     } else if (arg === '--auto-approve') {
       autoApprove = true;
@@ -190,20 +192,46 @@ async function runAnalyze(
 }
 
 async function listPending(pendingDir: string): Promise<void> {
-  let entries: string[];
+  // E3 — list both legacy `<skillsDir>/pending/` (eval-driven candidates)
+  // and the per-personality auto-trigger dirs at
+  // `<skillsDir>/.pending/<personalityId>/`.
+  const sections: Array<{ label: string; files: string[] }> = [];
+
   try {
-    entries = await readdir(pendingDir);
+    const entries = await readdir(pendingDir);
+    const mds = entries.filter((e) => e.endsWith('.md')).sort();
+    if (mds.length > 0) sections.push({ label: pendingDir, files: mds });
   } catch {
+    // No legacy pending dir — fine.
+  }
+
+  const autoRoot = join(ethosDir(), 'skills', '.pending');
+  try {
+    const personalities = await readdir(autoRoot);
+    for (const personality of personalities.sort()) {
+      const personalityDir = join(autoRoot, personality);
+      try {
+        const inner = await readdir(personalityDir);
+        const mds = inner.filter((e) => e.endsWith('.md')).sort();
+        if (mds.length > 0) {
+          sections.push({ label: `${personalityDir} (auto)`, files: mds });
+        }
+      } catch {
+        // Skip non-directories.
+      }
+    }
+  } catch {
+    // No auto-trigger queue yet.
+  }
+
+  if (sections.length === 0) {
     console.log(`${c.dim}No pending skills.${c.reset}`);
     return;
   }
-  const mds = entries.filter((e) => e.endsWith('.md')).sort();
-  if (mds.length === 0) {
-    console.log(`${c.dim}No pending skills.${c.reset}`);
-    return;
+  for (const section of sections) {
+    console.log(`${c.bold}Pending skills${c.reset}  ${c.dim}${section.label}${c.reset}`);
+    for (const f of section.files) console.log(`  ${f}`);
   }
-  console.log(`${c.bold}Pending skills${c.reset}  ${c.dim}${pendingDir}${c.reset}`);
-  for (const f of mds) console.log(`  ${f}`);
 }
 
 async function approveAll(pendingDir: string, skillsDir: string): Promise<void> {
@@ -231,13 +259,20 @@ async function approveOne(fileName: string, pendingDir: string, skillsDir: strin
     console.error(`${c.red}Invalid filename: ${fileName}${c.reset}`);
     process.exit(1);
   }
-  try {
-    await rename(join(pendingDir, safe), join(skillsDir, safe));
-    console.log(`${c.green}approved${c.reset} ${safe}`);
-  } catch {
-    console.error(`${c.red}No such pending skill: ${safe}${c.reset}`);
-    process.exit(1);
+  // E3 — try the legacy pending dir first, then walk the per-personality
+  // auto-trigger queues. The first match wins.
+  const candidates = [join(pendingDir, safe), ...(await autoPendingPaths(safe))];
+  for (const path of candidates) {
+    try {
+      await rename(path, join(skillsDir, safe));
+      console.log(`${c.green}approved${c.reset} ${safe}`);
+      return;
+    } catch {
+      // Next candidate.
+    }
   }
+  console.error(`${c.red}No such pending skill: ${safe}${c.reset}`);
+  process.exit(1);
 }
 
 async function rejectOne(fileName: string, pendingDir: string): Promise<void> {
@@ -246,12 +281,28 @@ async function rejectOne(fileName: string, pendingDir: string): Promise<void> {
     console.error(`${c.red}Invalid filename: ${fileName}${c.reset}`);
     process.exit(1);
   }
+  const candidates = [join(pendingDir, safe), ...(await autoPendingPaths(safe))];
+  for (const path of candidates) {
+    try {
+      await rm(path);
+      console.log(`${c.dim}rejected ${safe}${c.reset}`);
+      return;
+    } catch {
+      // Next candidate.
+    }
+  }
+  console.error(`${c.red}No such pending skill: ${safe}${c.reset}`);
+  process.exit(1);
+}
+
+/** E3 — enumerate per-personality auto-pending paths for the given filename. */
+async function autoPendingPaths(safe: string): Promise<string[]> {
+  const root = join(ethosDir(), 'skills', '.pending');
   try {
-    await rm(join(pendingDir, safe));
-    console.log(`${c.dim}rejected ${safe}${c.reset}`);
+    const personalities = await readdir(root);
+    return personalities.map((p) => join(root, p, safe));
   } catch {
-    console.error(`${c.red}No such pending skill: ${safe}${c.reset}`);
-    process.exit(1);
+    return [];
   }
 }
 

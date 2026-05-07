@@ -547,6 +547,17 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
 
     const safety = parsed.nested.safety ? buildSafetyConfig(parsed.nested.safety) : undefined;
 
+    // E5 — context_layering.* dotted keys. Mirrors the fs_reach.* pattern so
+    // we don't need a new nested-block parser entry for one-off configs.
+    const contextLayering = buildContextLayering(cfg);
+
+    // E4 — context_engine + context_engine_options.* dotted keys.
+    const contextEngine = cfg.context_engine || undefined;
+    const contextEngineOptions = buildContextEngineOptions(cfg);
+
+    // E3 — skill_evolution.* dotted keys.
+    const skillEvolution = buildSkillEvolution(cfg);
+
     const config: PersonalityConfig = {
       id,
       name: cfg.name ?? titleCase(id),
@@ -565,6 +576,12 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       ...(plugins !== undefined ? { plugins } : {}),
       ...(budgetCapUsd !== undefined ? { budgetCapUsd } : {}),
       ...(safety !== undefined ? { safety } : {}),
+      ...(contextLayering !== undefined ? { context_layering: contextLayering } : {}),
+      ...(contextEngine !== undefined ? { context_engine: contextEngine } : {}),
+      ...(contextEngineOptions !== undefined
+        ? { context_engine_options: contextEngineOptions }
+        : {}),
+      ...(skillEvolution !== undefined ? { skill_evolution: skillEvolution } : {}),
     };
 
     validateUnsafeCombinations(id, config);
@@ -619,6 +636,71 @@ function isStorageLike(v: unknown): v is Storage {
 
 function titleCase(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function buildContextLayering(
+  cfg: Record<string, string>,
+): PersonalityConfig['context_layering'] | undefined {
+  const mode = cfg['context_layering.mode'];
+  const maxDepth = cfg['context_layering.max_depth'];
+  const discovery = cfg['context_layering.discovery_files'];
+  const cap = cfg['context_layering.cap_total_chars'];
+  if (!mode && !maxDepth && !discovery && !cap) return undefined;
+  const out: NonNullable<PersonalityConfig['context_layering']> = {};
+  if (mode) {
+    if (mode !== 'static' && mode !== 'progressive' && mode !== 'off') {
+      throw new Error(
+        `Invalid context_layering.mode: "${mode}". Expected one of: static, progressive, off`,
+      );
+    }
+    out.mode = mode;
+  }
+  if (maxDepth && /^\d+$/.test(maxDepth)) out.max_depth = Number.parseInt(maxDepth, 10);
+  if (discovery) {
+    const list = discovery
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (list.length > 0) out.discovery_files = list;
+  }
+  if (cap && /^\d+$/.test(cap)) out.cap_total_chars = Number.parseInt(cap, 10);
+  return out;
+}
+
+function buildSkillEvolution(
+  cfg: Record<string, string>,
+): PersonalityConfig['skill_evolution'] | undefined {
+  const enabled = cfg['skill_evolution.enabled'];
+  const minToolCalls = cfg['skill_evolution.min_tool_calls'];
+  const cooldown = cfg['skill_evolution.cooldown_minutes'];
+  if (!enabled && !minToolCalls && !cooldown) return undefined;
+  const out: NonNullable<PersonalityConfig['skill_evolution']> = {};
+  if (enabled === 'true') out.enabled = true;
+  else if (enabled === 'false') out.enabled = false;
+  if (minToolCalls && /^\d+$/.test(minToolCalls)) {
+    out.min_tool_calls = Number.parseInt(minToolCalls, 10);
+  }
+  if (cooldown && /^\d+$/.test(cooldown)) {
+    out.cooldown_minutes = Number.parseInt(cooldown, 10);
+  }
+  return out;
+}
+
+function buildContextEngineOptions(
+  cfg: Record<string, string>,
+): Record<string, unknown> | undefined {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(cfg)) {
+    if (!key.startsWith('context_engine_options.')) continue;
+    const subKey = key.slice('context_engine_options.'.length);
+    if (subKey.length === 0) continue;
+    if (/^-?\d+$/.test(value)) out[subKey] = Number.parseInt(value, 10);
+    else if (/^-?\d+\.\d+$/.test(value)) out[subKey] = Number.parseFloat(value);
+    else if (value === 'true') out[subKey] = true;
+    else if (value === 'false') out[subKey] = false;
+    else out[subKey] = value;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function parseCsv(value: string | undefined): string[] | undefined {

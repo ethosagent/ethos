@@ -1,5 +1,11 @@
 export type IngestMode = 'capability' | 'tags' | 'explicit' | 'none';
 
+/** E2 — single env-var reference with a human-readable description. */
+export interface SkillEnvRef {
+  name: string;
+  description?: string;
+}
+
 export interface SkillPermissions {
   fs_read?: string[];
   fs_write?: string[];
@@ -49,6 +55,29 @@ export interface Skill {
   tags?: string[];
   /** Tools required by this skill, from frontmatter `required_tools`. */
   required_tools?: string[];
+  /**
+   * Fallback activation: skill is included only when ALL listed tools are
+   * absent from the personality's effective tool reach. From frontmatter
+   * `ethos.fallback_for_tools`. Mutually orthogonal with `required_tools`
+   * (a skill MAY declare both — both gates must pass).
+   */
+  fallback_for_tools?: string[];
+  /**
+   * E2 — environment dependencies declared by the skill. Hard requirements:
+   * skill is filtered out when any listed name is unset in `process.env`.
+   * From frontmatter `ethos.env_required`.
+   */
+  env_required?: SkillEnvRef[];
+  /**
+   * E2 — informational env hints surfaced by `ethos doctor`. Never blocks
+   * skill activation. From frontmatter `ethos.env_optional`.
+   */
+  env_optional?: SkillEnvRef[];
+  /**
+   * E2 — at least ONE of these external CLIs must be discoverable on PATH
+   * for the skill to load. From frontmatter `ethos.external_cli_alternatives`.
+   */
+  external_cli_alternatives?: string[];
   /** Raw parsed frontmatter object. */
   rawFrontmatter: Record<string, unknown>;
   /** Which frontmatter dialect was detected. */

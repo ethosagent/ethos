@@ -1,27 +1,12 @@
-import type { Skill, SkillPermissions } from '@ethosagent/types';
+import type { Skill } from '@ethosagent/types';
 import matter from 'gray-matter';
-
-function parseEthosPermissions(data: Record<string, unknown>): SkillPermissions | undefined {
-  const ethos = data.ethos;
-  if (typeof ethos !== 'object' || ethos === null || Array.isArray(ethos)) return undefined;
-  const perms = (ethos as Record<string, unknown>).permissions;
-  if (typeof perms !== 'object' || perms === null || Array.isArray(perms)) return undefined;
-  const p = perms as Record<string, unknown>;
-  const result: SkillPermissions = {};
-  if (Array.isArray(p.fs_read))
-    result.fs_read = p.fs_read.filter((x): x is string => typeof x === 'string');
-  if (Array.isArray(p.fs_write))
-    result.fs_write = p.fs_write.filter((x): x is string => typeof x === 'string');
-  if (Array.isArray(p.network))
-    result.network = p.network.filter((x): x is string => typeof x === 'string');
-  if (Array.isArray(p.tools_required))
-    result.tools_required = p.tools_required.filter((x): x is string => typeof x === 'string');
-  if (Array.isArray(p.mcp_env_passthrough))
-    result.mcp_env_passthrough = p.mcp_env_passthrough.filter(
-      (x): x is string => typeof x === 'string',
-    );
-  return Object.keys(result).length > 0 ? result : undefined;
-}
+import {
+  parseEthosEnvOptional,
+  parseEthosEnvRequired,
+  parseEthosExternalCliAlternatives,
+  parseEthosFallbackForTools,
+  parseEthosPermissions,
+} from './ethos-namespace';
 
 const META_KEYS = ['openclaw', 'clawdbot', 'clawdis'] as const;
 
@@ -61,6 +46,10 @@ export function parseOpenClaw(
     filePath,
     body: content.trim() || raw,
     tags: tags && tags.length > 0 ? tags : undefined,
+    fallback_for_tools: parseEthosFallbackForTools(data),
+    env_required: parseEthosEnvRequired(data),
+    env_optional: parseEthosEnvOptional(data),
+    external_cli_alternatives: parseEthosExternalCliAlternatives(data),
     rawFrontmatter: data as Record<string, unknown>,
     dialect: 'openclaw',
     mtimeMs,

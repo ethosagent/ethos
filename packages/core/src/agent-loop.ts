@@ -12,6 +12,7 @@ import {
 import { ScopedStorage } from '@ethosagent/storage-fs';
 import type {
   CompletionChunk,
+  ContextEngineRegistry,
   ContextInjector,
   HookRegistry,
   LLMProvider,
@@ -29,6 +30,8 @@ import type {
   ToolRegistry,
   ToolResult,
 } from '@ethosagent/types';
+import { DefaultContextEngineRegistry } from './context-engines/registry';
+import { estimateMessagesTokens, estimateTokens } from './context-engines/token-estimator';
 
 import { InMemorySessionStore } from './defaults/in-memory-session';
 import { NoopMemoryProvider } from './defaults/noop-memory';
@@ -154,6 +157,14 @@ export interface AgentLoopConfig {
   watcher?: import('@ethosagent/safety-watcher').Watcher;
   // Maps personality ID → model ID. Resolution: modelRouting[id] → personality.model → llm.model
   modelRouting?: Record<string, string>;
+  /**
+   * E4 — Pluggable context-engine registry. When unset, AgentLoop builds
+   * a `DefaultContextEngineRegistry` (drop_oldest + semantic_summary
+   * placeholder + reference_preserving). Each personality picks an engine
+   * via `personality.context_engine`; unknown names fall back to
+   * `drop_oldest` with a one-line warning.
+   */
+  contextEngines?: ContextEngineRegistry;
   options?: {
     maxIterations?: number;
     historyLimit?: number;
@@ -225,6 +236,7 @@ export class AgentLoop {
   private readonly observability?: ObservabilityWriter;
   private readonly injectionClassifier?: InjectionClassifier;
   private readonly watcher?: import('@ethosagent/safety-watcher').Watcher;
+  private readonly contextEngines: ContextEngineRegistry;
   /** Per-session accumulated spend in USD. Keyed by sessionKey. Reset via resetSessionCost(). */
   private readonly sessionCosts = new Map<string, number>();
 
@@ -251,6 +263,7 @@ export class AgentLoop {
     if (config.observability) this.observability = config.observability;
     if (config.injectionClassifier) this.injectionClassifier = config.injectionClassifier;
     if (config.watcher) this.watcher = config.watcher;
+    this.contextEngines = config.contextEngines ?? new DefaultContextEngineRegistry();
   }
 
   /** Returns all available tools for inventory display (e.g. TUI splash screen). */
@@ -482,13 +495,23 @@ export class AgentLoop {
     const systemPrompt = systemParts.join('\n\n').trim() || undefined;
 
     // Step 8: Agentic loop — LLM call → tool use → LLM call → ...
-    const llmMessages = this.toLLMMessages(history);
+    let llmMessages = this.toLLMMessages(history);
+    // E4 — pre-LLM compaction. If estimated context usage already exceeds
+    // the personality's pressure threshold (80% of the model's window by
+    // default), the resolved context engine compacts before we hand the
+    // history to the provider.
+    llmMessages = await this.maybeCompact(llmMessages, systemPrompt ?? '', personality, {
+      sessionId,
+      sessionKey,
+      turnNumber: 0,
+    });
     let fullText = '';
     let turnCount = 0;
 
     // Tool-call budget tracking — prevents runaway loops (see IMPROVEMENT.md P1-3).
     // Counted across all iterations within a single user turn.
     let totalToolCalls = 0;
+    let successfulToolCalls = 0;
     const toolNameCounts = new Map<string, number>();
 
     // Ch.3d — post-untrusted-read downgrade. After any `outputIsUntrusted`
@@ -967,6 +990,7 @@ export class AgentLoop {
             });
           }
           observe({ type: 'tool_end', toolName: p.name, ok: result.ok });
+          if (result.ok) successfulToolCalls++;
           yield {
             type: 'tool_end',
             toolCallId: p.toolCallId,
@@ -999,6 +1023,25 @@ export class AgentLoop {
             },
             allowedPlugins,
           );
+
+          // E5 — surface the touched filesystem path so subscribers (e.g. the
+          // file-context injector's progressive discovery) can react to where
+          // the agent is navigating without scanning every tool's args
+          // themselves.
+          const touchedPath = extractFilePath(p.args);
+          if (touchedPath !== undefined) {
+            await this.hooks.fireVoid(
+              'tool_end_with_path',
+              {
+                sessionId,
+                personalityId: personality.id,
+                toolName: p.name,
+                filePath: touchedPath,
+                workingDir: this.workingDir,
+              },
+              allowedPlugins,
+            );
+          }
 
           llmContent = result.ok ? result.value : result.error;
 
@@ -1073,10 +1116,21 @@ export class AgentLoop {
     // Step 11: Update usage
     await this.session.updateUsage(sessionId, { apiCallCount: turnCount });
 
-    // Step 12: Fire agent_done
+    // Step 12: Fire agent_done. The optional fields (E3) let the
+    // skill-evolver auto-trigger decide whether the turn was substantive
+    // enough to queue an analysis.
     await this.hooks.fireVoid(
       'agent_done',
-      { sessionId, text: fullText, turnCount },
+      {
+        sessionId,
+        text: fullText,
+        turnCount,
+        personalityId: personality.id,
+        successfulToolCalls,
+        totalToolCalls,
+        toolNames: [...toolNameCounts.keys()],
+        initialPrompt: text,
+      },
       allowedPlugins,
     );
 
@@ -1268,6 +1322,56 @@ export class AgentLoop {
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // E4 — pre-LLM compaction. Resolves the personality's context engine and
+  // calls into it when estimated context usage exceeds the pressure
+  // threshold (80% of the model's window). When the personality declares no
+  // engine, we still resolve to `drop_oldest` — but the engine is only
+  // *invoked* when there is real pressure, so static configs see no change.
+  // ---------------------------------------------------------------------------
+  private async maybeCompact(
+    messages: Message[],
+    systemPrompt: string,
+    personality: PersonalityConfig,
+    sessionMetadata: { sessionId: string; sessionKey: string; turnNumber: number },
+  ): Promise<Message[]> {
+    const window = this.llm.maxContextTokens || 200_000;
+    const target = Math.floor(window * 0.7);
+    const pressureGate = Math.floor(window * 0.8);
+    const current = estimateTokens(systemPrompt) + estimateMessagesTokens(messages);
+    if (current <= pressureGate) return messages;
+
+    const engineName = personality.context_engine ?? 'drop_oldest';
+    const engine = this.contextEngines.get(engineName) ?? this.contextEngines.get('drop_oldest');
+    if (!engine) return messages;
+    try {
+      const result = await engine.compact({
+        messages,
+        currentSystem: systemPrompt,
+        targetTokens: target,
+        personality,
+        sessionMetadata,
+      });
+      this.observability?.recordEvent({
+        category: 'audit.compaction',
+        severity: 'info',
+        code: 'context_compacted',
+        cause: `${engine.name}: ${result.notes}`,
+      });
+      return result.messages;
+    } catch (err) {
+      // Fail open — better to send the un-compacted history and let the
+      // provider error than to silently drop messages on engine failure.
+      this.observability?.recordEvent({
+        category: 'audit.compaction',
+        severity: 'warn',
+        code: 'context_engine_failed',
+        cause: err instanceof Error ? err.message : String(err),
+      });
+      return messages;
+    }
+  }
+
   private buildScopedStorage(personality: PersonalityConfig): Storage | undefined {
     if (!this.storage) return undefined;
 
@@ -1332,6 +1436,21 @@ function substitute(
     .replace(/\$\{ETHOS_HOME\}/g, vars.ethosHome)
     .replace(/\$\{self\}/g, vars.self)
     .replace(/\$\{CWD\}/g, vars.cwd);
+}
+
+// E5 — best-effort filesystem-path extractor. Detects path-like arguments
+// across the common file/edit/terminal tool shapes so the AgentLoop can fire
+// `tool_end_with_path` without each tool re-implementing introspection.
+// Returns undefined when no plausible path argument is present (e.g. pure web
+// tools).
+function extractFilePath(args: unknown): string | undefined {
+  if (!args || typeof args !== 'object') return undefined;
+  const a = args as Record<string, unknown>;
+  if (typeof a.path === 'string' && a.path.length > 0) return a.path;
+  if (typeof a.file_path === 'string' && a.file_path.length > 0) return a.file_path;
+  if (typeof a.filePath === 'string' && a.filePath.length > 0) return a.filePath;
+  if (typeof a.cwd === 'string' && a.cwd.length > 0) return a.cwd;
+  return undefined;
 }
 
 // Best-effort origin label for `<untrusted source="…">`. Picks from common

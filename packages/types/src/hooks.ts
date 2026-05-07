@@ -60,10 +60,39 @@ export interface AfterToolCallPayload {
   durationMs: number;
 }
 
+/**
+ * E5 — emitted after `tool_end` for any tool whose arguments referenced a
+ * filesystem path (`read_file`, `write_file`, `patch_file`, `terminal` with
+ * `cwd`, etc.). Subscribers can use this to react to where the agent is
+ * navigating — e.g. progressive context-file discovery in a monorepo.
+ *
+ * `filePath` may be relative (resolved against `workingDir`) or absolute;
+ * subscribers should normalize before use. `workingDir` is the AgentLoop's
+ * working directory at the time the tool ran.
+ */
+export interface ToolEndWithPathPayload {
+  sessionId: string;
+  personalityId?: string;
+  toolName: string;
+  filePath: string;
+  workingDir: string;
+}
+
 export interface AgentDonePayload {
   sessionId: string;
   text: string;
   turnCount: number;
+  /**
+   * E3 — extra metadata used by the skill-evolver auto-trigger to decide
+   * whether the turn was substantive enough to queue an analysis. Optional
+   * so existing call sites stay unchanged.
+   */
+  personalityId?: string;
+  successfulToolCalls?: number;
+  totalToolCalls?: number;
+  toolNames?: string[];
+  /** First user message of the turn — context for skill candidate analysis. */
+  initialPrompt?: string;
 }
 
 export interface MessageReceivedPayload {
@@ -145,6 +174,7 @@ export interface VoidHooks {
   before_llm_call: BeforeLLMCallPayload;
   after_llm_call: AfterLLMCallPayload;
   after_tool_call: AfterToolCallPayload;
+  tool_end_with_path: ToolEndWithPathPayload;
   agent_done: AgentDonePayload;
   message_received: MessageReceivedPayload;
   message_sent: MessageSentPayload;

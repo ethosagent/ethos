@@ -181,6 +181,50 @@ export interface PersonalityConfig {
    * that controls what gets persisted in observability.db for this personality.
    */
   safety?: PersonalitySafetyConfig;
+  /**
+   * E4 — Name of the context-compaction engine to use when the conversation
+   * approaches the model's context window. Resolved against the
+   * `ContextEngineRegistry`; if the name is unknown, AgentLoop falls back to
+   * the built-in `drop_oldest`. Counts as ONE field.
+   */
+  context_engine?: string;
+  /**
+   * E4 — Free-form per-engine options. Passed to the engine via
+   * `personality.context_engine_options` so engines can read their own
+   * configuration without inventing a new wiring channel. Counts as ONE field.
+   */
+  context_engine_options?: Record<string, unknown>;
+  /**
+   * E3 — Auto-triggered skill evolution. When `enabled: true`, the
+   * skill-evolver auto-trigger queues an analysis after every turn that
+   * crosses the `min_tool_calls` threshold and is outside the cooldown
+   * window. Default: disabled (opt-in per personality). Counts as ONE
+   * field for the schema-freeze gate (the nested shape is a leaf type).
+   */
+  skill_evolution?: {
+    enabled?: boolean;
+    min_tool_calls?: number;
+    cooldown_minutes?: number;
+  };
+  /**
+   * E5 — Workspace-aware context layering. Controls how the file-context
+   * injector discovers `AGENTS.md` / `CLAUDE.md` files as the agent
+   * navigates the workspace.
+   *
+   *   `static` (default): load context once at session start from `workingDir`.
+   *   `progressive`: also discover sub-AGENTS.md as the agent reads/writes
+   *      files; injected on the next turn.
+   *   `off`: skip context-file injection entirely.
+   *
+   * Counts as ONE field for the schema-freeze gate (the nested shape is a
+   * leaf type — same precedent as `fs_reach`).
+   */
+  context_layering?: {
+    mode?: 'static' | 'progressive' | 'off';
+    max_depth?: number;
+    discovery_files?: string[];
+    cap_total_chars?: number;
+  };
 }
 
 export interface PersonalityRegistry {

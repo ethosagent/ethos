@@ -3,3 +3,7 @@ description: Terse, code-first agent that writes working code immediately and ex
 model: claude-sonnet-4-6
 memoryScope: global
 capabilities: code, file, terminal
+context_layering.mode: progressive
+skill_evolution.enabled: true
+skill_evolution.min_tool_calls: 5
+skill_evolution.cooldown_minutes: 60

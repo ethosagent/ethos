@@ -34,6 +34,7 @@
     "@ethosagent/sandbox-docker": "workspace:*",
     "@ethosagent/session-sqlite": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
+    "@ethosagent/skill-evolver": "workspace:*",
     "@ethosagent/skills": "workspace:*",
     "@ethosagent/skills-coding": "workspace:*",
     "@ethosagent/tools-browser": "workspace:*",

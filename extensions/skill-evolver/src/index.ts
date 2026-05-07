@@ -4,6 +4,11 @@ export {
   loadEvolveConfig,
   parseEvalJsonl,
 } from './analyze';
+export {
+  registerSkillEvolutionAutoTrigger,
+  resetSkillEvolutionCooldowns,
+  type SkillEvolutionAutoTriggerOptions,
+} from './auto-trigger';
 export type { EvolveOptions, EvolveResult } from './evolver';
 export { SkillEvolver } from './evolver';
 export {

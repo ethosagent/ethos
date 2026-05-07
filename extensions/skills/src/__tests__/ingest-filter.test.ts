@@ -324,6 +324,90 @@ describe('filterSkill', () => {
       expect(filterSkill(skill, personality, new Set()).include).toBe(true);
     });
   });
+
+  describe('fallback_for_tools (E1 — conditional skill availability)', () => {
+    it('includes fallback skill when listed tool is absent', () => {
+      const skill = makeSkill({
+        qualifiedName: 'ethos/local-source-search',
+        fallback_for_tools: ['web_search'],
+      });
+      const personality = makePersonality({ toolset: ['read_file'] });
+      const result = filterSkill(skill, personality, new Set(['read_file']));
+      expect(result.include).toBe(true);
+    });
+
+    it('excludes fallback skill when listed tool is present', () => {
+      const skill = makeSkill({
+        qualifiedName: 'ethos/local-source-search',
+        fallback_for_tools: ['web_search'],
+      });
+      const personality = makePersonality({ toolset: ['web_search', 'read_file'] });
+      const result = filterSkill(skill, personality, new Set(['web_search', 'read_file']));
+      expect(result.include).toBe(false);
+      expect(result.reason).toContain('web_search');
+    });
+
+    it('excludes fallback skill when ANY listed tool is present', () => {
+      const skill = makeSkill({
+        fallback_for_tools: ['web_search', 'web_extract'],
+      });
+      const personality = makePersonality({ toolset: ['web_extract'] });
+      const result = filterSkill(skill, personality, new Set(['web_extract']));
+      expect(result.include).toBe(false);
+      expect(result.reason).toContain('web_extract');
+    });
+
+    it('includes fallback skill when ALL listed tools are absent', () => {
+      const skill = makeSkill({
+        fallback_for_tools: ['web_search', 'web_extract'],
+      });
+      const result = filterSkill(skill, makePersonality({ toolset: [] }), new Set());
+      expect(result.include).toBe(true);
+    });
+
+    it('honors both required_tools AND fallback_for_tools — both gates apply', () => {
+      const skill = makeSkill({
+        required_tools: ['read_file'],
+        fallback_for_tools: ['web_search'],
+      });
+      // required satisfied + fallback target absent → include
+      const personality = makePersonality({ toolset: ['read_file'] });
+      expect(filterSkill(skill, personality, new Set(['read_file'])).include).toBe(true);
+      // required satisfied but fallback target present → exclude
+      const personality2 = makePersonality({ toolset: ['read_file', 'web_search'] });
+      expect(filterSkill(skill, personality2, new Set(['read_file', 'web_search'])).include).toBe(
+        false,
+      );
+    });
+
+    it('applies fallback gate to explicit-allow skills too', () => {
+      const skill = makeSkill({
+        qualifiedName: 'ethos/local-fallback',
+        fallback_for_tools: ['web_search'],
+      });
+      const personality = makePersonality({
+        toolset: ['web_search'],
+        skills: { global_ingest: { mode: 'explicit', allow: ['ethos/local-fallback'] } },
+      });
+      const result = filterSkill(skill, personality, new Set(['web_search']));
+      expect(result.include).toBe(false);
+      expect(result.reason).toContain('fallback_for_tools active');
+    });
+
+    it('applies fallback gate to tags-mode skills too', () => {
+      const skill = makeSkill({
+        tags: ['research'],
+        fallback_for_tools: ['web_search'],
+      });
+      const personality = makePersonality({
+        toolset: ['web_search'],
+        skills: { global_ingest: { mode: 'tags', accept_tags: ['research'] } },
+      });
+      const result = filterSkill(skill, personality, new Set(['web_search']));
+      expect(result.include).toBe(false);
+      expect(result.reason).toContain('fallback_for_tools active');
+    });
+  });
 });
 
 describe('warnMissingAllowList', () => {

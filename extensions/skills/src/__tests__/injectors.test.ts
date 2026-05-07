@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DefaultHookRegistry } from '@ethosagent/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FileContextInjector } from '../file-context-injector';
 import { MemoryGuidanceInjector } from '../memory-guidance-injector';
@@ -298,6 +299,191 @@ describe('FileContextInjector', () => {
     const injector = new FileContextInjector();
     const result = await injector.inject(makeCtx(undefined));
     expect(result).toBeNull();
+  });
+
+  // E5 — workspace-aware context layering
+  describe('progressive discovery (E5)', () => {
+    const makeRegistryWithMode = (
+      mode: 'static' | 'progressive' | 'off',
+      extras: Record<string, unknown> = {},
+    ) => ({
+      define: () => {},
+      get: (_id: string) => ({
+        id: 'engineer',
+        name: 'Engineer',
+        context_layering: { mode, ...extras },
+      }),
+      list: () => [],
+      getDefault: () => ({ id: 'engineer', name: 'Engineer' }),
+      setDefault: () => {},
+      loadFromDirectory: async () => {},
+      remove: () => {},
+    });
+
+    it('static mode (default) does not pick up sub-AGENTS.md after a tool call', async () => {
+      // Root AGENTS.md is loaded statically; sub-AGENTS.md must NOT appear.
+      await writeFile(join(testDir, 'AGENTS.md'), 'root rules');
+      await mkdir(join(testDir, 'pkg'), { recursive: true });
+      await writeFile(join(testDir, 'pkg', 'AGENTS.md'), 'pkg-specific rules');
+
+      const hooks = new DefaultHookRegistry();
+      const personalities = makeRegistryWithMode('static');
+      const injector = new FileContextInjector({ hooks, personalities });
+      await hooks.fireVoid('tool_end_with_path', {
+        sessionId: 'test',
+        personalityId: 'engineer',
+        toolName: 'read_file',
+        filePath: join(testDir, 'pkg', 'handler.ts'),
+        workingDir: testDir,
+      });
+      const result = await injector.inject({ ...makeCtx(testDir, 'engineer') });
+      expect(result?.content).toContain('root rules');
+      expect(result?.content).not.toContain('pkg-specific rules');
+    });
+
+    it('progressive mode injects sub-AGENTS.md after a path-bearing tool call', async () => {
+      await mkdir(join(testDir, 'pkg'), { recursive: true });
+      await writeFile(join(testDir, 'pkg', 'AGENTS.md'), 'pkg-specific rules');
+
+      const hooks = new DefaultHookRegistry();
+      const personalities = makeRegistryWithMode('progressive');
+      const injector = new FileContextInjector({ hooks, personalities });
+      await hooks.fireVoid('tool_end_with_path', {
+        sessionId: 'test',
+        personalityId: 'engineer',
+        toolName: 'read_file',
+        filePath: join(testDir, 'pkg', 'handler.ts'),
+        workingDir: testDir,
+      });
+      const result = await injector.inject({ ...makeCtx(testDir, 'engineer') });
+      expect(result?.content).toContain('pkg/AGENTS.md');
+      expect(result?.content).toContain('pkg-specific rules');
+    });
+
+    it('off mode skips injection entirely', async () => {
+      await writeFile(join(testDir, 'AGENTS.md'), 'root rules');
+      const personalities = makeRegistryWithMode('off');
+      const injector = new FileContextInjector({ personalities });
+      const result = await injector.inject({ ...makeCtx(testDir, 'engineer') });
+      expect(result).toBeNull();
+    });
+
+    it('does not re-inject the same discovered layer twice (idempotent)', async () => {
+      await mkdir(join(testDir, 'pkg'), { recursive: true });
+      await writeFile(join(testDir, 'pkg', 'AGENTS.md'), 'pkg rules');
+
+      const hooks = new DefaultHookRegistry();
+      const personalities = makeRegistryWithMode('progressive');
+      const injector = new FileContextInjector({ hooks, personalities });
+      const payload = {
+        sessionId: 'test',
+        personalityId: 'engineer',
+        toolName: 'read_file',
+        filePath: join(testDir, 'pkg', 'a.ts'),
+        workingDir: testDir,
+      };
+      await hooks.fireVoid('tool_end_with_path', payload);
+      await hooks.fireVoid('tool_end_with_path', {
+        ...payload,
+        filePath: join(testDir, 'pkg', 'b.ts'),
+      });
+      const layers = injector.getDiscoveredLayers('test');
+      expect(layers).toEqual(['pkg/AGENTS.md']);
+    });
+
+    it('respects max_depth — does not walk above the configured depth', async () => {
+      await mkdir(join(testDir, 'a', 'b', 'c'), { recursive: true });
+      await writeFile(join(testDir, 'a', 'AGENTS.md'), 'top');
+      await writeFile(join(testDir, 'a', 'b', 'c', 'AGENTS.md'), 'leaf');
+
+      const hooks = new DefaultHookRegistry();
+      const personalities = makeRegistryWithMode('progressive', { max_depth: 1 });
+      const injector = new FileContextInjector({ hooks, personalities });
+      await hooks.fireVoid('tool_end_with_path', {
+        sessionId: 'test',
+        personalityId: 'engineer',
+        toolName: 'read_file',
+        filePath: join(testDir, 'a', 'b', 'c', 'file.ts'),
+        workingDir: testDir,
+      });
+      const layers = injector.getDiscoveredLayers('test');
+      // From a/b/c upward: depth 0 = a/b/c, depth 1 = a/b — so a/AGENTS.md is past the cap
+      expect(layers).toContain('a/b/c/AGENTS.md');
+      expect(layers).not.toContain('a/AGENTS.md');
+    });
+
+    it('honors custom discovery_files list', async () => {
+      await mkdir(join(testDir, 'pkg'), { recursive: true });
+      await writeFile(join(testDir, 'pkg', 'AGENTS.md'), 'should be skipped');
+      await writeFile(join(testDir, 'pkg', '.ethos.md'), 'custom file rules');
+
+      const hooks = new DefaultHookRegistry();
+      const personalities = makeRegistryWithMode('progressive', {
+        discovery_files: ['.ethos.md'],
+      });
+      const injector = new FileContextInjector({ hooks, personalities });
+      await hooks.fireVoid('tool_end_with_path', {
+        sessionId: 'test',
+        personalityId: 'engineer',
+        toolName: 'patch_file',
+        filePath: join(testDir, 'pkg', 'x.ts'),
+        workingDir: testDir,
+      });
+      const layers = injector.getDiscoveredLayers('test');
+      expect(layers).toEqual(['pkg/.ethos.md']);
+    });
+
+    it('refuses to walk outside the project root', async () => {
+      await writeFile(join(testDir, 'AGENTS.md'), 'inside');
+      const sibling = join(testDir, '..', 'sibling-fake');
+      await mkdir(sibling, { recursive: true });
+      await writeFile(join(sibling, 'AGENTS.md'), 'outside-private');
+      try {
+        const hooks = new DefaultHookRegistry();
+        const personalities = makeRegistryWithMode('progressive');
+        const injector = new FileContextInjector({ hooks, personalities });
+        await hooks.fireVoid('tool_end_with_path', {
+          sessionId: 'test',
+          personalityId: 'engineer',
+          toolName: 'read_file',
+          filePath: join(sibling, 'leak.ts'),
+          workingDir: testDir,
+        });
+        const layers = injector.getDiscoveredLayers('test');
+        expect(layers).toEqual([]);
+      } finally {
+        await rm(sibling, { recursive: true, force: true });
+      }
+    });
+
+    it('drops oldest discovered layer when cap_total_chars is exceeded', async () => {
+      await mkdir(join(testDir, 'a'), { recursive: true });
+      await mkdir(join(testDir, 'b'), { recursive: true });
+      // Each layer is 60 chars; cap of 100 fits one but not two — drops oldest.
+      await writeFile(join(testDir, 'a', 'AGENTS.md'), 'a'.repeat(60));
+      await writeFile(join(testDir, 'b', 'AGENTS.md'), 'b'.repeat(60));
+
+      const hooks = new DefaultHookRegistry();
+      const personalities = makeRegistryWithMode('progressive', { cap_total_chars: 100 });
+      const injector = new FileContextInjector({ hooks, personalities });
+      await hooks.fireVoid('tool_end_with_path', {
+        sessionId: 'test',
+        personalityId: 'engineer',
+        toolName: 'read_file',
+        filePath: join(testDir, 'a', 'x.ts'),
+        workingDir: testDir,
+      });
+      await hooks.fireVoid('tool_end_with_path', {
+        sessionId: 'test',
+        personalityId: 'engineer',
+        toolName: 'read_file',
+        filePath: join(testDir, 'b', 'y.ts'),
+        workingDir: testDir,
+      });
+      const layers = injector.getDiscoveredLayers('test');
+      // Oldest dropped, newest retained
+      expect(layers).toEqual(['b/AGENTS.md']);
+    });
   });
 });
 

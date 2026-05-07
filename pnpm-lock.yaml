@@ -1007,6 +1007,9 @@ importers:
       '@ethosagent/session-sqlite':
         specifier: workspace:*
         version: link:../../extensions/session-sqlite
+      '@ethosagent/skill-evolver':
+        specifier: workspace:*
+        version: link:../../extensions/skill-evolver
       '@ethosagent/skills':
         specifier: workspace:*
         version: link:../../extensions/skills

@@ -1,8 +1,19 @@
 import type { IngestMode, PersonalityConfig, Skill } from '@ethosagent/types';
+import { checkSkillEnv, type EnvResolverOptions } from './env-resolver';
 
 export interface FilterResult {
   include: boolean;
   reason: string;
+}
+
+/**
+ * E2 — module-level test seam for env resolution. Production passes
+ * `undefined` (uses `process.env` + real `which`); tests inject deterministic
+ * env/which by setting this with `setEnvResolverOptions`.
+ */
+let envResolverOpts: EnvResolverOptions | undefined;
+export function setEnvResolverOptions(opts: EnvResolverOptions | undefined): void {
+  envResolverOpts = opts;
 }
 
 /**
@@ -31,6 +42,10 @@ export function filterSkill(
   if (allow.includes(skill.qualifiedName)) {
     const reach = checkToolReach(skill, toolNames, onWarn, personality.id);
     if (reach) return reach;
+    const fallback = checkFallbackForTools(skill, toolNames);
+    if (fallback) return fallback;
+    const envCheck = checkEnv(skill, onWarn, personality.id);
+    if (envCheck) return envCheck;
     const permCheck = checkSkillPermissions(skill, personality, onWarn);
     if (permCheck) return permCheck;
     return { include: true, reason: 'explicit allow' };
@@ -59,6 +74,10 @@ export function filterSkill(
       }
       const reach = checkToolReach(skill, toolNames, onWarn, personality.id);
       if (reach) return reach;
+      const fallback = checkFallbackForTools(skill, toolNames);
+      if (fallback) return fallback;
+      const envCheck = checkEnv(skill, onWarn, personality.id);
+      if (envCheck) return envCheck;
       const permCheck = checkSkillPermissions(skill, personality, onWarn);
       if (permCheck) return permCheck;
       return { include: true, reason: 'tags match' };
@@ -94,6 +113,10 @@ function capabilityCheck(
         `[boot] ${personality.id}: skill '${skill.qualifiedName}' has no required_tools — loading (fallback: warn)`,
       );
     }
+    const fallbackCheck = checkFallbackForTools(skill, toolNames);
+    if (fallbackCheck) return fallbackCheck;
+    const envCheck = checkEnv(skill, onWarn, personality.id);
+    if (envCheck) return envCheck;
     const permCheck = checkSkillPermissions(skill, personality, onWarn);
     if (permCheck) return permCheck;
     return { include: true, reason: 'no required_tools (pure prose)' };
@@ -106,6 +129,10 @@ function capabilityCheck(
       reason: `required_tools not in effective reach: ${missing.join(', ')}`,
     };
   }
+  const fallbackCheck = checkFallbackForTools(skill, toolNames);
+  if (fallbackCheck) return fallbackCheck;
+  const envCheck = checkEnv(skill, onWarn, personality.id);
+  if (envCheck) return envCheck;
   const permCheck = checkSkillPermissions(skill, personality, onWarn);
   if (permCheck) return permCheck;
   return { include: true, reason: 'capability match' };
@@ -131,6 +158,59 @@ function checkToolReach(
     return {
       include: false,
       reason: `required_tools not reachable: ${missing.join(', ')}`,
+    };
+  }
+  return null;
+}
+
+/**
+ * E2 — `ethos.env_required` + `ethos.external_cli_alternatives` gate.
+ *
+ * Hard requirement: when env vars are unset OR no CLI alternative resolves,
+ * the skill is filtered out and a warning is emitted so the operator can fix
+ * it. Skills declaring neither field skip the check entirely.
+ *
+ * Returns null when the env is satisfied (or the skill declares no env
+ * dependencies). Returns a FilterResult when the skill should be excluded.
+ */
+function checkEnv(
+  skill: Skill,
+  onWarn: ((msg: string) => void) | undefined,
+  personalityId: string,
+): FilterResult | null {
+  const hasEnvDecl = (skill.env_required?.length ?? 0) > 0;
+  const hasCliDecl = (skill.external_cli_alternatives?.length ?? 0) > 0;
+  if (!hasEnvDecl && !hasCliDecl) return null;
+  const result = checkSkillEnv(skill, envResolverOpts);
+  if (result.ok) return null;
+  const parts: string[] = [];
+  if (result.missingEnv.length > 0) parts.push(`env unset: ${result.missingEnv.join(', ')}`);
+  if (result.missingCli.length > 0) {
+    parts.push(`no CLI on PATH from: ${result.missingCli.join(' / ')}`);
+  }
+  const reason = `env_required not satisfied — ${parts.join('; ')}`;
+  onWarn?.(`[boot] ${personalityId}: skill '${skill.qualifiedName}' filtered — ${reason}`);
+  return { include: false, reason };
+}
+
+/**
+ * E1 — `ethos.fallback_for_tools` activation gate. The skill is intended as
+ * a graceful-degradation fallback: it activates ONLY when ALL listed tools
+ * are absent from the personality's effective tool reach. If any one of
+ * them is present, the skill is filtered out so the primary (tool-using)
+ * skill takes precedence.
+ *
+ * Returns null when the skill does not declare `fallback_for_tools`, or
+ * when every listed tool is absent (skill should be included).
+ */
+function checkFallbackForTools(skill: Skill, toolNames: Set<string>): FilterResult | null {
+  const fallbackFor = skill.fallback_for_tools ?? [];
+  if (fallbackFor.length === 0) return null;
+  const present = fallbackFor.filter((t) => toolNames.has(t));
+  if (present.length > 0) {
+    return {
+      include: false,
+      reason: `fallback_for_tools active: tool(s) present (${present.join(', ')})`,
     };
   }
   return null;

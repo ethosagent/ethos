@@ -45,6 +45,13 @@ mcp_servers:  # allowed MCP server names (default-deny; omit or leave empty = no
 plugins:      # allowed plugin ids (default-deny; omit or leave empty = no plugin access)
 skills:       # global skill pool filter (capability | explicit | tags | none; default: capability)
 budgetCapUsd: 1.00  # per-session spending cap in USD; turns are refused with BUDGET_EXCEEDED once crossed
+context_engine: drop_oldest          # E4: compaction strategy when conversation approaches context window
+context_engine_options:              # free-form per-engine options (read by the resolved context_engine)
+context_engine_options.preserve_first_n_turns: 1
+context_layering:                    # E5: workspace-aware context-file discovery for monorepos
+context_layering.mode: static        # static | progressive | off
+skill_evolution:                     # E3: opt-in auto-trigger for skill-candidate queueing
+skill_evolution.enabled: false       # opt-in per personality
 safety:              # per-personality safety config (observability sub-block controls what gets persisted)
   observability:
     storeToolArgs: redacted    # none | redacted | full — how tool arguments are stored in observability.db
@@ -67,6 +74,10 @@ The `fs_reach` keys scope filesystem access for the read_file / write_file tools
 - `skills` — filter rules for skills discovered by the universal scanner. The per-personality `skills/` folder is always loaded unfiltered; this controls what flows in from the global pool. Default mode is `capability` (only skills whose `required_tools` are a subset of this personality's effective tool reach are included). Set `skills.global_ingest.mode` to `explicit`, `tags`, or `none` to change the filter strategy.
 - `budgetCapUsd` — per-session spending cap in USD. When the running cost for the current session key crosses this value, the next turn is refused with a `BUDGET_EXCEEDED` error. Session-scoped: resets on `/new`. Absent = no cap.
 - `safety` — per-personality safety config. Currently supports an `observability` sub-block that controls what gets persisted to `observability.db` for this personality. Fields: `storeToolArgs` (`none` | `redacted` | `full`), `storeToolBodies` (`none` | `redacted` | `full`), `storeLlmPayloads` (`none` | `metadata` | `full`), `redactPatterns` (list of regex strings to redact from stored data).
+- `context_engine` — name of the context-compaction engine used when conversation approaches the model's context window. Built-ins: `drop_oldest` (default), `semantic_summary`, `reference_preserving`. Plugin authors can register custom engines via `EthosPluginApi.registerContextEngine`.
+- `context_engine_options` — free-form per-engine options (set via dotted keys like `context_engine_options.preserve_first_n_turns: 2`). Each engine reads only the keys it understands.
+- `context_layering` — controls how the file-context injector discovers `AGENTS.md` / `CLAUDE.md` files. Set `context_layering.mode` to `static` (default — root only), `progressive` (also discovers sub-AGENTS.md as the agent navigates), or `off`. `context_layering.max_depth`, `context_layering.discovery_files`, and `context_layering.cap_total_chars` tune progressive mode.
+- `skill_evolution` — auto-trigger for queueing skill candidates after substantive turns. Set `skill_evolution.enabled: true` to opt in; `skill_evolution.min_tool_calls` (default 5) is the threshold and `skill_evolution.cooldown_minutes` (default 60) caps re-queuing. Candidates land under `~/.ethos/skills/.pending/<personality>/`; review with `ethos evolve --list-pending` and `--accept` / `--reject`.
 
 ## Step 4 — Define the toolset
 

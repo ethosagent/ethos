@@ -272,13 +272,15 @@ export async function createAgentLoop(
     }
   }
 
+  const hooks = new DefaultHookRegistry();
+
   const { injectors, tools: skillTools } = createInjectors(personalities, {
     onSkillSkip: (skillId, reason) => log.warn(`skill ${skillId} skipped: ${reason}`),
     trustedFirstPartySources: [codingBundleSource],
+    hooks,
   });
   for (const tool of skillTools) tools.register(tool);
 
-  const hooks = new DefaultHookRegistry();
   // CLI/TUI/ACP get the synchronous block-and-explain guard. Web replaces it
   // with an interactive approval flow registered after createAgentLoop returns
   // (see @ethosagent/web-api). Both call sites share `checkCommand` via
@@ -287,15 +289,27 @@ export async function createAgentLoop(
     hooks.registerModifying('before_tool_call', createTerminalGuardHook());
   }
 
+  // E4 — context-engine registry. Built-ins register at construction; the
+  // PluginLoader exposes it so plugins can contribute custom engines via
+  // `EthosPluginApi.registerContextEngine`.
+  const { DefaultContextEngineRegistry } = await import('@ethosagent/core');
+  const contextEngines = new DefaultContextEngineRegistry();
+
   // Discover and activate installed plugins. Plugins register tools/hooks/
   // injectors into the same registries the AgentLoop uses; the personality
   // gate (allowedPlugins) decides which actually fire per turn.
   const injectorPluginIds = new Map<ContextInjector, string>();
   const pluginLoader = new PluginLoader(
-    { tools, hooks, injectors, injectorPluginIds, personalities },
+    { tools, hooks, injectors, injectorPluginIds, personalities, contextEngines },
     { storage: new FsStorage() },
   );
   await pluginLoader.loadAll();
+
+  // E3 — auto-trigger for skill evolution. Only fires when the active
+  // personality opts in via `skill_evolution.enabled`. Built-ins
+  // (engineer, coordinator) ship with it on; everything else stays off.
+  const { registerSkillEvolutionAutoTrigger } = await import('@ethosagent/skill-evolver');
+  registerSkillEvolutionAutoTrigger({ hooks, personalities, dataDir });
 
   // Ch.6a — In-process watcher. Built with the default rule set
   // (rate-limit + token-budget + compounding-error + suspicious-
@@ -331,6 +345,7 @@ export async function createAgentLoop(
     modelRouting: config.modelRouting,
     watcher,
     injectionClassifier,
+    contextEngines,
     ...(opts.observability ? { observability: opts.observability } : {}),
     options: {
       platform: profile,

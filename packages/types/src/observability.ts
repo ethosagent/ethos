@@ -18,6 +18,7 @@ export type EventCategory =
   | 'audit.watcher'
   | 'audit.injection_flag'
   | 'audit.redacted'
+  | 'audit.compaction'
   | 'channel.pairing'
   | 'channel.allow'
   | 'channel.deny'

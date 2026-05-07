@@ -1,13 +1,24 @@
-import type { PersonalityRegistry, Tool } from '@ethosagent/types';
+import type { HookRegistry, PersonalityRegistry, Tool } from '@ethosagent/types';
 import { FileContextInjector } from './file-context-injector';
 import { GetSkillTool } from './get-skill-tool';
 import { MemoryGuidanceInjector } from './memory-guidance-injector';
 import { SkillsInjector } from './skills-injector';
 import { type ScanSource, UniversalScanner } from './universal-scanner';
 
+export {
+  checkSkillEnv,
+  defaultWhich,
+  type EnvResolutionResult,
+  type EnvResolverOptions,
+} from './env-resolver';
 export { FileContextInjector } from './file-context-injector';
 export { GetSkillTool } from './get-skill-tool';
-export { type FilterResult, filterSkill, warnMissingAllowList } from './ingest-filter';
+export {
+  type FilterResult,
+  filterSkill,
+  setEnvResolverOptions,
+  warnMissingAllowList,
+} from './ingest-filter';
 export { MemoryGuidanceInjector } from './memory-guidance-injector';
 export { sanitize } from './prompt-injection-guard';
 export {
@@ -51,6 +62,12 @@ export interface InjectorConfig {
    * `extraSources`.
    */
   trustedFirstPartySources?: ScanSource[];
+  /**
+   * E5 — when provided, the FileContextInjector subscribes to
+   * `tool_end_with_path` for progressive context-file discovery in
+   * monorepos. Without it, the injector falls back to static-only.
+   */
+  hooks?: HookRegistry;
 }
 
 /**
@@ -73,8 +90,12 @@ export function createInjectors(
     onSkip: config.onSkillSkip,
     scanner,
   });
+  const fileContext = new FileContextInjector({
+    personalities,
+    ...(config.hooks ? { hooks: config.hooks } : {}),
+  });
   return {
-    injectors: [skillsInjector, new FileContextInjector(), new MemoryGuidanceInjector()],
+    injectors: [skillsInjector, fileContext, new MemoryGuidanceInjector()],
     tools: [new GetSkillTool(scanner) as Tool],
   };
 }
