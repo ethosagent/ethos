@@ -1,0 +1,74 @@
+name: Bug report
+description: Report something that's broken
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. The more we know up front, the faster we can fix it.
+
+        For security issues, do **not** open a public issue — see [SECURITY.md](../../SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: Ethos version
+      description: 'Output of `ethos --version`'
+      placeholder: 'e.g. 0.4.2'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does this happen?
+      options:
+        - CLI (terminal)
+        - TUI
+        - Web UI
+        - Telegram
+        - Slack
+        - Discord
+        - Email
+        - Cron
+        - Library / programmatic
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the actual behavior. Include error messages or unexpected output verbatim.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Minimum steps to reproduce. The smaller, the better.
+      placeholder: |
+        1. Run `ethos chat`
+        2. Type `…`
+        3. See `…`
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: 'OS, Node version (`node --version`), pnpm version, anything else relevant.'
+      placeholder: |
+        - OS: macOS 15.2
+        - Node: v24.1.0
+        - pnpm: 10.33.0

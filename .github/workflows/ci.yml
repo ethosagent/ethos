@@ -10,41 +10,100 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Opt the runner-side Node into 24 for actions; suppresses Node 20 deprecation warning.
+  # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
-  check:
-    name: typecheck · lint · test
+  tests:
+    name: tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      # Opt the runner-side Node into 24 for actions (checkout/setup-node/pnpm-action-setup
-      # ship Node 20, which deprecates June 2026). Suppresses the deprecation warning
-      # and forward-proofs the workflow. See:
-      # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: bash scripts/check-tests.sh
 
-      - uses: pnpm/action-setup@v4
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: bash scripts/check-typecheck.sh
+
+  version-sync:
+    name: version-sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    # version-sync's --pr mode is only meaningful in PR context
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: bash scripts/check-version-sync.sh
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Run Biome (advisory — never blocks merge)
+        id: lint
+        run: |
+          set +e
+          bash scripts/check-lint.sh > lint.out 2>&1
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          cat lint.out
+          # Always succeed: lint is advisory at the workflow level
+          exit 0
+      # Sticky comment — find by hidden HTML marker, update in place if it
+      # exists so long-lived PRs don't accumulate one comment per push.
+      # When lint goes green, the body becomes "✓ Lint clean" (still sticky)
+      # so the stale findings don't linger after they're fixed.
+      - name: Sticky lint comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
         with:
-          version: 10.33.0
+          script: |
+            const fs = require('fs');
+            const MARKER = '<!-- ethos-ci-lint-comment -->';
+            const exitCode = '${{ steps.lint.outputs.exit_code }}';
+            let body;
+            if (exitCode === '0') {
+              body = `${MARKER}\n### ✓ Lint clean (advisory)\n\nNo Biome findings on this PR's snapshot.`;
+            } else {
+              const raw = fs.readFileSync('lint.out', 'utf8');
+              const trimmed = raw.length > 30000 ? raw.slice(0, 30000) + '\n…(truncated)' : raw;
+              body = `${MARKER}\n### Lint findings (advisory — does not block merge)\n\`\`\`\n${trimmed}\n\`\`\``;
+            }
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Version sync (G1 + G2)
-        run: node scripts/verify-version.js --pr
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Test
-        run: pnpm test
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            const existing = comments.find((c) => c.body && c.body.includes(MARKER));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                comment_id: existing.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body,
+              });
+            }

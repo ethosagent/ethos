@@ -1,0 +1,23 @@
+{
+  "name": "ethos",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:24",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "postCreateCommand": "corepack enable && corepack prepare pnpm@10.33.0 --activate && make prepare",
+  "customizations": {
+    "vscode": {
+      "extensions": ["biomejs.biome"],
+      "settings": {
+        "editor.defaultFormatter": "biomejs.biome",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+          "quickfix.biome": "explicit",
+          "source.organizeImports.biome": "explicit"
+        }
+      }
+    }
+  },
+  "remoteUser": "node",
+  "forwardPorts": [3000, 5173]
+}

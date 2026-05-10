@@ -1,0 +1,38 @@
+version: 2
+updates:
+  # npm — root + each workspace package. Weekly cadence keeps PR noise low.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Group dev tooling so biome / vitest / tsx upgrades land as one PR.
+      dev-tooling:
+        dependency-type: development
+        patterns:
+          - '@biomejs/*'
+          - 'vitest'
+          - 'tsx'
+          - 'tsup'
+          - 'typescript'
+      # Group SDK upgrades so providers move together.
+      llm-sdks:
+        patterns:
+          - '@anthropic-ai/sdk'
+          - 'openai'
+    commit-message:
+      prefix: chore
+      include: scope
+
+  # GitHub Actions — pin updates, weekly.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+      include: scope

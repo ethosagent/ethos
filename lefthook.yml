@@ -1,0 +1,31 @@
+# lefthook config — pre-commit + pre-push hooks for ethos.
+#
+# Why lefthook (not Husky / pre-commit): single Go binary, no Node-dep
+# loop, fast cold-start. Installed automatically by `make prepare`.
+#
+# Disable hooks for a single command with the LEFTHOOK=0 env var.
+
+pre-commit:
+  parallel: true
+  commands:
+    biome-check:
+      glob: '*.{ts,tsx,js,jsx,json}'
+      run: pnpm dlx @biomejs/biome check --write --no-errors-on-unmatched {staged_files}
+      stage_fixed: true
+
+    eof-newline:
+      glob: '*'
+      run: |
+        set -e
+        for f in {staged_files}; do
+          [ -f "$f" ] || continue
+          if [ -n "$(tail -c 1 "$f" 2>/dev/null)" ]; then
+            printf '\n' >> "$f"
+          fi
+        done
+      stage_fixed: true
+
+pre-push:
+  commands:
+    typecheck-fast:
+      run: pnpm typecheck

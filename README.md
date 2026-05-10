@@ -24,6 +24,20 @@ npm i -g @ethosagent/cli && ethos setup
 git clone https://github.com/MiteshSharma/ethos && cd ethos && make setup
 ```
 
+## Contribute in 5 minutes
+
+**Easiest — GitHub Codespaces:** click *Code → Codespaces → Create codespace*. The devcontainer auto-installs Node 24, pnpm, deps, and git hooks. When the editor opens, run `make check` — it passes immediately.
+
+**Local:**
+```bash
+git clone https://github.com/MiteshSharma/ethos
+cd ethos
+make prepare    # installs deps + sets up pre-commit / pre-push hooks
+make check      # typecheck + tests + version-sync (blocking) + lint (advisory) — mirrors CI exactly
+```
+
+Then open a PR — the [PR template](.github/PULL_REQUEST_TEMPLATE.md) walks you through the checklist. Looking for a starter task? `gh issue list --label good-first-issue`.
+
 ---
 
 ## What you can do with it

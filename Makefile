@@ -49,7 +49,8 @@ help:
 	@echo "  typecheck          - tsc --noEmit across the workspace"
 	@echo "  lint               - biome check"
 	@echo "  format             - biome format --write"
-	@echo "  check              - typecheck + lint + test (full CI suite locally)"
+	@echo "  version-sync       - run scripts/check-version-sync.sh (G1 + G2)"
+	@echo "  check              - typecheck + tests + version-sync (blocking) + lint (advisory) — mirrors CI"
 	@echo ""
 	@echo "Versioning (VERSION file is the single source of truth — never edit package.json directly)"
 	@echo "  version            - Print current version"
@@ -115,6 +116,8 @@ prepare:
 	@$(NVM_EXEC) pnpm install --frozen-lockfile
 	@echo "Rebuilding native modules for current Node version..."
 	@$(NVM_EXEC) npm rebuild better-sqlite3
+	@echo "Installing git hooks via lefthook..."
+	@$(NVM_EXEC) pnpm dlx lefthook install >/dev/null 2>&1 || echo "  (lefthook install skipped; not in a git repo)"
 	@echo "Dependencies installed."
 
 # ---------- dev ----------
@@ -270,20 +273,30 @@ docs-build:
 	@$(NVM_EXEC) pnpm --filter docs run build
 
 # ---------- quality ----------
+#
+# Each target wraps the matching scripts/check-*.sh so make / CI / humans all
+# run the same code path. CI's ci.yml jobs call the same scripts directly; the
+# composite `check` target runs all four via scripts/run-checks.sh and mirrors
+# CI's policy (typecheck + tests + version-sync block; lint advisory).
 
 test:
-	@$(NVM_EXEC) pnpm test
+	@$(NVM_EXEC) bash scripts/check-tests.sh
 
 typecheck:
-	@$(NVM_EXEC) pnpm typecheck
+	@$(NVM_EXEC) bash scripts/check-typecheck.sh
 
 lint:
-	@$(NVM_EXEC) pnpm lint
+	@$(NVM_EXEC) bash scripts/check-lint.sh
+
+version-sync:
+	@$(NVM_EXEC) bash scripts/check-version-sync.sh
 
 format:
 	@$(NVM_EXEC) pnpm format
 
-check: typecheck lint test
+# Mirrors CI exactly. Override LINT_BLOCKING=1 to make lint fail the run too.
+check:
+	@$(NVM_EXEC) bash scripts/run-checks.sh
 
 # ---------- versioning (VERSION file is the single source of truth) ----------
 #
@@ -489,7 +502,7 @@ clean:
         dev tui web web-dev web-build gateway-setup gateway cron personality memory keys \
         start-gateway-daemon stop-gateway-daemon delete-gateway-daemon status-gateway-daemon \
         docs docs-build \
-        test typecheck lint format check \
+        test typecheck lint version-sync format check \
         version version-set version-bump-patch version-bump-minor version-bump-major \
         verify \
         build-npm build-publishable \

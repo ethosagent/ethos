@@ -1,0 +1,49 @@
+name: pr-title
+
+# Conventional Commits enforcement on PR titles. Squash-merge defaults to the
+# PR title (set in repo settings), so a clean PR title becomes a clean
+# changelog entry on main. Blocks merge.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  pr-title:
+    name: conventional commits
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Allowed types match the PR-template checklist + CONTRIBUTING.md.
+          types: |
+            feat
+            fix
+            chore
+            docs
+            refactor
+            test
+            perf
+            build
+            ci
+            style
+            revert
+          # Subject is the bit after the colon. Lower-case start matches
+          # ethos's existing commit log; keeps `git log --oneline` consistent.
+          subjectPattern: ^[a-z].*$
+          subjectPatternError: |
+            The subject "{subject}" found in the PR title "{title}" must start with a lower-case letter.
+            Conventional Commits format: <type>(<scope>)?: <subject>
+            Examples:
+              feat(gateway): add per-channel personality binding
+              fix: handle missing TELEGRAM_TOKEN gracefully
+              docs: update CONTRIBUTING with frozen-schema rules
