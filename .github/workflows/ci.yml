@@ -70,7 +70,7 @@ jobs:
       # so the stale findings don't linger after they're fixed.
       - name: Sticky lint comment on PR
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
