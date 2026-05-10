@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
 import { DefaultPersonalityRegistry } from '../defaults/noop-personality';
+import type { AgentLoopObservability } from '../observability/agent-loop-observability';
 import { DefaultToolRegistry } from '../tool-registry';
 
 interface Step {
@@ -320,12 +321,13 @@ describe('AgentLoop — Ch.3c short-pattern check', () => {
       { text: 'ok', finishReason: 'end_turn' },
     ]);
     const events: Array<{ category: string; code?: string }> = [];
-    const observability = {
-      startTrace: () => 'tr1',
+    const observability: AgentLoopObservability = {
+      startTurnTrace: () => 'tr1',
       endTrace: () => {},
       startSpan: () => 'sp1',
       endSpan: () => {},
-      recordEvent: (e: { category: string; code?: string }) => events.push(e),
+      recordSafetyBlock: (e) => events.push({ category: 'audit.block', code: e.code }),
+      recordCompaction: (e) => events.push({ category: 'audit.compaction', code: e.code }),
       flush: () => {},
     };
     const loop = new AgentLoop({

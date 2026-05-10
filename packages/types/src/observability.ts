@@ -1,31 +1,36 @@
-import type { PersonalityObservabilityConfig } from './personality';
-
-export type TraceKind =
-  | 'turn'
-  | 'mesh.handshake'
-  | 'cron.tick'
-  | 'channel.inbound'
-  | 'system'
-  | 'support.bundle';
+/**
+ * Opaque trace kind. Convention: `<domain>.<verb>` (e.g. `turn`, `cron.tick`).
+ * The library does not enforce specific values; consumers define their own
+ * vocabulary in their adapter layer.
+ */
+export type TraceKind = string;
 
 export type SpanKind = 'tool_call' | 'llm_call' | 'hook' | 'mcp_call';
 
-export type EventCategory =
-  | 'error'
-  | 'audit.transition'
-  | 'audit.approval'
-  | 'audit.block'
-  | 'audit.watcher'
-  | 'audit.injection_flag'
-  | 'audit.redacted'
-  | 'audit.compaction'
-  | 'channel.pairing'
-  | 'channel.allow'
-  | 'channel.deny'
-  | 'install.scan'
-  | 'install.event';
+/**
+ * Opaque event category. Convention: `<domain>.<verb>` (e.g. `audit.transition`,
+ * `app.login`). The library does not enforce specific values; consumers define
+ * their own vocabulary in their adapter layer.
+ */
+export type EventCategory = string;
 
 export type EventSeverity = 'info' | 'warn' | 'error' | 'critical';
+
+/**
+ * How aggressively to redact tool args / bodies / snapshots before storing.
+ *
+ * - `none`     — strip the field entirely (record metadata only).
+ * - `redacted` — apply built-in floor patterns plus any `extraPatterns`.
+ * - `full`     — store as-is. Built-in floor patterns still apply; only the
+ *                consumer-supplied `extraPatterns` are skipped.
+ *
+ * The default policy is `{ level: 'redacted' }` when not set on the writer
+ * call site or via the writer's default.
+ */
+export interface RedactionPolicy {
+  level: 'none' | 'redacted' | 'full';
+  extraPatterns?: string[];
+}
 
 export interface Trace {
   traceId: string;
@@ -34,7 +39,12 @@ export interface Trace {
   startTs: number;
   endTs?: number;
   status?: 'ok' | 'error' | 'aborted';
-  personalityId?: string;
+  /**
+   * Opaque identifier of what this trace is about. Consumers map their own
+   * domain concept onto it (e.g. ethos uses personality id; another consumer
+   * might use tenant id, service name, or account id).
+   */
+  subjectId?: string;
   snapshotId?: string;
   attrs?: Record<string, unknown>;
 }
@@ -63,10 +73,11 @@ export interface ObsEvent {
   details?: Record<string, unknown>;
 }
 
-export interface PolicySnapshot {
+export interface Snapshot {
   snapshotId: string;
   takenAt: number;
-  personalityId: string;
+  /** See `Trace.subjectId`. */
+  subjectId: string;
   body: string;
 }
 
@@ -76,7 +87,7 @@ export interface ObservabilityStore {
   insertSpan(span: Span, extraRedactPatterns?: string[]): void;
   closeSpan(spanId: string, status: 'ok' | 'error' | 'blocked'): void;
   insertEvent(event: ObsEvent, extraRedactPatterns?: string[]): void;
-  insertSnapshot(snapshot: PolicySnapshot): void;
+  insertSnapshot(snapshot: Snapshot): void;
   getTrace(traceId: string): Trace | null;
   getSpans(traceId: string): Span[];
   getEvents(filter: {
@@ -98,9 +109,10 @@ export interface ObservabilityWriter {
   startTrace(opts: {
     sessionId?: string;
     kind: TraceKind;
-    personalityId?: string;
+    subjectId?: string;
+    snapshotId?: string;
     attrs?: Record<string, unknown>;
-    obsConfig?: PersonalityObservabilityConfig;
+    redaction?: RedactionPolicy;
   }): string;
   endTrace(traceId: string, status: 'ok' | 'error' | 'aborted'): void;
   startSpan(opts: {
@@ -109,7 +121,7 @@ export interface ObservabilityWriter {
     kind: SpanKind;
     name: string;
     attrs?: Record<string, unknown>;
-    obsConfig?: PersonalityObservabilityConfig;
+    redaction?: RedactionPolicy;
   }): string;
   endSpan(
     spanId: string,

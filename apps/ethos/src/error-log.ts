@@ -13,18 +13,22 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ObservabilityService } from '@ethosagent/observability-sqlite';
 import type { EthosError } from '@ethosagent/types';
 import { ethosDir } from './config';
 
-let _obsService: ObservabilityService | undefined;
+interface ErrorLogObservability {
+  recordError(opts: { code?: string; cause?: string; details?: Record<string, unknown> }): void;
+}
+
+let _obs: ErrorLogObservability | undefined;
 
 /**
- * Wire up the ObservabilityService so errors are also written to observability.db.
- * Call this once during CLI startup after the service is created.
+ * Wire up an observability adapter so errors are also written to
+ * observability.db. Call this once during CLI startup with the app's
+ * EthosObservability adapter (or any object exposing `recordError`).
  */
-export function setObservabilityService(svc: ObservabilityService): void {
-  _obsService = svc;
+export function setObservabilityService(obs: ErrorLogObservability): void {
+  _obs = obs;
 }
 
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -91,9 +95,7 @@ export function appendErrorLog(err: EthosError, ctx: LogContext = {}): void {
     };
     appendFileSync(logPath(), `${JSON.stringify(entry)}\n`);
     try {
-      _obsService?.recordEvent({
-        category: 'error',
-        severity: 'error',
+      _obs?.recordError({
         code: err.code,
         cause: err.cause,
         details: { action: err.action, ...ctx },

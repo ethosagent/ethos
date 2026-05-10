@@ -6,11 +6,35 @@ import {
   getApprovedSenders,
   revokeApproval,
 } from '@ethosagent/safety-channel';
-import type { InboundMessage, ObservabilityWriter, PlatformAdapter } from '@ethosagent/types';
+import type { InboundMessage, PlatformAdapter } from '@ethosagent/types';
 import type Database from 'better-sqlite3';
 import { MessageDedupCache } from './dedup';
 
 export { MessageDedupCache } from './dedup';
+
+/**
+ * Minimal observability surface the gateway needs. Defined locally so this
+ * package depends only on `@ethosagent/types` + `@ethosagent/core`'s AgentLoop;
+ * any adapter exposing this method shape (e.g. wiring's GatewayObservability)
+ * is a fit.
+ */
+export interface GatewayObservability {
+  recordSafetyBlock(opts: {
+    code?: string;
+    cause?: string;
+    details?: Record<string, unknown>;
+  }): void;
+  recordChannelAllow(opts: {
+    code?: string;
+    cause?: string;
+    details?: Record<string, unknown>;
+  }): void;
+  recordChannelDeny(opts: {
+    code?: string;
+    cause?: string;
+    details?: Record<string, unknown>;
+  }): void;
+}
 
 // ---------------------------------------------------------------------------
 // SessionLane — serialises concurrent messages for the same chat
@@ -116,9 +140,9 @@ export interface GatewayConfig {
    */
   pairingDb?: Database.Database;
   /**
-   * Optional observability writer for audit events (drops, blocks, context strips).
+   * Optional observability adapter for audit events (drops, blocks, context strips).
    */
-  observability?: ObservabilityWriter;
+  observability?: GatewayObservability;
   /**
    * Optional hook called when a sender is approved via `/allow <code>` so the
    * caller can persist the updated allowlist back to config.yaml.
@@ -178,8 +202,8 @@ export class Gateway {
   private readonly channelFilter: ChannelFilterConfig | undefined;
   /** SQLite DB for pairing codes. */
   private readonly pairingDb: Database.Database | undefined;
-  /** Observability writer for audit events. */
-  private readonly observability: ObservabilityWriter | undefined;
+  /** Observability adapter for audit events. */
+  private readonly observability: GatewayObservability | undefined;
   /** Hook called when the allowlist changes via /allow or /deny. */
   private readonly onAllowlistChange:
     | ((platform: string, userId: string, action: 'add' | 'remove') => void | Promise<void>)
@@ -246,9 +270,7 @@ export class Gateway {
 
       if (filterResult.action === 'drop') {
         // Emit audit event for observability
-        this.observability?.recordEvent({
-          category: 'audit.block',
-          severity: 'warn',
+        this.observability?.recordSafetyBlock({
           code: message.isDm ? 'channel.allowlist.blocked' : 'channel.mention_gate',
           details: {
             platform: message.platform,
@@ -268,9 +290,7 @@ export class Gateway {
 
       // 'allow' — if context was stripped, use stripped text for the turn
       if (filterResult.strippedText !== undefined) {
-        this.observability?.recordEvent({
-          category: 'audit.block',
-          severity: 'warn',
+        this.observability?.recordSafetyBlock({
           code: 'channel.context_stripped',
           details: {
             platform: message.platform,
@@ -406,9 +426,7 @@ export class Gateway {
             platformCfg.recipientAllowlist.push(result.senderId);
           }
         }
-        this.observability?.recordEvent({
-          category: 'channel.allow',
-          severity: 'info',
+        this.observability?.recordChannelAllow({
           code: 'channel.pairing.approved',
           details: {
             approvedUserId: result.senderId,
@@ -463,9 +481,7 @@ export class Gateway {
 
         if (removedOnPlatform) {
           removed = true;
-          this.observability?.recordEvent({
-            category: 'channel.deny',
-            severity: 'info',
+          this.observability?.recordChannelDeny({
             code: 'channel.allowlist.removed',
             details: { removedUserId: cleanTarget, platform, byUserId: message.userId },
           });

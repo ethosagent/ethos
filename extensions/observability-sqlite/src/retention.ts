@@ -21,7 +21,7 @@ export function parseDuration(s: string): number | null {
   }
 }
 
-/** Deep-merge a sparse per-personality override on top of the global config. */
+/** Deep-merge a sparse per-subject override on top of the global config. */
 export function mergeRetentionConfig(
   global: RetentionConfig,
   override?: RetentionConfig,
@@ -53,9 +53,9 @@ export function pruneObservability(
     dryRun?: boolean;
     now?: number;
     sessDb?: BetterSqlite3.Database;
-    personalityId?: string;
-    /** Personality IDs to exclude from the global pass (they have per-personality passes). */
-    excludePersonalityIds?: string[];
+    subjectId?: string;
+    /** Subject IDs to exclude from the global pass (they have per-subject passes). */
+    excludeSubjectIds?: string[];
   } = {},
 ): PruneResult {
   const now = opts.now ?? Date.now();
@@ -66,23 +66,23 @@ export function pruneObservability(
   const traceCutoff = cutoff(config.traces, '90d');
   const spanCutoff = cutoff(config.spans, '90d');
 
-  // Personalities that have their own prune pass — excluded from the global pass
-  // so a stricter global TTL cannot delete rows that a personality should retain.
-  const excluded = opts.excludePersonalityIds ?? [];
+  // Subjects that have their own prune pass — excluded from the global pass
+  // so a stricter global TTL cannot delete rows the subject pass should retain.
+  const excluded = opts.excludeSubjectIds ?? [];
 
   if (traceCutoff !== null) {
     const threshold = now - traceCutoff;
-    if (opts.personalityId) {
+    if (opts.subjectId) {
       if (opts.dryRun) {
         result.traces = (
           db
-            .prepare('SELECT COUNT(*) as n FROM traces WHERE personality_id = ? AND start_ts < ?')
-            .get(opts.personalityId, threshold) as { n: number }
+            .prepare('SELECT COUNT(*) as n FROM traces WHERE subject_id = ? AND start_ts < ?')
+            .get(opts.subjectId, threshold) as { n: number }
         ).n;
       } else {
         result.traces = db
-          .prepare('DELETE FROM traces WHERE personality_id = ? AND start_ts < ?')
-          .run(opts.personalityId, threshold).changes;
+          .prepare('DELETE FROM traces WHERE subject_id = ? AND start_ts < ?')
+          .run(opts.subjectId, threshold).changes;
       }
     } else if (excluded.length > 0) {
       const ph = excluded.map(() => '?').join(',');
@@ -90,14 +90,14 @@ export function pruneObservability(
         result.traces = (
           db
             .prepare(
-              `SELECT COUNT(*) as n FROM traces WHERE start_ts < ? AND (personality_id IS NULL OR personality_id NOT IN (${ph}))`,
+              `SELECT COUNT(*) as n FROM traces WHERE start_ts < ? AND (subject_id IS NULL OR subject_id NOT IN (${ph}))`,
             )
             .get(threshold, ...excluded) as { n: number }
         ).n;
       } else {
         result.traces = db
           .prepare(
-            `DELETE FROM traces WHERE start_ts < ? AND (personality_id IS NULL OR personality_id NOT IN (${ph}))`,
+            `DELETE FROM traces WHERE start_ts < ? AND (subject_id IS NULL OR subject_id NOT IN (${ph}))`,
           )
           .run(threshold, ...excluded).changes;
       }
@@ -114,21 +114,21 @@ export function pruneObservability(
 
   if (spanCutoff !== null) {
     const threshold = now - spanCutoff;
-    if (opts.personalityId) {
+    if (opts.subjectId) {
       if (opts.dryRun) {
         result.spans = (
           db
             .prepare(
-              'SELECT COUNT(*) as n FROM spans WHERE trace_id IN (SELECT trace_id FROM traces WHERE personality_id = ? AND start_ts < ?)',
+              'SELECT COUNT(*) as n FROM spans WHERE trace_id IN (SELECT trace_id FROM traces WHERE subject_id = ? AND start_ts < ?)',
             )
-            .get(opts.personalityId, threshold) as { n: number }
+            .get(opts.subjectId, threshold) as { n: number }
         ).n;
       } else {
         result.spans = db
           .prepare(
-            'DELETE FROM spans WHERE trace_id IN (SELECT trace_id FROM traces WHERE personality_id = ? AND start_ts < ?)',
+            'DELETE FROM spans WHERE trace_id IN (SELECT trace_id FROM traces WHERE subject_id = ? AND start_ts < ?)',
           )
-          .run(opts.personalityId, threshold).changes;
+          .run(opts.subjectId, threshold).changes;
       }
     } else if (excluded.length > 0) {
       const ph = excluded.map(() => '?').join(',');
@@ -136,14 +136,14 @@ export function pruneObservability(
         result.spans = (
           db
             .prepare(
-              `SELECT COUNT(*) as n FROM spans WHERE start_ts < ? AND trace_id NOT IN (SELECT trace_id FROM traces WHERE personality_id IN (${ph}))`,
+              `SELECT COUNT(*) as n FROM spans WHERE start_ts < ? AND trace_id NOT IN (SELECT trace_id FROM traces WHERE subject_id IN (${ph}))`,
             )
             .get(threshold, ...excluded) as { n: number }
         ).n;
       } else {
         result.spans = db
           .prepare(
-            `DELETE FROM spans WHERE start_ts < ? AND trace_id NOT IN (SELECT trace_id FROM traces WHERE personality_id IN (${ph}))`,
+            `DELETE FROM spans WHERE start_ts < ? AND trace_id NOT IN (SELECT trace_id FROM traces WHERE subject_id IN (${ph}))`,
           )
           .run(threshold, ...excluded).changes;
       }
@@ -158,7 +158,15 @@ export function pruneObservability(
     }
   }
 
-  // Events: per-category cutoffs
+  // Events: per-category cutoffs.
+  //
+  // The keys (`audit`, `channel`, `install`) are ethos-flavored. They live
+  // here because RetentionEventsConfig in `@ethosagent/types` exposes them
+  // as named fields — reshaping that into a generic pattern map is
+  // explicitly out-of-scope for the extractability refactor (see
+  // plan/phases/observability_extractability.md "Out of scope"). The
+  // hardcoded LIKE patterns mirror the conventions documented in the
+  // library README's vocabulary-contract section.
   const categories: Array<[string, string]> = [
     ['error', config.events?.error ?? '90d'],
     ['audit.%', config.events?.audit ?? '365d'],
@@ -171,21 +179,21 @@ export function pruneObservability(
     if (ms === null) continue;
     const threshold = now - ms;
     const likeOp = pat.includes('%') ? 'LIKE' : '=';
-    if (opts.personalityId) {
+    if (opts.subjectId) {
       if (opts.dryRun) {
         result.events += (
           db
             .prepare(
-              `SELECT COUNT(*) as n FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id IN (SELECT trace_id FROM traces WHERE personality_id = ?))`,
+              `SELECT COUNT(*) as n FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id IN (SELECT trace_id FROM traces WHERE subject_id = ?))`,
             )
-            .get(pat, threshold, opts.personalityId) as { n: number }
+            .get(pat, threshold, opts.subjectId) as { n: number }
         ).n;
       } else {
         result.events += db
           .prepare(
-            `DELETE FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id IN (SELECT trace_id FROM traces WHERE personality_id = ?))`,
+            `DELETE FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id IN (SELECT trace_id FROM traces WHERE subject_id = ?))`,
           )
-          .run(pat, threshold, opts.personalityId).changes;
+          .run(pat, threshold, opts.subjectId).changes;
       }
     } else if (excluded.length > 0) {
       const ph = excluded.map(() => '?').join(',');
@@ -193,14 +201,14 @@ export function pruneObservability(
         result.events += (
           db
             .prepare(
-              `SELECT COUNT(*) as n FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id NOT IN (SELECT trace_id FROM traces WHERE personality_id IN (${ph})))`,
+              `SELECT COUNT(*) as n FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id NOT IN (SELECT trace_id FROM traces WHERE subject_id IN (${ph})))`,
             )
             .get(pat, threshold, ...excluded) as { n: number }
         ).n;
       } else {
         result.events += db
           .prepare(
-            `DELETE FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id NOT IN (SELECT trace_id FROM traces WHERE personality_id IN (${ph})))`,
+            `DELETE FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id NOT IN (SELECT trace_id FROM traces WHERE subject_id IN (${ph})))`,
           )
           .run(pat, threshold, ...excluded).changes;
       }
@@ -218,7 +226,7 @@ export function pruneObservability(
   }
 
   // Snapshots: prune orphaned snapshots (no referenced trace) — global-only
-  if (!opts.personalityId && !opts.dryRun) {
+  if (!opts.subjectId && !opts.dryRun) {
     result.snapshots = db
       .prepare(
         'DELETE FROM snapshots WHERE snapshot_id NOT IN (SELECT DISTINCT snapshot_id FROM traces WHERE snapshot_id IS NOT NULL)',
@@ -227,9 +235,9 @@ export function pruneObservability(
   }
 
   // Messages (sessions.db — separate DB, passed in as sessDb).
-  // Not personality-scoped: messages table has no personality_id column.
-  // Only run in the global pass (not per-personality passes).
-  if (opts.sessDb && !opts.personalityId) {
+  // Not subject-scoped: messages table has no subject_id column.
+  // Only run in the global pass (not per-subject passes).
+  if (opts.sessDb && !opts.subjectId) {
     const msgCutoff = cutoff(config.messages, '365d');
     if (msgCutoff !== null) {
       const threshold = now - msgCutoff;
@@ -264,8 +272,8 @@ export function pruneObservabilityByPath(
     dryRun?: boolean;
     now?: number;
     sessDbPath?: string;
-    personalityId?: string;
-    excludePersonalityIds?: string[];
+    subjectId?: string;
+    excludeSubjectIds?: string[];
   } = {},
 ): PruneResult {
   const db = new BetterSqlite3(dbPath);

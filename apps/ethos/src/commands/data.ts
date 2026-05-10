@@ -12,6 +12,7 @@ import {
   SQLiteObservabilityStore,
 } from '@ethosagent/observability-sqlite';
 import { RETENTION_DEFAULTS } from '@ethosagent/types';
+import { EthosObservability } from '@ethosagent/wiring';
 import { ethosDir, readConfig } from '../config';
 import { getStorage } from '../wiring';
 
@@ -268,9 +269,7 @@ async function runReset(argv: string[]): Promise<void> {
       const store = new SQLiteObservabilityStore(obsDbPath);
       try {
         const svc = new ObservabilityService(store, blobStore);
-        svc.recordEvent({
-          category: 'install.event',
-          severity: 'info',
+        new EthosObservability(svc).recordInstallEvent({
           code: 'data.reset',
           cause: 'User-initiated reset',
         });

@@ -174,18 +174,18 @@ describe('SQLiteObservabilityStore Wave C queries', () => {
     store.insertSnapshot({
       snapshotId: 'snap-1',
       takenAt: Date.now(),
-      personalityId: 'engineer',
+      subjectId: 'engineer',
       body: '{"version":1}',
     });
     const got = store.getSnapshot('snap-1');
     expect(got?.snapshotId).toBe('snap-1');
-    expect(got?.personalityId).toBe('engineer');
+    expect(got?.subjectId).toBe('engineer');
   });
 
   it('getSnapshotsByIds returns only requested snapshots', () => {
-    store.insertSnapshot({ snapshotId: 'snap-A', takenAt: 1, personalityId: 'eng', body: '{}' });
-    store.insertSnapshot({ snapshotId: 'snap-B', takenAt: 2, personalityId: 'eng', body: '{}' });
-    store.insertSnapshot({ snapshotId: 'snap-C', takenAt: 3, personalityId: 'eng', body: '{}' });
+    store.insertSnapshot({ snapshotId: 'snap-A', takenAt: 1, subjectId: 'eng', body: '{}' });
+    store.insertSnapshot({ snapshotId: 'snap-B', takenAt: 2, subjectId: 'eng', body: '{}' });
+    store.insertSnapshot({ snapshotId: 'snap-C', takenAt: 3, subjectId: 'eng', body: '{}' });
 
     const results = store.getSnapshotsByIds(['snap-A', 'snap-C']);
     expect(results.map((s) => s.snapshotId).sort()).toEqual(['snap-A', 'snap-C']);

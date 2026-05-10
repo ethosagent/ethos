@@ -19,7 +19,6 @@ import type {
   MemoryProvider,
   Message,
   MessageContent,
-  ObservabilityWriter,
   PersonalityConfig,
   PersonalityRegistry,
   PromptContext,
@@ -37,6 +36,7 @@ import { InMemorySessionStore } from './defaults/in-memory-session';
 import { NoopMemoryProvider } from './defaults/noop-memory';
 import { DefaultPersonalityRegistry } from './defaults/noop-personality';
 import { DefaultHookRegistry } from './hook-registry';
+import type { AgentLoopObservability } from './observability/agent-loop-observability';
 import { DefaultToolRegistry } from './tool-registry';
 
 // ---------------------------------------------------------------------------
@@ -126,11 +126,12 @@ export interface AgentLoopConfig {
    */
   dataDir?: string;
   /**
-   * Optional observability writer. When provided, AgentLoop records traces,
-   * spans, and events for LLM calls, tool calls, and errors. When absent,
-   * behaviour is identical to before — no observability writes occur.
+   * Optional observability adapter. When provided, AgentLoop records traces,
+   * spans, and events for LLM calls, tool calls, and errors via typed
+   * domain helpers. When absent, behaviour is identical to before — no
+   * observability writes occur.
    */
-  observability?: ObservabilityWriter;
+  observability?: AgentLoopObservability;
   /**
    * Ch.3c — Tier-2 LLM injection classifier. When provided, AgentLoop calls
    * it after wrapping any `outputIsUntrusted` tool result whose Tier-1
@@ -233,7 +234,7 @@ export class AgentLoop {
   private readonly modelRouting: Record<string, string>;
   private readonly storage?: Storage;
   private readonly dataDir?: string;
-  private readonly observability?: ObservabilityWriter;
+  private readonly observability?: AgentLoopObservability;
   private readonly injectionClassifier?: InjectionClassifier;
   private readonly watcher?: import('@ethosagent/safety-watcher').Watcher;
   private readonly contextEngines: ContextEngineRegistry;
@@ -326,9 +327,8 @@ export class AgentLoop {
 
     const obsConfig = personality?.safety?.observability;
 
-    const traceId = this.observability?.startTrace({
+    const traceId = this.observability?.startTurnTrace({
       sessionId,
-      kind: 'turn',
       personalityId: personality?.id,
       obsConfig,
     });
@@ -837,10 +837,8 @@ export class AgentLoop {
         // counter is positive. The user's next message clears the counter
         // (run() is invoked fresh; dgRemaining resets to 0).
         if (dgEnabled && dgRemaining > 0 && dgTools.has(tc.toolName)) {
-          this.observability?.recordEvent({
+          this.observability?.recordSafetyBlock({
             traceId,
-            category: 'audit.block',
-            severity: 'warn',
             code: 'tool_downgraded_post_untrusted_read',
             cause: tc.toolName,
           });
@@ -874,10 +872,8 @@ export class AgentLoop {
         );
 
         if (beforeResult.error) {
-          this.observability?.recordEvent({
+          this.observability?.recordSafetyBlock({
             traceId,
-            category: 'audit.block',
-            severity: 'warn',
             code: 'tool_blocked',
             cause: beforeResult.error,
           });
@@ -1060,10 +1056,8 @@ export class AgentLoop {
               );
               llmContent = verdict.wrappedContent;
               if (verdict.containsInstructions) {
-                this.observability?.recordEvent({
+                this.observability?.recordSafetyBlock({
                   traceId,
-                  category: 'audit.block',
-                  severity: 'warn',
                   code: 'injection_detected',
                   cause: verdict.reason ?? 'pattern-hit',
                 });
@@ -1297,10 +1291,8 @@ export class AgentLoop {
         // operator can see when a configured safety control is offline.
         // We continue with Tier-1 only (fail-open by design: blocking the
         // turn on classifier outage would brick every tool call).
-        this.observability?.recordEvent({
+        this.observability?.recordSafetyBlock({
           traceId,
-          category: 'audit.block',
-          severity: 'warn',
           code: 'injection_classifier_failed',
           cause: err instanceof Error ? err.message : String(err),
         });
@@ -1352,9 +1344,7 @@ export class AgentLoop {
         personality,
         sessionMetadata,
       });
-      this.observability?.recordEvent({
-        category: 'audit.compaction',
-        severity: 'info',
+      this.observability?.recordCompaction({
         code: 'context_compacted',
         cause: `${engine.name}: ${result.notes}`,
       });
@@ -1362,8 +1352,7 @@ export class AgentLoop {
     } catch (err) {
       // Fail open — better to send the un-compacted history and let the
       // provider error than to silently drop messages on engine failure.
-      this.observability?.recordEvent({
-        category: 'audit.compaction',
+      this.observability?.recordCompaction({
         severity: 'warn',
         code: 'context_engine_failed',
         cause: err instanceof Error ? err.message : String(err),

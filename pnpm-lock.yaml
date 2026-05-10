@@ -389,9 +389,6 @@ importers:
 
   extensions/agent-mesh:
     dependencies:
-      '@ethosagent/observability-sqlite':
-        specifier: workspace:*
-        version: link:../observability-sqlite
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs

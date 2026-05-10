@@ -103,11 +103,15 @@ export interface CreateAgentLoopOptions {
    *  Set by ethos serve --mesh <name> so team members route within their mesh. */
   meshRegistryPath?: string;
   /**
-   * Optional observability service. When provided, passed through to
-   * AgentLoop so LLM calls, tool calls, and hook blocks are recorded.
-   * When absent, no observability writes occur.
+   * Optional observability adapter. When provided, passed through to
+   * AgentLoop so LLM calls, tool calls, and hook blocks are recorded via
+   * typed domain helpers. When absent, no observability writes occur.
+   *
+   * Construct as `new EthosObservability(observabilityService)` at the
+   * call site; the adapter owns the ethos vocabulary while the underlying
+   * service stays vocabulary-agnostic.
    */
-  observability?: import('@ethosagent/observability-sqlite').ObservabilityService;
+  observability?: import('./observability/ethos-observability').EthosObservability;
 }
 
 // ---------------------------------------------------------------------------
@@ -376,3 +380,15 @@ export {
 export type { ModelSource, ModelTarget, ResolveModelInput } from './model-resolver';
 // Re-export the resolver so callers don't need a separate import.
 export { resolveModelTarget } from './model-resolver';
+
+// ---------------------------------------------------------------------------
+// Ethos observability adapter
+// ---------------------------------------------------------------------------
+
+export {
+  ETHOS_EVENT_CATEGORIES,
+  ETHOS_TRACE_KINDS,
+  type EthosEventCategory,
+  EthosObservability,
+  type EthosTraceKind,
+} from './observability/ethos-observability';

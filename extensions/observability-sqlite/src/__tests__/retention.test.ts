@@ -84,7 +84,7 @@ function makeTestDb(): Database.Database {
       start_ts        INTEGER NOT NULL,
       end_ts          INTEGER,
       status          TEXT,
-      personality_id  TEXT,
+      subject_id      TEXT,
       snapshot_id     TEXT,
       attrs           TEXT
     ) STRICT;
@@ -116,7 +116,7 @@ function makeTestDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS snapshots (
       snapshot_id     TEXT PRIMARY KEY,
       taken_at        INTEGER NOT NULL,
-      personality_id  TEXT NOT NULL,
+      subject_id      TEXT NOT NULL,
       body            TEXT NOT NULL
     ) STRICT;
   `);
@@ -240,7 +240,7 @@ describe('pruneObservability', () => {
     ).run('new-trace', RECENT, 'snap-B');
     for (const [id] of [['snap-A'], ['snap-B'], ['snap-C']]) {
       db.prepare(
-        `INSERT INTO snapshots (snapshot_id, taken_at, personality_id, body) VALUES (?, ?, 'eng', '{}')`,
+        `INSERT INTO snapshots (snapshot_id, taken_at, subject_id, body) VALUES (?, ?, 'eng', '{}')`,
       ).run(id, RECENT);
     }
 
@@ -255,7 +255,7 @@ describe('pruneObservability', () => {
     expect(snaps).toEqual(['snap-B']); // only the referenced survivor remains
   });
 
-  it('per-personality retention override: longer TTL prevents pruning', () => {
+  it('per-subject retention override: longer TTL prevents pruning', () => {
     // OLD trace is 100 days old — past the 90d default but within a 200d override
     insertTrace('old-trace', OLD);
 
@@ -267,7 +267,7 @@ describe('pruneObservability', () => {
     expect(remaining).toBe(1);
   });
 
-  it('per-personality retention override: shorter TTL prunes more aggressively', () => {
+  it('per-subject retention override: shorter TTL prunes more aggressively', () => {
     // RECENT trace is 10 days old — within 90d default but past a 7d override
     insertTrace('recent-trace', RECENT);
 
@@ -279,26 +279,26 @@ describe('pruneObservability', () => {
     expect(remaining).toBe(0);
   });
 
-  it('excludePersonalityIds: global pass does not delete rows belonging to excluded personalities', () => {
-    // personality-A trace is 100 days old (past 90d global) but should survive because
-    // personality A is excluded from the global pass (it has its own longer-TTL pass).
+  it('excludeSubjectIds: global pass does not delete rows belonging to excluded subjects', () => {
+    // subject-A trace is 100 days old (past 90d global) but should survive because
+    // subject A is excluded from the global pass (it has its own longer-TTL pass).
     db.prepare(
-      `INSERT INTO traces (trace_id, kind, start_ts, personality_id) VALUES (?, 'turn', ?, ?)`,
-    ).run('a-trace', OLD, 'personality-a');
-    // Unscoped trace of the same age — no personality, should be pruned by global pass.
+      `INSERT INTO traces (trace_id, kind, start_ts, subject_id) VALUES (?, 'turn', ?, ?)`,
+    ).run('a-trace', OLD, 'subject-a');
+    // Unscoped trace of the same age — no subject, should be pruned by global pass.
     insertTrace('global-trace', OLD);
 
     const result = pruneObservability(db, RETENTION_DEFAULTS, {
       dryRun: false,
       now: NOW,
-      excludePersonalityIds: ['personality-a'],
+      excludeSubjectIds: ['subject-a'],
     });
 
     expect(result.traces).toBe(1); // only global-trace pruned
     const remaining = (
       db.prepare('SELECT trace_id FROM traces').all() as { trace_id: string }[]
     ).map((r) => r.trace_id);
-    expect(remaining).toEqual(['a-trace']); // personality-a row survives
+    expect(remaining).toEqual(['a-trace']); // subject-a row survives
   });
 
   it('messages pruning uses ISO timestamp column and prunes old messages', () => {
@@ -354,10 +354,10 @@ describe('pruneObservability — referenced blobs survive', () => {
     const obsDb = new Database(dbPath);
     obsDb.pragma('journal_mode = WAL');
     obsDb.exec(`
-      CREATE TABLE IF NOT EXISTS traces (trace_id TEXT PRIMARY KEY, kind TEXT NOT NULL, start_ts INTEGER NOT NULL, end_ts INTEGER, status TEXT, personality_id TEXT, snapshot_id TEXT, attrs TEXT) STRICT;
+      CREATE TABLE IF NOT EXISTS traces (trace_id TEXT PRIMARY KEY, kind TEXT NOT NULL, start_ts INTEGER NOT NULL, end_ts INTEGER, status TEXT, subject_id TEXT, snapshot_id TEXT, attrs TEXT) STRICT;
       CREATE TABLE IF NOT EXISTS spans (span_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, parent_span_id TEXT, kind TEXT NOT NULL, name TEXT NOT NULL, start_ts INTEGER NOT NULL, end_ts INTEGER, status TEXT, attrs TEXT) STRICT;
       CREATE TABLE IF NOT EXISTS events (event_id TEXT PRIMARY KEY, trace_id TEXT, span_id TEXT, ts INTEGER NOT NULL, category TEXT NOT NULL, severity TEXT NOT NULL, code TEXT, cause TEXT, details TEXT) STRICT;
-      CREATE TABLE IF NOT EXISTS snapshots (snapshot_id TEXT PRIMARY KEY, taken_at INTEGER NOT NULL, personality_id TEXT NOT NULL, body TEXT NOT NULL) STRICT;
+      CREATE TABLE IF NOT EXISTS snapshots (snapshot_id TEXT PRIMARY KEY, taken_at INTEGER NOT NULL, subject_id TEXT NOT NULL, body TEXT NOT NULL) STRICT;
     `);
 
     // Old trace + span (past 90d TTL) — will be pruned.

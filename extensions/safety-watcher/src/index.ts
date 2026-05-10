@@ -13,4 +13,4 @@ export {
 } from './rules';
 export type { WatcherDecision, WatcherEvent, WatcherRule, WatcherState } from './types';
 export { makeInitialState } from './types';
-export { Watcher, type WatcherOptions } from './watcher';
+export { Watcher, type WatcherObservability, type WatcherOptions } from './watcher';

@@ -126,7 +126,7 @@ export async function runTrace(args: string[]): Promise<void> {
       console.log(`  start:      ${formatTs(trace.startTs)}`);
       console.log(`  duration:   ${formatDuration(trace.startTs, trace.endTs)}`);
       if (trace.sessionId) console.log(`  session:    ${trace.sessionId}`);
-      if (trace.personalityId) console.log(`  personality: ${trace.personalityId}`);
+      if (trace.subjectId) console.log(`  personality: ${trace.subjectId}`);
 
       if (spans.length > 0) {
         console.log(`\n${c.bold}Spans${c.reset} (${spans.length}):\n`);

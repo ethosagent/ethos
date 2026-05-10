@@ -16,15 +16,18 @@ describe('Watcher', () => {
     expect(r.action).toBe('pause');
   });
 
-  it('records non-allow decisions in observability', () => {
-    const events: Array<{ category: string; code?: string; severity?: string }> = [];
+  it('records non-allow decisions via the observability adapter', () => {
+    const calls: Array<{
+      decision: 'pause' | 'force_approval' | 'terminate';
+      code?: string;
+      traceId?: string;
+    }> = [];
     const observability = {
-      startTrace: () => 'tr',
-      endTrace: () => {},
-      startSpan: () => 'sp',
-      endSpan: () => {},
-      recordEvent: (e: { category: string; code?: string; severity?: string }) => events.push(e),
-      flush: () => {},
+      recordWatcherDecision: (opts: {
+        decision: 'pause' | 'force_approval' | 'terminate';
+        code?: string;
+        traceId?: string;
+      }) => calls.push(opts),
     };
     const w = new Watcher({
       rules: [compoundingErrorRule({ threshold: 1 })],
@@ -32,21 +35,17 @@ describe('Watcher', () => {
       traceId: 'tr1',
     });
     w.observe({ type: 'tool_end', toolName: 't', ok: false });
-    expect(events).toHaveLength(1);
-    expect(events[0]?.category).toBe('audit.watcher');
-    expect(events[0]?.code).toBe('compounding-error');
-    expect(events[0]?.severity).toBe('warn');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.decision).toBe('pause');
+    expect(calls[0]?.code).toBe('compounding-error');
+    expect(calls[0]?.traceId).toBe('tr1');
   });
 
-  it('records terminate decisions at severity=critical', () => {
-    const events: Array<{ severity?: string }> = [];
+  it('forwards terminate decisions through the adapter', () => {
+    const calls: Array<{ decision: 'pause' | 'force_approval' | 'terminate' }> = [];
     const observability = {
-      startTrace: () => 'tr',
-      endTrace: () => {},
-      startSpan: () => 'sp',
-      endSpan: () => {},
-      recordEvent: (e: { severity?: string }) => events.push(e),
-      flush: () => {},
+      recordWatcherDecision: (opts: { decision: 'pause' | 'force_approval' | 'terminate' }) =>
+        calls.push(opts),
     };
     const w = new Watcher({
       rules: [
@@ -61,7 +60,7 @@ describe('Watcher', () => {
     });
     const ev: WatcherEvent = { type: 'tool_end' };
     w.observe(ev);
-    expect(events[0]?.severity).toBe('critical');
+    expect(calls[0]?.decision).toBe('terminate');
   });
 
   it('resetTurn clears per-turn state', () => {

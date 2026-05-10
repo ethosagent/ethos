@@ -16,6 +16,7 @@ export { InMemorySessionStore } from './defaults/in-memory-session';
 export { NoopMemoryProvider } from './defaults/noop-memory';
 export { DefaultPersonalityRegistry } from './defaults/noop-personality';
 export { DefaultHookRegistry } from './hook-registry';
+export type { AgentLoopObservability } from './observability/agent-loop-observability';
 export type { PluginFactory } from './plugin-registry';
 export { PluginRegistry } from './plugin-registry';
 export type { ChainedProviderOptions } from './providers/chained-provider';

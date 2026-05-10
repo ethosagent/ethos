@@ -1,4 +1,4 @@
-import type { ObsEvent, ObservabilityStore, PolicySnapshot, Span, Trace } from '@ethosagent/types';
+import type { ObsEvent, ObservabilityStore, Snapshot, Span, Trace } from '@ethosagent/types';
 import Database from 'better-sqlite3';
 import { redactJson, redactString } from './redact';
 
@@ -22,6 +22,11 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
   // ---------------------------------------------------------------------------
 
   private migrate(): void {
+    // Rename pre-existing legacy columns BEFORE any new-schema operation so
+    // that indexes / future schema additions referencing `subject_id` always
+    // see the renamed column.
+    this.renameLegacySubjectColumns();
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS traces (
         trace_id        TEXT PRIMARY KEY,
@@ -30,7 +35,7 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
         start_ts        INTEGER NOT NULL,
         end_ts          INTEGER,
         status          TEXT,
-        personality_id  TEXT,
+        subject_id      TEXT,
         snapshot_id     TEXT,
         attrs           TEXT
       ) STRICT;
@@ -69,10 +74,24 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
       CREATE TABLE IF NOT EXISTS snapshots (
         snapshot_id     TEXT PRIMARY KEY,
         taken_at        INTEGER NOT NULL,
-        personality_id  TEXT NOT NULL,
+        subject_id      TEXT NOT NULL,
         body            TEXT NOT NULL
       ) STRICT;
     `);
+  }
+
+  // Idempotent rename for databases created before the personality_id →
+  // subject_id rename. Skipped when the new schema is already in place.
+  private renameLegacySubjectColumns(): void {
+    for (const table of ['traces', 'snapshots'] as const) {
+      const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+        name: string;
+      }>;
+      const names = new Set(columns.map((c) => c.name));
+      if (names.has('personality_id') && !names.has('subject_id')) {
+        this.db.exec(`ALTER TABLE ${table} RENAME COLUMN personality_id TO subject_id`);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -84,7 +103,7 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
     this.db
       .prepare(
         `INSERT OR IGNORE INTO traces
-         (trace_id, session_id, kind, start_ts, end_ts, status, personality_id, snapshot_id, attrs)
+         (trace_id, session_id, kind, start_ts, end_ts, status, subject_id, snapshot_id, attrs)
          VALUES (?,?,?,?,?,?,?,?,?)`,
       )
       .run(
@@ -94,7 +113,7 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
         trace.startTs,
         trace.endTs ?? null,
         trace.status ?? null,
-        trace.personalityId ?? null,
+        trace.subjectId ?? null,
         trace.snapshotId ?? null,
         attrsJson,
       );
@@ -218,21 +237,21 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
   // Snapshots
   // ---------------------------------------------------------------------------
 
-  insertSnapshot(snapshot: PolicySnapshot): void {
+  insertSnapshot(snapshot: Snapshot): void {
     this.db
       .prepare(
-        `INSERT OR IGNORE INTO snapshots (snapshot_id, taken_at, personality_id, body)
+        `INSERT OR IGNORE INTO snapshots (snapshot_id, taken_at, subject_id, body)
          VALUES (?,?,?,?)`,
       )
-      .run(snapshot.snapshotId, snapshot.takenAt, snapshot.personalityId, snapshot.body);
+      .run(snapshot.snapshotId, snapshot.takenAt, snapshot.subjectId, snapshot.body);
   }
 
-  getSnapshot(snapshotId: string): PolicySnapshot | null {
+  getSnapshot(snapshotId: string): Snapshot | null {
     const row = this.db.prepare('SELECT * FROM snapshots WHERE snapshot_id = ?').get(snapshotId);
     return row ? rowToSnapshot(row as SnapshotRow) : null;
   }
 
-  getSnapshotsByIds(ids: string[]): PolicySnapshot[] {
+  getSnapshotsByIds(ids: string[]): Snapshot[] {
     if (ids.length === 0) return [];
     const ph = ids.map(() => '?').join(',');
     const rows = this.db
@@ -314,7 +333,7 @@ interface TraceRow {
   start_ts: number;
   end_ts: number | null;
   status: string | null;
-  personality_id: string | null;
+  subject_id: string | null;
   snapshot_id: string | null;
   attrs: string | null;
 }
@@ -351,7 +370,7 @@ function rowToTrace(r: TraceRow): Trace {
     startTs: r.start_ts,
     endTs: r.end_ts ?? undefined,
     status: (r.status as Trace['status']) ?? undefined,
-    personalityId: r.personality_id ?? undefined,
+    subjectId: r.subject_id ?? undefined,
     snapshotId: r.snapshot_id ?? undefined,
     attrs: r.attrs ? (JSON.parse(r.attrs) as Record<string, unknown>) : undefined,
   };
@@ -388,15 +407,15 @@ function rowToEvent(r: EventRow): ObsEvent {
 interface SnapshotRow {
   snapshot_id: string;
   taken_at: number;
-  personality_id: string;
+  subject_id: string;
   body: string;
 }
 
-function rowToSnapshot(r: SnapshotRow): PolicySnapshot {
+function rowToSnapshot(r: SnapshotRow): Snapshot {
   return {
     snapshotId: r.snapshot_id,
     takenAt: r.taken_at,
-    personalityId: r.personality_id,
+    subjectId: r.subject_id,
     body: r.body,
   };
 }

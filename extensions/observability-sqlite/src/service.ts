@@ -5,8 +5,8 @@ import type {
   ObsEvent,
   ObservabilityStore,
   ObservabilityWriter,
-  PersonalityObservabilityConfig,
-  PolicySnapshot,
+  RedactionPolicy,
+  Snapshot,
   Span,
   SpanKind,
   Trace,
@@ -28,7 +28,7 @@ import type { BlobStore } from './blob-store';
  * future batching.
  */
 export class ObservabilityService implements ObservabilityWriter {
-  private readonly traceConfigs = new Map<string, PersonalityObservabilityConfig>();
+  private readonly tracePolicies = new Map<string, RedactionPolicy>();
 
   constructor(
     private readonly store: ObservabilityStore,
@@ -41,9 +41,10 @@ export class ObservabilityService implements ObservabilityWriter {
   startTrace(opts: {
     sessionId?: string;
     kind: TraceKind;
-    personalityId?: string;
+    subjectId?: string;
+    snapshotId?: string;
     attrs?: Record<string, unknown>;
-    obsConfig?: PersonalityObservabilityConfig;
+    redaction?: RedactionPolicy;
   }): string {
     const traceId = randomUUID();
     if (this.isDisabled?.()) return traceId; // suppress writes during reset window
@@ -52,12 +53,13 @@ export class ObservabilityService implements ObservabilityWriter {
       sessionId: opts.sessionId,
       kind: opts.kind,
       startTs: Date.now(),
-      personalityId: opts.personalityId,
+      subjectId: opts.subjectId,
+      snapshotId: opts.snapshotId,
       attrs: opts.attrs,
     };
     this.store.insertTrace(trace);
-    if (opts.obsConfig) {
-      this.traceConfigs.set(traceId, opts.obsConfig);
+    if (opts.redaction) {
+      this.tracePolicies.set(traceId, opts.redaction);
     }
     return traceId;
   }
@@ -66,7 +68,7 @@ export class ObservabilityService implements ObservabilityWriter {
   endTrace(traceId: string, status: 'ok' | 'error' | 'aborted'): void {
     if (this.isDisabled?.()) return;
     this.store.closeTrace(traceId, status);
-    this.traceConfigs.delete(traceId);
+    this.tracePolicies.delete(traceId);
   }
 
   /** Start a span inside a trace. Returns the spanId. */
@@ -76,26 +78,26 @@ export class ObservabilityService implements ObservabilityWriter {
     kind: SpanKind;
     name: string;
     attrs?: Record<string, unknown>;
-    obsConfig?: PersonalityObservabilityConfig;
+    redaction?: RedactionPolicy;
   }): string {
-    const cfg = opts.obsConfig ?? this.traceConfigs.get(opts.traceId);
-    const storeArgs = cfg?.storeToolArgs ?? 'redacted';
-    const extraRedactPatterns = cfg?.redactPatterns;
+    const policy = opts.redaction ?? this.tracePolicies.get(opts.traceId);
+    const level = policy?.level ?? 'redacted';
+    const extraPatterns = policy?.extraPatterns;
 
     let finalAttrs = opts.attrs;
-    // 'full' skips extra personality patterns but the 8 built-in floor patterns always apply.
-    let effectiveExtraPatterns = extraRedactPatterns;
+    // 'full' skips the consumer-supplied extra patterns; the built-in floor
+    // patterns still apply.
+    let effectiveExtraPatterns = extraPatterns;
     if (opts.kind === 'tool_call' && finalAttrs?.args !== undefined) {
-      if (storeArgs === 'none') {
+      if (level === 'none') {
         // Strip args entirely — keep everything else
         const { args: _dropped, ...rest } = finalAttrs;
         finalAttrs = rest;
-      } else if (storeArgs === 'full') {
-        // Built-in floor patterns still apply (spec: "even 'full' mode redacts these").
-        // Only the personality's extra redactPatterns are skipped.
+      } else if (level === 'full') {
+        // Built-in floor patterns still apply; consumer extras are skipped.
         effectiveExtraPatterns = undefined;
       }
-      // 'redacted' — default: built-in patterns + personality extra patterns both apply
+      // 'redacted' — default: built-in patterns + consumer extras both apply.
     }
 
     const spanId = randomUUID();
@@ -140,18 +142,18 @@ export class ObservabilityService implements ObservabilityWriter {
       eventId: randomUUID(),
       ts: Date.now(),
     };
-    const cfg = event.traceId ? this.traceConfigs.get(event.traceId) : undefined;
-    this.store.insertEvent(obsEvent, cfg?.redactPatterns);
+    const policy = event.traceId ? this.tracePolicies.get(event.traceId) : undefined;
+    this.store.insertEvent(obsEvent, policy?.extraPatterns);
   }
 
   /** Store a snapshot blob and register it in the snapshots table. */
-  async recordSnapshot(opts: { personalityId: string; body: string }): Promise<string> {
+  async recordSnapshot(opts: { subjectId: string; body: string }): Promise<string> {
     if (this.isDisabled?.()) return randomUUID(); // suppress writes during reset window
     const snapshotId = await this.blobStore.put(opts.body);
-    const snapshot: PolicySnapshot = {
+    const snapshot: Snapshot = {
       snapshotId,
       takenAt: Date.now(),
-      personalityId: opts.personalityId,
+      subjectId: opts.subjectId,
       body: opts.body,
     };
     this.store.insertSnapshot(snapshot);

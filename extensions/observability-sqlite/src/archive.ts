@@ -167,7 +167,7 @@ export async function restoreArchive(
 
     db.transaction(() => {
       const insertTrace = db.prepare(
-        'INSERT OR IGNORE INTO traces (trace_id, session_id, kind, start_ts, end_ts, status, personality_id, snapshot_id, attrs) VALUES (?,?,?,?,?,?,?,?,?)',
+        'INSERT OR IGNORE INTO traces (trace_id, session_id, kind, start_ts, end_ts, status, subject_id, snapshot_id, attrs) VALUES (?,?,?,?,?,?,?,?,?)',
       );
       const insertSpan = db.prepare(
         'INSERT OR IGNORE INTO spans (span_id, trace_id, parent_span_id, kind, name, start_ts, end_ts, status, attrs) VALUES (?,?,?,?,?,?,?,?,?)',
@@ -176,7 +176,7 @@ export async function restoreArchive(
         'INSERT OR IGNORE INTO events (event_id, trace_id, span_id, ts, category, severity, code, cause, details) VALUES (?,?,?,?,?,?,?,?,?)',
       );
       const insertSnapshot = db.prepare(
-        'INSERT OR IGNORE INTO snapshots (snapshot_id, taken_at, personality_id, body) VALUES (?,?,?,?)',
+        'INSERT OR IGNORE INTO snapshots (snapshot_id, taken_at, subject_id, body) VALUES (?,?,?,?)',
       );
 
       for (const t of traces) {
@@ -187,7 +187,8 @@ export async function restoreArchive(
           t.start_ts,
           t.end_ts ?? null,
           t.status ?? null,
-          t.personality_id ?? null,
+          // Pre-rename archives stored `personality_id`; accept either key.
+          t.subject_id ?? t.personality_id ?? null,
           t.snapshot_id ?? null,
           t.attrs ?? null,
         );
@@ -222,7 +223,13 @@ export async function restoreArchive(
         result.events++;
       }
       for (const snap of snapshots) {
-        insertSnapshot.run(snap.snapshot_id, snap.taken_at, snap.personality_id, snap.body);
+        insertSnapshot.run(
+          snap.snapshot_id,
+          snap.taken_at,
+          // Pre-rename archives stored `personality_id`; accept either key.
+          snap.subject_id ?? snap.personality_id,
+          snap.body,
+        );
         result.snapshots++;
       }
     })();

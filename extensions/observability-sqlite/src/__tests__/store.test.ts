@@ -200,7 +200,7 @@ describe('SQLiteObservabilityStore', () => {
       store.insertSnapshot({
         snapshotId: randomUUID(),
         takenAt: Date.now(),
-        personalityId: 'assistant',
+        subjectId: 'assistant',
         body: 'name: assistant\ntoolset: [read_file]',
       }),
     ).not.toThrow();

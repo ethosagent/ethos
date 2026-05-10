@@ -12,6 +12,7 @@ import { FsStorage } from '@ethosagent/storage-fs';
 import { parseTeamManifest, teamsDir } from '@ethosagent/team-supervisor';
 import type { LLMProvider, RetentionConfig, Storage, TeamManifest } from '@ethosagent/types';
 import {
+  EthosObservability,
   createAgentLoop as packageCreateAgentLoop,
   createLLM as packageCreateLLM,
   type WiringProfile,
@@ -38,11 +39,14 @@ export function getStorage(): Storage {
 }
 
 let obsSingleton: ObservabilityService | undefined;
+let ethosObsSingleton: EthosObservability | undefined;
 let pruneStop: (() => void) | undefined;
 
 /**
  * The CLI's process-wide ObservabilityService. Creates the SQLite store and
- * blob store on first access, then returns the same instance thereafter.
+ * blob store on first access, returning the same instance thereafter. The
+ * ethos-flavored adapter is constructed alongside and registered with
+ * components that need typed domain helpers (error-log, mesh journal).
  */
 export function getObservabilityService(): ObservabilityService {
   if (!obsSingleton) {
@@ -52,10 +56,20 @@ export function getObservabilityService(): ObservabilityService {
     const blobStore = new BlobStore(join(dir, 'blobs'), storage);
     const killSwitchPath = join(dir, '.observability.disabled');
     obsSingleton = new ObservabilityService(store, blobStore, () => existsSync(killSwitchPath));
-    setObservabilityService(obsSingleton);
-    setMeshObservabilityService(obsSingleton);
+    ethosObsSingleton = new EthosObservability(obsSingleton);
+    setObservabilityService(ethosObsSingleton);
+    setMeshObservabilityService(ethosObsSingleton);
   }
   return obsSingleton;
+}
+
+function getEthosObservability(): EthosObservability {
+  // Constructed alongside the singleton — getObservabilityService initialises both.
+  if (!ethosObsSingleton) {
+    getObservabilityService();
+  }
+  if (!ethosObsSingleton) throw new Error('ethos observability adapter not initialised');
+  return ethosObsSingleton;
 }
 
 /**
@@ -72,7 +86,7 @@ export function startNightlyPrune(
       obsDbPath: join(ethosDir(), 'observability.db'),
       sessDbPath: join(ethosDir(), 'sessions.db'),
       config,
-      personalitiesConfig,
+      perSubjectConfig: personalitiesConfig,
     });
     pruneStop = handle.stop;
   }
@@ -106,7 +120,7 @@ export async function createAgentLoop(
     profile: opts.profile ?? 'cli',
     logger,
     meshRegistryPath: opts.meshRegistryPath,
-    observability: getObservabilityService(),
+    observability: getEthosObservability(),
   });
 }
 

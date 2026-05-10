@@ -478,7 +478,7 @@ export async function runInspect(argv: string[]): Promise<void> {
   console.log(`  Ethos version    ${version}`);
   console.log(`  Platform         ${platform}`);
 
-  const personalities = [...new Set(traces.map((t) => t.personalityId).filter(Boolean))];
+  const personalities = [...new Set(traces.map((t) => t.subjectId).filter(Boolean))];
   if (personalities.length > 0) {
     console.log(`  Personality      ${personalities.join(' → ')}`);
   }
