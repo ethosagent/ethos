@@ -18,5 +18,5 @@ apps/ethos/web
 *.db
 *.db-shm
 *.db-wal
-plan/
+/plan/
 .gstack/
