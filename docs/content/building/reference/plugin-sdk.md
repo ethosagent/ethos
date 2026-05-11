@@ -215,8 +215,8 @@ import type {
 
 ## See also {#see-also}
 
-- [Tool interface](./tool-interface.md)
-- [HookRegistry reference](./hook-registry.md)
-- [ToolRegistry reference](./tool-registry.md)
-- [How to publish a plugin](../how-to/publish-a-plugin.md)
-- [Glossary: Plugin](../../getting-started/glossary.md#plugin)
+- [Tool interface](./tool-interface.md) — the `Tool<TArgs>` contract `defineTool` constructs and `register.tool` accepts.
+- [HookRegistry reference](./hook-registry.md) — every hook point a plugin can attach to via `register.hook`.
+- [ToolRegistry reference](./tool-registry.md) — how registered tools get filtered against `personality.toolset` at execution time.
+- [How to publish a plugin](../how-to/publish-a-plugin.md) — package, version, and ship a plugin to npm.
+- [Glossary: Plugin](../../getting-started/glossary.md#plugin) — one-line definition of the unit a plugin author publishes.

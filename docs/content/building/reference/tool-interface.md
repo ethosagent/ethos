@@ -157,4 +157,4 @@ export interface ToolContext {
 - [Tool-result budget](../explanation/tool-result-budget.md) — how `maxResultChars` and `resultBudgetChars` combine.
 - [Audience boundary](../explanation/audience-boundary.md) — when to use `emit({ audience: 'user' })`.
 - [Plugin SDK reference](./plugin-sdk.md) — `defineTool`, `ok`, `err` helpers.
-- [Tutorial: write your first tool](../tutorials/write-your-first-tool.md)
+- [Tutorial: write your first tool](../tutorials/write-your-first-tool.md) — apply this interface end-to-end against a `get_weather` example.

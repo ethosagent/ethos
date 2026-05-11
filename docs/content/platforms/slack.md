@@ -186,7 +186,7 @@ Either `app_mention` / `message.im` are not subscribed in **Event Subscriptions*
 Slack scopes are per-channel for `channels:history` and `groups:history`. Invite the bot to each channel you want it active in. `app_mention` works regardless of channel membership, but reading thread history does not.
 
 **HTTP 429 / `ratelimited` from `chat.postMessage`.**
-Slack's tier-3 rate limit is ~50 calls per minute per workspace. Streaming edits stay under this because `reflowChunks` edits in place. Sustained 429s mean two gateways share a bot token or a personality is auto-replying. Check `ethos errors` and the running gateway count.
+Slack's tier-3 rate limit is ~50 calls per minute per workspace. Streaming edits stay under this because `reflowChunks` edits in place. Sustained 429s mean two gateways share a bot token or a [personality](../getting-started/glossary.md#personality) is auto-replying. Check `ethos errors` and the running gateway count.
 
 **`not_in_channel` from `chat.postMessage`.**
 The bot user is not a member of the target channel. Invite the bot to the channel.

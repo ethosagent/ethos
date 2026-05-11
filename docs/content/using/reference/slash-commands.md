@@ -139,7 +139,7 @@ Synopsis: `/exit` (alias: `/quit`)
 
 ## See also {#see-also}
 
-- [CLI reference](./cli.md#ethos-chat)
-- [`config.yaml` reference](./config-yaml.md)
-- [Personality config reference](./personality-yaml.md)
-- [Glossary: session](../../getting-started/glossary.md#session)
+- [CLI reference](./cli.md#ethos-chat) — the `ethos chat` shell that hosts every slash command.
+- [`config.yaml` reference](./config-yaml.md) — the user `config.yaml` slash commands like `/model` and `/skin` mutate at runtime.
+- [Personality config reference](./personality-yaml.md) — the per-personality `config.yaml` + `toolset.yaml` that `/personality` swaps between.
+- [Glossary: session](../../getting-started/glossary.md#session) — one-line definition of what `/new` clears and `/sessions` lists.

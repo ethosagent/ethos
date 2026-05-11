@@ -13,7 +13,7 @@ Ethos has one core abstraction and a handful of interfaces around it. This page 
 
 `AgentLoop` is an `AsyncGenerator<AgentEvent>`. You give it a user message; it streams typed events back — text, tool calls, usage, errors, completion — until the turn is done.
 
-Every dependency `AgentLoop` needs (LLM provider, session store, memory provider, personality registry, tool registry, hook registry) is an interface defined in `@ethosagent/types` and injected at construction. Core never imports concrete implementations.
+Every dependency `AgentLoop` needs (LLM provider, [session](glossary.md#session) store, memory provider, [personality](glossary.md#personality) registry, [tool](glossary.md#tool) registry, [hook](glossary.md#hook) registry) is an interface defined in `@ethosagent/types` and injected at construction. Core never imports concrete implementations.
 
 ## The turn cycle
 

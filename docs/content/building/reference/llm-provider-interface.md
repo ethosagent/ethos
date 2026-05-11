@@ -226,5 +226,5 @@ Providers map their error taxonomy to one of these so the wrapper logic stays pr
 
 - [AgentEvent reference](./agent-event.md) — the surface-facing event stream `AgentLoop` builds from `CompletionChunk`.
 - [Tool interface](./tool-interface.md) — `ToolDefinitionLite` mirrors `Tool.schema` for the LLM call.
-- [Tutorial: add an LLM provider](../tutorials/add-an-llm-provider.md)
-- [Glossary: Agent](../../getting-started/glossary.md#agent)
+- [Tutorial: add an LLM provider](../tutorials/add-an-llm-provider.md) — implement this interface end-to-end against a fake `echo` provider.
+- [Glossary: Agent](../../getting-started/glossary.md#agent) — one-line definition of the construct this provider drives.

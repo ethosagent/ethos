@@ -183,6 +183,6 @@ throw new BoundaryError('read', '/etc/passwd', ['/home/me/.ethos/']);
 ## See also {#see-also}
 
 - [Tool interface](./tool-interface.md) — `ToolContext.storage` is the per-turn `ScopedStorage`.
-- [Glossary: Storage](../../getting-started/glossary.md#storage)
-- [Glossary: fs_reach](../../getting-started/glossary.md#fs-reach)
 - [Personality registry reference](./personality-registry.md) — produces the `fs_reach` config that drives `ScopedStorage`.
+- [Glossary: Storage](../../getting-started/glossary.md#storage) — one-line definition for cross-page reference.
+- [Glossary: fs_reach](../../getting-started/glossary.md#fs-reach) — the path-allowlist field as it appears in `personality.yaml`.

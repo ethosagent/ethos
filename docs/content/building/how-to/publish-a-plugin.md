@@ -14,7 +14,7 @@ Build, package, and publish an Ethos [plugin](../../getting-started/glossary.md#
 
 ## Result
 
-A package named `ethos-plugin-<name>` (or `@<scope>/ethos-plugin-<name>`) on npm. After `ethos plugin install <pkg>`, the [tool](../../getting-started/glossary.md#tool), [hook](../../getting-started/glossary.md#hook), and personality registrations the plugin declares appear in `ethos doctor` and become reachable to any personality whose toolset and plugin allowlist include them.
+A package named `ethos-plugin-<name>` (or `@<scope>/ethos-plugin-<name>`) on npm. After `ethos plugin install <pkg>`, the [tool](../../getting-started/glossary.md#tool), [hook](../../getting-started/glossary.md#hook), and [personality](../../getting-started/glossary.md#personality) registrations the plugin declares appear in `ethos doctor` and become reachable to any personality whose toolset and plugin allowlist include them.
 
 ## Prereqs
 

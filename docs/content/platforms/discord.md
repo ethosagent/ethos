@@ -82,7 +82,7 @@ If `✓ Discord online` prints but the bot ignores every mention, **Message Cont
 
 The adapter strips the `<@botId>` prefix before passing text to the agent, so `@Ethos summarise the channel` arrives as `summarise the channel`.
 
-To respond to every message a server channel produces, construct the adapter with `mentionOnly: false`. This is rarely what you want — Discord rate limits scale per channel, and Ethos has no per-personality cost cap that limits guild-wide replies.
+To respond to every message a server channel produces, construct the adapter with `mentionOnly: false`. This is rarely what you want — Discord rate limits scale per channel, and Ethos has no per-[personality](../getting-started/glossary.md#personality) cost cap that limits guild-wide replies.
 
 ### 5. Restrict who can talk to the bot
 

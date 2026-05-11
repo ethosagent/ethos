@@ -8,7 +8,7 @@ time: "30 min"
 updated: 2026-05-12
 ---
 
-Your personality runs locally in `ethos chat`. This tutorial puts it in front of real users on Telegram. The path is: create a bot, paste its token, foreground-test the gateway, then wrap it in a service manager that survives reboots.
+Your [personality](../../getting-started/glossary.md#personality) runs locally in `ethos chat`. This tutorial puts it in front of real users on Telegram. The path is: create a bot, paste its token, foreground-test the gateway, then wrap it in a service manager that survives reboots.
 
 ## Goal
 

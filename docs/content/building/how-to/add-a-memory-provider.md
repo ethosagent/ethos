@@ -26,7 +26,7 @@ Implement the [MemoryProvider](../../getting-started/glossary.md#memory-provider
 
 ### 1. Read the interface
 
-`MemoryProvider` is two methods. Both receive a `MemoryLoadContext` describing the active session and personality; `sync` also takes the `MemoryUpdate[]` the agent decided to apply.
+`MemoryProvider` is two methods. Both receive a `MemoryLoadContext` describing the active [session](../../getting-started/glossary.md#session) and [personality](../../getting-started/glossary.md#personality); `sync` also takes the `MemoryUpdate[]` the agent decided to apply.
 
 ```ts title="packages/types/src/memory.ts"
 export interface MemoryProvider {

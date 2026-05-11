@@ -321,7 +321,7 @@ Optional sibling directory at `~/.ethos/personalities/<id>/skills/`. Per-persona
 
 ## See also {#see-also}
 
-- [`config.yaml` reference](./config-yaml.md)
-- [CLI reference](./cli.md#ethos-personality)
-- [Glossary: personality](../../getting-started/glossary.md#personality)
-- [Glossary: fs_reach](../../getting-started/glossary.md#fs-reach)
+- [`config.yaml` reference](./config-yaml.md) — the user-level `~/.ethos/config.yaml` that picks which personality runs (different file, different schema).
+- [CLI reference](./cli.md#ethos-personality) — the `ethos personality` subcommands that scaffold and edit these files.
+- [Glossary: personality](../../getting-started/glossary.md#personality) — one-line definition shared across every page that names the construct.
+- [Glossary: fs_reach](../../getting-started/glossary.md#fs-reach) — the path-allowlist field this file declares; backed by `ScopedStorage`.

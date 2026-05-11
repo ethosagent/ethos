@@ -44,7 +44,7 @@ export interface ToolRegistry {
 
 | Method | Description |
 |---|---|
-| `register(tool, opts?)` | Add a [`Tool`](./tool-interface.md) under `tool.name`. `opts.pluginId` tags the entry for per-personality plugin gating. |
+| `register(tool, opts?)` | Add a [`Tool`](./tool-interface.md) under `tool.name`. `opts.pluginId` tags the entry for per-[personality](../../getting-started/glossary.md#personality) plugin gating. |
 | `registerAll(tools)` | Convenience wrapper that calls `register(t)` for each entry. |
 | `unregister(name)` | Remove the tool with the given name. Used by `PluginApiImpl.cleanup` and tests. |
 | `get(name)` | Look up a `Tool` by name. Returns `undefined` if missing. |
@@ -186,4 +186,4 @@ const results = await registry.executeParallel(
 - [Tool interface](./tool-interface.md) — what a `Tool` is.
 - [Tool-result budget](../explanation/tool-result-budget.md) — how `maxResultChars` and `resultBudgetChars` interact.
 - [Plugin SDK reference](./plugin-sdk.md) — registering tools from a plugin.
-- [Glossary: ToolRegistry](../../getting-started/glossary.md#tool-registry)
+- [Glossary: ToolRegistry](../../getting-started/glossary.md#tool-registry) — one-line definition shared across the building tree.

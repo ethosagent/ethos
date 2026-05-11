@@ -159,4 +159,4 @@ Channel adapters that only render user-visible output filter to `text_delta` plu
 - [LLMProvider interface](./llm-provider-interface.md) — emits `CompletionChunk` which `AgentLoop` translates into `AgentEvent`.
 - [Tool interface](./tool-interface.md) — `ToolContext.emit` produces `tool_progress` events.
 - [Audience boundary](../explanation/audience-boundary.md) — why `tool_progress` and `tool_end` carry an `audience` field.
-- [Glossary: AgentEvent](../../getting-started/glossary.md#agent-event)
+- [Glossary: AgentEvent](../../getting-started/glossary.md#agent-event) — one-line definition; cross-referenced from every page that mentions the stream.

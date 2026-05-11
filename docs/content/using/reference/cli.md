@@ -348,7 +348,7 @@ Errors land on stderr formatted by `formatError(toEthosError(err))` and are appe
 
 ## See also {#see-also}
 
-- [`config.yaml` reference](./config-yaml.md)
-- [Personality config reference](./personality-yaml.md)
-- [Slash commands reference](./slash-commands.md)
-- [Glossary](../../getting-started/glossary.md)
+- [`config.yaml` reference](./config-yaml.md) — every field these subcommands read and write.
+- [Personality config reference](./personality-yaml.md) — the per-personality `config.yaml` + `toolset.yaml` that `ethos personality` scaffolds.
+- [Slash commands reference](./slash-commands.md) — every `/command` available inside `ethos chat`.
+- [Glossary](../../getting-started/glossary.md) — every Ethos term in one definition list, anchored for cross-page links.

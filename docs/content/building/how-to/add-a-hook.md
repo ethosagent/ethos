@@ -31,7 +31,7 @@ Each hook is registered under exactly one of three models. Picking the wrong one
 | Model | Method | When to use |
 |---|---|---|
 | Void | `registerVoid` | Side effects only — logging, metrics, audit trails, notifications. All handlers run in parallel via `Promise.allSettled`; failures are swallowed. |
-| Modifying | `registerModifying` | The handler amends the payload — rewriting the system prompt, overriding tool args, swapping the personality. Handlers run sequentially; results merge with first-non-null per key. |
+| Modifying | `registerModifying` | The handler amends the payload — rewriting the system prompt, overriding tool args, swapping the [personality](../../getting-started/glossary.md#personality). Handlers run sequentially; results merge with first-non-null per key. |
 | Claiming | `registerClaiming` | Routing decisions — which platform handles this inbound message, which adapter dispatches an outbound message. Handlers run sequentially; the first `{ handled: true }` wins. |
 
 The hook map in `packages/types/src/hooks.ts` is the source of truth. `VoidHooks` lists every Void point and its payload; `ModifyingHooks` lists the payload-plus-result tuples; `ClaimingHooks` is for routing.

@@ -122,7 +122,7 @@ Two paths:
 - **Model-invoked** — when the user message matches the skill's `description`, the agent loads the skill body into context for that turn. No special syntax.
 - **User-invoked** — type `/<skill-name>` as the first token of your message. Required for any skill with `disable-model-invocation: true` in its frontmatter.
 
-The active personality's [toolset](../../getting-started/glossary.md#tool) gates skills the same way it gates tools — a skill listing `required_tools: [terminal_run]` only flows into a personality whose `toolset.yaml` allows `terminal_run`.
+The active [personality](../../getting-started/glossary.md#personality)'s [toolset](../../getting-started/glossary.md#tool) gates skills the same way it gates tools — a skill listing `required_tools: [terminal_run]` only flows into a personality whose `toolset.yaml` allows `terminal_run`.
 
 ### 7. Wire a skill into a personality
 

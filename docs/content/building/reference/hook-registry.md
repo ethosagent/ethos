@@ -75,7 +75,7 @@ export interface HookRegistry {
 
 ### opts.pluginId {#opts-plugin-id}
 
-When a plugin registers a hook, the SDK passes `opts.pluginId`. AgentLoop's `fire*` calls receive `allowedPlugins` (derived from `personality.plugins`); plugin-registered handlers fire only when their `pluginId` is in that list. Built-in handlers (no `pluginId`) always fire.
+When a plugin registers a hook, the SDK passes `opts.pluginId`. AgentLoop's `fire*` calls receive `allowedPlugins` (derived from the active [personality](../../getting-started/glossary.md#personality)'s `plugins` config); plugin-registered handlers fire only when their `pluginId` is in that list. Built-in handlers (no `pluginId`) always fire.
 
 | `allowedPlugins` | Effect |
 |---|---|
@@ -183,6 +183,6 @@ Result types follow the same naming (`BeforeToolCallResult`, etc.) and only carr
 
 - [Hook execution models](../explanation/hook-execution-models.md) — why three models, not one.
 - [Tool interface](./tool-interface.md) — `before_tool_call` mutates `args` before `execute`.
-- [How to add a hook](../how-to/add-a-hook.md)
+- [How to add a hook](../how-to/add-a-hook.md) — task-shaped recipe for picking a model and wiring a handler.
 - [Plugin SDK reference](./plugin-sdk.md) — how plugins register hooks safely.
-- [Glossary: Hook](../../getting-started/glossary.md#hook)
+- [Glossary: Hook](../../getting-started/glossary.md#hook) — one-line definition of the extension point.
