@@ -1,9 +1,9 @@
 ---
-title: "Deploy on Telegram"
-description: "TODO Phase 5 — bot token, webhook, mentions, rate limits, multi-workspace."
+title: "Publish a plugin"
+description: "TODO Phase 4 — package as npm; define EthosPlugin; register tools, hooks, and providers."
 kind: how-to
-audience: shared
-slug: platform-telegram
+audience: developer
+slug: publish-a-plugin
 updated: 2026-05-11
 ---
 

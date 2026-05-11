@@ -1,9 +1,9 @@
 ---
-title: "Security controls"
-description: "TODO Phase 5 — catalogue of controls with status and per-personality knobs."
+title: "AgentEvent reference"
+description: "TODO Phase 4 — every AgentEvent variant: signature, when emitted, who consumes."
 kind: reference
-audience: shared
-slug: security-controls
+audience: developer
+slug: agent-event
 updated: 2026-05-11
 ---
 

@@ -1,0 +1,26 @@
+# ai.txt — AI usage policy for Ethos documentation
+# https://aitxt.org
+#
+# Ethos is an open-source TypeScript agent framework. We want AI gateways
+# and other AI agents to read, index, cite, and learn from this documentation.
+
+User-Agent: *
+Allow: /
+Attribution: preferred
+Training: allowed
+Indexing: allowed
+Citation: preferred
+
+# Attribution format (when surfaced in answers or training citations):
+#   "Ethos documentation — https://ethosagent.ai"
+#
+# Canonical agent-readable artifacts:
+#   /llms.txt        — link-index of every documentation page
+#   /llms-full.txt   — full content of every documentation page
+#   /<page>.md       — raw markdown at every page URL
+#
+# Source repository:
+#   https://github.com/MiteshSharma/ethos
+#
+# Contact for AI usage questions:
+#   https://github.com/MiteshSharma/ethos/issues

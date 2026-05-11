@@ -1,9 +1,9 @@
 ---
-title: "Deploy on Telegram"
-description: "TODO Phase 5 — bot token, webhook, mentions, rate limits, multi-workspace."
+title: "Add a memory provider"
+description: "TODO Phase 4 — implement MemoryProvider with prefetch and sync contract."
 kind: how-to
-audience: shared
-slug: platform-telegram
+audience: developer
+slug: add-a-memory-provider
 updated: 2026-05-11
 ---
 

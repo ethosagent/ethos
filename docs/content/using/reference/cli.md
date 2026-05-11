@@ -1,9 +1,9 @@
 ---
-title: "Security controls"
-description: "TODO Phase 5 — catalogue of controls with status and per-personality knobs."
+title: "CLI reference"
+description: "TODO Phase 3 — every ethos subcommand, flag, exit code."
 kind: reference
-audience: shared
-slug: security-controls
+audience: user
+slug: cli
 updated: 2026-05-11
 ---
 

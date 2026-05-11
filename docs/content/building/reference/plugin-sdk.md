@@ -1,9 +1,9 @@
 ---
-title: "Security controls"
-description: "TODO Phase 5 — catalogue of controls with status and per-personality knobs."
+title: "Plugin SDK reference"
+description: "TODO Phase 4 — EthosPlugin, EthosPluginApi, tool helpers."
 kind: reference
-audience: shared
-slug: security-controls
+audience: developer
+slug: plugin-sdk
 updated: 2026-05-11
 ---
 

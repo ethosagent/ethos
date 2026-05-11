@@ -1,9 +1,9 @@
 ---
-title: "Why this security model?"
-description: "TODO Phase 5 — defense-in-depth model, what Ethos promises, what it does not."
+title: "Why MEMORY.md and USER.md?"
+description: "TODO Phase 3 — markdown-file memory rationale, per-personality scope, what gets written and when."
 kind: explanation
-audience: shared
-slug: security-overview
+audience: user
+slug: memory-model
 updated: 2026-05-11
 ---
 

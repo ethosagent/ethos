@@ -1,45 +1,39 @@
 ---
-title: Welcome to Ethos
-sidebar_position: 1
+title: "Ethos"
+description: "Ethos is a TypeScript agent framework where personality is architecture — a directory of files that changes prompt, tools, memory, and model atomically."
+kind: explanation
+audience: shared
+slug: /
+updated: 2026-05-12
 ---
 
-# Welcome to Ethos
+**Ethos is a TypeScript framework where personality is the unit of architecture.** A personality lives at `~/.ethos/personalities/<id>/` — three files (`ETHOS.md`, `config.yaml`, `toolset.yaml`) that, when switched, atomically change the agent's prompt, tool access, memory scope, and model.
 
-**Ethos is a TypeScript framework for building AI agents that stay specialized — not generic do-everything bots.**
+Five personalities ship by default. Sessions persist across CLI, Telegram, Discord, and Slack. Your existing Claude Code, OpenClaw, OpenCode, and Hermes skill libraries run as-is — filtered to the right specialist per personality.
 
-You pick a personality (`researcher`, `engineer`, `reviewer`, `coach`, `operator`), and the agent's tool access, memory scope, and model all change together. Five specialists ship by default. You can write your own.
+## Two doors
 
-Your conversations persist across restarts. The same agent runs on the CLI, Telegram, Discord, and Slack with shared session history.
+<div className="docsGrid">
 
-## Pick your starting point
+<a className="docsCard" href="/docs/using/quickstart">
+  <h3>Using Ethos →</h3>
+  <p>Install the CLI, configure a provider, run your first chat, ship a Telegram bot. Five minutes to first message.</p>
+</a>
 
-- **Just want to use it?** → [Quickstart](/docs/getting-started/quickstart) — install + first chat in five minutes.
-- **Need multi-agent collaboration?** → [Teams and Meshes](/docs/core-concepts/teams-and-meshes) — boot and manage a team with one command.
-- **Already have a Claude Code or OpenClaw library?** → [Skills](/docs/skills/overview) — the universal scanner picks them up automatically; each personality only sees what's relevant to its role.
-- **Want to understand the design?** → [Why Ethos?](/docs/getting-started/why-ethos) — honest comparison with LangChain, CrewAI, AutoGen.
-- **Evaluating for production?** → [Security](/docs/security/overview) — defense-in-depth model, threat model, the sixteen pre-launch fixes.
-- **Building on top?** → [Tutorial](/docs/tutorial/build-your-first-agent) — walk through your first custom personality.
-- **Extending the framework?** → [Extending Ethos](/docs/extending-ethos/overview) — add LLM providers, tools, platform adapters, plugins.
-- **Want Ethos in Claude Desktop / Cursor / OpenCode?** → [MCP Server](/docs/core-concepts/mcp-server) — expose Ethos personalities to any MCP-compatible client.
+<a className="docsCard" href="/docs/building/quickstart">
+  <h3>Building on Ethos →</h3>
+  <p>Write a tool, add an LLM provider, build a channel adapter, publish a plugin. Ten minutes to first commit.</p>
+</a>
 
-## What makes a personality structural
+</div>
 
-A personality is a directory:
+## Before you choose a door
 
-```
-~/.ethos/personalities/<id>/
-├── ETHOS.md        ← first-person identity
-├── config.yaml     ← name, model, memoryScope
-└── toolset.yaml    ← allowed tool names
-```
+- [What is Ethos?](getting-started/what-is-ethos.md) — 90-second mental model of personalities, sessions, and the streaming event contract.
+- [Architecture in 90 seconds](getting-started/architecture-90-seconds.md) — one diagram of `AgentLoop` and every component that hangs off it.
+- [Why Ethos?](getting-started/why-ethos.md) — honest comparison to LangChain, CrewAI, AutoGen, OpenClaw, Hermes.
+- [Glossary](getting-started/glossary.md) — every domain term in one place.
 
-Switching personalities mid-conversation changes:
+## For AI agents reading these docs
 
-- The system prompt (via `ETHOS.md`)
-- The tools the agent can call (via `toolset.yaml`)
-- Whether memory is shared or isolated (via `memoryScope`)
-- Which model handles the next turn (via `model`)
-
-All four change atomically. That's what we mean by *personality is architecture, not a system prompt*.
-
-[Read more about personalities →](/docs/personality/what-is-a-personality)
+Other AI agents (Claude Code, Cursor, OpenClaw, Hermes) are first-class readers of Ethos's docs. Once Phase 6 of the docs rewrite lands, three agent-readable surfaces ship alongside the site: `llms.txt` (link-index), `llms-full.txt` (full content), and per-page raw markdown at `<path>.md`. The convention is documented in [DOCS.md §Agent-readable surface](https://github.com/MiteshSharma/ethos/blob/main/DOCS.md#agent-readable-surface-two-file--raw-markdown).

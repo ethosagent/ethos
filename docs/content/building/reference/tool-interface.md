@@ -1,9 +1,9 @@
 ---
-title: "Security controls"
-description: "TODO Phase 5 — catalogue of controls with status and per-personality knobs."
+title: "Tool interface reference"
+description: "TODO Phase 4 — Tool<TArgs>, ToolResult, ToolContext signatures and fields."
 kind: reference
-audience: shared
-slug: security-controls
+audience: developer
+slug: tool-interface
 updated: 2026-05-11
 ---
 

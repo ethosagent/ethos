@@ -1,9 +1,9 @@
 ---
-title: "Deploy on Telegram"
-description: "TODO Phase 5 — bot token, webhook, mentions, rate limits, multi-workspace."
+title: "Configure an LLM provider"
+description: "TODO Phase 3 — set up Anthropic, OpenAI, OpenRouter, or Ollama as the LLM provider."
 kind: how-to
-audience: shared
-slug: platform-telegram
+audience: user
+slug: configure-providers
 updated: 2026-05-11
 ---
 

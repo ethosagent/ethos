@@ -1,73 +1,51 @@
 import Link from '@docusaurus/Link';
-import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
-import type { CSSProperties, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
-import InstallCard from '../components/InstallCard';
 import PersonalityShowcase from '../components/PersonalityShowcase';
 import styles from './index.module.css';
 
-const fastPaths = [
+const doors = [
   {
-    number: '01',
-    label: 'Use it',
-    description: 'Install, configure, and run your first agent in under 5 minutes.',
+    label: 'Using Ethos',
+    description:
+      'Install the CLI, configure a provider, run your first chat, ship a Telegram bot. Five minutes to first message.',
     cta: 'Quickstart →',
-    to: '/docs/getting-started/quickstart',
+    to: '/docs/using/quickstart',
+    time: '5 min',
   },
   {
-    number: '02',
-    label: 'Build on it',
-    description: 'Step-by-step tutorials for agents, personalities, and tools.',
-    cta: 'Tutorial →',
-    to: '/docs/tutorial/build-your-first-agent',
-  },
-  {
-    number: '03',
-    label: 'Extend it',
-    description: 'Add LLM providers, tools, platform adapters, and plugins.',
-    cta: 'SDK →',
-    to: '/docs/extending-ethos/overview',
+    label: 'Building on Ethos',
+    description:
+      'Write a tool, add an LLM provider, build a channel adapter, publish a plugin. Ten minutes to first commit.',
+    cta: 'Contributor quickstart →',
+    to: '/docs/building/quickstart',
+    time: '10 min',
   },
 ];
 
 function Hero() {
-  const { siteConfig } = useDocusaurusContext();
-  const taglineWords = siteConfig.tagline.split(/\s+/);
   return (
     <section className={styles.hero}>
       <div className={styles.heroInner}>
-        <Link to="/docs/personality/built-in-personalities" className={styles.announcePill}>
-          <span className={styles.announceBadge}>specialists</span>
-          <span className={styles.announceText}>5 ship by default</span>
-          <span className={styles.announceArrow} aria-hidden="true">
-            →
-          </span>
-        </Link>
         <div className={styles.heroStripe} aria-hidden="true" />
         <p className={styles.heroEyebrow}>ethos</p>
         <h1 className={styles.heroTitle}>
-          {taglineWords.map((word, i) => (
-            <span
-              // biome-ignore lint/suspicious/noArrayIndexKey: stable token list, never reordered
-              key={i}
-              className={styles.heroWord}
-              style={{ ['--i' as never]: i } as CSSProperties}
-            >
-              {word}
-            </span>
-          ))}
+          <span className={styles.heroWord}>Personality</span>{' '}
+          <span className={styles.heroWord}>is</span>{' '}
+          <span className={styles.heroWord}>architecture.</span>
         </h1>
         <p className={styles.heroSubtitle}>
-          You wouldn't ask your therapist to file your taxes. So why does your AI? Ethos gives you
-          focused specialists. Switch instantly. Build your own.
+          A personality is a directory of three files — <code>ETHOS.md</code>,{' '}
+          <code>config.yaml</code>, <code>toolset.yaml</code>. Switching it atomically changes
+          prompt, tool access, memory scope, and model. Five ship by default.
         </p>
         <div className={styles.heroActions}>
-          <Link className={styles.btnPrimary} to="/docs/getting-started/quickstart">
-            Get started
+          <Link className={styles.btnPrimary} to="/docs/using/quickstart">
+            Use Ethos
           </Link>
-          <Link className={styles.btnGhost} href="https://github.com/MiteshSharma/ethos">
-            View on GitHub
+          <Link className={styles.btnGhost} to="/docs/building/quickstart">
+            Build on Ethos
           </Link>
         </div>
         <p className={styles.heroMeta}>
@@ -78,35 +56,15 @@ function Hero() {
   );
 }
 
-function QuickStart() {
-  return (
-    <section className={styles.quickStart}>
-      <div className={styles.quickStartInner}>
-        <div className={styles.sectionHeading}>
-          <span className={styles.sectionChevron} aria-hidden="true">
-            ▸
-          </span>
-          <span className={styles.sectionLabel}>quickstart</span>
-        </div>
-        <InstallCard />
-        <p className={styles.quickStartNote}>
-          tabs are personalities. swap them — the agent's behavior, tools, and memory scope change
-          with the file.
-        </p>
-      </div>
-    </section>
-  );
-}
-
-function FastPaths() {
+function TwoDoors() {
   return (
     <section className={styles.fastPaths}>
       <div className="container">
-        <div className={styles.sectionLabel}>three ways in</div>
+        <div className={styles.sectionLabel}>two doors</div>
         <div className={styles.pathRows}>
-          {fastPaths.map((p) => (
+          {doors.map((p) => (
             <Link key={p.label} to={p.to} className={styles.pathRow}>
-              <span className={styles.pathNumber}>{p.number}</span>
+              <span className={styles.pathNumber}>{p.time}</span>
               <span className={styles.pathLabel}>{p.label}</span>
               <span className={styles.pathDescription}>{p.description}</span>
               <span className={styles.pathCta}>{p.cta}</span>
@@ -118,15 +76,34 @@ function FastPaths() {
   );
 }
 
+function OrientationLinks() {
+  return (
+    <section className={styles.teaser}>
+      <div className="container">
+        <div className={styles.teaserInner}>
+          <p className={styles.teaserText}>
+            <strong>New here?</strong> Read{' '}
+            <Link to="/docs/getting-started/what-is-ethos">What is Ethos?</Link> for the 90-second
+            mental model, <Link to="/docs/getting-started/why-ethos">Why Ethos?</Link> for the
+            comparison to LangChain / CrewAI / OpenClaw / Hermes, and{' '}
+            <Link to="/docs/getting-started/glossary">Glossary</Link> for every domain term.
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ArchDiagram() {
   return (
     <section className={styles.arch}>
       <div className="container">
         <div className={styles.sectionLabel}>how it works</div>
-        <h2 className={styles.sectionTitle}>AgentLoop is a 12-step generator.</h2>
+        <h2 className={styles.sectionTitle}>AgentLoop is one async generator.</h2>
         <p className={styles.sectionSubtitle}>
-          Every component is an interface, injected at construction. Personality decides which tools
-          enter step 9 and which model handles step 8.
+          Every component is an interface in <code>@ethosagent/types</code>, injected at
+          construction. Personality decides which tools enter the loop and which model handles the
+          turn.
         </p>
         <pre className={styles.archDiagram}>
           {`  user input
@@ -153,8 +130,8 @@ function ArchDiagram() {
        ▼
   surfaces: cli · tui · vscode · email · telegram · slack`}
         </pre>
-        <Link to="/docs/getting-started/architecture-overview" className={styles.archLink}>
-          read architecture overview →
+        <Link to="/docs/getting-started/architecture-90-seconds" className={styles.archLink}>
+          Architecture in 90 seconds →
         </Link>
       </div>
     </section>
@@ -169,7 +146,7 @@ function Compat() {
         <h2 className={styles.sectionTitle}>Bring your existing setup.</h2>
         <p className={styles.sectionSubtitle}>
           OpenClaw users migrate in one command. Any clawhub skill installs into Ethos directly —
-          the entire catalog becomes your toolset, no forks, no shims.
+          the catalogue becomes your toolset, no forks, no shims.
         </p>
         <div className={styles.compatRows}>
           <div className={styles.compatRow}>
@@ -198,28 +175,10 @@ function Compat() {
             </pre>
             <p className={styles.compatNote}>
               The OpenClaw-compat layer parses <code>SKILL.md</code> frontmatter, environment
-              substitutions, and OS gates — so the full clawhub catalog runs unmodified inside your
-              personality's toolset.
+              substitutions, and OS gates — so the full clawhub catalogue runs unmodified inside
+              your personality's toolset.
             </p>
           </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function WhyNotTeaser() {
-  return (
-    <section className={styles.teaser}>
-      <div className="container">
-        <div className={styles.teaserInner}>
-          <p className={styles.teaserText}>
-            <strong>Why not LangChain, CrewAI, or AutoGen?</strong> Personality as a structural
-            component, not a string. Strict toolset isolation. ACP-native swarm.
-          </p>
-          <Link to="/docs/getting-started/why-ethos" className={styles.teaserLink}>
-            see the comparison →
-          </Link>
         </div>
       </div>
     </section>
@@ -229,14 +188,13 @@ function WhyNotTeaser() {
 export default function Home(): ReactNode {
   return (
     <Layout
-      title="The right AI for the job at hand"
-      description="Five focused AI specialists — researcher, engineer, reviewer, coach, operator. Each has its own tools, memory, and voice. Switch instantly, or build your own."
+      title="Personality is architecture"
+      description="Ethos is a TypeScript agent framework where personality is architecture — a directory of files that changes prompt, tools, memory, and model atomically."
     >
       <Hero />
-      <QuickStart />
+      <TwoDoors />
       <PersonalityShowcase />
-      <WhyNotTeaser />
-      <FastPaths />
+      <OrientationLinks />
       <ArchDiagram />
       <Compat />
     </Layout>

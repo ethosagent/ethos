@@ -1,9 +1,9 @@
 ---
-title: "Security controls"
-description: "TODO Phase 5 — catalogue of controls with status and per-personality knobs."
+title: "HookRegistry reference"
+description: "TODO Phase 4 — fireVoid, fireModifying, fireClaiming signatures and every hook point."
 kind: reference
-audience: shared
-slug: security-controls
+audience: developer
+slug: hook-registry
 updated: 2026-05-11
 ---
 

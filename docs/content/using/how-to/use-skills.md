@@ -1,9 +1,9 @@
 ---
-title: "Deploy on Telegram"
-description: "TODO Phase 5 — bot token, webhook, mentions, rate limits, multi-workspace."
+title: "Install and use skills"
+description: "TODO Phase 3 — install skills from ClawHub, Claude Code, or Hermes; invoke them in chat."
 kind: how-to
-audience: shared
-slug: platform-telegram
+audience: user
+slug: use-skills
 updated: 2026-05-11
 ---
 

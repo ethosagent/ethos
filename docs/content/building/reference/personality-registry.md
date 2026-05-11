@@ -1,9 +1,9 @@
 ---
-title: "Security controls"
-description: "TODO Phase 5 — catalogue of controls with status and per-personality knobs."
+title: "PersonalityRegistry reference"
+description: "TODO Phase 4 — FilePersonalityRegistry, loadFromDirectory, mtime caching behaviour."
 kind: reference
-audience: shared
-slug: security-controls
+audience: developer
+slug: personality-registry
 updated: 2026-05-11
 ---
 

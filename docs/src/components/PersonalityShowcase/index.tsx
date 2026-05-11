@@ -224,10 +224,10 @@ export default function PersonalityShowcase(): ReactNode {
         </div>
 
         <div className={styles.cta}>
-          <Link to="/docs/personality/what-is-a-personality" className={styles.ctaLink}>
+          <Link to="/docs/using/explanation/what-is-a-personality" className={styles.ctaLink}>
             what is a personality? →
           </Link>
-          <Link to="/docs/tutorial/create-a-custom-personality" className={styles.ctaLink}>
+          <Link to="/docs/using/tutorials/first-personality" className={styles.ctaLink}>
             create your own →
           </Link>
         </div>

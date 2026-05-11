@@ -94,16 +94,22 @@ Every page starts with this front-matter block. CI will fail the build if any re
 ```yaml
 ---
 title: <Sentence-case page title>
+description: <≤155 chars — what the page is, not advocacy for it>
 kind: tutorial | how-to | reference | explanation
 audience: user | developer | shared
+slug: <optional kebab-case URL slug; defaults from filename>
+agent: <optional bool; default true; opt-out from llms.txt + llms-full.txt>
 time: <only on tutorials and how-tos — e.g., "5 min", "20 min">
 updated: <YYYY-MM-DD, the last meaningful content change>
 ---
 ```
 
 - `title` — the H1 derives from this; do not write a separate `# Heading` in the body.
+- `description` — the source of truth for `<meta description>`, OG card, Twitter card, AI answer snippets, and sidebar tooltip. States *what the page is*, not *why you should read it*. Marketing voice fails the SEO/AEO scan.
 - `kind` — must match the template the page follows. CI grep-checks for required and prohibited sections per kind.
 - `audience` — `user` lives under `using/`, `developer` under `building/`, `shared` under `getting-started/`, `platforms/`, `security/`, `troubleshooting.md`, or `glossary.md`. The directory and the field must agree.
+- `slug` — kebab-case, ≤4 words, semantically dense. Defaults from filename when omitted. Once published, slugs do not change — if one must, ship a permanent redirect in the same PR.
+- `agent` — defaults `true`. Set `false` to exclude the page from `llms.txt` and `llms-full.txt`. Almost no page should opt out; the lever exists for sensitive or in-flux content only.
 - `time` — present-tense, conservative estimate. Better to under-promise.
 - `updated` — bumped on any content edit. Cosmetic-only edits (typos) do not bump it.
 
@@ -203,6 +209,9 @@ These patterns are slop. Code review checks for them, and so does CI grep where 
 | Repeated explanations of the same concept across pages | Drift bait — the second copy will lag | Single canonical page, link to it from everywhere else |
 | Code samples with `// ...` placeholder bodies | Reader can't run it | Real, minimal, runnable code |
 | "Coming soon" / "WIP" badges | Promises that rot | Ship the page or don't link to it |
+| Missing `description` front-matter | Search engines invent a snippet from page body; AI answer cards do the same. Both lose. | Required field. CI fails the build if absent or over 155 chars. |
+| Marketing-voice `description` ("Learn how to harness…") | The description is what surfaces in search results and AI answers — advocacy reads as spam | State what the page *is*, not why to read it |
+| Auto-generated anchors on reference + glossary pages | Heading-text edits silently break external citations; agents that cited `#tools` lose the link when "Tools" is renamed | Explicit `{#stable-id}` suffix on every H2/H3 in reference + glossary |
 
 ## Page-acceptance checklist
 
@@ -233,11 +242,76 @@ Same content, different surfaces. Single source of truth is the markdown under [
 | **Personality `ETHOS.md`** | First-person identity for the personality itself | Not user docs — runtime config. Subject to DOCS.md voice rules anyway: imperative, terminal-adjacent, no marketing copy. |
 | **`apps/web` in-app help** | Glossary tooltips, command-palette descriptions | Reads from canonical glossary entries. Sentence-length cap: 140 chars. |
 
+## SEO and AEO
+
+Docs reach humans through search engines and agents through LLM gateways. Both readers consume the same content, surfaced differently. SEO (Search Engine Optimization) and AEO (Answer Engine Optimization — how AI agents understand and cite the docs) are not afterthoughts: for an AI agent framework specifically, AEO is as load-bearing as SEO.
+
+### URL slugs and anchor stability
+
+1. **Slugs are kebab-case, ≤4 words, semantically dense.** `add-an-llm-provider`, not `adding-providers` or `llm-provider-tutorial`. Once published, slugs do not change. If a slug must change, the old URL gets a permanent redirect in the same PR.
+2. **H2/H3 anchors are explicit on reference and glossary pages.** Write `## ToolResult {#tool-result}` so external citations survive heading-text edits. Tutorial / how-to / explanation pages may use auto-generated anchors.
+3. **One H1 per page** (also a Diátaxis rule). Search engines and AI gateways alike treat H1 as the page topic.
+
+### Required meta description
+
+Every page declares `description` in front-matter (≤155 chars, no marketing voice). The same string surfaces in:
+
+- Google search result snippets
+- AI answer cards (Claude, Perplexity, ChatGPT Search, Google AI Mode)
+- Social card previews (Twitter, Slack, Discord, LinkedIn)
+- Sidebar tooltip on hover
+
+A description states *what the page is*. "Step-by-step build of a Telegram bot using Ethos, from bot token to first reply in production." Not "Learn how to harness the power of Ethos to build amazing Telegram bots."
+
+### Structured data (Schema.org JSON-LD)
+
+Docusaurus injects JSON-LD per page, keyed by `kind`:
+
+| `kind` | Schema.org type | Why |
+|---|---|---|
+| `tutorial` | `HowTo` | Tutorials show as step-by-step rich results; agents emit "follow these steps" answers |
+| `how-to` | `HowTo` | Same. AI gateways prefer pages that declare their procedural shape. |
+| `reference` | `TechArticle` | Lookup pages get clean preview cards; AI snippets quote the parameter table |
+| `explanation` | `TechArticle` | Concept pages get article treatment, not procedural treatment |
+| Troubleshooting entries | `FAQPage` (one Q&A per entry) | Each error becomes a discoverable Q&A on Google + in AI answers |
+
+Sitemap (`sitemap.xml`) auto-generated by Docusaurus; submitted to Search Console after launch.
+
+### Crawler policy
+
+`docs/static/robots.txt` allows every major crawler — including AI gateways. Ethos is open-source; we want all gateways indexing.
+
+Explicitly allowed: `Googlebot`, `Bingbot`, `GPTBot`, `ClaudeBot`, `Claude-Web`, `anthropic-ai`, `PerplexityBot`, `OAI-SearchBot`, `Google-Extended`, `Applebot-Extended`, `Meta-ExternalAgent`, `Bytespider`, `cohere-ai`, `CCBot`.
+
+`docs/static/ai.txt` declares permissive AI usage with attribution preferred (the emerging convention; see [aitxt.org](https://aitxt.org)). No `Disallow: /` for any AI crawler — that would defeat the purpose.
+
+### Agent-readable surface (two-file + raw-markdown)
+
+Three artifacts ship with every build, all generated from the canonical content. No artifact is hand-maintained.
+
+| File | What | Generated from |
+|---|---|---|
+| [`docs/static/llms.txt`](docs/static/llms.txt) | Link-index. Title + one-line summary + URL for every page where `agent !== false`. Under 50KB. | `description` front-matter |
+| [`docs/static/llms-full.txt`](docs/static/llms-full.txt) | Full content of every page where `agent !== false`. Front-matter stripped, MDX components inlined. Under 5MB. | Page bodies |
+| `<page>.md` at every page URL | Raw markdown at the same path as the HTML. `/using/quickstart` and `/using/quickstart.md` both resolve. | Docusaurus plugin |
+
+Agents fetch raw markdown via `.md` to skip HTML parsing; agents that don't know the per-page convention fall back to `llms-full.txt`. Both routes must work. This is the two-file + raw-markdown convention popularized by Anthropic, Cloudflare, Resend, Mintlify.
+
+### Glossary as definition list
+
+[glossary.md](docs/content/getting-started/glossary.md) is HTML-shaped (`<dl><dt><dd>`), not prose. Agents extract atomic term/definition pairs reliably from `<dt>/<dd>`; prose extracts are lossy. Schema.org `DefinedTermSet` is injected from the same source.
+
+### Per-surface meta consistency
+
+The repo [README.md](README.md), docs landing, and `og:description` carry the *same* one-sentence pitch — not near-duplicates. One pitch, three surfaces. The cross-surface table above governs this; the SEO consequence is that Google and AI gateways see the same answer regardless of which surface they crawled.
+
 ## Implementation notes
 
 - **Build gate.** `docs/docusaurus.config.ts` sets `onBrokenLinks: 'throw'` and `onBrokenAnchors: 'throw'`. CI runs `pnpm --filter docs build` on every PR.
-- **Front-matter validator.** A script (`pnpm docs:check`) walks [docs/content/](docs/content/), validates required front-matter fields, and grep-checks for kind-specific required/prohibited sections. Fails CI on violation.
-- **Anti-pattern scan.** Same `pnpm docs:check` greps for the worst patterns ("Welcome to Ethos", emoji in headings, "click here", stub-length pages). Easy wins, mechanical.
-- **`llms.txt` generation.** A build step concatenates pages where `agent: true` or `kind: reference|explanation` into `docs/static/llms.txt`. Front-matter and Docusaurus syntax stripped. Run as part of `pnpm --filter docs build`.
+- **Front-matter validator.** A script (`pnpm docs:check`) walks [docs/content/](docs/content/), validates required front-matter fields (including `description` ≤155 chars), and grep-checks for kind-specific required/prohibited sections. Fails CI on violation.
+- **Anti-pattern scan.** Same `pnpm docs:check` greps for the worst patterns ("Welcome to Ethos", emoji in headings, "click here", stub-length pages, marketing-voice descriptions, missing stable anchors on reference + glossary pages). Easy wins, mechanical.
+- **Sitemap, structured data, social cards.** Docusaurus' built-in sitemap plugin emits `sitemap.xml`. A small plugin injects Schema.org JSON-LD per page based on `kind`. A social-card plugin renders OG/Twitter card images from `title` + `description`.
+- **Crawler files.** `docs/static/robots.txt` allows all crawlers including AI gateways. `docs/static/ai.txt` declares permissive AI usage with attribution preferred.
+- **Agent-readable artifacts.** A build step generates `docs/static/llms.txt` (link-index), `docs/static/llms-full.txt` (full content), and serves `<path>.md` at every page URL. All three from canonical markdown — front-matter stripped, MDX components inlined.
 - **PR template.** [.github/pull_request_template.md](.github/pull_request_template.md) carries the page-acceptance checklist verbatim for any PR touching [docs/](docs/).
 - **No docs without DOCS.md review.** Any change that introduces a new page kind, renames a top-level section, or amends a template requires an explicit DOCS.md update in the same PR. The decisions log below is the audit trail.

@@ -1,9 +1,9 @@
 ---
-title: "Deploy on Telegram"
-description: "TODO Phase 5 — bot token, webhook, mentions, rate limits, multi-workspace."
+title: "Migrate from OpenClaw"
+description: "TODO Phase 3 — one-command migration of skills, soul, and sessions from OpenClaw to Ethos."
 kind: how-to
-audience: shared
-slug: platform-telegram
+audience: user
+slug: migrate-from-openclaw
 updated: 2026-05-11
 ---
 

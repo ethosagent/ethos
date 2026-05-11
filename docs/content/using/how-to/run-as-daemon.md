@@ -1,9 +1,9 @@
 ---
-title: "Deploy on Telegram"
-description: "TODO Phase 5 — bot token, webhook, mentions, rate limits, multi-workspace."
+title: "Run Ethos as a daemon"
+description: "TODO Phase 3 — run Ethos under systemd or supervisor as a persistent process."
 kind: how-to
-audience: shared
-slug: platform-telegram
+audience: user
+slug: run-as-daemon
 updated: 2026-05-11
 ---
 

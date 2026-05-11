@@ -4,7 +4,7 @@ import { themes as prismThemes } from 'prism-react-renderer';
 
 const config: Config = {
   title: 'Ethos',
-  tagline: 'The right AI for the job at hand.',
+  tagline: 'TypeScript agent framework where personality is architecture.',
   favicon: 'img/favicon.svg',
 
   future: {
@@ -17,10 +17,11 @@ const config: Config = {
   organizationName: 'ethosagent',
   projectName: 'ethos',
 
-  onBrokenLinks: 'warn',
+  onBrokenLinks: 'throw',
+  onBrokenAnchors: 'throw',
   markdown: {
     hooks: {
-      onBrokenMarkdownLinks: 'warn',
+      onBrokenMarkdownLinks: 'throw',
     },
   },
 
@@ -60,7 +61,7 @@ const config: Config = {
       {
         name: 'description',
         content:
-          'Five focused AI specialists — researcher, engineer, reviewer, coach, operator. Each has its own tools, memory, and voice. Switch instantly, or build your own. TypeScript framework, Claude and OpenAI compatible.',
+          'Ethos is a TypeScript agent framework where personality is architecture — a directory of files that changes prompt, tools, memory, and model atomically.',
       },
     ],
     colorMode: {
@@ -75,23 +76,18 @@ const config: Config = {
       },
       items: [
         {
-          to: '/docs/getting-started/quickstart',
+          to: '/docs',
           label: 'Docs',
           position: 'left',
         },
         {
-          to: '/docs/personality/what-is-a-personality',
-          label: 'Personality',
+          to: '/docs/using/quickstart',
+          label: 'Use',
           position: 'left',
         },
         {
-          to: '/docs/tutorial/build-your-first-agent',
-          label: 'Tutorial',
-          position: 'left',
-        },
-        {
-          to: '/docs/extending-ethos/overview',
-          label: 'Extend',
+          to: '/docs/building/quickstart',
+          label: 'Build',
           position: 'left',
         },
         {
@@ -107,10 +103,10 @@ const config: Config = {
         {
           title: 'Docs',
           items: [
-            { label: 'Quickstart', to: '/docs/getting-started/quickstart' },
-            { label: 'Tutorial', to: '/docs/tutorial/build-your-first-agent' },
-            { label: 'CLI Reference', to: '/docs/cli-reference' },
-            { label: 'Contributing', to: '/docs/getting-started/contributing' },
+            { label: 'Use Ethos', to: '/docs/using/quickstart' },
+            { label: 'Build on Ethos', to: '/docs/building/quickstart' },
+            { label: 'CLI reference', to: '/docs/using/reference/cli' },
+            { label: 'Glossary', to: '/docs/getting-started/glossary' },
           ],
         },
         {

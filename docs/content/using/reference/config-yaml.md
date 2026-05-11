@@ -1,9 +1,9 @@
 ---
-title: "Security controls"
-description: "TODO Phase 5 — catalogue of controls with status and per-personality knobs."
+title: "config.yaml reference"
+description: "TODO Phase 3 — every field in ~/.ethos/config.yaml: provider, model, sessionStore, gateway, dedup TTL."
 kind: reference
-audience: shared
-slug: security-controls
+audience: user
+slug: config-yaml
 updated: 2026-05-11
 ---
 

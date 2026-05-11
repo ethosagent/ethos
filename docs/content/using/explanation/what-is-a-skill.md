@@ -1,9 +1,9 @@
 ---
-title: "Why this security model?"
-description: "TODO Phase 5 — defense-in-depth model, what Ethos promises, what it does not."
+title: "Why skills?"
+description: "TODO Phase 3 — skills vs tools vs personalities, discovery model, per-personality filter."
 kind: explanation
-audience: shared
-slug: security-overview
+audience: user
+slug: what-is-a-skill
 updated: 2026-05-11
 ---
 

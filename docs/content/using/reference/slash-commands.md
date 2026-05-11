@@ -1,9 +1,9 @@
 ---
-title: "Security controls"
-description: "TODO Phase 5 — catalogue of controls with status and per-personality knobs."
+title: "Slash commands reference"
+description: "TODO Phase 3 — every /command in interactive chat: /new, /personality, /skills, /usage, /help."
 kind: reference
-audience: shared
-slug: security-controls
+audience: user
+slug: slash-commands
 updated: 2026-05-11
 ---
 
