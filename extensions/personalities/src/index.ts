@@ -565,6 +565,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       ...(plugins !== undefined ? { plugins } : {}),
       ...(budgetCapUsd !== undefined ? { budgetCapUsd } : {}),
       ...(safety !== undefined ? { safety } : {}),
+      ...(cfg.skin ? { skin: cfg.skin } : {}),
     };
 
     validateUnsafeCombinations(id, config);

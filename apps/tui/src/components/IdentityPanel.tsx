@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import { DESIGN } from '../skin';
+import { useSkin } from '../skin';
 import { PersonalityMark } from './PersonalityMark';
 
 type PanelStatus = 'idle' | 'thinking' | 'running' | 'interrupted';
@@ -32,10 +32,11 @@ export function IdentityPanel({
   accentColor,
   focused = false,
 }: IdentityPanelProps) {
+  const tokens = useSkin();
   return (
     <Box
       borderStyle="single"
-      borderColor={focused ? DESIGN.info : DESIGN.borderSubtle}
+      borderColor={focused ? tokens.semantic.info : tokens.surface.borderSubtle}
       paddingX={1}
       paddingY={1}
       flexDirection="column"

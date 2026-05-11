@@ -1,4 +1,5 @@
-import { generatePersonalityMark, personalityAccent } from '@ethosagent/web-contracts';
+import { personalityAccent } from '@ethosagent/design-tokens';
+import { generatePersonalityMark } from '@ethosagent/web-contracts';
 import { Box, Text, useInput } from 'ink';
 import { useState } from 'react';
 import { DESIGN, GLYPHS } from '../../skin';

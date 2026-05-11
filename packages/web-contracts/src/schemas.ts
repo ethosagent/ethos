@@ -84,6 +84,9 @@ export const PersonalitySchema = z.object({
   mcp_servers: z.array(z.string()).nullable(),
   /** Attached plugin ids. null = not configured (default-deny). */
   plugins: z.array(z.string()).nullable(),
+  /** Named skin declared by the personality (Phase 3). null when no
+   *  override — engine default applies if the user hasn't pinned a skin. */
+  skin: z.string().nullable(),
   /** True when the personality lives in the package's built-in data directory
    *  (read-only). User-created personalities under `~/.ethos/personalities/`
    *  are mutable. */

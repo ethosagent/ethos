@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import { DESIGN, GLYPHS } from '../skin';
+import { useSkin } from '../skin';
 
 export interface ChatMessage {
   id: string;
@@ -18,6 +18,7 @@ interface ChatPaneProps {
 const MAX_VISIBLE = 12;
 
 export function ChatPane({ messages, streamingText, accentColor }: ChatPaneProps) {
+  const tokens = useSkin();
   const visible = messages.slice(-MAX_VISIBLE);
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -25,21 +26,21 @@ export function ChatPane({ messages, streamingText, accentColor }: ChatPaneProps
         <Box key={msg.id} flexDirection="column" marginBottom={1}>
           {msg.role === 'user' ? (
             <Box gap={1}>
-              <Text color={DESIGN.info} bold>
+              <Text color={tokens.semantic.info} bold>
                 You
               </Text>
-              <Text dimColor>{GLYPHS.prompt}</Text>
+              <Text dimColor>{tokens.glyphs.prompt}</Text>
               <Text wrap="wrap">{msg.text}</Text>
             </Box>
           ) : (
             <Box gap={1}>
-              <Text color={msg.accentColor ?? accentColor ?? DESIGN.success}>
-                {GLYPHS.accentStripe}
+              <Text color={msg.accentColor ?? accentColor ?? tokens.semantic.success}>
+                {tokens.glyphs.accentStripe}
               </Text>
-              <Text bold color={DESIGN.textPrimary}>
+              <Text bold color={tokens.surface.textPrimary}>
                 ethos
               </Text>
-              <Text dimColor>{GLYPHS.prompt}</Text>
+              <Text dimColor>{tokens.glyphs.prompt}</Text>
               <Text wrap="wrap">{msg.text}</Text>
             </Box>
           )}
@@ -47,11 +48,11 @@ export function ChatPane({ messages, streamingText, accentColor }: ChatPaneProps
       ))}
       {streamingText && (
         <Box gap={1}>
-          <Text color={accentColor ?? DESIGN.success}>{GLYPHS.accentStripe}</Text>
-          <Text bold color={DESIGN.textPrimary}>
+          <Text color={accentColor ?? tokens.semantic.success}>{tokens.glyphs.accentStripe}</Text>
+          <Text bold color={tokens.surface.textPrimary}>
             ethos
           </Text>
-          <Text dimColor>{GLYPHS.prompt}</Text>
+          <Text dimColor>{tokens.glyphs.prompt}</Text>
           <Text wrap="wrap">{streamingText}</Text>
         </Box>
       )}

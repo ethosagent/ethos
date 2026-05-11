@@ -14,6 +14,7 @@ export interface ConfigGetResult {
   personality: string;
   memory: 'markdown' | 'vector';
   modelRouting: Record<string, string>;
+  skin: string;
 }
 
 export interface ConfigUpdateInput {
@@ -24,6 +25,7 @@ export interface ConfigUpdateInput {
   personality?: string;
   memory?: 'markdown' | 'vector';
   modelRouting?: Record<string, string>;
+  skin?: string;
 }
 
 export interface ConfigServiceOptions {
@@ -50,6 +52,7 @@ export class ConfigService {
       personality: raw.personality ?? 'researcher',
       memory: raw.memory ?? 'markdown',
       modelRouting: raw.modelRouting,
+      skin: raw.skin ?? 'default',
     };
   }
 

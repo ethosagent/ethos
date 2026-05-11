@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import { DESIGN } from '../skin';
+import { useSkin } from '../skin';
 
 export interface TimelineEvent {
   id: string;
@@ -15,26 +15,26 @@ interface ExecutionTimelineProps {
 
 const MAX_EVENTS = 24;
 
-function colorFor(level: TimelineEvent['level']): string {
-  switch (level) {
-    case 'success':
-      return DESIGN.success;
-    case 'warning':
-      return DESIGN.warning;
-    case 'error':
-      return DESIGN.error;
-    default:
-      return DESIGN.info;
-  }
-}
-
 export function ExecutionTimeline({ events, focused = false }: ExecutionTimelineProps) {
+  const tokens = useSkin();
+  const colorFor = (level: TimelineEvent['level']): string => {
+    switch (level) {
+      case 'success':
+        return tokens.semantic.success;
+      case 'warning':
+        return tokens.semantic.warning;
+      case 'error':
+        return tokens.semantic.error;
+      default:
+        return tokens.semantic.info;
+    }
+  };
   const visible = events.slice(-MAX_EVENTS);
   return (
     <Box flexDirection="column" marginLeft={1}>
-      <Text dimColor color={focused ? DESIGN.info : undefined}>
+      <Text dimColor color={focused ? tokens.semantic.info : undefined}>
         {'─── '}
-        <Text bold color={focused ? DESIGN.info : DESIGN.textPrimary}>
+        <Text bold color={focused ? tokens.semantic.info : tokens.surface.textPrimary}>
           execution
         </Text>
         {' ───'}

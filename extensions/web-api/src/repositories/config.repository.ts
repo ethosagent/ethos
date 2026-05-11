@@ -28,6 +28,8 @@ export interface RawConfig {
   personality?: string;
   memory?: 'markdown' | 'vector';
   baseUrl?: string;
+  /** Active skin name (default | mono | paper, or future custom skins). */
+  skin?: string;
   modelRouting: Record<string, string>;
   /** Every other top-level key the file contained (telegramToken etc.).
    *  Round-tripped through writes verbatim. */
@@ -51,7 +53,15 @@ export class ConfigRepository {
     const src = await this.storage.read(this.path);
     if (src === null) return null;
 
-    const known = new Set(['provider', 'model', 'apiKey', 'personality', 'memory', 'baseUrl']);
+    const known = new Set([
+      'provider',
+      'model',
+      'apiKey',
+      'personality',
+      'memory',
+      'baseUrl',
+      'skin',
+    ]);
     const config: RawConfig = { modelRouting: {}, passthrough: {} };
 
     for (const line of src.split('\n')) {
@@ -88,6 +98,9 @@ export class ConfigRepository {
             break;
           case 'baseUrl':
             config.baseUrl = value;
+            break;
+          case 'skin':
+            config.skin = value;
             break;
         }
       } else {
@@ -142,6 +155,7 @@ export class ConfigRepository {
     if (config.personality) lines.push(`personality: ${config.personality}`);
     if (config.memory) lines.push(`memory: ${config.memory}`);
     if (config.baseUrl) lines.push(`baseUrl: ${config.baseUrl}`);
+    if (config.skin) lines.push(`skin: ${config.skin}`);
     for (const [id, model] of Object.entries(config.modelRouting)) {
       lines.push(`modelRouting.${id}: ${model}`);
     }

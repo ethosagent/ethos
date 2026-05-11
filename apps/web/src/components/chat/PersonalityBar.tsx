@@ -1,4 +1,4 @@
-import { personalityAccent } from '@ethosagent/web-contracts';
+import { personalityAccent } from '@ethosagent/design-tokens';
 import { PersonalityMark } from '../ui/PersonalityMark';
 import { PersonalitySwitcher } from './PersonalitySwitcher';
 

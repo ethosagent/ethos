@@ -181,6 +181,19 @@ export interface PersonalityConfig {
    * that controls what gets persisted in observability.db for this personality.
    */
   safety?: PersonalitySafetyConfig;
+  /**
+   * Named skin override for this personality. References a built-in or
+   * user-installed skin from `@ethosagent/design-tokens`. When the user
+   * has NOT pinned a global skin in `~/.ethos/config.yaml`, switching to
+   * this personality applies the named skin's resolved tokens. User pin
+   * always wins.
+   *
+   * The string is just the skin name; resolution to concrete tokens
+   * happens at the surface layer. The validator runs at skin load time,
+   * not here — an invalid name falls back to the engine default and
+   * surfaces a warning.
+   */
+  skin?: string;
 }
 
 export interface PersonalityRegistry {

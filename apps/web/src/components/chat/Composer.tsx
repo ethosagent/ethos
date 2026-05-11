@@ -1,4 +1,4 @@
-import { personalityAccent } from '@ethosagent/web-contracts';
+import { personalityAccent } from '@ethosagent/design-tokens';
 import { Button, Input } from 'antd';
 import { type KeyboardEvent, useState } from 'react';
 

@@ -118,6 +118,11 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
     return this.loop.getPersonalityBudgetCap(personalityId);
   }
 
+  /** Returns the named skin the personality declares (undefined when unset). */
+  getPersonalitySkin(personalityId?: string): string | undefined {
+    return this.loop.getPersonalitySkin(personalityId);
+  }
+
   /**
    * Swap the underlying AgentLoop on the next idle tick.
    * If a turn is in flight, it finishes with the old loop; subsequent turns

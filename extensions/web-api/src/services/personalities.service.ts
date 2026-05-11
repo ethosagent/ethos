@@ -146,6 +146,7 @@ function toWire(d: DescribedPersonality): Personality {
     streamingTimeoutMs: c.streamingTimeoutMs ?? null,
     mcp_servers: c.mcp_servers ?? null,
     plugins: c.plugins ?? null,
+    skin: c.skin ?? null,
     builtin: d.builtin,
   };
 }

@@ -89,29 +89,7 @@ export function generatePersonalityMark(personalityId: string): PersonalityMarkS
   };
 }
 
-/**
- * Built-in personality accents from DESIGN.md. Custom personalities fall
- * back to operator grey for now — a sensible neutral until per-
- * personality color customization lands as its own decision.
- */
-export const PERSONALITY_ACCENTS: Readonly<Record<string, string>> = Object.freeze({
-  researcher: '#4A9EFF',
-  engineer: '#4ADE80',
-  reviewer: '#F59E0B',
-  coach: '#E879F9',
-  operator: '#94A3B8',
-});
-
-export function personalityAccent(personalityId: string): string {
-  return PERSONALITY_ACCENTS[personalityId] ?? PERSONALITY_ACCENTS.operator ?? '#94A3B8';
-}
-
-/** True when the id matches one of the five built-in personalities. */
-export function isBuiltinPersonality(personalityId: string): boolean {
-  return personalityId in PERSONALITY_ACCENTS;
-}
-
-/** Public list of built-in ids — useful for tests + iteration. */
-export const BUILTIN_PERSONALITY_IDS: ReadonlyArray<string> = Object.freeze(
-  Object.keys(PERSONALITY_ACCENTS),
-);
+// Personality accent resolution moved to @ethosagent/design-tokens (the
+// single runtime source of truth for visual tokens). The marks algorithm
+// is identity-only — it produces cells/opacity/bgRadius. Surface code
+// applies the accent on top by reading from design-tokens.

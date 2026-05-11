@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import { DESIGN } from '../skin';
+import { useSkin } from '../skin';
 
 export type SafetyTag = 'READ_ONLY' | 'SUGGESTED' | 'APPROVAL_REQUIRED' | 'DESTRUCTIVE';
 
@@ -9,20 +9,21 @@ interface SafetyLaneProps {
   focused?: boolean;
 }
 
-function colorFor(tag: SafetyTag): string {
-  switch (tag) {
-    case 'DESTRUCTIVE':
-      return DESIGN.error;
-    case 'APPROVAL_REQUIRED':
-      return DESIGN.warning;
-    case 'SUGGESTED':
-      return DESIGN.info;
-    default:
-      return DESIGN.success;
-  }
-}
-
 export function SafetyLane({ readonlyMode, tags, focused = false }: SafetyLaneProps) {
+  const tokens = useSkin();
+  const colorFor = (tag: SafetyTag): string => {
+    switch (tag) {
+      case 'DESTRUCTIVE':
+        return tokens.semantic.error;
+      case 'APPROVAL_REQUIRED':
+        return tokens.semantic.warning;
+      case 'SUGGESTED':
+        return tokens.semantic.info;
+      default:
+        return tokens.semantic.success;
+    }
+  };
+
   const counts = new Map<SafetyTag, number>([
     ['READ_ONLY', 0],
     ['SUGGESTED', 0],
@@ -39,15 +40,15 @@ export function SafetyLane({ readonlyMode, tags, focused = false }: SafetyLanePr
 
   return (
     <Box marginBottom={1} flexDirection="column">
-      <Text dimColor color={focused ? DESIGN.info : undefined}>
+      <Text dimColor color={focused ? tokens.semantic.info : undefined}>
         {'─── '}
-        <Text bold color={focused ? DESIGN.info : DESIGN.textPrimary}>
+        <Text bold color={focused ? tokens.semantic.info : tokens.surface.textPrimary}>
           safety
         </Text>
         {' ───'}
       </Text>
       <Box gap={2}>
-        <Text color={readonlyMode ? DESIGN.success : DESIGN.textSecondary}>
+        <Text color={readonlyMode ? tokens.semantic.success : tokens.surface.textSecondary}>
           {readonlyMode ? 'READ-ONLY' : 'execution'}
         </Text>
         {activeTags.map((tag) => (

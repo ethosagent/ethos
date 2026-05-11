@@ -1,54 +1,52 @@
-import { personalityAccent } from '@ethosagent/web-contracts';
-import { type ThemeConfig, theme } from 'antd';
+import { accentFor, BUILTIN_SKINS, DEFAULT_TOKENS, resolveSkin } from '@ethosagent/design-tokens';
+import { tokensToAntd } from '@ethosagent/design-tokens/antd';
+import type { ThemeConfig } from 'antd';
 
-// Single source of truth for the web theme — DESIGN.md tokens, applied via
-// Antd ConfigProvider. The chat surface wraps its subtree in a SECOND
-// ConfigProvider built from `personalityTheme(id)` so the per-personality
-// accent flows through every Antd primitive (button background, input
-// caret, focus ring) without recomputing the full palette.
-//
-// Why two providers, not one?
-//   • The base theme is stable across the whole app (sidebar, top bar,
-//     onboarding, sessions, settings).
-//   • The accent is per-personality and changes when the user switches
-//     personalities mid-session — wrapping just the chat subtree keeps
-//     the rest of the app on the global accent (researcher blue).
-//   • Antd merges nested `ConfigProvider` themes shallowly, so we only
-//     need to override `colorPrimary` in the inner one.
+// Per-personality chat-tab theming. Phase 3 resolution order — highest wins:
+//   1. User pin (config.yaml `skin:`) — applied by the OUTER ConfigProvider
+//      in main.tsx. When set, the inner provider only swaps the accent.
+//   2. Personality default (personality.skin) — when no user pin, the chat
+//      tab applies the personality's full token slice (so paper/mono change
+//      surface colors too, not just the accent).
+//   3. Engine default — no override; inner provider just swaps the accent.
 
-export const baseTheme: ThemeConfig = {
-  algorithm: theme.darkAlgorithm,
-  token: {
-    fontFamily: "'Geist', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    fontFamilyCode: "'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
-    colorBgLayout: '#0F0F0F',
-    colorBgContainer: '#1A1A1A',
-    colorBgElevated: '#2A2A2A',
-    colorPrimary: '#4A9EFF',
-    colorBorder: '#2A2A2A',
-    colorBorderSecondary: '#3A3A3A',
-    borderRadius: 6,
-    motionDurationFast: '0.08s',
-    motionDurationMid: '0.18s',
-    motionDurationSlow: '0.24s',
-    motionEaseOut: 'cubic-bezier(0.16, 1, 0.3, 1)',
-    motionEaseInOut: 'cubic-bezier(0.16, 1, 0.3, 1)',
-  },
-  components: {
-    Card: { borderRadius: 14 },
-    Modal: { borderRadius: 12 },
-  },
-};
+export interface PersonalityThemeOptions {
+  /** The user's pinned skin from `~/.ethos/config.yaml`. When `null` or
+   *  `'default'`, the personality's own skin (if any) wins. */
+  userPin?: string | null;
+  /** The personality's declared `skin` field. */
+  personalitySkin?: string | null;
+}
 
-/**
- * Theme override for a personality-scoped subtree. Only swaps the accent —
- * caller wraps the chat surface in `<ConfigProvider theme={personalityTheme(id)}>`
- * INSIDE the base provider, and Antd merges them.
- */
-export function personalityTheme(personalityId: string): ThemeConfig {
-  return {
-    token: {
-      colorPrimary: personalityAccent(personalityId),
-    },
-  };
+export function personalityTheme(
+  personalityId: string,
+  options: PersonalityThemeOptions = {},
+): ThemeConfig {
+  const accent = accentFor(DEFAULT_TOKENS, personalityId);
+  const { userPin, personalitySkin } = options;
+
+  // User pin wins. Outer provider already carries the pinned tokens; just
+  // override the accent for this chat subtree.
+  const userPinActive = !!(userPin && userPin !== 'default' && BUILTIN_SKINS[userPin]);
+  if (userPinActive) {
+    return { token: { colorPrimary: accent } };
+  }
+
+  // No user pin, personality declares a skin → apply its full token slice
+  // to the chat tab. Outer provider stays on the base theme so non-chat
+  // surfaces (sidebar, top bar) keep their look.
+  if (personalitySkin && BUILTIN_SKINS[personalitySkin]) {
+    try {
+      const personalityTokens = resolveSkin(DEFAULT_TOKENS, BUILTIN_SKINS, personalitySkin);
+      const antdConfig = tokensToAntd(personalityTokens);
+      return {
+        ...antdConfig,
+        token: { ...antdConfig.token, colorPrimary: accent },
+      };
+    } catch {
+      // Unknown skin name → fall through to the accent-only override.
+    }
+  }
+
+  return { token: { colorPrimary: accent } };
 }

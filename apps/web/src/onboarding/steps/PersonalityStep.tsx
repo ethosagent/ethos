@@ -1,5 +1,5 @@
+import { personalityAccent } from '@ethosagent/design-tokens';
 import type { Personality } from '@ethosagent/web-contracts';
-import { personalityAccent } from '@ethosagent/web-contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Button, ConfigProvider, Spin } from 'antd';
 import { useEffect, useRef, useState } from 'react';

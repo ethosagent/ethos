@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import { DESIGN } from '../skin';
+import { useSkin } from '../skin';
 import type { ActiveTool, CompletedTool } from './ToolSpinner';
 
 interface ContextPanelProps {
@@ -19,13 +19,14 @@ export function ContextPanel({
   pendingPatchCount,
   focused = false,
 }: ContextPanelProps) {
+  const tokens = useSkin();
   const activeNames = activeTools.slice(-3).map((t) => t.toolName);
 
   return (
     <Box marginBottom={1} flexDirection="column">
-      <Text dimColor color={focused ? DESIGN.info : undefined}>
+      <Text dimColor color={focused ? tokens.semantic.info : undefined}>
         {'─── '}
-        <Text bold color={focused ? DESIGN.info : DESIGN.textPrimary}>
+        <Text bold color={focused ? tokens.semantic.info : tokens.surface.textPrimary}>
           context
         </Text>
         {' ───'}
