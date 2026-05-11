@@ -274,5 +274,12 @@ The web UI (in development) references DESIGN.md tokens via Antd ConfigProvider.
 
 When reviewing or writing code that touches UI, flag any deviations from DESIGN.md (slop blacklist, font choices, color hex values, motion durations, "cards earn existence" rule).
 
+Docs system
+Always read DOCS.md before writing, editing, or restructuring any documentation. All page types (Diátaxis: tutorial / how-to / reference / explanation), IA decisions, front-matter contract, voice rules, anti-patterns, and the page-acceptance checklist live there. Do not deviate without explicit user approval.
+
+Scope is wider than the Docusaurus site — DOCS.md governs all written documentation: docs/, the repo README, in-package READMEs, the agent-readable llms.txt, and the ETHOS.md shipped with each personality. Two-persona shell ("Using Ethos" / "Building on Ethos") with Diátaxis four-pillar inside each persona, plus shared concerns (platforms, security, troubleshooting, glossary).
+
+When reviewing or writing any doc, flag deviations from DOCS.md (kind/template mismatch, mixed-audience pages, anti-pattern phrases, missing front-matter, stub pages, broken source-of-truth links).
+
 gstack
 Available skills: /review, /plan-eng-review, /plan-ceo-review, /plan-design-review, /design-consultation, /browse, /investigate, /careful, /ship, /qa, /retro.

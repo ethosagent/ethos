@@ -1,0 +1,243 @@
+# Ethos · Docs System
+
+**The reader is in a hurry.** Every page earns its existence by serving one of four customer-first needs in the first screen. This system specifies the IA, page templates, voice, and acceptance rules that all Ethos documentation adheres to — across the Docusaurus site, the repo README, in-package READMEs, the agent-readable `llms.txt`, and every `ETHOS.md` shipped with a personality.
+
+> Always read this file before writing, editing, or restructuring any documentation. All page types, IA decisions, voice rules, and structural patterns live here. Do not deviate without explicit user approval. This is the docs counterpart to [DESIGN.md](DESIGN.md) — same authority, same enforcement, same shape.
+
+## Product context
+
+- **What these docs cover:** Ethos — TypeScript AI agent framework where personality is architecture. CLI, channel adapters, plugin system, multiple LLM providers, persistent sessions.
+- **Two audiences (the persona shell):**
+  - **Using Ethos** — operators running the CLI, deploying personalities, wiring channels, configuring providers. Reads docs to *get something working*.
+  - **Building on Ethos** — contributors writing tools, providers, personalities, channel adapters, plugins. Reads docs to *extend the framework*.
+- **A third reader: AI agents.** Other coding agents (Claude Code, Cursor, OpenClaw, Hermes) consume Ethos docs to scaffold integrations. We ship `llms.txt` as a first-class artifact, not an afterthought.
+- **Surface this lives on:** the canonical site is Docusaurus at [docs/](docs/). The repo [README.md](README.md), in-package READMEs, and `llms.txt` are derived surfaces that link back to the canonical pages.
+
+## The four customer-first questions
+
+Every page must serve at least one. A page that serves none gets cut.
+
+| Question | What it means in practice |
+|---|---|
+| Can the reader **see the bigger picture**? | One-sentence pitch on the landing; "Architecture in 90 seconds" reachable from any page; mental model precedes mechanics. |
+| Can the reader **understand the context**? | Why this exists, what problem it solves, which alternatives the reader was likely comparing it against. Linked from every concept page. |
+| Can the reader **start using it just from this page**? | Quickstart from zero to first run in under 5 minutes (Using) / 10 minutes (Building). One command before any YAML. |
+| Can the reader **get value quickly**? | Worked end-to-end examples that produce a visible win — a Telegram bot that replies, a research agent that summarizes a URL. Not toy snippets. |
+
+These four questions are the **page-acceptance test**. A docs PR is reviewed against them before it is reviewed for prose quality.
+
+## Information architecture
+
+Two-persona shell at the top. Diátaxis four-pillar inside each persona. Shared concerns at the same level as the persona doors. One canonical tree — no parallel `/docs` vs `/kb` split, no orphan content trees.
+
+```
+docs/content/
+  intro.md                          ← landing: one-sentence pitch + two doors
+  getting-started/
+    what-is-ethos.md                ← 90-second mental model (explanation)
+    architecture-90-seconds.md      ← one diagram + three sentences each (explanation)
+    why-ethos.md                    ← positioning vs LangChain/CrewAI/OpenClaw/Hermes (explanation)
+    glossary.md                     ← every domain term in one place (reference)
+  using/
+    quickstart.md                   ← install → first chat in 5 min (tutorial)
+    tutorials/                      ← learning-oriented walkthroughs
+    how-to/                         ← task-oriented recipes
+    reference/                      ← cli, config-yaml, personality-yaml, slash-commands
+    explanation/                    ← what is a personality, memory model, sessions
+  building/
+    quickstart.md                   ← clone → run tests → ship a tool in 10 min (tutorial)
+    tutorials/
+    how-to/
+    reference/                      ← interface specs: AgentEvent, Tool, LLMProvider, etc.
+    explanation/                    ← personality-as-architecture, hook execution models, etc.
+  platforms/                        ← shared: cli, telegram, discord, slack
+  security/                         ← shared: overview, threat-model, controls, disclosure
+  troubleshooting.md                ← error-index reference
+  changelog.md
+docs/static/llms.txt                ← agent-readable digest (generated)
+```
+
+**Rules of the tree:**
+1. **One canonical home per page.** No page lives in two sections. If two audiences need it, it goes in `shared/` (platforms, security, troubleshooting) and both personas link to it.
+2. **The persona shell is shallow.** Only the top nav splits by audience. Reference pages that genuinely serve both audiences live in `shared/`; they do *not* get duplicated into both persona trees.
+3. **Diátaxis is enforced inside each persona.** Every page is exactly one of `tutorial`, `how-to`, `reference`, or `explanation`. Mixed pages are a bug.
+4. **Verb-driven section names within each persona.** Use `tutorials/`, `how-to/`, `reference/`, `explanation/` literally — don't rename them. Consistency is more valuable than cleverness.
+5. **No stub pages.** A page is either complete or doesn't exist. Stubs rot fastest and damage trust most.
+
+## Page types
+
+Every page declares `kind` in front-matter. The page must follow its kind's template — no exceptions.
+
+| `kind` | Reader state | Purpose | Length | Required sections | Prohibited |
+|---|---|---|---|---|---|
+| `tutorial` | At study — learning Ethos for the first time | Acquire basic competence on one path | 300–700 lines | Goal · Prereqs · Estimated time · Numbered steps · What you learned · Next step | Branching choices, alternative paths, "see also for advanced," design rationale |
+| `how-to` | At work — has a real task to ship | Accomplish a specific outcome | 100–300 lines | Task statement (1 line) · Result statement (1 line) · Prereqs · Numbered steps · Verify · Troubleshoot | Concept teaching, "what is X" preambles, narrative arc |
+| `reference` | At work — looking up a fact | Authoritative lookup, scannable | 100–500 lines | Synopsis · Parameters/fields table · Examples · Source path link · See also | Step-by-step narrative, opinions, marketing copy, design rationale |
+| `explanation` | At study — building mental model | Answer one "why" question | 150–400 lines | Question (as H1) · Context · Discussion · Trade-offs · See also | Numbered steps, "how to" procedures, exhaustive parameter lists |
+
+**Tutorial vs. how-to test.** If the reader is *studying Ethos*, it's a tutorial. If the reader is *shipping something with Ethos*, it's a how-to. Pick one. A page that fails this test gets split.
+
+**Explanation guardrails:**
+1. **H1 is a "why" question.** "Why are hooks split into three execution models?" "Why is personality a structural component, not a system prompt?" If you can't phrase it as a why, the content belongs in reference or how-to.
+2. **No procedures.** If a page has numbered steps, it has migrated to how-to.
+3. **Cross-link instead of duplicate.** Explanation links to reference for "what's the signature?" and to how-to for "how do I use this?"
+
+**Reference guardrails:**
+1. **Every reference page links to its source-of-truth code path.** A `Tool` interface reference page links to [packages/types/src/index.ts](packages/types/src/index.ts).
+2. **Tables, not prose.** Parameters/fields are tables. Prose between tables is one sentence max.
+3. **No rationale.** "We did it this way because…" lives in explanation. Cross-link.
+
+## Front-matter contract
+
+Every page starts with this front-matter block. CI will fail the build if any required field is missing or malformed.
+
+```yaml
+---
+title: <Sentence-case page title>
+kind: tutorial | how-to | reference | explanation
+audience: user | developer | shared
+time: <only on tutorials and how-tos — e.g., "5 min", "20 min">
+updated: <YYYY-MM-DD, the last meaningful content change>
+---
+```
+
+- `title` — the H1 derives from this; do not write a separate `# Heading` in the body.
+- `kind` — must match the template the page follows. CI grep-checks for required and prohibited sections per kind.
+- `audience` — `user` lives under `using/`, `developer` under `building/`, `shared` under `getting-started/`, `platforms/`, `security/`, `troubleshooting.md`, or `glossary.md`. The directory and the field must agree.
+- `time` — present-tense, conservative estimate. Better to under-promise.
+- `updated` — bumped on any content edit. Cosmetic-only edits (typos) do not bump it.
+
+## Voice
+
+Inherits DESIGN.md voice rules verbatim. Honest, terminal-adjacent, dense-but-readable. The reader is a competent developer in a hurry — write for them.
+
+- **Imperative second person.** "Run `ethos chat`." Not "We run `ethos chat`" or "You can run `ethos chat`."
+- **No marketing copy.** No "Welcome to Ethos!", no "Unlock the power of agents," no "Get Started" buttons. Buttons are verbs: "Install", "Run", "Configure".
+- **No emoji as decoration.** Status indicators (✓ / ✗ / ⏳) only, and only where they convey state. Never in headings.
+- **Concrete over abstract.** "API key invalid — re-enter to continue." Not "Authentication failed."
+- **Specific identifiers.** Reference real file paths, real function names, real config keys. Avoid "the foo system" when "[tool-registry.ts](packages/core/src/tool-registry.ts)" is what you mean.
+- **No throat-clearing.** Drop "In this guide, we will…", "Note that…", "It's important to remember that…" Start with the goal.
+- **One thought per paragraph.** Paragraphs over six lines get split. The reader is scanning.
+- **Active over passive.** "AgentLoop emits events." Not "Events are emitted by AgentLoop."
+- **Sentence-case headings.** "Add a new LLM provider," not "Add A New LLM Provider."
+
+## Cross-page rules
+
+1. **Glossary-first-use linking.** The first occurrence of any domain term (`personality`, `skill`, `tool`, `hook`, `mesh`, `session`, `memory scope`, `audience boundary`) on a page links to [glossary.md](docs/content/getting-started/glossary.md).
+2. **Source-of-truth linking.** Every reference page links to the source file it describes — `Tool` reference → [packages/types/src/index.ts](packages/types/src/index.ts). Code drift is detected when these links break.
+3. **"See also" footer is mandatory** on every reference and explanation page. At least one link, no more than five. Curated, not auto-generated.
+4. **"Recommended reading order" footer** on architecture and concept-cluster pages — Hermes-style — names the next 2–3 pages to read in order.
+5. **Internal links use repo-relative paths**, not absolute URLs. `[Tool reference](../reference/tool.md)`, not the deployed `https://docs.ethos.dev/...` URL.
+6. **Code samples are runnable.** Snippets compile against the current version of `@ethosagent/types`. Pseudocode is banned in reference; allowed in explanation only when labeled `// illustration`.
+7. **One H1 per page.** Subsections are H2 and H3 only. Never skip levels (no H4 directly under H2).
+8. **Tables for ≥3 parallel items.** Lists of properties, parameters, options, or trade-offs go in tables. Prose lists are allowed for ≤2 items.
+
+## Reference schemas
+
+Each kind of reference page follows a fixed schema. Schemas exist so the reader's eye knows where to look, page after page.
+
+### CLI subcommand reference
+
+```
+## ethos <subcommand>
+
+Synopsis · one-line description · since version
+| Arg / flag | Type | Default | Description |
+Examples · 1–3 minimal invocations
+Exit codes · table of (code, meaning)
+See also · related subcommands
+```
+
+### Config field reference (`config-yaml.md`, `personality-yaml.md`)
+
+```
+## <field-name>
+
+Type · Default · Required · Since version
+Description (1 paragraph max)
+Example (1 minimal YAML block)
+Notes (only if non-obvious behavior; one bullet per note)
+```
+
+### Interface reference (`AgentEvent`, `Tool`, `LLMProvider`, etc.)
+
+```
+## <InterfaceName>
+
+Source · link to packages/types/src/<file>
+Signature · TypeScript block, verbatim from source
+Members · table of (name, type, description)
+Notes · one bullet per non-obvious invariant
+Used by · table of (consumer file, role)
+See also · related interfaces
+```
+
+### Error / troubleshooting entry
+
+```
+## <Error message or symptom>
+
+Cause · 1–2 sentences
+Fix · numbered steps (≤5)
+Prevent · 1 bullet (optional)
+```
+
+## Anti-patterns
+
+These patterns are slop. Code review checks for them, and so does CI grep where possible.
+
+| Pattern | Why it's slop | Replacement |
+|---|---|---|
+| "Welcome to Ethos!" / "In this guide, we will…" | Throat-clearing burns the first screen | One-sentence pitch or task statement |
+| Mixed-audience page (user + developer in one tree) | Both readers bounce off material for the other | Split by persona; share via `shared/` directory |
+| Numbered steps inside an Explanation page | Page is secretly a how-to in costume | Move steps to how-to, cross-link from explanation |
+| Rationale paragraphs inside Reference | Page is secretly an explanation | Move "why" to explanation, cross-link from reference |
+| Stub pages (under-length, "TODO," placeholders) | Damages trust more than absence | Delete or fold until the page can be complete |
+| "Click here" / "Read more" link text | Unscannable; screen-reader hostile | Linkify the noun phrase: "the [Tool reference](#)" |
+| Marketing-template hero (3-column grid of icons in colored circles) | Indistinguishable from every AI SaaS | Stacked rows with real sample content |
+| Generic hero copy ("Build powerful agents") | No information density | Specific in-product language ("Personality is architecture") |
+| Sidebar as primary discovery (no landing card grid) | Long sidebars defeat scanning | Card-grid landing + sidebar as secondary |
+| Two parallel doc trees (`/docs` + `/kb`) | Reader searches twice | One canonical tree, types declared in front-matter |
+| Auto-generated "See also" link dumps | Untrusted, noisy | Curated, ≤5 links, each one chosen |
+| Emoji as decoration in headings (🚀, ✨, 🔥) | Indistinguishable from low-effort AI output | Status indicators in body content only |
+| Repeated explanations of the same concept across pages | Drift bait — the second copy will lag | Single canonical page, link to it from everywhere else |
+| Code samples with `// ...` placeholder bodies | Reader can't run it | Real, minimal, runnable code |
+| "Coming soon" / "WIP" badges | Promises that rot | Ship the page or don't link to it |
+
+## Page-acceptance checklist
+
+A docs PR is not merge-ready until every changed page passes this list. Reviewers paste it into the PR.
+
+- [ ] Front-matter declares `kind`, `audience`, and `updated`; values agree with the directory.
+- [ ] Page matches the template for its `kind` (required sections present, prohibited sections absent).
+- [ ] Passes the tutorial-vs-how-to test (or the why-question test for explanation).
+- [ ] Answers at least one of the four customer-first questions and the answer is visible above the fold.
+- [ ] First occurrence of every domain term links to [glossary.md](docs/content/getting-started/glossary.md).
+- [ ] Reference pages link to source-of-truth code path.
+- [ ] "See also" footer present on reference and explanation pages (≥1, ≤5 links).
+- [ ] Code samples are runnable against current `@ethosagent/types`.
+- [ ] No anti-patterns from the table above.
+- [ ] Docusaurus build passes with `onBrokenLinks: 'throw'`.
+- [ ] Page is reachable from at least one other page (no orphans).
+
+## Cross-surface rendering
+
+Same content, different surfaces. Single source of truth is the markdown under [docs/content/](docs/content/).
+
+| Surface | What it shows | Render rule |
+|---|---|---|
+| **Docusaurus site** (primary) | Full tree, all kinds, full styling | The canonical surface. Other surfaces link back here. |
+| **Repo [README.md](README.md)** | One-sentence pitch · install · quickstart link · two doors | Mirrors landing intent; never duplicates content. Links to the site. |
+| **In-package READMEs** | One-sentence purpose · install · link to package's reference page | One paragraph max. Package metadata, not docs. |
+| **`docs/static/llms.txt`** | Glossary · CLI reference · interface reference · explanation pages | Generated at build time from pages with `agent: true` front-matter flag (or by kind: reference + explanation). Single text file, no nav. |
+| **Personality `ETHOS.md`** | First-person identity for the personality itself | Not user docs — runtime config. Subject to DOCS.md voice rules anyway: imperative, terminal-adjacent, no marketing copy. |
+| **`apps/web` in-app help** | Glossary tooltips, command-palette descriptions | Reads from canonical glossary entries. Sentence-length cap: 140 chars. |
+
+## Implementation notes
+
+- **Build gate.** `docs/docusaurus.config.ts` sets `onBrokenLinks: 'throw'` and `onBrokenAnchors: 'throw'`. CI runs `pnpm --filter docs build` on every PR.
+- **Front-matter validator.** A script (`pnpm docs:check`) walks [docs/content/](docs/content/), validates required front-matter fields, and grep-checks for kind-specific required/prohibited sections. Fails CI on violation.
+- **Anti-pattern scan.** Same `pnpm docs:check` greps for the worst patterns ("Welcome to Ethos", emoji in headings, "click here", stub-length pages). Easy wins, mechanical.
+- **`llms.txt` generation.** A build step concatenates pages where `agent: true` or `kind: reference|explanation` into `docs/static/llms.txt`. Front-matter and Docusaurus syntax stripped. Run as part of `pnpm --filter docs build`.
+- **PR template.** [.github/pull_request_template.md](.github/pull_request_template.md) carries the page-acceptance checklist verbatim for any PR touching [docs/](docs/).
+- **No docs without DOCS.md review.** Any change that introduces a new page kind, renames a top-level section, or amends a template requires an explicit DOCS.md update in the same PR. The decisions log below is the audit trail.
