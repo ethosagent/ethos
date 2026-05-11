@@ -59,7 +59,7 @@ const LAYOUT_NUMBERS = ['240', '64', '360', '800', '520'];
 const LAYOUT_PATTERN = new RegExp(
   String.raw`\b(width|maxWidth|max-width)\s*[:=]\s*['"]?(` +
     LAYOUT_NUMBERS.join('|') +
-    String.raw`)(px)?['"]?`,
+    `)(px)?['"]?`,
   'g',
 );
 

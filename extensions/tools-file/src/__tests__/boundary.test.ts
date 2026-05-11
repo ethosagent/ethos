@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FsStorage, ScopedStorage } from '@ethosagent/storage-fs';
@@ -34,8 +34,14 @@ describe('tools-file — fs_reach boundary enforcement', () => {
   let cwd: string;
 
   beforeEach(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), 'ethos-fsreach-'));
-    cwd = await mkdtemp(join(tmpdir(), 'ethos-cwd-'));
+    // Canonicalize through realpath: on macOS, tmpdir() lives under
+    // /var/folders/... which is a symlink to /private/var/folders/...
+    // The read tool calls realpath() on the request path (Ch.5 symlink
+    // defense), so the allowlist prefixes must already be canonical or
+    // ScopedStorage's prefix check sees a /private/var path against a
+    // /var prefix and rejects.
+    dataDir = await realpath(await mkdtemp(join(tmpdir(), 'ethos-fsreach-')));
+    cwd = await realpath(await mkdtemp(join(tmpdir(), 'ethos-cwd-')));
     // Seed two personality dirs with their own MEMORY.md
     await mkdir(join(dataDir, 'personalities', 'researcher'), { recursive: true });
     await mkdir(join(dataDir, 'personalities', 'engineer'), { recursive: true });

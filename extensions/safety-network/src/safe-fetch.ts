@@ -27,7 +27,7 @@
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isCloudMetadataHost } from './cloud-metadata';
 import { checkAllowDeny, type NetworkPolicy } from './policy';
-import { checkScheme, type SchemeCheckResult } from './scheme';
+import { checkScheme } from './scheme';
 
 async function defaultResolveHost(host: string): Promise<string[]> {
   const records = await dnsLookup(host, { all: true });
@@ -189,7 +189,7 @@ const PRIVATE_RANGES_V4: Array<{ start: number; end: number; label: string }> = 
 
 function isValidIpv4(s: string): boolean {
   const m = s.match(IPV4_RE);
-  return m !== null && m.slice(1).every((octet) => Number(octet) <= 255);
+  return m?.slice(1).every((octet) => Number(octet) <= 255) ?? false;
 }
 
 function isPrivateIpv4(ip: string): boolean {

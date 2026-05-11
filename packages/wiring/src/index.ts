@@ -24,18 +24,9 @@ import { createImageTools } from '@ethosagent/tools-image';
 import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
 import { createMemoryTools } from '@ethosagent/tools-memory';
 import { createProcessTools } from '@ethosagent/tools-process';
-import {
-  checkCommand,
-  createTerminalGuardHook,
-  createTerminalTools,
-} from '@ethosagent/tools-terminal';
+import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-terminal';
 import { createWebTools } from '@ethosagent/tools-web';
-import type {
-  BeforeToolCallPayload,
-  ContextInjector,
-  LLMProvider,
-  PersonalityConfig,
-} from '@ethosagent/types';
+import type { ContextInjector, LLMProvider } from '@ethosagent/types';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
 
 // ---------------------------------------------------------------------------
