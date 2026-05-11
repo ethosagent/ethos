@@ -1,8 +1,8 @@
 import './styles.css';
 import { BUILTIN_SKINS, DEFAULT_TOKENS, resolveSkin } from '@ethosagent/design-tokens';
-import { tokensToAntd, tokensToLayoutCss } from '@ethosagent/design-tokens/antd';
+import { tokensToAntd, tokensToCssVariables } from '@ethosagent/design-tokens/antd';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { App as AntApp, ConfigProvider, type ThemeConfig, theme } from 'antd';
+import { App as AntApp, ConfigProvider, type ThemeConfig } from 'antd';
 import React, { useEffect, useMemo, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
@@ -64,24 +64,26 @@ function Root() {
   useEffect(() => watchReducedMotion(setReduceMotion), []);
 
   const antdTheme: ThemeConfig = useMemo(() => {
-    const base: ThemeConfig = {
-      algorithm: theme.darkAlgorithm,
-      ...tokensToAntd(resolvedTokens),
-    };
+    // tokensToAntd picks darkAlgorithm vs defaultAlgorithm from the skin's
+    // bgBase luminance — paper flips to light, default/mono stay on dark.
+    const base = tokensToAntd(resolvedTokens);
     return reduceMotion ? applyReducedMotion(base) : base;
   }, [resolvedTokens, reduceMotion]);
 
-  // Layout CSS variables — injected/updated on every skin change so a
-  // future skin that overrides tokens.layout reaches the static CSS rules.
+  // Root CSS variables (surface colors + layout dimensions). Re-emitted on
+  // every skin change so the static rules in styles.css (`var(--ethos-bg)`,
+  // `var(--layout-sidebar-expanded)`, …) follow the active skin without a
+  // reload. Replaces the hardcoded `--ethos-bg: #0f0f0f` and friends that
+  // used to be baked into the stylesheet's `:root`.
   useEffect(() => {
-    const id = 'ethos-layout-tokens';
+    const id = 'ethos-skin-tokens';
     let el = document.getElementById(id) as HTMLStyleElement | null;
     if (!el) {
       el = document.createElement('style');
       el.id = id;
       document.head.appendChild(el);
     }
-    el.textContent = tokensToLayoutCss(resolvedTokens);
+    el.textContent = tokensToCssVariables(resolvedTokens);
   }, [resolvedTokens]);
 
   // Global reduce-motion stylesheet — covers CSS-driven animations

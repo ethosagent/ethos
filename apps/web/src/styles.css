@@ -4,15 +4,18 @@
    chrome. */
 
 :root {
+  /*
+   * Surface colors and layout dimensions are owned by
+   * @ethosagent/design-tokens and re-emitted at runtime by main.tsx so the
+   * active skin drives both. The values below match the DESIGN.md default
+   * skin and act as the pre-hydration fallback — the runtime <style>
+   * block overrides them on mount and on every subsequent skin change.
+   */
   --ethos-bg: #0f0f0f;
   --ethos-bg-elevated: #1a1a1a;
   --ethos-border: #2a2a2a;
-  --ethos-text: rgba(255, 255, 255, 0.9);
-  --ethos-text-dim: rgba(255, 255, 255, 0.55);
-
-  /* Layout dimensions are owned by @ethosagent/design-tokens (see
-     tokens.layout). main.tsx injects --layout-* vars at runtime; these
-     aliases keep existing rules working without a sweeping rename. */
+  --ethos-text: #e8e8e6;
+  --ethos-text-dim: #9a9a98;
   --sidebar-width: var(--layout-sidebar-expanded);
   --sidebar-collapsed-width: var(--layout-sidebar-collapsed);
   --topbar-height: 48px;
