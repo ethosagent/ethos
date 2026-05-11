@@ -46,6 +46,8 @@
     "@ethosagent/tools-memory": "workspace:*",
     "@ethosagent/tools-process": "workspace:*",
     "@ethosagent/tools-terminal": "workspace:*",
+    "@ethosagent/kanban-store": "workspace:*",
+    "@ethosagent/tools-kanban": "workspace:*",
     "@ethosagent/tools-todo": "workspace:*",
     "@ethosagent/tools-web": "workspace:*",
     "@ethosagent/types": "workspace:*"

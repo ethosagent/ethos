@@ -1,0 +1,12 @@
+- kanban_create
+- kanban_list
+- kanban_show
+- kanban_update_status
+- kanban_comment
+- kanban_complete
+- kanban_block
+- kanban_unblock
+- kanban_heartbeat
+- kanban_link
+- kanban_assign
+- kanban_archive
