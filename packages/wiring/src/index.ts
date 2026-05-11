@@ -5,6 +5,7 @@ import {
   DefaultHookRegistry,
   DefaultToolRegistry,
 } from '@ethosagent/core';
+import { KanbanStore } from '@ethosagent/kanban-store';
 import { AnthropicProvider, AuthRotatingProvider } from '@ethosagent/llm-anthropic';
 import { OpenAICompatProvider } from '@ethosagent/llm-openai-compat';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
@@ -21,6 +22,7 @@ import { createCodeTools } from '@ethosagent/tools-code';
 import { createDelegationTools } from '@ethosagent/tools-delegation';
 import { createFileTools } from '@ethosagent/tools-file';
 import { createImageTools } from '@ethosagent/tools-image';
+import { createKanbanTools } from '@ethosagent/tools-kanban';
 import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
 import { createMemoryTools } from '@ethosagent/tools-memory';
 import { createProcessTools } from '@ethosagent/tools-process';
@@ -58,6 +60,13 @@ export interface WiringConfig {
   modelRouting?: Record<string, string>;
   /** Anthropic key rotation pool. Empty / absent = single-key provider. */
   rotationKeys?: RotationKey[];
+  /**
+   * Override path to the kanban SQLite database. When unset, the store lives at
+   * `${dataDir}/personalities/<active-personality-id>/kanban.db` (per-personality
+   * solo board, per Plan A spec). Plan B teams override this to point at a
+   * shared team board.
+   */
+  kanbanDbPath?: string;
   /**
    * Fallback provider chain. When 2+ entries are provided, `createLLM` wraps
    * them in a `ChainedProvider` with cooldown-based automatic failover.
@@ -109,6 +118,10 @@ export interface CreateAgentLoopOptions {
 // ---------------------------------------------------------------------------
 // LLM provider construction
 // ---------------------------------------------------------------------------
+
+function personalityWantsKanban(p: { toolset?: readonly string[] }): boolean {
+  return (p.toolset ?? []).some((name) => name.startsWith('kanban_'));
+}
 
 function createSingleProvider(cfg: {
   provider: string;
@@ -202,6 +215,10 @@ export async function createAgentLoop(
     }
   }
 
+  // Capture the active personality once. Downstream wiring (kanban, MCP, skill
+  // passthrough, watcher boot) all branch off this same value.
+  const activePerson = personalities.getDefault();
+
   // Sandbox is shared by the browser and code tools. init() is non-blocking
   // when Docker is absent; the tool sets gate themselves on isAvailable().
   const sandbox = new DockerSandbox();
@@ -219,6 +236,18 @@ export async function createAgentLoop(
   // five todo_* tools share the same Map, keyed by ToolContext.sessionKey.
   const todoStore = new InMemoryTodoStore();
   for (const tool of createTodoTools(todoStore)) tools.register(tool);
+
+  // Kanban tools are wired only when the active personality actually uses them.
+  // The DB is per-personality in Plan A (one solo board); Plan B's team-supervisor
+  // overrides kanbanDbPath to point at a shared team board.
+  // KanbanStore handles its own parent-directory creation (same raw-fs exception
+  // session-sqlite gets — see CLAUDE.md "Storage abstraction" exceptions).
+  if (personalityWantsKanban(activePerson)) {
+    const kanbanDbPath =
+      config.kanbanDbPath ?? join(dataDir, 'personalities', activePerson.id, 'kanban.db');
+    const kanbanStore = new KanbanStore(kanbanDbPath);
+    for (const tool of createKanbanTools({ store: kanbanStore })) tools.register(tool);
+  }
   for (const tool of createProcessTools(dataDir)) tools.register(tool);
   for (const tool of createImageTools()) tools.register(tool);
   if (!opts.disableDocker) {
@@ -236,7 +265,6 @@ export async function createAgentLoop(
   // ingest filter cannot contribute passthrough. Passthrough is then applied
   // only to MCP servers the personality is allowed to reach (mcp_servers
   // allowlist), not globally to every server.
-  const activePerson = personalities.getDefault();
   const codingBundleSource = bundledCodingSkillsSource();
   const skillPool = await new UniversalScanner({
     trustedFirstPartySources: [codingBundleSource],

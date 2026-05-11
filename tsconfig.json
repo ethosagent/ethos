@@ -12,6 +12,8 @@
       "@ethosagent/memory-markdown": ["./extensions/memory-markdown/src"],
       "@ethosagent/personalities": ["./extensions/personalities/src"],
       "@ethosagent/session-sqlite": ["./extensions/session-sqlite/src"],
+      "@ethosagent/kanban-store": ["./extensions/kanban-store/src"],
+      "@ethosagent/tools-kanban": ["./extensions/tools-kanban/src"],
       "@ethosagent/agent-mesh": ["./extensions/agent-mesh/src"],
       "@ethosagent/team-supervisor": ["./extensions/team-supervisor/src"],
       "@ethosagent/acp-server": ["./extensions/acp-server/src"],

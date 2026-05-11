@@ -465,6 +465,19 @@ importers:
         specifier: ^12.9.0
         version: 12.9.0
 
+  extensions/kanban-store:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      better-sqlite3:
+        specifier: ^12.9.0
+        version: 12.9.0
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
+
   extensions/llm-anthropic:
     dependencies:
       '@anthropic-ai/sdk':
@@ -807,6 +820,15 @@ importers:
         specifier: '*'
         version: 4.104.0(ws@8.20.0)(zod@4.3.6)
 
+  extensions/tools-kanban:
+    dependencies:
+      '@ethosagent/kanban-store':
+        specifier: workspace:*
+        version: link:../kanban-store
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/tools-mcp:
     dependencies:
       '@ethosagent/safety-scanner':
@@ -995,6 +1017,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../core
+      '@ethosagent/kanban-store':
+        specifier: workspace:*
+        version: link:../../extensions/kanban-store
       '@ethosagent/llm-anthropic':
         specifier: workspace:*
         version: link:../../extensions/llm-anthropic
@@ -1052,6 +1077,9 @@ importers:
       '@ethosagent/tools-image':
         specifier: workspace:*
         version: link:../../extensions/tools-image
+      '@ethosagent/tools-kanban':
+        specifier: workspace:*
+        version: link:../../extensions/tools-kanban
       '@ethosagent/tools-mcp':
         specifier: workspace:*
         version: link:../../extensions/tools-mcp
