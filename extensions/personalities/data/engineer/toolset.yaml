@@ -8,3 +8,8 @@
 - execute_code
 - run_tests
 - lint
+- todo_set
+- todo_add
+- todo_update
+- todo_list
+- todo_clear

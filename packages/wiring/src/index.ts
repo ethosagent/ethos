@@ -25,6 +25,7 @@ import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
 import { createMemoryTools } from '@ethosagent/tools-memory';
 import { createProcessTools } from '@ethosagent/tools-process';
 import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-terminal';
+import { createTodoTools, InMemoryTodoStore } from '@ethosagent/tools-todo';
 import { createWebTools } from '@ethosagent/tools-web';
 import type { ContextInjector, LLMProvider } from '@ethosagent/types';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
@@ -214,6 +215,10 @@ export async function createAgentLoop(
   for (const tool of createTerminalTools()) tools.register(tool);
   for (const tool of createWebTools()) tools.register(tool);
   for (const tool of createMemoryTools(memory, session)) tools.register(tool);
+  // One InMemoryTodoStore per process — lifetime tied to the AgentLoop; all
+  // five todo_* tools share the same Map, keyed by ToolContext.sessionKey.
+  const todoStore = new InMemoryTodoStore();
+  for (const tool of createTodoTools(todoStore)) tools.register(tool);
   for (const tool of createProcessTools(dataDir)) tools.register(tool);
   for (const tool of createImageTools()) tools.register(tool);
   if (!opts.disableDocker) {

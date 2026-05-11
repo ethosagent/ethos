@@ -846,6 +846,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/tools-todo:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/tools-web:
     dependencies:
       '@ethosagent/safety-network':
@@ -1058,6 +1064,9 @@ importers:
       '@ethosagent/tools-terminal':
         specifier: workspace:*
         version: link:../../extensions/tools-terminal
+      '@ethosagent/tools-todo':
+        specifier: workspace:*
+        version: link:../../extensions/tools-todo
       '@ethosagent/tools-web':
         specifier: workspace:*
         version: link:../../extensions/tools-web

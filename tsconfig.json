@@ -32,6 +32,7 @@
       "@ethosagent/tools-web": ["./extensions/tools-web/src"],
       "@ethosagent/tools-delegation": ["./extensions/tools-delegation/src"],
       "@ethosagent/tools-memory": ["./extensions/tools-memory/src"],
+      "@ethosagent/tools-todo": ["./extensions/tools-todo/src"],
       "@ethosagent/plugin-sdk": ["./packages/plugin-sdk/src"],
       "@ethosagent/plugin-sdk/tool-helpers": ["./packages/plugin-sdk/src/tool-helpers"],
       "@ethosagent/plugin-sdk/testing": ["./packages/plugin-sdk/src/testing"],
