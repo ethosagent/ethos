@@ -689,6 +689,7 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
     description: string;
     model: string;
     memoryScope: 'global' | 'per-personality' | undefined;
+    skin: string | undefined;
   }>();
 
   useEffect(() => {
@@ -697,6 +698,7 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
       description: personality.description ?? '',
       model: personality.model ?? '',
       memoryScope: personality.memoryScope ?? undefined,
+      skin: personality.skin ?? undefined,
     });
   }, [personality, form]);
 
@@ -706,6 +708,9 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
       description: string;
       model: string;
       memoryScope?: 'global' | 'per-personality';
+      // `null` is the explicit "clear the override" signal; `undefined` means
+      // "leave alone." Server side: `string | null | undefined` per contract.
+      skin?: string | null;
     }) =>
       rpc.personalities.update({
         id,
@@ -713,10 +718,15 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
         description: values.description,
         model: values.model,
         ...(values.memoryScope ? { memoryScope: values.memoryScope } : {}),
+        skin: values.skin ?? null,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['personalities', 'get', id] });
       qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
+      // Invalidate config too — the chat tab's per-personality skin resolution
+      // reads `personality.skin` from the list and the user pin from config,
+      // so this refresh makes the chat surface repaint immediately.
+      qc.invalidateQueries({ queryKey: ['config'] });
       notification.success({ message: 'Config saved', placement: 'topRight' });
     },
     onError: (err) =>
@@ -733,6 +743,7 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
           description: values.description,
           model: values.model,
           ...(values.memoryScope ? { memoryScope: values.memoryScope } : {}),
+          skin: values.skin ?? null,
         })
       }
     >
@@ -751,6 +762,21 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
           options={[
             { label: 'global (default)', value: 'global' },
             { label: 'per-personality', value: 'per-personality' },
+          ]}
+        />
+      </Form.Item>
+      <Form.Item
+        label="Skin"
+        name="skin"
+        extra="Applies on chat tabs for this personality when no global skin is pinned in Settings. Clear to fall back to the global default."
+      >
+        <Select
+          allowClear
+          placeholder="(none — use global default)"
+          options={[
+            { value: 'default', label: 'default — DESIGN.md baseline' },
+            { value: 'mono', label: 'mono — desaturated accents' },
+            { value: 'paper', label: 'paper — light mode' },
           ]}
         />
       </Form.Item>
