@@ -119,6 +119,12 @@ const PersonalityUpdateInput = z.object({
   memoryScope: z.enum(['global', 'per-personality']).optional(),
   mcp_servers: z.array(z.string()).optional(),
   plugins: z.array(z.string()).optional(),
+  /**
+   * Named skin override (see @ethosagent/design-tokens BUILTIN_SKINS).
+   * `null` clears the override; a string sets it; omitting the field
+   * leaves the existing value alone.
+   */
+  skin: z.string().nullable().optional(),
 });
 const PersonalityUpdateOutput = z.object({ personality: PersonalitySchema });
 

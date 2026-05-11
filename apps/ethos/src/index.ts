@@ -175,9 +175,12 @@ try {
         await runPersonalityPlugins(args.slice(2));
       } else if (sub === 'duplicate') {
         await runPersonalityDuplicate(args.slice(2));
+      } else if (sub === 'skin') {
+        const { runPersonalitySkin } = await import('./commands/personality-skin');
+        await runPersonalitySkin(args.slice(2));
       } else {
         console.log(
-          'Usage: ethos personality [list | set <id> | duplicate <src> <dst> | mcp <id> [--attach <name> | --detach <name>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
+          'Usage: ethos personality [list | set <id> | duplicate <src> <dst> | mcp <id> [--attach <name> | --detach <name>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>] | skin [<id> [<name> | --clear]]]',
         );
       }
       break;
