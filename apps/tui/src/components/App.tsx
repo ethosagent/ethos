@@ -1,10 +1,18 @@
 import { basename } from 'node:path';
 import type { AgentBridge } from '@ethosagent/agent-bridge';
 import type { AgentLoop } from '@ethosagent/core';
+import { DEFAULT_TOKENS } from '@ethosagent/design-tokens';
 import type { Session } from '@ethosagent/types';
 import { Box, Text, useApp, useInput } from 'ink';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { personalityAccent, SKINS, type SkinConfig, SkinContext } from '../skin';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  BUILTIN_SKIN_NAMES,
+  BUILTIN_SKINS,
+  personalityAccent,
+  resolveSkin,
+  SkinContext,
+  type Tokens,
+} from '../skin';
 import { getUpdateStatus, type UpdateStatus } from '../update-check';
 import { AccordionSection, type DetailsMode } from './AccordionSection';
 import { type ChatMessage, ChatPane } from './ChatPane';
@@ -79,9 +87,35 @@ interface AppProps {
   initialPersonality: string;
   initialSessionKey: string;
   initialVerbose?: boolean;
+  /**
+   * Named skin pinned by the user (config.yaml `skin:` or `--skin` flag).
+   * When set, it overrides any personality-declared skin. When absent,
+   * the personality's own `skin` field wins, falling back to 'default'.
+   */
+  initialSkin?: string;
   rebuildLoop?: (modelId: string) => Promise<AgentLoop>;
   inventory?: SplashInventory;
   version?: string;
+}
+
+/**
+ * Phase 3 resolution order — highest wins:
+ *   1. User pin (initialSkin / /skin <name>)
+ *   2. Personality default (personality.skin from config.yaml)
+ *   3. Engine default ('default')
+ */
+function pickEffectiveSkin(userPin: string | null, personalitySkin: string | undefined): string {
+  if (userPin && BUILTIN_SKINS[userPin]) return userPin;
+  if (personalitySkin && BUILTIN_SKINS[personalitySkin]) return personalitySkin;
+  return 'default';
+}
+
+function resolveTokensFor(skinName: string): Tokens {
+  try {
+    return resolveSkin(DEFAULT_TOKENS, BUILTIN_SKINS, skinName);
+  } catch {
+    return DEFAULT_TOKENS;
+  }
 }
 
 interface DetailsState {
@@ -113,6 +147,7 @@ export function App({
   initialPersonality,
   initialSessionKey,
   initialVerbose = false,
+  initialSkin,
   rebuildLoop,
   inventory,
   version,
@@ -133,7 +168,29 @@ export function App({
   const [usage, setUsage] = useState({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
   const [statusMsg, setStatusMsg] = useState('');
   const [details, setDetails] = useState<DetailsState>(DEFAULT_DETAILS);
-  const [skin, setSkin] = useState<SkinConfig>(SKINS.default);
+  // Skin state — Phase 3 resolution order: user pin > personality.skin > default.
+  // `userPinnedSkin` is the value the user set via `--skin` flag, config.yaml,
+  // or `/skin <name>`. When null, the personality's declared skin wins.
+  const [userPinnedSkin, setUserPinnedSkin] = useState<string | null>(() =>
+    initialSkin && BUILTIN_SKINS[initialSkin] ? initialSkin : null,
+  );
+  const [tokens, setTokens] = useState<Tokens>(() => {
+    const personalitySkin = bridge.getPersonalitySkin(initialPersonality);
+    const effective = pickEffectiveSkin(
+      initialSkin && BUILTIN_SKINS[initialSkin] ? initialSkin : null,
+      personalitySkin,
+    );
+    return resolveTokensFor(effective);
+  });
+  const applyTokensFor = useCallback(
+    (personalityId: string, userPin: string | null): string => {
+      const personalitySkin = bridge.getPersonalitySkin(personalityId);
+      const effective = pickEffectiveSkin(userPin, personalitySkin);
+      setTokens(resolveTokensFor(effective));
+      return effective;
+    },
+    [bridge],
+  );
   const [modal, setModal] = useState<Modal>(null);
   const [completionIndex, setCompletionIndex] = useState(0);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
@@ -665,6 +722,10 @@ export function App({
           const newPersonality = args[0] ?? personality;
           setPersonality(newPersonality);
           setBudgetCapUsd(bridge.getPersonalityBudgetCap(newPersonality) ?? null);
+          // Phase 3 — re-resolve the active skin against the new personality.
+          // User pin still wins; falls back to the new personality's declared
+          // skin if no pin is set.
+          applyTokensFor(newPersonality, userPinnedSkin);
           setStatusMsg(`[personality: ${newPersonality}]`);
         }
         break;
@@ -741,26 +802,45 @@ export function App({
       case 'details':
         handleDetailsCommand(args);
         break;
-      case 'skin':
-        if (args.length === 0 || args[0] === 'list') {
+      case 'skin': {
+        const sub = args[0] ?? '';
+        if (sub === '' || sub === 'list') {
+          const personalitySkin = bridge.getPersonalitySkin(personality);
+          const effective = pickEffectiveSkin(userPinnedSkin, personalitySkin);
+          const lines = BUILTIN_SKIN_NAMES.map((name) => {
+            const marker = name === effective ? '*' : ' ';
+            return `  ${marker} ${name.padEnd(10)} ${BUILTIN_SKINS[name].description}`;
+          });
+          const source = userPinnedSkin
+            ? `pinned by user`
+            : personalitySkin
+              ? `from personality "${personality}"`
+              : `engine default`;
           setMessages((prev) => [
             ...prev,
             {
               id: nextId(),
               role: 'assistant',
-              text: `Skins: ${Object.keys(SKINS).join(' · ')}\nCurrent: ${skin.name}`,
+              text: `Skins:\n${lines.join('\n')}\nActive: ${effective} (${source})`,
             },
           ]);
-        } else {
-          const next = SKINS[args[0] ?? ''];
-          if (next) {
-            setSkin(next);
-            setStatusMsg(`[skin: ${next.name}]`);
-          } else {
-            setStatusMsg(`Unknown skin: ${args[0]}`);
-          }
+          break;
         }
+        if (sub === 'reset') {
+          setUserPinnedSkin(null);
+          const effective = applyTokensFor(personality, null);
+          setStatusMsg(`[skin: ${effective} — user pin cleared]`);
+          break;
+        }
+        if (!BUILTIN_SKINS[sub]) {
+          setStatusMsg(`Unknown skin: ${sub} — /skin list to see options`);
+          break;
+        }
+        setUserPinnedSkin(sub);
+        applyTokensFor(personality, sub);
+        setStatusMsg(`[skin: ${sub}]`);
         break;
+      }
       case 'tools': {
         if (!inventory) {
           setStatusMsg('[no tool inventory available]');
@@ -838,7 +918,7 @@ export function App({
 
   if (modal === 'sessions') {
     return (
-      <SkinContext.Provider value={skin}>
+      <SkinContext.Provider value={tokens}>
         <SessionPickerModal
           onSelect={(s: Session) => {
             setSessionKey(s.key);
@@ -856,7 +936,7 @@ export function App({
 
   if (modal === 'models') {
     return (
-      <SkinContext.Provider value={skin}>
+      <SkinContext.Provider value={tokens}>
         <ModelPickerModal
           current={currentModel}
           onSelect={async (entry) => {
@@ -887,7 +967,7 @@ export function App({
   }
 
   return (
-    <SkinContext.Provider value={skin}>
+    <SkinContext.Provider value={tokens}>
       <Box flexDirection="column">
         <ConsoleHeader
           model={currentModel}

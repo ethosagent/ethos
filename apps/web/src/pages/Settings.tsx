@@ -1,3 +1,4 @@
+import { BUILTIN_SKIN_NAMES, BUILTIN_SKINS } from '@ethosagent/design-tokens';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   App as AntApp,
@@ -33,6 +34,7 @@ interface FormShape {
   baseUrl?: string;
   personality: string;
   memory: 'markdown' | 'vector';
+  skin: string;
 }
 
 export function Settings() {
@@ -64,6 +66,7 @@ export function Settings() {
         baseUrl: configQuery.data.baseUrl ?? '',
         personality: configQuery.data.personality,
         memory: configQuery.data.memory,
+        skin: configQuery.data.skin,
       });
     }
   }, [configQuery.data, form]);
@@ -105,6 +108,7 @@ export function Settings() {
       model: values.model,
       personality: values.personality,
       memory: values.memory,
+      skin: values.skin,
     };
     if (values.apiKey && values.apiKey.length > 0) patch.apiKey = values.apiKey;
     if (values.baseUrl !== undefined) patch.baseUrl = values.baseUrl;
@@ -171,6 +175,21 @@ export function Settings() {
               }))}
               showSearch
               optionFilterProp="label"
+            />
+          </Form.Item>
+        </Card>
+
+        <Card title="Appearance" size="small" style={{ marginBottom: 16 }}>
+          <Form.Item
+            label="Skin"
+            name="skin"
+            extra="DESIGN.md baseline plus named overrides. Applies across all surfaces (Web, TUI)."
+          >
+            <Select
+              options={BUILTIN_SKIN_NAMES.map((name) => ({
+                value: name,
+                label: `${name} — ${BUILTIN_SKINS[name].description}`,
+              }))}
             />
           </Form.Item>
         </Card>

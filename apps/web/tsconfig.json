@@ -6,7 +6,9 @@
     "types": ["vite/client"],
     "noEmit": true,
     "paths": {
-      "@ethosagent/web-contracts": ["../../packages/web-contracts/src"]
+      "@ethosagent/web-contracts": ["../../packages/web-contracts/src"],
+      "@ethosagent/design-tokens": ["../../packages/design-tokens/src"],
+      "@ethosagent/design-tokens/antd": ["../../packages/design-tokens/src/antd"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]

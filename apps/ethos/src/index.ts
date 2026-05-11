@@ -115,6 +115,9 @@ try {
     case '': {
       const chatArgs = args.slice(command === 'chat' ? 1 : 0);
       const verboseFlag = chatArgs.includes('--verbose');
+      // --skin <name> overrides the persisted config.skin for this process.
+      const skinFlagIdx = chatArgs.indexOf('--skin');
+      const skinFlag = skinFlagIdx !== -1 ? chatArgs[skinFlagIdx + 1] : undefined;
       const { query, queryFlagUsed } = extractSingleQuery(chatArgs);
       if (queryFlagUsed && (!query || query.trim().length === 0)) {
         console.error('Usage: ethos chat -q "<prompt>"');
@@ -126,13 +129,19 @@ try {
         const setupResult = await runSetup();
         if (setupResult) {
           const { config: fresh } = setupResult;
-          await runChat(verboseFlag ? { ...fresh, verbose: true } : fresh, {
+          const withFlags = { ...fresh };
+          if (verboseFlag) withFlags.verbose = true;
+          if (skinFlag) withFlags.skin = skinFlag;
+          await runChat(withFlags, {
             ...(query ? { singleQuery: query } : {}),
           });
           if (query) process.exit(0);
         }
       } else {
-        await runChat(verboseFlag ? { ...config, verbose: true } : config, {
+        const withFlags = { ...config };
+        if (verboseFlag) withFlags.verbose = true;
+        if (skinFlag) withFlags.skin = skinFlag;
+        await runChat(withFlags, {
           ...(query ? { singleQuery: query } : {}),
         });
         if (query) process.exit(0);

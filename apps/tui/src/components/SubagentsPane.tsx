@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import { DESIGN, GLYPHS } from '../skin';
+import { useSkin } from '../skin';
 
 export interface DelegationRecord {
   id: string;
@@ -16,6 +16,7 @@ interface SubagentsPaneProps {
 const MAX_VISIBLE = 16;
 
 export function SubagentsPane({ delegations }: SubagentsPaneProps) {
+  const tokens = useSkin();
   if (delegations.length === 0) return null;
   const visible = delegations.slice(-MAX_VISIBLE);
   return (
@@ -26,13 +27,17 @@ export function SubagentsPane({ delegations }: SubagentsPaneProps) {
             <Text
               color={
                 d.status === 'done'
-                  ? DESIGN.success
+                  ? tokens.semantic.success
                   : d.status === 'failed'
-                    ? DESIGN.error
-                    : DESIGN.warning
+                    ? tokens.semantic.error
+                    : tokens.semantic.warning
               }
             >
-              {d.status === 'done' ? GLYPHS.toolOk : d.status === 'failed' ? GLYPHS.toolFail : '…'}
+              {d.status === 'done'
+                ? tokens.glyphs.toolOk
+                : d.status === 'failed'
+                  ? tokens.glyphs.toolFail
+                  : '…'}
             </Text>
             <Text dimColor>
               {d.capability}
@@ -40,7 +45,7 @@ export function SubagentsPane({ delegations }: SubagentsPaneProps) {
             </Text>
           </Box>
           {d.status === 'failed' && d.error && (
-            <Text color={DESIGN.error}> reason: {d.error.slice(0, 96)}</Text>
+            <Text color={tokens.semantic.error}> reason: {d.error.slice(0, 96)}</Text>
           )}
         </Box>
       ))}

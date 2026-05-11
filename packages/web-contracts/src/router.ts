@@ -299,6 +299,8 @@ const ConfigGetOutput = z.object({
   personality: z.string(),
   memory: z.enum(['markdown', 'vector']),
   modelRouting: z.record(z.string(), z.string()),
+  /** Currently selected skin (one of the BUILTIN_SKINS names). */
+  skin: z.string(),
 });
 
 const ConfigUpdateInput = z.object({
@@ -309,6 +311,7 @@ const ConfigUpdateInput = z.object({
   personality: z.string().optional(),
   memory: z.enum(['markdown', 'vector']).optional(),
   modelRouting: z.record(z.string(), z.string()).optional(),
+  skin: z.string().optional(),
 });
 const ConfigUpdateOutput = z.object({ ok: z.literal(true) });
 

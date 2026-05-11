@@ -10,10 +10,13 @@
   --ethos-text: rgba(255, 255, 255, 0.9);
   --ethos-text-dim: rgba(255, 255, 255, 0.55);
 
-  --sidebar-width: 220px;
-  --sidebar-collapsed-width: 56px;
+  /* Layout dimensions are owned by @ethosagent/design-tokens (see
+     tokens.layout). main.tsx injects --layout-* vars at runtime; these
+     aliases keep existing rules working without a sweeping rename. */
+  --sidebar-width: var(--layout-sidebar-expanded);
+  --sidebar-collapsed-width: var(--layout-sidebar-collapsed);
   --topbar-height: 48px;
-  --drawer-width: 280px;
+  --drawer-width: var(--layout-right-drawer);
 }
 
 html,
@@ -206,7 +209,7 @@ body,
   flex-direction: column;
   align-items: center;
   gap: 24px;
-  max-width: 520px;
+  max-width: var(--layout-onboarding-max-width);
   margin: 48px auto;
   padding: 0 24px;
 }
@@ -1373,7 +1376,7 @@ body,
 .message-row {
   display: flex;
   padding: 0 24px;
-  max-width: 800px;
+  max-width: var(--layout-chat-max-width);
   width: 100%;
   margin: 0 auto;
 }
@@ -1485,7 +1488,7 @@ body,
   border-top: 1px solid var(--ethos-border);
   background: var(--ethos-bg);
   align-items: flex-end;
-  max-width: 800px;
+  max-width: var(--layout-chat-max-width);
   width: 100%;
   margin: 0 auto;
   box-sizing: border-box;

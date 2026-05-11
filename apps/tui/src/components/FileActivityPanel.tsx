@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import { DESIGN } from '../skin';
+import { useSkin } from '../skin';
 
 export interface FileActivity {
   id: string;
@@ -18,23 +18,6 @@ interface FileActivityPanelProps {
 
 const MAX_ENTRIES = 20;
 
-function colorFor(status: FileActivity['status']): string {
-  switch (status) {
-    case 'approval_required':
-      return DESIGN.warning;
-    case 'approved':
-      return DESIGN.success;
-    case 'denied':
-      return DESIGN.error;
-    case 'done':
-      return DESIGN.success;
-    case 'error':
-      return DESIGN.error;
-    default:
-      return DESIGN.warning;
-  }
-}
-
 function actionGlyph(action: FileActivity['action']): string {
   switch (action) {
     case 'write':
@@ -47,6 +30,7 @@ function actionGlyph(action: FileActivity['action']): string {
 }
 
 function InlineDiff({ diff, maxLines = 8 }: { diff: string; maxLines?: number }) {
+  const tokens = useSkin();
   const lines = diff
     .split('\n')
     .filter((l) => l.startsWith('+') || l.startsWith('-') || l.startsWith('@'));
@@ -56,10 +40,10 @@ function InlineDiff({ diff, maxLines = 8 }: { diff: string; maxLines?: number })
     <Box flexDirection="column" paddingLeft={2}>
       {visible.map((line, i) => {
         const color = line.startsWith('+')
-          ? DESIGN.success
+          ? tokens.semantic.success
           : line.startsWith('-')
-            ? DESIGN.error
-            : DESIGN.textSecondary;
+            ? tokens.semantic.error
+            : tokens.surface.textSecondary;
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: stable diff lines
           <Text key={i} color={color}>
@@ -77,20 +61,37 @@ export function FileActivityPanel({
   focused = false,
   selectedId,
 }: FileActivityPanelProps) {
+  const tokens = useSkin();
+  const colorFor = (status: FileActivity['status']): string => {
+    switch (status) {
+      case 'approval_required':
+        return tokens.semantic.warning;
+      case 'approved':
+        return tokens.semantic.success;
+      case 'denied':
+        return tokens.semantic.error;
+      case 'done':
+        return tokens.semantic.success;
+      case 'error':
+        return tokens.semantic.error;
+      default:
+        return tokens.semantic.warning;
+    }
+  };
   const visible = entries.slice(-MAX_ENTRIES);
   const pendingPatches = visible.filter((e) => e.status === 'approval_required').length;
 
   return (
     <Box marginBottom={1} flexDirection="column">
-      <Text dimColor color={focused ? DESIGN.info : undefined}>
+      <Text dimColor color={focused ? tokens.semantic.info : undefined}>
         {'─── '}
-        <Text bold color={focused ? DESIGN.info : DESIGN.textPrimary}>
+        <Text bold color={focused ? tokens.semantic.info : tokens.surface.textPrimary}>
           file activity
         </Text>
         {' ───'}
       </Text>
       {pendingPatches > 0 && (
-        <Text color={DESIGN.warning} dimColor>
+        <Text color={tokens.semantic.warning} dimColor>
           {pendingPatches} pending · a=approve d=deny
         </Text>
       )}

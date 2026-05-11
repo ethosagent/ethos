@@ -1,4 +1,4 @@
-import { personalityAccent } from '@ethosagent/web-contracts';
+import { personalityAccent } from '@ethosagent/design-tokens';
 import { formatContextWindow, MODEL_CATALOG } from '../catalog/models';
 import type { WizardAnswers } from '../reducer';
 

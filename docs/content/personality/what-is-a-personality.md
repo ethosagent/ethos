@@ -78,6 +78,7 @@ memoryScope: global
 | `capabilities` | string (comma-separated) | no | Capability labels advertised to the agent mesh — used by `route_to_agent` to pick this agent for matching tasks |
 | `memoryScope` | `global` \| `per-personality` | no | Defaults to `global` |
 | `streamingTimeoutMs` | number | no | Per-personality streaming watchdog — abort the LLM stream if no chunk arrives within this many milliseconds. Defaults to the agent loop's 120000ms |
+| `skin` | string | no | Named skin override (e.g. `mono`, `paper`). When the user has not pinned a global skin in `~/.ethos/config.yaml`, switching to this personality applies the skin's resolved tokens across web + TUI. User pin always wins |
 | `toolset` | string[] | no | Allowed tool names — declared in the separate `toolset.yaml` file (see below) |
 
 ---

@@ -86,6 +86,13 @@ export interface EthosConfig {
   emailSmtpPort?: number;
   /** Show per-turn timing summary after every response. */
   verbose?: boolean;
+  /**
+   * Named skin override (see `@ethosagent/design-tokens` built-in skins:
+   * `default`, `mono`, `paper`). When set, the resolved tokens are wired
+   * into both the TUI SkinContext and the Web ConfigProvider so the
+   * visible palette matches the user's choice on every surface.
+   */
+  skin?: string;
   /** Global retention settings. Per-category TTLs. */
   retention?: RetentionConfig;
   /**
@@ -130,6 +137,7 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   if (config.slackAppToken) lines.push(`slackAppToken: ${config.slackAppToken}`);
   if (config.slackSigningSecret) lines.push(`slackSigningSecret: ${config.slackSigningSecret}`);
   if (config.verbose) lines.push('verbose: true');
+  if (config.skin) lines.push(`skin: ${config.skin}`);
   if (config.retention) {
     for (const [key, val] of retentionToLines(config.retention)) {
       lines.push(`retention.${key}: ${val}`);
@@ -243,6 +251,7 @@ function parseConfigYaml(src: string): EthosConfig {
     emailSmtpHost: kv.emailSmtpHost,
     emailSmtpPort: kv.emailSmtpPort ? Number(kv.emailSmtpPort) : undefined,
     verbose: kv.verbose === 'true' ? true : undefined,
+    skin: kv.skin || undefined,
     retention,
     personalitiesConfig,
   };

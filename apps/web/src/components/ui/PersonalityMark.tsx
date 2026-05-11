@@ -1,4 +1,5 @@
-import { generatePersonalityMark, personalityAccent } from '@ethosagent/web-contracts';
+import { personalityAccent } from '@ethosagent/design-tokens';
+import { generatePersonalityMark } from '@ethosagent/web-contracts';
 
 // SVG renderer for the deterministic personality mark. The algorithm
 // lives in `@ethosagent/web-contracts/marks` so the same mark renders

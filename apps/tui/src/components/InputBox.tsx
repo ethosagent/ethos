@@ -1,6 +1,6 @@
 import { Box, Text, useInput } from 'ink';
 import { useState } from 'react';
-import { DESIGN, useSkin } from '../skin';
+import { useSkin } from '../skin';
 
 interface InputBoxProps {
   value: string;
@@ -45,7 +45,7 @@ export function InputBox({
   onArrowDown,
   onEscape,
 }: InputBoxProps) {
-  const skin = useSkin();
+  const tokens = useSkin();
   const [cursor, setCursor] = useState(value.length);
   const safeCursor = Math.min(cursor, value.length);
 
@@ -168,12 +168,17 @@ export function InputBox({
   const lineCount = lines.length;
 
   return (
-    <Box borderStyle="single" borderColor={DESIGN.borderSubtle} paddingX={1} flexDirection="column">
+    <Box
+      borderStyle="single"
+      borderColor={tokens.surface.borderSubtle}
+      paddingX={1}
+      flexDirection="column"
+    >
       <Box>
-        <Text color={skin.promptColor} bold>
+        <Text color={tokens.semantic.info} bold>
           You
         </Text>
-        <Text dimColor> {skin.promptGlyph} </Text>
+        <Text dimColor> {tokens.glyphs.prompt} </Text>
         {value === '' ? (
           <Text>
             <Text inverse> </Text>

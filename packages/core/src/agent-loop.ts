@@ -285,6 +285,18 @@ export class AgentLoop {
     return p.budgetCapUsd;
   }
 
+  /**
+   * Returns the named skin the personality declares (undefined when the
+   * personality has no `skin` field in config.yaml). Used by surfaces to
+   * apply per-personality theming on /personality switch.
+   */
+  getPersonalitySkin(personalityId?: string): string | undefined {
+    const p =
+      (personalityId ? this.personalities.get(personalityId) : null) ??
+      this.personalities.getDefault();
+    return p.skin;
+  }
+
   /** Returns accumulated session spend in USD (0 if no spend recorded yet). */
   getSessionCost(sessionKey: string): number {
     return this.sessionCosts.get(sessionKey) ?? 0;

@@ -91,6 +91,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       model: config.model,
       personality: displayName,
       verbose: config.verbose ?? false,
+      skin: config.skin,
       inventory,
       rebuildLoop: async (modelId: string) => {
         const { loop: newLoop } = await resolveActiveLoop({ ...config, model: modelId });

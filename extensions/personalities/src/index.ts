@@ -582,6 +582,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         ? { context_engine_options: contextEngineOptions }
         : {}),
       ...(skillEvolution !== undefined ? { skill_evolution: skillEvolution } : {}),
+      ...(cfg.skin ? { skin: cfg.skin } : {}),
     };
 
     validateUnsafeCombinations(id, config);

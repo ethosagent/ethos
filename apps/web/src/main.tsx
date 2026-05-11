@@ -1,21 +1,27 @@
 import './styles.css';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { App as AntApp, ConfigProvider } from 'antd';
-import React from 'react';
+import { BUILTIN_SKINS, DEFAULT_TOKENS, resolveSkin } from '@ethosagent/design-tokens';
+import { tokensToAntd, tokensToLayoutCss } from '@ethosagent/design-tokens/antd';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { App as AntApp, ConfigProvider, type ThemeConfig, theme } from 'antd';
+import React, { useEffect, useMemo, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './App';
-import { baseTheme } from './lib/theme';
+import {
+  applyReducedMotion,
+  REDUCED_MOTION_STYLESHEET,
+  watchReducedMotion,
+} from './lib/reduced-motion';
+import { rpc } from './rpc';
 
-// Boot order mirrors the praxis stack pivot (plan/phases/26-web-ui.md "Stack
-// pivot 2026-04-26"):
-//   QueryClientProvider → ConfigProvider → BrowserRouter → AntApp → App
-// AntApp gives us imperative `message` / `notification` / `Modal` outlets
-// from anywhere in the tree without a separate `<App.useApp />` plumb.
+// Boot order: QueryClientProvider → Root → ConfigProvider → ...
 //
-// Theme tokens live in `lib/theme.ts` so the chat surface can wrap its
-// subtree in a per-personality variant (`personalityTheme(id)`) without
-// re-declaring the base palette.
+// Root reads `config.skin` (from ~/.ethos/config.yaml via rpc.config.get)
+// and computes the Antd ThemeConfig from the resolved tokens. When the
+// user picks a different skin in the Settings page, the mutation
+// invalidates ['config'] which re-runs the query and re-renders this
+// component — the new theme flows into Antd ConfigProvider without a
+// full reload.
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,19 +36,91 @@ const queryClient = new QueryClient({
   },
 });
 
+function Root() {
+  // Config may not exist yet (first-time onboarding). Fall back to default
+  // skin so the shell still renders.
+  const configQuery = useQuery({
+    queryKey: ['config'],
+    queryFn: () => rpc.config.get(),
+    retry: false,
+  });
+  const skinName = configQuery.data?.skin ?? 'default';
+
+  const resolvedTokens = useMemo(() => {
+    if (!BUILTIN_SKINS[skinName]) return DEFAULT_TOKENS;
+    try {
+      return resolveSkin(DEFAULT_TOKENS, BUILTIN_SKINS, skinName);
+    } catch {
+      return DEFAULT_TOKENS;
+    }
+  }, [skinName]);
+
+  // prefers-reduced-motion — DESIGN.md line 139 says every transition
+  // and animation must freeze under `reduce`. Track the OS preference,
+  // collapse Antd motionDuration tokens to 0s, and inject a global stop-
+  // animation stylesheet. Mid-session OS toggles take effect via the
+  // matchMedia change listener.
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => watchReducedMotion(setReduceMotion), []);
+
+  const antdTheme: ThemeConfig = useMemo(() => {
+    const base: ThemeConfig = {
+      algorithm: theme.darkAlgorithm,
+      ...tokensToAntd(resolvedTokens),
+    };
+    return reduceMotion ? applyReducedMotion(base) : base;
+  }, [resolvedTokens, reduceMotion]);
+
+  // Layout CSS variables — injected/updated on every skin change so a
+  // future skin that overrides tokens.layout reaches the static CSS rules.
+  useEffect(() => {
+    const id = 'ethos-layout-tokens';
+    let el = document.getElementById(id) as HTMLStyleElement | null;
+    if (!el) {
+      el = document.createElement('style');
+      el.id = id;
+      document.head.appendChild(el);
+    }
+    el.textContent = tokensToLayoutCss(resolvedTokens);
+  }, [resolvedTokens]);
+
+  // Global reduce-motion stylesheet — covers CSS-driven animations
+  // (thinking dots, streaming cursor, drawer slide-ins) that don't read
+  // from Antd tokens. Inserted only while the preference is active so
+  // turning it off restores normal motion immediately.
+  useEffect(() => {
+    const id = 'ethos-reduced-motion';
+    let el = document.getElementById(id) as HTMLStyleElement | null;
+    if (!reduceMotion) {
+      if (el) el.remove();
+      return;
+    }
+    if (!el) {
+      el = document.createElement('style');
+      el.id = id;
+      document.head.appendChild(el);
+    }
+    el.textContent = REDUCED_MOTION_STYLESHEET;
+  }, [reduceMotion]);
+
+  return (
+    <ConfigProvider theme={antdTheme}>
+      <AntApp>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </AntApp>
+    </ConfigProvider>
+  );
+}
+
 const root = document.getElementById('root');
 if (!root) throw new Error('root element missing');
 
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <ConfigProvider theme={baseTheme}>
-        <AntApp>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
-        </AntApp>
-      </ConfigProvider>
+      <Root />
     </QueryClientProvider>
   </React.StrictMode>,
 );

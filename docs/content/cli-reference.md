@@ -885,6 +885,9 @@ plugins:
 # ── Verbose mode ─────────────────────────────────────────────────────────────
 verbose: true                        # print per-turn timing summary (llm · tools · total · tokens · cost)
 
+# ── Skin (visual theme) ──────────────────────────────────────────────────────
+skin: default                        # default | mono | paper — overrides the DESIGN.md baseline palette; switch live in the TUI via /skin <name>
+
 # ── Retention — how long observability data is kept ─────────────────────────
 retention:                           # per-category TTLs for observability data in observability.db
 retention.messages: 365d             # conversation message history TTL (default 365d)

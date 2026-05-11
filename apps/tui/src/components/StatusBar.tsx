@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import { DESIGN } from '../skin';
+import { useSkin } from '../skin';
 
 export type AgentStatus = 'idle' | 'thinking' | 'running' | 'interrupted';
 
@@ -44,32 +44,39 @@ function StatusIndicator({
   currentTool?: string;
   elapsedSecs?: number;
 }) {
+  const tokens = useSkin();
   switch (status) {
     case 'thinking':
       return (
-        <Text color={DESIGN.warning}>
+        <Text color={tokens.semantic.warning}>
           {' thinking '}
           {elapsedSecs !== undefined && elapsedSecs > 0 ? padTime(elapsedSecs) : '…    '}
         </Text>
       );
     case 'running':
       return (
-        <Text color={DESIGN.info}>
+        <Text color={tokens.semantic.info}>
           {' running'}
           {currentTool ? `: ${currentTool}` : ''}
           {'…'}
         </Text>
       );
     case 'interrupted':
-      return <Text color={DESIGN.error}> interrupted</Text>;
+      return <Text color={tokens.semantic.error}> interrupted</Text>;
     default:
       return null;
   }
 }
 
 function BudgetIndicator({ budgetState }: { budgetState: BudgetState }) {
+  const tokens = useSkin();
   const ratio = budgetState.cap > 0 ? budgetState.spent / budgetState.cap : 0;
-  const color = ratio >= 1 ? DESIGN.error : ratio >= 0.8 ? DESIGN.warning : DESIGN.textSecondary;
+  const color =
+    ratio >= 1
+      ? tokens.semantic.error
+      : ratio >= 0.8
+        ? tokens.semantic.warning
+        : tokens.surface.textSecondary;
   return (
     <Text
       color={color}
@@ -92,24 +99,27 @@ export function StatusBar({
   updateStatus,
   budgetState,
 }: StatusBarProps) {
+  const tokens = useSkin();
   return (
     <Box marginBottom={1}>
-      <Text bold color={DESIGN.textPrimary}>
+      <Text bold color={tokens.surface.textPrimary}>
         ethos
       </Text>
-      <Text color={DESIGN.textSecondary}> {model} ·</Text>
+      <Text color={tokens.surface.textSecondary}> {model} ·</Text>
       <Text color={accentColor}>{` ${personality}`}</Text>
-      {readonlyMode && <Text color={DESIGN.success}> [READ-ONLY]</Text>}
+      {readonlyMode && <Text color={tokens.semantic.success}> [READ-ONLY]</Text>}
       <StatusIndicator status={status} currentTool={currentTool} elapsedSecs={elapsedSecs} />
-      <Text color={DESIGN.textSecondary}>
+      <Text color={tokens.surface.textSecondary}>
         {'  '}
         {inputTokens.toLocaleString()} in · {outputTokens.toLocaleString()} out $
         {costUsd.toFixed(5)}
       </Text>
       {budgetState && <BudgetIndicator budgetState={budgetState} />}
-      {backgroundCount > 0 && <Text color={DESIGN.warning}>{` bg:${backgroundCount}`}</Text>}
+      {backgroundCount > 0 && (
+        <Text color={tokens.semantic.warning}>{` bg:${backgroundCount}`}</Text>
+      )}
       {updateStatus && updateStatus.behind > 0 && (
-        <Text color={DESIGN.warning}>
+        <Text color={tokens.semantic.warning}>
           {` ! ${updateStatus.behind} version${updateStatus.behind === 1 ? '' : 's'} behind — pnpm dlx ethos upgrade`}
         </Text>
       )}
