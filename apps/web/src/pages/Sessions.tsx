@@ -28,6 +28,8 @@ export function Sessions() {
 
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingValue, setEditingValue] = useState('');
 
   // Debounce the input — TanStack Query's queryKey changes drive the
   // refetch, so we only update the key after the user pauses typing.
@@ -87,6 +89,21 @@ export function Sessions() {
     },
   });
 
+  const renameMut = useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string | null }) =>
+      rpc.sessions.update({ id, title }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['sessions', 'list'] });
+    },
+    onError: (err) => {
+      notification.error({
+        message: 'Could not rename session',
+        description: err instanceof Error ? err.message : String(err),
+        placement: 'topRight',
+      });
+    },
+  });
+
   // --- render ---
 
   if (error) {
@@ -110,6 +127,9 @@ export function Sessions() {
           loading={isFetching && !isFetchingNextPage}
           style={{ maxWidth: 480 }}
         />
+        <Button type="primary" onClick={() => navigate('/chat')} style={{ marginLeft: 8 }}>
+          New Session
+        </Button>
         <span className="sessions-count">
           {flat.length} {flat.length === 1 ? 'session' : 'sessions'}
           {hasNextPage ? '+' : ''}
@@ -142,6 +162,55 @@ export function Sessions() {
               style: { cursor: 'pointer' },
             })}
             columns={[
+              {
+                title: 'Name',
+                key: 'name',
+                ellipsis: true,
+                render: (_v: unknown, row: Session) => {
+                  if (editingId === row.id) {
+                    return (
+                      <Input
+                        size="small"
+                        value={editingValue}
+                        autoFocus
+                        onChange={(e) => setEditingValue(e.target.value)}
+                        onPressEnter={() => {
+                          renameMut.mutate({ id: row.id, title: editingValue.trim() || null });
+                          setEditingId(null);
+                        }}
+                        onBlur={() => {
+                          renameMut.mutate({ id: row.id, title: editingValue.trim() || null });
+                          setEditingId(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') setEditingId(null);
+                        }}
+                        style={{ maxWidth: 220 }}
+                      />
+                    );
+                  }
+                  const label = row.title ?? `${row.id.slice(0, 8)}…`;
+                  return (
+                    <button
+                      type="button"
+                      className="sessions-name"
+                      title={row.title ?? undefined}
+                      onDoubleClick={() => {
+                        setEditingId(row.id);
+                        setEditingValue(row.title ?? '');
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === 'F2') {
+                          setEditingId(row.id);
+                          setEditingValue(row.title ?? '');
+                        }
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                },
+              },
               {
                 title: 'ID',
                 dataIndex: 'id',
@@ -192,6 +261,10 @@ export function Sessions() {
                   <RowActions
                     id={row.id}
                     onOpen={() => navigate(`/chat?session=${row.id}`)}
+                    onRename={() => {
+                      setEditingId(row.id);
+                      setEditingValue(row.title ?? '');
+                    }}
                     onFork={() => forkMut.mutate(row.id)}
                     onDelete={() => deleteMut.mutate(row.id)}
                     deleting={deleteMut.isPending && deleteMut.variables === row.id}
@@ -221,14 +294,16 @@ export function Sessions() {
 interface RowActionsProps {
   id: string;
   onOpen: () => void;
+  onRename: () => void;
   onFork: () => void;
   onDelete: () => void;
   deleting: boolean;
 }
 
-function RowActions({ id, onOpen, onFork, onDelete, deleting }: RowActionsProps) {
+function RowActions({ id, onOpen, onRename, onFork, onDelete, deleting }: RowActionsProps) {
   const items: MenuProps['items'] = [
     { key: 'open', label: 'Open' },
+    { key: 'rename', label: 'Rename' },
     { key: 'fork', label: 'Fork' },
     {
       key: 'delete',
@@ -264,6 +339,7 @@ function RowActions({ id, onOpen, onFork, onDelete, deleting }: RowActionsProps)
           onClick: ({ key, domEvent }) => {
             domEvent.stopPropagation();
             if (key === 'open') onOpen();
+            else if (key === 'rename') onRename();
             else if (key === 'fork') onFork();
             // delete handled by the Popconfirm inside the menu item
           },
