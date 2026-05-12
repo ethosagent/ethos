@@ -292,8 +292,8 @@ describe('LastWriteWinsPolicy', () => {
     expect(caught).not.toBeNull();
     expect(caught?.key).toBe('onboarding.md');
     expect(caught?.scopeId).toBe('team:alpha');
-    expect(caught?.entryMtime).toBe(2000);
-    expect(caught?.lastReadAt).toBe(1000);
+    expect(caught?.currentAt).toBe(2000);
+    expect(caught?.recordedAt).toBe(1000);
   });
 
   it('integration: two concurrent writers — first succeeds, second gets conflict', async () => {
@@ -360,5 +360,26 @@ describe('LastWriteWinsPolicy', () => {
     await expect(
       policy.sync([{ action: 'add', key: 'missing.md', content: 'new' }], makeCtx('team:alpha')),
     ).resolves.toBeUndefined();
+  });
+
+  it('records mtime from search results and enforces conflict detection on subsequent sync', async () => {
+    const inner = new InMemoryMemoryProvider();
+    inner.seed('team:alpha', 'decisions.md', 'we use TypeScript', 5000);
+    const policy = new LastWriteWinsPolicy(inner);
+
+    // Establish read timestamp via search instead of read.
+    const results = await policy.search('TypeScript', makeCtx('team:alpha'));
+    expect(results.length).toBe(1);
+
+    // Simulate external write advancing mtime.
+    inner.setMtime('team:alpha', 'decisions.md', 8000);
+
+    // sync should now detect the conflict.
+    await expect(
+      policy.sync(
+        [{ action: 'add', key: 'decisions.md', content: 'extra line' }],
+        makeCtx('team:alpha'),
+      ),
+    ).rejects.toThrow(MemoryConflictError);
   });
 });

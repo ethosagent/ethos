@@ -18,6 +18,9 @@ import type {
   MemoryUpdate,
   SearchOpts,
 } from '@ethosagent/types';
+import { MemoryConflictError } from '@ethosagent/types';
+
+export { MemoryConflictError } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // EagerPrefetchPolicy
@@ -91,35 +94,6 @@ export class LazyOnDemandPolicy implements MemoryProvider {
 }
 
 // ---------------------------------------------------------------------------
-// MemoryConflictError
-// ---------------------------------------------------------------------------
-
-/**
- * Thrown by LastWriteWinsPolicy when a concurrent write is detected.
- * Callers can check `instanceof MemoryConflictError` before retrying.
- */
-export class MemoryConflictError extends Error {
-  readonly key: string;
-  readonly scopeId: string;
-  /** mtime of the entry at the time of the conflicting sync() call (ms). */
-  readonly entryMtime: number;
-  /** mtime recorded when the caller last read the entry (ms). */
-  readonly lastReadAt: number;
-
-  constructor(opts: { key: string; scopeId: string; entryMtime: number; lastReadAt: number }) {
-    super(
-      `Conflict on "${opts.key}" in scope "${opts.scopeId}": ` +
-        `entry modified at ${opts.entryMtime} but caller last read at ${opts.lastReadAt}`,
-    );
-    this.name = 'MemoryConflictError';
-    this.key = opts.key;
-    this.scopeId = opts.scopeId;
-    this.entryMtime = opts.entryMtime;
-    this.lastReadAt = opts.lastReadAt;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // LastWriteWinsPolicy
 // ---------------------------------------------------------------------------
 
@@ -127,16 +101,30 @@ export class MemoryConflictError extends Error {
  * Wraps `sync()` with an optimistic-concurrency precondition check.
  *
  * The policy records the `mtime` (from `MemoryEntry.metadata.lastUpdatedAt`)
- * each time `read()` is called, keyed by `${scopeId}:${key}`.  When `sync()`
- * is called for a key the policy has a read-timestamp for, it fetches the
- * current `mtime` from the inner provider and rejects the write with a
- * `MemoryConflictError` if the file has been modified since the last read.
+ * each time `read()` or `search()` returns an entry, keyed by
+ * `${scopeId}:${key}`.  When `sync()` is called for a key the policy has a
+ * read-timestamp for, it re-reads the current `mtime` from the inner provider
+ * and rejects the write with a `MemoryConflictError` if the file has been
+ * modified since the caller last saw it.
  *
  * Keys never read (no timestamp recorded) pass through unconditionally —
  * this avoids blocking blind adds on new keys.
  *
+ * **Known limitation — not fully atomic:** the mtime check and the subsequent
+ * `inner.sync()` are not a single atomic operation.  Two concurrent writers
+ * that both pass the mtime check in the same millisecond can both write.  This
+ * is an inherent property of the decorator approach over a filesystem backend;
+ * a fully atomic compare-and-swap would require support in the storage layer.
+ * The policy catches the common case of sequential-but-concurrent agents where
+ * writes are spaced by network and tool-call latency.
+ *
+ * **Instance scope:** one `LastWriteWinsPolicy` instance tracks timestamps for
+ * one caller (typically one AgentLoop / session).  Do not share an instance
+ * across concurrent callers — the read-timestamp map is not thread-isolated and
+ * cross-caller reads would invalidate each other's preconditions.
+ *
  * Used for team memory to prevent silent overwrites when two agents write the
- * same file concurrently.
+ * same file within the same session boundary.
  */
 export class LastWriteWinsPolicy implements MemoryProvider {
   /** scopeId:key → mtime at last read (ms). */
@@ -157,8 +145,18 @@ export class LastWriteWinsPolicy implements MemoryProvider {
     return entry;
   }
 
-  search(query: string, ctx: MemoryContext, opts?: SearchOpts): Promise<MemoryEntry[]> {
-    return this.inner.search(query, ctx, opts);
+  /**
+   * Records mtimes for entries returned by search so that a write based on
+   * search results also benefits from conflict detection.
+   */
+  async search(query: string, ctx: MemoryContext, opts?: SearchOpts): Promise<MemoryEntry[]> {
+    const results = await this.inner.search(query, ctx, opts);
+    for (const entry of results) {
+      if (entry.metadata?.lastUpdatedAt !== undefined) {
+        this.lastReadAt.set(`${ctx.scopeId}:${entry.key}`, entry.metadata.lastUpdatedAt);
+      }
+    }
+    return results;
   }
 
   /**
@@ -186,8 +184,8 @@ export class LastWriteWinsPolicy implements MemoryProvider {
           throw new MemoryConflictError({
             key,
             scopeId: ctx.scopeId,
-            entryMtime: currentMtime,
-            lastReadAt: readAt,
+            recordedAt: readAt,
+            currentAt: currentMtime,
           });
         }
       }),
@@ -208,6 +206,7 @@ export class LastWriteWinsPolicy implements MemoryProvider {
 /**
  * Placeholder for future role-based access control on memory operations.
  * TODO: implement scope × role × operation permission matrix.
+ * Not wired — stub only.
  */
 export class AuthorisationPolicy implements MemoryProvider {
   constructor(private readonly inner: MemoryProvider) {}

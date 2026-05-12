@@ -148,3 +148,36 @@ export function formatError(err: EthosError, opts: FormatOptions = {}): string {
     `  ${c.dim}→${c.reset} ${err.action}`,
   ].join('\n');
 }
+
+// ---------------------------------------------------------------------------
+// MemoryConflictError
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown by LastWriteWinsPolicy when a concurrent write is detected: the
+ * entry's mtime at the time of sync() is newer than the mtime recorded when
+ * the caller last read it.
+ *
+ * Callers may catch `MemoryConflictError` and retry after re-reading the
+ * current entry.
+ */
+export class MemoryConflictError extends Error {
+  readonly key: string;
+  readonly scopeId: string;
+  /** mtime recorded when the caller last read the entry (ms). */
+  readonly recordedAt: number;
+  /** current mtime of the entry at sync() time (ms). */
+  readonly currentAt: number;
+
+  constructor(opts: { key: string; scopeId: string; recordedAt: number; currentAt: number }) {
+    super(
+      `Conflict on "${opts.key}" in scope "${opts.scopeId}": ` +
+        `entry modified at ${opts.currentAt} but caller last read at ${opts.recordedAt}`,
+    );
+    this.name = 'MemoryConflictError';
+    this.key = opts.key;
+    this.scopeId = opts.scopeId;
+    this.recordedAt = opts.recordedAt;
+    this.currentAt = opts.currentAt;
+  }
+}
