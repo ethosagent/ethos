@@ -1,4 +1,4 @@
-import type { PlatformId, PlatformStatus } from '@ethosagent/web-contracts';
+import type { BotBinding, SlackAppEntry, TelegramBotEntry } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   App as AntApp,
@@ -8,23 +8,493 @@ import {
   Form,
   Input,
   Popconfirm,
+  Segmented,
+  Select,
+  Space,
   Spin,
+  Table,
   Tabs,
+  Tag,
   Typography,
 } from 'antd';
+import { useState } from 'react';
 import { rpc } from '../rpc';
 
-// Communications tab — v1.
-//
-// Per-platform connection state + setup. The web tab edits the same
-// flat keys the gateway already reads from ~/.ethos/config.yaml
-// (telegramToken, slackBotToken, …). Sensitive values never round-
-// trip through reads — the server only emits per-field configured
-// flags. Setup is paste-token-and-save; live validation against the
-// upstream platform happens when the gateway boots, not here.
+type BindType = 'personality' | 'team';
+
+interface AddBotFormValues {
+  token?: string;
+  botToken?: string;
+  appToken?: string;
+  signingSecret?: string;
+  bindType: BindType;
+  bindName: string;
+}
+
+// ---------------------------------------------------------------------------
+// Telegram panel
+// ---------------------------------------------------------------------------
+
+function TelegramPanel() {
+  const qc = useQueryClient();
+  const { notification } = AntApp.useApp();
+  const [adding, setAdding] = useState(false);
+  const [bindType, setBindType] = useState<BindType>('personality');
+  const [form] = Form.useForm<AddBotFormValues>();
+
+  const botsQuery = useQuery({
+    queryKey: ['platforms', 'bots', 'telegram'],
+    queryFn: () => rpc.platforms.botsListTelegram(),
+  });
+
+  const personalitiesQuery = useQuery({
+    queryKey: ['personalities', 'list'],
+    queryFn: () => rpc.personalities.list(),
+    enabled: adding,
+  });
+
+  const teamsQuery = useQuery({
+    queryKey: ['kanban', 'list'],
+    queryFn: () => rpc.kanban.list(),
+    enabled: adding && bindType === 'team',
+  });
+
+  const addMut = useMutation({
+    mutationFn: (values: AddBotFormValues) =>
+      rpc.platforms.botsAddTelegram({
+        token: values.token ?? '',
+        bind: { type: values.bindType, name: values.bindName } satisfies BotBinding,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['platforms', 'bots', 'telegram'] });
+      notification.success({ message: 'Telegram bot added', placement: 'topRight' });
+      form.resetFields();
+      setAdding(false);
+    },
+    onError: (err) =>
+      notification.error({ message: 'Add failed', description: (err as Error).message }),
+  });
+
+  const removeMut = useMutation({
+    mutationFn: (botKey: string) => rpc.platforms.botsRemoveTelegram({ botKey }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['platforms', 'bots', 'telegram'] });
+      notification.info({ message: 'Telegram bot removed', placement: 'topRight' });
+    },
+    onError: (err) =>
+      notification.error({ message: 'Remove failed', description: (err as Error).message }),
+  });
+
+  const bots: TelegramBotEntry[] = botsQuery.data?.bots ?? [];
+
+  const columns = [
+    {
+      title: 'Bot ID',
+      dataIndex: 'botKey',
+      key: 'botKey',
+      render: (k: string) => (
+        <Typography.Text code style={{ fontSize: 12 }}>
+          {k}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: 'Token',
+      key: 'token',
+      render: (_: unknown, row: TelegramBotEntry) => (
+        <Badge
+          status={row.tokenConfigured ? 'success' : 'default'}
+          text={row.tokenConfigured ? 'configured' : 'missing'}
+        />
+      ),
+    },
+    {
+      title: 'Binding',
+      key: 'bind',
+      render: (_: unknown, row: TelegramBotEntry) => (
+        <Space>
+          <Tag color={row.bind.type === 'personality' ? 'blue' : 'purple'}>{row.bind.type}</Tag>
+          <Typography.Text>{row.bind.name}</Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: '',
+      key: 'actions',
+      width: 100,
+      render: (_: unknown, row: TelegramBotEntry) => (
+        <Popconfirm
+          title="Remove this bot?"
+          description="The bot token and binding will be deleted from config."
+          okText="Remove"
+          okButtonProps={{ danger: true }}
+          onConfirm={() => removeMut.mutate(row.botKey)}
+        >
+          <Button size="small" danger>
+            Remove
+          </Button>
+        </Popconfirm>
+      ),
+    },
+  ];
+
+  const bindOptions =
+    bindType === 'personality'
+      ? (personalitiesQuery.data?.personalities ?? []).map((p) => ({
+          label: p.name,
+          value: p.id,
+        }))
+      : (teamsQuery.data?.teams ?? []).map((t) => ({
+          label: t.name,
+          value: t.name,
+        }));
+
+  return (
+    <Card
+      size="small"
+      title="Telegram bots"
+      extra={
+        <Typography.Link href="https://core.telegram.org/bots" target="_blank" rel="noreferrer">
+          Setup guide ↗
+        </Typography.Link>
+      }
+      style={{ maxWidth: 720 }}
+    >
+      {botsQuery.isLoading ? (
+        <Spin />
+      ) : (
+        <Table
+          dataSource={bots}
+          columns={columns}
+          rowKey="botKey"
+          pagination={false}
+          size="small"
+          locale={{ emptyText: 'No bots configured yet.' }}
+          style={{ marginBottom: bots.length > 0 ? 16 : 0 }}
+        />
+      )}
+
+      {!adding && (
+        <Button type="dashed" onClick={() => setAdding(true)} style={{ marginTop: 8 }}>
+          + Add Telegram bot
+        </Button>
+      )}
+
+      {adding && (
+        <Card
+          size="small"
+          style={{ marginTop: 12, background: 'var(--ant-color-bg-container-disabled, #fafafa)' }}
+        >
+          <Form
+            form={form}
+            layout="vertical"
+            initialValues={{ bindType: 'personality' }}
+            onFinish={(values) => addMut.mutate(values)}
+          >
+            <Form.Item
+              label="Bot token"
+              name="token"
+              rules={[{ required: true, message: 'Paste the token from BotFather' }]}
+            >
+              <Input.Password autoComplete="off" placeholder="123456:ABC-DEF..." />
+            </Form.Item>
+
+            <Form.Item label="Bind to" style={{ marginBottom: 8 }}>
+              <Segmented
+                options={[
+                  { label: 'Personality', value: 'personality' },
+                  { label: 'Team', value: 'team' },
+                ]}
+                value={bindType}
+                onChange={(v) => {
+                  setBindType(v as BindType);
+                  form.setFieldValue('bindName', undefined);
+                }}
+              />
+            </Form.Item>
+
+            <Form.Item name="bindType" hidden>
+              <Input />
+            </Form.Item>
+
+            <Form.Item
+              name="bindName"
+              rules={[{ required: true, message: `Select a ${bindType}` }]}
+            >
+              <Select
+                placeholder={`Select ${bindType}…`}
+                loading={
+                  bindType === 'personality' ? personalitiesQuery.isLoading : teamsQuery.isLoading
+                }
+                options={bindOptions}
+                onChange={() => form.setFieldValue('bindType', bindType)}
+              />
+            </Form.Item>
+
+            <Space>
+              <Button type="primary" htmlType="submit" loading={addMut.isPending}>
+                Save bot
+              </Button>
+              <Button
+                onClick={() => {
+                  setAdding(false);
+                  form.resetFields();
+                }}
+              >
+                Cancel
+              </Button>
+            </Space>
+          </Form>
+        </Card>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Slack panel
+// ---------------------------------------------------------------------------
+
+function SlackPanel() {
+  const qc = useQueryClient();
+  const { notification } = AntApp.useApp();
+  const [adding, setAdding] = useState(false);
+  const [bindType, setBindType] = useState<BindType>('personality');
+  const [form] = Form.useForm<AddBotFormValues>();
+
+  const botsQuery = useQuery({
+    queryKey: ['platforms', 'bots', 'slack'],
+    queryFn: () => rpc.platforms.botsListSlack(),
+  });
+
+  const personalitiesQuery = useQuery({
+    queryKey: ['personalities', 'list'],
+    queryFn: () => rpc.personalities.list(),
+    enabled: adding,
+  });
+
+  const teamsQuery = useQuery({
+    queryKey: ['kanban', 'list'],
+    queryFn: () => rpc.kanban.list(),
+    enabled: adding && bindType === 'team',
+  });
+
+  const addMut = useMutation({
+    mutationFn: (values: AddBotFormValues) =>
+      rpc.platforms.botsAddSlack({
+        botToken: values.botToken ?? '',
+        appToken: values.appToken ?? '',
+        signingSecret: values.signingSecret ?? '',
+        bind: { type: values.bindType, name: values.bindName } satisfies BotBinding,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['platforms', 'bots', 'slack'] });
+      notification.success({ message: 'Slack app added', placement: 'topRight' });
+      form.resetFields();
+      setAdding(false);
+    },
+    onError: (err) =>
+      notification.error({ message: 'Add failed', description: (err as Error).message }),
+  });
+
+  const removeMut = useMutation({
+    mutationFn: (botKey: string) => rpc.platforms.botsRemoveSlack({ botKey }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['platforms', 'bots', 'slack'] });
+      notification.info({ message: 'Slack app removed', placement: 'topRight' });
+    },
+    onError: (err) =>
+      notification.error({ message: 'Remove failed', description: (err as Error).message }),
+  });
+
+  const apps: SlackAppEntry[] = botsQuery.data?.bots ?? [];
+
+  const columns = [
+    {
+      title: 'Bot ID',
+      dataIndex: 'botKey',
+      key: 'botKey',
+      render: (k: string) => (
+        <Typography.Text code style={{ fontSize: 12 }}>
+          {k}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: 'Tokens',
+      key: 'tokens',
+      render: (_: unknown, row: SlackAppEntry) => (
+        <Space size="small">
+          <Badge status={row.botTokenConfigured ? 'success' : 'default'} text="bot" />
+          <Badge status={row.appTokenConfigured ? 'success' : 'default'} text="app" />
+          <Badge status={row.signingSecretConfigured ? 'success' : 'default'} text="secret" />
+        </Space>
+      ),
+    },
+    {
+      title: 'Binding',
+      key: 'bind',
+      render: (_: unknown, row: SlackAppEntry) => (
+        <Space>
+          <Tag color={row.bind.type === 'personality' ? 'blue' : 'purple'}>{row.bind.type}</Tag>
+          <Typography.Text>{row.bind.name}</Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: '',
+      key: 'actions',
+      width: 100,
+      render: (_: unknown, row: SlackAppEntry) => (
+        <Popconfirm
+          title="Remove this Slack app?"
+          description="The app tokens and binding will be deleted from config."
+          okText="Remove"
+          okButtonProps={{ danger: true }}
+          onConfirm={() => removeMut.mutate(row.botKey)}
+        >
+          <Button size="small" danger>
+            Remove
+          </Button>
+        </Popconfirm>
+      ),
+    },
+  ];
+
+  const bindOptions =
+    bindType === 'personality'
+      ? (personalitiesQuery.data?.personalities ?? []).map((p) => ({
+          label: p.name,
+          value: p.id,
+        }))
+      : (teamsQuery.data?.teams ?? []).map((t) => ({
+          label: t.name,
+          value: t.name,
+        }));
+
+  return (
+    <Card
+      size="small"
+      title="Slack apps"
+      extra={
+        <Typography.Link href="https://api.slack.com/apps" target="_blank" rel="noreferrer">
+          Setup guide ↗
+        </Typography.Link>
+      }
+      style={{ maxWidth: 720 }}
+    >
+      {botsQuery.isLoading ? (
+        <Spin />
+      ) : (
+        <Table
+          dataSource={apps}
+          columns={columns}
+          rowKey="botKey"
+          pagination={false}
+          size="small"
+          locale={{ emptyText: 'No Slack apps configured yet.' }}
+          style={{ marginBottom: apps.length > 0 ? 16 : 0 }}
+        />
+      )}
+
+      {!adding && (
+        <Button type="dashed" onClick={() => setAdding(true)} style={{ marginTop: 8 }}>
+          + Add Slack app
+        </Button>
+      )}
+
+      {adding && (
+        <Card
+          size="small"
+          style={{ marginTop: 12, background: 'var(--ant-color-bg-container-disabled, #fafafa)' }}
+        >
+          <Form
+            form={form}
+            layout="vertical"
+            initialValues={{ bindType: 'personality' }}
+            onFinish={(values) => addMut.mutate(values)}
+          >
+            <Form.Item
+              label="Bot token"
+              name="botToken"
+              rules={[{ required: true, message: 'Required' }]}
+            >
+              <Input.Password autoComplete="off" placeholder="xoxb-…" />
+            </Form.Item>
+            <Form.Item
+              label="App token"
+              name="appToken"
+              rules={[{ required: true, message: 'Required' }]}
+            >
+              <Input.Password autoComplete="off" placeholder="xapp-…" />
+            </Form.Item>
+            <Form.Item
+              label="Signing secret"
+              name="signingSecret"
+              rules={[{ required: true, message: 'Required' }]}
+              extra="From Slack app dashboard → Basic Information → App Credentials."
+            >
+              <Input.Password autoComplete="off" />
+            </Form.Item>
+
+            <Form.Item label="Bind to" style={{ marginBottom: 8 }}>
+              <Segmented
+                options={[
+                  { label: 'Personality', value: 'personality' },
+                  { label: 'Team', value: 'team' },
+                ]}
+                value={bindType}
+                onChange={(v) => {
+                  setBindType(v as BindType);
+                  form.setFieldValue('bindName', undefined);
+                }}
+              />
+            </Form.Item>
+
+            <Form.Item name="bindType" hidden>
+              <Input />
+            </Form.Item>
+
+            <Form.Item
+              name="bindName"
+              rules={[{ required: true, message: `Select a ${bindType}` }]}
+            >
+              <Select
+                placeholder={`Select ${bindType}…`}
+                loading={
+                  bindType === 'personality' ? personalitiesQuery.isLoading : teamsQuery.isLoading
+                }
+                options={bindOptions}
+                onChange={() => form.setFieldValue('bindType', bindType)}
+              />
+            </Form.Item>
+
+            <Space>
+              <Button type="primary" htmlType="submit" loading={addMut.isPending}>
+                Save app
+              </Button>
+              <Button
+                onClick={() => {
+                  setAdding(false);
+                  form.resetFields();
+                }}
+              >
+                Cancel
+              </Button>
+            </Space>
+          </Form>
+        </Card>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Legacy single-bot panels (Discord, Email — unchanged from v1)
+// ---------------------------------------------------------------------------
 
 interface PlatformShape {
-  id: PlatformId;
+  id: 'discord' | 'email';
   label: string;
   fields: ReadonlyArray<{
     name: string;
@@ -36,36 +506,7 @@ interface PlatformShape {
   helpUrl?: string;
 }
 
-const PLATFORMS: ReadonlyArray<PlatformShape> = [
-  {
-    id: 'telegram',
-    label: 'Telegram',
-    fields: [
-      {
-        name: 'token',
-        label: 'Bot token',
-        placeholder: '123456:ABC-DEF...',
-        secret: true,
-        helper: 'From BotFather. Stored at telegramToken in config.yaml.',
-      },
-    ],
-    helpUrl: 'https://core.telegram.org/bots',
-  },
-  {
-    id: 'slack',
-    label: 'Slack',
-    fields: [
-      { name: 'botToken', label: 'Bot token', placeholder: 'xoxb-…', secret: true },
-      { name: 'appToken', label: 'App token', placeholder: 'xapp-…', secret: true },
-      {
-        name: 'signingSecret',
-        label: 'Signing secret',
-        secret: true,
-        helper: 'From the Slack app dashboard, Basic Information → App Credentials.',
-      },
-    ],
-    helpUrl: 'https://api.slack.com/apps',
-  },
+const LEGACY_PLATFORMS: ReadonlyArray<PlatformShape> = [
   {
     id: 'discord',
     label: 'Discord',
@@ -93,55 +534,13 @@ const PLATFORMS: ReadonlyArray<PlatformShape> = [
   },
 ];
 
-export function Communications() {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['platforms', 'list'],
-    queryFn: () => rpc.platforms.list(),
-  });
-
-  if (isLoading) {
-    return (
-      <div style={{ display: 'grid', placeItems: 'center', height: 200 }}>
-        <Spin />
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <Typography.Text type="danger">
-        Failed to load platforms: {(error as Error).message}
-      </Typography.Text>
-    );
-  }
-
-  const statusById = new Map((data?.platforms ?? []).map((p) => [p.id, p] as const));
-
-  return (
-    <div className="comms-tab">
-      <Tabs
-        defaultActiveKey="telegram"
-        items={PLATFORMS.map((shape) => {
-          const status = statusById.get(shape.id);
-          return {
-            key: shape.id,
-            label: (
-              <span>
-                {shape.label}{' '}
-                <Badge
-                  status={status?.configured ? 'success' : 'default'}
-                  style={{ marginLeft: 6 }}
-                />
-              </span>
-            ),
-            children: <PlatformPanel shape={shape} status={status} />,
-          };
-        })}
-      />
-    </div>
-  );
-}
-
-function PlatformPanel({ shape, status }: { shape: PlatformShape; status?: PlatformStatus }) {
+function LegacyPlatformPanel({
+  shape,
+  status,
+}: {
+  shape: PlatformShape;
+  status?: { configured: boolean; fields: Record<string, boolean> };
+}) {
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
   const [form] = Form.useForm<Record<string, string>>();
@@ -169,9 +568,6 @@ function PlatformPanel({ shape, status }: { shape: PlatformShape; status?: Platf
   });
 
   const onFinish = (values: Record<string, string>) => {
-    // Drop empty strings — the server preserves existing values for
-    // those, so this lets users rotate one secret without re-typing
-    // every other.
     const cleaned: Record<string, string> = {};
     for (const [k, v] of Object.entries(values)) {
       if (v && v.length > 0) cleaned[k] = v;
@@ -213,7 +609,6 @@ function PlatformPanel({ shape, status }: { shape: PlatformShape; status?: Platf
         Stored values are never sent back to this page. Enter a new value to rotate; leave a field
         blank to keep its current value.
       </Typography.Paragraph>
-
       <Form layout="vertical" form={form} onFinish={onFinish}>
         {shape.fields.map((field) => {
           const fieldConfigured = status?.fields[field.name] ?? false;
@@ -230,7 +625,6 @@ function PlatformPanel({ shape, status }: { shape: PlatformShape; status?: Platf
             </Form.Item>
           );
         })}
-
         <div style={{ display: 'flex', gap: 8 }}>
           <Button type="primary" htmlType="submit" loading={setMut.isPending}>
             Save
@@ -249,5 +643,61 @@ function PlatformPanel({ shape, status }: { shape: PlatformShape; status?: Platf
         </div>
       </Form>
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Root Communications component
+// ---------------------------------------------------------------------------
+
+export function Communications() {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['platforms', 'list'],
+    queryFn: () => rpc.platforms.list(),
+  });
+
+  if (isLoading) {
+    return (
+      <div style={{ display: 'grid', placeItems: 'center', height: 200 }}>
+        <Spin />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <Typography.Text type="danger">
+        Failed to load platforms: {(error as Error).message}
+      </Typography.Text>
+    );
+  }
+
+  const statusById = new Map((data?.platforms ?? []).map((p) => [p.id, p] as const));
+
+  return (
+    <div className="comms-tab">
+      <Tabs
+        defaultActiveKey="telegram"
+        items={[
+          { key: 'telegram', label: 'Telegram', children: <TelegramPanel /> },
+          { key: 'slack', label: 'Slack', children: <SlackPanel /> },
+          ...LEGACY_PLATFORMS.map((shape) => {
+            const status = statusById.get(shape.id);
+            return {
+              key: shape.id,
+              label: (
+                <span>
+                  {shape.label}{' '}
+                  <Badge
+                    status={status?.configured ? 'success' : 'default'}
+                    style={{ marginLeft: 6 }}
+                  />
+                </span>
+              ),
+              children: <LegacyPlatformPanel shape={shape} status={status} />,
+            };
+          }),
+        ]}
+      />
+    </div>
   );
 }
