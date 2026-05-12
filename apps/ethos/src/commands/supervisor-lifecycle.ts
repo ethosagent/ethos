@@ -69,7 +69,16 @@ export async function ensureSupervisorRunning(
     await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
   }
 
-  return { status: 'spawned', pid: child.pid };
+  // Verify the supervisor wrote its runtime file and the PID is alive.
+  // If not, we still return 'spawned' but with pid: undefined so callers
+  // can surface a warning rather than silently accepting a broken state.
+  const postSpawnRuntime = deps.readRuntime(teamName);
+  const confirmedPid =
+    postSpawnRuntime && deps.isPidAlive(postSpawnRuntime.supervisorPid)
+      ? postSpawnRuntime.supervisorPid
+      : undefined;
+
+  return { status: 'spawned', pid: confirmedPid };
 }
 
 export interface StopDeps {

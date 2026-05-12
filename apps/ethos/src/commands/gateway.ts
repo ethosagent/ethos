@@ -217,11 +217,17 @@ export async function runGatewayStart(): Promise<void> {
   const entryPoint = process.argv[1] ?? '';
   const supervisorResults = await ensureTeamSupervisors(bots, entryPoint, supervisorDeps);
   for (const [teamName, result] of supervisorResults) {
-    console.log(
-      result.status === 'spawned'
-        ? `${c.dim}team supervisor${c.reset} ${c.bold}${teamName}${c.reset} ${c.dim}spawned (PID ${result.pid ?? '?'})${c.reset}`
-        : `${c.dim}team supervisor${c.reset} ${c.bold}${teamName}${c.reset} ${c.dim}already running (PID ${result.pid ?? '?'})${c.reset}`,
-    );
+    if (result.status === 'spawned' && result.pid === undefined) {
+      console.log(
+        `${c.yellow}⚠ team supervisor${c.reset} ${c.bold}${teamName}${c.reset} ${c.yellow}spawned but did not publish a runtime file — team routing may be broken. Run 'ethos team status ${teamName}' to diagnose.${c.reset}`,
+      );
+    } else {
+      console.log(
+        result.status === 'spawned'
+          ? `${c.dim}team supervisor${c.reset} ${c.bold}${teamName}${c.reset} ${c.dim}spawned (PID ${result.pid})${c.reset}`
+          : `${c.dim}team supervisor${c.reset} ${c.bold}${teamName}${c.reset} ${c.dim}already running (PID ${result.pid})${c.reset}`,
+      );
+    }
   }
   // System loop used by cron — not bot-bound. Cron jobs route through
   // their own `job.personality` field, not through the platform bot

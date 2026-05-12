@@ -89,6 +89,42 @@ describe('ensureSupervisorRunning', () => {
     expect(removeRuntime).toHaveBeenCalledWith('eng');
     expect(spawn).toHaveBeenCalledOnce();
   });
+
+  it('returns confirmed PID from runtime file when supervisor starts successfully', async () => {
+    const child = fakeChild(200);
+    const spawn = vi.fn().mockReturnValue(child);
+    // First call (pre-spawn check): null. Second call (post-spawn verify): live runtime.
+    const readRuntime = vi.fn().mockReturnValueOnce(null).mockReturnValueOnce(makeRuntime(200));
+    const deps: SupervisorLifecycleDeps = {
+      readRuntime,
+      isPidAlive: () => true,
+      removeRuntime: vi.fn(),
+      spawn,
+      waitMs: 0,
+    };
+
+    const result = await ensureSupervisorRunning('eng', ENTRY, deps);
+
+    expect(result.status).toBe('spawned');
+    expect(result.pid).toBe(200);
+  });
+
+  it('returns pid undefined when supervisor does not publish runtime after spawn', async () => {
+    const child = fakeChild(200);
+    const spawn = vi.fn().mockReturnValue(child);
+    const deps: SupervisorLifecycleDeps = {
+      readRuntime: vi.fn().mockReturnValue(null), // never writes runtime
+      isPidAlive: () => false,
+      removeRuntime: vi.fn(),
+      spawn,
+      waitMs: 0,
+    };
+
+    const result = await ensureSupervisorRunning('eng', ENTRY, deps);
+
+    expect(result.status).toBe('spawned');
+    expect(result.pid).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
