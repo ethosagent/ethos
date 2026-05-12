@@ -22,7 +22,8 @@
     "format": "biome format --write .",
     "clean": "find . -name 'dist' -not -path '*/node_modules/*' -exec rm -rf {} + 2>/dev/null; true",
     "docs": "pnpm --filter docs run start",
-    "docs:build": "pnpm --filter docs run build"
+    "docs:build": "pnpm --filter docs run build",
+    "docs:check": "pnpm --filter docs run check"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.13",

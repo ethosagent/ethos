@@ -1,6 +1,6 @@
 ---
 title: "Glossary"
-description: "Every Ethos domain term in one place: personality, skill, tool, hook, mesh, session, memory scope, audience boundary, storage scope, plugin, adapter, gateway."
+description: "Every Ethos domain term in one place: personality, skill, tool, hook, mesh, session, memory, audience boundary, storage, plugin, adapter, gateway."
 kind: reference
 audience: shared
 slug: glossary
@@ -9,7 +9,11 @@ updated: 2026-05-12
 
 Every domain term used elsewhere in the docs has one canonical entry here. Pages link to the entry on first use. The list is alphabetical inside each cluster; clusters are ordered by how often a newcomer hits them.
 
-## Core agent model
+## Synopsis {#synopsis}
+
+Single canonical home for every Ethos domain term. Each entry: one-sentence definition + anchor link from other pages on first use. Entries are grouped into seven clusters — agent / personality / tools / sessions / multi-agent / channels / skills — ordered roughly by how soon a newcomer hits them.
+
+## Core agent model {#core-agent-model}
 
 ### Agent {#agent}
 
@@ -27,7 +31,7 @@ The streaming event type. Eight variants: `text_delta`, `thinking_delta`, `tool_
 
 One user message in, one streamed response out. A turn may include multiple [tool](#tool) calls executed in parallel, multiple [hook](#hook) invocations, and one or more LLM completions. A session is a sequence of turns.
 
-## Personality
+## Personality {#personality}
 
 ### Personality {#personality}
 
@@ -49,7 +53,7 @@ A field in a personality's `config.yaml` controlling whether its agent reads and
 
 The per-personality filesystem allowlist. A list of absolute or glob paths a personality's file tools may read or write. Default-deny: anything not listed is unreachable. Surfaces as a `BoundaryError` when violated.
 
-## Tools, hooks, registries
+## Tools, hooks, registries {#tools-hooks-registries}
 
 ### Tool {#tool}
 
@@ -75,7 +79,7 @@ A registration point for cross-cutting behaviour fired at a fixed boundary in th
 
 The `audience` field on tool progress events. `'internal'` (default) is consumed by the framework only — logs, telemetry, dev TUI. `'user'` is rendered by surface code (CLI, channel adapters). Tools opt into `'user'` per-event for long-running operations where silent latency would confuse the reader.
 
-## Sessions, memory, storage
+## Sessions, memory, storage {#sessions-memory-storage}
 
 ### Session {#session}
 
@@ -101,7 +105,7 @@ The filesystem-access interface from `@ethosagent/types`. All reads and writes u
 
 The per-personality read/write boundary enforced by `ScopedStorage`. Paths outside the personality's allowlist raise `BoundaryError`; surfaces translate this into a user-facing tool error. Distinct from [fs_reach](#fs-reach) — Storage scope is enforced for framework I/O, fs_reach for the agent's own file tools.
 
-## Multi-agent
+## Multi-agent {#multi-agent}
 
 ### Mesh {#mesh}
 
@@ -111,7 +115,7 @@ A configuration of multiple personalities that can pass work to each other under
 
 The personality at the top of a mesh that decides which other personality handles the next message. Picks routing based on message content, prior turn outcomes, or explicit user direction.
 
-## Channels and platforms
+## Channels and platforms {#channels-platforms}
 
 ### Channel adapter {#channel-adapter}
 
@@ -121,7 +125,7 @@ An implementation of `PlatformAdapter` that bridges a messaging platform (Telegr
 
 The runtime layer between channel adapters and `AgentLoop`. Routes inbound messages to the correct session, dedupes outbound messages (30-second TTL, keyed by `(sessionId, sha256(content))`), and fans events out to the right adapter.
 
-## Skills and plugins
+## Skills and plugins {#skills-plugins}
 
 ### Skill {#skill}
 
@@ -135,7 +139,7 @@ A packaged set of tools, hooks, and / or providers shipped as an npm module impl
 
 A named visual theme resolved against `@ethosagent/design-tokens`. Built-in skins ship with the CLI (`default`, `mono`, `paper`); user skins can be added via plugins. Wired into both the TUI `SkinContext` and the Web `ConfigProvider` so every surface picks up the same palette. Configurable per-personality and per-user; the user pin always wins.
 
-## See also
+## See also {#see-also}
 
 - [What is Ethos?](what-is-ethos.md) — the 90-second mental model
 - [Architecture in 90 seconds](architecture-90-seconds.md) — how the pieces fit

@@ -25,6 +25,21 @@ jobs:
       - uses: ./.github/actions/setup
       - run: bash scripts/check-tests.sh
 
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Runs on every PR — the gate is cheap and the rules drift fast. Locally
+    # the same script runs via `pnpm docs:check`. Pre-build it once so the
+    # JSON-LD parse check can read built HTML.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Build the docs site
+        run: pnpm --filter docs run build
+      - name: Run docs:check page-acceptance gate
+        run: bash scripts/check-docs.sh
+
   typecheck:
     name: typecheck
     runs-on: ubuntu-latest
