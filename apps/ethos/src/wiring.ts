@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import { meshRegistryPath, setMeshObservabilityService } from '@ethosagent/agent-mesh';
 import type { AgentLoop } from '@ethosagent/core';
@@ -272,9 +273,58 @@ export async function resolveActiveLoop(
   if (config.activeContext?.type === 'team') {
     const teamName = config.activeContext.name;
     const { loop, coordinatorPersonality } = await createTeamAgentLoop(config, teamName, opts);
+    applyCliOverrideHooks(loop, config);
     return { loop, personalityId: coordinatorPersonality, displayName: `team:${teamName}` };
   }
   const personalityId = config.activeContext?.name ?? config.personality;
   const loop = await createAgentLoop({ ...config, personality: personalityId }, opts);
+  applyCliOverrideHooks(loop, config);
   return { loop, personalityId, displayName: personalityId };
+}
+
+// ---------------------------------------------------------------------------
+// FW-8 — apply CLI override hooks after the AgentLoop is constructed
+// ---------------------------------------------------------------------------
+
+/**
+ * Register hooks that enforce the CLI override flags (`--toolsets`, `-s`).
+ * Called after every loop construction path in resolveActiveLoop so team
+ * and solo modes both get the overrides.
+ */
+function applyCliOverrideHooks(loop: AgentLoop, config: EthosConfig): void {
+  // --toolsets: reject before_tool_call for tools not in the allowed set
+  if (config.cliToolsets && config.cliToolsets.length > 0) {
+    const allowed = new Set(config.cliToolsets);
+    loop.hooks.registerModifying('before_tool_call', async (payload) => {
+      const tool = loop.getAvailableTools().find((t) => t.name === payload.toolName);
+      if (tool?.toolset && !allowed.has(tool.toolset)) {
+        return {
+          error: `Tool '${payload.toolName}' (toolset: ${tool.toolset}) is disabled by --toolsets CLI override`,
+        };
+      }
+      return null;
+    });
+  }
+
+  // -s: prepend skill content to every turn's system prompt
+  if (config.cliSkills && config.cliSkills.length > 0) {
+    const skillsDir = join(homedir(), '.ethos', 'skills');
+    const skillContent = config.cliSkills
+      .map((name) => {
+        const path = join(skillsDir, `${name}.md`);
+        try {
+          return readFileSync(path, 'utf-8');
+        } catch {
+          return '';
+        }
+      })
+      .filter(Boolean)
+      .join('\n\n---\n\n');
+
+    if (skillContent) {
+      loop.hooks.registerModifying('before_prompt_build', async () => {
+        return { prependSystem: skillContent };
+      });
+    }
+  }
 }
