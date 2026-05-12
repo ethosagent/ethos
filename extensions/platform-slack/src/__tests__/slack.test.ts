@@ -127,3 +127,50 @@ describe('SlackAdapter — botKey identity', () => {
     expect(b.botKey).toBe('explicit');
   });
 });
+
+// ---------------------------------------------------------------------------
+// SlackAdapter — webUiBaseUrl validation
+// ---------------------------------------------------------------------------
+
+describe('SlackAdapter — webUiBaseUrl normalization', () => {
+  /** Reach into the private normalized field — the adapter has no public
+   *  getter, and the value is observable nowhere else without a live Bolt
+   *  app. The cast is the test's only honest seam. */
+  const baseUrlOf = (adapter: SlackAdapter): string | undefined =>
+    (adapter as unknown as { webUiBaseUrl: string | undefined }).webUiBaseUrl;
+
+  const make = (webUiBaseUrl?: string): SlackAdapter =>
+    new SlackAdapter({
+      botToken: 'xoxb-fake',
+      appToken: 'xapp-fake',
+      signingSecret: 'sig-fake',
+      webUiBaseUrl,
+    });
+
+  it('keeps a valid https URL', () => {
+    expect(baseUrlOf(make('https://ethos.example.com'))).toBe('https://ethos.example.com');
+  });
+
+  it('keeps a valid http URL', () => {
+    expect(baseUrlOf(make('http://localhost:3000'))).toBe('http://localhost:3000');
+  });
+
+  it('strips trailing slashes', () => {
+    expect(baseUrlOf(make('https://ethos.example.com/'))).toBe('https://ethos.example.com');
+    expect(baseUrlOf(make('https://ethos.example.com///'))).toBe('https://ethos.example.com');
+  });
+
+  it('treats a non-http(s) URL as absent', () => {
+    expect(baseUrlOf(make('ftp://ethos.example.com'))).toBeUndefined();
+    expect(baseUrlOf(make('javascript:alert(1)'))).toBeUndefined();
+  });
+
+  it('treats garbage as absent without throwing', () => {
+    expect(baseUrlOf(make('not a url'))).toBeUndefined();
+    expect(baseUrlOf(make('https://ok|broken>markup'))).toBeUndefined();
+  });
+
+  it('treats an absent value as absent', () => {
+    expect(baseUrlOf(make(undefined))).toBeUndefined();
+  });
+});

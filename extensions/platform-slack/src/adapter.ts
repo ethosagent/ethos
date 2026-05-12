@@ -55,6 +55,27 @@ function deriveDefaultBotKey(botToken: string): string {
   return createHash('sha256').update(botToken).digest('hex').slice(0, 24);
 }
 
+/**
+ * Normalize a configured `webUiBaseUrl`. The value is interpolated directly
+ * into Slack mrkdwn link syntax (`<url|text>`) in `blocks/session.ts`, so a
+ * bad value containing `>` or `|` would break the markup. We validate it once
+ * here at the boundary: accept only `http:` / `https:` URLs, strip trailing
+ * slashes, and treat anything absent or invalid as absent — the home view
+ * already degrades gracefully to plain-text session rows when there's no base
+ * URL. A misconfigured optional cosmetic field must not crash startup.
+ */
+function normalizeWebUiBaseUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
+  return raw.replace(/\/+$/, '');
+}
+
 export interface SlackAdapterConfig {
   /** Bot token (xoxb-...) */
   botToken: string;
@@ -170,7 +191,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     this.memory = config.memory;
     this.kanban = config.kanban;
     this.session = config.session;
-    this.webUiBaseUrl = config.webUiBaseUrl;
+    this.webUiBaseUrl = normalizeWebUiBaseUrl(config.webUiBaseUrl);
 
     if (config.storage) {
       const slackDir = config.slackDir ?? join(homeEthosDir(), 'slack');

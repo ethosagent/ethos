@@ -11,11 +11,28 @@
 
 import { type KanbanTicket, kanbanListBlocks } from '../blocks/kanban';
 import { type SessionSummary, sessionListBlocks } from '../blocks/session';
-import { divider, escapeMrkdwn, header, type SlackBlock, section } from '../blocks/shared';
+import { context, divider, escapeMrkdwn, header, type SlackBlock, section } from '../blocks/shared';
 import type { Binding, ChannelMode } from '../config';
 
 /** `action_id` for the home tab's Refresh button. */
 export const HOME_REFRESH_ACTION_ID = 'home:refresh';
+
+// Per-section caps. Slack Home tab views have a hard 100-block limit; an
+// unbounded reader (a bot in many channels, a busy team) would otherwise emit
+// an invalid view. The caps are enforced here in the view builder, independent
+// of what the readers return. Sessions/memory match the Phase 3 spec ("last 5
+// sessions", "last 5 memory entries"); kanban/channels pick a sensible bound.
+const SESSION_CAP = 5;
+const MEMORY_CAP = 5;
+const KANBAN_CAP = 10;
+const CHANNEL_CAP = 20;
+
+/** Truncate `items` to `cap`. Returns the kept slice and the overflow count
+ *  so the caller can append an honest `+ N more` context row. */
+function capSection<T>(items: T[], cap: number): { kept: T[]; overflow: number } {
+  if (items.length <= cap) return { kept: items, overflow: 0 };
+  return { kept: items.slice(0, cap), overflow: items.length - cap };
+}
 
 /** A Slack `view` payload — the shape `client.views.publish` expects. We use a
  *  minimal structural type for the same reason `blocks/` uses `SlackBlock`:
@@ -57,36 +74,42 @@ export function buildHomeView(input: HomeViewInput): SlackHomeView {
   blocks.push(divider());
 
   // Recent sessions.
-  blocks.push(...sessionListBlocks({ sessions: input.sessions, webUiBaseUrl: input.webUiBaseUrl }));
+  const sessions = capSection(input.sessions, SESSION_CAP);
+  blocks.push(...sessionListBlocks({ sessions: sessions.kept, webUiBaseUrl: input.webUiBaseUrl }));
+  if (sessions.overflow > 0) blocks.push(context([`+ ${sessions.overflow} more`]));
 
   // Active kanban — team-bound bots only. Hidden entirely for personality bots
   // per the spec (kanban is a team feature).
   if (input.bot.binding.type === 'team') {
-    blocks.push(
-      ...kanbanListBlocks({ team: input.bot.binding.name, tickets: input.kanbanTickets }),
-    );
+    const kanban = capSection(input.kanbanTickets, KANBAN_CAP);
+    blocks.push(...kanbanListBlocks({ team: input.bot.binding.name, tickets: kanban.kept }));
+    if (kanban.overflow > 0) blocks.push(context([`+ ${kanban.overflow} more`]));
     blocks.push(divider());
   }
 
   // Recent memory updates.
   blocks.push(header('Recent memory updates'));
-  if (input.memorySnippets.length === 0) {
+  const memory = capSection(input.memorySnippets, MEMORY_CAP);
+  if (memory.kept.length === 0) {
     blocks.push(section('No recent memory updates.'));
   } else {
-    for (const snippet of input.memorySnippets) {
+    for (const snippet of memory.kept) {
       blocks.push(section(escapeMrkdwn(snippet)));
     }
+    if (memory.overflow > 0) blocks.push(context([`+ ${memory.overflow} more`]));
   }
   blocks.push(divider());
 
   // This bot is in — channels + their mode.
   blocks.push(header('This bot is in'));
-  if (input.channelModes.length === 0) {
+  const channels = capSection(input.channelModes, CHANNEL_CAP);
+  if (channels.kept.length === 0) {
     blocks.push(section('This bot is not in any channels yet, or channel state is not persisted.'));
   } else {
-    for (const [channel, mode] of input.channelModes) {
+    for (const [channel, mode] of channels.kept) {
       blocks.push(section(`<#${escapeMrkdwn(channel)}> · mode \`${mode}\``));
     }
+    if (channels.overflow > 0) blocks.push(context([`+ ${channels.overflow} more`]));
   }
   blocks.push({
     type: 'actions',

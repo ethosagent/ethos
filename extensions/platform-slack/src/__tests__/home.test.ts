@@ -149,6 +149,60 @@ describe('home/view — buildHomeView', () => {
     expect(json).not.toContain('<!here>');
     expect(json).toContain('&lt;!here&gt;');
   });
+
+  it('stays at/under Slack 100-block limit when readers return large lists', () => {
+    const view = buildHomeView({
+      bot: { displayName: 'Eng', binding: teamBinding },
+      sessions: Array.from({ length: 200 }, (_, i) => ({
+        id: `s${i}`,
+        label: `#chan-${i}`,
+        lastActivity: new Date('2026-05-10T10:00:00Z'),
+      })),
+      kanbanTickets: Array.from({ length: 200 }, (_, i) => ({
+        id: `t${i}`,
+        title: `ticket ${i}`,
+        status: 'todo',
+        assignee: null,
+      })),
+      memorySnippets: Array.from({ length: 200 }, (_, i) => `- entry ${i}`),
+      channelModes: Array.from({ length: 200 }, (_, i) => [`C${i}`, 'all'] as [string, 'all']),
+    });
+    expect(view.blocks.length).toBeLessThanOrEqual(100);
+  });
+
+  it('appends a "+ N more" row to each truncated section', () => {
+    const view = buildHomeView({
+      bot: { displayName: 'Eng', binding: teamBinding },
+      sessions: Array.from({ length: 7 }, (_, i) => ({
+        id: `s${i}`,
+        label: `#chan-${i}`,
+        lastActivity: new Date('2026-05-10T10:00:00Z'),
+      })),
+      kanbanTickets: Array.from({ length: 13 }, (_, i) => ({
+        id: `t${i}`,
+        title: `ticket ${i}`,
+        status: 'todo',
+        assignee: null,
+      })),
+      memorySnippets: Array.from({ length: 8 }, (_, i) => `- entry ${i}`),
+      channelModes: Array.from({ length: 25 }, (_, i) => [`C${i}`, 'all'] as [string, 'all']),
+    });
+    const text = plaintextFallback(view.blocks);
+    expect(text).toContain('+ 2 more'); // sessions: 7 - 5
+    expect(text).toContain('+ 3 more'); // kanban: 13 - 10
+    expect(text).toContain('+ 5 more'); // channels: 25 - 20, memory: 8 - 5
+  });
+
+  it('omits the "+ N more" row when no section is truncated', () => {
+    const view = buildHomeView({
+      bot: { displayName: 'Eng', binding: teamBinding },
+      sessions: [{ id: 's1', label: '#general', lastActivity: new Date('2026-05-10T10:00:00Z') }],
+      kanbanTickets: [{ id: 't1', title: 'do thing', status: 'todo', assignee: null }],
+      memorySnippets: ['- learned a thing'],
+      channelModes: [['C1', 'all']],
+    });
+    expect(plaintextFallback(view.blocks)).not.toContain('more');
+  });
 });
 
 // ---------------------------------------------------------------------------
