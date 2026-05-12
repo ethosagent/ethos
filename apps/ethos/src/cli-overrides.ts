@@ -155,18 +155,34 @@ export async function applyCliOverrides(
   // -s: resolve each skill name against ~/.ethos/skills/<name>.md
   if (flags.skills !== undefined && flags.skills.length > 0) {
     const skillsRoot = flags.skillsDir ?? join(ethosDir(), 'skills');
+    const skillContents: string[] = [];
     for (const name of flags.skills) {
+      // Reject path traversal attempts before joining into ~/.ethos/skills/
+      if (
+        name.includes('/') ||
+        name.includes('\\') ||
+        name.includes('..') ||
+        name.startsWith('.')
+      ) {
+        throw new EthosError({
+          code: 'MISSING_SKILL',
+          cause: `Invalid skill name '${name}': must be a plain filename with no path separators`,
+          action: `Use a simple skill name like 'my-skill', not a path`,
+        });
+      }
       const path = join(skillsRoot, `${name}.md`);
-      const exists = await storage.exists(path);
-      if (!exists) {
+      const content = await storage.read(path);
+      if (content === null) {
         throw new EthosError({
           code: 'MISSING_SKILL',
           cause: `Skill '${name}' not found at ${path}`,
           action: `Place a ${name}.md file in ~/.ethos/skills/ or check the skill name spelling`,
         });
       }
+      skillContents.push(content);
     }
     result.cliSkills = flags.skills;
+    result.cliSkillContents = skillContents;
   }
 
   return result;

@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import { meshRegistryPath, setMeshObservabilityService } from '@ethosagent/agent-mesh';
 import type { AgentLoop } from '@ethosagent/core';
@@ -306,21 +305,9 @@ function applyCliOverrideHooks(loop: AgentLoop, config: EthosConfig): void {
     });
   }
 
-  // -s: prepend skill content to every turn's system prompt
-  if (config.cliSkills && config.cliSkills.length > 0) {
-    const skillsDir = join(homedir(), '.ethos', 'skills');
-    const skillContent = config.cliSkills
-      .map((name) => {
-        const path = join(skillsDir, `${name}.md`);
-        try {
-          return readFileSync(path, 'utf-8');
-        } catch {
-          return '';
-        }
-      })
-      .filter(Boolean)
-      .join('\n\n---\n\n');
-
+  // -s: prepend skill content to every turn's system prompt (content pre-loaded by applyCliOverrides)
+  if (config.cliSkillContents && config.cliSkillContents.length > 0) {
+    const skillContent = config.cliSkillContents.filter(Boolean).join('\n\n---\n\n');
     if (skillContent) {
       loop.hooks.registerModifying('before_prompt_build', async () => {
         return { prependSystem: skillContent };

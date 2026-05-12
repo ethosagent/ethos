@@ -180,13 +180,17 @@ async function exportSessionsToEval(dbPath: string, outPath: string): Promise<bo
 
   try {
     // Fetch messages from the last 7 days across all sessions.
+    // JOIN sessions to get the key (messages only has session_id FK, not session_key).
+    // LIMIT 2000 prevents loading the entire table into memory on busy installs.
     const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const rows = db
       .prepare(
-        `SELECT session_key, role, content
-           FROM messages
-          WHERE timestamp >= ?
-          ORDER BY timestamp ASC`,
+        `SELECT s.key AS session_key, m.role, m.content
+           FROM messages m
+           JOIN sessions s ON m.session_id = s.id
+          WHERE m.timestamp >= ?
+          ORDER BY m.timestamp ASC
+          LIMIT 2000`,
       )
       .all(cutoff) as Array<{ session_key: string; role: string; content: string }>;
 

@@ -220,6 +220,14 @@ export const readFileTool: Tool = {
     const abs = await canonicalizeForRead(expanded);
     const storage = storageOf(ctx);
 
+    // FW-28 — snapshot mtime before reading. Stat again after; if the file
+    // changed while we read it the content is ambiguous, so we surface an error
+    // rather than silently recording the wrong baseline for the stale-write guard.
+    let mtimeBefore: number | null = null;
+    if (ctx.readMtimes) {
+      mtimeBefore = await storage.mtime(abs);
+    }
+
     let content: string | null;
     try {
       content = await storage.read(abs);
@@ -240,13 +248,16 @@ export const readFileTool: Tool = {
       };
     }
 
-    // FW-28 — record mtime so write_file / patch_file can detect external edits.
-    // Storage.mtime() returns null for missing paths and respects ScopedStorage.
-    if (ctx.readMtimes) {
-      const mtimeMs = await storage.mtime(abs);
-      if (mtimeMs !== null) {
-        ctx.readMtimes.set(abs, { mtimeMs, readAtTurn: ctx.currentTurn });
+    if (ctx.readMtimes && mtimeBefore !== null) {
+      const mtimeAfter = await storage.mtime(abs);
+      if (mtimeAfter === null || mtimeAfter !== mtimeBefore) {
+        return {
+          ok: false,
+          error: `${abs} changed during read — re-read the file before writing`,
+          code: 'execution_failed',
+        };
       }
+      ctx.readMtimes.set(abs, { mtimeMs: mtimeBefore, readAtTurn: ctx.currentTurn });
     }
 
     const lines = content.split('\n');

@@ -188,6 +188,12 @@ export interface EthosConfig {
    * @internal
    */
   cliSkills?: string[];
+  /**
+   * FW-8 — Pre-loaded content for cliSkills. Populated by applyCliOverrides
+   * so the hook in wiring.ts avoids a second readFileSync path.
+   * @internal
+   */
+  cliSkillContents?: string[];
   /** Global retention settings. Per-category TTLs. */
   retention?: RetentionConfig;
   /**
