@@ -888,6 +888,7 @@ export class AgentLoop {
         agentId: opts.agentId,
         personalityId: personality.id,
         memoryScope: personality.memoryScope,
+        memoryScopeId: memScopeId,
         currentTurn: turnCount,
         messageCount: allMessages.length + turnCount,
         abortSignal,
