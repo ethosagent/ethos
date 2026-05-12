@@ -23,6 +23,7 @@ import { type ChatDefaults, ChatService } from './services/chat.service';
 import { ConfigService } from './services/config.service';
 import { CronService } from './services/cron.service';
 import { EvolverService } from './services/evolver.service';
+import { KanbanService } from './services/kanban.service';
 import { LabService } from './services/lab.service';
 import { MemoryService } from './services/memory.service';
 import { MeshService } from './services/mesh.service';
@@ -140,6 +141,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const evolverService = new EvolverService({ evolver: evolverRepo, library: skillsLibrary });
   const meshService = new MeshService({ mesh });
   const memoryService = new MemoryService({ memory: memoryProvider });
+  const kanbanService = new KanbanService();
   // Project-level plugins (`<cwd>/.ethos/plugins/`) are out of scope
   // for v1; user-level only is the standard install path. Threading
   // `workingDir` from boot would be the next step when we add it.
@@ -210,6 +212,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       plugins: pluginsService,
       platforms: platformsService,
       lab: labService,
+      kanban: kanbanService,
     },
     ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),
     ...(opts.secureCookie !== undefined ? { secureCookie: opts.secureCookie } : {}),

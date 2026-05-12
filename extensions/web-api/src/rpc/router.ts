@@ -4,6 +4,7 @@ import { configRouter } from './config';
 import { cronRouter } from './cron';
 import { evalRouter } from './eval';
 import { evolverRouter } from './evolver';
+import { kanbanRouter } from './kanban';
 import { memoryRouter } from './memory';
 import { meshRouter } from './mesh';
 import { onboardingRouter } from './onboarding';
@@ -52,6 +53,7 @@ export const apiRouter = {
   platforms: platformsRouter,
   batch: batchRouter,
   eval: evalRouter,
+  kanban: kanbanRouter,
 };
 
 export type ApiRouter = typeof apiRouter;

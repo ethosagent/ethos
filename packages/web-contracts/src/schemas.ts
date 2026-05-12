@@ -431,3 +431,109 @@ export const MeshRouteResultSchema = z.object({
   reason: z.string().nullable(),
 });
 export type MeshRouteResult = z.infer<typeof MeshRouteResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Kanban — Plan B Control Center surface
+//
+// Wire-format mirrors of `@ethosagent/kanban-store` types, with epoch-ms
+// timestamps converted to ISO-8601 strings and snake_case columns mapped to
+// camelCase for the client. Mutations route through the server (the human
+// "actor" is `human:<sessionLabel>`).
+// ---------------------------------------------------------------------------
+
+export const KanbanTaskStatusSchema = z.enum([
+  'todo',
+  'ready',
+  'running',
+  'blocked',
+  'done',
+  'archived',
+  'scheduled',
+]);
+export type KanbanTaskStatus = z.infer<typeof KanbanTaskStatusSchema>;
+
+export const KanbanTaskSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  body: z.string(),
+  status: KanbanTaskStatusSchema,
+  assignee: z.string().nullable(),
+  priority: z.number().int(),
+  workspaceMode: z.enum(['scratch', 'worktree', 'dir']),
+  workspacePath: z.string().nullable(),
+  scheduledFor: z.string().nullable(), // ISO-8601
+  currentRunId: z.string().nullable(),
+  createdAt: z.string(), // ISO-8601
+  updatedAt: z.string(), // ISO-8601
+});
+export type KanbanTask = z.infer<typeof KanbanTaskSchema>;
+
+export const KanbanCommentSchema = z.object({
+  id: z.string(),
+  taskId: z.string(),
+  author: z.string(),
+  body: z.string(),
+  createdAt: z.string(), // ISO-8601
+});
+export type KanbanComment = z.infer<typeof KanbanCommentSchema>;
+
+export const KanbanRunSchema = z.object({
+  id: z.string(),
+  taskId: z.string(),
+  startedAt: z.string(), // ISO-8601
+  endedAt: z.string().nullable(), // ISO-8601
+  outcome: z.enum(['completed', 'blocked', 'stalled', 'cancelled']).nullable(),
+  summary: z.string().nullable(),
+  lastHeartbeatAt: z.string(), // ISO-8601
+});
+export type KanbanRun = z.infer<typeof KanbanRunSchema>;
+
+export const KanbanEventSchema = z.object({
+  id: z.number().int(),
+  taskId: z.string(),
+  kind: z.enum([
+    'created',
+    'status_changed',
+    'commented',
+    'assigned',
+    'linked',
+    'unlinked',
+    'run_started',
+    'run_completed',
+    'heartbeat',
+    'archived',
+  ]),
+  actor: z.string(),
+  data: z.record(z.string(), z.unknown()),
+  createdAt: z.string(), // ISO-8601
+});
+export type KanbanEvent = z.infer<typeof KanbanEventSchema>;
+
+export const KanbanLinkSchema = z.object({
+  parentId: z.string(),
+  childId: z.string(),
+});
+export type KanbanLink = z.infer<typeof KanbanLinkSchema>;
+
+export const KanbanTeamSummarySchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  dispatchMode: z.enum(['coordinator', 'self-routing', 'broadcast']),
+  /** Health label derived from the runtime file: `running`, `stopped`, `stale`. */
+  health: z.enum(['running', 'stopped', 'stale']),
+  memberCount: z.number().int().nonnegative(),
+  /** Members whose runtime status is `running`. */
+  runningCount: z.number().int().nonnegative(),
+  /** ISO-8601 mtime of the board.db, or null when no board exists. */
+  boardModifiedAt: z.string().nullable(),
+});
+export type KanbanTeamSummary = z.infer<typeof KanbanTeamSummarySchema>;
+
+export const KanbanBoardSnapshotSchema = z.object({
+  team: KanbanTeamSummarySchema,
+  tasks: z.array(KanbanTaskSchema),
+  links: z.array(KanbanLinkSchema),
+  /** Most-recent events, oldest→newest, capped at 100. */
+  recentEvents: z.array(KanbanEventSchema),
+});
+export type KanbanBoardSnapshot = z.infer<typeof KanbanBoardSnapshotSchema>;

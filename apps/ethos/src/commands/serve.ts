@@ -39,6 +39,17 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   if (modelOverride) config = { ...config, model: modelOverride };
 
   const teamFlag = parseFlagValue(args, ['--team']);
+  const rawRole = parseFlagValue(args, ['--role']);
+  if (rawRole !== undefined && rawRole !== 'coordinator' && rawRole !== 'member') {
+    // Fail-closed: a typo in --role would otherwise silently disable the kanban
+    // role gate. Better to crash the spawn loudly.
+    console.error(`Invalid --role "${rawRole}". Must be "coordinator" or "member".`);
+    process.exit(1);
+  }
+  const roleFlag: 'coordinator' | 'member' | undefined = rawRole as
+    | 'coordinator'
+    | 'member'
+    | undefined;
   const meshName = parseFlagValue(args, ['--mesh']) ?? 'default';
 
   const dir = ethosDir();
@@ -48,12 +59,27 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   let activeMeshName: string;
   let activePersonality: string;
 
-  if (teamFlag) {
+  if (teamFlag && personalityOverride) {
+    // Plan B member spawn — supervisor spawns each member with
+    //   ethos serve --personality <member> --team <name> --role <role>
+    // Keep the named personality (don't force coordinator) but apply team context
+    // so the kanban store routes to the team board and the role hook fires.
+    activeMeshName = meshName === 'default' ? teamFlag : meshName;
+    activePersonality = personalityOverride;
+    loop = await createAgentLoop(
+      { ...config, teamName: teamFlag, ...(roleFlag ? { role: roleFlag } : {}) },
+      { profile: loopProfile, meshRegistryPath: meshRegistryPath(activeMeshName) },
+    );
+  } else if (teamFlag) {
+    // Chat UX: `ethos serve --team <name>` → run as the team's coordinator.
     const {
       loop: teamLoop,
       coordinatorPersonality,
       meshName: teamMesh,
-    } = await createTeamAgentLoop(config, teamFlag, { profile: loopProfile });
+    } = await createTeamAgentLoop(config, teamFlag, {
+      profile: loopProfile,
+      ...(roleFlag ? { role: roleFlag } : {}),
+    });
     loop = teamLoop;
     activeMeshName = teamMesh;
     activePersonality = coordinatorPersonality;

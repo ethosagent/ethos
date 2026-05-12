@@ -22,7 +22,11 @@ import { createCodeTools } from '@ethosagent/tools-code';
 import { createDelegationTools } from '@ethosagent/tools-delegation';
 import { createFileTools } from '@ethosagent/tools-file';
 import { createImageTools } from '@ethosagent/tools-image';
-import { createKanbanTools } from '@ethosagent/tools-kanban';
+import {
+  createKanbanRoleGateHook,
+  createKanbanTools,
+  type TeamRole,
+} from '@ethosagent/tools-kanban';
 import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
 import { createMemoryTools } from '@ethosagent/tools-memory';
 import { createProcessTools } from '@ethosagent/tools-process';
@@ -30,6 +34,7 @@ import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-
 import { createTodoTools, InMemoryTodoStore } from '@ethosagent/tools-todo';
 import { createWebTools } from '@ethosagent/tools-web';
 import type { ContextInjector, LLMProvider } from '@ethosagent/types';
+import { resolveKanbanDbPath } from './kanban-path';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
 
 // ---------------------------------------------------------------------------
@@ -61,12 +66,27 @@ export interface WiringConfig {
   /** Anthropic key rotation pool. Empty / absent = single-key provider. */
   rotationKeys?: RotationKey[];
   /**
-   * Override path to the kanban SQLite database. When unset, the store lives at
-   * `${dataDir}/personalities/<active-personality-id>/kanban.db` (per-personality
-   * solo board, per Plan A spec). Plan B teams override this to point at a
-   * shared team board.
+   * Override path to the kanban SQLite database. When unset, the path resolves
+   * based on `teamName`:
+   *   - `teamName` set → `${dataDir}/teams/<teamName>/board.db` (shared team board)
+   *   - `teamName` unset → `${dataDir}/personalities/<active-personality-id>/kanban.db` (solo)
+   * `kanbanDbPath` always wins when explicitly set.
    */
   kanbanDbPath?: string;
+  /**
+   * Team this AgentLoop belongs to. When set, the kanban store points at the
+   * team's shared board (`${dataDir}/teams/<name>/board.db`) and a `before_tool_call`
+   * role hook gets registered (Plan B). When unset, the loop runs solo (Plan A).
+   */
+  teamName?: string;
+  /**
+   * Caller's role within the team. Drives the kanban role-gate hook:
+   *   - `coordinator` can call kanban_create/_create_goal/_assign/_link/_archive
+   *   - `member` cannot, and can only complete/block/unblock/heartbeat their own
+   *     assigned tasks. Both roles can comment/list/show/update_status.
+   * Only honored when `teamName` is also set.
+   */
+  role?: TeamRole;
   /**
    * Fallback provider chain. When 2+ entries are provided, `createLLM` wraps
    * them in a `ChainedProvider` with cooldown-based automatic failover.
@@ -122,6 +142,8 @@ export interface CreateAgentLoopOptions {
 function personalityWantsKanban(p: { toolset?: readonly string[] }): boolean {
   return (p.toolset ?? []).some((name) => name.startsWith('kanban_'));
 }
+
+export { resolveKanbanDbPath } from './kanban-path';
 
 function createSingleProvider(cfg: {
   provider: string;
@@ -242,10 +264,10 @@ export async function createAgentLoop(
   // overrides kanbanDbPath to point at a shared team board.
   // KanbanStore handles its own parent-directory creation (same raw-fs exception
   // session-sqlite gets — see CLAUDE.md "Storage abstraction" exceptions).
+  let kanbanStore: KanbanStore | null = null;
   if (personalityWantsKanban(activePerson)) {
-    const kanbanDbPath =
-      config.kanbanDbPath ?? join(dataDir, 'personalities', activePerson.id, 'kanban.db');
-    const kanbanStore = new KanbanStore(kanbanDbPath);
+    const kanbanDbPath = resolveKanbanDbPath(config, dataDir, activePerson.id);
+    kanbanStore = new KanbanStore(kanbanDbPath);
     for (const tool of createKanbanTools({ store: kanbanStore })) tools.register(tool);
   }
   for (const tool of createProcessTools(dataDir)) tools.register(tool);
@@ -315,6 +337,20 @@ export async function createAgentLoop(
   // `createDangerPredicate` below.
   if (profile !== 'web') {
     hooks.registerModifying('before_tool_call', createTerminalGuardHook());
+  }
+
+  // Plan B — kanban role gate: enforce coordinator-only / assignee-only rules
+  // when the loop runs inside a team. Solo personalities (no teamName) bypass
+  // entirely, so Plan A semantics are unchanged.
+  if (kanbanStore !== null && config.teamName !== undefined && config.role !== undefined) {
+    hooks.registerModifying(
+      'before_tool_call',
+      createKanbanRoleGateHook({
+        role: config.role,
+        personalityId: activePerson.id,
+        store: kanbanStore,
+      }),
+    );
   }
 
   // E4 — context-engine registry. Built-ins register at construction; the

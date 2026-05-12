@@ -58,6 +58,20 @@ export function readRuntime(name: string): TeamRuntime | null {
   }
 }
 
+/**
+ * Read a runtime file from a non-default teams root. Test harnesses and any
+ * caller that wires a custom teams dir (e.g. `KanbanService({ teamsDir })`)
+ * must use this to keep manifest, board, and runtime reads consistent.
+ */
+export function readRuntimeFrom(rootDir: string, name: string): TeamRuntime | null {
+  try {
+    const src = readFileSync(join(rootDir, `${name}.runtime.json`), 'utf-8');
+    return JSON.parse(src) as TeamRuntime;
+  } catch {
+    return null;
+  }
+}
+
 export function removeRuntime(name: string): void {
   try {
     unlinkSync(runtimePath(name));

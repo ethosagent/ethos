@@ -743,6 +743,9 @@ importers:
 
   extensions/team-supervisor:
     dependencies:
+      '@ethosagent/kanban-store':
+        specifier: workspace:*
+        version: link:../kanban-store
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -900,6 +903,9 @@ importers:
       '@ethosagent/eval-harness':
         specifier: workspace:*
         version: link:../eval-harness
+      '@ethosagent/kanban-store':
+        specifier: workspace:*
+        version: link:../kanban-store
       '@ethosagent/memory-markdown':
         specifier: workspace:*
         version: link:../memory-markdown
@@ -924,6 +930,9 @@ importers:
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
+      '@ethosagent/team-supervisor':
+        specifier: workspace:*
+        version: link:../team-supervisor
       '@ethosagent/tools-mcp':
         specifier: workspace:*
         version: link:../tools-mcp

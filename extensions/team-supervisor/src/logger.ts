@@ -9,7 +9,8 @@ export type SupervisorEventKind =
   | 'give_up'
   | 'probe_fail'
   | 'probe_ok'
-  | 'degraded';
+  | 'degraded'
+  | 'dispatch_error';
 
 export interface SupervisorLogEntry {
   ts: string;

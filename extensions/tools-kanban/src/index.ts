@@ -9,6 +9,12 @@ import type {
 } from '@ethosagent/kanban-store';
 import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
+export {
+  createKanbanRoleGateHook,
+  type KanbanRoleGateOptions,
+  type TeamRole,
+} from './role-gate';
+
 // Rules block — appended to every tool description so the LLM remembers when
 // to reach for kanban vs the ephemeral `todo_*` toolset.
 const RULES = [
@@ -249,6 +255,80 @@ function createKanbanCreate(store: KanbanStore): Tool {
 }
 
 // ---------------------------------------------------------------------------
+// kanban_create_goal — sugar around kanban_create for the goal-as-parent-task pattern
+// ---------------------------------------------------------------------------
+
+interface CreateGoalArgs {
+  title: string;
+  description?: string;
+  priority?: number;
+  idempotency_key?: string;
+}
+
+function createKanbanCreateGoal(store: KanbanStore): Tool {
+  return {
+    name: 'kanban_create_goal',
+    description:
+      'Create a top-level GOAL. A goal is a kanban task with no assignee — the goal itself is never executed; its children are. Use this when the human gives you a multi-part objective, then call `kanban_create` once per child sub-task with `parents=[goal_id]` and `assignee=<specialist>`. Returns { task_id, status }.\n' +
+      RULES,
+    toolset: 'kanban',
+    maxResultChars: MAX_RESULT_CHARS,
+    schema: {
+      type: 'object',
+      required: ['title'],
+      properties: {
+        title: { type: 'string' },
+        description: { type: 'string', description: 'Full goal body (rendered in the board UI)' },
+        priority: { type: 'integer' },
+        idempotency_key: { type: 'string' },
+      },
+    },
+    async execute(rawArgs, ctx) {
+      const args = (rawArgs ?? {}) as Partial<CreateGoalArgs>;
+      if (typeof args.title !== 'string' || args.title.length === 0) {
+        return errorResult('title must be a non-empty string', 'input_invalid');
+      }
+      const titleErr = tooLong('title', args.title, MAX_TITLE_CHARS);
+      if (titleErr) return titleErr;
+      if (args.description !== undefined) {
+        if (typeof args.description !== 'string') {
+          return errorResult('description must be a string', 'input_invalid');
+        }
+        const dErr = tooLong('description', args.description, MAX_BODY_CHARS);
+        if (dErr) return dErr;
+      }
+      if (
+        args.priority !== undefined &&
+        (typeof args.priority !== 'number' || !Number.isFinite(args.priority))
+      ) {
+        return errorResult('priority must be a finite number', 'input_invalid');
+      }
+      if (args.idempotency_key !== undefined) {
+        if (typeof args.idempotency_key !== 'string') {
+          return errorResult('idempotency_key must be a string', 'input_invalid');
+        }
+        const ikErr = tooLong('idempotency_key', args.idempotency_key, MAX_IDEMPOTENCY_KEY_CHARS);
+        if (ikErr) return ikErr;
+      }
+      try {
+        const task = store.createTask({
+          title: args.title,
+          ...(args.description !== undefined ? { body: args.description } : {}),
+          ...(args.priority !== undefined ? { priority: args.priority } : {}),
+          ...(args.idempotency_key !== undefined ? { idempotencyKey: args.idempotency_key } : {}),
+          // assignee stays null — that's what makes this a goal vs a regular task.
+          assignee: null,
+          actor: actorOf(ctx),
+        });
+        return jsonResult({ task_id: task.id, status: task.status });
+      } catch (err) {
+        return storeError(err);
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // kanban_list
 // ---------------------------------------------------------------------------
 
@@ -427,8 +507,7 @@ function createKanbanUpdateStatus(store: KanbanStore): Tool {
 function createKanbanComment(store: KanbanStore): Tool {
   return {
     name: 'kanban_comment',
-    description:
-      'Append a comment to a task. Append-only; edits happen by adding new comments.\n' + RULES,
+    description: `Append a comment to a task. Append-only; edits happen by adding new comments.\n${RULES}`,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
     schema: {
@@ -471,7 +550,7 @@ function createKanbanComment(store: KanbanStore): Tool {
 function createKanbanComplete(store: KanbanStore): Tool {
   return {
     name: 'kanban_complete',
-    description: 'End the open run with outcome=completed, set status=done.\n' + RULES,
+    description: `End the open run with outcome=completed, set status=done.\n${RULES}`,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
     schema: {
@@ -587,8 +666,7 @@ function createKanbanUnblock(store: KanbanStore): Tool {
 function createKanbanHeartbeat(store: KanbanStore): Tool {
   return {
     name: 'kanban_heartbeat',
-    description:
-      'Bump last_heartbeat_at on the open run + write a heartbeat audit event.\n' + RULES,
+    description: `Bump last_heartbeat_at on the open run + write a heartbeat audit event.\n${RULES}`,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
     schema: {
@@ -649,8 +727,7 @@ function createKanbanLink(store: KanbanStore): Tool {
 function createKanbanAssign(store: KanbanStore): Tool {
   return {
     name: 'kanban_assign',
-    description:
-      'Set the assignee (personality id or "human:<name>"). Pass null to unassign.\n' + RULES,
+    description: `Set the assignee (personality id or "human:<name>"). Pass null to unassign.\n${RULES}`,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
     schema: {
@@ -721,6 +798,7 @@ export function createKanbanTools(opts: { store: KanbanStore }): Tool[] {
   const { store } = opts;
   return [
     createKanbanCreate(store),
+    createKanbanCreateGoal(store),
     createKanbanList(store),
     createKanbanShow(store),
     createKanbanUpdateStatus(store),

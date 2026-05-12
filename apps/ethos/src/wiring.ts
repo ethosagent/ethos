@@ -15,6 +15,7 @@ import {
   EthosObservability,
   createAgentLoop as packageCreateAgentLoop,
   createLLM as packageCreateLLM,
+  type WiringConfig,
   type WiringProfile,
 } from '@ethosagent/wiring';
 import { type EthosConfig, ethosDir, readKeys } from './config';
@@ -111,10 +112,16 @@ export async function createLLM(config: EthosConfig): Promise<LLMProvider> {
 }
 
 export async function createAgentLoop(
-  config: EthosConfig,
+  config: EthosConfig & Pick<WiringConfig, 'teamName' | 'role'>,
   opts: { profile?: WiringProfile; meshRegistryPath?: string } = {},
 ): Promise<AgentLoop> {
-  return packageCreateAgentLoop(await withRotation(config), {
+  const rotated = await withRotation(config);
+  const wiringConfig: WiringConfig = {
+    ...rotated,
+    ...(config.teamName !== undefined ? { teamName: config.teamName } : {}),
+    ...(config.role !== undefined ? { role: config.role } : {}),
+  };
+  return packageCreateAgentLoop(wiringConfig, {
     dataDir: ethosDir(),
     workingDir: process.cwd(),
     profile: opts.profile ?? 'cli',
@@ -159,7 +166,7 @@ export function loadTeamManifest(teamName: string): TeamManifest {
 export async function createTeamAgentLoop(
   config: EthosConfig,
   teamName: string,
-  opts: { profile?: WiringProfile } = {},
+  opts: { profile?: WiringProfile; role?: 'coordinator' | 'member' } = {},
 ): Promise<TeamLoopInfo> {
   const manifest = loadTeamManifest(teamName);
   const coordinatorPersonality =
@@ -172,8 +179,15 @@ export async function createTeamAgentLoop(
     ? { ...config, model: manifest.coordinator_model }
     : config;
 
+  // Plan B — thread teamName + role into the wiring so the kanban store points at
+  // the team board and the role-gate hook gets registered.
   const loop = await createAgentLoop(
-    { ...coordinatorConfig, personality: coordinatorPersonality },
+    {
+      ...coordinatorConfig,
+      personality: coordinatorPersonality,
+      teamName,
+      role: opts.role ?? 'coordinator',
+    },
     { profile: opts.profile ?? 'cli', meshRegistryPath: meshRegistryPath(meshName) },
   );
 

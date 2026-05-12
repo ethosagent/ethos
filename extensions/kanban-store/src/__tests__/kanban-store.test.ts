@@ -405,6 +405,78 @@ describe('KanbanStore', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Plan B dispatcher helpers
+  // ---------------------------------------------------------------------------
+
+  it('promoteReady gates on real-work parents (assignee set) and treats goal parents (assignee=null) as transparent', () => {
+    const noParent = store.createTask({ title: 'standalone' });
+    const realParent = store.createTask({ title: 'real-work', assignee: 'engineer' });
+    const goalParent = store.createTask({ title: 'goal' }); // no assignee = goal
+    const childOfReal = store.createTask({ title: 'child-real', parents: [realParent.id] });
+    const childOfGoal = store.createTask({ title: 'child-goal', parents: [goalParent.id] });
+
+    // Real-work parent not done → its child stays todo. Goal parent is
+    // transparent → its child promotes immediately. Standalone has no parents.
+    let promoted = store.promoteReady();
+    expect(promoted).toContain(noParent.id);
+    expect(promoted).toContain(childOfGoal.id);
+    expect(promoted).not.toContain(childOfReal.id);
+
+    // Finish the real-work parent → its child becomes eligible.
+    store.updateStatus(realParent.id, 'running');
+    store.completeRun(realParent.id, 'real parent done');
+    promoted = store.promoteReady();
+    expect(promoted).toContain(childOfReal.id);
+  });
+
+  it('promoteScheduled promotes scheduled tasks whose time has passed', () => {
+    const past = store.createTask({ title: 'past', scheduledFor: 1 });
+    const future = store.createTask({ title: 'future', scheduledFor: Date.now() + 60_000 });
+    const promoted = store.promoteScheduled(Date.now());
+    expect(promoted).toEqual([past.id]);
+    expect(promoted).not.toContain(future.id);
+    expect(store.getTask(past.id)?.status).toBe('ready');
+    expect(store.getTask(future.id)?.status).toBe('scheduled');
+  });
+
+  it('findStalledRuns returns only runs whose last_heartbeat_at is older than cutoff', () => {
+    const fresh = store.createTask({ title: 'fresh' });
+    store.updateStatus(fresh.id, 'running');
+    const stale = store.createTask({ title: 'stale' });
+    store.updateStatus(stale.id, 'running');
+
+    const now = Date.now();
+    // Backdate the second run by 200ms via direct UPDATE (test-only shortcut).
+    const staleRunId = store.getTask(stale.id)?.currentRunId;
+    expect(staleRunId).toBeTruthy();
+    // Pretend stale run hasn't heartbeated in 200ms
+    (
+      store as unknown as {
+        db: { prepare: (s: string) => { run: (a: number, b: string) => void } };
+      }
+    ).db
+      .prepare('UPDATE task_runs SET last_heartbeat_at = ? WHERE id = ?')
+      .run(now - 200, staleRunId as string);
+
+    const stalled = store.findStalledRuns(100, now);
+    expect(stalled.map((r) => r.taskId)).toEqual([stale.id]);
+  });
+
+  it('findReadyToDispatch returns ready tasks with an assignee and no open run, ordered by priority', () => {
+    const t1 = store.createTask({ title: 'p2', assignee: 'engineer', priority: 2 });
+    const t2 = store.createTask({ title: 'p9', assignee: 'researcher', priority: 9 });
+    store.createTask({ title: 'unassigned' }); // no assignee
+    const t4 = store.createTask({ title: 'in-prog', assignee: 'engineer' });
+    store.updateStatus(t1.id, 'ready');
+    store.updateStatus(t2.id, 'ready');
+    store.updateStatus(t4.id, 'ready');
+    store.updateStatus(t4.id, 'running'); // has a current_run_id now
+
+    const out = store.findReadyToDispatch();
+    expect(out.map((t) => t.id)).toEqual([t2.id, t1.id]); // priority 9 before 2
+  });
+
+  // ---------------------------------------------------------------------------
   // Cycle prevention — deterministic stress
   // ---------------------------------------------------------------------------
 

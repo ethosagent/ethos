@@ -2,13 +2,15 @@ import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { KanbanStore } from '@ethosagent/kanban-store';
 import type { TeamManifest } from '@ethosagent/types';
+import { Dispatcher, type SupervisorState } from './dispatcher';
 import { startHealthProbeLoop } from './health';
 import { logSupervisorEvent } from './logger';
 import { acquirePidFile } from './pid';
 import { allocatePorts } from './ports';
 import type { MemberRuntime, MemberStatus } from './runtime';
-import { pidFilePath, teamLogDir, writeRuntime } from './runtime';
+import { pidFilePath, teamLogDir, teamsDir, writeRuntime } from './runtime';
 
 const BACKOFF_BASE_MS = 1000;
 const BACKOFF_CAP_MS = 30_000;
@@ -22,9 +24,16 @@ export function buildMemberLaunchArgs(
   personality: string,
   meshName: string,
   modelOverride?: string,
+  teamName?: string,
+  role?: 'coordinator' | 'member',
 ): string[] {
   const base = ['serve', '--port', String(port), '--personality', personality, '--mesh', meshName];
   if (modelOverride) base.push('--model', modelOverride);
+  // Plan B: --team and --role thread the team-context plumbing through serve →
+  // wiring → kanban store + role-gate hook. Both are optional; solo serve calls
+  // omit them entirely and behave like Plan A.
+  if (teamName) base.push('--team', teamName);
+  if (role) base.push('--role', role);
   const needsTsxLoader = entryPoint.endsWith('.ts') || entryPoint.endsWith('.tsx');
   return needsTsxLoader ? ['--import', 'tsx', entryPoint, ...base] : [entryPoint, ...base];
 }
@@ -96,6 +105,10 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
   // Probe loop stop handle — assigned after the loop starts below.
   let stopProbeLoop: () => void = () => {};
 
+  // Additional shutdown hook for the kanban dispatcher (registered later). Splitting
+  // it out lets `shutdown()` stay declared near the top while wiring runs in order.
+  let stopDispatcher: () => Promise<void> = async () => {};
+
   // ---------------------------------------------------------------------------
   // Graceful shutdown
   // ---------------------------------------------------------------------------
@@ -104,6 +117,7 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
     if (shuttingDown) return;
     shuttingDown = true;
 
+    await stopDispatcher();
     stopProbeLoop();
     console.log(`[team-supervisor] Stopping team "${name}"…`);
 
@@ -161,12 +175,20 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
       throw new Error('Cannot determine CLI entry point for member launch');
     }
     const modelOverride = manifest.personality_models?.[personality];
+    // Default every member's role to 'member' explicitly. Without this, an
+    // omitted role spawns the child with no --role flag at all, which the
+    // wiring layer interprets as "don't register the kanban role gate" —
+    // i.e., the member gets the team board with no authorization. Forcing
+    // an explicit default closes the silent-privilege-drift hole.
+    const role = member.role ?? 'member';
     const childArgs = buildMemberLaunchArgs(
       entryPoint,
       m.port,
       personality,
       meshName,
       modelOverride,
+      name,
+      role,
     );
 
     const child = spawn(process.execPath, childArgs, {
@@ -292,6 +314,45 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
   for (const personality of memberMap.keys()) {
     spawnMember(personality);
   }
+
+  // ---------------------------------------------------------------------------
+  // Plan B — kanban dispatcher
+  // ---------------------------------------------------------------------------
+  // Opens the team's shared board and starts the promote / reclaim / dispatch
+  // loop. The board file lives at ~/.ethos/teams/<name>/board.db; KanbanStore
+  // creates the directory on first open. Stopping the team aborts in-flight
+  // HTTP calls and leaves any open runs to be reclaimed via stale heartbeat
+  // on the next start.
+  const boardPath = join(teamsDir(), name, 'board.db');
+  const board = new KanbanStore(boardPath);
+
+  const supervisorView: SupervisorState = {
+    portOf: (p) => memberMap.get(p)?.port ?? null,
+    statusOf: (p) => memberMap.get(p)?.status ?? null,
+  };
+
+  const dispatcher = new Dispatcher({
+    board,
+    supervisor: supervisorView,
+    ...(manifest.kanban?.stale_ms !== undefined ? { staleMs: manifest.kanban.stale_ms } : {}),
+    ...(manifest.kanban?.poll_ms !== undefined ? { pollMs: manifest.kanban.poll_ms } : {}),
+    onError: (err, taskId) => {
+      logSupervisorEvent({
+        ts: new Date().toISOString(),
+        team: name,
+        personality: 'dispatcher',
+        event: 'dispatch_error',
+        data: { taskId, message: err.message },
+      });
+    },
+  });
+
+  stopDispatcher = async () => {
+    await dispatcher.stop();
+    board.close();
+  };
+
+  dispatcher.start();
 
   // Block indefinitely — signals drive shutdown.
   await new Promise<never>(() => {});

@@ -15,6 +15,9 @@ domain_capabilities:
 dispatch_mode: coordinator
 coordinator: coordinator
 members:
+  - personality: coordinator
+    role: coordinator
+    port: 3000
   - personality: data-engineer
     port: 3001
     capabilities: [dbt, sql]
@@ -46,8 +49,8 @@ describe('parseTeamManifest', () => {
     expect(result.domain_capabilities).toEqual(['analytics', 'data-engineering']);
     expect(result.dispatch_mode).toBe('coordinator');
     expect(result.coordinator).toBe('coordinator');
-    expect(result.members).toHaveLength(3);
-    expect(result.members[0]).toEqual({
+    expect(result.members).toHaveLength(4);
+    expect(result.members[1]).toEqual({
       personality: 'data-engineer',
       port: 3001,
       capabilities: ['dbt', 'sql'],
@@ -66,8 +69,8 @@ describe('parseTeamManifest', () => {
 
   it('honours per-member capabilities override', () => {
     const result = parseTeamManifest(VALID_MANIFEST);
-    expect(result.members[0]?.capabilities).toEqual(['dbt', 'sql']);
-    expect(result.members[1]?.capabilities).toBeUndefined();
+    expect(result.members[1]?.capabilities).toEqual(['dbt', 'sql']);
+    expect(result.members[2]?.capabilities).toBeUndefined();
   });
 
   it('accepts broadcast dispatch mode', () => {
@@ -162,11 +165,53 @@ domain_capabilities: [general]
 coordinator: leader
 members:
   - personality: leader
+    role: coordinator
   - personality: worker
 `;
     const result = parseTeamManifest(yaml);
     expect(result.coordinator).toBe('leader');
     expect(result.dispatch_mode).toBeUndefined();
+  });
+
+  it('rejects coordinator mode with no role=coordinator member (fail-closed)', () => {
+    const yaml = `
+name: missing-role
+description: Coordinator missing role
+domain_capabilities: [general]
+coordinator: leader
+members:
+  - personality: leader
+  - personality: worker
+`;
+    expect(() => parseTeamManifest(yaml)).toThrow(EthosError);
+    try {
+      parseTeamManifest(yaml);
+    } catch (err) {
+      const e = err as EthosError;
+      expect(e.code).toBe('TEAM_MANIFEST_INVALID');
+      expect(e.cause).toMatch(/exactly one member with role=coordinator/);
+    }
+  });
+
+  it('rejects coordinator mode when role=coordinator does not match top-level coordinator field', () => {
+    const yaml = `
+name: mismatch
+description: role mismatch
+domain_capabilities: [general]
+coordinator: leader
+members:
+  - personality: worker
+    role: coordinator
+  - personality: leader
+`;
+    expect(() => parseTeamManifest(yaml)).toThrow(EthosError);
+    try {
+      parseTeamManifest(yaml);
+    } catch (err) {
+      const e = err as EthosError;
+      expect(e.code).toBe('TEAM_MANIFEST_INVALID');
+      expect(e.cause).toMatch(/does not match/);
+    }
   });
 });
 
@@ -336,6 +381,7 @@ coordinator: researcher
 coordinator_model: claude-haiku-4-5
 members:
   - personality: researcher
+    role: coordinator
   - personality: engineer
 `;
     const result = parseTeamManifest(yaml);
@@ -436,6 +482,30 @@ describe('buildMemberLaunchArgs', () => {
     const { buildMemberLaunchArgs } = await import('../supervisor');
     const args = buildMemberLaunchArgs('/usr/bin/ethos', 3001, 'engineer', 'alpha');
     expect(args).not.toContain('--model');
+  });
+
+  it('passes --team and --role when both are provided (Plan B member spawn)', async () => {
+    const { buildMemberLaunchArgs } = await import('../supervisor');
+    const args = buildMemberLaunchArgs(
+      '/usr/bin/ethos',
+      3001,
+      'engineer',
+      'alpha',
+      undefined,
+      'analytics',
+      'member',
+    );
+    expect(args).toContain('--team');
+    expect(args[args.indexOf('--team') + 1]).toBe('analytics');
+    expect(args).toContain('--role');
+    expect(args[args.indexOf('--role') + 1]).toBe('member');
+  });
+
+  it('omits --team and --role when neither is provided (solo serve)', async () => {
+    const { buildMemberLaunchArgs } = await import('../supervisor');
+    const args = buildMemberLaunchArgs('/usr/bin/ethos', 3001, 'engineer', 'alpha');
+    expect(args).not.toContain('--team');
+    expect(args).not.toContain('--role');
   });
 });
 

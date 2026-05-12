@@ -8,6 +8,7 @@ const TeamMemberSchema: z.ZodType<TeamMember> = z.object({
   port: z.number().int().positive().optional(),
   capabilities: z.array(z.string()).optional(),
   auto_restart: z.boolean().optional(),
+  role: z.enum(['coordinator', 'member']).optional(),
 });
 
 const TeamManifestSchema: z.ZodType<TeamManifest> = z
@@ -24,6 +25,12 @@ const TeamManifestSchema: z.ZodType<TeamManifest> = z
     personality_models: z.record(z.string(), z.string()).optional(),
     mesh: z.string().optional(),
     members: z.array(TeamMemberSchema),
+    kanban: z
+      .object({
+        stale_ms: z.number().int().positive().optional(),
+        poll_ms: z.number().int().positive().optional(),
+      })
+      .optional(),
   })
   .superRefine((val, ctx) => {
     const mode =
@@ -34,6 +41,30 @@ const TeamManifestSchema: z.ZodType<TeamManifest> = z
         message: '`coordinator` field is required when dispatch_mode is "coordinator"',
         path: ['coordinator'],
       });
+    }
+
+    // Plan B — if dispatch_mode is coordinator, the manifest must declare exactly
+    // one member with role: coordinator, and that member's personality must match
+    // the top-level coordinator field. Zero coordinators is rejected so the role
+    // gate cannot silently disappear — fail-closed.
+    if (mode === 'coordinator' && val.coordinator !== undefined && val.members.length > 0) {
+      const coordinators = val.members.filter((m) => m.role === 'coordinator');
+      if (coordinators.length !== 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `dispatch_mode=coordinator requires exactly one member with role=coordinator (found ${coordinators.length}). Add 'role: coordinator' to the ${val.coordinator} member.`,
+          path: ['members'],
+        });
+      } else {
+        const coord = coordinators[0];
+        if (coord && coord.personality !== val.coordinator) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `member with role=coordinator (${coord.personality}) does not match top-level coordinator (${val.coordinator})`,
+            path: ['members'],
+          });
+        }
+      }
     }
   });
 
