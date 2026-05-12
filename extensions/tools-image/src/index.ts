@@ -1,8 +1,13 @@
-import { mkdirSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { Tool, ToolResult } from '@ethosagent/types';
+import { FsStorage } from '@ethosagent/storage-fs';
+import {
+  BoundaryError,
+  type Storage,
+  type Tool,
+  type ToolContext,
+  type ToolResult,
+} from '@ethosagent/types';
 import { pickProvider } from './auto-pick';
 import { OpenAIDalleProvider } from './providers/openai-dalle';
 import { ReplicateFluxProvider } from './providers/replicate-flux';
@@ -23,6 +28,13 @@ function parseSize(size: string): { width: number; height: number } {
 }
 
 const providers = [new OpenAIDalleProvider(), new ReplicateFluxProvider()];
+
+let fallbackStorage: FsStorage | undefined;
+function storageOf(ctx: ToolContext): Storage {
+  if (ctx.storage) return ctx.storage;
+  if (!fallbackStorage) fallbackStorage = new FsStorage();
+  return fallbackStorage;
+}
 
 export const imageGenerateTool: Tool = {
   name: 'image_generate',
@@ -59,7 +71,7 @@ export const imageGenerateTool: Tool = {
     },
     required: ['prompt'],
   },
-  async execute(args, _ctx): Promise<ToolResult> {
+  async execute(args, ctx): Promise<ToolResult> {
     const {
       prompt,
       output_path,
@@ -128,9 +140,19 @@ export const imageGenerateTool: Tool = {
     }
 
     try {
-      mkdirSync(dirname(outPath), { recursive: true });
-      await writeFile(outPath, buffer);
+      const storage = storageOf(ctx);
+      await storage.mkdir(dirname(outPath));
+      // writeAtomic accepts Uint8Array — a partial write here would leave
+      // a corrupt PNG on disk, which is worse than no file at all.
+      await storage.writeAtomic(outPath, buffer);
     } catch (err) {
+      if (err instanceof BoundaryError) {
+        return {
+          ok: false,
+          error: `Filesystem boundary: ${err.kind} of "${err.path}" is outside this personality's fs_reach allowlist.`,
+          code: 'execution_failed',
+        };
+      }
       return {
         ok: false,
         error: `Failed to write image to ${outPath}: ${err instanceof Error ? err.message : String(err)}`,

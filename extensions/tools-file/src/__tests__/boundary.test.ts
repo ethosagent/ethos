@@ -85,6 +85,26 @@ describe('tools-file — fs_reach boundary enforcement', () => {
     }
   });
 
+  it('out-of-scope rejection is shaped by the tool, not leaked from Storage', async () => {
+    // Phase 5 verification: when ScopedStorage throws BoundaryError, the
+    // tool catches it and emits a tool-shaped ToolResult — the LLM does
+    // not see the raw error class. The check matters because a leaky
+    // tool would let storage internals (BoundaryError, fs error codes)
+    // surface to the model as opaque exceptions.
+    const ctx = makeCtx({ workingDir: cwd, storage: researcherStorage() });
+    const result = await readFileTool.execute(
+      { path: join(dataDir, 'personalities', 'engineer', 'MEMORY.md') },
+      ctx,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('execution_failed');
+      // Tool wording, not Storage wording.
+      expect(result.error).toMatch(/Filesystem boundary: read/);
+      expect(result.error).toMatch(/personality's fs_reach allowlist/);
+    }
+  });
+
   it('researcher CAN read files in its working dir', async () => {
     const ctx = makeCtx({ workingDir: cwd, storage: researcherStorage() });
     const result = await readFileTool.execute({ path: join(cwd, 'project-notes.md') }, ctx);

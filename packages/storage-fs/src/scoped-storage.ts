@@ -83,7 +83,11 @@ export class ScopedStorage implements Storage {
     return this.inner.listEntries(dir);
   }
 
-  async write(path: string, content: string, opts?: StorageWriteOptions): Promise<void> {
+  async write(
+    path: string,
+    content: string | Uint8Array,
+    opts?: StorageWriteOptions,
+  ): Promise<void> {
     this.check(path, 'write');
     return this.inner.write(path, content, opts);
   }
@@ -93,7 +97,11 @@ export class ScopedStorage implements Storage {
     return this.inner.append(path, content);
   }
 
-  async writeAtomic(path: string, content: string, opts?: StorageWriteOptions): Promise<void> {
+  async writeAtomic(
+    path: string,
+    content: string | Uint8Array,
+    opts?: StorageWriteOptions,
+  ): Promise<void> {
     this.check(path, 'write');
     return this.inner.writeAtomic(path, content, opts);
   }

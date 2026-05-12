@@ -863,6 +863,9 @@ importers:
 
   extensions/tools-image:
     dependencies:
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types

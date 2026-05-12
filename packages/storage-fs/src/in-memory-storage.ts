@@ -8,7 +8,11 @@ import type {
 
 interface FileNode {
   type: 'file';
-  content: string;
+  // Files written as utf-8 text live as `string`; binary writes (image,
+  // audio, blobs) live as `Uint8Array`. `read()` always returns the utf-8
+  // decoding so the existing string-shaped contract is preserved for the
+  // typical case; tools that need raw bytes know what they wrote.
+  content: string | Uint8Array;
   mode?: number;
   mtimeMs: number;
 }
@@ -78,7 +82,9 @@ export class InMemoryStorage implements Storage {
       (err as NodeJS.ErrnoException).code = 'EISDIR';
       throw err;
     }
-    return node.content;
+    return typeof node.content === 'string'
+      ? node.content
+      : new TextDecoder('utf-8').decode(node.content);
   }
 
   async exists(path: string): Promise<boolean> {
@@ -119,7 +125,11 @@ export class InMemoryStorage implements Storage {
     });
   }
 
-  async write(path: string, content: string, opts?: StorageWriteOptions): Promise<void> {
+  async write(
+    path: string,
+    content: string | Uint8Array,
+    opts?: StorageWriteOptions,
+  ): Promise<void> {
     const existing = this.nodes.get(path);
     if (existing && existing.type === 'dir') {
       const err = new Error(`EISDIR: illegal operation on a directory, write '${path}'`);
@@ -136,7 +146,11 @@ export class InMemoryStorage implements Storage {
     this.nodes.set(path, node);
   }
 
-  async writeAtomic(path: string, content: string, opts?: StorageWriteOptions): Promise<void> {
+  async writeAtomic(
+    path: string,
+    content: string | Uint8Array,
+    opts?: StorageWriteOptions,
+  ): Promise<void> {
     // Same observable end-state as write — atomicity is a property of the
     // backing store; the in-memory map is single-step by definition.
     await this.write(path, content, opts);
@@ -159,9 +173,16 @@ export class InMemoryStorage implements Storage {
       });
       return;
     }
+    // Append only makes sense on text — append on a binary node decodes
+    // the bytes (replacing invalid sequences) so the trace stays
+    // string-shaped. Use writeAtomic for binary blobs instead.
+    const existingText =
+      typeof existing.content === 'string'
+        ? existing.content
+        : new TextDecoder('utf-8').decode(existing.content);
     this.nodes.set(path, {
       ...existing,
-      content: existing.content + content,
+      content: existingText + content,
       mtimeMs: this.nextMtime(),
     });
   }

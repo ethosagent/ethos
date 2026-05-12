@@ -64,24 +64,42 @@ export class FsStorage implements Storage {
     }
   }
 
-  async write(path: string, content: string, opts?: StorageWriteOptions): Promise<void> {
+  async write(
+    path: string,
+    content: string | Uint8Array,
+    opts?: StorageWriteOptions,
+  ): Promise<void> {
+    const isBinary = typeof content !== 'string';
     if (opts?.mode !== undefined) {
-      await writeFile(path, content, { encoding: 'utf-8', mode: opts.mode });
+      await writeFile(
+        path,
+        content,
+        isBinary ? { mode: opts.mode } : { encoding: 'utf-8', mode: opts.mode },
+      );
       return;
     }
-    await writeFile(path, content, 'utf-8');
+    await writeFile(path, content, isBinary ? undefined : 'utf-8');
   }
 
   async append(path: string, content: string): Promise<void> {
     await appendFile(path, content, 'utf-8');
   }
 
-  async writeAtomic(path: string, content: string, opts?: StorageWriteOptions): Promise<void> {
+  async writeAtomic(
+    path: string,
+    content: string | Uint8Array,
+    opts?: StorageWriteOptions,
+  ): Promise<void> {
     const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;
+    const isBinary = typeof content !== 'string';
     if (opts?.mode !== undefined) {
-      await writeFile(tmp, content, { encoding: 'utf-8', mode: opts.mode });
+      await writeFile(
+        tmp,
+        content,
+        isBinary ? { mode: opts.mode } : { encoding: 'utf-8', mode: opts.mode },
+      );
     } else {
-      await writeFile(tmp, content, 'utf-8');
+      await writeFile(tmp, content, isBinary ? undefined : 'utf-8');
     }
     try {
       await rename(tmp, path);

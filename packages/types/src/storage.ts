@@ -56,11 +56,13 @@ export interface Storage {
   // --- Writes ---------------------------------------------------------
 
   /**
-   * Write utf-8 text. Creates the file if missing; overwrites if present.
-   * Parent directories must already exist (use mkdir first). The optional
-   * `mode` sets POSIX file permissions atomically with the write.
+   * Write file contents. Strings are written as utf-8 text; `Uint8Array`
+   * is written as raw bytes (image / audio / binary blobs). Creates the
+   * file if missing; overwrites if present. Parent directories must
+   * already exist (use mkdir first). The optional `mode` sets POSIX
+   * file permissions atomically with the write.
    */
-  write(path: string, content: string, opts?: StorageWriteOptions): Promise<void>;
+  write(path: string, content: string | Uint8Array, opts?: StorageWriteOptions): Promise<void>;
 
   /**
    * Append utf-8 text. Creates the file if missing. Distinct from
@@ -71,11 +73,18 @@ export interface Storage {
 
   /**
    * Atomic write: write to <path>.tmp.<pid>, then rename to <path>.
-   * Used for files where partial writes corrupt state (config, keys, audit).
-   * `mode` is applied to the temp file before rename, so the final file
-   * always has the requested permissions from the moment it exists.
+   * Strings are written as utf-8 text; `Uint8Array` as raw bytes — the
+   * same contract as `write` but with the no-partial-corruption guarantee.
+   * Used for files where partial writes corrupt state (config, keys,
+   * audit, image outputs). `mode` is applied to the temp file before
+   * rename, so the final file always has the requested permissions from
+   * the moment it exists.
    */
-  writeAtomic(path: string, content: string, opts?: StorageWriteOptions): Promise<void>;
+  writeAtomic(
+    path: string,
+    content: string | Uint8Array,
+    opts?: StorageWriteOptions,
+  ): Promise<void>;
 
   /** Create a directory and parent directories. No-op if already exists as a directory. */
   mkdir(dir: string): Promise<void>;
