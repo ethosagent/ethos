@@ -1,4 +1,3 @@
-import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { AgentLoop } from '@ethosagent/core';
@@ -390,27 +389,25 @@ async function buildGatewayBots(config: EthosConfig): Promise<GatewayBotConfig[]
  * `~/.ethos/teams/<name>.yaml`.
  */
 async function validateBindings(config: EthosConfig): Promise<string[]> {
+  const storage = getStorage();
   const registry = await createPersonalityRegistry({
-    storage: getStorage(),
+    storage,
     userPersonalitiesDir: join(ethosDir(), 'personalities'),
   });
-  // Pick up the user dir's personalities so binding validation matches
-  // what AgentLoop will see at run time. Missing directory is fine
-  // (operator hasn't created any custom personalities yet); a corrupt
-  // file or parser bug surfaces as a load error here rather than
-  // booting and crashing the first inbound message.
-  const userPersonalitiesDir = join(ethosDir(), 'personalities');
-  if (existsSync(userPersonalitiesDir)) {
-    await registry.loadFromDirectory(userPersonalitiesDir);
-  }
+  // `loadFromDirectory` uses Storage.list, which returns [] for a
+  // missing directory — so we don't pre-check existence. Genuine
+  // load errors (corrupt personality file, parse failure, permission
+  // denied) propagate here at validation time rather than crashing
+  // the first inbound message later.
+  await registry.loadFromDirectory(join(ethosDir(), 'personalities'));
   const personalityIds = new Set<string>(registry.list().map((p) => p.id));
 
+  // Team manifests live at ~/.ethos/teams/<name>.yaml. Storage.listEntries
+  // is the constitution-approved listing primitive and yields an empty
+  // list for a missing directory, so no pre-check needed.
   const teamNames = new Set<string>();
-  const teamsRoot = join(ethosDir(), 'teams');
-  if (existsSync(teamsRoot)) {
-    for (const entry of readdirSync(teamsRoot)) {
-      if (entry.endsWith('.yaml')) teamNames.add(entry.replace(/\.yaml$/, ''));
-    }
+  for (const entry of await storage.listEntries(join(ethosDir(), 'teams'))) {
+    if (entry.name.endsWith('.yaml')) teamNames.add(entry.name.replace(/\.yaml$/, ''));
   }
   return validateBotBindings(config, { personalityIds, teamNames });
 }
