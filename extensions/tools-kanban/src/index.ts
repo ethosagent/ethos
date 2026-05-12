@@ -507,8 +507,7 @@ function createKanbanUpdateStatus(store: KanbanStore): Tool {
 function createKanbanComment(store: KanbanStore): Tool {
   return {
     name: 'kanban_comment',
-    description:
-      'Append a comment to a task. Append-only; edits happen by adding new comments.\n' + RULES,
+    description: `Append a comment to a task. Append-only; edits happen by adding new comments.\n${RULES}`,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
     schema: {
@@ -551,7 +550,7 @@ function createKanbanComment(store: KanbanStore): Tool {
 function createKanbanComplete(store: KanbanStore): Tool {
   return {
     name: 'kanban_complete',
-    description: 'End the open run with outcome=completed, set status=done.\n' + RULES,
+    description: `End the open run with outcome=completed, set status=done.\n${RULES}`,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
     schema: {
@@ -667,8 +666,7 @@ function createKanbanUnblock(store: KanbanStore): Tool {
 function createKanbanHeartbeat(store: KanbanStore): Tool {
   return {
     name: 'kanban_heartbeat',
-    description:
-      'Bump last_heartbeat_at on the open run + write a heartbeat audit event.\n' + RULES,
+    description: `Bump last_heartbeat_at on the open run + write a heartbeat audit event.\n${RULES}`,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
     schema: {
@@ -729,8 +727,7 @@ function createKanbanLink(store: KanbanStore): Tool {
 function createKanbanAssign(store: KanbanStore): Tool {
   return {
     name: 'kanban_assign',
-    description:
-      'Set the assignee (personality id or "human:<name>"). Pass null to unassign.\n' + RULES,
+    description: `Set the assignee (personality id or "human:<name>"). Pass null to unassign.\n${RULES}`,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
     schema: {
