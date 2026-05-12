@@ -138,6 +138,52 @@ describe('team memory — integration', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Security test: isSafeTopicKey rejects invalid keys
+// ---------------------------------------------------------------------------
+
+describe('team memory — key validation rejection', () => {
+  const storage = new InMemoryStorage();
+  const teamMemory = new MarkdownFileMemoryProvider({
+    dir: '/ethos/teams/security-test/memory',
+    storage,
+  });
+  const readTool = createTeamMemoryReadTool(teamMemory);
+  const writeTool = createTeamMemoryWriteTool(teamMemory);
+  const ctx = makeCtx({ teamId: 'security-test' });
+
+  it('rejects empty string key', async () => {
+    const result = await readTool.execute({ key: '' }, ctx);
+    expect(result.ok).toBe(false);
+    expect('error' in result && result.error).toMatch(/invalid|key/i);
+  });
+
+  it('rejects path traversal key: ../etc/passwd', async () => {
+    const result = await readTool.execute({ key: '../etc/passwd' }, ctx);
+    expect(result.ok).toBe(false);
+    expect('error' in result && result.error).toMatch(/invalid/i);
+  });
+
+  it('rejects key with slash: foo/bar', async () => {
+    const result = await writeTool.execute({ action: 'add', key: 'foo/bar', content: 'x' }, ctx);
+    expect(result.ok).toBe(false);
+    expect('error' in result && result.error).toMatch(/invalid/i);
+  });
+
+  it('rejects key with null byte: foo\\x00bar', async () => {
+    const result = await readTool.execute({ key: 'foo\x00bar' }, ctx);
+    expect(result.ok).toBe(false);
+    expect('error' in result && result.error).toMatch(/invalid/i);
+  });
+
+  it('rejects key with dot in the middle: foo.bar', async () => {
+    // foo.bar has no .md suffix; stripped stays foo.bar — dot is not in [a-zA-Z0-9_-]
+    const result = await readTool.execute({ key: 'foo.bar' }, ctx);
+    expect(result.ok).toBe(false);
+    expect('error' in result && result.error).toMatch(/invalid/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Regression test: personality memory still works alongside team memory
 // ---------------------------------------------------------------------------
 

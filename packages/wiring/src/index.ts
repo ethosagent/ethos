@@ -29,7 +29,7 @@ import {
   type TeamRole,
 } from '@ethosagent/tools-kanban';
 import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
-import { createMemoryTools, createTeamMemoryTools } from '@ethosagent/tools-memory';
+import { createMemoryTools, createTeamMemoryTools, isSafeTopicKey } from '@ethosagent/tools-memory';
 import { createProcessTools } from '@ethosagent/tools-process';
 import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-terminal';
 import { createTodoTools, InMemoryTodoStore } from '@ethosagent/tools-todo';
@@ -463,7 +463,10 @@ function isSafeTeamName(name: string): boolean {
   return /^[a-zA-Z0-9_-]+$/.test(name);
 }
 
-const TEAM_MEMORY_BOOTSTRAP_TOPICS = ['onboarding', 'decisions'] as const;
+const TEAM_MEMORY_BOOTSTRAP_TOPICS = [
+  { key: 'onboarding', placeholder: '# Onboarding\n' },
+  { key: 'decisions', placeholder: '# Decisions\n' },
+] as const;
 
 /**
  * Seed empty topic files via the team memory provider if no .md files exist
@@ -482,8 +485,12 @@ async function seedTeamMemory(teamMemory: MemoryProvider, teamName: string): Pro
     const refs = await teamMemory.list(seedCtx);
     if (refs.length === 0) {
       for (const topic of TEAM_MEMORY_BOOTSTRAP_TOPICS) {
-        // Write empty content via add — the provider's sync() creates the dir.
-        await teamMemory.sync([{ action: 'add', key: `${topic}.md`, content: '' }], seedCtx);
+        // Seed with a minimal placeholder header so agents get something
+        // meaningful back when they read the bootstrap topics on first use.
+        await teamMemory.sync(
+          [{ action: 'add', key: `${topic.key}.md`, content: topic.placeholder }],
+          seedCtx,
+        );
       }
     }
   } catch {
@@ -520,9 +527,10 @@ function createTeamMemoryIndexInjector(
         return null;
       }
 
-      // Filter to only .md files that are non-empty keys (skip USER.md — not a team topic).
+      // Filter to safe, non-USER topic keys only. isSafeTopicKey guards against
+      // crafted filenames that could inject content into the system prompt.
       const topics = refs
-        .filter((r) => r.key !== 'USER.md')
+        .filter((r) => r.key !== 'USER.md' && isSafeTopicKey(r.key))
         .map((r) => r.key.replace(/\.md$/i, ''));
 
       if (topics.length === 0) return null;

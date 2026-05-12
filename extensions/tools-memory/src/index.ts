@@ -209,7 +209,7 @@ export function createTeamMemoryReadTool(teamMemory: MemoryProvider): Tool {
       if (!ctx.teamId)
         return { ok: false, error: 'no team context for this session', code: 'not_available' };
 
-      const memCtx = buildTeamMemoryContext(ctx);
+      const memCtx = buildTeamMemoryContext(ctx, ctx.teamId);
       const entry = await teamMemory.read(key.endsWith('.md') ? key : `${key}.md`, memCtx);
       if (!entry) return { ok: true, value: `No team memory entry for "${key}".` };
       return { ok: true, value: entry.content.trim() || `"${key}" is empty.` };
@@ -290,7 +290,7 @@ export function createTeamMemoryWriteTool(teamMemory: MemoryProvider): Tool {
       }
 
       const fileKey = key.endsWith('.md') ? key : `${key}.md`;
-      const memCtx = buildTeamMemoryContext(ctx);
+      const memCtx = buildTeamMemoryContext(ctx, ctx.teamId);
 
       if (action === 'remove') {
         const match = substring_match ?? '';
@@ -347,7 +347,7 @@ export function createTeamMemorySearchTool(teamMemory: MemoryProvider): Tool {
       if (!ctx.teamId)
         return { ok: false, error: 'no team context for this session', code: 'not_available' };
 
-      const memCtx = buildTeamMemoryContext(ctx);
+      const memCtx = buildTeamMemoryContext(ctx, ctx.teamId);
       const results = await teamMemory.search(query, memCtx, {
         limit: Math.min(limit ?? 5, 20),
         mode,
@@ -400,9 +400,9 @@ function buildMemoryContext(ctx: ToolContext): MemoryContext {
   };
 }
 
-function buildTeamMemoryContext(ctx: ToolContext): MemoryContext {
+function buildTeamMemoryContext(ctx: ToolContext, teamId: string): MemoryContext {
   return {
-    scopeId: `team:${ctx.teamId}`,
+    scopeId: `team:${teamId}`,
     sessionId: ctx.sessionId,
     sessionKey: ctx.sessionKey,
     platform: ctx.platform,
@@ -415,7 +415,7 @@ function buildTeamMemoryContext(ctx: ToolContext): MemoryContext {
  * and underscores — with an optional `.md` suffix. Rejects path separators,
  * traversal sequences, control characters, and any multi-component paths.
  */
-function isSafeTopicKey(key: string): boolean {
+export function isSafeTopicKey(key: string): boolean {
   const stripped = key.endsWith('.md') ? key.slice(0, -3) : key;
   return /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(stripped);
 }
