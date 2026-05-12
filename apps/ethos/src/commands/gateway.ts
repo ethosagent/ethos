@@ -395,8 +395,14 @@ async function validateBindings(config: EthosConfig): Promise<string[]> {
     userPersonalitiesDir: join(ethosDir(), 'personalities'),
   });
   // Pick up the user dir's personalities so binding validation matches
-  // what AgentLoop will see at run time.
-  await registry.loadFromDirectory(join(ethosDir(), 'personalities')).catch(() => {});
+  // what AgentLoop will see at run time. Missing directory is fine
+  // (operator hasn't created any custom personalities yet); a corrupt
+  // file or parser bug surfaces as a load error here rather than
+  // booting and crashing the first inbound message.
+  const userPersonalitiesDir = join(ethosDir(), 'personalities');
+  if (existsSync(userPersonalitiesDir)) {
+    await registry.loadFromDirectory(userPersonalitiesDir);
+  }
   const personalityIds = new Set<string>(registry.list().map((p) => p.id));
 
   const teamNames = new Set<string>();

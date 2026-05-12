@@ -1,6 +1,12 @@
 import Database from 'better-sqlite3';
 
-// Multi-bot routing session-key migration.
+// Multi-bot routing session-key migration. INTERNAL — this is a one-shot
+// operational repair tool for the multi-bot routing transition, not a
+// stable session-store capability. It's exported so the apps/ethos
+// gateway boot can orchestrate it, but it should not gain new callers
+// outside the upgrade flow. After the migration era completes (no
+// remaining legacy keys in any deployment we care about), this module
+// can be deleted; the marker file documents the contract.
 //
 // Pre-multi-bot, gateway sessionKeys were `${platform}:${chatId}` (or
 // `${platform}:${chatId}:${ts}` after /new). The multi-bot gateway uses
@@ -13,12 +19,14 @@ import Database from 'better-sqlite3';
 // handle marker-file bookkeeping via the Storage contract and orchestrate
 // when to run.
 
+/** @internal — one-shot migration result; do not depend on this beyond the upgrade flow. */
 export interface SessionKeyMigrationResult {
   migrated: number;
   alreadyMigrated: number;
   skippedNoBot: number;
 }
 
+/** @internal — one-shot migration options. */
 export interface MigrateSessionKeysOptions {
   /** Absolute path to the SQLite sessions database. */
   dbPath: string;
@@ -38,8 +46,8 @@ type Decision =
   | { kind: 'skip-no-bot' };
 
 /**
- * Decide what to do with a single session key. Pure function — exported
- * for unit tests; the migration runner threads each row's decision
+ * @internal — one-shot migration helper. Pure function exported for
+ * unit tests; the migration runner threads each row's decision
  * through a transaction with collision preflight.
  *
  * Heuristic:
@@ -68,6 +76,10 @@ export function decideMigration(
 }
 
 /**
+ * @internal — one-shot migration entry point. Do not call outside the
+ * gateway boot orchestration. Will be removed when the multi-bot
+ * routing migration era is over.
+ *
  * Rewrite legacy session keys to the multi-bot lane format. Synchronous
  * because better-sqlite3 is synchronous; safe to call once at boot
  * before the SessionStore opens its own connection.
