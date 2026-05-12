@@ -136,7 +136,11 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   startNightlyPrune(config.retention, config.personalitiesConfig);
   if (config.evolverCronEnabled) {
     const schedule = config.evolverSchedule ?? '0 3 * * *';
-    void startEvolverCron(schedule);
+    startEvolverCron(schedule, config).catch((err) => {
+      process.stderr.write(
+        `[ethos] evolve cron startup failed: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    });
   }
   const { loop, personalityId, displayName } = await resolveActiveLoop(config);
 

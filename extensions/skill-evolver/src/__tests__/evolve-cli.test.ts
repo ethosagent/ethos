@@ -165,14 +165,25 @@ describe('registerEvolverCron', () => {
     expect(typeof registerEvolverCron).toBe('function');
   });
 
-  it('returns a cleanup function when called with a schedule', () => {
-    return import('../cron').then(({ registerEvolverCron }) => {
-      // We don't actually start a cron scheduler in tests; just verify the
-      // return shape so the wiring contract is exercised.
-      const cleanup = registerEvolverCron('0 3 * * *');
-      expect(typeof cleanup).toBe('function');
-      // Clean up any timers the scheduler might have started
-      cleanup();
+  it('returns a cleanup function and calls onFire on schedule', async () => {
+    const { registerEvolverCron } = await import('../cron');
+    // We don't actually start a cron scheduler in tests; just verify the
+    // return shape so the wiring contract is exercised.
+    const noop = async () => {};
+    const cleanup = registerEvolverCron('0 3 * * *', noop);
+    expect(typeof cleanup).toBe('function');
+    // Clean up any timers the scheduler might have started
+    cleanup();
+  });
+
+  it('does not call onFire before the schedule fires', async () => {
+    const { registerEvolverCron } = await import('../cron');
+    let called = false;
+    const cleanup = registerEvolverCron('0 3 * * *', async () => {
+      called = true;
     });
+    // Immediately after registration, onFire should not have been called yet.
+    expect(called).toBe(false);
+    cleanup();
   });
 });
