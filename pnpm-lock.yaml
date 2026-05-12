@@ -766,6 +766,9 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+      croner:
+        specifier: ^9.0.0
+        version: 9.1.0
 
   extensions/skills:
     dependencies:

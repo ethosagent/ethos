@@ -1,6 +1,11 @@
 import { appendFile, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { loadEvolveConfig, SkillEvolver } from '@ethosagent/skill-evolver';
+import {
+  loadEvolveConfig,
+  runEvolveApply,
+  runEvolveStatus,
+  SkillEvolver,
+} from '@ethosagent/skill-evolver';
 import { type EthosConfig, ethosDir } from '../config';
 import { createLLM } from '../wiring';
 
@@ -54,6 +59,9 @@ function parseArgs(args: string[]): ParsedArgs {
 
 function printUsage(): void {
   console.log('Usage:');
+  console.log('  ethos evolve status');
+  console.log('  ethos evolve run [--quiet]');
+  console.log('  ethos evolve apply <filename> | --all [-y]');
   console.log('  ethos evolve --eval-output <file.eval.jsonl> [--auto-approve]');
   console.log('  ethos evolve --list-pending');
   console.log('  ethos evolve --approve <filename> | --approve-all');
@@ -61,8 +69,27 @@ function printUsage(): void {
 }
 
 export async function runEvolve(args: string[], config: EthosConfig): Promise<void> {
-  const opts = parseArgs(args);
+  // New subcommand routing: status / run / apply
+  const sub = args[0];
   const dir = ethosDir();
+
+  if (sub === 'status') {
+    await runEvolveStatus(args.slice(1), dir);
+    return;
+  }
+
+  if (sub === 'apply') {
+    await runEvolveApply(args.slice(1), dir);
+    return;
+  }
+
+  if (sub === 'run') {
+    await runEvolveRun(args.slice(1), config, dir);
+    return;
+  }
+
+  // Legacy flag-based routing (backwards-compatible)
+  const opts = parseArgs(args);
   const skillsDir = join(dir, 'skills');
   const pendingDir = join(skillsDir, 'pending');
 
@@ -92,6 +119,103 @@ export async function runEvolve(args: string[], config: EthosConfig): Promise<vo
   }
 
   printUsage();
+}
+
+// ---------------------------------------------------------------------------
+// ethos evolve run [--quiet]
+// ---------------------------------------------------------------------------
+// Generates an eval output file from recent sessions and runs the evolver
+// against it. This is the cron-safe equivalent of `--eval-output` — it
+// sources sessions from the SQLite session store rather than requiring the
+// caller to supply a pre-baked eval file.
+
+async function runEvolveRun(args: string[], config: EthosConfig, dir: string): Promise<void> {
+  const quiet = args.includes('--quiet');
+  const skillsDir = join(dir, 'skills');
+  const pendingDir = join(skillsDir, 'pending');
+
+  // Export recent sessions to a temporary eval file.
+  // The SQLite session store doesn't expose a built-in eval exporter, so we
+  // check whether there are any sessions at all via the DB file's presence.
+  const sessionsDb = join(dir, 'sessions.db');
+  try {
+    await stat(sessionsDb);
+  } catch {
+    if (!quiet) console.log(`${c.dim}No sessions to analyze.${c.reset}`);
+    return;
+  }
+
+  // Build a temporary eval file from the session DB.
+  const tmpEvalPath = join(dir, `.evolver-run-${Date.now()}.eval.jsonl`);
+  let wroteRecords = false;
+  try {
+    wroteRecords = await exportSessionsToEval(sessionsDb, tmpEvalPath);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!quiet) console.error(`${c.red}Failed to export sessions:${c.reset} ${msg}`);
+    return;
+  }
+
+  if (!wroteRecords) {
+    if (!quiet) console.log(`${c.dim}No sessions to analyze.${c.reset}`);
+    return;
+  }
+
+  try {
+    await runAnalyze(tmpEvalPath, config, skillsDir, pendingDir, false);
+  } finally {
+    await rm(tmpEvalPath, { force: true });
+  }
+}
+
+/**
+ * Export messages from the session SQLite DB into an eval JSONL file.
+ * Returns true if at least one record was written.
+ */
+async function exportSessionsToEval(dbPath: string, outPath: string): Promise<boolean> {
+  // Dynamic import keeps better-sqlite3 out of the require graph for codepaths
+  // that don't use `evolve run`.
+  const { default: Database } = await import('better-sqlite3');
+  const db = new Database(dbPath, { readonly: true });
+
+  try {
+    // Fetch messages from the last 7 days across all sessions.
+    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const rows = db
+      .prepare(
+        `SELECT session_key, role, content
+           FROM messages
+          WHERE timestamp >= ?
+          ORDER BY timestamp ASC`,
+      )
+      .all(cutoff) as Array<{ session_key: string; role: string; content: string }>;
+
+    if (rows.length === 0) return false;
+
+    const lines: string[] = [];
+    const seenSessions = new Map<string, number>();
+    for (const row of rows) {
+      let taskIdx = seenSessions.get(row.session_key);
+      if (taskIdx === undefined) {
+        taskIdx = seenSessions.size;
+        seenSessions.set(row.session_key, taskIdx);
+      }
+      const record = {
+        schema_version: '1.0',
+        task_id: `session-${taskIdx}`,
+        turn: 0,
+        role: row.role as 'user' | 'assistant' | 'tool',
+        content: row.content,
+      };
+      lines.push(JSON.stringify(record));
+    }
+
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(outPath, `${lines.join('\n')}\n`, 'utf-8');
+    return true;
+  } finally {
+    db.close();
+  }
 }
 
 async function runAnalyze(

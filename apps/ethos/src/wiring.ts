@@ -102,6 +102,44 @@ export function stopNightlyPrune(): void {
   }
 }
 
+let evolverCronStop: (() => void) | undefined;
+
+/**
+ * Register the skill-evolver cron job. Idempotent — second call is a no-op.
+ * Returns a stop function.
+ *
+ * The execution callback lives here (app layer) so the extension stays pure
+ * and never references CLI command strings. `runEvolveRun` is imported lazily
+ * to avoid pulling better-sqlite3 and the LLM into startup.
+ */
+export async function startEvolverCron(schedule: string, config: EthosConfig): Promise<() => void> {
+  if (!evolverCronStop) {
+    const { registerEvolverCron } = await import('@ethosagent/skill-evolver');
+    evolverCronStop = registerEvolverCron(schedule, async () => {
+      try {
+        // Lazy import keeps the LLM wiring out of the startup bundle.
+        const { runEvolve } = await import('./commands/evolve');
+        await runEvolve(['run', '--quiet'], config);
+      } catch (err) {
+        // Cron failures must not propagate into the interactive session.
+        // Log a warning to stderr so the user can diagnose if they look.
+        process.stderr.write(
+          `[ethos evolve cron] run failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+    });
+  }
+  return evolverCronStop;
+}
+
+/** Stop the evolver cron job if it was started. */
+export function stopEvolverCron(): void {
+  if (evolverCronStop) {
+    evolverCronStop();
+    evolverCronStop = undefined;
+  }
+}
+
 async function withRotation(config: EthosConfig) {
   const rotationKeys = config.provider === 'anthropic' ? await readKeys(getStorage()) : [];
   return { ...config, rotationKeys };

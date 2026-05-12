@@ -9,6 +9,8 @@ export {
   resetSkillEvolutionCooldowns,
   type SkillEvolutionAutoTriggerOptions,
 } from './auto-trigger';
+export { registerEvolverCron } from './cron';
+export { runEvolveApply, runEvolveStatus } from './evolve-helpers';
 export type { EvolveOptions, EvolveResult } from './evolver';
 export { SkillEvolver } from './evolver';
 export {

@@ -183,6 +183,14 @@ export interface EthosConfig {
    * Only `retention` sub-block is supported here.
    */
   personalitiesConfig?: Record<string, { retention?: RetentionConfig }>;
+  /**
+   * FW-29 — skill evolver cron registration.
+   *   `evolverCronEnabled` — when true, registers an in-process cron job that
+   *     runs `ethos evolve run --quiet` on the configured schedule.
+   *   `evolverSchedule`   — 5-field cron expression (default: "0 3 * * *").
+   */
+  evolverCronEnabled?: boolean;
+  evolverSchedule?: string;
 }
 
 export function ethosDir(): string {
@@ -280,6 +288,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const retentionKv: Record<string, string> = {};
   const personalitiesRetKv: Record<string, Record<string, string>> = {};
   const displayKv: Record<string, string> = {};
+  const evolverKv: Record<string, string> = {};
   // Indexed list shapes: telegram.bots.<n>.<field> and slack.apps.<n>.<field>,
   // plus their nested `.bind.<field>` sub-keys. Per-team config keyed by name.
   const telegramBotsKv: Record<number, Record<string, string>> = {};
@@ -354,6 +363,12 @@ function parseConfigYaml(src: string): EthosConfig {
     const disp = line.match(/^display\.([a-z_]+):\s*(.+)$/);
     if (disp) {
       displayKv[disp[1]] = disp[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // evolver.<field>: <value>
+    const evlv = line.match(/^evolver\.([a-z_]+):\s*(.+)$/);
+    if (evlv) {
+      evolverKv[evlv[1]] = evlv[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // modelRouting.<personality>: <model>
@@ -433,6 +448,8 @@ function parseConfigYaml(src: string): EthosConfig {
     telegram: telegramResult.bots.length > 0 ? { bots: telegramResult.bots } : undefined,
     slack: slackResult.apps.length > 0 ? { apps: slackResult.apps } : undefined,
     teams,
+    evolverCronEnabled: evolverKv.cron_enabled === 'true' ? true : undefined,
+    evolverSchedule: evolverKv.schedule || undefined,
   };
   // Stash parse errors so the strict loader can surface them at boot.
   // readConfig (used by CLI commands that don't gateway-boot) ignores them
