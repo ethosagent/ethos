@@ -363,6 +363,11 @@ export async function createAgentLoop(
   // MarkdownFileMemoryProvider, register the three team_memory_* tools, seed
   // the memory directory if empty, and register a lazy index injector.
   if (config.teamName) {
+    if (!isSafeTeamName(config.teamName)) {
+      throw new Error(
+        `Invalid teamName "${config.teamName}": must match [a-zA-Z0-9_-]+ (no path separators or traversal)`,
+      );
+    }
     const teamMemoryDir = join(dataDir, 'teams', config.teamName, 'memory');
     const teamMemory = new MarkdownFileMemoryProvider({ dir: teamMemoryDir });
 
@@ -453,6 +458,11 @@ export async function createAgentLoop(
 // Phase 3 — team memory helpers (used only by createAgentLoop)
 // ---------------------------------------------------------------------------
 
+/** Reject team names that could be used for path traversal or directory aliasing. */
+function isSafeTeamName(name: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(name);
+}
+
 const TEAM_MEMORY_BOOTSTRAP_TOPICS = ['onboarding', 'decisions'] as const;
 
 /**
@@ -460,10 +470,7 @@ const TEAM_MEMORY_BOOTSTRAP_TOPICS = ['onboarding', 'decisions'] as const;
  * yet. Called once at AgentLoop wiring time (before the loop starts) so
  * agents always see at least the bootstrap topics in the lazy index.
  */
-async function seedTeamMemory(
-  teamMemory: MarkdownFileMemoryProvider,
-  teamName: string,
-): Promise<void> {
+async function seedTeamMemory(teamMemory: MemoryProvider, teamName: string): Promise<void> {
   const seedCtx: MemoryContext = {
     scopeId: `team:${teamName}`,
     sessionId: 'seed',

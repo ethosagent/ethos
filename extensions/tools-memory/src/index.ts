@@ -200,6 +200,12 @@ export function createTeamMemoryReadTool(teamMemory: MemoryProvider): Tool {
     async execute(args, ctx): Promise<ToolResult> {
       const { key } = args as { key: string };
       if (!key) return { ok: false, error: 'key is required', code: 'input_invalid' };
+      if (!isSafeTopicKey(key))
+        return {
+          ok: false,
+          error: `invalid key "${key}": use alphanumeric, hyphens, underscores`,
+          code: 'input_invalid',
+        };
       if (!ctx.teamId)
         return { ok: false, error: 'no team context for this session', code: 'not_available' };
 
@@ -260,6 +266,12 @@ export function createTeamMemoryWriteTool(teamMemory: MemoryProvider): Tool {
         };
       }
       if (!key) return { ok: false, error: 'key is required', code: 'input_invalid' };
+      if (!isSafeTopicKey(key))
+        return {
+          ok: false,
+          error: `invalid key "${key}": use alphanumeric, hyphens, underscores`,
+          code: 'input_invalid',
+        };
       if (!ctx.teamId)
         return { ok: false, error: 'no team context for this session', code: 'not_available' };
       if ((action === 'add' || action === 'replace') && !content) {
@@ -269,12 +281,19 @@ export function createTeamMemoryWriteTool(teamMemory: MemoryProvider): Tool {
           code: 'input_invalid',
         };
       }
+      if (action === 'remove' && !substring_match) {
+        return {
+          ok: false,
+          error: 'substring_match is required for action="remove"',
+          code: 'input_invalid',
+        };
+      }
 
       const fileKey = key.endsWith('.md') ? key : `${key}.md`;
       const memCtx = buildTeamMemoryContext(ctx);
 
       if (action === 'remove') {
-        const match = substring_match ?? content ?? '';
+        const match = substring_match ?? '';
         await teamMemory.sync([{ action: 'remove', key: fileKey, substringMatch: match }], memCtx);
       } else if (action === 'delete') {
         await teamMemory.sync([{ action: 'delete', key: fileKey }], memCtx);
@@ -389,4 +408,14 @@ function buildTeamMemoryContext(ctx: ToolContext): MemoryContext {
     platform: ctx.platform,
     workingDir: ctx.workingDir,
   };
+}
+
+/**
+ * Validate a topic key supplied by the model. Accepts alphanumeric, hyphens,
+ * and underscores — with an optional `.md` suffix. Rejects path separators,
+ * traversal sequences, control characters, and any multi-component paths.
+ */
+function isSafeTopicKey(key: string): boolean {
+  const stripped = key.endsWith('.md') ? key.slice(0, -3) : key;
+  return /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(stripped);
 }
