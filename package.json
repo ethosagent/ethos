@@ -26,14 +26,14 @@
     "docs:check": "pnpm --filter docs run check"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.13",
+    "@biomejs/biome": "^2.4.15",
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.0",
     "vite": "^6.0.0",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.6"
   },
   "dependencies": {
     "@types/ws": "^8.18.1",
