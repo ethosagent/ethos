@@ -40,6 +40,7 @@ const NAV_GROUPS: NavGroup[] = [
       { key: '/cron', label: 'Cron' },
       { key: '/communications', label: 'Communications' },
       { key: '/mesh', label: 'Mesh' },
+      { key: '/teams', label: 'Teams' },
     ],
   },
   {

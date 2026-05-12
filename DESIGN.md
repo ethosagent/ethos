@@ -120,6 +120,7 @@ xl  24px
 The `Card` primitive is reserved. It appears **only** on:
 - Skill rows (Skills tab)
 - Cron job rows (Cron tab)
+- Task tiles (Teams Control Center board)
 
 Everything else uses raw layout primitives. Tool chips are inline rows. Drawer streams are dense lists. Onboarding personality picker is stacked rows. No card grids anywhere.
 
@@ -220,3 +221,4 @@ The web UI specifically must avoid these patterns. Code review checks for them.
 | 2026-04-26 | Approval modal anchored to personality bar | The agent itself is asking permission, so the modal slides down from where the agent's face lives. Distinct from centered-modal default. |
 | 2026-04-26 | Single easing `cubic-bezier(0.16, 1, 0.3, 1)`, no springs | Reinforces honesty/utility — no marketing-app whoosh. |
 | 2026-04-26 | Cross-surface token mapping defined | Web/TUI/VS Code/email/CLI consume the same tokens, surface-specific render. Single source of truth survives surface additions. |
+| 2026-05-11 | Task tile is the third Card-primitive exemption | Plan B Control Center boards need a tile primitive — id + title + priority + assignee mark + child progress + status action row don't fit a dense list row. Same rationale as Skill / Cron exemptions: the card IS the unit of work, not decoration. Tied to the kanban primitive (`extensions/kanban-store`) and `apps/web/src/pages/TeamControlCenter.tsx`. |
