@@ -123,9 +123,9 @@ export class PlatformsRepository {
       const m = key.match(/^telegram\.bots\.(\d+)\.(.+)$/);
       if (!m) continue;
       const idx = Number(m[1]);
-      const sub = m[2];
+      const sub = m[2] as string;
       const entry = byIndex.get(idx) ?? {};
-      if (sub !== undefined) entry[sub] = value;
+      entry[sub] = value;
       byIndex.set(idx, entry);
     }
     return byIndex;
@@ -140,9 +140,9 @@ export class PlatformsRepository {
       const m = key.match(/^slack\.apps\.(\d+)\.(.+)$/);
       if (!m) continue;
       const idx = Number(m[1]);
-      const sub = m[2];
+      const sub = m[2] as string;
       const entry = byIndex.get(idx) ?? {};
-      if (sub !== undefined) entry[sub] = value;
+      entry[sub] = value;
       byIndex.set(idx, entry);
     }
     return byIndex;
@@ -163,13 +163,13 @@ export class PlatformsRepository {
     for (const [, fields] of [...byIndex.entries()].sort(([a], [b]) => a - b)) {
       const bindType = fields['bind.type'];
       const bindName = fields['bind.name'];
-      if (!bindType || !bindName) continue;
+      if (!bindName || (bindType !== 'personality' && bindType !== 'team')) continue;
       const token = fields['token'] ?? '';
       const botKey = this.entryToBotKey(fields, token);
       result.push({
         botKey,
         tokenConfigured: token.length > 0,
-        bind: { type: bindType as 'personality' | 'team', name: bindName },
+        bind: { type: bindType, name: bindName },
       });
     }
     return result;
@@ -237,7 +237,7 @@ export class PlatformsRepository {
     for (const [, fields] of [...byIndex.entries()].sort(([a], [b]) => a - b)) {
       const bindType = fields['bind.type'];
       const bindName = fields['bind.name'];
-      if (!bindType || !bindName) continue;
+      if (!bindName || (bindType !== 'personality' && bindType !== 'team')) continue;
       const botToken = fields['botToken'] ?? '';
       const botKey = this.entryToBotKey(fields, botToken);
       result.push({
@@ -245,7 +245,7 @@ export class PlatformsRepository {
         botTokenConfigured: botToken.length > 0,
         appTokenConfigured: (fields['appToken'] ?? '').length > 0,
         signingSecretConfigured: (fields['signingSecret'] ?? '').length > 0,
-        bind: { type: bindType as 'personality' | 'team', name: bindName },
+        bind: { type: bindType, name: bindName },
       });
     }
     return result;
