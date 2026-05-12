@@ -81,6 +81,16 @@ describe('SQLiteSessionStore', () => {
     expect(cliSessions[0]?.platform).toBe('cli');
   });
 
+  it('lists sessions by keyPrefix — bg: prefix returns only background sessions', async () => {
+    await store.createSession({ ...baseSession, key: 'cli:default', platform: 'cli' });
+    await store.createSession({ ...baseSession, key: 'bg:1234:abcd', platform: 'cli' });
+    await store.createSession({ ...baseSession, key: 'bg:5678:ef01', platform: 'cli' });
+
+    const bgSessions = await store.listSessions({ keyPrefix: 'bg:' });
+    expect(bgSessions).toHaveLength(2);
+    expect(bgSessions.every((s) => s.key.startsWith('bg:'))).toBe(true);
+  });
+
   // -------------------------------------------------------------------------
   // Messages
   // -------------------------------------------------------------------------

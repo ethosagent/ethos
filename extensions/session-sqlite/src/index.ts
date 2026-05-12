@@ -190,7 +190,7 @@ export class SQLiteSessionStore implements SessionStore {
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
   }
 
-  async listSessions(filter?: SessionFilter): Promise<Session[]> {
+  async listSessions(filter?: SessionFilter & { keyPrefix?: string }): Promise<Session[]> {
     const conditions: string[] = [];
     const values: unknown[] = [];
 
@@ -209,6 +209,10 @@ export class SQLiteSessionStore implements SessionStore {
     if (filter?.since) {
       conditions.push('created_at >= ?');
       values.push(filter.since.toISOString());
+    }
+    if (filter?.keyPrefix) {
+      conditions.push('key LIKE ?');
+      values.push(`${filter.keyPrefix}%`);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

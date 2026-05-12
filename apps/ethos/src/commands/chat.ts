@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
-import { InMemorySteerSink } from '@ethosagent/agent-bridge';
+import { BackgroundRunner, InMemorySteerSink } from '@ethosagent/agent-bridge';
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
 import type { SplashInventory } from '@ethosagent/tui';
 import type { SteerSink } from '@ethosagent/types';
@@ -100,6 +100,8 @@ interface ChatState {
   inputQueue: string[];
   /** Currently running turn — null when idle. */
   abort: AbortController | null;
+  /** FW-13 — background task runner. */
+  bgRunner: BackgroundRunner;
   /** Total in-flight iterations seen this turn (for steer pre-first-iteration fallback). */
   iterationsThisTurn: number;
   /**
@@ -176,6 +178,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     terminal: true,
   });
 
+  const bgRunner = new BackgroundRunner({ maxConcurrent: config.backgroundMaxConcurrent ?? 4 });
+
   const state: ChatState = {
     sessionKey: `cli:${basename(process.cwd())}`,
     personalityId,
@@ -191,7 +195,26 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     abort: null,
     iterationsThisTurn: 0,
     draining: false,
+    bgRunner,
   };
+
+  bgRunner.onComplete((task) => {
+    const header = `bg:${task.id}`;
+    const statusLine = task.status === 'done' ? 'done' : `error: ${task.error ?? 'unknown'}`;
+    out(`\n${c.dim}╭─ background [${header}] ${statusLine}${c.reset}\n`);
+    if (task.result) {
+      const lines = task.result.split('\n').slice(0, 10);
+      for (const line of lines) {
+        out(`${c.dim}│ ${line}${c.reset}\n`);
+      }
+      if (task.result.split('\n').length > 10) {
+        out(`${c.dim}│ ... (truncated)${c.reset}\n`);
+      }
+    }
+    out(`${c.dim}╰─${c.reset}\n`);
+    if (config.displayBellOnComplete) out('\x07');
+    rl.prompt();
+  });
 
   rl.on('SIGINT', () => {
     if (state.abort) {
@@ -643,6 +666,9 @@ async function handleSlashCommand(
           `  /budget reset         reset the session budget counter\n` +
           `  /verbose              cycle quiet → default → verbose → debug\n` +
           `  /verbose <level>      set level directly\n` +
+          `  /background <prompt>  spawn a background agent task\n` +
+          `  /background list      show all background tasks\n` +
+          `  /background cancel <id>  abort a running background task\n` +
           `  /verbose status       show current level\n` +
           `  /busy <mode|status>   busy-input mode (interrupt/queue/steer)\n` +
           `  /steer <text>         inject [USER STEER] mid-turn\n` +
@@ -807,7 +833,51 @@ async function handleSlashCommand(
       rl.close();
       break;
 
+    case 'background':
+    case 'bg':
+      handleBackgroundCommand(arg, state, loop);
+      break;
+
     default:
       out(`${c.dim}Unknown command /${name} — type /help${c.reset}\n`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FW-13 — /background command handler
+// ---------------------------------------------------------------------------
+
+function handleBackgroundCommand(arg: string, state: ChatState, loop: AgentLoop): void {
+  if (!arg || arg === 'list') {
+    const tasks = state.bgRunner.list();
+    if (tasks.length === 0) {
+      out(`${c.dim}[no background tasks]${c.reset}\n`);
+      return;
+    }
+    for (const t of tasks) {
+      const elapsed = Math.round((Date.now() - t.startedAt) / 1000);
+      out(`${c.dim}  ${t.id}  [${t.status}]  ${t.prompt.slice(0, 60)}  (${elapsed}s)${c.reset}\n`);
+    }
+    return;
+  }
+
+  if (arg.startsWith('cancel ')) {
+    const taskId = arg.slice('cancel '.length).trim();
+    const ok = state.bgRunner.cancel(taskId);
+    if (ok) {
+      out(`${c.dim}[background task ${taskId} cancelled]${c.reset}\n`);
+    } else {
+      out(`${c.dim}[no running task with id ${taskId}]${c.reset}\n`);
+    }
+    return;
+  }
+
+  // /background <prompt> — spawn
+  try {
+    const task = state.bgRunner.run(arg, loop);
+    out(`${c.dim}[background task started: ${task.id}]${c.reset}\n`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    out(`${c.dim}[background: ${msg}]${c.reset}\n`);
   }
 }
