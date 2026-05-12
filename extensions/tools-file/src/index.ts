@@ -1,4 +1,4 @@
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
@@ -56,6 +56,44 @@ async function canonicalizeForRead(path: string): Promise<string> {
 function isWriteBlocked(abs: string): boolean {
   if (BLOCKED_WRITE_PATHS.includes(abs)) return true;
   return BLOCKED_WRITE_PREFIXES.some((prefix) => abs.startsWith(prefix));
+}
+
+/**
+ * FW-28 — check whether the file at `abs` has been modified externally since
+ * the agent last read it. Returns a STALE_WRITE ToolResult when stale, or
+ * null when the write is safe to proceed.
+ *
+ * Skipped (returns null) when:
+ * - `readMtimes` is absent (backward-compat: old callers without the map)
+ * - the path was never read in this session (new-file creation, no false positive)
+ */
+async function checkStaleWrite(
+  abs: string,
+  readMtimes: Map<string, { mtimeMs: number; readAtTurn: number }> | undefined,
+): Promise<ToolResult | null> {
+  if (!readMtimes) return null;
+  const record = readMtimes.get(abs);
+  if (!record) return null;
+
+  let currentMtimeMs: number;
+  try {
+    const s = await stat(abs);
+    currentMtimeMs = s.mtimeMs;
+  } catch {
+    return null;
+  }
+
+  if (currentMtimeMs !== record.mtimeMs) {
+    const readAt = new Date(record.mtimeMs).toISOString();
+    const modAt = new Date(currentMtimeMs).toISOString();
+    return {
+      ok: false,
+      error: `STALE_WRITE: ${abs} was read at ${readAt} but modified externally at ${modAt}. Re-read the file before writing.`,
+      code: 'STALE_WRITE',
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -193,6 +231,16 @@ export const readFileTool: Tool = {
       };
     }
 
+    // FW-28 — record mtime so write_file / patch_file can detect external edits.
+    if (ctx.readMtimes) {
+      try {
+        const s = await stat(abs);
+        ctx.readMtimes.set(abs, { mtimeMs: s.mtimeMs, readAtTurn: ctx.currentTurn });
+      } catch {
+        // stat failure is non-fatal — skip recording; stale check will be skipped too
+      }
+    }
+
     const lines = content.split('\n');
     const total = lines.length;
 
@@ -246,9 +294,22 @@ export const writeFileTool: Tool = {
       };
     }
 
+    const stale = await checkStaleWrite(abs, ctx.readMtimes);
+    if (stale) return stale;
+
     try {
       await storage.mkdir(dirname(abs));
       await storage.write(abs, content);
+      // FW-28 — update the recorded mtime after a successful write so subsequent
+      // writes in the same session don't false-positive against the pre-write record.
+      if (ctx.readMtimes) {
+        try {
+          const s = await stat(abs);
+          ctx.readMtimes.set(abs, { mtimeMs: s.mtimeMs, readAtTurn: ctx.currentTurn });
+        } catch {
+          ctx.readMtimes.delete(abs);
+        }
+      }
       return { ok: true, value: `Written ${content.length} bytes to ${abs}` };
     } catch (err) {
       if (err instanceof BoundaryError) return boundaryFailure(err);
@@ -296,6 +357,9 @@ export const patchFileTool: Tool = {
       return { ok: false, error: `Writing to ${abs} is blocked.`, code: 'execution_failed' };
     }
 
+    const stale = await checkStaleWrite(abs, ctx.readMtimes);
+    if (stale) return stale;
+
     let content: string | null;
     try {
       content = await storage.read(abs);
@@ -338,6 +402,15 @@ export const patchFileTool: Tool = {
     } catch (err) {
       if (err instanceof BoundaryError) return boundaryFailure(err);
       throw err;
+    }
+    // FW-28 — update the recorded mtime after a successful patch.
+    if (ctx.readMtimes) {
+      try {
+        const s = await stat(abs);
+        ctx.readMtimes.set(abs, { mtimeMs: s.mtimeMs, readAtTurn: ctx.currentTurn });
+      } catch {
+        ctx.readMtimes.delete(abs);
+      }
     }
     return { ok: true, value: `Patched ${abs}` };
   },

@@ -1,6 +1,10 @@
 export type ToolResult =
   | { ok: true; value: string; cost_usd?: number }
-  | { ok: false; error: string; code: 'input_invalid' | 'not_available' | 'execution_failed' };
+  | {
+      ok: false;
+      error: string;
+      code: 'input_invalid' | 'not_available' | 'execution_failed' | 'STALE_WRITE';
+    };
 
 export interface ToolProgressEvent {
   type: 'progress';
@@ -49,6 +53,17 @@ export interface ToolContext {
    * unrestricted fs in that case.
    */
   storage?: import('./storage').Storage;
+  /**
+   * FW-28 — per-run mtime registry. Keyed by absolute path; populated by
+   * read_file after each successful read. write_file / patch_file check
+   * this before writing: if the on-disk mtime differs from the recorded
+   * value the write is refused with STALE_WRITE, preventing silent
+   * clobber of externally-modified files.
+   *
+   * Optional — absent in tests that don't wire AgentLoop; tools skip the
+   * check when the map is undefined.
+   */
+  readMtimes?: Map<string, { mtimeMs: number; readAtTurn: number }>;
   /**
    * Ch.7 — per-personality network reach policy. URL-capable tools must
    * thread this through `safeFetch` from `@ethosagent/safety-network`

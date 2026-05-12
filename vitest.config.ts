@@ -15,6 +15,7 @@ const srcAliases = {
   '@ethosagent/eval-harness': resolve('./extensions/eval-harness/src'),
   '@ethosagent/memory-vector': resolve('./extensions/memory-vector/src'),
   '@ethosagent/safety-scanner': resolve('./packages/safety/scanner/src'),
+  '@ethosagent/tools-file': resolve('./extensions/tools-file/src'),
 };
 
 export default defineConfig({

@@ -252,6 +252,11 @@ export class AgentLoop {
   private readonly contextEngines: ContextEngineRegistry;
   /** Per-session accumulated spend in USD. Keyed by sessionKey. Reset via resetSessionCost(). */
   private readonly sessionCosts = new Map<string, number>();
+  /** FW-28 — per-session mtime registry. Keyed by sessionKey → (absPath → record). */
+  private readonly sessionReadMtimes = new Map<
+    string,
+    Map<string, { mtimeMs: number; readAtTurn: number }>
+  >();
 
   constructor(config: AgentLoopConfig) {
     this.llm = config.llm;
@@ -820,6 +825,13 @@ export class AgentLoop {
 
       const scopedStorage = this.buildScopedStorage(personality);
 
+      // FW-28 — retrieve or create the per-session mtime registry for this turn.
+      let sessionMtimes = this.sessionReadMtimes.get(sessionKey);
+      if (!sessionMtimes) {
+        sessionMtimes = new Map();
+        this.sessionReadMtimes.set(sessionKey, sessionMtimes);
+      }
+
       const toolCtxBase = {
         sessionId,
         sessionKey,
@@ -846,6 +858,7 @@ export class AgentLoop {
           });
         },
         resultBudgetChars: this.resultBudgetChars,
+        readMtimes: sessionMtimes,
         ...(scopedStorage ? { storage: scopedStorage } : {}),
         ...(personality.safety?.network ? { networkPolicy: personality.safety.network } : {}),
       };
