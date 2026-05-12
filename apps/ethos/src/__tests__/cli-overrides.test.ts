@@ -74,6 +74,13 @@ describe('parseCliOverrideFlags', () => {
     expect(flags.toolsets).toEqual(['web', 'terminal']);
     expect(flags.skills).toEqual(['my-skill']);
   });
+
+  it('does not consume an adjacent flag as a value', () => {
+    // --model --provider anthropic must not set model='--provider'
+    const flags = parseCliOverrideFlags(['--model', '--provider', 'anthropic']);
+    expect(flags.model).toBeUndefined();
+    expect(flags.provider).toBe('anthropic');
+  });
 });
 
 // ---------------------------------------------------------------------------

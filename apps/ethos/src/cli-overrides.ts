@@ -69,32 +69,36 @@ export interface CliOverrideFlags {
  */
 export function parseCliOverrideFlags(argv: string[]): CliOverrideFlags {
   const flags: CliOverrideFlags = {};
+  const nextArg = (i: number) => {
+    const v = argv[i + 1];
+    return v && !v.startsWith('-') ? v : undefined;
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] ?? '';
     if (a === '--model') {
-      flags.model = argv[i + 1];
-      i++;
+      flags.model = nextArg(i);
+      if (flags.model !== undefined) i++;
     } else if (a === '--provider') {
-      flags.provider = argv[i + 1];
-      i++;
+      flags.provider = nextArg(i);
+      if (flags.provider !== undefined) i++;
     } else if (a === '--toolsets') {
-      const val = argv[i + 1];
+      const val = nextArg(i);
       if (val) {
         flags.toolsets = val
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean);
+        i++;
       }
-      i++;
     } else if (a === '-s') {
-      const val = argv[i + 1];
+      const val = nextArg(i);
       if (val) {
         flags.skills = val
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean);
+        i++;
       }
-      i++;
     }
   }
   return flags;
