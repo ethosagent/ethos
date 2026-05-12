@@ -20,6 +20,7 @@ const config: Config = {
   onBrokenLinks: 'throw',
   onBrokenAnchors: 'throw',
   markdown: {
+    format: 'detect',
     hooks: {
       onBrokenMarkdownLinks: 'throw',
     },
