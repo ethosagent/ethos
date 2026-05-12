@@ -102,4 +102,54 @@ describe('SessionsRepository', () => {
   it('fork rejects with a "session not found" message for unknown ids', async () => {
     await expect(repo.fork('does-not-exist')).rejects.toThrow(/session not found: does-not-exist/);
   });
+
+  it('update() sets the title on the session', async () => {
+    const sess = await store.createSession({ ...baseSession, key: 'update-test' });
+    await repo.update(sess.id, { title: 'My renamed session' });
+    const reloaded = await repo.get(sess.id);
+    expect(reloaded?.title).toBe('My renamed session');
+  });
+
+  it('update() clears the title when null is passed', async () => {
+    const sess = await store.createSession({
+      ...baseSession,
+      key: 'clear-title',
+      title: 'Old title',
+    });
+    await repo.update(sess.id, { title: null });
+    const reloaded = await repo.get(sess.id);
+    // rowToSession converts SQL NULL → undefined for optional fields
+    expect(reloaded?.title).toBeUndefined();
+  });
+
+  it('update() throws for unknown id', async () => {
+    await expect(repo.update('ghost-id', { title: 'x' })).rejects.toThrow(/session not found/);
+  });
+
+  it('list({ q }) returns sessions whose messages match the query', async () => {
+    const sessA = await store.createSession({ ...baseSession, key: 'q-a' });
+    const sessB = await store.createSession({ ...baseSession, key: 'q-b' });
+    await store.appendMessage({
+      sessionId: sessA.id,
+      role: 'user',
+      content: 'the quick brown fox',
+    });
+    await store.appendMessage({
+      sessionId: sessB.id,
+      role: 'user',
+      content: 'a completely different topic',
+    });
+
+    const page = await repo.list({ limit: 20, cursor: null, q: 'quick fox' });
+    const ids = page.sessions.map((s) => s.id);
+    expect(ids).toContain(sessA.id);
+    expect(ids).not.toContain(sessB.id);
+  });
+
+  it('list({ q: "" }) returns all sessions (empty query = no filter)', async () => {
+    await store.createSession({ ...baseSession, key: 'empty-q-1' });
+    await store.createSession({ ...baseSession, key: 'empty-q-2' });
+    const page = await repo.list({ limit: 20, cursor: null, q: '' });
+    expect(page.sessions.length).toBeGreaterThanOrEqual(2);
+  });
 });
