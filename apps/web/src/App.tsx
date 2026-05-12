@@ -21,6 +21,8 @@ import { Sessions } from './pages/Sessions';
 import { Settings } from './pages/Settings';
 import { SigningIn } from './pages/SigningIn';
 import { Skills } from './pages/Skills';
+import { TeamControlCenter } from './pages/TeamControlCenter';
+import { Teams } from './pages/Teams';
 import { rpc } from './rpc';
 
 // Top-level route map. v0 ships only Talk-group routes (Chat + Sessions)
@@ -106,6 +108,8 @@ export function App() {
           <Route path="/cron" element={<Cron />} />
           <Route path="/skills" element={<Skills />} />
           <Route path="/mesh" element={<Mesh />} />
+          <Route path="/teams" element={<Teams />} />
+          <Route path="/teams/:name" element={<TeamControlCenter />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/memory" element={<Memory />} />
           <Route path="/plugins" element={<Plugins />} />
