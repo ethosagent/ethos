@@ -137,6 +137,9 @@ importers:
       '@ethosagent/cron':
         specifier: workspace:*
         version: link:../../extensions/cron
+      '@ethosagent/gateway':
+        specifier: workspace:*
+        version: link:../../extensions/gateway
       '@ethosagent/mcp-server':
         specifier: workspace:*
         version: link:../mcp-server

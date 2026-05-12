@@ -147,23 +147,23 @@ export async function runGatewayStart(): Promise<void> {
     process.exit(1);
   }
 
-  // Cheap config invariants first — before constructing any AgentLoop.
-  // Phase 1 supports one bot per platform; refusing the config here
-  // means we don't spin up LLM providers, plugin loaders, or team
-  // supervisors only to immediately exit. Phase 2 lifts this limit.
-  if ((config.telegram?.bots.length ?? 0) > 1) {
+  // Multi-bot routing has a known limitation in v1: email and discord
+  // continue to use a single legacy adapter without botKey stamping.
+  // When multi-bot telegram/slack is configured alongside email/discord,
+  // those legacy adapters' messages have no botKey, and the Gateway has
+  // no `defaultBotKey` to fall back on (defaultBotKey only fires for
+  // single-bot deployments). Warn at boot so operators know.
+  const multiBotConfigured =
+    (config.telegram?.bots.length ?? 0) + (config.slack?.apps.length ?? 0) > 1;
+  const legacyAdapterConfigured =
+    !!config.discordToken ||
+    !!(config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost);
+  if (multiBotConfigured && legacyAdapterConfigured) {
     console.log(
-      `${c.red}Phase 1 supports one telegram bot per gateway. ` +
-        `Configure exactly one entry under 'telegram.bots' or wait for Phase 2.${c.reset}`,
+      `${c.yellow}⚠${c.reset} ${c.dim}Multi-bot routing is configured alongside email/discord. ` +
+        `Email and Discord inbound messages will not be routed in v1 — they have no botKey. ` +
+        `Use single-bot configs or wait for v1.1 multi-bot email/discord.${c.reset}`,
     );
-    process.exit(1);
-  }
-  if ((config.slack?.apps.length ?? 0) > 1) {
-    console.log(
-      `${c.red}Phase 1 supports one slack app per gateway. ` +
-        `Configure exactly one entry under 'slack.apps' or wait for Phase 2.${c.reset}`,
-    );
-    process.exit(1);
   }
 
   // Validate bot bindings against the on-disk personality registry and
@@ -212,77 +212,9 @@ export async function runGatewayStart(): Promise<void> {
       `${c.dim}bot${c.reset} ${c.bold}${bot.botKey}${c.reset} ${c.dim}→ ${bot.binding.type}:${bot.binding.name}${c.reset}`,
     );
   }
-  const telegramBotKey = config.telegram?.bots[0] ? deriveBotKey(config.telegram.bots[0]) : null;
-  const slackBotKey = config.slack?.apps[0] ? deriveBotKey(config.slack.apps[0]) : null;
-
   // Build and register all configured adapters. Each loads lazily so a missing
   // SDK in node_modules only takes down its own platform, not the gateway.
-  const adapters: PlatformAdapter[] = [];
-
-  if (config.telegramToken) {
-    const mod = await loadAdapterModule<typeof import('@ethosagent/platform-telegram')>(
-      '@ethosagent/platform-telegram',
-      'Telegram',
-    );
-    if (mod) {
-      adapters.push(
-        new mod.TelegramAdapter({
-          token: config.telegramToken,
-          dropPendingUpdates: true,
-        }),
-      );
-    }
-  }
-
-  if (config.discordToken) {
-    const mod = await loadAdapterModule<typeof import('@ethosagent/platform-discord')>(
-      '@ethosagent/platform-discord',
-      'Discord',
-    );
-    if (mod) {
-      adapters.push(new mod.DiscordAdapter({ token: config.discordToken }));
-    }
-  }
-
-  if (config.slackBotToken && config.slackAppToken && config.slackSigningSecret) {
-    const mod = await loadAdapterModule<typeof import('@ethosagent/platform-slack')>(
-      '@ethosagent/platform-slack',
-      'Slack',
-    );
-    if (mod) {
-      adapters.push(
-        new mod.SlackAdapter({
-          botToken: config.slackBotToken,
-          appToken: config.slackAppToken,
-          signingSecret: config.slackSigningSecret,
-        }),
-      );
-    }
-  }
-
-  if (hasEmailConfig) {
-    // Re-narrow for the type checker. hasEmailConfig already proves all four
-    // are truthy (see line 97-98); the inner check is unreachable at runtime.
-    const { emailImapHost, emailUser, emailPassword, emailSmtpHost } = config;
-    if (emailImapHost && emailUser && emailPassword && emailSmtpHost) {
-      const mod = await loadAdapterModule<typeof import('@ethosagent/platform-email')>(
-        '@ethosagent/platform-email',
-        'Email',
-      );
-      if (mod) {
-        adapters.push(
-          new mod.EmailAdapter({
-            imapHost: emailImapHost,
-            imapPort: config.emailImapPort ?? 993,
-            user: emailUser,
-            password: emailPassword,
-            smtpHost: emailSmtpHost,
-            smtpPort: config.emailSmtpPort ?? 587,
-          }),
-        );
-      }
-    }
-  }
+  const adapters = await buildAdapters(config, loadAdapterModule);
 
   if (adapters.length === 0) {
     console.log(
@@ -291,18 +223,15 @@ export async function runGatewayStart(): Promise<void> {
     process.exit(1);
   }
 
-  // Wire all adapters → gateway. Phase 1 keeps the single-adapter-per-
-  // platform boot path; we stamp the inbound `botKey` here using the
-  // first bot of that platform so the multi-bot gateway can route
-  // correctly. Phase 2 swaps this for per-bot adapter instances each
-  // stamping their own botKey.
+  // Wire all adapters → gateway. Telegram and Slack adapters stamp
+  // `InboundMessage.botKey` themselves (from the `botKey` field passed
+  // at construction). Email and Discord don't stamp; their messages
+  // fall back to `defaultBotKey` in single-bot deployments and are
+  // dropped by the gateway with an observability event in multi-bot
+  // ones (warned about at boot above).
   for (const adapter of adapters) {
     adapter.onMessage((message: InboundMessage) => {
-      const stamped =
-        message.botKey === undefined
-          ? stampBotKeyForPlatform(message, { telegramBotKey, slackBotKey })
-          : message;
-      void gateway.handleMessage(stamped, adapter).catch((err) => {
+      void gateway.handleMessage(message, adapter).catch((err) => {
         console.error(`[gateway:${adapter.id}] Error:`, err);
       });
     });
@@ -424,19 +353,88 @@ async function validateBindings(config: EthosConfig): Promise<string[]> {
 }
 
 /**
- * Phase-1 single-adapter bridge: stamp the first bot's botKey on
- * inbound messages from each platform. Phase 2 replaces this with
- * per-bot adapters each stamping their own botKey directly.
+ * Construct one PlatformAdapter per configured bot/app, in addition to
+ * single legacy adapters for discord + email. Exported so tests can
+ * exercise the multi-bot adapter loop with a mocked module loader
+ * (avoiding a real grammy / @slack/bolt construction in unit tests).
+ *
+ * The post-shim contract: `config.telegram.bots[]` and `config.slack.apps[]`
+ * are the source of truth for those platforms. Operators see one adapter
+ * per entry; each adapter stamps its own `botKey` on inbound messages.
  */
-function stampBotKeyForPlatform(
-  message: InboundMessage,
-  keys: { telegramBotKey: string | null; slackBotKey: string | null },
-): InboundMessage {
-  if (message.platform === 'telegram' && keys.telegramBotKey) {
-    return { ...message, botKey: keys.telegramBotKey };
+export type AdapterModuleLoader = <T>(modulePath: string, label: string) => Promise<T | null>;
+
+export async function buildAdapters(
+  config: EthosConfig,
+  loadAdapter: AdapterModuleLoader,
+): Promise<PlatformAdapter[]> {
+  const adapters: PlatformAdapter[] = [];
+
+  if ((config.telegram?.bots.length ?? 0) > 0) {
+    const mod = await loadAdapter<typeof import('@ethosagent/platform-telegram')>(
+      '@ethosagent/platform-telegram',
+      'Telegram',
+    );
+    if (mod) {
+      for (const botCfg of config.telegram?.bots ?? []) {
+        adapters.push(
+          new mod.TelegramAdapter({
+            token: botCfg.token,
+            botKey: deriveBotKey(botCfg),
+            dropPendingUpdates: true,
+          }),
+        );
+      }
+    }
   }
-  if (message.platform === 'slack' && keys.slackBotKey) {
-    return { ...message, botKey: keys.slackBotKey };
+
+  if ((config.slack?.apps.length ?? 0) > 0) {
+    const mod = await loadAdapter<typeof import('@ethosagent/platform-slack')>(
+      '@ethosagent/platform-slack',
+      'Slack',
+    );
+    if (mod) {
+      for (const appCfg of config.slack?.apps ?? []) {
+        adapters.push(
+          new mod.SlackAdapter({
+            botToken: appCfg.botToken,
+            appToken: appCfg.appToken,
+            signingSecret: appCfg.signingSecret,
+            botKey: deriveBotKey(appCfg),
+          }),
+        );
+      }
+    }
   }
-  return message;
+
+  if (config.discordToken) {
+    const mod = await loadAdapter<typeof import('@ethosagent/platform-discord')>(
+      '@ethosagent/platform-discord',
+      'Discord',
+    );
+    if (mod) {
+      adapters.push(new mod.DiscordAdapter({ token: config.discordToken }));
+    }
+  }
+
+  if (config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost) {
+    const mod = await loadAdapter<typeof import('@ethosagent/platform-email')>(
+      '@ethosagent/platform-email',
+      'Email',
+    );
+    if (mod) {
+      adapters.push(
+        new mod.EmailAdapter({
+          imapHost: config.emailImapHost,
+          imapPort: config.emailImapPort ?? 993,
+          user: config.emailUser,
+          password: config.emailPassword,
+          smtpHost: config.emailSmtpHost,
+          smtpPort: config.emailSmtpPort ?? 587,
+        }),
+      );
+    }
+  }
+
+  return adapters;
 }

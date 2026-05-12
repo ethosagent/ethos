@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chunkText, reflowChunks } from '../index';
+import { chunkText, reflowChunks, TelegramAdapter } from '../index';
 
 describe('chunkText', () => {
   it('returns single chunk when text is within limit', () => {
@@ -77,5 +77,35 @@ describe('reflowChunks', () => {
       },
     };
     await expect(reflowChunks(['a'], ['1', '2', '3'], ops)).resolves.toEqual(['1']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TelegramAdapter — multi-bot routing identity
+//
+// Each TelegramAdapter is bound to a single bot. The adapter exposes its
+// `botKey` so logs / orchestration code can disambiguate; `id` carries
+// the same value so Gateway shutdown + error logs read cleanly.
+// ---------------------------------------------------------------------------
+
+describe('TelegramAdapter — botKey identity', () => {
+  it('stores the configured botKey and surfaces it through the id', () => {
+    // `new Bot(token)` doesn't validate the token at construction (only on
+    // start/getMe), so a fake token is enough to exercise the identity
+    // plumbing.
+    const adapter = new TelegramAdapter({
+      token: '1234567890:fake-token-for-construction-only',
+      botKey: 'researcher-bot',
+    });
+    expect(adapter.botKey).toBe('researcher-bot');
+    expect(adapter.id).toBe('telegram:researcher-bot');
+  });
+
+  it('two adapters bound to different bots have distinct ids', () => {
+    const a = new TelegramAdapter({ token: '1:a', botKey: 'a' });
+    const b = new TelegramAdapter({ token: '2:b', botKey: 'b' });
+    expect(a.id).not.toBe(b.id);
+    expect(a.botKey).toBe('a');
+    expect(b.botKey).toBe('b');
   });
 });

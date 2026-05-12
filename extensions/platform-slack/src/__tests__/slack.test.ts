@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chunkText, reflowChunks } from '../index';
+import { chunkText, reflowChunks, SlackAdapter } from '../index';
 
 describe('Slack chunkText', () => {
   it('returns single chunk within limit', () => {
@@ -58,5 +58,40 @@ describe('reflowChunks', () => {
     expect(ids2).toEqual(['a']);
     expect(edits).toEqual([['a', 'only']]);
     expect(deletes).toEqual(['b']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SlackAdapter — multi-bot routing identity
+// ---------------------------------------------------------------------------
+
+describe('SlackAdapter — botKey identity', () => {
+  it('stores the configured botKey and surfaces it through the id', () => {
+    const adapter = new SlackAdapter({
+      botToken: 'xoxb-fake',
+      appToken: 'xapp-fake',
+      signingSecret: 'sig-fake',
+      botKey: 'coder-app',
+    });
+    expect(adapter.botKey).toBe('coder-app');
+    expect(adapter.id).toBe('slack:coder-app');
+  });
+
+  it('two adapters bound to different apps have distinct ids', () => {
+    const a = new SlackAdapter({
+      botToken: 'xoxb-1',
+      appToken: 'xapp-1',
+      signingSecret: 's1',
+      botKey: 'a',
+    });
+    const b = new SlackAdapter({
+      botToken: 'xoxb-2',
+      appToken: 'xapp-2',
+      signingSecret: 's2',
+      botKey: 'b',
+    });
+    expect(a.id).not.toBe(b.id);
+    expect(a.botKey).toBe('a');
+    expect(b.botKey).toBe('b');
   });
 });

@@ -76,10 +76,17 @@ export interface SlackAdapterConfig {
   appToken: string;
   /** Signing secret from Slack app config */
   signingSecret: string;
+  /**
+   * Stable identifier of the Slack app this adapter is bound to. Stamped on
+   * every inbound `InboundMessage.botKey` so the Gateway can route to the
+   * right `AgentLoop` in multi-bot deployments. Required: see
+   * `TelegramAdapterConfig.botKey` for the same contract.
+   */
+  botKey: string;
 }
 
 export class SlackAdapter implements PlatformAdapter {
-  readonly id = 'slack';
+  readonly id: string;
   readonly displayName = 'Slack';
   readonly canSendTyping = false; // Slack doesn't support persistent typing indicator
   readonly canEditMessage = true;
@@ -87,6 +94,7 @@ export class SlackAdapter implements PlatformAdapter {
   readonly canSendFiles = false;
   readonly maxMessageLength = 3000;
 
+  readonly botKey: string;
   private readonly app: App;
   private readonly client: App['client'];
   private messageHandler?: (message: InboundMessage) => void;
@@ -103,6 +111,8 @@ export class SlackAdapter implements PlatformAdapter {
     });
 
     this.client = this.app.client;
+    this.botKey = config.botKey;
+    this.id = `slack:${config.botKey}`;
   }
 
   // ---------------------------------------------------------------------------
@@ -125,6 +135,7 @@ export class SlackAdapter implements PlatformAdapter {
       const ts = 'ts' in msg ? String(msg.ts) : undefined;
       this.messageHandler({
         platform: 'slack',
+        botKey: this.botKey,
         chatId: String(msg.channel),
         userId: 'user' in msg ? String(msg.user) : undefined,
         text,
@@ -144,6 +155,7 @@ export class SlackAdapter implements PlatformAdapter {
 
       this.messageHandler({
         platform: 'slack',
+        botKey: this.botKey,
         chatId: event.channel,
         userId: event.user,
         text,

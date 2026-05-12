@@ -77,12 +77,21 @@ export async function reflowChunks(
 
 export interface TelegramAdapterConfig {
   token: string;
+  /**
+   * Stable identifier of the bot this adapter is bound to. Stamped on every
+   * inbound `InboundMessage.botKey` so the Gateway can route to the right
+   * `AgentLoop` in multi-bot deployments. Required: there's no sensible
+   * default — the value originates in the resolved `telegram.bots[].id` /
+   * derived `deriveBotKey()` from config. Single-bot configs pass the
+   * Gateway's synthesized `'default'` botKey.
+   */
+  botKey: string;
   /** Whether to drop updates that arrived while the bot was offline. Default true. */
   dropPendingUpdates?: boolean;
 }
 
 export class TelegramAdapter implements PlatformAdapter {
-  readonly id = 'telegram';
+  readonly id: string;
   readonly displayName = 'Telegram';
   readonly canSendTyping = true;
   readonly canEditMessage = true;
@@ -90,6 +99,7 @@ export class TelegramAdapter implements PlatformAdapter {
   readonly canSendFiles = false;
   readonly maxMessageLength = 4096;
 
+  readonly botKey: string;
   private readonly bot: Bot;
   private readonly dropPendingUpdates: boolean;
   private messageHandler?: (message: InboundMessage) => void;
@@ -100,6 +110,11 @@ export class TelegramAdapter implements PlatformAdapter {
   constructor(config: TelegramAdapterConfig) {
     this.bot = new Bot(config.token);
     this.dropPendingUpdates = config.dropPendingUpdates ?? true;
+    this.botKey = config.botKey;
+    // Multi-bot logs disambiguate by including the botKey. Single-bot
+    // deployments pass 'default' here and see `telegram:default` — the
+    // shape is identical, the value carries the routing identity.
+    this.id = `telegram:${config.botKey}`;
   }
 
   // ---------------------------------------------------------------------------
@@ -115,6 +130,7 @@ export class TelegramAdapter implements PlatformAdapter {
 
       const msg: InboundMessage = {
         platform: 'telegram',
+        botKey: this.botKey,
         chatId: String(ctx.chat.id),
         userId: ctx.from ? String(ctx.from.id) : undefined,
         username: ctx.from?.username,
