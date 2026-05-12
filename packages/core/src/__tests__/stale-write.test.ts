@@ -1,4 +1,4 @@
-import { mkdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, rm, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CompletionChunk, LLMProvider, Message } from '@ethosagent/types';
@@ -218,5 +218,38 @@ describe('FW-28: stale-write guard', () => {
     expect(writeEnds[0]?.result).toMatch(/STALE_WRITE|modified externally|re-read/i);
     // Second write (after re-read) should succeed
     expect(writeEnds[1]?.ok).toBe(true);
+  });
+
+  it('scenario 5: read → external delete → write returns STALE_WRITE (file disappeared)', async () => {
+    const filePath = join(testDir, 'deleted.ts');
+    await writeFile(filePath, 'will be deleted');
+
+    const tools = await buildFileRegistry();
+    const personalities = await buildPersonalitiesNoInjectionDefense();
+    const llm = makeScriptedLLM([
+      { tool: 'read_file', args: { path: filePath } },
+      { tool: 'write_file', args: { path: filePath, content: 'recreated' } },
+      { text: 'done' },
+    ]);
+
+    const loop = new AgentLoop({ llm, tools, personalities, options: { workingDir: testDir } });
+
+    const allEvents: AgentEvent[] = [];
+    const gen = loop.run('test deleted file', { sessionKey: 'sk-deleted' });
+
+    for await (const ev of gen) {
+      allEvents.push(ev);
+      if (ev.type === 'tool_end' && ev.toolName === 'read_file' && ev.ok) {
+        await unlink(filePath);
+      }
+    }
+
+    const writeEnd = allEvents
+      .filter((e): e is Extract<AgentEvent, { type: 'tool_end' }> => e.type === 'tool_end')
+      .find((e) => e.toolName === 'write_file');
+
+    expect(writeEnd).toBeDefined();
+    expect(writeEnd?.ok).toBe(false);
+    expect(writeEnd?.result).toMatch(/STALE_WRITE|no longer exists|re-read/i);
   });
 });

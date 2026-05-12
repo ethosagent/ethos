@@ -1,4 +1,4 @@
-import { realpath, stat } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
@@ -66,21 +66,30 @@ function isWriteBlocked(abs: string): boolean {
  * Skipped (returns null) when:
  * - `readMtimes` is absent (backward-compat: old callers without the map)
  * - the path was never read in this session (new-file creation, no false positive)
+ *
+ * Uses Storage.mtime() so the check routes through ScopedStorage and respects
+ * personality-boundary enforcement rather than bypassing it with raw stat().
+ * A file that was previously read but has since been deleted is treated as
+ * stale to prevent silent clobber of a disappearance.
  */
 async function checkStaleWrite(
   abs: string,
   readMtimes: Map<string, { mtimeMs: number; readAtTurn: number }> | undefined,
+  storage: Storage,
 ): Promise<ToolResult | null> {
   if (!readMtimes) return null;
   const record = readMtimes.get(abs);
   if (!record) return null;
 
-  let currentMtimeMs: number;
-  try {
-    const s = await stat(abs);
-    currentMtimeMs = s.mtimeMs;
-  } catch {
-    return null;
+  const currentMtimeMs = await storage.mtime(abs);
+
+  if (currentMtimeMs === null) {
+    const readAt = new Date(record.mtimeMs).toISOString();
+    return {
+      ok: false,
+      error: `STALE_WRITE: ${abs} was read at ${readAt} but no longer exists on disk. Re-read the file before writing.`,
+      code: 'STALE_WRITE',
+    };
   }
 
   if (currentMtimeMs !== record.mtimeMs) {
@@ -232,12 +241,11 @@ export const readFileTool: Tool = {
     }
 
     // FW-28 — record mtime so write_file / patch_file can detect external edits.
+    // Storage.mtime() returns null for missing paths and respects ScopedStorage.
     if (ctx.readMtimes) {
-      try {
-        const s = await stat(abs);
-        ctx.readMtimes.set(abs, { mtimeMs: s.mtimeMs, readAtTurn: ctx.currentTurn });
-      } catch {
-        // stat failure is non-fatal — skip recording; stale check will be skipped too
+      const mtimeMs = await storage.mtime(abs);
+      if (mtimeMs !== null) {
+        ctx.readMtimes.set(abs, { mtimeMs, readAtTurn: ctx.currentTurn });
       }
     }
 
@@ -294,7 +302,7 @@ export const writeFileTool: Tool = {
       };
     }
 
-    const stale = await checkStaleWrite(abs, ctx.readMtimes);
+    const stale = await checkStaleWrite(abs, ctx.readMtimes, storage);
     if (stale) return stale;
 
     try {
@@ -303,10 +311,10 @@ export const writeFileTool: Tool = {
       // FW-28 — update the recorded mtime after a successful write so subsequent
       // writes in the same session don't false-positive against the pre-write record.
       if (ctx.readMtimes) {
-        try {
-          const s = await stat(abs);
-          ctx.readMtimes.set(abs, { mtimeMs: s.mtimeMs, readAtTurn: ctx.currentTurn });
-        } catch {
+        const writtenMtime = await storage.mtime(abs);
+        if (writtenMtime !== null) {
+          ctx.readMtimes.set(abs, { mtimeMs: writtenMtime, readAtTurn: ctx.currentTurn });
+        } else {
           ctx.readMtimes.delete(abs);
         }
       }
@@ -357,7 +365,7 @@ export const patchFileTool: Tool = {
       return { ok: false, error: `Writing to ${abs} is blocked.`, code: 'execution_failed' };
     }
 
-    const stale = await checkStaleWrite(abs, ctx.readMtimes);
+    const stale = await checkStaleWrite(abs, ctx.readMtimes, storage);
     if (stale) return stale;
 
     let content: string | null;
@@ -404,11 +412,12 @@ export const patchFileTool: Tool = {
       throw err;
     }
     // FW-28 — update the recorded mtime after a successful patch.
+    // FW-28 — update the recorded mtime after a successful patch.
     if (ctx.readMtimes) {
-      try {
-        const s = await stat(abs);
-        ctx.readMtimes.set(abs, { mtimeMs: s.mtimeMs, readAtTurn: ctx.currentTurn });
-      } catch {
+      const patchedMtime = await storage.mtime(abs);
+      if (patchedMtime !== null) {
+        ctx.readMtimes.set(abs, { mtimeMs: patchedMtime, readAtTurn: ctx.currentTurn });
+      } else {
         ctx.readMtimes.delete(abs);
       }
     }
