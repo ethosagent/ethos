@@ -92,7 +92,7 @@ The personality's `toolset.yaml` is a hard allowlist enforced at the framework l
 
 A small set of operations is always-deny, regardless of personality, regardless of approval. The danger predicate fires before any approval check.
 
-- Source: `extensions/web-api/src/services/approval-hook.ts`
+- Source: `apps/web-api/src/services/approval-hook.ts`
 - Audit category: `audit.block`
 
 ### Risk classifier (mode-aware, per-call) {#risk-classifier}
@@ -111,7 +111,7 @@ Every tool call is scored against a pattern-based classifier (regex floor) and a
 
 When any of the previous checks flag a call, the request is held in front of the approval surface (Web UI modal or CLI prompt). The approval is binary, sender-attributable, and persisted as an audit event.
 
-- Source: `extensions/web-api/src/services/approval-hook.ts`
+- Source: `apps/web-api/src/services/approval-hook.ts`
 - Audit category: `audit.approval`
 - Per-personality knob: `safety.approvalMode` — `auto` | `safe-auto` | `manual` | `off`. Default is `safe-auto`.
 

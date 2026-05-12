@@ -55,7 +55,7 @@ The framework calls a dependency "global" when:
 
 None of these appear in `AgentLoop` or in `packages/core/`. The interfaces live in `@ethosagent/types`, which has zero runtime dependencies. Concrete backends — `AnthropicProvider`, `SQLiteSessionStore`, `MarkdownFileMemoryProvider`, `FilePersonalityRegistry`, `FsStorage` — live in `extensions/`. The wiring layer (`apps/ethos/src/wiring.ts`, `packages/wiring/src/index.ts`) is the only code that resolves a path or reads an env var.
 
-This layering is the practical answer to "why a constructor argument is better than a global". The same `AgentLoop` is constructed differently by the CLI, by `extensions/web-api/`, by `extensions/gateway/`, by the test suite, and by a future ACP server. Each wires a different set of providers, but the loop's contract — what it depends on, what it returns — is invariant.
+This layering is the practical answer to "why a constructor argument is better than a global". The same `AgentLoop` is constructed differently by the CLI, by `apps/web-api/`, by `extensions/gateway/`, by the test suite, and by a future ACP server. Each wires a different set of providers, but the loop's contract — what it depends on, what it returns — is invariant.
 
 ### The wiring layer is where decisions happen
 
@@ -84,7 +84,7 @@ The temptation, when starting a project like this, is to write `AgentLoop` as a 
 
 **Tests become integration tests.** If `AgentLoop` reads from `~/.ethos/config.yaml`, every test needs that file to exist, or a `tmpdir` fixture, or `mock-fs` patches. Tests that should isolate a single behaviour — "what does the loop do when the session is empty" — turn into ten-line setups that mock the filesystem. The defaults-to-no-op pattern (`InMemorySessionStore`, `NoopMemoryProvider`) makes the same test three lines.
 
-**Surfaces collide.** The CLI lives at `apps/ethos/src/`. The gateway lives at `extensions/gateway/`. The web API lives at `extensions/web-api/`. Each has different idea of where data lives, which credentials to use, which observability backend to ship events to. If `AgentLoop` resolves those on its own, every surface has to monkey-patch the resolution path. The constructor argument is the seam that keeps the surfaces from interfering.
+**Surfaces collide.** The CLI lives at `apps/ethos/src/`. The gateway lives at `extensions/gateway/`. The web API lives at `apps/web-api/`. Each has different idea of where data lives, which credentials to use, which observability backend to ship events to. If `AgentLoop` resolves those on its own, every surface has to monkey-patch the resolution path. The constructor argument is the seam that keeps the surfaces from interfering.
 
 **Swap-ability dies.** The `@ethosagent/types` package declares the interfaces — `LLMProvider`, `SessionStore`, `MemoryProvider`, `PersonalityRegistry`, `ToolRegistry`, `HookRegistry`, `Storage`. Implementing a new backend means implementing the interface and wiring it. If the loop reached for a specific backend by name, "swap the LLM" would be a refactor instead of a constructor argument. Ethos's claim that LLM and session and memory are pluggable rests on the loop not knowing which one is plugged in.
 
@@ -137,7 +137,7 @@ The clearest way to feel the value of the pattern: read four wiring files side b
 - `apps/ethos/src/wiring.ts` — the CLI. Reads `~/.ethos/config.yaml`, picks an LLM provider based on `config.provider`, opens a SQLite session store, mounts the markdown memory provider, registers all built-in tools.
 - `packages/wiring/src/index.ts` — the shared assembly. The "what goes in an `AgentLoop`" recipe that surfaces compose.
 - `extensions/gateway/src/` — the multi-channel gateway. Wires the same loop but also constructs adapters for telegram, discord, slack, email, and the dedup cache.
-- `extensions/web-api/` — the HTTP layer. Wires the loop with observability and an approval-hook plumbing for human-in-the-loop confirmations.
+- `apps/web-api/` — the HTTP layer. Wires the loop with observability and an approval-hook plumbing for human-in-the-loop confirmations.
 
 Same `AgentLoop`. Same `AgentLoopConfig` shape. Different decisions about which concrete provider to inject for each role. Reading two of these against each other is the fastest way to understand what "injection at construction" buys: when you add a new surface, you do not modify `AgentLoop` — you write a new wiring file.
 

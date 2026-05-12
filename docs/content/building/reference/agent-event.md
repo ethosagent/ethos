@@ -150,7 +150,7 @@ Channel adapters that only render user-visible output filter to `text_delta` plu
 | `apps/web/src/lib/chat-reducer.ts` | Web UI — reducer that maps events to message state. |
 | `apps/web/src/lib/drawer-reducer.ts` | Web UI — tool-call drawer that consumes `tool_start` / `tool_end` / `context_meta`. |
 | `apps/vscode-extension/src/bridge.ts` | VS Code bridge — forwards events to the webview. |
-| `extensions/acp-server/src/index.ts` | ACP server — wire-protocol mapping of events. |
+| `apps/acp-server/src/index.ts` | ACP server — wire-protocol mapping of events. |
 | `extensions/gateway/src/` | Channel gateway — filters by audience before dispatching to adapters. |
 | `extensions/eval-harness/src/runner.ts` | Eval runner — collects events to score turns. |
 

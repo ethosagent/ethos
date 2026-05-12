@@ -24,10 +24,6 @@
 //   src/index.ts                 file metadata. Storage models text (utf-8 strings);
 //                                 binary copy semantics aren't in scope.
 //
-//   extensions/web-api/          Serves the built apps/web/dist from disk. This is
-//   src/routes/static.ts         the web server's static-file handler, not a
-//                                 ~/.ethos/ operation — Tier 4 defer per plan.
-//
 //   extensions/skills/           statSync walks $PATH looking for executable
 //   src/skill-compat.ts          binaries. Not a ~/.ethos/ operation — explicitly
 //                                 out of scope per the storage abstraction plan.
@@ -58,7 +54,6 @@ const ALLOWED_PREFIXES = [
 const ALLOWED_FILES = new Set([
   'extensions/cron/src/index.ts',
   'extensions/claw-migrate/src/index.ts',
-  'extensions/web-api/src/routes/static.ts',
   'extensions/skills/src/skill-compat.ts',
 ]);
 

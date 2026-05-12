@@ -13,7 +13,7 @@ import { rpc } from '../rpc';
 //   • Fork   → rpc.sessions.fork → navigate to the new id
 //   • Delete → rpc.sessions.delete → invalidate this list
 //
-// FTS5 search is wired in `extensions/web-api`; the input below feeds
+// FTS5 search is wired in `apps/web-api`; the input below feeds
 // `q` directly. Debouncing is local — 400ms after the last keystroke
 // before triggering a refetch — so typing fast doesn't fire a refetch
 // per character.

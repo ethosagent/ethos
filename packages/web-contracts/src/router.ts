@@ -33,7 +33,7 @@ import {
 } from './schemas';
 
 // oRPC contract — single source of truth for the web control plane.
-// `extensions/web-api` (server) calls `implement(contract)` against this.
+// `apps/web-api` (server) calls `implement(contract)` against this.
 // `apps/web` (client) calls `createORPCClient(link)` typed as
 // `ContractRouterClient<typeof contract>`. Both ends fail to compile if the
 // shapes drift.

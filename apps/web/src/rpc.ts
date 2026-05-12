@@ -4,7 +4,7 @@ import { RPCLink } from '@orpc/client/fetch';
 import type { ContractRouterClient } from '@orpc/contract';
 
 // Typed oRPC client. The shape is locked by `@ethosagent/web-contracts`,
-// which both the server (`extensions/web-api`) and this file import — if
+// which both the server (`apps/web-api`) and this file import — if
 // the contract changes, both ends fail to compile.
 //
 // Auth piggybacks on the same cookie the server set during the

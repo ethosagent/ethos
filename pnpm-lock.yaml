@@ -53,6 +53,18 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@22.19.17)(vite@6.4.2(@types/node@22.19.17)(jiti@1.21.7)(lightningcss@1.32.0)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.3))
 
+  apps/acp-server:
+    dependencies:
+      '@ethosagent/agent-mesh':
+        specifier: workspace:*
+        version: link:../../extensions/agent-mesh
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      ws:
+        specifier: ^8.20.0
+        version: 8.20.0
+
   apps/ethos:
     dependencies:
       '@anthropic-ai/sdk':
@@ -124,7 +136,7 @@ importers:
         version: link:../../extensions/cron
       '@ethosagent/mcp-server':
         specifier: workspace:*
-        version: link:../../extensions/mcp-server
+        version: link:../mcp-server
       '@ethosagent/observability-sqlite':
         specifier: workspace:*
         version: link:../../extensions/observability-sqlite
@@ -145,7 +157,7 @@ importers:
         version: link:../../extensions/team-supervisor
       '@ethosagent/web-api':
         specifier: workspace:*
-        version: link:../../extensions/web-api
+        version: link:../web-api
       '@ethosagent/wiring':
         specifier: workspace:*
         version: link:../../packages/wiring
@@ -174,6 +186,18 @@ importers:
       playwright:
         specifier: ^1.48.0
         version: 1.59.1
+
+  apps/mcp-server:
+    dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.0.0
+        version: 1.29.0(zod@4.3.6)
 
   apps/tui:
     dependencies:
@@ -257,6 +281,75 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^4.3.0
         version: 4.7.0(vite@6.4.2(@types/node@22.19.17)(jiti@1.21.7)(lightningcss@1.32.0)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.3))
+
+  apps/web-api:
+    dependencies:
+      '@ethosagent/agent-bridge':
+        specifier: workspace:*
+        version: link:../../packages/agent-bridge
+      '@ethosagent/agent-mesh':
+        specifier: workspace:*
+        version: link:../../extensions/agent-mesh
+      '@ethosagent/batch-runner':
+        specifier: workspace:*
+        version: link:../../extensions/batch-runner
+      '@ethosagent/cron':
+        specifier: workspace:*
+        version: link:../../extensions/cron
+      '@ethosagent/eval-harness':
+        specifier: workspace:*
+        version: link:../../extensions/eval-harness
+      '@ethosagent/kanban-store':
+        specifier: workspace:*
+        version: link:../../extensions/kanban-store
+      '@ethosagent/memory-markdown':
+        specifier: workspace:*
+        version: link:../../extensions/memory-markdown
+      '@ethosagent/personalities':
+        specifier: workspace:*
+        version: link:../../extensions/personalities
+      '@ethosagent/plugin-contract':
+        specifier: workspace:*
+        version: link:../../packages/plugin-contract
+      '@ethosagent/plugin-loader':
+        specifier: workspace:*
+        version: link:../../extensions/plugin-loader
+      '@ethosagent/session-sqlite':
+        specifier: workspace:*
+        version: link:../../extensions/session-sqlite
+      '@ethosagent/skill-evolver':
+        specifier: workspace:*
+        version: link:../../extensions/skill-evolver
+      '@ethosagent/skills':
+        specifier: workspace:*
+        version: link:../../extensions/skills
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+      '@ethosagent/team-supervisor':
+        specifier: workspace:*
+        version: link:../../extensions/team-supervisor
+      '@ethosagent/tools-mcp':
+        specifier: workspace:*
+        version: link:../../extensions/tools-mcp
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@ethosagent/web-contracts':
+        specifier: workspace:*
+        version: link:../../packages/web-contracts
+      '@hono/node-server':
+        specifier: ^2.0.0
+        version: 2.0.0(hono@4.12.15)
+      '@orpc/openapi':
+        specifier: ^1.14.0
+        version: 1.14.0(ws@8.20.0)
+      '@orpc/server':
+        specifier: ^1.14.0
+        version: 1.14.0(ws@8.20.0)
+      hono:
+        specifier: ^4.12.15
+        version: 4.12.15
 
   docs:
     dependencies:
@@ -390,18 +483,6 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@22.19.17)(vite@6.4.2(@types/node@22.19.17)(jiti@1.21.7)(lightningcss@1.32.0)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.3))
 
-  extensions/acp-server:
-    dependencies:
-      '@ethosagent/agent-mesh':
-        specifier: workspace:*
-        version: link:../agent-mesh
-      '@ethosagent/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-      ws:
-        specifier: ^8.20.0
-        version: 8.20.0
-
   extensions/agent-mesh:
     dependencies:
       '@ethosagent/storage-fs':
@@ -504,18 +585,6 @@ importers:
       openai:
         specifier: ^4.87.0
         version: 4.104.0(ws@8.20.0)(zod@4.3.6)
-
-  extensions/mcp-server:
-    dependencies:
-      '@ethosagent/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      '@ethosagent/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.0.0
-        version: 1.29.0(zod@4.3.6)
 
   extensions/memory-markdown:
     dependencies:
@@ -858,75 +927,6 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
-
-  extensions/web-api:
-    dependencies:
-      '@ethosagent/agent-bridge':
-        specifier: workspace:*
-        version: link:../../packages/agent-bridge
-      '@ethosagent/agent-mesh':
-        specifier: workspace:*
-        version: link:../agent-mesh
-      '@ethosagent/batch-runner':
-        specifier: workspace:*
-        version: link:../batch-runner
-      '@ethosagent/cron':
-        specifier: workspace:*
-        version: link:../cron
-      '@ethosagent/eval-harness':
-        specifier: workspace:*
-        version: link:../eval-harness
-      '@ethosagent/kanban-store':
-        specifier: workspace:*
-        version: link:../kanban-store
-      '@ethosagent/memory-markdown':
-        specifier: workspace:*
-        version: link:../memory-markdown
-      '@ethosagent/personalities':
-        specifier: workspace:*
-        version: link:../personalities
-      '@ethosagent/plugin-contract':
-        specifier: workspace:*
-        version: link:../../packages/plugin-contract
-      '@ethosagent/plugin-loader':
-        specifier: workspace:*
-        version: link:../plugin-loader
-      '@ethosagent/session-sqlite':
-        specifier: workspace:*
-        version: link:../session-sqlite
-      '@ethosagent/skill-evolver':
-        specifier: workspace:*
-        version: link:../skill-evolver
-      '@ethosagent/skills':
-        specifier: workspace:*
-        version: link:../skills
-      '@ethosagent/storage-fs':
-        specifier: workspace:*
-        version: link:../../packages/storage-fs
-      '@ethosagent/team-supervisor':
-        specifier: workspace:*
-        version: link:../team-supervisor
-      '@ethosagent/tools-mcp':
-        specifier: workspace:*
-        version: link:../tools-mcp
-      '@ethosagent/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-      '@ethosagent/web-contracts':
-        specifier: workspace:*
-        version: link:../../packages/web-contracts
-      '@hono/node-server':
-        specifier: ^2.0.0
-        version: 2.0.0(hono@4.12.15)
-      '@orpc/openapi':
-        specifier: ^1.14.0
-        version: 1.14.0(ws@8.20.0)
-      '@orpc/server':
-        specifier: ^1.14.0
-        version: 1.14.0(ws@8.20.0)
-      hono:
-        specifier: ^4.12.15
-        version: 4.12.15
 
   packages/agent-bridge:
     dependencies:

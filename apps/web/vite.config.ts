@@ -9,7 +9,7 @@ import { defineConfig } from 'vite';
 //            ethos-serve API on :3000. Cookies sent by the API stay scoped
 //            to localhost so the proxy is transparent.
 //  • Build — `pnpm --filter @ethosagent/web build` writes to `apps/web/dist/`.
-//            `extensions/web-api`'s static handler serves that directory in
+//            `apps/web-api`'s static handler serves that directory in
 //            production runs of `ethos serve --web-experimental`.
 //
 // The `@ethosagent/*` aliases mirror the root tsconfig so workspace imports
