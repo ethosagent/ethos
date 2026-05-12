@@ -5,29 +5,42 @@ import type {
   KanbanTaskStatus,
 } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { App as AntApp, Badge, Button, Card, Empty, Select, Spin, Tag, Typography } from 'antd';
+import { App as AntApp, Button, Descriptions, Drawer, Dropdown, Spin, Typography } from 'antd';
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { rpc } from '../rpc';
 
 // Per-team Control Center.
 //
-// Three panes (Board / Activity / Roster) as described in the Plan B spec.
-// First-cut implementation — drag-drop, full DESIGN.md token compliance, and
-// the WebSocket live stream are deferred to a follow-up. Status changes go
-// through a small Select dropdown on each card; the board polls the server on
-// a 2s cadence so multi-process updates surface within that window.
+// Three panes (Board · Activity · Roster) with strict overflow containment so
+// columns never bleed into neighboring sections. Status is rendered as a
+// semantic chip — colored by meaning, not by personality — and changed via a
+// dropdown menu next to it. Click a task tile → drawer with full detail.
 //
-// The task tile is the third Card-primitive exemption (see DESIGN.md's
-// Decisions log). Skills and Cron were the first two; durable tasks earn the
-// same treatment because the tile is the unit of work, not decoration.
+// All chrome rides on DESIGN.md surface tokens (`--ethos-*` CSS vars) and the
+// 8px base unit. The task tile is the third Card-primitive exemption per the
+// Decisions log; everything else is raw layout. Heavy lifting (overflow,
+// scroll containment, hover states, status colors) lives in styles.css under
+// the `.cc-*` namespace.
 
 const STATUS_COLUMNS: KanbanTaskStatus[] = ['todo', 'ready', 'running', 'blocked', 'done'];
 const ARCHIVED_STATUS: KanbanTaskStatus = 'archived';
+const ALL_STATUSES: KanbanTaskStatus[] = [...STATUS_COLUMNS, ARCHIVED_STATUS, 'scheduled'];
+const STATUS_LABEL: Record<KanbanTaskStatus, string> = {
+  todo: 'todo',
+  ready: 'ready',
+  running: 'running',
+  blocked: 'blocked',
+  done: 'done',
+  archived: 'archived',
+  scheduled: 'scheduled',
+};
 
-export function TeamControlCenter() {
+export function TeamControlCenter(): JSX.Element {
   const { name = '' } = useParams<{ name: string }>();
   const navigate = useNavigate();
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['kanban', 'board', name],
@@ -38,79 +51,87 @@ export function TeamControlCenter() {
 
   if (isLoading) {
     return (
-      <div style={{ display: 'grid', placeItems: 'center', height: 200 }}>
-        <Spin />
+      <div className="cc-page">
+        <div style={{ display: 'grid', placeItems: 'center', flex: 1 }}>
+          <Spin />
+        </div>
       </div>
     );
   }
   if (error) {
     return (
-      <Typography.Text type="danger">
-        Failed to load board: {(error as Error).message}
-      </Typography.Text>
+      <div className="cc-page">
+        <Typography.Text type="danger">
+          Failed to load board: {(error as Error).message}
+        </Typography.Text>
+      </div>
     );
   }
-  if (!data) return null;
+  if (!data) return <div className="cc-page" />;
+
+  const board = data.board;
+  const selectedTask = selectedTaskId ? board.tasks.find((t) => t.id === selectedTaskId) : null;
 
   return (
-    <div className="team-control-center">
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'baseline',
-          gap: 12,
-          marginBottom: 16,
-        }}
-      >
-        <Button onClick={() => navigate('/teams')} type="text">
+    <div className="cc-page">
+      <header className="cc-header">
+        <Button onClick={() => navigate('/teams')} type="text" size="small">
           ← Teams
         </Button>
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          {data.board.team.name}
-        </Typography.Title>
-        <Tag bordered={false}>{data.board.team.dispatchMode}</Tag>
-        <span style={{ flex: 1 }} />
-        <Button onClick={() => void refetch()} loading={isFetching}>
+        <h2 className="cc-title">{board.team.name}</h2>
+        <span className="cc-status-chip cc-status-ready">{board.team.dispatchMode}</span>
+        <span className="cc-spacer" />
+        <Button
+          size="small"
+          type={showArchived ? 'primary' : 'default'}
+          onClick={() => setShowArchived((v) => !v)}
+        >
+          {showArchived ? 'Hide archived' : 'Show archived'}
+        </Button>
+        <Button size="small" onClick={() => void refetch()} loading={isFetching}>
           Refresh
         </Button>
       </header>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) 320px 280px',
-          gap: 16,
-        }}
-      >
-        <Board snapshot={data.board} teamName={name} />
-        <Activity events={data.board.recentEvents} tasks={data.board.tasks} />
-        <Roster snapshot={data.board} />
+      <div className="cc-grid">
+        <Board
+          snapshot={board}
+          teamName={name}
+          showArchived={showArchived}
+          onSelect={setSelectedTaskId}
+        />
+        <Activity events={board.recentEvents} tasks={board.tasks} onSelect={setSelectedTaskId} />
+        <Roster snapshot={board} />
       </div>
+
+      <TaskDrawer
+        task={selectedTask ?? null}
+        board={board}
+        teamName={name}
+        onClose={() => setSelectedTaskId(null)}
+      />
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Board pane — status columns + goal swimlanes
+// Board pane
 // ---------------------------------------------------------------------------
 
 function Board({
   snapshot,
   teamName,
+  showArchived,
+  onSelect,
 }: {
   snapshot: KanbanBoardSnapshot;
   teamName: string;
+  showArchived: boolean;
+  onSelect: (id: string) => void;
 }): JSX.Element {
-  const [showArchived, setShowArchived] = useState(false);
-
-  // Group tasks by status. Tasks under a goal still appear in their own
-  // status column — the goal is a swimlane header above its children, not a
-  // gate that hides them.
   const byStatus = useMemo(() => {
     const map = new Map<KanbanTaskStatus, KanbanTask[]>();
-    for (const status of [...STATUS_COLUMNS, ARCHIVED_STATUS]) {
-      map.set(status, []);
-    }
+    for (const status of [...STATUS_COLUMNS, ARCHIVED_STATUS]) map.set(status, []);
     for (const t of snapshot.tasks) {
       if (t.status === 'archived' && !showArchived) continue;
       const bucket = map.get(t.status);
@@ -119,38 +140,28 @@ function Board({
     return map;
   }, [snapshot.tasks, showArchived]);
 
-  const childCountsByParent = useMemo(() => buildChildCounts(snapshot), [snapshot]);
+  const childCounts = useMemo(() => buildChildCounts(snapshot), [snapshot]);
+
+  const columns = showArchived ? [...STATUS_COLUMNS, ARCHIVED_STATUS] : STATUS_COLUMNS;
 
   return (
-    <section className="cc-board">
-      <header style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <Typography.Title level={5} style={{ margin: 0 }}>
-          Board
-        </Typography.Title>
-        <span style={{ flex: 1 }} />
-        <Button
-          size="small"
-          type={showArchived ? 'primary' : 'default'}
-          onClick={() => setShowArchived((v) => !v)}
-        >
-          {showArchived ? 'Hide archived' : 'Show archived'}
-        </Button>
+    <section className="cc-panel cc-board">
+      <header className="cc-panel-header">
+        <h3 className="cc-panel-title">Board</h3>
+        <span className="cc-spacer" />
+        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+          {snapshot.tasks.length} tasks
+        </Typography.Text>
       </header>
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: `repeat(${showArchived ? STATUS_COLUMNS.length + 1 : STATUS_COLUMNS.length}, minmax(140px, 1fr))`,
-          gap: 8,
-        }}
-      >
-        {[...STATUS_COLUMNS, ...(showArchived ? [ARCHIVED_STATUS] : [])].map((status) => (
+      <div className="cc-panel-body">
+        {columns.map((status) => (
           <BoardColumn
             key={status}
             status={status}
             tasks={byStatus.get(status) ?? []}
-            childCounts={childCountsByParent}
+            childCounts={childCounts}
             teamName={teamName}
+            onSelect={onSelect}
           />
         ))}
       </div>
@@ -163,31 +174,35 @@ function BoardColumn({
   tasks,
   childCounts,
   teamName,
+  onSelect,
 }: {
   status: KanbanTaskStatus;
   tasks: KanbanTask[];
   childCounts: Map<string, { total: number; done: number }>;
   teamName: string;
+  onSelect: (id: string) => void;
 }): JSX.Element {
   return (
-    <div className="cc-board-column">
-      <header
-        style={{
-          fontWeight: 600,
-          fontSize: 12,
-          textTransform: 'uppercase',
-          letterSpacing: 0.5,
-          marginBottom: 8,
-        }}
-      >
-        {status} <Typography.Text type="secondary">({tasks.length})</Typography.Text>
+    <div className="cc-column">
+      <header className="cc-column-header">
+        <span className={`cc-column-name cc-status-chip cc-status-${status}`}>
+          {STATUS_LABEL[status]}
+        </span>
+        <span className="cc-spacer" />
+        <span className="cc-column-count">{tasks.length}</span>
       </header>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div className="cc-column-body">
         {tasks.length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={null} />
+          <div className="cc-column-empty">No tasks here yet</div>
         ) : (
           tasks.map((t) => (
-            <TaskTile key={t.id} task={t} childCount={childCounts.get(t.id)} teamName={teamName} />
+            <TaskTile
+              key={t.id}
+              task={t}
+              childCount={childCounts.get(t.id)}
+              teamName={teamName}
+              onSelect={onSelect}
+            />
           ))
         )}
       </div>
@@ -195,19 +210,20 @@ function BoardColumn({
   );
 }
 
-// Task tile — DESIGN.md Card-primitive exemption #3. The decision is logged
-// in DESIGN.md's "Decisions" section in the same change-set as this file.
-// The accent stripe / assignee mark / priority pill are the design hooks the
-// spec calls out; tokens come through Antd's ConfigProvider so they stay in
-// sync with the rest of the surface.
+// Task tile — DESIGN.md Card-primitive exemption #3. The accent stripe encodes
+// the assignee; the status chip on the bottom encodes work state. Click the
+// tile to open the drawer; status changes go through the dropdown on the chip
+// so a stray click doesn't reclassify the task.
 function TaskTile({
   task,
   childCount,
   teamName,
+  onSelect,
 }: {
   task: KanbanTask;
   childCount?: { total: number; done: number };
   teamName: string;
+  onSelect: (id: string) => void;
 }): JSX.Element {
   const queryClient = useQueryClient();
   const { notification } = AntApp.useApp();
@@ -226,105 +242,137 @@ function TaskTile({
   const isGoal = task.assignee === null;
   const accent = accentFor(task.assignee);
 
+  // The tile is keyboard-activatable but intentionally NOT a <button> because
+  // it contains a nested status-chip button (Dropdown trigger) and HTML
+  // forbids button-in-button. role="button" + tabIndex + Enter/Space keydown
+  // give the same a11y semantics without the nesting violation.
   return (
-    <Card
-      size="small"
-      style={{
-        borderLeftWidth: 3,
-        borderLeftStyle: 'solid',
-        borderLeftColor: accent,
-        position: 'relative',
+    // biome-ignore lint/a11y/useSemanticElements: tile holds a nested Dropdown trigger button; can't be <button>
+    <div
+      role="button"
+      tabIndex={0}
+      className="cc-task"
+      style={{ borderLeftColor: accent }}
+      onClick={() => onSelect(task.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(task.id);
+        }
       }}
-      bodyStyle={{ padding: 8 }}
+      title={task.title}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-        <Typography.Text code style={{ fontSize: 10 }}>
-          {task.id.slice(0, 8)}
-        </Typography.Text>
-        {task.priority !== 0 && (
-          <Tag
-            bordered={false}
-            color={task.priority > 0 ? 'gold' : 'default'}
-            style={{ margin: 0 }}
-          >
-            p{task.priority}
-          </Tag>
-        )}
-        {isGoal && (
-          <Tag bordered={false} color="purple" style={{ margin: 0 }}>
-            goal
-          </Tag>
-        )}
+      <div className="cc-task-top">
+        <span className="cc-task-id">{task.id.slice(0, 8)}</span>
+        {task.priority !== 0 && <span className="cc-task-priority">p{task.priority}</span>}
+        {isGoal && <span className="cc-task-goal-badge">goal</span>}
+        <span className="cc-spacer" />
         {childCount && childCount.total > 0 && (
-          <Tag bordered={false} style={{ margin: 0 }}>
+          <span className="cc-task-progress">
             {childCount.done}/{childCount.total}
-          </Tag>
+          </span>
         )}
       </div>
-      <div style={{ fontWeight: 500, marginBottom: 4 }}>{task.title}</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
-        <Typography.Text type="secondary">{task.assignee ?? <em>unassigned</em>}</Typography.Text>
-        <span style={{ flex: 1 }} />
-        <Select
-          size="small"
-          value={task.status}
-          style={{ width: 90 }}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(next) => updateMut.mutate(next)}
-          disabled={updateMut.isPending}
-          options={[...STATUS_COLUMNS, ARCHIVED_STATUS, 'scheduled' as KanbanTaskStatus].map(
-            (s) => ({ label: s, value: s }),
-          )}
-        />
+      <div className="cc-task-title">{task.title}</div>
+      <div className="cc-task-bottom">
+        <span className="cc-task-assignee" style={{ color: accent }}>
+          <span className="cc-task-assignee-mark" style={{ background: accent }} />
+          {task.assignee ?? <em style={{ fontStyle: 'normal', opacity: 0.6 }}>unassigned</em>}
+        </span>
+        <span className="cc-spacer" />
+        <Dropdown
+          trigger={['click']}
+          menu={{
+            items: ALL_STATUSES.filter((s) => s !== task.status).map((s) => ({
+              key: s,
+              label: <span className={`cc-status-chip cc-status-${s}`}>{STATUS_LABEL[s]}</span>,
+              onClick: ({ domEvent }) => {
+                domEvent.stopPropagation();
+                updateMut.mutate(s);
+              },
+            })),
+          }}
+        >
+          <button
+            type="button"
+            className={`cc-status-chip cc-status-${task.status}`}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
+            }}
+            style={{ cursor: 'pointer', border: 'none', font: 'inherit' }}
+          >
+            {STATUS_LABEL[task.status]}
+          </button>
+        </Dropdown>
       </div>
-    </Card>
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Activity pane — recent task_events
+// Activity pane
 // ---------------------------------------------------------------------------
 
-function Activity({ events, tasks }: { events: KanbanEvent[]; tasks: KanbanTask[] }): JSX.Element {
+function Activity({
+  events,
+  tasks,
+  onSelect,
+}: {
+  events: KanbanEvent[];
+  tasks: KanbanTask[];
+  onSelect: (id: string) => void;
+}): JSX.Element {
   const taskTitle = useMemo(() => {
     const m = new Map<string, string>();
     for (const t of tasks) m.set(t.id, t.title);
     return m;
   }, [tasks]);
 
+  // Most recent first.
+  const ordered = useMemo(() => [...events].reverse(), [events]);
+
   return (
-    <section className="cc-activity" style={{ minWidth: 0 }}>
-      <Typography.Title level={5} style={{ margin: '0 0 8px 0' }}>
-        Activity
-      </Typography.Title>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-        {events.length === 0 ? (
-          <Typography.Text type="secondary">No activity yet.</Typography.Text>
+    <section className="cc-panel cc-activity">
+      <header className="cc-panel-header">
+        <h3 className="cc-panel-title">Activity</h3>
+      </header>
+      <div className="cc-panel-body">
+        {ordered.length === 0 ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            No activity yet.
+          </Typography.Text>
         ) : (
-          [...events].reverse().map((e) => (
-            <div
-              key={`${e.taskId}:${e.id}`}
-              style={{
-                display: 'flex',
-                gap: 6,
-                alignItems: 'baseline',
-                padding: '2px 0',
-                borderBottom: '1px solid var(--ant-color-split, #f0f0f0)',
-              }}
-            >
-              <Typography.Text style={{ color: accentFor(e.actor), fontWeight: 500 }}>
-                {e.actor}
-              </Typography.Text>
-              <Typography.Text type="secondary">{describeEvent(e)}</Typography.Text>
-              <Typography.Text code style={{ fontSize: 10 }}>
-                {(taskTitle.get(e.taskId) ?? e.taskId.slice(0, 8)).slice(0, 24)}
-              </Typography.Text>
-              <span style={{ flex: 1 }} />
-              <Typography.Text type="secondary" style={{ fontSize: 10 }}>
-                {formatRelative(e.createdAt)}
-              </Typography.Text>
-            </div>
-          ))
+          <div className="cc-activity-list">
+            {ordered.map((e) => {
+              const accent = accentFor(e.actor);
+              const title = taskTitle.get(e.taskId) ?? e.taskId.slice(0, 8);
+              return (
+                <button
+                  type="button"
+                  key={`${e.taskId}:${e.id}`}
+                  className="cc-activity-row"
+                  onClick={() => onSelect(e.taskId)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '6px 0',
+                    textAlign: 'left',
+                    color: 'inherit',
+                  }}
+                >
+                  <span className="cc-activity-actor" style={{ color: accent }}>
+                    {e.actor}
+                  </span>
+                  <span className="cc-activity-text" title={`${describeEvent(e)} ${title}`}>
+                    {describeEvent(e)} {title}
+                  </span>
+                  <span className="cc-activity-time">{formatRelative(e.createdAt)}</span>
+                </button>
+              );
+            })}
+          </div>
         )}
       </div>
     </section>
@@ -332,12 +380,10 @@ function Activity({ events, tasks }: { events: KanbanEvent[]; tasks: KanbanTask[
 }
 
 // ---------------------------------------------------------------------------
-// Roster pane — members + status
+// Roster pane
 // ---------------------------------------------------------------------------
 
 function Roster({ snapshot }: { snapshot: KanbanBoardSnapshot }): JSX.Element {
-  // Derive who's currently working from the task list: anyone holding an
-  // open run is "working", otherwise idle.
   const workingByAssignee = useMemo(() => {
     const m = new Map<string, KanbanTask>();
     for (const t of snapshot.tasks) {
@@ -346,8 +392,6 @@ function Roster({ snapshot }: { snapshot: KanbanBoardSnapshot }): JSX.Element {
     return m;
   }, [snapshot.tasks]);
 
-  // No member list available without a separate teams.get call — fall back
-  // to "everyone we've seen as an assignee on a task".
   const seenAssignees = useMemo(() => {
     const s = new Set<string>();
     for (const t of snapshot.tasks) {
@@ -357,35 +401,198 @@ function Roster({ snapshot }: { snapshot: KanbanBoardSnapshot }): JSX.Element {
   }, [snapshot.tasks]);
 
   return (
-    <section className="cc-roster" style={{ minWidth: 0 }}>
-      <Typography.Title level={5} style={{ margin: '0 0 8px 0' }}>
-        Roster
-      </Typography.Title>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+    <section className="cc-panel cc-roster">
+      <header className="cc-panel-header">
+        <h3 className="cc-panel-title">Roster</h3>
+      </header>
+      <div className="cc-panel-body">
         {seenAssignees.length === 0 ? (
-          <Typography.Text type="secondary">No assigned tasks yet.</Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            No assigned tasks yet.
+          </Typography.Text>
         ) : (
-          seenAssignees.map((person) => {
-            const running = workingByAssignee.get(person);
-            return (
-              <div
-                key={person}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}
-              >
-                <Badge status={running ? 'processing' : 'default'} />
-                <Typography.Text style={{ color: accentFor(person), fontWeight: 500 }}>
-                  {person}
-                </Typography.Text>
-                <span style={{ flex: 1 }} />
-                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                  {running ? running.title.slice(0, 30) : 'idle'}
-                </Typography.Text>
-              </div>
-            );
-          })
+          <div className="cc-roster-list">
+            {seenAssignees.map((person) => {
+              const accent = accentFor(person);
+              const running = workingByAssignee.get(person);
+              return (
+                <div key={person} className="cc-roster-row">
+                  <span className="cc-roster-mark" style={{ background: accent }} />
+                  <span className="cc-roster-name" style={{ color: accent }}>
+                    {person}
+                  </span>
+                  <span className="cc-spacer" />
+                  <span
+                    className={`cc-roster-status-dot ${running ? 'cc-roster-status-running' : ''}`}
+                    title={running ? `working on ${running.title}` : 'idle'}
+                  />
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Task drawer — full detail + recent events for one task
+// ---------------------------------------------------------------------------
+
+function TaskDrawer({
+  task,
+  board,
+  teamName,
+  onClose,
+}: {
+  task: KanbanTask | null;
+  board: KanbanBoardSnapshot;
+  teamName: string;
+  onClose: () => void;
+}): JSX.Element {
+  const queryClient = useQueryClient();
+  const { notification } = AntApp.useApp();
+
+  const updateMut = useMutation({
+    mutationFn: (nextStatus: KanbanTaskStatus) =>
+      rpc.kanban.updateStatus({
+        team: teamName,
+        taskId: task?.id ?? '',
+        status: nextStatus,
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['kanban', 'board', teamName] }),
+    onError: (err) =>
+      notification.error({
+        message: 'Status change failed',
+        description: (err as Error).message,
+      }),
+  });
+
+  const events = useMemo(() => {
+    if (!task) return [];
+    return board.recentEvents.filter((e) => e.taskId === task.id).reverse();
+  }, [task, board.recentEvents]);
+
+  const parents = useMemo(() => {
+    if (!task) return [];
+    return board.links
+      .filter((l) => l.childId === task.id)
+      .map((l) => board.tasks.find((t) => t.id === l.parentId))
+      .filter((t): t is KanbanTask => t !== undefined);
+  }, [task, board]);
+
+  const children = useMemo(() => {
+    if (!task) return [];
+    return board.links
+      .filter((l) => l.parentId === task.id)
+      .map((l) => board.tasks.find((t) => t.id === l.childId))
+      .filter((t): t is KanbanTask => t !== undefined);
+  }, [task, board]);
+
+  return (
+    <Drawer
+      open={task !== null}
+      onClose={onClose}
+      width={520}
+      title={task ? `${task.id} · ${task.title}` : ''}
+      destroyOnClose
+    >
+      {task && (
+        <>
+          <div style={{ marginBottom: 16 }}>
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: ALL_STATUSES.filter((s) => s !== task.status).map((s) => ({
+                  key: s,
+                  label: <span className={`cc-status-chip cc-status-${s}`}>{STATUS_LABEL[s]}</span>,
+                  onClick: () => updateMut.mutate(s),
+                })),
+              }}
+            >
+              <Button size="small">
+                <span className={`cc-status-chip cc-status-${task.status}`}>
+                  {STATUS_LABEL[task.status]}
+                </span>
+                <span style={{ marginLeft: 6 }}>▾</span>
+              </Button>
+            </Dropdown>
+          </div>
+
+          {task.body && (
+            <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>
+              {task.body}
+            </Typography.Paragraph>
+          )}
+
+          <Descriptions size="small" column={1} bordered style={{ marginBottom: 16 }}>
+            <Descriptions.Item label="Assignee">
+              {task.assignee ?? <em style={{ opacity: 0.6 }}>unassigned (goal)</em>}
+            </Descriptions.Item>
+            <Descriptions.Item label="Priority">{task.priority}</Descriptions.Item>
+            <Descriptions.Item label="Workspace">{task.workspaceMode}</Descriptions.Item>
+            <Descriptions.Item label="Created">
+              {new Date(task.createdAt).toLocaleString()}
+            </Descriptions.Item>
+            <Descriptions.Item label="Updated">
+              {new Date(task.updatedAt).toLocaleString()}
+            </Descriptions.Item>
+          </Descriptions>
+
+          {parents.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <Typography.Text strong style={{ fontSize: 12 }}>
+                Parents
+              </Typography.Text>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                {parents.map((p) => (
+                  <span key={p.id} className={`cc-status-chip cc-status-${p.status}`}>
+                    {p.title.slice(0, 30)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {children.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <Typography.Text strong style={{ fontSize: 12 }}>
+                Children
+              </Typography.Text>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                {children.map((c) => (
+                  <span key={c.id} className={`cc-status-chip cc-status-${c.status}`}>
+                    {c.title.slice(0, 30)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <Typography.Text strong style={{ fontSize: 12 }}>
+            Recent events
+          </Typography.Text>
+          <div className="cc-activity-list" style={{ marginTop: 6 }}>
+            {events.length === 0 ? (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                No events for this task in the recent window.
+              </Typography.Text>
+            ) : (
+              events.map((e) => (
+                <div key={e.id} className="cc-activity-row">
+                  <span className="cc-activity-actor" style={{ color: accentFor(e.actor) }}>
+                    {e.actor}
+                  </span>
+                  <span className="cc-activity-text">{describeEvent(e).replace(/ on$/, '')}</span>
+                  <span className="cc-activity-time">{formatRelative(e.createdAt)}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </>
+      )}
+    </Drawer>
   );
 }
 
@@ -410,16 +617,28 @@ function buildChildCounts(
   return counts;
 }
 
-// Cheap deterministic mark color from a personality / actor id. Same algorithm
-// the existing surface uses for sender accents; full DESIGN.md token roundtrip
-// is on the deferred-UI list.
-const ACCENTS = ['#1677ff', '#13c2c2', '#722ed1', '#fa8c16', '#52c41a', '#eb2f96', '#fa541c'];
-const ACCENT_FALLBACK = '#1677ff';
+// Per-personality accent — matches DESIGN.md's recommended hexes for the
+// known built-in personalities and falls back to a deterministic hash for
+// anything custom. Used for the assignee mark, name color, and tile stripe.
+const KNOWN_ACCENTS: Record<string, string> = {
+  researcher: '#4A9EFF',
+  engineer: '#4ADE80',
+  reviewer: '#F59E0B',
+  coach: '#E879F9',
+  operator: '#94A3B8',
+  coordinator: '#67E8F9',
+  dispatcher: '#94A3B8',
+};
+const FALLBACK_ACCENTS = ['#1677ff', '#13c2c2', '#722ed1', '#fa8c16', '#52c41a', '#eb2f96'];
+const ACCENT_FALLBACK = '#9A9A98';
+
 function accentFor(key: string | null): string {
-  if (key === null) return '#8c8c8c';
+  if (key === null) return ACCENT_FALLBACK;
+  const stripped = key.replace(/^human:/, '');
+  if (KNOWN_ACCENTS[stripped]) return KNOWN_ACCENTS[stripped];
   let hash = 0;
-  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-  return ACCENTS[hash % ACCENTS.length] ?? ACCENT_FALLBACK;
+  for (let i = 0; i < stripped.length; i++) hash = (hash * 31 + stripped.charCodeAt(i)) >>> 0;
+  return FALLBACK_ACCENTS[hash % FALLBACK_ACCENTS.length] ?? ACCENT_FALLBACK;
 }
 
 function describeEvent(e: KanbanEvent): string {

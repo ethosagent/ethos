@@ -96,6 +96,9 @@ export class Dispatcher {
     // 1. Promote — parents-done and scheduled-time-passed both unblock work.
     this.board.promoteReady();
     this.board.promoteScheduled();
+    // 1a. Roll up goals whose children have all finished. Closes the "Q3
+    //     roadmap sits at ready forever after every sub-task completes" hole.
+    this.board.rollupCompletedGoals('dispatcher');
 
     // 2. Reclaim — any run with a stale heartbeat is treated as the worker
     //    crashing. We mark the task `blocked` so a human (or a future reassign)
