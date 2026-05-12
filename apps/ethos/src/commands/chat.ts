@@ -5,6 +5,8 @@ import type { AgentEvent, AgentLoop } from '@ethosagent/core';
 import type { SplashInventory } from '@ethosagent/tui';
 import type { SteerSink } from '@ethosagent/types';
 import type { EthosConfig } from '../config';
+import { makeCompleter } from '../lib/autocomplete';
+import { buildBaseRegistry, type SlashCommandRegistry } from '../lib/slash-commands';
 import { SpinnerState } from '../lib/spinner';
 import { renderStatusBar, type Threshold } from '../lib/status-bar';
 import { formatToolFeedLine } from '../lib/tool-feed';
@@ -136,6 +138,9 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   startNightlyPrune(config.retention, config.personalitiesConfig);
   const { loop, personalityId, displayName } = await resolveActiveLoop(config);
 
+  // FW-14 — build the shared slash command registry. FW-15 and FW-16 extend it.
+  const registry = buildBaseRegistry();
+
   if (opts.singleQuery) {
     await runSingleQuery(loop, config, {
       query: opts.singleQuery,
@@ -162,10 +167,12 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     return;
   }
 
+  const completer = makeCompleter(registry);
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal: true,
+    ...(completer ? { completer } : {}),
   });
 
   const state: ChatState = {
@@ -218,7 +225,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     // /busy and /steer which have special busy-state semantics handled below.
     const isBusySlash = input.startsWith('/busy') || input.startsWith('/steer');
     if (input.startsWith('/') && !isBusySlash) {
-      handleSlashCommand(input, state, loop, rl, config)
+      handleSlashCommand(input, state, loop, rl, config, registry)
         .then(() => {
           // Only re-prompt when idle; a running turn will prompt on completion.
           if (!state.draining && !state.abort) rl.prompt();
@@ -615,6 +622,7 @@ async function handleSlashCommand(
   loop: AgentLoop,
   rl: ReturnType<typeof createInterface>,
   _config: EthosConfig,
+  registry: SlashCommandRegistry,
 ): Promise<void> {
   const parts = raw.slice(1).trim().split(/\s+/);
   const name = parts[0]?.toLowerCase() ?? '';
