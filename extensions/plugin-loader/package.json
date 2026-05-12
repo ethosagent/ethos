@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@ethosagent/core": "workspace:*",
+    "@ethosagent/logger": "workspace:*",
     "@ethosagent/openclaw-compat": "workspace:*",
     "@ethosagent/plugin-contract": "workspace:*",
     "@ethosagent/plugin-sdk": "workspace:*",

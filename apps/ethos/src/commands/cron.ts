@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { CronScheduler, isValidCronExpression, nextRun } from '@ethosagent/cron';
+import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { EthosError } from '@ethosagent/types';
 import { type EthosConfig, ethosDir } from '../config';
@@ -20,6 +21,7 @@ function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup
   let personalities: Awaited<ReturnType<typeof createPersonalityRegistry>> | null = null;
 
   const scheduler = new CronScheduler({
+    logger: new ConsoleLogger(),
     runJob: async (job) => {
       if (job.personality) {
         if (!personalities) {

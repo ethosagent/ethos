@@ -4,6 +4,7 @@ import { join, resolve as pathResolve } from 'node:path';
 import { AcpServer } from '@ethosagent/acp-server';
 import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
 import { CronScheduler } from '@ethosagent/cron';
+import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { type ChatService, createWebApi, WebTokenRepository } from '@ethosagent/web-api';
@@ -142,6 +143,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     // text_delta from the same agent loop, write the rest to the
     // canonical output dir under ~/.ethos/cron/output/.
     cronScheduler = new CronScheduler({
+      logger: new ConsoleLogger(),
       runJob: async (job) => {
         const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
         const ranAt = new Date().toISOString();

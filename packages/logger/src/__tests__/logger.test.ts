@@ -1,0 +1,72 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ConsoleLogger, NoopLogger, noopLogger } from '../index';
+
+describe('NoopLogger', () => {
+  it('silently swallows every level', () => {
+    const log = new NoopLogger();
+    // No assertions on output — the contract is "doesn't throw, doesn't write".
+    // Vitest will surface any unexpected console writes through its own redirects.
+    log.debug('a');
+    log.info('b');
+    log.warn('c');
+    log.error('d');
+  });
+
+  it('child() returns a no-op logger that ignores meta', () => {
+    const log = new NoopLogger();
+    const child = log.child({ component: 'whatever' });
+    expect(child).toBeInstanceOf(NoopLogger);
+  });
+
+  it('exports a singleton', () => {
+    expect(noopLogger).toBeInstanceOf(NoopLogger);
+  });
+});
+
+describe('ConsoleLogger', () => {
+  const spies = {
+    log: vi.spyOn(console, 'log'),
+    warn: vi.spyOn(console, 'warn'),
+    error: vi.spyOn(console, 'error'),
+    debug: vi.spyOn(console, 'debug'),
+  };
+
+  beforeEach(() => {
+    for (const spy of Object.values(spies)) {
+      spy.mockClear();
+      spy.mockImplementation(() => {});
+    }
+  });
+
+  afterEach(() => {
+    for (const spy of Object.values(spies)) {
+      spy.mockClear();
+    }
+  });
+
+  it('routes each level to the matching console method', () => {
+    const log = new ConsoleLogger();
+    log.info('hello info');
+    log.warn('hello warn');
+    log.error('hello error');
+    log.debug('hello debug');
+
+    expect(spies.log).toHaveBeenCalledWith('hello info');
+    expect(spies.warn).toHaveBeenCalledWith('hello warn');
+    expect(spies.error).toHaveBeenCalledWith('hello error');
+    expect(spies.debug).toHaveBeenCalledWith('hello debug');
+  });
+
+  it('prefixes with [component] when meta.component is set', () => {
+    const log = new ConsoleLogger({ component: 'cron' });
+    log.warn('clock skewed');
+    expect(spies.warn).toHaveBeenCalledWith('[cron] clock skewed');
+  });
+
+  it('child() merges base meta with new meta', () => {
+    const base = new ConsoleLogger({ component: 'parent' });
+    const child = base.child({ component: 'child' });
+    child.info('hello');
+    expect(spies.log).toHaveBeenCalledWith('[child] hello');
+  });
+});

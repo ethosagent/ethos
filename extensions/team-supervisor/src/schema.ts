@@ -1,4 +1,5 @@
-import type { TeamManifest, TeamMember } from '@ethosagent/types';
+import { noopLogger } from '@ethosagent/logger';
+import type { Logger, TeamManifest, TeamMember } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
@@ -82,7 +83,11 @@ function firstIssueMessage(err: z.ZodError): string {
  * validation failure. Logs a warning (but does not fail) when
  * `dispatch_mode: self-routing` is set alongside a `coordinator:` field.
  */
-export function parseTeamManifest(yamlContent: string): TeamManifest {
+export function parseTeamManifest(
+  yamlContent: string,
+  opts: { logger?: Logger } = {},
+): TeamManifest {
+  const logger = opts.logger ?? noopLogger;
   let raw: unknown;
   try {
     raw = parseYaml(yamlContent);
@@ -113,8 +118,9 @@ export function parseTeamManifest(yamlContent: string): TeamManifest {
   if (effectiveMode === 'self-routing' && manifest.coordinator !== undefined) {
     // Not fatal — coordinator field is ignored at runtime, but warn so the
     // author knows their intent doesn't match the configured mode.
-    console.warn(
+    logger.warn(
       `[team-supervisor] team.yaml: \`coordinator\` field is set but dispatch_mode is "self-routing" — the coordinator field will be ignored`,
+      { component: 'team-supervisor', team: manifest.name },
     );
   }
 
@@ -127,7 +133,8 @@ export function parseTeamManifest(yamlContent: string): TeamManifest {
  * this function enforces the runtime constraints that the supervisor needs.
  * Called by `ethos team start` before spawning the supervisor.
  */
-export function validateForStart(manifest: TeamManifest): void {
+export function validateForStart(manifest: TeamManifest, opts: { logger?: Logger } = {}): void {
+  const logger = opts.logger ?? noopLogger;
   if (manifest.members.length === 0) {
     throw new EthosError({
       code: 'TEAM_MANIFEST_INVALID',
@@ -141,9 +148,10 @@ export function validateForStart(manifest: TeamManifest): void {
     const knownPersonalities = new Set(manifest.members.map((m) => m.personality));
     for (const key of Object.keys(manifest.personality_models)) {
       if (!knownPersonalities.has(key)) {
-        console.warn(
+        logger.warn(
           `[team] Warning: personality_models key "${key}" does not match any team member personality. ` +
             `Known personalities: ${[...knownPersonalities].join(', ') || '(none)'}`,
+          { component: 'team-supervisor', team: manifest.name, key },
         );
       }
     }

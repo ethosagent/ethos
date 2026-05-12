@@ -1,5 +1,7 @@
 import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { noopLogger } from '@ethosagent/logger';
+import type { Logger } from '@ethosagent/types';
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -21,7 +23,8 @@ function isProcessAlive(pid: number): boolean {
  *
  * Returns a cleanup function that removes the PID file on exit.
  */
-export function acquirePidFile(pidPath: string): () => void {
+export function acquirePidFile(pidPath: string, opts: { logger?: Logger } = {}): () => void {
+  const logger = opts.logger ?? noopLogger;
   mkdirSync(dirname(pidPath), { recursive: true });
 
   const tryCreate = (): boolean => {
@@ -55,8 +58,9 @@ export function acquirePidFile(pidPath: string): () => void {
     }
 
     // Stale PID file from a previous crash — clean up and take the lock.
-    console.warn(
+    logger.warn(
       `[team-supervisor] Cleaning up stale PID file from previous crash (PID ${existingPid ?? 'unknown'})`,
+      { component: 'team-supervisor', staleEntryPid: existingPid ?? 'unknown' },
     );
     try {
       unlinkSync(pidPath);

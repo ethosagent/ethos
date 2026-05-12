@@ -1,8 +1,9 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { noopLogger } from '@ethosagent/logger';
 import { buildMcpEnv } from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
-import type { Storage, Tool, ToolResult } from '@ethosagent/types';
+import type { Logger, Storage, Tool, ToolResult } from '@ethosagent/types';
 import { Client } from '@modelcontextprotocol/sdk/client';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
@@ -230,9 +231,11 @@ function adaptMcpTool(mcpTool: McpToolDef, serverName: string, client: McpClient
 export class McpManager {
   private _clients: McpClient[];
   private _tools: Tool[] = [];
+  private readonly logger: Logger;
 
-  constructor(configs: McpServerConfig[]) {
+  constructor(configs: McpServerConfig[], opts: { logger?: Logger } = {}) {
     this._clients = configs.map((c) => new McpClient(c));
+    this.logger = opts.logger ?? noopLogger;
   }
 
   async connect(): Promise<void> {
@@ -241,10 +244,11 @@ export class McpManager {
         try {
           await client.connect();
         } catch (err) {
-          console.warn(
-            `[ethos] MCP server '${client.name}' failed to connect:`,
-            err instanceof Error ? err.message : String(err),
-          );
+          this.logger.warn(`[ethos] MCP server '${client.name}' failed to connect`, {
+            component: 'tools-mcp',
+            server: client.name,
+            error: err instanceof Error ? err.message : String(err),
+          });
           return;
         }
 
@@ -254,10 +258,11 @@ export class McpManager {
             this._tools.push(adaptMcpTool(t, client.name, client));
           }
         } catch (err) {
-          console.warn(
-            `[ethos] MCP server '${client.name}' listTools failed:`,
-            err instanceof Error ? err.message : String(err),
-          );
+          this.logger.warn(`[ethos] MCP server '${client.name}' listTools failed`, {
+            component: 'tools-mcp',
+            server: client.name,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }),
     );

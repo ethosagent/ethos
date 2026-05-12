@@ -499,9 +499,13 @@ try {
         process.exit(1);
       }
       const { readFileSync } = await import('node:fs');
+      const { ConsoleLogger } = await import('@ethosagent/logger');
       const { parseTeamManifest, runSupervisor } = await import('@ethosagent/team-supervisor');
-      const manifest = parseTeamManifest(readFileSync(manifestPath, 'utf-8'));
-      await runSupervisor(manifest, manifestPath);
+      const supervisorLogger = new ConsoleLogger();
+      const manifest = parseTeamManifest(readFileSync(manifestPath, 'utf-8'), {
+        logger: supervisorLogger,
+      });
+      await runSupervisor(manifest, manifestPath, { logger: supervisorLogger });
       break;
     }
 

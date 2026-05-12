@@ -1,8 +1,9 @@
 import { open, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { noopLogger } from '@ethosagent/logger';
 import { FsStorage } from '@ethosagent/storage-fs';
-import type { Storage } from '@ethosagent/types';
+import type { Logger, Storage } from '@ethosagent/types';
 import { Cron } from 'croner';
 
 // ---------------------------------------------------------------------------
@@ -51,6 +52,8 @@ export interface CronSchedulerConfig {
   tickIntervalMs?: number;
   /** Storage backend. Defaults to FsStorage. */
   storage?: Storage;
+  /** Logger for tick-time errors. Defaults to a silent NoopLogger. */
+  logger?: Logger;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +97,7 @@ export class CronScheduler {
   private readonly runJob: (job: CronJob) => Promise<CronRunResult>;
   private readonly tickIntervalMs: number;
   private readonly storage: Storage;
+  private readonly logger: Logger;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: CronSchedulerConfig) {
@@ -104,6 +108,7 @@ export class CronScheduler {
     this.runJob = config.runJob;
     this.tickIntervalMs = config.tickIntervalMs ?? 60_000;
     this.storage = config.storage ?? new FsStorage();
+    this.logger = config.logger ?? noopLogger;
   }
 
   // ---------------------------------------------------------------------------
@@ -250,12 +255,20 @@ export class CronScheduler {
           nextRunAt: upcoming?.toISOString(),
         });
       } catch (err) {
-        console.error(`[cron] Could not claim job "${job.id}", skipping tick:`, err);
+        this.logger.error(`[cron] Could not claim job "${job.id}", skipping tick`, {
+          component: 'cron',
+          jobId: job.id,
+          error: String(err),
+        });
         continue;
       }
 
       await this.executeJob(job).catch((err) => {
-        console.error(`[cron] Job "${job.id}" failed:`, err);
+        this.logger.error(`[cron] Job "${job.id}" failed`, {
+          component: 'cron',
+          jobId: job.id,
+          error: String(err),
+        });
       });
     }
   }

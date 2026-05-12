@@ -8,6 +8,7 @@ import {
 import { KanbanStore } from '@ethosagent/kanban-store';
 import { AnthropicProvider, AuthRotatingProvider } from '@ethosagent/llm-anthropic';
 import { OpenAICompatProvider } from '@ethosagent/llm-openai-compat';
+import { noopLogger } from '@ethosagent/logger';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import { VectorMemoryProvider } from '@ethosagent/memory-vector';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
@@ -33,7 +34,7 @@ import { createProcessTools } from '@ethosagent/tools-process';
 import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-terminal';
 import { createTodoTools, InMemoryTodoStore } from '@ethosagent/tools-todo';
 import { createWebTools } from '@ethosagent/tools-web';
-import type { ContextInjector, LLMProvider } from '@ethosagent/types';
+import type { ContextInjector, LLMProvider, Logger } from '@ethosagent/types';
 import { resolveKanbanDbPath } from './kanban-path';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
 
@@ -97,11 +98,11 @@ export interface WiringConfig {
 
 export type WiringProfile = 'cli' | 'tui' | 'web' | 'acp';
 
-export interface WiringLogger {
-  warn: (msg: string) => void;
-}
-
-const NOOP_LOGGER: WiringLogger = { warn: () => {} };
+// WiringLogger is kept as an alias of the Logger contract from
+// @ethosagent/types — wiring used to ship a one-method ad-hoc shape, but
+// the framework now has a real Logger contract that downstream packages
+// (cron, plugin-loader, tools-mcp, team-supervisor) consume directly.
+export type WiringLogger = Logger;
 
 export interface CreateAgentLoopOptions {
   /** Root data directory (typically `~/.ethos`). Sessions DB, memory, and
@@ -217,7 +218,7 @@ export async function createAgentLoop(
   const { dataDir } = opts;
   const workingDir = opts.workingDir ?? process.cwd();
   const profile: WiringProfile = opts.profile ?? 'cli';
-  const log: WiringLogger = opts.logger ?? NOOP_LOGGER;
+  const log: Logger = opts.logger ?? noopLogger;
 
   const llm = await createLLM(config);
 
@@ -303,7 +304,7 @@ export async function createAgentLoop(
     skillPassthrough,
     attachedServers,
   ) as Awaited<ReturnType<typeof loadMcpConfig>>;
-  const mcpManager = new McpManager(mcpConfig);
+  const mcpManager = new McpManager(mcpConfig, { logger: log });
   await mcpManager.connect();
   for (const tool of mcpManager.getTools()) tools.register(tool);
 
@@ -365,7 +366,7 @@ export async function createAgentLoop(
   const injectorPluginIds = new Map<ContextInjector, string>();
   const pluginLoader = new PluginLoader(
     { tools, hooks, injectors, injectorPluginIds, personalities, contextEngines },
-    { storage: new FsStorage() },
+    { storage: new FsStorage(), logger: log },
   );
   await pluginLoader.loadAll();
 

@@ -44,6 +44,7 @@
   },
   "dependencies": {
     "@ethosagent/core": "workspace:*",
+    "@ethosagent/logger": "workspace:*",
     "@ethosagent/safety-channel": "workspace:*",
     "@ethosagent/safety-scanner": "workspace:*",
     "@ethosagent/types": "workspace:*",

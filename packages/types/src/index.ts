@@ -6,6 +6,7 @@ export * from './errors';
 export * from './hooks';
 export * from './injector';
 export * from './llm';
+export * from './logger';
 export * from './memory';
 export * from './observability';
 export * from './personality';

@@ -3,7 +3,8 @@ import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { KanbanStore } from '@ethosagent/kanban-store';
-import type { TeamManifest } from '@ethosagent/types';
+import { noopLogger } from '@ethosagent/logger';
+import type { Logger, TeamManifest } from '@ethosagent/types';
 import { Dispatcher, type SupervisorState } from './dispatcher';
 import { startHealthProbeLoop } from './health';
 import { logSupervisorEvent } from './logger';
@@ -49,13 +50,18 @@ interface MemberState extends MemberRuntime {
  * (SIGTERM / SIGINT). Designed to be called from an isolated child process
  * launched by `ethos team start`.
  */
-export async function runSupervisor(manifest: TeamManifest, manifestPath: string): Promise<void> {
+export async function runSupervisor(
+  manifest: TeamManifest,
+  manifestPath: string,
+  opts: { logger?: Logger } = {},
+): Promise<void> {
+  const log0 = opts.logger ?? noopLogger;
   const name = manifest.name;
   const meshName = manifest.mesh ?? manifest.name;
   const pidPath = pidFilePath(name);
 
   // CC-3: acquire exclusive PID file before doing anything else.
-  const releasePid = acquirePidFile(pidPath);
+  const releasePid = acquirePidFile(pidPath, { logger: log0 });
 
   const logDir = teamLogDir(name);
   mkdirSync(logDir, { recursive: true });
@@ -119,7 +125,10 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
 
     await stopDispatcher();
     stopProbeLoop();
-    console.log(`[team-supervisor] Stopping team "${name}"…`);
+    log0.info(`[team-supervisor] Stopping team "${name}"…`, {
+      component: 'team-supervisor',
+      team: name,
+    });
 
     // Send SIGTERM to all live children.
     for (const m of memberMap.values()) {
@@ -205,7 +214,13 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
     persist();
 
     log(personality, 'spawn', { port: m.port, pid: m.pid });
-    console.log(`[team-supervisor] Spawned ${personality} on port ${m.port} (PID ${m.pid ?? '?'})`);
+    log0.info(`[team-supervisor] Spawned ${personality} on port ${m.port} (PID ${m.pid ?? '?'})`, {
+      component: 'team-supervisor',
+      team: name,
+      personality,
+      port: m.port,
+      pid: m.pid,
+    });
 
     child.on('exit', (code, signal) => {
       if (shuttingDown) return;
@@ -219,8 +234,9 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
       const autoRestart = member.auto_restart ?? false;
       if (!autoRestart) {
         m.status = 'failed';
-        console.error(
+        log0.error(
           `[team-supervisor] ${personality} exited (code=${code}, signal=${signal}); auto_restart disabled`,
+          { component: 'team-supervisor', team: name, personality, code, signal },
         );
         persist();
         return;
@@ -238,8 +254,15 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
           failureCount: m.failureCount,
           windowMs: FAILURE_WINDOW_MS,
         });
-        console.error(
+        log0.error(
           `[team-supervisor] ${personality}: giving up — ${MAX_FAILURES_PER_MINUTE} failures in ${FAILURE_WINDOW_MS / 1000}s`,
+          {
+            component: 'team-supervisor',
+            team: name,
+            personality,
+            failureCount: m.failureCount,
+            windowMs: FAILURE_WINDOW_MS,
+          },
         );
         persist();
         return;
@@ -252,7 +275,12 @@ export async function runSupervisor(manifest: TeamManifest, manifestPath: string
       m.status = 'restarting';
       log(personality, 'restart', { backoffMs: backoff, attempt: m.recentFailures.length });
       persist();
-      console.log(`[team-supervisor] ${personality}: restarting in ${backoff}ms`);
+      log0.info(`[team-supervisor] ${personality}: restarting in ${backoff}ms`, {
+        component: 'team-supervisor',
+        team: name,
+        personality,
+        backoffMs: backoff,
+      });
 
       setTimeout(() => {
         if (!shuttingDown) spawnMember(personality);

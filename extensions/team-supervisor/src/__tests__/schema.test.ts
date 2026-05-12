@@ -140,7 +140,9 @@ members:
   });
 
   it('warns (does not throw) when dispatch_mode is self-routing but coordinator is set', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.fn();
+    const logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn(), child: vi.fn() };
+    logger.child.mockReturnValue(logger);
     const yaml = `
 name: warn-team
 description: coordinator set but mode is self-routing
@@ -150,11 +152,10 @@ coordinator: leader
 members:
   - personality: worker
 `;
-    const result = parseTeamManifest(yaml);
+    const result = parseTeamManifest(yaml, { logger });
     expect(result.name).toBe('warn-team');
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('coordinator'));
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('self-routing'));
-    warnSpy.mockRestore();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('coordinator'), expect.any(Object));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('self-routing'), expect.any(Object));
   });
 
   it('implicit coordinator mode (no dispatch_mode, coordinator set) is valid', () => {
@@ -422,7 +423,9 @@ members:
 
 describe('validateForStart — model routing warnings', () => {
   it('warns when personality_models contains a key not matching any member', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.fn();
+    const logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn(), child: vi.fn() };
+    logger.child.mockReturnValue(logger);
     const yaml = `
 name: alpha
 description: Test
@@ -433,14 +436,18 @@ personality_models:
   engineer: claude-haiku-4-5
 `;
     const manifest = parseTeamManifest(yaml);
-    validateForStart(manifest);
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('engineer'));
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('personality_models'));
-    warnSpy.mockRestore();
+    validateForStart(manifest, { logger });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('engineer'), expect.any(Object));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('personality_models'),
+      expect.any(Object),
+    );
   });
 
   it('does not warn when all personality_models keys match members', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.fn();
+    const logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn(), child: vi.fn() };
+    logger.child.mockReturnValue(logger);
     const yaml = `
 name: alpha
 description: Test
@@ -453,9 +460,8 @@ personality_models:
   engineer: claude-haiku-4-5
 `;
     const manifest = parseTeamManifest(yaml);
-    validateForStart(manifest);
-    expect(warnSpy).not.toHaveBeenCalled();
-    warnSpy.mockRestore();
+    validateForStart(manifest, { logger });
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

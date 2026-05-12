@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { noopLogger } from '@ethosagent/logger';
 import {
   createOpenClawApiShim,
   extractOpenClawRegister,
@@ -21,7 +22,7 @@ import {
   scanPluginCode,
 } from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
-import type { MemoryProvider, PlatformAdapter, Storage } from '@ethosagent/types';
+import type { Logger, MemoryProvider, PlatformAdapter, Storage } from '@ethosagent/types';
 
 export interface InstalledPluginManifest {
   /** The plugin's id — `ethos.id` if declared, else `name`. */
@@ -46,6 +47,8 @@ export interface InstalledPluginManifest {
 export interface PluginLoaderOptions {
   /** Storage backend. Defaults to FsStorage. */
   storage?: Storage;
+  /** Logger for load-time failures. Defaults to a silent NoopLogger. */
+  logger?: Logger;
   /**
    * Called when an OpenClaw memory plugin registers a MemoryProvider.
    * The wiring layer uses this to slot the provider into the memory pipeline.
@@ -61,6 +64,7 @@ export interface PluginLoaderOptions {
 export class PluginLoader {
   private readonly registries: PluginRegistries;
   private readonly storage: Storage;
+  private readonly logger: Logger;
   private readonly apis = new Map<string, PluginApiImpl>();
   private readonly plugins = new Map<string, EthosPlugin>();
   private readonly compatCallbacks: OpenClawCompatCallbacks;
@@ -68,6 +72,7 @@ export class PluginLoader {
   constructor(registries: PluginRegistries, opts: PluginLoaderOptions = {}) {
     this.registries = registries;
     this.storage = opts.storage ?? new FsStorage();
+    this.logger = opts.logger ?? noopLogger;
     this.compatCallbacks = {
       onMemoryProvider: opts.onMemoryProviderRegistered,
       onPlatformAdapter: opts.onPlatformAdapterRegistered,
@@ -123,7 +128,7 @@ export class PluginLoader {
     // declaration is incompatible.
     const reject = await checkContractMajorFromDir(this.storage, dir, id);
     if (reject) {
-      console.warn(`[plugin-loader] ${reject}`);
+      this.logger.warn(`[plugin-loader] ${reject}`, { component: 'plugin-loader', pluginId: id });
       return;
     }
 
@@ -140,7 +145,11 @@ export class PluginLoader {
     const scanResult = await scanPluginTree(this.storage, dir, permissions);
     const decision = canInstall(scanResult, tier);
     if (!decision.allowed) {
-      console.warn(`[plugin-loader] "${id}" blocked by safety scan: ${decision.blockedBy}`);
+      this.logger.warn(`[plugin-loader] "${id}" blocked by safety scan: ${decision.blockedBy}`, {
+        component: 'plugin-loader',
+        pluginId: id,
+        blockedBy: decision.blockedBy,
+      });
       return;
     }
 
@@ -151,7 +160,11 @@ export class PluginLoader {
     try {
       mod = await import(entry);
     } catch (err) {
-      console.warn(`[plugin-loader] Failed to load plugin "${id}": ${String(err)}`);
+      this.logger.warn(`[plugin-loader] Failed to load plugin "${id}": ${String(err)}`, {
+        component: 'plugin-loader',
+        pluginId: id,
+        error: String(err),
+      });
       return;
     }
 
@@ -210,7 +223,10 @@ export class PluginLoader {
             ?.pluginContractMajor;
           const compat = checkPluginContractMajor(declared, undefined, name);
           if (!compat.ok) {
-            console.warn(`[plugin-loader] ${compat.reason}`);
+            this.logger.warn(`[plugin-loader] ${compat.reason}`, {
+              component: 'plugin-loader',
+              pluginId: name,
+            });
             continue;
           }
         }
@@ -224,7 +240,10 @@ export class PluginLoader {
         const scanResult = await scanPluginTree(this.storage, join(nmDir, name), permissions);
         const decision = canInstall(scanResult, tier);
         if (!decision.allowed) {
-          console.warn(`[plugin-loader] "${name}" blocked by safety scan: ${decision.blockedBy}`);
+          this.logger.warn(
+            `[plugin-loader] "${name}" blocked by safety scan: ${decision.blockedBy}`,
+            { component: 'plugin-loader', pluginId: name, blockedBy: decision.blockedBy },
+          );
           continue;
         }
 
@@ -289,7 +308,10 @@ export class PluginLoader {
 
     // Ethos-native dialect — activate(api) export pattern
     if (!isPluginModule(mod)) {
-      console.warn(`[plugin-loader] "${id}" has no activate() or register() export — skipping`);
+      this.logger.warn(
+        `[plugin-loader] "${id}" has no activate() or register() export — skipping`,
+        { component: 'plugin-loader', pluginId: id },
+      );
       return;
     }
 
@@ -303,7 +325,11 @@ export class PluginLoader {
     try {
       await mod.activate(api);
     } catch (err) {
-      console.warn(`[plugin-loader] Plugin "${id}" activate() threw: ${String(err)}`);
+      this.logger.warn(`[plugin-loader] Plugin "${id}" activate() threw: ${String(err)}`, {
+        component: 'plugin-loader',
+        pluginId: id,
+        error: String(err),
+      });
       api.cleanup();
       return;
     }
@@ -322,7 +348,11 @@ export class PluginLoader {
     try {
       await registerFn(shim);
     } catch (err) {
-      console.warn(`[plugin-loader] OpenClaw plugin "${id}" register() threw: ${String(err)}`);
+      this.logger.warn(`[plugin-loader] OpenClaw plugin "${id}" register() threw: ${String(err)}`, {
+        component: 'plugin-loader',
+        pluginId: id,
+        error: String(err),
+      });
       ethosApi.cleanup();
       return;
     }

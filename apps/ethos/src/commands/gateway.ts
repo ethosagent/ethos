@@ -1,6 +1,7 @@
 import { createInterface } from 'node:readline';
 import { CronScheduler } from '@ethosagent/cron';
 import { Gateway } from '@ethosagent/gateway';
+import { ConsoleLogger } from '@ethosagent/logger';
 // Platform adapters are loaded LAZILY in runGatewayStart() — see plan/IMPROVEMENT.md P0-3.
 // Their underlying SDKs (grammy, discord.js, @slack/bolt, imapflow…) are
 // optionalDependencies of @ethosagent/cli. A failed install for any one of
@@ -209,6 +210,7 @@ export async function runGatewayStart(config: EthosConfig): Promise<void> {
 
   // Start cron scheduler — runs inside the gateway process
   const scheduler = new CronScheduler({
+    logger: new ConsoleLogger(),
     runJob: async (job) => {
       const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
       let output = '';

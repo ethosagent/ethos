@@ -77,8 +77,9 @@ export function mockTool(name: string, result: ToolResult | string): Tool {
  *
  * @example
  * const loop = createTestRuntime({ llm: mockLLM(['Hello!']) });
+ * let final = '';
  * for await (const event of loop.run('hi')) {
- *   if (event.type === 'done') console.log(event.text);
+ *   if (event.type === 'done') final = event.text;
  * }
  */
 export function createTestRuntime(

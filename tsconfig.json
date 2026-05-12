@@ -6,6 +6,7 @@
     "paths": {
       "@ethosagent/types": ["./packages/types/src"],
       "@ethosagent/storage-fs": ["./packages/storage-fs/src"],
+      "@ethosagent/logger": ["./packages/logger/src"],
       "@ethosagent/core": ["./packages/core/src"],
       "@ethosagent/llm-anthropic": ["./extensions/llm-anthropic/src"],
       "@ethosagent/llm-openai-compat": ["./extensions/llm-openai-compat/src"],

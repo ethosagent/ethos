@@ -6,7 +6,7 @@ import {
   DefaultPersonalityRegistry,
   DefaultToolRegistry,
 } from '@ethosagent/core';
-import type { ContextInjector } from '@ethosagent/types';
+import type { ContextInjector, Logger } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PluginLoader } from '../index';
 
@@ -195,7 +195,17 @@ export async function deactivate() {}
   describe('Phase 30.6: contract major gate', () => {
     it('rejects a directory plugin declaring an incompatible pluginContractMajor', async () => {
       const registries = makeRegistries();
-      const loader = new PluginLoader(registries);
+      const warns: string[] = [];
+      const logger: Logger = {
+        debug: () => {},
+        info: () => {},
+        warn: (msg: string) => {
+          warns.push(msg);
+        },
+        error: () => {},
+        child: () => logger,
+      };
+      const loader = new PluginLoader(registries, { logger });
 
       const pluginDir = join(testDir, 'old-major');
       await mkdir(pluginDir, { recursive: true });
@@ -219,14 +229,7 @@ export async function deactivate() {}
         }`,
       );
 
-      const warns: string[] = [];
-      const origWarn = console.warn;
-      console.warn = (...args) => warns.push(args.join(' '));
-      try {
-        await loader.loadFromDirectory(testDir);
-      } finally {
-        console.warn = origWarn;
-      }
+      await loader.loadFromDirectory(testDir);
 
       expect(loader.isLoaded('old-major')).toBe(false);
       expect(registries.tools.get('should_not_register')).toBeUndefined();
@@ -239,7 +242,17 @@ export async function deactivate() {}
 
     it('rejects an npm-discovered plugin declaring an incompatible major', async () => {
       const registries = makeRegistries();
-      const loader = new PluginLoader(registries);
+      const warns: string[] = [];
+      const logger: Logger = {
+        debug: () => {},
+        info: () => {},
+        warn: (msg: string) => {
+          warns.push(msg);
+        },
+        error: () => {},
+        child: () => logger,
+      };
+      const loader = new PluginLoader(registries, { logger });
 
       const pluginDir = join(testDir, 'ethos-plugin-bad');
       await mkdir(pluginDir, { recursive: true });
@@ -263,14 +276,7 @@ export async function deactivate() {}
         }`,
       );
 
-      const warns: string[] = [];
-      const origWarn = console.warn;
-      console.warn = (...args) => warns.push(args.join(' '));
-      try {
-        await loader.loadFromNodeModules(testDir);
-      } finally {
-        console.warn = origWarn;
-      }
+      await loader.loadFromNodeModules(testDir);
 
       expect(registries.tools.get('bad_tool')).toBeUndefined();
       expect(warns.find((w) => /ethos-plugin-bad.*pluginContractMajor=42/.test(w))).toBeDefined();
