@@ -74,7 +74,7 @@ export function PersonalityBar({
                   onKeyDown={(e) => {
                     if (e.key === 'Escape') setEditing(false);
                   }}
-                  style={{ maxWidth: 240, fontSize: 12 }}
+                  style={{ fontSize: 12 }}
                 />
               ) : (
                 <>
