@@ -362,7 +362,7 @@ export class VectorMemoryProvider implements MemoryProvider {
     const userPath = join(this.dir, 'USER.md');
 
     const memContent = await this.storage.read(memPath);
-    if (memContent && memContent.trim()) {
+    if (memContent?.trim()) {
       await this.upsert('global', 'MEMORY.md', memContent);
       memoryChunks = 1;
       await this.storage.rename(memPath, `${memPath}.bak`);
