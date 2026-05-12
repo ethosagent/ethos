@@ -1,8 +1,10 @@
+import { homedir } from 'node:os';
 import { basename } from 'node:path';
 import type { AgentBridge } from '@ethosagent/agent-bridge';
 import type { AgentLoop } from '@ethosagent/core';
 import { DEFAULT_TOKENS } from '@ethosagent/design-tokens';
 import type { Session } from '@ethosagent/types';
+import { createMemoryProvider } from '@ethosagent/wiring';
 import { Box, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -737,8 +739,7 @@ export function App({
         break;
       case 'memory': {
         try {
-          const { MarkdownFileMemoryProvider } = await import('@ethosagent/memory-markdown');
-          const mem = new MarkdownFileMemoryProvider();
+          const mem = createMemoryProvider({ dataDir: `${homedir()}/.ethos` });
           const result = await mem.prefetch({ sessionId: '', sessionKey, platform: 'cli' });
           if (result) {
             setMessages((prev) => [

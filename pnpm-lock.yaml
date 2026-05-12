@@ -213,12 +213,6 @@ importers:
       '@ethosagent/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
-      '@ethosagent/memory-markdown':
-        specifier: workspace:*
-        version: link:../../extensions/memory-markdown
-      '@ethosagent/session-sqlite':
-        specifier: workspace:*
-        version: link:../../extensions/session-sqlite
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types

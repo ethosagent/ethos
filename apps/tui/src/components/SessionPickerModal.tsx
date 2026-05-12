@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Session } from '@ethosagent/types';
+import { createSessionStore } from '@ethosagent/wiring';
 import { Box, Text, useInput } from 'ink';
 import { useEffect, useState } from 'react';
 
@@ -21,9 +22,7 @@ export function SessionPickerModal({ onSelect, onCancel }: SessionPickerModalPro
     let cancelled = false;
     (async () => {
       try {
-        const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
-        const dbPath = join(homedir(), '.ethos', 'sessions.db');
-        const store = new SQLiteSessionStore(dbPath);
+        const store = createSessionStore({ dataDir: join(homedir(), '.ethos') });
         const list = await store.listSessions({ limit: 50 });
         if (!cancelled) setSessions(list);
       } catch (err) {

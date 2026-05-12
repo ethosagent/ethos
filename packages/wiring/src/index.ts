@@ -427,6 +427,36 @@ export async function createAgentLoop(
 }
 
 // ---------------------------------------------------------------------------
+// Session / memory factories
+// ---------------------------------------------------------------------------
+// Apps that need a SessionStore or MemoryProvider before they build a full
+// AgentLoop (e.g. the TUI session picker) ask wiring for one. Wiring keeps
+// the choice of concrete backend; the app does not import session-sqlite or
+// memory-markdown directly.
+
+export interface CreateSessionStoreOptions {
+  /** Root data directory (typically `~/.ethos`). */
+  dataDir: string;
+}
+
+export function createSessionStore(opts: CreateSessionStoreOptions): SQLiteSessionStore {
+  return new SQLiteSessionStore(join(opts.dataDir, 'sessions.db'));
+}
+
+export interface CreateMemoryProviderOptions {
+  /** Root data directory (typically `~/.ethos`). */
+  dataDir: string;
+  /** Max characters returned by prefetch before truncation. */
+  maxChars?: number;
+}
+
+export function createMemoryProvider(
+  opts: CreateMemoryProviderOptions,
+): MarkdownFileMemoryProvider {
+  return new MarkdownFileMemoryProvider({ dir: opts.dataDir, maxChars: opts.maxChars });
+}
+
+// ---------------------------------------------------------------------------
 // Danger predicate (shared between CLI guard + web approval flow)
 // ---------------------------------------------------------------------------
 

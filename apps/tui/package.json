@@ -11,8 +11,6 @@
     "@ethosagent/agent-bridge": "workspace:*",
     "@ethosagent/core": "workspace:*",
     "@ethosagent/design-tokens": "workspace:*",
-    "@ethosagent/memory-markdown": "workspace:*",
-    "@ethosagent/session-sqlite": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@ethosagent/web-contracts": "workspace:*",
     "@ethosagent/wiring": "workspace:*",
