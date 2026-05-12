@@ -11,6 +11,7 @@ import { createPersonalityRegistry } from '@ethosagent/personalities';
 // them must not crash the CLI for users who don't run that platform.
 import type { InboundMessage, PlatformAdapter } from '@ethosagent/types';
 import {
+  applyPlatformShim,
   deriveBotKey,
   type EthosConfig,
   ethosDir,
@@ -358,9 +359,11 @@ async function validateBindings(config: EthosConfig): Promise<string[]> {
  * exercise the multi-bot adapter loop with a mocked module loader
  * (avoiding a real grammy / @slack/bolt construction in unit tests).
  *
- * The post-shim contract: `config.telegram.bots[]` and `config.slack.apps[]`
- * are the source of truth for those platforms. Operators see one adapter
- * per entry; each adapter stamps its own `botKey` on inbound messages.
+ * Applies `applyPlatformShim` defensively so callers that pass a
+ * legacy single-bot config (`telegramToken` / `slackBotToken` etc.)
+ * still construct adapters correctly. The shim is idempotent — when
+ * the boot path already normalized via `loadConfigStrict`, the
+ * second pass is a no-op.
  */
 export type AdapterModuleLoader = <T>(modulePath: string, label: string) => Promise<T | null>;
 
@@ -368,6 +371,7 @@ export async function buildAdapters(
   config: EthosConfig,
   loadAdapter: AdapterModuleLoader,
 ): Promise<PlatformAdapter[]> {
+  config = applyPlatformShim(config).config;
   const adapters: PlatformAdapter[] = [];
 
   if ((config.telegram?.bots.length ?? 0) > 0) {

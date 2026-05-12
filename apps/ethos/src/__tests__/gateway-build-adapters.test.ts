@@ -205,6 +205,45 @@ describe('buildAdapters — multi-bot adapter loop (Phase 2)', () => {
     expect(adapters).toEqual([]);
   });
 
+  it('handles a legacy single-bot Telegram config (telegramToken scalar) via the shim', async () => {
+    // Operators upgrading from pre-multi-bot ethos have `telegramToken`
+    // set without an explicit `telegram.bots[]` list. The boot path
+    // already normalizes via `loadConfigStrict`, but `buildAdapters`
+    // applies the shim defensively so calling it directly with a
+    // legacy config still produces an adapter.
+    const adapters = await buildAdapters(
+      { ...baseConfig, telegramToken: '123:legacy-token' },
+      makeLoader(),
+    );
+
+    expect(adapters).toHaveLength(1);
+    expect(adapters[0].id.startsWith('telegram:')).toBe(true);
+    const cfg = (adapters[0] as CapturedAdapter).capturedConfig;
+    expect(cfg.token).toBe('123:legacy-token');
+    // Derived botKey from sha256(token) — 24 hex chars.
+    expect(cfg.botKey).toMatch(/^[0-9a-f]{24}$/);
+  });
+
+  it('handles a legacy single-app Slack config (botToken/appToken/signingSecret scalars) via the shim', async () => {
+    const adapters = await buildAdapters(
+      {
+        ...baseConfig,
+        slackBotToken: 'xoxb-legacy',
+        slackAppToken: 'xapp-legacy',
+        slackSigningSecret: 'sig-legacy',
+      },
+      makeLoader(),
+    );
+
+    expect(adapters).toHaveLength(1);
+    expect(adapters[0].id.startsWith('slack:')).toBe(true);
+    const cfg = (adapters[0] as CapturedAdapter).capturedConfig;
+    expect(cfg.botToken).toBe('xoxb-legacy');
+    expect(cfg.appToken).toBe('xapp-legacy');
+    expect(cfg.signingSecret).toBe('sig-legacy');
+    expect(cfg.botKey).toMatch(/^[0-9a-f]{24}$/);
+  });
+
   it('still constructs legacy discord + email adapters alongside multi-bot telegram', async () => {
     const adapters = await buildAdapters(
       {
