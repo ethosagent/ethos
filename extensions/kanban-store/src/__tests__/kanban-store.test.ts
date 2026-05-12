@@ -517,6 +517,63 @@ describe('KanbanStore', () => {
     expect(store.getTask(parent.id)?.status).not.toBe('done');
   });
 
+  // ---------------------------------------------------------------------------
+  // Orphan adoption — unassigned non-goal tickets get reassigned to coordinator
+  // ---------------------------------------------------------------------------
+
+  it('adoptOrphanTickets reassigns a leaf task with no assignee to the coordinator', () => {
+    const orphan = store.createTask({ title: 'lost ticket' });
+    const adopted = store.adoptOrphanTickets('coordinator', { gracePeriodMs: 0 });
+    expect(adopted).toContain(orphan.id);
+    expect(store.getTask(orphan.id)?.assignee).toBe('coordinator');
+  });
+
+  it('adoptOrphanTickets does NOT touch goals (assignee=null + has children)', () => {
+    const goal = store.createTask({ title: 'Q3 roadmap' });
+    store.createTask({ title: 'child', assignee: 'engineer', parents: [goal.id] });
+    const adopted = store.adoptOrphanTickets('coordinator', { gracePeriodMs: 0 });
+    expect(adopted).not.toContain(goal.id);
+    expect(store.getTask(goal.id)?.assignee).toBeNull();
+  });
+
+  it('adoptOrphanTickets does NOT touch already-assigned tasks', () => {
+    const assigned = store.createTask({ title: 'real work', assignee: 'engineer' });
+    const adopted = store.adoptOrphanTickets('coordinator', { gracePeriodMs: 0 });
+    expect(adopted).not.toContain(assigned.id);
+    expect(store.getTask(assigned.id)?.assignee).toBe('engineer');
+  });
+
+  it('adoptOrphanTickets does NOT touch done or archived tasks (closed work)', () => {
+    const done = store.createTask({ title: 'done leaf' });
+    const archived = store.createTask({ title: 'archived leaf' });
+    store.updateStatus(done.id, 'done');
+    store.archive(archived.id);
+
+    const adopted = store.adoptOrphanTickets('coordinator', { gracePeriodMs: 0 });
+    expect(adopted).not.toContain(done.id);
+    expect(adopted).not.toContain(archived.id);
+  });
+
+  it('adoptOrphanTickets honours gracePeriodMs — fresh orphans are protected from race', () => {
+    // Without the grace window, kanban_create_goal would race the dispatcher:
+    // the goal lives ~milliseconds without children before the coordinator
+    // calls kanban_create on each child. A non-zero grace prevents premature
+    // adoption during that window.
+    const fresh = store.createTask({ title: 'goal in flight' });
+    const adopted = store.adoptOrphanTickets('coordinator', { gracePeriodMs: 60_000 });
+    expect(adopted).not.toContain(fresh.id);
+    expect(store.getTask(fresh.id)?.assignee).toBeNull();
+  });
+
+  it('adoptOrphanTickets emits an `assigned` event so the coordinator sees the adoption', () => {
+    const orphan = store.createTask({ title: 'lost ticket' });
+    store.adoptOrphanTickets('coordinator', { gracePeriodMs: 0, actor: 'dispatcher' });
+    const events = store.listEvents(orphan.id);
+    const assigned = events.find((e) => e.kind === 'assigned');
+    expect(assigned).toBeDefined();
+    expect(assigned?.actor).toBe('dispatcher');
+  });
+
   it('findReadyToDispatch returns ready tasks with an assignee and no open run, ordered by priority', () => {
     const t1 = store.createTask({ title: 'p2', assignee: 'engineer', priority: 2 });
     const t2 = store.createTask({ title: 'p9', assignee: 'researcher', priority: 9 });

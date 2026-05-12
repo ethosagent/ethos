@@ -2360,7 +2360,8 @@ body,
 }
 
 /* Three-pane layout — Board (flex) · Activity (sticky right) · Roster (compact)
-   On wide screens it reads left→right. On <1080px the panes stack. */
+   Activity and Roster are user-hideable via header buttons; the modifier classes
+   below collapse the grid so Board fills the freed space. */
 .cc-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px 240px;
@@ -2368,6 +2369,15 @@ body,
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+}
+.cc-grid.cc-grid--no-roster {
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+.cc-grid.cc-grid--no-activity {
+  grid-template-columns: minmax(0, 1fr) 240px;
+}
+.cc-grid.cc-grid--no-activity.cc-grid--no-roster {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 /* Pane shell — one of {Board, Activity, Roster} */
@@ -2753,19 +2763,13 @@ body,
   box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.18);
 }
 
-/* ── Responsive — stack panels under 1080px, drop roster on tablets ── */
-
-@media (max-width: 1080px) {
-  .cc-grid {
-    grid-template-columns: minmax(0, 1fr) 280px;
-  }
-  .cc-roster {
-    display: none;
-  }
-}
+/* ── Responsive — stack panels on phones ── */
 
 @media (max-width: 760px) {
-  .cc-grid {
+  .cc-grid,
+  .cc-grid.cc-grid--no-activity,
+  .cc-grid.cc-grid--no-roster,
+  .cc-grid.cc-grid--no-activity.cc-grid--no-roster {
     grid-template-columns: 1fr;
     grid-auto-rows: auto;
     overflow-y: auto;

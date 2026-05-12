@@ -733,6 +733,48 @@ export class KanbanStore {
   }
 
   /**
+   * Adopt orphan tickets — non-goal tasks left without an assignee — into the
+   * coordinator's queue so the coordinator can decide where they belong.
+   *
+   * Definition of an orphan:
+   *   - `assignee IS NULL`
+   *   - Has NO children — this excludes the goal pattern, where
+   *     `assignee=null + has children` is load-bearing for rollupCompletedGoals.
+   *     A "leaf" with no assignee is hanging work; a parent with no assignee
+   *     is a goal in progress.
+   *   - Not yet `done` or `archived` — closed work doesn't need a triage owner.
+   *   - Older than `gracePeriodMs` — protects the very common pattern of
+   *     `kanban_create_goal` immediately followed by `kanban_create` children.
+   *     Without this, a goal can be adopted in the few ms between creating it
+   *     and adding its first child, breaking the goal-as-parent-task pattern.
+   *
+   * Returns the ids that were reassigned (empty when nothing matched).
+   */
+  adoptOrphanTickets(
+    coordinator: string,
+    opts: { gracePeriodMs?: number; actor?: string } = {},
+  ): string[] {
+    const gracePeriodMs = opts.gracePeriodMs ?? 60_000;
+    const actor = opts.actor ?? 'system';
+    const ageThreshold = Date.now() - gracePeriodMs;
+    const candidates = this.db
+      .prepare(
+        `SELECT t.id FROM tasks t
+         WHERE t.assignee IS NULL
+           AND t.status NOT IN ('done', 'archived')
+           AND t.created_at <= ?
+           AND NOT EXISTS (
+             SELECT 1 FROM task_links l WHERE l.parent_id = t.id
+           )`,
+      )
+      .all(ageThreshold) as Array<{ id: string }>;
+    for (const c of candidates) {
+      this.assign(c.id, coordinator, actor);
+    }
+    return candidates.map((c) => c.id);
+  }
+
+  /**
    * Tasks ready for the dispatcher to claim: status=ready, an assignee is set,
    * and there is no current run yet.
    */

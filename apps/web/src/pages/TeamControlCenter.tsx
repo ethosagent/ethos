@@ -41,6 +41,8 @@ export function TeamControlCenter() {
   const navigate = useNavigate();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
+  const [showRoster, setShowRoster] = useState(false);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['kanban', 'board', name],
@@ -88,20 +90,44 @@ export function TeamControlCenter() {
         >
           {showArchived ? 'Hide archived' : 'Show archived'}
         </Button>
+        <Button
+          size="small"
+          type={showActivity ? 'primary' : 'default'}
+          onClick={() => setShowActivity((v) => !v)}
+        >
+          {showActivity ? 'Hide activity' : 'Show activity'}
+        </Button>
+        <Button
+          size="small"
+          type={showRoster ? 'primary' : 'default'}
+          onClick={() => setShowRoster((v) => !v)}
+        >
+          {showRoster ? 'Hide roster' : 'Show roster'}
+        </Button>
         <Button size="small" onClick={() => void refetch()} loading={isFetching}>
           Refresh
         </Button>
       </header>
 
-      <div className="cc-grid">
+      <div
+        className={[
+          'cc-grid',
+          !showActivity && 'cc-grid--no-activity',
+          !showRoster && 'cc-grid--no-roster',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      >
         <Board
           snapshot={board}
           teamName={name}
           showArchived={showArchived}
           onSelect={setSelectedTaskId}
         />
-        <Activity events={board.recentEvents} tasks={board.tasks} onSelect={setSelectedTaskId} />
-        <Roster snapshot={board} />
+        {showActivity && (
+          <Activity events={board.recentEvents} tasks={board.tasks} onSelect={setSelectedTaskId} />
+        )}
+        {showRoster && <Roster snapshot={board} />}
       </div>
 
       <TaskDrawer

@@ -54,6 +54,19 @@ export interface DispatcherOptions {
   dispatchTimeoutMs?: number;
   /** Optional callback fired on every dispatch error (logging hook). */
   onError?: (err: Error, taskId: string) => void;
+  /**
+   * Coordinator personality id from the team manifest. When set, the
+   * dispatcher reassigns orphan tickets (assignee=null + no children) to the
+   * coordinator each tick so no work is left without an owner. Unset on teams
+   * without a coordinator (e.g. dispatch_mode: self-routing).
+   */
+  coordinator?: string;
+  /**
+   * Grace window for orphan adoption. Protects the race between
+   * `kanban_create_goal` and the immediately-following `kanban_create` calls
+   * that add the goal's children. Default 60 s.
+   */
+  orphanGracePeriodMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -63,6 +76,7 @@ export interface DispatcherOptions {
 const DEFAULT_STALE_MS = 90_000;
 const DEFAULT_POLL_MS = 1_000;
 const DEFAULT_DISPATCH_TIMEOUT_MS = 300_000;
+const DEFAULT_ORPHAN_GRACE_MS = 60_000;
 const DISPATCH_HOST = 'localhost';
 
 export class Dispatcher {
@@ -73,6 +87,8 @@ export class Dispatcher {
   private readonly pollMs: number;
   private readonly dispatchTimeoutMs: number;
   private readonly onError: (err: Error, taskId: string) => void;
+  private readonly coordinator: string | null;
+  private readonly orphanGracePeriodMs: number;
   private readonly inflight = new Map<string, AbortController>();
   private timer: NodeJS.Timeout | null = null;
   private running = false;
@@ -85,6 +101,8 @@ export class Dispatcher {
     this.pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
     this.dispatchTimeoutMs = opts.dispatchTimeoutMs ?? DEFAULT_DISPATCH_TIMEOUT_MS;
     this.onError = opts.onError ?? (() => {});
+    this.coordinator = opts.coordinator ?? null;
+    this.orphanGracePeriodMs = opts.orphanGracePeriodMs ?? DEFAULT_ORPHAN_GRACE_MS;
   }
 
   /**
@@ -99,6 +117,15 @@ export class Dispatcher {
     // 1a. Roll up goals whose children have all finished. Closes the "Q3
     //     roadmap sits at ready forever after every sub-task completes" hole.
     this.board.rollupCompletedGoals('dispatcher');
+    // 1b. Adopt orphan tickets — non-goal tasks without an assignee — into
+    //     the coordinator's queue. Every ticket must have an owner; the
+    //     coordinator triages from here. No-op on teams without a coordinator.
+    if (this.coordinator !== null) {
+      this.board.adoptOrphanTickets(this.coordinator, {
+        gracePeriodMs: this.orphanGracePeriodMs,
+        actor: 'dispatcher',
+      });
+    }
 
     // 2. Reclaim — any run with a stale heartbeat is treated as the worker
     //    crashing. We mark the task `blocked` so a human (or a future reassign)
