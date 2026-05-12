@@ -7,9 +7,9 @@ slug: /
 updated: 2026-05-12
 ---
 
-**Ethos is a TypeScript framework where personality is the unit of architecture.** A personality lives at `~/.ethos/personalities/<id>/` — three files (`ETHOS.md`, `config.yaml`, `toolset.yaml`) that, when switched, atomically change the agent's prompt, tool access, memory scope, and model.
+**Ethos is a TypeScript framework where [personality](getting-started/glossary.md#personality) is the unit of architecture.** A personality lives at `~/.ethos/personalities/<id>/` — three files (`ETHOS.md`, `config.yaml`, `toolset.yaml`) that, when switched, atomically change the agent's prompt, tool access, memory scope, and model.
 
-Five personalities ship by default. Sessions persist across CLI, Telegram, Discord, and Slack. Your existing Claude Code, OpenClaw, OpenCode, and Hermes skill libraries run as-is — filtered to the right specialist per personality.
+Five personalities ship by default. Sessions persist across CLI, Telegram, Discord, and Slack. Your existing Claude Code, OpenClaw, OpenCode, and Hermes [skill](getting-started/glossary.md#skill) libraries run as-is — filtered to the right specialist per personality.
 
 ## Two doors
 

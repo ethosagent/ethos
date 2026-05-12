@@ -239,6 +239,14 @@ Alternatives considered:
 - Tool access as a separate file unrelated to the personality. Rejected: the atomic-swap property is the headline. Joining tool access to the personality at the directory level keeps the four dimensions visibly coupled; splitting them invites drift where a personality "is" a reviewer but "can" write.
 - Personality overlays / inheritance. Rejected as overengineering for v1. Five built-ins, duplicate-and-edit, is enough; overlays add a layer that obscures what a personality actually is.
 
+## Recommended reading order
+
+If you came here from the 90-second tour, the next three pages in order:
+
+1. [Why does AgentLoop receive every dependency at construction?](injection-at-construction.md) — the wiring shape that makes personality-as-architecture work
+2. [Why are hooks split into three execution models?](hook-execution-models.md) — Void / Modifying / Claiming
+3. [Build on Ethos: quickstart](../quickstart.md) — wire AgentLoop in your own program
+
 ## See also
 
 - [Why is personality the unit, not a system prompt?](../../using/explanation/what-is-a-personality.md) — the user-facing version of this thesis

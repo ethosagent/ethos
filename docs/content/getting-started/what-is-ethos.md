@@ -7,7 +7,7 @@ slug: what-is-ethos
 updated: 2026-05-12
 ---
 
-**Ethos is a TypeScript framework where personality is the unit of architecture.** Not a system prompt string. A directory of files that, when switched, atomically changes the agent's prompt, tool access, memory scope, and model.
+**Ethos is a TypeScript framework where [personality](glossary.md#personality) is the unit of architecture.** Not a system prompt string. A directory of files that, when switched, atomically changes the agent's prompt, tool access, memory scope, and model.
 
 ## The one-sentence pitch
 

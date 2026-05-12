@@ -279,6 +279,7 @@ The directory can be relocated with the `ETHOS_DIR` env var.
 
 ## See also {#see-also}
 
-- [CLI reference](./cli.md)
-- [Personality config reference](./personality-yaml.md)
-- [Glossary: personality](../../getting-started/glossary.md#personality)
+- [CLI reference](./cli.md) — every `ethos` subcommand and the flags that override what config.yaml sets
+- [Personality config reference](./personality-yaml.md) — the per-personality `config.yaml` and `toolset.yaml` (different file, different schema)
+- [How to configure providers](../how-to/configure-providers.md) — task-shaped recipe for switching between Anthropic, OpenAI, OpenRouter, and Ollama
+- [Glossary: personality](../../getting-started/glossary.md#personality) — what the term means everywhere else in the docs

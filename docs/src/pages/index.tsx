@@ -11,15 +11,17 @@ const doors = [
   {
     number: '01',
     label: 'Using Ethos',
-    description: 'Install the CLI, configure a provider, run your first chat, ship a Telegram bot.',
-    cta: 'Quickstart · 5 min →',
+    description:
+      'Install the CLI, configure a provider, run your first chat, ship a Telegram bot. Five minutes to first message.',
+    cta: 'Install →',
     to: '/docs/using/quickstart',
   },
   {
     number: '02',
     label: 'Building on Ethos',
-    description: 'Write a tool, add an LLM provider, build a channel adapter, publish a plugin.',
-    cta: 'Contributor quickstart · 10 min →',
+    description:
+      'Write a tool, add an LLM provider, build a channel adapter, publish a plugin. Ten minutes to first commit.',
+    cta: 'Build →',
     to: '/docs/building/quickstart',
   },
 ];

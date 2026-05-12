@@ -126,10 +126,8 @@ The mental model is: a personality is a *role-bound configuration of the agent*,
 Newcomers usually go from here in this order:
 
 1. [Why is personality the unit?](../using/explanation/what-is-a-personality.md) — the headline thesis
-2. [What are the built-in personalities?](../using/explanation/built-in-personalities.md) — the five shipped roles and what they're for
-3. [Why are hooks split into three execution models?](../building/explanation/hook-execution-models.md) — Void / Modifying / Claiming
-4. [Why is there an 80k tool result budget?](../building/explanation/tool-result-budget.md) — per-call splitting and truncation
-5. [Glossary](glossary.md) — every term in one place
+2. [Why Ethos?](why-ethos.md) — honest comparison to LangChain, CrewAI, OpenClaw, Hermes
+3. [Use Ethos: quickstart](../using/quickstart.md) — install, talk to the agent, switch personalities
 
 ## See also
 

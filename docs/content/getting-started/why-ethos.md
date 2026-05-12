@@ -31,7 +31,7 @@ Ethos makes different trade-offs than other agent frameworks. This page is the h
 
 ### Personality is a structural component
 
-In LangChain, CrewAI, and AutoGen, "personality" means setting a system prompt string. Changing it changes how the model responds — and nothing else.
+In LangChain, CrewAI, and AutoGen, ["personality"](glossary.md#personality) means setting a system prompt string. Changing it changes how the model responds — and nothing else.
 
 In Ethos, a personality is a directory. Swapping it changes:
 
@@ -75,7 +75,7 @@ LangChain has swap-ability in theory; in practice, changing the underlying LLM r
 
 ### Your existing skill library already runs — scoped to the right specialist
 
-Most agent frameworks expect you to rebuild your skill library to try them. Ethos discovers what you already have:
+Most agent frameworks expect you to rebuild your [skill](glossary.md#skill) library to try them. Ethos discovers what you already have:
 
 - `~/.claude/skills/` — Claude Code skills (agentskills.io standard)
 - `~/.openclaw/skills/` — OpenClaw skills (incl. the [clawhub](https://clawhub.ai) catalogue)

@@ -236,6 +236,14 @@ Alternatives considered:
 - Replicated registry over a service-discovery system (Consul, etcd). Rejected for v1: out of scope for "developer laptop" workloads. The file-based registry is replaceable behind the interface.
 - Auto-forwarding parent session to delegated children. Rejected: would cause confused sub-agents in the common case where the parent's recent context is unrelated to the sub-task.
 
+## Recommended reading order
+
+If you're here to wire delegation into your own agent, the next three pages in order:
+
+1. [Why does AgentLoop receive every dependency at construction?](injection-at-construction.md) — child loops are constructed the same way as the parent
+2. [Why is there an 80k tool result budget?](tool-result-budget.md) — what a delegated child costs against the parent's budget
+3. [How do I publish a plugin?](../how-to/publish-a-plugin.md) — package a delegation tool and the personalities it spawns
+
 ## See also
 
 - [Why is personality architecture, not a system prompt?](personality-as-architecture.md) — what a member's role binding actually is

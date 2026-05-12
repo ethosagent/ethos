@@ -10,7 +10,7 @@ updated: 2026-05-12
 
 ## Task
 
-Run `ethos gateway start` (or another long-running `ethos` subcommand) as a persistent background process under systemd, launchd, or pm2, surviving logout and restarting on crash.
+Run `ethos gateway start` (or another long-running `ethos` subcommand) as a persistent background process under systemd, launchd, or pm2, surviving logout and restarting on crash. The [gateway](../../getting-started/glossary.md#gateway) is the long-running process that routes platform messages into the agent loop.
 
 ## Result
 
