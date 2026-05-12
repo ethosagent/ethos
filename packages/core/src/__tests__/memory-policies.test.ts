@@ -362,22 +362,46 @@ describe('LastWriteWinsPolicy', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('records mtime from search results and enforces conflict detection on subsequent sync', async () => {
+  it('records mtime from search when no prior read exists, enabling conflict detection', async () => {
     const inner = new InMemoryMemoryProvider();
     inner.seed('team:alpha', 'decisions.md', 'we use TypeScript', 5000);
     const policy = new LastWriteWinsPolicy(inner);
 
-    // Establish read timestamp via search instead of read.
+    // Establish timestamp via search (no prior read).
     const results = await policy.search('TypeScript', makeCtx('team:alpha'));
     expect(results.length).toBe(1);
 
     // Simulate external write advancing mtime.
     inner.setMtime('team:alpha', 'decisions.md', 8000);
 
-    // sync should now detect the conflict.
+    // sync should detect the conflict because search recorded mtime 5000.
     await expect(
       policy.sync(
         [{ action: 'add', key: 'decisions.md', content: 'extra line' }],
+        makeCtx('team:alpha'),
+      ),
+    ).rejects.toThrow(MemoryConflictError);
+  });
+
+  it('does not overwrite a prior read mtime with a later search result (stale-state laundering guard)', async () => {
+    const inner = new InMemoryMemoryProvider();
+    inner.seed('team:alpha', 'decisions.md', 'we use TypeScript', 1000);
+    const policy = new LastWriteWinsPolicy(inner);
+
+    // Caller reads at mtime 1000 — this is the authoritative baseline.
+    await policy.read('decisions.md', makeCtx('team:alpha'));
+
+    // External writer bumps mtime to 2000.
+    inner.setMtime('team:alpha', 'decisions.md', 2000);
+
+    // Caller searches and gets the entry at the NEW mtime 2000.
+    // search() must NOT overwrite the recorded read mtime (1000).
+    await policy.search('TypeScript', makeCtx('team:alpha'));
+
+    // sync should still detect the conflict (recorded baseline is 1000, current is 2000).
+    await expect(
+      policy.sync(
+        [{ action: 'add', key: 'decisions.md', content: 'stale write' }],
         makeCtx('team:alpha'),
       ),
     ).rejects.toThrow(MemoryConflictError);

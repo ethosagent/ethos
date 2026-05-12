@@ -148,12 +148,20 @@ export class LastWriteWinsPolicy implements MemoryProvider {
   /**
    * Records mtimes for entries returned by search so that a write based on
    * search results also benefits from conflict detection.
+   *
+   * Only sets the mtime when no prior timestamp is recorded for the key.
+   * Overwriting an existing timestamp from a search result would allow a
+   * stale write to pass: caller reads at mtime 1, external writer bumps to
+   * mtime 2, caller searches and the result records mtime 2, caller syncs
+   * stale content — conflict check passes because currentAt === recordedAt.
+   * Preserving the oldest (first-read) mtime ensures that risk does not apply.
    */
   async search(query: string, ctx: MemoryContext, opts?: SearchOpts): Promise<MemoryEntry[]> {
     const results = await this.inner.search(query, ctx, opts);
     for (const entry of results) {
-      if (entry.metadata?.lastUpdatedAt !== undefined) {
-        this.lastReadAt.set(`${ctx.scopeId}:${entry.key}`, entry.metadata.lastUpdatedAt);
+      const mapKey = `${ctx.scopeId}:${entry.key}`;
+      if (entry.metadata?.lastUpdatedAt !== undefined && !this.lastReadAt.has(mapKey)) {
+        this.lastReadAt.set(mapKey, entry.metadata.lastUpdatedAt);
       }
     }
     return results;
