@@ -11,7 +11,13 @@ updated: 2026-05-11
 
 Set up an Ethos team whose coordinator captures human goals as durable tasks, whose dispatcher routes ready work to assignees over the mesh, and whose audit trail and run state survive process restarts.
 
-You end with a running team, a populated `~/.ethos/teams/<name>/board.db`, and a coordinator who decomposes the next multi-part request into linked tasks without you having to babysit dispatch.
+## Task
+
+Stand up a multi-personality Ethos team backed by a durable shared kanban board.
+
+## Result
+
+A running team supervisor, a populated `~/.ethos/teams/<name>/board.db`, and a coordinator that decomposes the next multi-part request into linked tasks without manual dispatch.
 
 ## Prereqs
 

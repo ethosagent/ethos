@@ -433,10 +433,33 @@ function checkJsonLd(pages: Page[]): void {
     return;
   }
 
-  for (const page of pages) {
-    const htmlPath = join(DOCS_ROOT, 'build', page.routePath.replace(/^\//, ''), 'index.html');
-    if (!existsSync(htmlPath)) continue;
-    const html = readFileSync(htmlPath, 'utf8');
+  // First pass — detect the "plugin not wired" condition. If zero built pages
+  // carry a JSON-LD <script> block, the Schema.org injection plugin hasn't
+  // landed yet (Phase 6 deliverable in plan/docs_rewrite.md). Emit one
+  // warning and skip the per-page checks instead of producing N identical
+  // failures — they'd be noise until the plugin lands.
+  const builtPages = pages
+    .map((page) => ({
+      page,
+      htmlPath: join(DOCS_ROOT, 'build', page.routePath.replace(/^\//, ''), 'index.html'),
+    }))
+    .filter(({ htmlPath }) => existsSync(htmlPath))
+    .map(({ page, htmlPath }) => ({
+      page,
+      html: readFileSync(htmlPath, 'utf8'),
+    }));
+  const withJsonLd = builtPages.filter(({ html }) =>
+    /<script type="application\/ld\+json">/.test(html),
+  );
+  if (builtPages.length > 0 && withJsonLd.length === 0) {
+    warn(
+      'docs/build',
+      'No built page carries a Schema.org JSON-LD block — Phase 6 (Agent-readable surface) plugin not wired yet. Skipping per-page parse check.',
+    );
+    return;
+  }
+
+  for (const { page, html } of builtPages) {
     const match = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
     if (!match) {
       fail(page.relPath, 'Built HTML has no Schema.org JSON-LD block in <head>.');

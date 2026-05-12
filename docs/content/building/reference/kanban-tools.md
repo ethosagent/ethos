@@ -14,7 +14,7 @@ The kanban primitive is a durable, SQLite-backed task tracker that any personali
 
 It is intentionally **not** a coordination layer — there is no dispatcher, no role-based authorization, no `@mention` notifications, no web UI. Those layer on top in the team-supervisor (Plan B). Plan A is just the substrate.
 
-## When to use it
+## When to use it {#when-to-use-it}
 
 | Need | Use this |
 |---|---|
@@ -24,7 +24,7 @@ It is intentionally **not** a coordination layer — there is no dispatcher, no 
 
 The two toolsets exist on purpose. `todo_*` is a scratch list and resets between sessions. `kanban_*` is a board that outlives the conversation.
 
-## Opting in
+## Opting in {#opting-in}
 
 Add the tools you want to a personality's `toolset.yaml`:
 
@@ -53,7 +53,7 @@ The built-in `task-tracker` personality has all 12 tools enabled and is the simp
 ethos chat --personality task-tracker
 ```
 
-## Schema (Plan A v1)
+## Schema (Plan A v1) {#schema}
 
 Five STRICT-mode SQLite tables plus an FTS5 virtual table for search:
 
@@ -75,7 +75,7 @@ The runtime invariants enforced at the store layer:
 - **Auto-cancel on bypass.** Setting `status` away from `running` via `kanban_update_status` (instead of `kanban_complete` / `kanban_block`) auto-cancels the open run with outcome `cancelled`. Status and run state cannot diverge.
 - **Audit completeness.** Every mutation inserts a `task_events` row (`created`, `status_changed`, `commented`, `assigned`, `linked`, `unlinked`, `run_started`, `run_completed`, `heartbeat`, `archived`).
 
-## Statuses
+## Statuses {#statuses}
 
 ```
 todo → ready → running → done
@@ -87,7 +87,7 @@ todo → ready → running → done
 
 Plan A does not enforce transitions — callers may set any status. Plan B's dispatcher adds the auto-promotion rules (`todo → ready` when parents close, `scheduled → ready` when time passes).
 
-## Tool surface
+## Tool surface {#tool-surface}
 
 All tools live in the `kanban` toolset and cap output at 20 000 chars.
 
@@ -106,7 +106,7 @@ All tools live in the `kanban` toolset and cap output at 20 000 chars.
 | `kanban_assign` | `task_id, assignee` | updated task; pass `null` to unassign |
 | `kanban_archive` | `task_id` | updated task — status=archived; closes any open run as `cancelled` first |
 
-## Forward reference: teams (Plan B)
+## Forward reference: teams (Plan B) {#forward-reference-teams}
 
 Plan B layers governance on this substrate without touching the tool implementations:
 
@@ -117,7 +117,7 @@ Plan B layers governance on this substrate without touching the tool implementat
 
 None of those require schema changes — the columns `workspace_mode`, `workspace_path`, `scheduled_for`, and `current_run_id` are pre-positioned for Plan B.
 
-## Implementation packages
+## Source {#source}
 
 - [`extensions/kanban-store`](https://github.com/MiteshSharma/ethos/tree/main/extensions/kanban-store) — schema, migrations, repository. Pure data layer.
 - [`extensions/tools-kanban`](https://github.com/MiteshSharma/ethos/tree/main/extensions/tools-kanban) — the 12 tool wrappers + `createKanbanTools` factory.
