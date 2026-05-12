@@ -4,6 +4,9 @@ import {
   ChainedProvider,
   DefaultHookRegistry,
   DefaultToolRegistry,
+  EagerPrefetchPolicy,
+  LastWriteWinsPolicy,
+  LazyOnDemandPolicy,
 } from '@ethosagent/core';
 import { KanbanStore } from '@ethosagent/kanban-store';
 import { AnthropicProvider, AuthRotatingProvider } from '@ethosagent/llm-anthropic';
@@ -228,10 +231,13 @@ export async function createAgentLoop(
   const llm = await createLLM(config);
 
   const session = new SQLiteSessionStore(join(dataDir, 'sessions.db'));
-  const memory =
+  // Personality memory uses eager prefetch: all content is injected at session
+  // start.  EagerPrefetchPolicy is a pass-through that makes the intent explicit.
+  const memory = new EagerPrefetchPolicy(
     config.memory === 'vector'
       ? new VectorMemoryProvider({ dir: dataDir })
-      : new MarkdownFileMemoryProvider({ dir: dataDir });
+      : new MarkdownFileMemoryProvider({ dir: dataDir }),
+  );
   const personalities = await createPersonalityRegistry();
   await personalities.loadFromDirectory(join(dataDir, 'personalities'));
 
@@ -369,7 +375,12 @@ export async function createAgentLoop(
       );
     }
     const teamMemoryDir = join(dataDir, 'teams', config.teamName, 'memory');
-    const teamMemory = new MarkdownFileMemoryProvider({ dir: teamMemoryDir });
+    // Team memory uses lazy on-demand policy (prefetch suppressed; topic index
+    // is injected via createTeamMemoryIndexInjector instead) and last-write-wins
+    // conflict detection to prevent silent concurrent overwrites.
+    const teamMemory = new LazyOnDemandPolicy(
+      new LastWriteWinsPolicy(new MarkdownFileMemoryProvider({ dir: teamMemoryDir })),
+    );
 
     // Seed bootstrap topic files if the directory has no .md files yet.
     await seedTeamMemory(teamMemory, config.teamName);
