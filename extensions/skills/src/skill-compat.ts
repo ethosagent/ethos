@@ -23,6 +23,10 @@ export interface ParsedFrontmatter {
   openclaw: OpenClawMeta | null;
   /** Markdown body with the frontmatter block removed. */
   body: string;
+  /** FW-15 — human-readable one-line description for the slash command dropdown. */
+  usage?: string;
+  /** FW-15 — usage hint shown when the command is invoked without args. */
+  description?: string;
 }
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
@@ -70,7 +74,9 @@ export function parseSkillFrontmatter(md: string): ParsedFrontmatter | null {
     }
   }
 
-  return { raw, openclaw, body };
+  const usage = typeof raw.usage === 'string' ? raw.usage : undefined;
+  const description = typeof raw.description === 'string' ? raw.description : undefined;
+  return { raw, openclaw, body, usage, description };
 }
 
 /**

@@ -52,7 +52,12 @@ describe('SlashCommandRegistry', () => {
 
   it('register with prefix stored correctly', () => {
     const reg = new SlashCommandRegistry();
-    reg.register({ name: 'my-skill', description: 'A skill', usage: '/my-skill', prefix: '[skill]' });
+    reg.register({
+      name: 'my-skill',
+      description: 'A skill',
+      usage: '/my-skill',
+      prefix: '[skill]',
+    });
     const cmd = reg.get('my-skill');
     expect(cmd?.prefix).toBe('[skill]');
   });
@@ -73,13 +78,21 @@ describe('renderDropdown', () => {
 
   it('snapshot of the rendered dropdown', () => {
     const commands = [
-      { name: 'personality', description: 'Show or switch personality', usage: '/personality [id|list]' },
-      { name: 'personalities', description: 'Alias — list all personalities', usage: '/personalities' },
+      {
+        name: 'personality',
+        description: 'Show or switch personality',
+        usage: '/personality [id|list]',
+      },
+      {
+        name: 'personalities',
+        description: 'Alias — list all personalities',
+        usage: '/personalities',
+      },
     ];
     const output = renderDropdown(commands, 80);
     expect(output).toMatchInlineSnapshot(`
-      "  /personality             Show or switch personality
-        /personalities           Alias — list all personalities
+      "  /personality                Show or switch personality
+        /personalities              Alias — list all personalities
         \x1b[2m↑↓ select · Tab accept · Esc dismiss\x1b[0m"
     `);
   });
