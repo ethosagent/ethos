@@ -61,7 +61,7 @@ export function PersonalityBar({
         <div className="personality-bar-text">
           <span className="personality-bar-name">{displayName}</span>
           {model ? <span className="personality-bar-model">{model}</span> : null}
-          {sessionTitle != null || editing ? (
+          {sessionTitle !== undefined || editing ? (
             <div className="personality-bar-session-title">
               {editing ? (
                 <Input
@@ -78,7 +78,9 @@ export function PersonalityBar({
                 />
               ) : (
                 <>
-                  <span className="personality-bar-session-name">{sessionTitle}</span>
+                  <span className="personality-bar-session-name">
+                    {sessionTitle ?? 'Untitled session'}
+                  </span>
                   {onRenameSession ? (
                     <button
                       type="button"

@@ -76,7 +76,8 @@ export function Chat() {
     enabled: !!currentSessionId,
     staleTime: 30_000,
   });
-  const sessionTitle = sessionQuery.data?.session.title ?? null;
+  // undefined = no session; null = session without title; string = titled session
+  const sessionTitle = currentSessionId ? (sessionQuery.data?.session.title ?? null) : undefined;
 
   const renameMut = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string | null }) =>

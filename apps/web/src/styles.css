@@ -1308,6 +1308,48 @@ body,
   font-variant-numeric: tabular-nums;
 }
 
+.personality-bar-session-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.personality-bar-session-name {
+  font-size: 12px;
+  color: var(--ethos-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.personality-bar-rename {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--ethos-text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 80ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.personality-bar-rename:hover {
+  color: var(--ethos-text);
+}
+
+.personality-bar-rename:focus-visible {
+  outline: 2px solid var(--accent, #4a9eff);
+  outline-offset: 1px;
+}
+
 .personality-bar-actions {
   display: flex;
   align-items: center;
