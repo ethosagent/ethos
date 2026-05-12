@@ -24,4 +24,8 @@ export const sessionsRouter = {
     await context.sessions.delete(input.id);
     return { ok: true as const };
   }),
+
+  update: os.sessions.update.handler(({ input, context }) =>
+    context.sessions.update(input.id, { title: input.title }),
+  ),
 };

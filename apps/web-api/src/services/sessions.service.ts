@@ -65,6 +65,20 @@ export class SessionsService {
     if (!exists) throw notFound(id);
     await this.opts.sessions.delete(id);
   }
+
+  async update(id: string, patch: { title: string | null }): Promise<{ session: WireSession }> {
+    try {
+      await this.opts.sessions.update(id, patch);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('session not found:')) {
+        throw notFound(id);
+      }
+      throw err;
+    }
+    const session = await this.opts.sessions.get(id);
+    if (!session) throw notFound(id);
+    return { session: toWireSession(session) };
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ function makeService(repoOverrides: RepoMock = {}) {
       throw new Error('not stubbed');
     },
     search: async () => [],
+    update: async () => {},
   };
   const repo = { ...defaults, ...repoOverrides } as unknown as SessionsRepository;
   return new SessionsService({ sessions: repo });
@@ -105,5 +106,26 @@ describe('SessionsService', () => {
       fork: async () => Promise.reject(new Error('session not found: sess_x')),
     });
     await expect(service.fork('sess_x')).rejects.toMatchObject({ code: 'SESSION_NOT_FOUND' });
+  });
+
+  it('update returns the updated session on success', async () => {
+    const updated = { ...aSession, title: 'Renamed' };
+    const service = makeService({
+      get: async () => updated,
+      update: async (_id: string, _patch: { title: string | null }) => {},
+    });
+    const result = await service.update('sess_1', { title: 'Renamed' });
+    expect(result.session.title).toBe('Renamed');
+  });
+
+  it('update throws SESSION_NOT_FOUND when the session does not exist', async () => {
+    const service = makeService({
+      update: async () => {
+        throw new Error('session not found: x');
+      },
+    });
+    await expect(service.update('x', { title: 'x' })).rejects.toMatchObject({
+      code: 'SESSION_NOT_FOUND',
+    });
   });
 });
