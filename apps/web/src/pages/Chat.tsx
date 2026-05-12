@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, ConfigProvider } from 'antd';
 import { useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -56,15 +56,7 @@ export function Chat() {
   const personalitySkin =
     personalitiesQuery.data?.personalities.find((p) => p.id === personalityId)?.skin ?? null;
 
-  // Restore last session on first mount when no `?session=` is in the URL.
-  // Lives at the page level (not inside useChat) because it interacts with
-  // routing — restoring means navigating, which is a Chat-page concern.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberately mount-only — once we know there's no URL param we look up storage exactly once
-  useEffect(() => {
-    if (sessionParam) return;
-    const stored = getLastSessionId();
-    if (stored) setSearchParams({ session: stored }, { replace: true });
-  }, []);
+  const queryClient = useQueryClient();
 
   const { state, currentSessionId, sendMessage, switchSession, resetSession } = useChat({
     ...(sessionParam ? { initialSessionId: sessionParam } : {}),
@@ -77,6 +69,38 @@ export function Chat() {
       setLastSessionId(id);
     },
   });
+
+  const sessionQuery = useQuery({
+    queryKey: ['sessions', 'get', currentSessionId],
+    queryFn: () => rpc.sessions.get({ id: currentSessionId ?? '' }),
+    enabled: !!currentSessionId,
+    staleTime: 30_000,
+  });
+  const sessionTitle = sessionQuery.data?.session.title ?? null;
+
+  const renameMut = useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string | null }) =>
+      rpc.sessions.update({ id, title }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['sessions', 'get', currentSessionId] });
+      void queryClient.invalidateQueries({ queryKey: ['sessions', 'list'] });
+    },
+  });
+
+  const handleRenameSession = (title: string | null) => {
+    if (!currentSessionId) return;
+    renameMut.mutate({ id: currentSessionId, title });
+  };
+
+  // Restore last session on first mount when no `?session=` is in the URL.
+  // Lives at the page level (not inside useChat) because it interacts with
+  // routing — restoring means navigating, which is a Chat-page concern.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberately mount-only — once we know there's no URL param we look up storage exactly once
+  useEffect(() => {
+    if (sessionParam) return;
+    const stored = getLastSessionId();
+    if (stored) setSearchParams({ session: stored }, { replace: true });
+  }, []);
 
   // Mirror every URL session change into localStorage so a refresh after
   // landing here from the Sessions tab (or a deep-link paste) sticks.
@@ -159,6 +183,8 @@ export function Chat() {
           model={isLoading ? '' : model}
           onSwitchPersonality={(id) => void handleSwitchPersonality(id)}
           onNewSession={handleNewSession}
+          sessionTitle={sessionTitle}
+          onRenameSession={handleRenameSession}
         />
         {pendingApproval ? (
           <ApprovalModal key={pendingApproval.approvalId} request={pendingApproval} />
