@@ -74,6 +74,7 @@
     "@ethosagent/skills": "workspace:*",
     "@ethosagent/skills-coding": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
+    "@ethosagent/session-sqlite": "workspace:*",
     "@ethosagent/team-supervisor": "workspace:*",
     "@ethosagent/web-api": "workspace:*",
     "@ethosagent/wiring": "workspace:*"

@@ -9,6 +9,13 @@ import type {
 } from '@ethosagent/types';
 import Database from 'better-sqlite3';
 
+export {
+  decideMigration,
+  type MigrateSessionKeysOptions,
+  migrateSessionKeys,
+  type SessionKeyMigrationResult,
+} from './session-key-migration';
+
 // ---------------------------------------------------------------------------
 // SQLiteSessionStore
 // WAL mode + FTS5 full-text search via external-content virtual table.

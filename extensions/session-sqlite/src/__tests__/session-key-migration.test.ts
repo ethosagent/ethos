@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { decideMigration } from '../migrations/session-keys-multi-bot';
+import { decideMigration } from '../session-key-migration';
 
-// Phase 1 — session-key migration. Pure decision logic is unit-tested
-// here; the SQLite-touching wrapper is covered by the gateway boot
-// integration path in Phase 5.
+// Multi-bot routing session-key migration. Pure decision logic is
+// unit-tested here; the SQLite-touching `migrateSessionKeys` wrapper
+// is covered by the gateway boot integration path in Phase 5.
 
 describe('decideMigration', () => {
   const known = new Map<string, Set<string>>([

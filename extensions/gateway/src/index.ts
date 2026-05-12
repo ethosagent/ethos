@@ -250,6 +250,14 @@ export class Gateway {
     | undefined;
 
   constructor(config: GatewayConfig) {
+    // The two construction shapes are mutually exclusive. Silent
+    // precedence would let a caller wire both and not notice that
+    // `loop` was ignored — a debugging nightmare three years out.
+    if (config.bots && config.bots.length > 0 && config.loop !== undefined) {
+      throw new Error(
+        'Gateway: pass either `bots: [...]` (multi-bot) or `loop` (single-bot back-compat), not both.',
+      );
+    }
     const botEntries: GatewayBotConfig[] =
       config.bots && config.bots.length > 0
         ? config.bots

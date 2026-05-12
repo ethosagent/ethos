@@ -800,6 +800,22 @@ describe('Gateway — multi-bot routing', () => {
     expect(() => new Gateway({} as never)).toThrow(/provide either/);
   });
 
+  it('rejects construction with both bots[] and loop (no silent precedence)', () => {
+    expect(
+      () =>
+        new Gateway({
+          loop: makeLoop('x'),
+          bots: [
+            {
+              botKey: 'a',
+              loop: makeLoop('y'),
+              binding: { type: 'personality', name: 'p' },
+            },
+          ],
+        }),
+    ).toThrow(/not both/);
+  });
+
   it('rejects construction with duplicate botKeys', () => {
     expect(
       () =>

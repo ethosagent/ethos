@@ -5,6 +5,7 @@ import type { AgentLoop } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
 import { Gateway, type GatewayBotConfig } from '@ethosagent/gateway';
 import { ConsoleLogger } from '@ethosagent/logger';
+import { createPersonalityRegistry } from '@ethosagent/personalities';
 // Platform adapters are loaded LAZILY in runGatewayStart() — see plan/IMPROVEMENT.md P0-3.
 // Their underlying SDKs (grammy, discord.js, @slack/bolt, imapflow…) are
 // optionalDependencies of @ethosagent/cli. A failed install for any one of
@@ -181,9 +182,26 @@ export async function runGatewayStart(config: EthosConfig): Promise<void> {
       `${c.dim}bot${c.reset} ${c.bold}${bot.botKey}${c.reset} ${c.dim}→ ${bot.binding.type}:${bot.binding.name}${c.reset}`,
     );
   }
-  // Capture the first telegram/slack botKey so the legacy single-adapter
-  // boot path below can stamp inbound messages. Phase 2 replaces this
-  // with one adapter per bot.
+  // Phase-1 single-adapter bridge: each platform can have at most one
+  // bot until Phase 2 introduces per-bot adapter instances. A
+  // multi-bot config on a single-adapter platform would silently route
+  // all inbound traffic to bot zero, which is exactly the failure
+  // mode that creates an apparently-multi-bot deployment that is
+  // actually single-bot. Fail loudly instead.
+  if ((config.telegram?.bots.length ?? 0) > 1) {
+    console.log(
+      `${c.red}Phase 1 supports one telegram bot per gateway. ` +
+        `Configure exactly one entry under 'telegram.bots' or wait for Phase 2.${c.reset}`,
+    );
+    process.exit(1);
+  }
+  if ((config.slack?.apps.length ?? 0) > 1) {
+    console.log(
+      `${c.red}Phase 1 supports one slack app per gateway. ` +
+        `Configure exactly one entry under 'slack.apps' or wait for Phase 2.${c.reset}`,
+    );
+    process.exit(1);
+  }
   const telegramBotKey = config.telegram?.bots[0] ? deriveBotKey(config.telegram.bots[0]) : null;
   const slackBotKey = config.slack?.apps[0] ? deriveBotKey(config.slack.apps[0]) : null;
 
@@ -366,24 +384,21 @@ async function buildGatewayBots(config: EthosConfig): Promise<GatewayBotConfig[]
 
 /**
  * Validate that every bot binding points at a real personality or team
- * on disk. Personality set comes from the built-in roster + any user
- * directory under `~/.ethos/personalities/`. Team set comes from
+ * on disk. Personality set comes from the same `FilePersonalityRegistry`
+ * the agent loop uses at runtime — no duplicated roster of built-ins
+ * to drift the next time built-ins change. Team set comes from
  * `~/.ethos/teams/<name>.yaml`.
  */
 async function validateBindings(config: EthosConfig): Promise<string[]> {
-  const personalityIds = new Set<string>([
-    'researcher',
-    'engineer',
-    'reviewer',
-    'coach',
-    'operator',
-  ]);
-  const userPersonalitiesDir = join(ethosDir(), 'personalities');
-  if (existsSync(userPersonalitiesDir)) {
-    for (const entry of readdirSync(userPersonalitiesDir, { withFileTypes: true })) {
-      if (entry.isDirectory()) personalityIds.add(entry.name);
-    }
-  }
+  const registry = await createPersonalityRegistry({
+    storage: getStorage(),
+    userPersonalitiesDir: join(ethosDir(), 'personalities'),
+  });
+  // Pick up the user dir's personalities so binding validation matches
+  // what AgentLoop will see at run time.
+  await registry.loadFromDirectory(join(ethosDir(), 'personalities')).catch(() => {});
+  const personalityIds = new Set<string>(registry.list().map((p) => p.id));
+
   const teamNames = new Set<string>();
   const teamsRoot = join(ethosDir(), 'teams');
   if (existsSync(teamsRoot)) {
