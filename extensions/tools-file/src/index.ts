@@ -59,6 +59,53 @@ function isWriteBlocked(abs: string): boolean {
 }
 
 /**
+ * FW-28 — check whether the file at `abs` has been modified externally since
+ * the agent last read it. Returns a STALE_WRITE ToolResult when stale, or
+ * null when the write is safe to proceed.
+ *
+ * Skipped (returns null) when:
+ * - `readMtimes` is absent (backward-compat: old callers without the map)
+ * - the path was never read in this session (new-file creation, no false positive)
+ *
+ * Uses Storage.mtime() so the check routes through ScopedStorage and respects
+ * personality-boundary enforcement rather than bypassing it with raw stat().
+ * A file that was previously read but has since been deleted is treated as
+ * stale to prevent silent clobber of a disappearance.
+ */
+async function checkStaleWrite(
+  abs: string,
+  readMtimes: Map<string, { mtimeMs: number; readAtTurn: number }> | undefined,
+  storage: Storage,
+): Promise<ToolResult | null> {
+  if (!readMtimes) return null;
+  const record = readMtimes.get(abs);
+  if (!record) return null;
+
+  const currentMtimeMs = await storage.mtime(abs);
+
+  if (currentMtimeMs === null) {
+    const readAt = new Date(record.mtimeMs).toISOString();
+    return {
+      ok: false,
+      error: `STALE_WRITE: ${abs} was read at ${readAt} but no longer exists on disk. Re-read the file before writing.`,
+      code: 'STALE_WRITE',
+    };
+  }
+
+  if (currentMtimeMs !== record.mtimeMs) {
+    const readAt = new Date(record.mtimeMs).toISOString();
+    const modAt = new Date(currentMtimeMs).toISOString();
+    return {
+      ok: false,
+      error: `STALE_WRITE: ${abs} was read at ${readAt} but modified externally at ${modAt}. Re-read the file before writing.`,
+      code: 'STALE_WRITE',
+    };
+  }
+
+  return null;
+}
+
+/**
  * Resolve the Storage to use for this call. AgentLoop hands ScopedStorage
  * via ctx.storage when fs_reach is configured; legacy callers (CLI tests,
  * tools instantiated outside the loop) fall back to an unrestricted
@@ -193,6 +240,15 @@ export const readFileTool: Tool = {
       };
     }
 
+    // FW-28 — record mtime so write_file / patch_file can detect external edits.
+    // Storage.mtime() returns null for missing paths and respects ScopedStorage.
+    if (ctx.readMtimes) {
+      const mtimeMs = await storage.mtime(abs);
+      if (mtimeMs !== null) {
+        ctx.readMtimes.set(abs, { mtimeMs, readAtTurn: ctx.currentTurn });
+      }
+    }
+
     const lines = content.split('\n');
     const total = lines.length;
 
@@ -246,9 +302,22 @@ export const writeFileTool: Tool = {
       };
     }
 
+    const stale = await checkStaleWrite(abs, ctx.readMtimes, storage);
+    if (stale) return stale;
+
     try {
       await storage.mkdir(dirname(abs));
       await storage.write(abs, content);
+      // FW-28 — update the recorded mtime after a successful write so subsequent
+      // writes in the same session don't false-positive against the pre-write record.
+      if (ctx.readMtimes) {
+        const writtenMtime = await storage.mtime(abs);
+        if (writtenMtime !== null) {
+          ctx.readMtimes.set(abs, { mtimeMs: writtenMtime, readAtTurn: ctx.currentTurn });
+        } else {
+          ctx.readMtimes.delete(abs);
+        }
+      }
       return { ok: true, value: `Written ${content.length} bytes to ${abs}` };
     } catch (err) {
       if (err instanceof BoundaryError) return boundaryFailure(err);
@@ -296,6 +365,9 @@ export const patchFileTool: Tool = {
       return { ok: false, error: `Writing to ${abs} is blocked.`, code: 'execution_failed' };
     }
 
+    const stale = await checkStaleWrite(abs, ctx.readMtimes, storage);
+    if (stale) return stale;
+
     let content: string | null;
     try {
       content = await storage.read(abs);
@@ -338,6 +410,16 @@ export const patchFileTool: Tool = {
     } catch (err) {
       if (err instanceof BoundaryError) return boundaryFailure(err);
       throw err;
+    }
+    // FW-28 — update the recorded mtime after a successful patch.
+    // FW-28 — update the recorded mtime after a successful patch.
+    if (ctx.readMtimes) {
+      const patchedMtime = await storage.mtime(abs);
+      if (patchedMtime !== null) {
+        ctx.readMtimes.set(abs, { mtimeMs: patchedMtime, readAtTurn: ctx.currentTurn });
+      } else {
+        ctx.readMtimes.delete(abs);
+      }
     }
     return { ok: true, value: `Patched ${abs}` };
   },
