@@ -203,6 +203,94 @@ describe('home/view — buildHomeView', () => {
     });
     expect(plaintextFallback(view.blocks)).not.toContain('more');
   });
+
+  // -------------------------------------------------------------------------
+  // Per-field text-length capping — an oversized single field must not push a
+  // `section` past Slack's ~3000-char-per-block limit (which would make
+  // `views.publish` fail and leave a blank Home tab).
+  // -------------------------------------------------------------------------
+
+  /** The longest `text` of any `section`/`context`/`header` block. */
+  function maxBlockTextLen(blocks: ReturnType<typeof buildHomeView>['blocks']): number {
+    let max = 0;
+    for (const block of blocks) {
+      if (block.type === 'header' || block.type === 'section') {
+        const t = block.text as { text?: string } | undefined;
+        if (t?.text) max = Math.max(max, t.text.length);
+      } else if (block.type === 'context') {
+        const els = (block.elements as Array<{ text?: string }> | undefined) ?? [];
+        for (const el of els) {
+          if (el.text) max = Math.max(max, el.text.length);
+        }
+      }
+    }
+    return max;
+  }
+
+  it('truncates an oversized memory entry with an ellipsis', () => {
+    const huge = `- ${'m'.repeat(10_000)}`;
+    const view = buildHomeView({
+      bot: { displayName: 'Eng', binding: teamBinding },
+      sessions: [],
+      kanbanTickets: [],
+      memorySnippets: [huge],
+      channelModes: [],
+    });
+    const text = plaintextFallback(view.blocks);
+    expect(text).toContain('…');
+    expect(text).not.toContain('m'.repeat(10_000));
+    expect(maxBlockTextLen(view.blocks)).toBeLessThan(3000);
+  });
+
+  it('truncates an oversized session label with an ellipsis', () => {
+    const view = buildHomeView({
+      bot: { displayName: 'Eng', binding: teamBinding },
+      sessions: [
+        { id: 's1', label: 'x'.repeat(10_000), lastActivity: new Date('2026-05-10T10:00:00Z') },
+      ],
+      kanbanTickets: [],
+      memorySnippets: [],
+      channelModes: [],
+    });
+    const text = plaintextFallback(view.blocks);
+    expect(text).toContain('…');
+    expect(text).not.toContain('x'.repeat(10_000));
+    expect(maxBlockTextLen(view.blocks)).toBeLessThan(3000);
+  });
+
+  it('truncates an oversized kanban ticket title with an ellipsis', () => {
+    const view = buildHomeView({
+      bot: { displayName: 'Eng', binding: teamBinding },
+      sessions: [],
+      kanbanTickets: [{ id: 't1', title: 'k'.repeat(10_000), status: 'todo', assignee: null }],
+      memorySnippets: [],
+      channelModes: [],
+    });
+    const text = plaintextFallback(view.blocks);
+    expect(text).toContain('…');
+    expect(text).not.toContain('k'.repeat(10_000));
+    expect(maxBlockTextLen(view.blocks)).toBeLessThan(3000);
+  });
+
+  it('keeps every block well under Slack 3000-char limit at max counts AND oversized fields', () => {
+    const view = buildHomeView({
+      bot: { displayName: 'Eng', binding: teamBinding },
+      sessions: Array.from({ length: 200 }, (_, i) => ({
+        id: `s${i}`,
+        label: 'x'.repeat(10_000),
+        lastActivity: new Date('2026-05-10T10:00:00Z'),
+      })),
+      kanbanTickets: Array.from({ length: 200 }, (_, i) => ({
+        id: `t${i}`,
+        title: 'k'.repeat(10_000),
+        status: 'todo',
+        assignee: null,
+      })),
+      memorySnippets: Array.from({ length: 200 }, () => 'm'.repeat(10_000)),
+      channelModes: Array.from({ length: 200 }, (_, i) => [`C${i}`, 'all'] as [string, 'all']),
+    });
+    expect(maxBlockTextLen(view.blocks)).toBeLessThan(3000);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -6,7 +6,19 @@
 // absent the row renders as plain text. The wiring layer passes one in via
 // `SlackAdapterConfig.webUiBaseUrl` once a deployment has a web UI to link to.
 
-import { context, divider, escapeMrkdwn, header, type SlackBlock, section } from './shared';
+import {
+  context,
+  divider,
+  escapeMrkdwn,
+  header,
+  type SlackBlock,
+  section,
+  truncate,
+} from './shared';
+
+/** Per-field cap for session labels. Well under Slack's ~3000-char section
+ *  limit so the row stays valid even with the longest label. */
+const SESSION_LABEL_MAX = 300;
 
 /** Minimal recent-session shape the home view consumes. The wiring layer
  *  adapts `SessionStore.listSessions` (filtered to this bot) to this shape so
@@ -31,7 +43,7 @@ export function sessionListBlocks(input: {
   }
   const blocks: SlackBlock[] = [header('Recent sessions')];
   for (const s of input.sessions) {
-    const label = escapeMrkdwn(s.label);
+    const label = escapeMrkdwn(truncate(s.label, SESSION_LABEL_MAX));
     const link = input.webUiBaseUrl
       ? `<${input.webUiBaseUrl}/sessions/${encodeURIComponent(s.id)}|${label}>`
       : label;

@@ -11,7 +11,15 @@
 
 import { type KanbanTicket, kanbanListBlocks } from '../blocks/kanban';
 import { type SessionSummary, sessionListBlocks } from '../blocks/session';
-import { context, divider, escapeMrkdwn, header, type SlackBlock, section } from '../blocks/shared';
+import {
+  context,
+  divider,
+  escapeMrkdwn,
+  header,
+  type SlackBlock,
+  section,
+  truncate,
+} from '../blocks/shared';
 import type { Binding, ChannelMode } from '../config';
 
 /** `action_id` for the home tab's Refresh button. */
@@ -26,6 +34,21 @@ const SESSION_CAP = 5;
 const MEMORY_CAP = 5;
 const KANBAN_CAP = 10;
 const CHANNEL_CAP = 20;
+
+// Per-field text caps. The count caps above bound the *number* of items; these
+// bound the *length* of each model/config/user-influenced string before it's
+// interpolated into a `section`/`context` text. Slack rejects a `views.publish`
+// whose section text exceeds ~3000 chars, and `home/handlers.ts` swallows that
+// failure into a blank Home tab — so every such field is capped here. The caps
+// are deliberately well under 3000: even at the count cap, a section's total
+// text stays comfortably within Slack's per-block limit.
+//   - Memory snippets are whole MEMORY.md entries, so they get more room.
+//   - Kanban titles share a `section` with status/assignee/id, so the title
+//     cap leaves headroom for the rest of that line.
+//   - Channel names are bounded in practice but capped defensively.
+const MEMORY_SNIPPET_MAX = 500;
+const KANBAN_TITLE_MAX = 300;
+const CHANNEL_NAME_MAX = 100;
 
 /** Truncate `items` to `cap`. Returns the kept slice and the overflow count
  *  so the caller can append an honest `+ N more` context row. */
@@ -82,7 +105,14 @@ export function buildHomeView(input: HomeViewInput): SlackHomeView {
   // per the spec (kanban is a team feature).
   if (input.bot.binding.type === 'team') {
     const kanban = capSection(input.kanbanTickets, KANBAN_CAP);
-    blocks.push(...kanbanListBlocks({ team: input.bot.binding.name, tickets: kanban.kept }));
+    // `kanbanListBlocks` is shared with the `/ethos kanban` slash command, so
+    // the per-field cap is applied here (App Home layer) on title-truncated
+    // copies rather than in the builder.
+    const tickets = kanban.kept.map((t) => ({
+      ...t,
+      title: truncate(t.title, KANBAN_TITLE_MAX),
+    }));
+    blocks.push(...kanbanListBlocks({ team: input.bot.binding.name, tickets }));
     if (kanban.overflow > 0) blocks.push(context([`+ ${kanban.overflow} more`]));
     blocks.push(divider());
   }
@@ -94,7 +124,7 @@ export function buildHomeView(input: HomeViewInput): SlackHomeView {
     blocks.push(section('No recent memory updates.'));
   } else {
     for (const snippet of memory.kept) {
-      blocks.push(section(escapeMrkdwn(snippet)));
+      blocks.push(section(escapeMrkdwn(truncate(snippet, MEMORY_SNIPPET_MAX))));
     }
     if (memory.overflow > 0) blocks.push(context([`+ ${memory.overflow} more`]));
   }
@@ -107,7 +137,9 @@ export function buildHomeView(input: HomeViewInput): SlackHomeView {
     blocks.push(section('This bot is not in any channels yet, or channel state is not persisted.'));
   } else {
     for (const [channel, mode] of channels.kept) {
-      blocks.push(section(`<#${escapeMrkdwn(channel)}> · mode \`${mode}\``));
+      blocks.push(
+        section(`<#${escapeMrkdwn(truncate(channel, CHANNEL_NAME_MAX))}> · mode \`${mode}\``),
+      );
     }
     if (channels.overflow > 0) blocks.push(context([`+ ${channels.overflow} more`]));
   }
