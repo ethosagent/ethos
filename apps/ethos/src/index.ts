@@ -26,6 +26,7 @@ import { runPlugin } from './commands/plugin';
 import { runRetention } from './commands/retention';
 import { runSecurityAudit } from './commands/security-audit';
 import { runServe } from './commands/serve';
+import { runSessionsCommand } from './commands/sessions';
 import { runSet } from './commands/set';
 import { runSetup } from './commands/setup';
 import { runSkills } from './commands/skills';
@@ -44,7 +45,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [setup | chat | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
+  'Usage: ethos [setup | chat | sessions | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -126,11 +127,45 @@ try {
         console.error('Usage: ethos chat --team <name>');
         process.exit(1);
       }
+      // FW-2 — --continue / -c (resume most recent) and --resume / -r <id> (resume by id/title)
+      const continueFlag = chatArgs.includes('--continue') || chatArgs.includes('-c');
+      const resumeFlagIdx =
+        chatArgs.indexOf('--resume') !== -1 ? chatArgs.indexOf('--resume') : chatArgs.indexOf('-r');
+      const resumeQuery = resumeFlagIdx !== -1 ? chatArgs[resumeFlagIdx + 1] : undefined;
+
       const { query, queryFlagUsed } = extractSingleQuery(chatArgs);
       if (queryFlagUsed && (!query || query.trim().length === 0)) {
         console.error('Usage: ethos chat -q "<prompt>"');
         process.exit(1);
       }
+
+      // Resolve resume target before loading config so we can error early
+      let resumeSessionKey: string | undefined;
+      let resumeSessionId: string | undefined;
+      if (continueFlag || resumeQuery !== undefined) {
+        const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+        const { ethosDir } = await import('./config');
+        const { join: pathJoin } = await import('node:path');
+        const { resolveResumeSession } = await import('./commands/sessions');
+        const store = new SQLiteSessionStore(pathJoin(ethosDir(), 'sessions.db'));
+        try {
+          const target = continueFlag
+            ? { type: 'continue' as const }
+            : { type: 'resume' as const, query: resumeQuery ?? '' };
+          const session = await resolveResumeSession(store, target);
+          if (!session) {
+            console.error(
+              continueFlag ? 'No sessions found to resume.' : `Session not found: ${resumeQuery}`,
+            );
+            process.exit(1);
+          }
+          resumeSessionKey = session.key;
+          resumeSessionId = session.id;
+        } finally {
+          store.close();
+        }
+      }
+
       const config = await readConfig(getStorage());
       if (!config) {
         console.log('No config found. Running setup first...\n');
@@ -143,6 +178,7 @@ try {
           if (teamFlag) withFlags.activeContext = { type: 'team', name: teamFlag };
           await runChat(withFlags, {
             ...(query ? { singleQuery: query } : {}),
+            ...(resumeSessionKey ? { resumeSessionKey, resumeSessionId } : {}),
           });
           if (query) process.exit(0);
         }
@@ -153,9 +189,15 @@ try {
         if (teamFlag) withFlags.activeContext = { type: 'team', name: teamFlag };
         await runChat(withFlags, {
           ...(query ? { singleQuery: query } : {}),
+          ...(resumeSessionKey ? { resumeSessionKey, resumeSessionId } : {}),
         });
         if (query) process.exit(0);
       }
+      break;
+    }
+
+    case 'sessions': {
+      await runSessionsCommand(args[1] ?? 'list', args.slice(2));
       break;
     }
 

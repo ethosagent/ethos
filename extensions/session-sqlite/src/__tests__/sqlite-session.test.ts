@@ -208,6 +208,100 @@ describe('SQLiteSessionStore', () => {
   });
 });
 
+// -------------------------------------------------------------------------
+// FW-4 — title management
+// -------------------------------------------------------------------------
+
+describe('SQLiteSessionStore — title management', () => {
+  let store: SQLiteSessionStore;
+
+  beforeEach(() => {
+    store = new SQLiteSessionStore(':memory:');
+  });
+
+  afterEach(() => {
+    store.close();
+  });
+
+  it('setTitle persists a title on the session', async () => {
+    const session = await store.createSession(baseSession);
+    await store.setTitle(session.id, 'auth refactor');
+
+    const found = await store.getSession(session.id);
+    expect(found?.title).toBe('auth refactor');
+  });
+
+  it('setTitle with null clears the title', async () => {
+    const session = await store.createSession({ ...baseSession, title: 'old title' });
+    await store.setTitle(session.id, null);
+
+    const found = await store.getSession(session.id);
+    expect(found?.title).toBeUndefined();
+  });
+});
+
+// -------------------------------------------------------------------------
+// FW-2 — session resume lookup
+// -------------------------------------------------------------------------
+
+describe('SQLiteSessionStore — resume lookup', () => {
+  let store: SQLiteSessionStore;
+
+  beforeEach(() => {
+    store = new SQLiteSessionStore(':memory:');
+  });
+
+  afterEach(() => {
+    store.close();
+  });
+
+  it('findMostRecent returns the session with the latest updated_at', async () => {
+    await store.createSession({ ...baseSession, key: 'cli:a' });
+    const s2 = await store.createSession({ ...baseSession, key: 'cli:b' });
+    // Advance s2's updated_at by touching it
+    await store.updateSession(s2.id, { title: 'newer' });
+
+    const found = await store.findMostRecent();
+    expect(found?.id).toBe(s2.id);
+  });
+
+  it('findMostRecent returns null when no sessions exist', async () => {
+    const found = await store.findMostRecent();
+    expect(found).toBeNull();
+  });
+
+  it('findByTitle returns exact match on title (case-insensitive)', async () => {
+    const s = await store.createSession({ ...baseSession, key: 'cli:x', title: 'Auth Refactor' });
+    const results = await store.findByTitle('auth refactor');
+    expect(results).toHaveLength(1);
+    expect(results[0]?.id).toBe(s.id);
+  });
+
+  it('findByTitle returns fragment match when no exact match', async () => {
+    const s = await store.createSession({
+      ...baseSession,
+      key: 'cli:y',
+      title: 'auth refactoring pass',
+    });
+    const results = await store.findByTitle('refactor');
+    expect(results).toHaveLength(1);
+    expect(results[0]?.id).toBe(s.id);
+  });
+
+  it('findByTitle returns empty array when nothing matches', async () => {
+    await store.createSession({ ...baseSession, key: 'cli:z', title: 'something else' });
+    const results = await store.findByTitle('quantum');
+    expect(results).toHaveLength(0);
+  });
+
+  it('findByTitle returns multiple sessions for fragment with multiple matches', async () => {
+    await store.createSession({ ...baseSession, key: 'cli:1', title: 'auth feature' });
+    await store.createSession({ ...baseSession, key: 'cli:2', title: 'auth bug fix' });
+    const results = await store.findByTitle('auth');
+    expect(results.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe('SQLiteSessionStore migration idempotency', () => {
   it('opening the same db twice does not throw and trace_id column exists exactly once', () => {
     const { join } = require('node:path');

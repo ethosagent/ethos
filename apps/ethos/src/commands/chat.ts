@@ -1,10 +1,13 @@
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { InMemorySteerSink } from '@ethosagent/agent-bridge';
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
 import type { SplashInventory } from '@ethosagent/tui';
 import type { SteerSink } from '@ethosagent/types';
 import type { EthosConfig } from '../config';
+import { ethosDir } from '../config';
+import { formatRecap } from '../lib/recap';
+import { formatResumeHint } from '../lib/resume-hint';
 import { SpinnerState } from '../lib/spinner';
 import { renderStatusBar, type Threshold } from '../lib/status-bar';
 import { formatToolFeedLine } from '../lib/tool-feed';
@@ -113,6 +116,10 @@ interface ChatState {
 
 interface RunChatOptions {
   singleQuery?: string;
+  /** FW-2 — resume an existing session by its stored key. */
+  resumeSessionKey?: string;
+  /** FW-2 — session ID to display in the resume hint and recap. */
+  resumeSessionId?: string;
 }
 
 function renderStatusBarLine(state: ChatState): void {
@@ -169,7 +176,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   });
 
   const state: ChatState = {
-    sessionKey: `cli:${basename(process.cwd())}`,
+    sessionKey: opts.resumeSessionKey ?? `cli:${basename(process.cwd())}`,
     personalityId,
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     contextTokens: 0,
@@ -195,10 +202,57 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     }
   });
 
-  rl.on('close', () => process.exit(0));
+  rl.on('close', async () => {
+    if (config.displayResumeHint !== false) {
+      try {
+        const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+        const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+        try {
+          const session = await store.getSessionByKey(state.sessionKey);
+          if (session) {
+            const messages = await store.getMessages(session.id);
+            const userCount = messages.filter((m) => m.role === 'user').length;
+            const hint = formatResumeHint({
+              sessionId: session.id,
+              title: session.title,
+              durationMs: Date.now() - state.startedAt,
+              userMessageCount: userCount,
+              totalMessageCount: messages.length,
+            });
+            if (hint) out(`\n${c.dim}${hint}${c.reset}\n`);
+          }
+        } finally {
+          store.close();
+        }
+      } catch {
+        // best-effort — don't break exit on hint failure
+      }
+    }
+    process.exit(0);
+  });
 
   // Welcome
   out(`${c.bold}ethos${c.reset}  ${c.dim}${config.model} · ${displayName} · /help${c.reset}\n\n`);
+
+  // FW-6 — show recap panel when resuming
+  if (opts.resumeSessionId) {
+    try {
+      const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+      const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+      try {
+        const messages = await store.getMessages(opts.resumeSessionId);
+        const recap = formatRecap(messages, { turns: config.displayResumeRecapTurns ?? 3 });
+        if (recap) {
+          for (const line of recap.lines) out(`${c.dim}${line}${c.reset}\n`);
+          out('\n');
+        }
+      } finally {
+        store.close();
+      }
+    } catch {
+      // best-effort
+    }
+  }
 
   if (state.verbosity !== 'quiet') renderStatusBarLine(state);
 
@@ -624,6 +678,8 @@ async function handleSlashCommand(
     case 'help':
       out(
         `\n${c.dim}` +
+          `  /title <name>         set a name for this session\n` +
+          `  /title                show current session title\n` +
           `  /new                  start a fresh session\n` +
           `  /personality          show current personality\n` +
           `  /personality list     list all personalities\n` +
@@ -791,6 +847,34 @@ async function handleSlashCommand(
     case 'comms': {
       const r = await runPairingCommand('list', {});
       out(`${c.dim}${r}${c.reset}\n`);
+      break;
+    }
+
+    case 'title': {
+      const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+      const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+      try {
+        const session = await store.getSessionByKey(state.sessionKey);
+        if (!session) {
+          out(`${c.dim}[no session found — send a message first]${c.reset}\n`);
+          break;
+        }
+        if (!arg) {
+          // No args: print current title
+          out(`${c.dim}Title: ${session.title ?? '(none)'}${c.reset}\n`);
+          break;
+        }
+        // Empty string arg: clear title
+        const newTitle = arg === '""' || arg === "''" ? null : arg;
+        await store.setTitle(session.id, newTitle);
+        if (newTitle) {
+          out(`${c.dim}[ titled: ${newTitle} ]${c.reset}\n`);
+        } else {
+          out(`${c.dim}[ title cleared ]${c.reset}\n`);
+        }
+      } finally {
+        store.close();
+      }
       break;
     }
 
