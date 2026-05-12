@@ -120,6 +120,29 @@ describe('Dispatcher.tick()', () => {
     expect(dispatch).toHaveBeenCalledTimes(2);
   });
 
+  it('rolls a goal up to done once every child completes', async () => {
+    const sup = makeSupervisor({});
+    const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+    const dispatcher = new Dispatcher({ board, supervisor: sup, dispatch });
+
+    const goal = board.createTask({ title: 'Q3 roadmap' });
+    const c1 = board.createTask({ title: 'a', assignee: 'engineer', parents: [goal.id] });
+    const c2 = board.createTask({ title: 'b', assignee: 'researcher', parents: [goal.id] });
+
+    // Children complete out-of-band (the dispatcher would normally do it via
+    // callMeshAgent → assignee → kanban_complete, but we shortcut here).
+    board.updateStatus(c1.id, 'running');
+    board.completeRun(c1.id, 'done a');
+    board.updateStatus(c2.id, 'running');
+    board.completeRun(c2.id, 'done b');
+
+    // One tick: promoteReady moves the goal todo→ready; rollup sees all
+    // children done and finishes it. Both steps run inside the same tick.
+    await dispatcher.tick();
+
+    expect(board.getTask(goal.id)?.status).toBe('done');
+  });
+
   it('goal-as-parent (no assignee) is transparent — child promotes immediately', async () => {
     const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
     const dispatch = vi.fn<DispatchCall>(async () => 'ok');

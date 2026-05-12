@@ -699,6 +699,40 @@ export class KanbanStore {
   }
 
   /**
+   * Roll up completed goals: any task with assignee=NULL and at least one child
+   * where every non-archived child is `done` flips to `done` itself. This is
+   * the goal-as-parent-task pattern's closure step — without it, a coordinator's
+   * `kanban_create_goal` + `kanban_create(parents=[goal])` flow leaves the goal
+   * stuck at `ready` forever, even after every sub-task completes.
+   *
+   * Refuses to complete a goal whose every child was archived: that would
+   * silently swallow the case where a coordinator removed all the work.
+   */
+  rollupCompletedGoals(actor = 'system'): string[] {
+    const candidates = this.db
+      .prepare(
+        `SELECT g.id FROM tasks g
+         WHERE g.assignee IS NULL
+           AND g.status NOT IN ('done', 'archived')
+           AND EXISTS (
+             SELECT 1 FROM task_links l
+             JOIN tasks c ON c.id = l.child_id
+             WHERE l.parent_id = g.id AND c.status = 'done'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM task_links l
+             JOIN tasks c ON c.id = l.child_id
+             WHERE l.parent_id = g.id AND c.status NOT IN ('done', 'archived')
+           )`,
+      )
+      .all() as Array<{ id: string }>;
+    for (const c of candidates) {
+      this.updateStatus(c.id, 'done', 'all children done', actor);
+    }
+    return candidates.map((c) => c.id);
+  }
+
+  /**
    * Tasks ready for the dispatcher to claim: status=ready, an assignee is set,
    * and there is no current run yet.
    */

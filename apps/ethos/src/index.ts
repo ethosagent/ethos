@@ -118,6 +118,14 @@ try {
       // --skin <name> overrides the persisted config.skin for this process.
       const skinFlagIdx = chatArgs.indexOf('--skin');
       const skinFlag = skinFlagIdx !== -1 ? chatArgs[skinFlagIdx + 1] : undefined;
+      // --team <name> overrides activeContext for this process (no persistence).
+      // Mirrors `ethos serve --team`; same dispatch as `ethos set team <name>`.
+      const teamFlagIdx = chatArgs.indexOf('--team');
+      const teamFlag = teamFlagIdx !== -1 ? chatArgs[teamFlagIdx + 1] : undefined;
+      if (teamFlagIdx !== -1 && (!teamFlag || teamFlag.startsWith('--'))) {
+        console.error('Usage: ethos chat --team <name>');
+        process.exit(1);
+      }
       const { query, queryFlagUsed } = extractSingleQuery(chatArgs);
       if (queryFlagUsed && (!query || query.trim().length === 0)) {
         console.error('Usage: ethos chat -q "<prompt>"');
@@ -132,6 +140,7 @@ try {
           const withFlags = { ...fresh };
           if (verboseFlag) withFlags.verbose = true;
           if (skinFlag) withFlags.skin = skinFlag;
+          if (teamFlag) withFlags.activeContext = { type: 'team', name: teamFlag };
           await runChat(withFlags, {
             ...(query ? { singleQuery: query } : {}),
           });
@@ -141,6 +150,7 @@ try {
         const withFlags = { ...config };
         if (verboseFlag) withFlags.verbose = true;
         if (skinFlag) withFlags.skin = skinFlag;
+        if (teamFlag) withFlags.activeContext = { type: 'team', name: teamFlag };
         await runChat(withFlags, {
           ...(query ? { singleQuery: query } : {}),
         });

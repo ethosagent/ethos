@@ -4,13 +4,24 @@ import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/ty
 /**
  * Role-based authorization for kanban tools — Plan B's policy layer.
  *
- * Three tiers:
- *   - coordinator-only: kanban_create_goal, kanban_create, kanban_assign,
- *     kanban_link, kanban_archive
- *   - assignee-only:    kanban_complete, kanban_block, kanban_unblock,
- *     kanban_heartbeat (only the task's assignee may close their own task)
- *   - any member:       everything else (kanban_comment, kanban_show, kanban_list,
- *     kanban_update_status)
+ * Four tiers:
+ *   - coordinator-only:       kanban_create_goal, kanban_create, kanban_assign,
+ *                             kanban_link, kanban_archive
+ *   - coordinator-or-assignee: kanban_update_status
+ *                             (coordinator drives the board for orchestration —
+ *                             e.g. wiring `blocked` dependencies, marking tasks
+ *                             `ready`; assignee may also self-drive)
+ *   - assignee-only:          kanban_complete, kanban_block, kanban_unblock,
+ *                             kanban_heartbeat (first-person closer tools —
+ *                             only the assignee can speak for their own task)
+ *   - any member:             kanban_comment, kanban_show, kanban_list
+ *
+ * Why `kanban_update_status` is not strictly assignee-only:
+ *   Treating it as any-member would let any member bypass the closer-tool
+ *   checks below. Treating it as strict-assignee blocked the coordinator from
+ *   doing legitimate board orchestration (the bug fix that landed this tier).
+ *   Coordinator-or-assignee threads the needle: coordinator wires dependencies,
+ *   assignee may self-drive, no other member can move someone else's status.
  *
  * Wiring registers this hook with `registerModifying('before_tool_call', ...)`
  * when both a team manifest and a role are active. Solo personalities never
@@ -38,16 +49,13 @@ const COORDINATOR_ONLY = new Set([
   'kanban_archive',
 ]);
 
-// kanban_update_status is assignee-only: it can drive a task to any status
-// including `done`/`blocked`/`archived`, which would otherwise let any member
-// bypass the closer-tool checks below. Treating it as any-member made the
-// role gate cosmetic for closing work.
+const COORDINATOR_OR_ASSIGNEE = new Set(['kanban_update_status']);
+
 const ASSIGNEE_ONLY = new Set([
   'kanban_complete',
   'kanban_block',
   'kanban_unblock',
   'kanban_heartbeat',
-  'kanban_update_status',
 ]);
 
 const KANBAN_PREFIX = 'kanban_';
@@ -69,7 +77,11 @@ export function createKanbanRoleGateHook(
       };
     }
 
-    if (ASSIGNEE_ONLY.has(toolName)) {
+    // Coordinator drives orchestration status changes; otherwise fall through
+    // to the assignee check below.
+    if (COORDINATOR_OR_ASSIGNEE.has(toolName) && role === 'coordinator') return {};
+
+    if (ASSIGNEE_ONLY.has(toolName) || COORDINATOR_OR_ASSIGNEE.has(toolName)) {
       const taskId = extractTaskId(args);
       if (typeof taskId !== 'string') {
         // The tool will reject this in its own arg validation; let it through.

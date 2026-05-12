@@ -139,6 +139,53 @@ describe('kanban role gate', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Coordinator orchestration tier
+  // ---------------------------------------------------------------------------
+
+  it('allows kanban_update_status from the coordinator on any task (orchestration)', async () => {
+    // Task assigned to engineer; coordinator wires it as `blocked` to set up a
+    // dependency. Without coordinator orchestration access this fails the
+    // assignee check and the team cannot bootstrap a dependency graph.
+    const task = store.createTask({ title: 'refactor', assignee: 'engineer' });
+    const hook = createKanbanRoleGateHook({
+      role: 'coordinator',
+      personalityId: 'coordinator',
+      store,
+    });
+    const result = await hook({
+      sessionId: 's',
+      toolCallId: 'tc',
+      toolName: 'kanban_update_status',
+      args: { task_id: task.id, status: 'blocked' },
+    });
+    expect(result.error).toBeUndefined();
+  });
+
+  it('still rejects first-person closer tools from the coordinator (semantic integrity)', async () => {
+    // kanban_complete, kanban_block, kanban_unblock, kanban_heartbeat are
+    // first-person — only the assignee can speak for their own task. The
+    // coordinator orchestrates via kanban_update_status, not by impersonating
+    // the assignee through closer tools.
+    const task = store.createTask({ title: 'work', assignee: 'engineer' });
+    const hook = createKanbanRoleGateHook({
+      role: 'coordinator',
+      personalityId: 'coordinator',
+      store,
+    });
+    for (const name of ['kanban_complete', 'kanban_block', 'kanban_unblock', 'kanban_heartbeat']) {
+      const r = await hook({
+        sessionId: 's',
+        toolCallId: 'tc',
+        toolName: name,
+        args: { task_id: task.id, summary: 'x' },
+      });
+      expect(r.error, `${name} should remain assignee-only even for the coordinator`).toMatch(
+        /requires you to be the assignee/,
+      );
+    }
+  });
+
+  // ---------------------------------------------------------------------------
   // Non-kanban tools
   // ---------------------------------------------------------------------------
 

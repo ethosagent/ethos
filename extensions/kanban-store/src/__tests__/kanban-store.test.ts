@@ -462,6 +462,61 @@ describe('KanbanStore', () => {
     expect(stalled.map((r) => r.taskId)).toEqual([stale.id]);
   });
 
+  // ---------------------------------------------------------------------------
+  // Goal rollup — assignee=null parents complete when all their children do
+  // ---------------------------------------------------------------------------
+
+  it('rollupCompletedGoals promotes a goal to done when every child is done', () => {
+    const goal = store.createTask({ title: 'Q3 roadmap' });
+    const c1 = store.createTask({ title: 'a', assignee: 'engineer', parents: [goal.id] });
+    const c2 = store.createTask({ title: 'b', assignee: 'researcher', parents: [goal.id] });
+    store.updateStatus(c1.id, 'running');
+    store.completeRun(c1.id, 'done a');
+    store.updateStatus(c2.id, 'running');
+    store.completeRun(c2.id, 'done b');
+
+    const completed = store.rollupCompletedGoals();
+    expect(completed).toContain(goal.id);
+    expect(store.getTask(goal.id)?.status).toBe('done');
+  });
+
+  it('rollupCompletedGoals leaves goals alone while any child is unfinished', () => {
+    const goal = store.createTask({ title: 'wip' });
+    const c1 = store.createTask({ title: 'a', assignee: 'engineer', parents: [goal.id] });
+    store.createTask({ title: 'b', assignee: 'researcher', parents: [goal.id] });
+    store.updateStatus(c1.id, 'running');
+    store.completeRun(c1.id, 'half-done');
+
+    const completed = store.rollupCompletedGoals();
+    expect(completed).not.toContain(goal.id);
+    expect(store.getTask(goal.id)?.status).not.toBe('done');
+  });
+
+  it('rollupCompletedGoals ignores goals with no children (nothing to roll up from)', () => {
+    const empty = store.createTask({ title: 'placeholder goal' });
+    expect(store.rollupCompletedGoals()).not.toContain(empty.id);
+  });
+
+  it('rollupCompletedGoals ignores goals whose every child was archived (refuses to silently swallow)', () => {
+    const goal = store.createTask({ title: 'abandoned' });
+    const c = store.createTask({ title: 'c', assignee: 'engineer', parents: [goal.id] });
+    store.archive(c.id);
+
+    expect(store.rollupCompletedGoals()).not.toContain(goal.id);
+    expect(store.getTask(goal.id)?.status).not.toBe('done');
+  });
+
+  it('rollupCompletedGoals never touches real-work tasks (assignee set)', () => {
+    const parent = store.createTask({ title: 'real-work parent', assignee: 'engineer' });
+    const c = store.createTask({ title: 'c', assignee: 'researcher', parents: [parent.id] });
+    store.updateStatus(c.id, 'running');
+    store.completeRun(c.id, 'done c');
+
+    expect(store.rollupCompletedGoals()).not.toContain(parent.id);
+    // Parent stays at whatever status it was — rollup is a goal-only operation.
+    expect(store.getTask(parent.id)?.status).not.toBe('done');
+  });
+
   it('findReadyToDispatch returns ready tasks with an assignee and no open run, ordered by priority', () => {
     const t1 = store.createTask({ title: 'p2', assignee: 'engineer', priority: 2 });
     const t2 = store.createTask({ title: 'p9', assignee: 'researcher', priority: 9 });
