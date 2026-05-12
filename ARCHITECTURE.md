@@ -106,6 +106,21 @@ The layering is total: every module the framework owns belongs to
 exactly one layer, and its imports are constrained by the layer's
 position in this diagram.
 
+A module that opens a network listener or otherwise serves a protocol is
+an app, regardless of which workspace directory it currently occupies.
+
+Layer membership is determined by role, not by directory. The
+operational state of the codebase may diverge from layer boundaries
+during a refactor; the constitution describes the target.
+
+Apps may carry their own thin wiring adapter, provided the shared
+topology lives in `packages/wiring/` and the app adapter only adds
+app-specific singletons.
+
+An app belongs in this monorepo only if it is a first-party Ethos
+surface. Third-party integrations live in their own repositories against
+the published contracts.
+
 ------------------------------------------------------------------------
 
 ## III. Architectural Laws
@@ -115,9 +130,12 @@ binding and are enforced mechanically by §IX unless explicitly marked
 prose-only.
 
 ### Law 1 — Contracts are pure
-Modules in the contracts layer import nothing — not other contracts, not
-runtime modules, not Node built-ins. *Rationale:* a dependency in the
-contracts layer is inherited by every downstream module.
+Modules in the contracts layer must not depend on any other internal
+workspace package. External runtime dependencies are permitted only when
+they author the schema language itself (zod, oRPC, Protobuf-TS).
+*Rationale:* a contract that imports a sibling becomes structurally
+bound to it; a contract that depends on a typed-DSL library is still a
+contract.
 
 ### Law 2 — Core does not import concrete implementations
 The core layer imports contracts only. It does not import an LLM
@@ -131,11 +149,13 @@ Only wiring modules import concrete extensions by name and assemble them.
 *Rationale:* the system's runtime topology must exist in exactly one
 place.
 
-### Law 4 — Extensions are leaves
-An extension depends on contracts and on core, and on no sibling
-extension except under the patterns in §IV. *Rationale:* an extension
-that reaches sideways into a sibling cannot be swapped, removed, or
-audited independently.
+### Law 4 — Extensions implement contracts
+An extension is a replaceable module that implements one or more
+contracts. Extensions may depend on sibling extensions. The §IV patterns
+are guidance for healthy sibling dependencies, not validator-enforced
+categories. *Rationale:* requiring contract mediation for every
+cross-extension call has higher cost than benefit when the boundary is
+not a security boundary.
 
 ### Law 5 — Apps do not bypass wiring
 An app imports wiring and contracts. An app does not import a concrete
@@ -150,11 +170,13 @@ prompt text, filename heuristics, or any unschematised source.
 if the schema does not express a capability, the framework does not
 honour it.
 
-### Law 7 — Storage abstraction is mandatory
-All reads and writes to user data go through the storage contract. Raw
-filesystem APIs are forbidden in any module that participates in a
-personality boundary. *Rationale:* without a single chokepoint,
-personality filesystem reach is unenforceable.
+### Law 7 — Storage abstraction guards the personality boundary
+Modules that read or write user-authored files on a personality's behalf
+use the Storage contract. All other filesystem access — internal state,
+logs, pidfiles, journals, database-driver files, system paths,
+build-time tooling — may use raw `node:fs`. *Rationale:* Storage exists
+to make personality `fs_reach` enforceable; outside that boundary it
+adds complexity without safety gain.
 
 ### Law 8 — Tool execution respects the personality toolset
 The tool registry filters tool definitions presented to the model by
@@ -169,22 +191,19 @@ codebase runs without a build step in development; extensionful imports
 break that contract and force a build dependency on every contributor.
 
 ### Law 10 — Library code is silent
-No module outside designated app entry points writes directly to stdout
-or stderr. Logging is structured and flows through the observability
-contract. *Rationale:* silent libraries compose; chatty libraries
-pollute every embedder.
-
-### Law 11 — One contract, one ownership
-Every contract has a named owner (a maintainer or maintainer group)
-recorded in §VII. Changes to the contract require the owner's approval.
-*Rationale:* a contract without an owner drifts.
+Library code outside designated app entry points uses the `Logger`
+contract for all output. `console.*` is permitted only in app entry
+modules and in build/test tooling. *Rationale:* silent libraries
+compose; chatty libraries pollute every embedder.
 
 ------------------------------------------------------------------------
 
 ## IV. Extension Patterns
 
-A sibling-extension dependency is permitted only when it matches a named
-pattern. New patterns require a §VI amendment.
+The patterns below are operational guidance — common shapes that
+healthy sibling dependencies take. They are recommendations, not
+validator-enforced categories. A new pattern does not require an
+amendment; it is simply a new common shape.
 
 **Pattern A — Wrapper.**
 A tool-layer extension wraps a single service-layer extension to expose
@@ -205,9 +224,6 @@ An extension that adapts an external protocol depends on the contract
 module for that protocol, not on any sibling implementation of the same
 protocol.
 
-A sibling dependency that does not match a pattern is a violation. It
-must either fit an existing pattern or motivate a new one through §VI.
-
 ------------------------------------------------------------------------
 
 ## V. Safety Constitution
@@ -215,6 +231,10 @@ must either fit an existing pattern or motivate a new one through §VI.
 These rules are absolute. They have no exception path. They predate any
 feature and outlive any release. Amendments to this section follow §VI
 structural-class rules.
+
+Safety primitives located in the core layer follow the same bump
+procedure as the engine itself; breaking changes require the unanimous
+maintainer agreement that core changes require.
 
 **S1 — Tool allowlist is authoritative.**
 The personality toolset is the sole authority on which tools the model
@@ -418,8 +438,7 @@ layers:
     role: "Interface definitions and value types. The floor."
     depends_on: []
     forbids:
-      - node_builtins: all
-      - external_runtime_deps: all
+      - internal_workspace_deps: all
 
   - name: core
     role: "Framework engine plus §V-mandated safety primitives."
@@ -432,7 +451,7 @@ layers:
   - name: extensions
     role: "Concrete implementations of contracts."
     depends_on: [contracts, core]
-    sibling_dependencies: "permitted only under named §IV patterns"
+    sibling_dependencies: permitted
     forbids:
       - direct_console_writes: true
       - raw_filesystem_apis_outside_storage_contract: true
@@ -453,7 +472,7 @@ layers:
 
 laws:
   L1_contracts_pure:
-    check: dependency_count_zero
+    check: forbid_internal_workspace_deps
     scope: layer:contracts
 
   L2_core_no_concrete:
@@ -466,18 +485,13 @@ laws:
     allowed_in: [layer:wiring]
     forbidden_elsewhere: true
 
-  L4_extensions_are_leaves:
-    check: sibling_imports_match_patterns
-    scope: layer:extensions
-    patterns: [wrapper, safety_decoration, content_bundle, protocol_bridge]
-
   L5_apps_through_wiring:
     check: imports_only_layers
     scope: layer:apps
     allowed_layers: [contracts, wiring]
 
   L7_storage_abstraction:
-    check: forbid_raw_filesystem
+    check: forbid_raw_filesystem_on_personality_boundary
     scope: "layer:core | layer:extensions | layer:apps"
     contract: storage
 
@@ -494,10 +508,7 @@ laws:
     check: forbid_console_writes
     scope: "*"
     allowed_in: layer:apps/entry
-
-  L11_contract_ownership:
-    check: every_contract_has_owner_in_section_vii
-    scope: layer:contracts
+    contract: logger
 
 # ---- Safety constitution (§V) ----------------------------------------
 # These have no exception path. A violation here is a release blocker.
