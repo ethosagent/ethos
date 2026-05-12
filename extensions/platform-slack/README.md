@@ -19,7 +19,7 @@ This README covers everything an operator needs to install the Slack app, config
 | **Member-join greeting** announcing the bot's binding + active channel mode | shipped (Phase 1) |
 | Block Kit responses for slash commands | shipped (Phase 1) |
 | Tool-call approval cards (interactive buttons) | upcoming (Phase 2) |
-| App Home tab | upcoming (Phase 3) |
+| **App Home tab** (sessions / kanban / memory / channel-mode dashboard) | shipped (Phase 3) |
 | URL unfurling, inbound files | upcoming (Phase 4) |
 
 ---
@@ -39,6 +39,9 @@ display_information:
   name: "<DISPLAY-NAME>"
   description: "Ethos agent — bound to one personality or team coordinator."
 features:
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: false
   bot_user:
     display_name: "<DISPLAY-NAME>"
     always_online: true
@@ -64,6 +67,7 @@ oauth_config:
 settings:
   event_subscriptions:
     bot_events:
+      - app_home_opened
       - app_mention
       - member_joined_channel
       - message.channels
@@ -77,7 +81,7 @@ settings:
   token_rotation_enabled: false
 ```
 
-> The `commands` block is what makes `/ethos` show up in Slack's command picker. The Socket Mode bit makes the bot dial out to Slack so you don't need a public webhook.
+> The `commands` block is what makes `/ethos` show up in Slack's command picker. The Socket Mode bit makes the bot dial out to Slack so you don't need a public webhook. The `app_home` block enables the **App Home** tab (see [§8](#8-app-home-tab)); the `app_home_opened` bot event is what lets the adapter publish the tab when a user opens it.
 
 ### 1.2 Generate tokens
 
@@ -258,7 +262,26 @@ If the bot misbehaves silently, check that the manifest in [§1.1](#11-create-th
 | `/ethos` doesn't appear in the slash command picker | `slash_commands.commands.[/ethos]` block missing from manifest, or app needs reinstall after manifest edit |
 | Channel messages don't reach the bot | `message.channels` (or `message.groups`) not in `event_subscriptions.bot_events` |
 | `member_joined_channel` greeting never fires | event not subscribed, or bot lacks `chat:write` for that channel |
+| App Home tab is blank or shows "Sending messages to this app has been turned off" | `app_home.home_tab_enabled` missing from the manifest, or `app_home_opened` not in `event_subscriptions.bot_events` |
 | Block Kit renders but plaintext fallback shows mrkdwn | this is intentional — Slack strips client-side for notifications |
+
+---
+
+## 8 · App Home tab
+
+Clicking the bot's name in Slack opens its **Home** tab — a read-only dashboard rendered by the adapter. It has four sections plus a **Refresh** button:
+
+| Section | Source | Notes |
+|---|---|---|
+| **Header** | `binding` + `auth.test` | Bot display name, bound personality/team, status. |
+| **Recent sessions** | `session` reader | Last few sessions for this bot. Rows deep-link to the Ethos web UI when `webUiBaseUrl` is configured; otherwise they render as plain text. |
+| **Active kanban** | `kanban` reader | Recently active tickets. **Team bots only** — hidden entirely for personality-bound bots. |
+| **Recent memory updates** | `memory` reader | Last 5 `MEMORY.md` entries for the bound personality. |
+| **This bot is in** | `ChannelOverrideStore` | Channels the bot is in with their current channel mode. The **Refresh** button (`action_id: home:refresh`) re-publishes the tab with fresh data. |
+
+The Home tab **degrades gracefully**: the header and "This bot is in" sections are populated from day one (binding + channel state are always wired), while the session / kanban / memory sections show a tasteful empty state until their readers are wired. *(Reader wiring lands in a follow-up, the same as the `/ethos memory` and `/ethos kanban` commands.)*
+
+To enable it, the Slack app manifest needs the `app_home.home_tab_enabled` feature and the `app_home_opened` bot event — both are in the manifest in [§1.1](#11-create-the-app).
 
 ---
 
@@ -291,12 +314,21 @@ src/
 │   └── help.ts
 │
 ├── blocks/                  # pure Block Kit builders — (data) => Block[]
-│   ├── shared.ts            # divider, section, header, context, plaintextFallback
+│   ├── shared.ts            # divider, section, header, context, escapeMrkdwn, plaintextFallback
 │   ├── help.ts
 │   ├── personality.ts
 │   ├── memory.ts
 │   ├── kanban.ts
+│   ├── session.ts
+│   ├── approval.ts
 │   └── channel-mode.ts
+│
+├── home/                    # App Home tab — pure view builder + Bolt registrar
+│   ├── view.ts              # buildHomeView(data) => SlackHomeView
+│   └── handlers.ts          # registerHomeEvents — app_home_opened + home:refresh
+│
+├── interactions/
+│   └── actions.ts           # block_actions → approval decision routing
 │
 ├── store/                   # JSONL-backed adapter-owned persistence
 │   ├── channel-overrides.ts
@@ -314,8 +346,10 @@ src/
 | `OutboundMessage.threadId` | `@ethosagent/types` | Lets the gateway thread agent replies back into the originating Slack thread. |
 | `SlackAdapterConfig.binding` | `./adapter` | Drives `/ethos personality`, `/ethos help`, member-join greeting. |
 | `SlackAdapterConfig.storage` | `./adapter` | Required for channel-mode persistence and thread-follow state. |
-| `SlackAdapterConfig.memory` | `./adapter` | Optional — wires `/ethos memory show|add` when supplied. |
-| `SlackAdapterConfig.kanban` | `./adapter` | Optional — wires `/ethos kanban list` for team bots. |
+| `SlackAdapterConfig.memory` | `./adapter` | Optional — wires `/ethos memory show|add` and the App Home memory section when supplied. |
+| `SlackAdapterConfig.kanban` | `./adapter` | Optional — wires `/ethos kanban list` and the App Home kanban section for team bots. |
+| `SlackAdapterConfig.session` | `./adapter` | Optional — wires the App Home "Recent sessions" section. |
+| `SlackAdapterConfig.webUiBaseUrl` | `./adapter` | Optional — Ethos web UI origin; when set, App Home session rows deep-link to `<base>/sessions/<id>`. |
 
 ### Why pure Block Kit builders
 
@@ -331,7 +365,11 @@ Per [`ARCHITECTURE.md`](../../ARCHITECTURE.md) §V S3, all outbound dedup is cen
 
 ### `auth.test` at startup
 
-The adapter calls `client.auth.test()` once during `start()` to resolve the bot's own user id (used to filter `member_joined_channel` events for self-join only). Failure is tolerated: the greeting just won't fire.
+The adapter calls `client.auth.test()` once during `start()` to resolve the bot's own user id (used to filter `member_joined_channel` events for self-join only) and display name (used as the App Home header). Failure is tolerated: the greeting just won't fire, and the Home tab falls back to the generic "Slack" label.
+
+### App Home is a pure view builder + a thin registrar
+
+`home/view.ts` exports a pure `buildHomeView(data) => SlackHomeView` — same `(data) => …` discipline as `blocks/`. `home/handlers.ts` exports `registerHomeEvents(app, deps)`, mirroring `events/messages.ts`: it registers `app_home_opened` and the `home:refresh` action, gathers data from the injected readers, and publishes via `client.views.publish`. Reader failures and publish failures are swallowed so a bad Slack event never crashes Bolt's event loop.
 
 ---
 
@@ -347,6 +385,8 @@ The adapter calls `client.auth.test()` once during `start()` to resolve the bot'
 | `src/routing/` | Triage + channel-mode pure decisions. |
 | `src/commands/` | Slash subcommands + dispatcher. |
 | `src/blocks/` | Block Kit builders. |
+| `src/home/` | App Home tab — `buildHomeView` + the `app_home_opened` / `home:refresh` registrar. |
+| `src/interactions/` | `block_actions` interaction handlers (approval-card buttons). |
 | `src/store/` | JSONL-backed channel overrides + thread state. |
 | `src/__tests__/` | Unit tests for all of the above. |
 | `package.json` | Workspace package; deps `@slack/bolt` ^3.21, `zod` ^4.3, `@ethosagent/types`. |
@@ -355,10 +395,8 @@ The adapter calls `client.auth.test()` once during `start()` to resolve the bot'
 
 ## Future phases
 
-This README documents Phase 0 + Phase 1. The remaining phases from `plan/phases/slack_solidify.md`:
+This README documents Phases 0–3. The remaining phase from `plan/phases/slack_solidify.md`:
 
-- **Phase 2** — interactive tool-call approval cards (Approve / Deny buttons, `block_actions` router, `chat.update` in place).
-- **Phase 3** — App Home tab (sessions / kanban / memory / channel-mode summary).
 - **Phase 4** — URL unfurling for Ethos web UI deep links + inbound file handling (images, text, PDFs).
 
-When those land, the manifest in [§1.1](#11-create-the-app) needs the additional scopes listed in [§1.3](#13-future-scopes), an interactive components endpoint, and the `link_shared` / `app_home_opened` / `file_shared` events.
+When it lands, the manifest in [§1.1](#11-create-the-app) needs the additional scopes listed in [§1.3](#13-future-scopes) and the `link_shared` / `file_shared` events.

@@ -33,6 +33,17 @@ export function context(elements: string[]): SlackBlock {
   };
 }
 
+/**
+ * Escape the three characters Slack mrkdwn treats as markup delimiters. Any
+ * string interpolated into a block that is model/config/user-influenced — tool
+ * names, session labels, channel names, memory entries, ticket titles — must
+ * pass through this first; an unescaped `<@U…>` or `<http…|text>` would inject
+ * a live mention or link onto an Ethos surface.
+ */
+export function escapeMrkdwn(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 /** Plaintext fallback rendered into the message `text` field — Slack uses
  *  this for notifications, screen-readers, and clients that don't render
  *  Block Kit. We pass the mrkdwn through unchanged: Slack strips it
