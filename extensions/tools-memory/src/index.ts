@@ -177,6 +177,177 @@ export function createSessionSearchTool(session: SessionStore): Tool {
 }
 
 // ---------------------------------------------------------------------------
+// team_memory_read
+// ---------------------------------------------------------------------------
+
+export function createTeamMemoryReadTool(teamMemory: MemoryProvider): Tool {
+  return {
+    name: 'team_memory_read',
+    description:
+      'Read a single team memory topic file. Use to load shared team knowledge before working on team tasks.',
+    toolset: 'team_memory',
+    maxResultChars: 20_000,
+    schema: {
+      type: 'object',
+      properties: {
+        key: {
+          type: 'string',
+          description: 'Topic file name, e.g. "architecture", "decisions", "onboarding"',
+        },
+      },
+      required: ['key'],
+    },
+    async execute(args, ctx): Promise<ToolResult> {
+      const { key } = args as { key: string };
+      if (!key) return { ok: false, error: 'key is required', code: 'input_invalid' };
+      if (!ctx.teamId)
+        return { ok: false, error: 'no team context for this session', code: 'not_available' };
+
+      const memCtx = buildTeamMemoryContext(ctx);
+      const entry = await teamMemory.read(key.endsWith('.md') ? key : `${key}.md`, memCtx);
+      if (!entry) return { ok: true, value: `No team memory entry for "${key}".` };
+      return { ok: true, value: entry.content.trim() || `"${key}" is empty.` };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// team_memory_write
+// ---------------------------------------------------------------------------
+
+export function createTeamMemoryWriteTool(teamMemory: MemoryProvider): Tool {
+  return {
+    name: 'team_memory_write',
+    description:
+      'Update a team memory topic file. "add" appends a fact, "replace" overwrites the topic, "remove" deletes matching lines, "delete" removes the topic entirely.',
+    toolset: 'team_memory',
+    schema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['add', 'replace', 'remove', 'delete'],
+          description: 'Operation to apply',
+        },
+        key: {
+          type: 'string',
+          description: 'Topic file name, e.g. "architecture", "decisions"',
+        },
+        content: {
+          type: 'string',
+          description: 'Content to add or replace (required for add/replace)',
+        },
+        substring_match: {
+          type: 'string',
+          description: 'For action="remove": delete lines containing this substring',
+        },
+      },
+      required: ['action', 'key'],
+    },
+    async execute(args, ctx): Promise<ToolResult> {
+      const { action, key, content, substring_match } = args as {
+        action: 'add' | 'replace' | 'remove' | 'delete';
+        key: string;
+        content?: string;
+        substring_match?: string;
+      };
+
+      if (!action || !['add', 'replace', 'remove', 'delete'].includes(action)) {
+        return {
+          ok: false,
+          error: 'action must be "add", "replace", "remove", or "delete"',
+          code: 'input_invalid',
+        };
+      }
+      if (!key) return { ok: false, error: 'key is required', code: 'input_invalid' };
+      if (!ctx.teamId)
+        return { ok: false, error: 'no team context for this session', code: 'not_available' };
+      if ((action === 'add' || action === 'replace') && !content) {
+        return {
+          ok: false,
+          error: `content is required for action="${action}"`,
+          code: 'input_invalid',
+        };
+      }
+
+      const fileKey = key.endsWith('.md') ? key : `${key}.md`;
+      const memCtx = buildTeamMemoryContext(ctx);
+
+      if (action === 'remove') {
+        const match = substring_match ?? content ?? '';
+        await teamMemory.sync([{ action: 'remove', key: fileKey, substringMatch: match }], memCtx);
+      } else if (action === 'delete') {
+        await teamMemory.sync([{ action: 'delete', key: fileKey }], memCtx);
+      } else {
+        await teamMemory.sync([{ action, key: fileKey, content: content ?? '' }], memCtx);
+      }
+
+      const verb =
+        action === 'add'
+          ? 'Appended to'
+          : action === 'replace'
+            ? 'Replaced'
+            : action === 'delete'
+              ? 'Deleted'
+              : 'Updated';
+      return { ok: true, value: `${verb} team memory: ${fileKey}` };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// team_memory_search
+// ---------------------------------------------------------------------------
+
+export function createTeamMemorySearchTool(teamMemory: MemoryProvider): Tool {
+  return {
+    name: 'team_memory_search',
+    description: 'Search team memory topics by keyword. Returns matching topic files.',
+    toolset: 'team_memory',
+    maxResultChars: 10_000,
+    schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query' },
+        limit: { type: 'number', description: 'Maximum number of results (default 5)' },
+        mode: {
+          type: 'string',
+          enum: ['keyword', 'semantic', 'hybrid'],
+          description: 'Search mode (default: keyword)',
+        },
+      },
+      required: ['query'],
+    },
+    async execute(args, ctx): Promise<ToolResult> {
+      const { query, limit, mode } = args as {
+        query: string;
+        limit?: number;
+        mode?: 'keyword' | 'semantic' | 'hybrid';
+      };
+      if (!query) return { ok: false, error: 'query is required', code: 'input_invalid' };
+      if (!ctx.teamId)
+        return { ok: false, error: 'no team context for this session', code: 'not_available' };
+
+      const memCtx = buildTeamMemoryContext(ctx);
+      const results = await teamMemory.search(query, memCtx, {
+        limit: Math.min(limit ?? 5, 20),
+        mode,
+      });
+
+      if (results.length === 0) return { ok: true, value: `No team memory matches "${query}"` };
+
+      const formatted = results
+        .map((r) => `### ${r.key}\n\n${r.content.trim()}`)
+        .join('\n\n---\n\n');
+      return {
+        ok: true,
+        value: `${results.length} team memory match${results.length === 1 ? '' : 'es'} for "${query}":\n\n${formatted}`,
+      };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -188,6 +359,14 @@ export function createMemoryTools(memory: MemoryProvider, session: SessionStore)
   ];
 }
 
+export function createTeamMemoryTools(teamMemory: MemoryProvider): Tool[] {
+  return [
+    createTeamMemoryReadTool(teamMemory),
+    createTeamMemoryWriteTool(teamMemory),
+    createTeamMemorySearchTool(teamMemory),
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -195,6 +374,16 @@ export function createMemoryTools(memory: MemoryProvider, session: SessionStore)
 function buildMemoryContext(ctx: ToolContext): MemoryContext {
   return {
     scopeId: ctx.memoryScopeId ?? 'global',
+    sessionId: ctx.sessionId,
+    sessionKey: ctx.sessionKey,
+    platform: ctx.platform,
+    workingDir: ctx.workingDir,
+  };
+}
+
+function buildTeamMemoryContext(ctx: ToolContext): MemoryContext {
+  return {
+    scopeId: `team:${ctx.teamId}`,
     sessionId: ctx.sessionId,
     sessionKey: ctx.sessionKey,
     platform: ctx.platform,

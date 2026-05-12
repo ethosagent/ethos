@@ -104,6 +104,12 @@ export interface AgentLoopConfig {
   tools?: ToolRegistry;
   personalities?: PersonalityRegistry;
   memory?: MemoryProvider;
+  /**
+   * Phase 3 — team id. When set, AgentLoop stamps `teamId` on every
+   * `ToolContext` so team memory tools can route to the correct team scope.
+   * Absent when running solo.
+   */
+  teamId?: string;
   session?: SessionStore;
   hooks?: HookRegistry;
   injectors?: ContextInjector[];
@@ -251,6 +257,8 @@ export class AgentLoop {
   private readonly injectionClassifier?: InjectionClassifier;
   private readonly watcher?: import('@ethosagent/safety-watcher').Watcher;
   private readonly contextEngines: ContextEngineRegistry;
+  /** Phase 3 — team id stamped onto ToolContext when loop runs inside a team. */
+  private readonly teamId?: string;
   /** Per-session accumulated spend in USD. Keyed by sessionKey. Reset via resetSessionCost(). */
   private readonly sessionCosts = new Map<string, number>();
   /** FW-28 — per-session mtime registry. Keyed by sessionKey → (absPath → record). */
@@ -280,6 +288,7 @@ export class AgentLoop {
     if (config.storage) this.storage = config.storage;
     if (config.dataDir) this.dataDir = config.dataDir;
     if (config.observability) this.observability = config.observability;
+    if (config.teamId) this.teamId = config.teamId;
     if (config.injectionClassifier) this.injectionClassifier = config.injectionClassifier;
     if (config.watcher) this.watcher = config.watcher;
     this.contextEngines = config.contextEngines ?? new DefaultContextEngineRegistry();
@@ -889,6 +898,7 @@ export class AgentLoop {
         personalityId: personality.id,
         memoryScope: personality.memoryScope,
         memoryScopeId: memScopeId,
+        ...(this.teamId !== undefined && { teamId: this.teamId }),
         currentTurn: turnCount,
         messageCount: allMessages.length + turnCount,
         abortSignal,

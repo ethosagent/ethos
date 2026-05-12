@@ -29,7 +29,7 @@ import {
   type TeamRole,
 } from '@ethosagent/tools-kanban';
 import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
-import { createMemoryTools } from '@ethosagent/tools-memory';
+import { createMemoryTools, createTeamMemoryTools } from '@ethosagent/tools-memory';
 import { createProcessTools } from '@ethosagent/tools-process';
 import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-terminal';
 import { createTodoTools, InMemoryTodoStore } from '@ethosagent/tools-todo';
@@ -37,9 +37,13 @@ import { createWebTools } from '@ethosagent/tools-web';
 import type {
   ContextInjector,
   GlobalMemoryStore,
+  InjectionResult,
   LLMProvider,
   Logger,
+  MemoryContext,
+  MemoryEntryRef,
   MemoryProvider,
+  PromptContext,
   SessionStore,
 } from '@ethosagent/types';
 import { resolveKanbanDbPath } from './kanban-path';
@@ -355,6 +359,23 @@ export async function createAgentLoop(
     );
   }
 
+  // Phase 3 — team memory: when running inside a team, wire a team-scoped
+  // MarkdownFileMemoryProvider, register the three team_memory_* tools, seed
+  // the memory directory if empty, and register a lazy index injector.
+  if (config.teamName) {
+    const teamMemoryDir = join(dataDir, 'teams', config.teamName, 'memory');
+    const teamMemory = new MarkdownFileMemoryProvider({ dir: teamMemoryDir });
+
+    // Seed bootstrap topic files if the directory has no .md files yet.
+    await seedTeamMemory(teamMemory, config.teamName);
+
+    for (const tool of createTeamMemoryTools(teamMemory)) tools.register(tool);
+
+    // Lazy index injector: injects a short list of available team memory
+    // topics into the system prompt instead of loading all content upfront.
+    injectors.push(createTeamMemoryIndexInjector(teamMemory, config.teamName));
+  }
+
   // E4 — context-engine registry. Built-ins register at construction; the
   // PluginLoader exposes it so plugins can contribute custom engines via
   // `EthosPluginApi.registerContextEngine`.
@@ -412,6 +433,7 @@ export async function createAgentLoop(
     watcher,
     injectionClassifier,
     contextEngines,
+    ...(config.teamName ? { teamId: config.teamName } : {}),
     ...(opts.observability ? { observability: opts.observability } : {}),
     options: {
       platform: profile,
@@ -425,6 +447,86 @@ export async function createAgentLoop(
   for (const tool of createDelegationTools(loop, opts.meshRegistryPath)) tools.register(tool);
 
   return loop;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 — team memory helpers (used only by createAgentLoop)
+// ---------------------------------------------------------------------------
+
+const TEAM_MEMORY_BOOTSTRAP_TOPICS = ['onboarding', 'decisions'] as const;
+
+/**
+ * Seed empty topic files via the team memory provider if no .md files exist
+ * yet. Called once at AgentLoop wiring time (before the loop starts) so
+ * agents always see at least the bootstrap topics in the lazy index.
+ */
+async function seedTeamMemory(
+  teamMemory: MarkdownFileMemoryProvider,
+  teamName: string,
+): Promise<void> {
+  const seedCtx: MemoryContext = {
+    scopeId: `team:${teamName}`,
+    sessionId: 'seed',
+    sessionKey: 'seed',
+    platform: 'cli',
+    workingDir: '',
+  };
+  try {
+    const refs = await teamMemory.list(seedCtx);
+    if (refs.length === 0) {
+      for (const topic of TEAM_MEMORY_BOOTSTRAP_TOPICS) {
+        // Write empty content via add — the provider's sync() creates the dir.
+        await teamMemory.sync([{ action: 'add', key: `${topic}.md`, content: '' }], seedCtx);
+      }
+    }
+  } catch {
+    // Non-fatal — team memory still works; agents just won't see bootstrap topics in the index.
+  }
+}
+
+/**
+ * ContextInjector that injects a short list of available team memory topics
+ * into the system prompt at session start. Uses lazy mode — only topic names
+ * are injected; content is loaded on demand via team_memory_read.
+ */
+function createTeamMemoryIndexInjector(
+  teamMemory: MemoryProvider,
+  teamName: string,
+): ContextInjector {
+  return {
+    id: `team-memory-index:${teamName}`,
+    priority: 70,
+
+    async inject(ctx: PromptContext): Promise<InjectionResult | null> {
+      const memCtx: MemoryContext = {
+        scopeId: `team:${teamName}`,
+        sessionId: ctx.sessionId,
+        sessionKey: ctx.sessionKey,
+        platform: ctx.platform,
+        workingDir: ctx.workingDir ?? '',
+      };
+
+      let refs: MemoryEntryRef[];
+      try {
+        refs = await teamMemory.list(memCtx);
+      } catch {
+        return null;
+      }
+
+      // Filter to only .md files that are non-empty keys (skip USER.md — not a team topic).
+      const topics = refs
+        .filter((r) => r.key !== 'USER.md')
+        .map((r) => r.key.replace(/\.md$/i, ''));
+
+      if (topics.length === 0) return null;
+
+      const lines = topics.map((t) => `- ${t}`).join('\n');
+      return {
+        content: `Team memory topics available (call team_memory_read to load):\n${lines}`,
+        position: 'append',
+      };
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
