@@ -43,7 +43,7 @@ export interface OpenClawPackageJsonBlock {
 
 // ---------------------------------------------------------------------------
 // Minimal config stub — OpenClaw passes its full config to plugin methods.
-// The shim constructs a minimal object from Ethos's MemoryLoadContext.
+// The shim constructs a minimal object from Ethos's MemoryContext.
 // ---------------------------------------------------------------------------
 
 export interface OpenClawConfig {

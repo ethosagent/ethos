@@ -20,6 +20,7 @@
 import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { MemoryContext } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MarkdownFileMemoryProvider } from '../index';
 
@@ -27,22 +28,25 @@ import { MarkdownFileMemoryProvider } from '../index';
 function botCtx(
   botKey: string,
   personalityId: string,
-  memoryScope: 'per-personality' | 'global' = 'per-personality',
-) {
+  scope: 'personality' | 'global' = 'personality',
+): MemoryContext {
   return {
+    scopeId: scope === 'personality' ? `personality:${personalityId}` : 'global',
     sessionId: `tg:${botKey}:chat42`,
     sessionKey: `tg:${botKey}:chat42`,
     platform: 'telegram',
-    personalityId,
-    memoryScope,
-  } as const;
+    workingDir: '/tmp',
+  };
 }
 
 let testDir: string;
 let provider: MarkdownFileMemoryProvider;
 
 beforeEach(() => {
-  testDir = join(tmpdir(), `ethos-multi-bot-test-${Date.now()}`);
+  testDir = join(
+    tmpdir(),
+    `ethos-multi-bot-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   provider = new MarkdownFileMemoryProvider({ dir: testDir });
 });
 
@@ -59,10 +63,11 @@ describe('different-personality bots — memory isolation', () => {
     const researcherCtx = botCtx('researcher-bot', 'researcher');
     const coderCtx = botCtx('coder-bot', 'coder');
 
-    await provider.sync(researcherCtx, [
-      { store: 'memory', action: 'add', content: 'Researcher insight.' },
-    ]);
-    await provider.sync(coderCtx, [{ store: 'memory', action: 'add', content: 'Coder insight.' }]);
+    await provider.sync(
+      [{ action: 'add', key: 'MEMORY.md', content: 'Researcher insight.' }],
+      researcherCtx,
+    );
+    await provider.sync([{ action: 'add', key: 'MEMORY.md', content: 'Coder insight.' }], coderCtx);
 
     const researcherMem = await readFile(
       join(testDir, 'personalities', 'researcher', 'MEMORY.md'),
@@ -77,12 +82,14 @@ describe('different-personality bots — memory isolation', () => {
   });
 
   it('shared MEMORY.md at root is not written when both bots use per-personality scope', async () => {
-    await provider.sync(botCtx('researcher-bot', 'researcher'), [
-      { store: 'memory', action: 'add', content: 'Researcher insight.' },
-    ]);
-    await provider.sync(botCtx('coder-bot', 'coder'), [
-      { store: 'memory', action: 'add', content: 'Coder insight.' },
-    ]);
+    await provider.sync(
+      [{ action: 'add', key: 'MEMORY.md', content: 'Researcher insight.' }],
+      botCtx('researcher-bot', 'researcher'),
+    );
+    await provider.sync(
+      [{ action: 'add', key: 'MEMORY.md', content: 'Coder insight.' }],
+      botCtx('coder-bot', 'coder'),
+    );
 
     const shared = await readFile(join(testDir, 'MEMORY.md'), 'utf-8').catch(() => null);
     if (shared !== null) {
@@ -98,14 +105,17 @@ describe('different-personality bots — memory isolation', () => {
 
 describe('same-personality bots — shared memory', () => {
   it('two bots bound to the same personality accumulate into one MEMORY.md', async () => {
-    // e.g. one human-facing bot and one programmatic-callers bot, both bound to 'researcher'
     const humanBot = botCtx('researcher-human', 'researcher');
     const apiBot = botCtx('researcher-api', 'researcher');
 
-    await provider.sync(humanBot, [
-      { store: 'memory', action: 'add', content: 'Human session fact.' },
-    ]);
-    await provider.sync(apiBot, [{ store: 'memory', action: 'add', content: 'API session fact.' }]);
+    await provider.sync(
+      [{ action: 'add', key: 'MEMORY.md', content: 'Human session fact.' }],
+      humanBot,
+    );
+    await provider.sync(
+      [{ action: 'add', key: 'MEMORY.md', content: 'API session fact.' }],
+      apiBot,
+    );
 
     const sharedMem = await readFile(
       join(testDir, 'personalities', 'researcher', 'MEMORY.md'),
@@ -126,27 +136,25 @@ describe('USER.md — global across bots', () => {
     const researcherCtx = botCtx('researcher-bot', 'researcher');
     const coderCtx = botCtx('coder-bot', 'coder');
 
-    // Researcher bot writes user context
-    await provider.sync(researcherCtx, [
-      { store: 'user', action: 'replace', content: 'I prefer TypeScript.' },
-    ]);
+    await provider.sync(
+      [{ action: 'replace', key: 'USER.md', content: 'I prefer TypeScript.' }],
+      researcherCtx,
+    );
 
-    // Coder bot (different personality) reads — should see the USER.md
     const result = await provider.prefetch(coderCtx);
-
-    expect(result).not.toBeNull();
-    expect(result?.content).toContain('I prefer TypeScript.');
+    const all = result?.entries.map((e) => e.content).join('\n') ?? '';
+    expect(all).toContain('I prefer TypeScript.');
   });
 
   it('USER.md file lives at the root, not inside any personality subdirectory', async () => {
-    await provider.sync(botCtx('researcher-bot', 'researcher'), [
-      { store: 'user', action: 'replace', content: 'Root user fact.' },
-    ]);
+    await provider.sync(
+      [{ action: 'replace', key: 'USER.md', content: 'Root user fact.' }],
+      botCtx('researcher-bot', 'researcher'),
+    );
 
     const rootUser = await readFile(join(testDir, 'USER.md'), 'utf-8');
     expect(rootUser).toContain('Root user fact.');
 
-    // Must NOT appear inside any personality subdirectory
     const personalityUser = await readFile(
       join(testDir, 'personalities', 'researcher', 'USER.md'),
       'utf-8',
@@ -161,45 +169,53 @@ describe('USER.md — global across bots', () => {
 
 describe('prefetch — per-bot memory context', () => {
   it('each bot sees only its personality MEMORY.md on prefetch', async () => {
-    await provider.sync(botCtx('researcher-bot', 'researcher'), [
-      { store: 'memory', action: 'add', content: 'Researcher-only fact.' },
-    ]);
-    await provider.sync(botCtx('coder-bot', 'coder'), [
-      { store: 'memory', action: 'add', content: 'Coder-only fact.' },
-    ]);
+    await provider.sync(
+      [{ action: 'add', key: 'MEMORY.md', content: 'Researcher-only fact.' }],
+      botCtx('researcher-bot', 'researcher'),
+    );
+    await provider.sync(
+      [{ action: 'add', key: 'MEMORY.md', content: 'Coder-only fact.' }],
+      botCtx('coder-bot', 'coder'),
+    );
 
     const researcherResult = await provider.prefetch(botCtx('researcher-bot', 'researcher'));
     const coderResult = await provider.prefetch(botCtx('coder-bot', 'coder'));
 
-    expect(researcherResult?.content).toContain('Researcher-only fact.');
-    expect(researcherResult?.content).not.toContain('Coder-only fact.');
+    const reviewerMem = researcherResult?.entries.find((e) => e.key === 'MEMORY.md')?.content;
+    const coderMem = coderResult?.entries.find((e) => e.key === 'MEMORY.md')?.content;
 
-    expect(coderResult?.content).toContain('Coder-only fact.');
-    expect(coderResult?.content).not.toContain('Researcher-only fact.');
+    expect(reviewerMem).toContain('Researcher-only fact.');
+    expect(reviewerMem).not.toContain('Coder-only fact.');
+    expect(coderMem).toContain('Coder-only fact.');
+    expect(coderMem).not.toContain('Researcher-only fact.');
   });
 
   it('prefetch includes shared USER.md for all bots alongside per-personality MEMORY.md', async () => {
-    await provider.sync(botCtx('researcher-bot', 'researcher'), [
-      { store: 'user', action: 'replace', content: 'I work in fintech.' },
-    ]);
-    await provider.sync(botCtx('researcher-bot', 'researcher'), [
-      { store: 'memory', action: 'add', content: 'Researcher memory.' },
-    ]);
-    await provider.sync(botCtx('coder-bot', 'coder'), [
-      { store: 'memory', action: 'add', content: 'Coder memory.' },
-    ]);
+    await provider.sync(
+      [{ action: 'replace', key: 'USER.md', content: 'I work in fintech.' }],
+      botCtx('researcher-bot', 'researcher'),
+    );
+    await provider.sync(
+      [{ action: 'add', key: 'MEMORY.md', content: 'Researcher memory.' }],
+      botCtx('researcher-bot', 'researcher'),
+    );
+    await provider.sync(
+      [{ action: 'add', key: 'MEMORY.md', content: 'Coder memory.' }],
+      botCtx('coder-bot', 'coder'),
+    );
 
     const researcherResult = await provider.prefetch(botCtx('researcher-bot', 'researcher'));
     const coderResult = await provider.prefetch(botCtx('coder-bot', 'coder'));
 
-    // Both bots see the shared USER.md
-    expect(researcherResult?.content).toContain('I work in fintech.');
-    expect(coderResult?.content).toContain('I work in fintech.');
+    const flatten = (r: typeof researcherResult) =>
+      r?.entries.map((e) => `${e.key}::${e.content}`).join('\n') ?? '';
 
-    // Each bot only sees its own MEMORY.md
-    expect(researcherResult?.content).toContain('Researcher memory.');
-    expect(researcherResult?.content).not.toContain('Coder memory.');
-    expect(coderResult?.content).toContain('Coder memory.');
-    expect(coderResult?.content).not.toContain('Researcher memory.');
+    expect(flatten(researcherResult)).toContain('I work in fintech.');
+    expect(flatten(coderResult)).toContain('I work in fintech.');
+
+    expect(flatten(researcherResult)).toContain('Researcher memory.');
+    expect(flatten(researcherResult)).not.toContain('Coder memory.');
+    expect(flatten(coderResult)).toContain('Coder memory.');
+    expect(flatten(coderResult)).not.toContain('Researcher memory.');
   });
 });

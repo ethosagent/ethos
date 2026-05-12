@@ -1,4 +1,11 @@
-import type { MemoryProvider, SessionStore, Tool, ToolResult } from '@ethosagent/types';
+import type {
+  MemoryContext,
+  MemoryProvider,
+  SessionStore,
+  Tool,
+  ToolContext,
+  ToolResult,
+} from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // memory_read
@@ -24,33 +31,30 @@ export function createMemoryReadTool(memory: MemoryProvider): Tool {
     async execute(args, ctx): Promise<ToolResult> {
       const { store = 'both' } = args as { store?: 'memory' | 'user' | 'both' };
 
-      const result = await memory.prefetch({
-        sessionId: ctx.sessionId,
-        sessionKey: ctx.sessionKey,
-        platform: ctx.platform,
-        workingDir: ctx.workingDir,
-        personalityId: ctx.personalityId,
-        memoryScope: ctx.memoryScope,
-      });
+      const memCtx = buildMemoryContext(ctx);
+      const snapshot = await memory.prefetch(memCtx);
 
-      if (!result) {
+      if (!snapshot || snapshot.entries.length === 0) {
         return { ok: true, value: 'Memory is empty. No notes recorded yet.' };
       }
 
-      // Filter by requested store
+      const byKey = new Map(snapshot.entries.map((e) => [e.key, e.content]));
+
       if (store === 'memory') {
-        const memSection = extractSection(result.content, '## Memory');
-        return { ok: true, value: memSection ?? 'MEMORY.md is empty.' };
+        const content = byKey.get('MEMORY.md');
+        return { ok: true, value: content?.trim() || 'MEMORY.md is empty.' };
       }
       if (store === 'user') {
-        const userSection = extractSection(result.content, '## About You');
-        return { ok: true, value: userSection ?? 'USER.md is empty.' };
+        const content = byKey.get('USER.md');
+        return { ok: true, value: content?.trim() || 'USER.md is empty.' };
       }
 
-      return {
-        ok: true,
-        value: result.truncated ? `${result.content}\n\n[truncated]` : result.content,
-      };
+      const parts: string[] = [];
+      const user = byKey.get('USER.md');
+      if (user) parts.push(`## About You\n\n${user.trim()}`);
+      const mem = byKey.get('MEMORY.md');
+      if (mem) parts.push(`## Memory\n\n${mem.trim()}`);
+      return { ok: true, value: parts.join('\n\n') };
     },
   };
 }
@@ -108,27 +112,18 @@ export function createMemoryWriteTool(memory: MemoryProvider): Tool {
         };
       }
 
-      const syncCtx = {
-        sessionId: ctx.sessionId,
-        sessionKey: ctx.sessionKey,
-        platform: ctx.platform,
-        workingDir: ctx.workingDir,
-        personalityId: ctx.personalityId,
-        memoryScope: ctx.memoryScope,
-      };
+      const memCtx = buildMemoryContext(ctx);
+      const key = store === 'memory' ? 'MEMORY.md' : 'USER.md';
 
-      await memory.sync(syncCtx, [
-        {
-          store,
-          action,
-          content,
-          substringMatch: substring_match,
-        },
-      ]);
+      if (action === 'remove') {
+        const match = substring_match ?? content;
+        await memory.sync([{ action: 'remove', key, substringMatch: match }], memCtx);
+      } else {
+        await memory.sync([{ action, key, content }], memCtx);
+      }
 
-      const label = store === 'memory' ? 'MEMORY.md' : 'USER.md';
       const verb = action === 'add' ? 'Appended to' : action === 'replace' ? 'Replaced' : 'Updated';
-      return { ok: true, value: `${verb} ${label}` };
+      return { ok: true, value: `${verb} ${key}` };
     },
   };
 }
@@ -197,10 +192,26 @@ export function createMemoryTools(memory: MemoryProvider, session: SessionStore)
 // Helpers
 // ---------------------------------------------------------------------------
 
-function extractSection(content: string, header: string): string | null {
-  const idx = content.indexOf(header);
-  if (idx < 0) return null;
-  const nextHeader = content.indexOf('\n## ', idx + 1);
-  const section = nextHeader > 0 ? content.slice(idx, nextHeader) : content.slice(idx);
-  return section.trim() || null;
+/**
+ * Build the `MemoryContext` the new five-method provider contract expects.
+ *
+ * `scopeId` follows the documented opaque-prefix convention: when the
+ * active personality is in `per-personality` memoryScope, we stamp
+ * `personality:<id>`. Anything else (global scope, no personality) maps
+ * to the shared `global` scope. Task 2 (Phase 2) revisits this — the
+ * AgentLoop will eventually resolve the scope and hand it through ctx.
+ */
+function buildMemoryContext(ctx: ToolContext): MemoryContext {
+  const personalityId = ctx.personalityId;
+  const scopeId =
+    ctx.memoryScope === 'per-personality' && personalityId
+      ? `personality:${personalityId}`
+      : 'global';
+  return {
+    scopeId,
+    sessionId: ctx.sessionId,
+    sessionKey: ctx.sessionKey,
+    platform: ctx.platform,
+    workingDir: ctx.workingDir ?? '',
+  };
 }

@@ -740,11 +740,21 @@ export function App({
       case 'memory': {
         try {
           const mem = createMemoryProvider({ dataDir: `${homedir()}/.ethos` });
-          const result = await mem.prefetch({ sessionId: '', sessionKey, platform: 'cli' });
-          if (result) {
+          const result = await mem.prefetch({
+            scopeId: 'global',
+            sessionId: '',
+            sessionKey,
+            platform: 'cli',
+            workingDir: process.cwd(),
+          });
+          if (result && result.entries.length > 0) {
             setMessages((prev) => [
               ...prev,
-              { id: nextId(), role: 'assistant', text: result.content },
+              {
+                id: nextId(),
+                role: 'assistant',
+                text: result.entries.map((e) => e.content.trim()).join('\n\n'),
+              },
             ]);
           } else {
             setStatusMsg('[no memory yet — chat to build it]');

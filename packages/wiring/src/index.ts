@@ -447,8 +447,6 @@ export function createSessionStore(opts: CreateSessionStoreOptions): SessionStor
 export interface CreateMemoryProviderOptions {
   /** Root data directory (typically `~/.ethos`). */
   dataDir: string;
-  /** Max characters returned by prefetch before truncation. */
-  maxChars?: number;
 }
 
 // The markdown backend supports MEMORY.md / USER.md direct read/write
@@ -458,7 +456,7 @@ export interface CreateMemoryProviderOptions {
 export function createMemoryProvider(
   opts: CreateMemoryProviderOptions,
 ): MemoryProvider & GlobalMemoryStore {
-  return new MarkdownFileMemoryProvider({ dir: opts.dataDir, maxChars: opts.maxChars });
+  return new MarkdownFileMemoryProvider({ dir: opts.dataDir });
 }
 
 // ---------------------------------------------------------------------------

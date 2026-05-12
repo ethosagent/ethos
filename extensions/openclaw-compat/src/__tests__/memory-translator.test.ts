@@ -1,4 +1,4 @@
-import type { MemoryLoadContext, PromptContext } from '@ethosagent/types';
+import type { MemoryContext, PromptContext } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import {
   translateBeforePromptBuildHook,
@@ -9,10 +9,12 @@ import {
 } from '../memory-translator';
 import type { MemoryPluginCapability, MemoryPluginRuntime } from '../types';
 
-const baseLoadCtx: MemoryLoadContext = {
+const baseLoadCtx: MemoryContext = {
+  scopeId: 'global',
   sessionId: 'sess-1',
   sessionKey: 'key-1',
   platform: 'cli',
+  workingDir: '/tmp',
 };
 
 const basePromptCtx: PromptContext = {
@@ -42,9 +44,7 @@ describe('translateMemoryCapability', () => {
     const provider = translateMemoryCapability(cap);
     const result = await provider.prefetch(baseLoadCtx);
     expect(result).not.toBeNull();
-    expect(result?.content).toBe('memory line 1\nmemory line 2');
-    expect(result?.source).toBe('custom');
-    expect(result?.truncated).toBe(false);
+    expect(result?.entries[0]?.content).toBe('memory line 1\nmemory line 2');
   });
 
   it('returns null when promptBuilder returns empty array', async () => {
@@ -53,7 +53,7 @@ describe('translateMemoryCapability', () => {
     expect(await provider.prefetch(baseLoadCtx)).toBeNull();
   });
 
-  it('delegates to runtime when no promptBuilder', async () => {
+  it('delegates to runtime search when no promptBuilder', async () => {
     const runtime: MemoryPluginRuntime = {
       async getMemorySearchManager() {
         return {
@@ -67,15 +67,14 @@ describe('translateMemoryCapability', () => {
     };
     const cap: MemoryPluginCapability = { runtime };
     const provider = translateMemoryCapability(cap);
-    const ctx = { ...baseLoadCtx, query: 'what do I know?' };
-    const result = await provider.prefetch(ctx);
-    expect(result).not.toBeNull();
-    expect(result?.content).toContain('result from runtime');
+    const results = await provider.search('what do I know?', baseLoadCtx);
+    expect(results.length).toBe(1);
+    expect(results[0]?.content).toContain('result from runtime');
   });
 
   it('sync() resolves without throwing', async () => {
     const provider = translateMemoryCapability({});
-    await expect(provider.sync(baseLoadCtx, [])).resolves.toBeUndefined();
+    await expect(provider.sync([], baseLoadCtx)).resolves.toBeUndefined();
   });
 });
 
@@ -84,7 +83,7 @@ describe('translateMemoryCapability', () => {
 // ---------------------------------------------------------------------------
 
 describe('translateMemoryRuntime', () => {
-  it('returns null when manager is null', async () => {
+  it('prefetch always returns null (runtime providers are search-driven)', async () => {
     const runtime: MemoryPluginRuntime = {
       async getMemorySearchManager() {
         return { manager: null };
@@ -94,46 +93,53 @@ describe('translateMemoryRuntime', () => {
     expect(await provider.prefetch(baseLoadCtx)).toBeNull();
   });
 
-  it('returns null when no query in context', async () => {
+  it('search() returns [] when manager is null', async () => {
+    const runtime: MemoryPluginRuntime = {
+      async getMemorySearchManager() {
+        return { manager: null };
+      },
+    };
+    const provider = translateMemoryRuntime(runtime);
+    expect(await provider.search('hello', baseLoadCtx)).toEqual([]);
+  });
+
+  it('search() returns [] for empty query', async () => {
     const runtime: MemoryPluginRuntime = {
       async getMemorySearchManager() {
         return {
           manager: {
             async search() {
-              return [];
+              return [{ content: 'never', id: '1' }];
             },
           },
         };
       },
     };
     const provider = translateMemoryRuntime(runtime);
-    // baseLoadCtx has no query
-    expect(await provider.prefetch(baseLoadCtx)).toBeNull();
+    expect(await provider.search('   ', baseLoadCtx)).toEqual([]);
   });
 
-  it('returns null when manager has no search method', async () => {
+  it('search() returns [] when manager has no search method', async () => {
     const runtime: MemoryPluginRuntime = {
       async getMemorySearchManager() {
         return { manager: {} };
       },
     };
     const provider = translateMemoryRuntime(runtime);
-    const ctx = { ...baseLoadCtx, query: 'hello' };
-    expect(await provider.prefetch(ctx)).toBeNull();
+    expect(await provider.search('hello', baseLoadCtx)).toEqual([]);
   });
 
-  it('returns null when getMemorySearchManager throws', async () => {
+  it('search() returns [] when getMemorySearchManager throws', async () => {
     const runtime: MemoryPluginRuntime = {
       async getMemorySearchManager() {
         throw new Error('connection failed');
       },
     };
     const provider = translateMemoryRuntime(runtime);
-    const ctx = { ...baseLoadCtx, query: 'hello' };
-    expect(await provider.prefetch(ctx)).toBeNull();
+    expect(await provider.search('hello', baseLoadCtx)).toEqual([]);
   });
 
-  it('returns joined results from search()', async () => {
+  it('search() returns mapped entries from runtime', async () => {
     const runtime: MemoryPluginRuntime = {
       async getMemorySearchManager() {
         return {
@@ -149,15 +155,13 @@ describe('translateMemoryRuntime', () => {
       },
     };
     const provider = translateMemoryRuntime(runtime);
-    const ctx = { ...baseLoadCtx, query: 'who am I?' };
-    const result = await provider.prefetch(ctx);
-    expect(result).not.toBeNull();
-    expect(result?.content).toContain('result A for: who am I?');
-    expect(result?.content).toContain('result B');
-    expect(result?.source).toBe('custom');
+    const results = await provider.search('who am I?', baseLoadCtx);
+    expect(results.length).toBe(2);
+    expect(results[0]?.content).toContain('result A for: who am I?');
+    expect(results[1]?.content).toContain('result B');
   });
 
-  it('returns null when search returns empty array', async () => {
+  it('search() returns [] when runtime search returns empty array', async () => {
     const runtime: MemoryPluginRuntime = {
       async getMemorySearchManager() {
         return {
@@ -170,8 +174,7 @@ describe('translateMemoryRuntime', () => {
       },
     };
     const provider = translateMemoryRuntime(runtime);
-    const ctx = { ...baseLoadCtx, query: 'anything' };
-    expect(await provider.prefetch(ctx)).toBeNull();
+    expect(await provider.search('anything', baseLoadCtx)).toEqual([]);
   });
 });
 

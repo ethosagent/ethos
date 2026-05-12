@@ -16,6 +16,7 @@ import type {
   ContextInjector,
   HookRegistry,
   LLMProvider,
+  MemoryContext,
   MemoryProvider,
   Message,
   MessageContent,
@@ -435,16 +436,34 @@ export class AgentLoop {
     const allMessages = await this.session.getMessages(sessionId, { limit: this.historyLimit });
     const history = allMessages.filter((m) => m.role !== 'system');
 
-    // Step 5: Prefetch memory
-    const memCtx = await this.memory.prefetch({
+    // Step 5: Prefetch memory.
+    //
+    // Task 1 (Phase 0+1): the AgentLoop hands the provider an opaque
+    // `scopeId`. Personalities in `per-personality` memoryScope route into
+    // a per-personality scope; everything else lands in the shared
+    // `global` scope. Task 2 will fold per-team scopes in.
+    const memScopeId =
+      personality.memoryScope === 'per-personality' ? `personality:${personality.id}` : 'global';
+    const memCtx: MemoryContext = {
+      scopeId: memScopeId,
       sessionId,
       sessionKey,
       platform: this.platform,
       workingDir: this.workingDir,
-      personalityId: personality.id,
-      memoryScope: personality.memoryScope,
-      query: text,
-    });
+    };
+    let memSnapshot = await this.memory.prefetch(memCtx);
+
+    // Providers that don't support bulk prefetch (e.g. VectorMemoryProvider)
+    // return null. Fall back to a semantic search on the current user text so
+    // those backends still inject relevant context into the system prompt —
+    // restoring the query-driven retrieval the old two-method contract did
+    // internally inside prefetch().
+    if (!memSnapshot && text.trim()) {
+      const hits = await this.memory.search(text, memCtx, { limit: 5 });
+      if (hits.length > 0) {
+        memSnapshot = { entries: hits.map((h) => ({ key: h.key, content: h.content })) };
+      }
+    }
 
     // Step 6: Build system prompt from injectors
     const promptCtx: PromptContext = {
@@ -497,9 +516,38 @@ export class AgentLoop {
       yield { type: 'context_meta', data: promptCtx.meta };
     }
 
-    // Memory injected last, as context about the user
-    if (memCtx) {
-      systemParts.push(`## Memory\n\n${memCtx.content}`);
+    // Memory injected last, as context about the user. The snapshot is a
+    // list of (key, content) pairs; render USER.md as "About You" first,
+    // MEMORY.md as "Memory" second, anything else as its own section.
+    //
+    // Hard cap on the total memory block at 20k chars — same budget the
+    // old MarkdownFileMemoryProvider enforced internally. Without this,
+    // a long-running session's MEMORY.md grows unbounded and silently
+    // explodes the system prompt token bill.
+    if (memSnapshot && memSnapshot.entries.length > 0) {
+      const blocks: string[] = [];
+      const orderHints: Record<string, string> = {
+        'USER.md': 'About You',
+        'MEMORY.md': 'Memory',
+      };
+      const sorted = [...memSnapshot.entries].sort((a, b) => {
+        const rank = (k: string) => (k === 'USER.md' ? 0 : k === 'MEMORY.md' ? 1 : 2);
+        return rank(a.key) - rank(b.key);
+      });
+      for (const e of sorted) {
+        const heading = orderHints[e.key] ?? e.key;
+        blocks.push(`## ${heading}\n\n${e.content.trim()}`);
+      }
+      if (blocks.length > 0) {
+        let rendered = `## Memory\n\n${blocks.join('\n\n')}`;
+        const MEMORY_MAX_CHARS = 20_000;
+        if (rendered.length > MEMORY_MAX_CHARS) {
+          // Tail-keep — newer memory lives at the end; the prelude carries
+          // less per-token signal than the freshest facts.
+          rendered = `[...truncated]\n\n${rendered.slice(-MEMORY_MAX_CHARS)}`;
+        }
+        systemParts.push(rendered);
+      }
     }
 
     // Step 7: Before-prompt-build modifying hooks (plugins can prepend/append/override)
