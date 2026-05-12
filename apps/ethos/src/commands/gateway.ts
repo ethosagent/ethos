@@ -12,6 +12,8 @@ import { readRuntime, removeRuntime } from '@ethosagent/team-supervisor';
 // optionalDependencies of @ethosagent/cli. A failed install for any one of
 // them must not crash the CLI for users who don't run that platform.
 import type { InboundMessage, PlatformAdapter } from '@ethosagent/types';
+import { createDangerPredicate } from '@ethosagent/wiring';
+import { ApprovalCoordinator, createSlackApprovalHook } from '../approval-coordinator';
 import {
   applyPlatformShim,
   deriveBotKey,
@@ -268,6 +270,13 @@ export async function runGatewayStart(): Promise<void> {
     });
   }
 
+  // Wire the interactive tool-approval flow. Registers a `before_tool_call`
+  // hook on every bot loop that suspends a dangerous tool call until the
+  // user clicks Allow / Deny on a Slack card. No-op for deployments without
+  // a Slack adapter — the hook still suspends, but the card never posts, so
+  // we only register it when at least one Slack adapter is present.
+  wireApprovalFlow(gateway, bots, adapters);
+
   // Start cron scheduler — runs inside the gateway process
   const scheduler = new CronScheduler({
     logger: new ConsoleLogger(),
@@ -359,6 +368,230 @@ async function buildGatewayBots(config: EthosConfig): Promise<GatewayBotConfig[]
   for (const bot of config.telegram?.bots ?? []) out.push(await buildOne(bot));
   for (const app of config.slack?.apps ?? []) out.push(await buildOne(app));
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Interactive tool-approval flow (Slack)
+// ---------------------------------------------------------------------------
+
+// `import type` only — erased at runtime, so `@ethosagent/platform-slack`
+// stays lazily loaded via `loadAdapterModule` and the layering is unchanged.
+// This replaces what was a structural duck-typed interface: the approval
+// contract now has a single named owner (`ApprovalCapableAdapter` in the
+// Slack package) that `SlackAdapter` deliberately implements.
+type ApprovalCapableAdapter = import('@ethosagent/platform-slack').ApprovalCapableAdapter;
+
+/**
+ * Runtime narrowing for the approval surface. The adapter list is typed as
+ * `PlatformAdapter[]` (adapters are loaded lazily and heterogeneously), so a
+ * structural probe is still needed to pick out the approval-capable ones —
+ * but it narrows to the explicit, package-owned `ApprovalCapableAdapter`
+ * type, not an ad-hoc shape.
+ */
+function isApprovalCapable(
+  adapter: PlatformAdapter,
+): adapter is PlatformAdapter & ApprovalCapableAdapter {
+  const a = adapter as Partial<ApprovalCapableAdapter>;
+  return (
+    typeof a.botKey === 'string' &&
+    typeof a.postApprovalCard === 'function' &&
+    typeof a.updateApprovalCard === 'function' &&
+    typeof a.onApprovalDecision === 'function'
+  );
+}
+
+/**
+ * Connect the agent loop's `before_tool_call` hook to Slack approval cards.
+ *
+ * Three wires:
+ *   1. `before_tool_call` hook on every *Slack-served* bot loop →
+ *      `ApprovalCoordinator` suspends dangerous calls. The danger source is
+ *      `createDangerPredicate` (terminal hardline still hard-blocks
+ *      separately via the synchronous guard `createAgentLoop` registers —
+ *      this hook is the approval path for the always-ask set). The hook is
+ *      registered ONLY on loops whose bot has a Slack adapter: a loop with
+ *      no card surface would suspend a dangerous call forever.
+ *   2. `coordinator.onPending` → resolve the sessionId to its adapter/chat/
+ *      thread via the gateway and post an approval card.
+ *   3. each Slack adapter's button-click event → `coordinator.approve/deny`
+ *      and an in-place `chat.update` of the card.
+ *
+ * Skipped entirely when no Slack adapter is configured — no Slack surface
+ * means no card to post, and the synchronous terminal guard already covers
+ * the hardline case.
+ */
+function wireApprovalFlow(
+  gateway: Gateway,
+  bots: GatewayBotConfig[],
+  adapters: PlatformAdapter[],
+): void {
+  const slackAdapters = adapters.filter(isApprovalCapable);
+  if (slackAdapters.length === 0) return;
+
+  const coordinator = new ApprovalCoordinator();
+  const isDangerous = createDangerPredicate();
+
+  // Where a posted card lives, keyed by `approvalId`. Populated once
+  // `postApprovalCard` succeeds; consumed by the `onResolved` handler so the
+  // card is updated in place no matter HOW the approval resolved — button
+  // click, timeout, or session cancel. A fail-closed deny (no card ever
+  // posted) simply has no entry here, so the update is skipped.
+  const postedCards = new Map<
+    string,
+    { adapter: ApprovalCapableAdapter; chatId: string; messageTs: string; toolName: string }
+  >();
+  // Resolutions that landed BEFORE the card finished posting (e.g. a session
+  // cancel races the Slack API call). Keyed by `approvalId`. The post
+  // `.then()` drains this so a card posted into an already-resolved approval
+  // is updated immediately instead of being left with live buttons forever.
+  const resolvedBeforePost = new Map<string, { decision: 'allow' | 'deny'; decidedBy: string }>();
+  // `approvalId`s with a `postApprovalCard` call genuinely in flight. Gates
+  // `resolvedBeforePost`: without it, a fail-closed deny (no route / no
+  // Slack adapter / post failure) would record an outcome that no post
+  // `.then()` ever drains — an unbounded leak.
+  const inFlightPosts = new Set<string>();
+
+  // Resolve a `sessionId` to its Slack approval target. Returns `undefined`
+  // — meaning "no Slack approval surface, pass the call through" — for any
+  // turn whose route isn't an approval-capable adapter. This is the seam
+  // that keeps the hook from coupling Slack to other platforms: a
+  // Discord/Email turn that fell back to a Slack-bound bot's shared loop
+  // resolves to a non-Slack adapter here and the hook leaves it untouched.
+  const resolveApprovalTarget = (sessionId: string) => {
+    const route = gateway.resolveApprovalRoute(sessionId);
+    if (!route || !isApprovalCapable(route.adapter)) return undefined;
+    // Bind the approval to the user whose message triggered the turn, so a
+    // bystander in the channel can't click Allow on a tool call they don't own.
+    return { requesterUserId: route.requesterUserId };
+  };
+
+  // Register the approval hook only on loops whose bot is served by a Slack
+  // adapter. Registering it on a non-Slack-served loop would be dead weight;
+  // the `resolveApprovalTarget` pass-through above handles the case where a
+  // Slack-served loop also fields non-Slack turns.
+  const slackBotKeys = new Set(slackAdapters.map((a) => a.botKey));
+  for (const bot of bots) {
+    if (!slackBotKeys.has(bot.botKey)) continue;
+    bot.loop.hooks.registerModifying(
+      'before_tool_call',
+      createSlackApprovalHook({ coordinator, isDangerous, resolveApprovalTarget }),
+    );
+  }
+
+  // Update a posted card to its resolved state. Shared by the normal
+  // `onResolved` path and the post-races-resolution recovery path.
+  const updateCard = (
+    card: { adapter: ApprovalCapableAdapter; chatId: string; messageTs: string; toolName: string },
+    decision: 'allow' | 'deny',
+    decidedBy: string,
+  ): void => {
+    void card.adapter
+      .updateApprovalCard({
+        chatId: card.chatId,
+        messageTs: card.messageTs,
+        toolName: card.toolName,
+        decision,
+        decidedBy,
+      })
+      .then((result) => {
+        if (!result.ok) {
+          console.error('[gateway] failed to update approval card:', result.error);
+        }
+      })
+      .catch((err) => {
+        console.error('[gateway] failed to update approval card:', err);
+      });
+  };
+
+  // Pending approval → post a card on the originating Slack conversation.
+  //
+  // Fail CLOSED: the agent loop's hook is already suspended on the
+  // coordinator promise. Any path that can't deliver a card — no route, a
+  // non-Slack adapter (e.g. a Discord/Email message that fell back to this
+  // Slack bot's loop), or a Slack post failure — must resolve the approval
+  // as a deny, or the turn hangs forever with no way to recover. Card
+  // delivery is a correctness path, not an observability-only one.
+  coordinator.onPending((req) => {
+    const route = gateway.resolveApprovalRoute(req.sessionId);
+    if (!route || !isApprovalCapable(route.adapter)) {
+      void coordinator.deny(req.approvalId, 'system');
+      return;
+    }
+    const adapter = route.adapter;
+    inFlightPosts.add(req.approvalId);
+    void adapter
+      .postApprovalCard({
+        chatId: route.chatId,
+        threadId: route.threadId,
+        approvalId: req.approvalId,
+        toolName: req.toolName,
+        reason: req.reason,
+        args: req.args,
+      })
+      .then((result) => {
+        inFlightPosts.delete(req.approvalId);
+        if ('error' in result) {
+          console.error('[gateway] failed to post approval card:', result.error);
+          resolvedBeforePost.delete(req.approvalId);
+          void coordinator.deny(req.approvalId, 'system');
+          return;
+        }
+        const card = {
+          adapter,
+          chatId: route.chatId,
+          messageTs: result.messageTs,
+          toolName: req.toolName,
+        };
+        // If the approval resolved while this post was in flight, the
+        // `onResolved` handler already ran and found no card. Drain that
+        // recorded outcome now so the freshly-posted card doesn't sit in the
+        // channel with live buttons forever.
+        const racedOutcome = resolvedBeforePost.get(req.approvalId);
+        if (racedOutcome) {
+          resolvedBeforePost.delete(req.approvalId);
+          updateCard(card, racedOutcome.decision, racedOutcome.decidedBy);
+          return;
+        }
+        postedCards.set(req.approvalId, card);
+      })
+      .catch((err) => {
+        inFlightPosts.delete(req.approvalId);
+        resolvedBeforePost.delete(req.approvalId);
+        console.error('[gateway] failed to post approval card:', err);
+        void coordinator.deny(req.approvalId, 'system');
+      });
+  });
+
+  // Resolution (from ANY source — click, timeout, cancel) → update the card
+  // in place so its buttons disappear and it reflects the real decision. The
+  // card UI must never lie about approval state. When a card post is still
+  // in flight, record the outcome so the post `.then()` can apply it the
+  // moment the card exists; when no post is in flight (a fail-closed deny
+  // with no route), there's no card to update and nothing to record.
+  coordinator.onResolved((approvalId, decision, decidedBy) => {
+    const card = postedCards.get(approvalId);
+    if (!card) {
+      if (inFlightPosts.has(approvalId)) {
+        resolvedBeforePost.set(approvalId, { decision, decidedBy });
+      }
+      return;
+    }
+    postedCards.delete(approvalId);
+    updateCard(card, decision, decidedBy);
+  });
+
+  // Button click → resolve the approval through the coordinator. The card
+  // update is handled by the `onResolved` handler above, so a click and a
+  // timeout converge on the same render path.
+  for (const adapter of slackAdapters) {
+    adapter.onApprovalDecision((event) => {
+      if (event.decision === 'allow') {
+        void coordinator.approve(event.approvalId, event.decidedBy);
+      } else {
+        void coordinator.deny(event.approvalId, event.decidedBy);
+      }
+    });
+  }
 }
 
 /**

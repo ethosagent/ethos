@@ -14,6 +14,13 @@ import type {
   Storage,
 } from '@ethosagent/types';
 import boltPkg from '@slack/bolt';
+import {
+  APPROVE_ACTION_ID,
+  approvalPendingBlocks,
+  approvalResolvedBlocks,
+  DENY_ACTION_ID,
+} from './blocks/approval';
+import { plaintextFallback } from './blocks/shared';
 import { chunkText, reflowChunks } from './chunking';
 import {
   dispatch as dispatchSlash,
@@ -25,6 +32,11 @@ import type { Binding, ChannelMode } from './config';
 import { DEFAULT_CHANNEL_MODE } from './config';
 import { registerMemberEvents } from './events/members';
 import { registerMessageEvents } from './events/messages';
+import {
+  type ApprovalActionPayload,
+  type ApprovalDecisionEvent,
+  handleApprovalAction,
+} from './interactions/actions';
 import { resolveChannelMode } from './routing/triage';
 import { ChannelOverrideStore } from './store/channel-overrides';
 import { ThreadStateStore } from './store/thread-state';
@@ -71,7 +83,36 @@ export interface SlackAdapterConfig {
   kanban?: KanbanReader;
 }
 
-export class SlackAdapter implements PlatformAdapter {
+/**
+ * The interactive tool-approval surface — a `PlatformAdapter` extension that
+ * only Slack implements today. Declared as an explicit, named contract so
+ * the gateway can depend on it via `import type` (erased at runtime, so the
+ * adapter stays lazily loaded) instead of duck-typing the method shape. A
+ * future approval-capable adapter implements this deliberately rather than
+ * matching by coincidence.
+ */
+export interface ApprovalCapableAdapter {
+  /** Stable per-bot identifier — matches a gateway `botKey`. */
+  readonly botKey: string;
+  postApprovalCard(input: {
+    chatId: string;
+    threadId?: string;
+    approvalId: string;
+    toolName: string;
+    reason: string | null;
+    args: unknown;
+  }): Promise<{ messageTs: string } | { error: string }>;
+  updateApprovalCard(input: {
+    chatId: string;
+    messageTs: string;
+    toolName: string;
+    decision: 'allow' | 'deny';
+    decidedBy: string;
+  }): Promise<DeliveryResult>;
+  onApprovalDecision(handler: (event: ApprovalDecisionEvent) => void): void;
+}
+
+export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   readonly id: string;
   readonly displayName = 'Slack';
   readonly canSendTyping = false;
@@ -92,6 +133,8 @@ export class SlackAdapter implements PlatformAdapter {
   private readonly kanban: KanbanReader | undefined;
   private readonly storage: Storage | undefined;
   private messageHandler?: (message: InboundMessage) => void;
+  /** Approval-card button-click handler, wired by the approval coordinator. */
+  private approvalDecisionHandler?: (event: ApprovalDecisionEvent) => void;
   /** Bolt-internal inbound handle. Resolved during `start()` via auth.test. */
   private selfUserId: string | null = null;
 
@@ -201,6 +244,46 @@ export class SlackAdapter implements PlatformAdapter {
       }
     });
 
+    // Approval-card button clicks. Bolt delivers `block_actions` events here;
+    // we parse the raw payload down to the fields `handleApprovalAction`
+    // needs and let it route to the coordinator's decision handler. Registered
+    // unconditionally — a click with no handler wired is a harmless no-op.
+    //
+    // Slack is the one thing we don't control: a malformed payload or Bolt
+    // API drift must not throw inside the event loop. We defensively probe
+    // the shape before dereferencing, ack when we can, and bail otherwise.
+    const onApprovalButton = async (raw: unknown): Promise<void> => {
+      const evt = (raw ?? {}) as {
+        ack?: unknown;
+        body?: { user?: { id?: string }; channel?: { id?: string }; message?: { ts?: string } };
+        action?: { action_id?: string; value?: string };
+      };
+      if (typeof evt.ack === 'function') {
+        await (evt.ack as () => Promise<void>)().catch(() => {});
+      }
+      const handler = this.approvalDecisionHandler;
+      if (!handler) return;
+      const body = evt.body;
+      const action = evt.action;
+      if (
+        typeof body !== 'object' ||
+        body === null ||
+        typeof action !== 'object' ||
+        action === null
+      )
+        return;
+      const payload: ApprovalActionPayload = {
+        actionId: action.action_id ?? '',
+        approvalId: action.value ?? '',
+        userId: body.user?.id ?? '',
+        channelId: body.channel?.id ?? '',
+        messageTs: body.message?.ts ?? '',
+      };
+      await handleApprovalAction(payload, { onDecision: async (event) => handler(event) });
+    };
+    this.app.action(APPROVE_ACTION_ID, onApprovalButton);
+    this.app.action(DENY_ACTION_ID, onApprovalButton);
+
     await this.app.start();
   }
 
@@ -291,6 +374,85 @@ export class SlackAdapter implements PlatformAdapter {
       this.chunkMap.delete(oldestKey);
     }
     this.chunkMap.set(primary, ids);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tool-approval cards
+  //
+  // The Slack adapter is the only platform with an interactive approval
+  // affordance, so these methods live here rather than on `PlatformAdapter`.
+  // The approval coordinator (apps layer) drives them: post a card when a
+  // dangerous tool call is gated, update it in place once resolved. The
+  // adapter never imports `@ethosagent/gateway` — the coordinator hands it a
+  // plain `chatId` / `threadId`, so layering stays one-directional.
+  // ---------------------------------------------------------------------------
+
+  /** Post the pending approval card. Returns the message `ts` so the
+   *  coordinator can `chat.update` it in place once the user decides. */
+  async postApprovalCard(input: {
+    chatId: string;
+    threadId?: string;
+    approvalId: string;
+    toolName: string;
+    reason: string | null;
+    args: unknown;
+  }): Promise<{ messageTs: string } | { error: string }> {
+    const blocks = approvalPendingBlocks({
+      approvalId: input.approvalId,
+      toolName: input.toolName,
+      reason: input.reason,
+      args: input.args,
+    });
+    try {
+      const result = await this.client.chat.postMessage({
+        channel: input.chatId,
+        text: plaintextFallback(blocks),
+        blocks: blocks as never,
+        ...(input.threadId ? { thread_ts: input.threadId } : {}),
+      });
+      const ts = result.ts as string | undefined;
+      if (!ts) return { error: 'Slack accepted the approval card but returned no message ts' };
+      return { messageTs: ts };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Replace a posted approval card with its resolved (decision) state —
+   *  removes the buttons so the card can't be clicked twice. */
+  async updateApprovalCard(input: {
+    chatId: string;
+    messageTs: string;
+    toolName: string;
+    decision: 'allow' | 'deny';
+    decidedBy: string;
+  }): Promise<DeliveryResult> {
+    const blocks = approvalResolvedBlocks({
+      toolName: input.toolName,
+      decision: input.decision,
+      decidedBy: input.decidedBy,
+    });
+    try {
+      await this.client.chat.update({
+        channel: input.chatId,
+        ts: input.messageTs,
+        text: plaintextFallback(blocks),
+        blocks: blocks as never,
+      });
+      return { ok: true };
+    } catch (err) {
+      // A stale card left showing live buttons is misleading on a privileged
+      // surface — report the failure rather than swallowing it. The caller
+      // (gateway) decides how loud to be; the decision itself is already
+      // final regardless.
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Register the approval-card button-click handler. The coordinator wires
+   *  this to its `approve()` / `deny()` calls. */
+  onApprovalDecision(handler: (event: ApprovalDecisionEvent) => void): void {
+    this.approvalDecisionHandler = handler;
   }
 
   async health(): Promise<{ ok: boolean; latencyMs?: number }> {

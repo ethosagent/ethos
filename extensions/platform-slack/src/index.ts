@@ -6,8 +6,14 @@
 // keeping `index.ts` a thin barrel makes it easy to refactor internals
 // without rippling through every consumer.
 
-export type { SlackAdapterConfig } from './adapter';
+export type { ApprovalCapableAdapter, SlackAdapterConfig } from './adapter';
 export { SlackAdapter } from './adapter';
+export {
+  APPROVE_ACTION_ID,
+  approvalPendingBlocks,
+  approvalResolvedBlocks,
+  DENY_ACTION_ID,
+} from './blocks/approval';
 export type { KanbanTicket } from './blocks/kanban';
 export { chunkText, reflowChunks } from './chunking';
 export type { KanbanReader, MemoryReader } from './commands';
@@ -17,3 +23,4 @@ export {
   ChannelModeSchema,
   DEFAULT_CHANNEL_MODE,
 } from './config';
+export type { ApprovalDecisionEvent } from './interactions/actions';

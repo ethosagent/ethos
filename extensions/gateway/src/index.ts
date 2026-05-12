@@ -242,6 +242,21 @@ const PLATFORM_COMMANDS: Record<
 // Gateway
 // ---------------------------------------------------------------------------
 
+/**
+ * Where an in-flight turn originated — the adapter/chat/thread plus the user
+ * who triggered it. The `before_tool_call` approval flow resolves a
+ * `sessionId` to this so it can surface a prompt on the right conversation
+ * and bind the decision to the rightful approver.
+ */
+export interface SessionRouting {
+  adapter: PlatformAdapter;
+  chatId: string;
+  threadId?: string;
+  /** Platform user id of whoever's message triggered the turn. Absent when
+   *  the adapter didn't stamp one — the approval is then left unbound. */
+  requesterUserId?: string;
+}
+
 export class Gateway {
   /** Bot routing table keyed by `botKey`. */
   private readonly bots: Map<string, GatewayBotConfig>;
@@ -266,6 +281,29 @@ export class Gateway {
   private readonly outboundDedup: MessageDedupCache;
   /** Active turns by laneKey — used by graceful shutdown to notify users. */
   private readonly activeTurns = new Map<string, { adapter: PlatformAdapter; chatId: string }>();
+  /**
+   * Routing for an in-flight turn, keyed by `sessionKey`. Populated when the
+   * turn is enqueued (where `adapter`, `chatId`, and `threadId` are all in
+   * scope) and consumed by the `session_start` hook below, which is the only
+   * place `sessionId` becomes known. `activeTurns` is keyed by `laneKey` and
+   * lacks `threadId`, so it can't serve this — hence a parallel map.
+   */
+  private readonly sessionRouting = new Map<string, SessionRouting>();
+  /**
+   * `sessionId → routing` — the bridge a `before_tool_call` approval hook
+   * needs. The hook only has `sessionId`; the adapter/chat/thread live on the
+   * inbound message. The gateway is the one component that knows both halves,
+   * so it owns the mapping. Populated by the `session_start` hook (which
+   * carries both ids), cleared when the turn ends.
+   */
+  private readonly approvalRoutes = new Map<string, SessionRouting>();
+  /**
+   * `sessionKey → sessionId`, recorded by the `session_start` hook. The
+   * gateway never computes `sessionId` itself (the AgentLoop does), so this
+   * is how turn-end cleanup — which only knows `sessionKey` — finds the
+   * `approvalRoutes` entry to evict.
+   */
+  private readonly sessionIdByKey = new Map<string, string>();
   private readonly maxChats: number;
   /** Chapter 1 safety: per-platform sender allowlist + pairing config. */
   private readonly channelFilter: ChannelFilterConfig | undefined;
@@ -316,6 +354,22 @@ export class Gateway {
       throw new Error('Gateway: duplicate botKey in GatewayConfig.bots.');
     }
     this.defaultBotKey = botEntries.length === 1 ? botEntries[0].botKey : null;
+
+    // Bridge `sessionId → routing`. `session_start` fires inside `loop.run()`
+    // (AgentLoop step 2) and is the only hook that carries BOTH `sessionId`
+    // and `sessionKey`. We register it on every bot loop so that, by the time
+    // any `before_tool_call` approval hook fires later in the same turn, the
+    // gateway can resolve the sessionId back to its adapter/chat/thread.
+    for (const entry of botEntries) {
+      entry.loop.hooks.registerVoid('session_start', async (payload) => {
+        const routing = this.sessionRouting.get(payload.sessionKey);
+        if (routing) {
+          this.approvalRoutes.set(payload.sessionId, routing);
+          this.sessionIdByKey.set(payload.sessionKey, payload.sessionId);
+        }
+      });
+    }
+
     this.dedupWindow = config.dedupWindow ?? 1024;
     this.maxChats = config.maxChats ?? 4096;
     // ttlMs <= 0 disables dedup inside the cache itself (shouldSend always returns true).
@@ -745,6 +799,17 @@ export class Gateway {
 
       // Track this turn so graceful shutdown can notify the user (P1-1).
       this.activeTurns.set(laneKey, { adapter, chatId: message.chatId });
+      // Record routing keyed by `sessionKey` so the `session_start` hook
+      // (which runs inside `loop.run()` below and is the only place the
+      // `sessionId` is known) can complete the `sessionId → routing` bridge.
+      // `message.threadId` is in scope here; `activeTurns` isn't a fit
+      // because it's keyed by `laneKey` and carries no thread identifier.
+      this.sessionRouting.set(sessionKey, {
+        adapter,
+        chatId: message.chatId,
+        threadId: message.threadId ? message.threadId : undefined,
+        requesterUserId: message.userId,
+      });
 
       // Typing indicator — renew every 4 s (Telegram shows it for ~5 s)
       await adapter.sendTyping?.(message.chatId).catch(() => {});
@@ -813,8 +878,29 @@ export class Gateway {
       } finally {
         clearInterval(typingTimer);
         this.activeTurns.delete(laneKey);
+        // Tear down the approval-routing bridge for this turn. An approval
+        // fires *during* the turn (the hook awaits, the turn is paused), so
+        // the maps are guaranteed populated for the whole pending window.
+        this.sessionRouting.delete(sessionKey);
+        const sessionId = this.sessionIdByKey.get(sessionKey);
+        if (sessionId !== undefined) {
+          this.approvalRoutes.delete(sessionId);
+          this.sessionIdByKey.delete(sessionKey);
+        }
       }
     });
+  }
+
+  /**
+   * Resolve a `sessionId` to the adapter/chat/thread its turn originated
+   * from — the bridge a `before_tool_call` approval hook needs to surface an
+   * approval prompt on the right platform conversation. Returns `undefined`
+   * once the turn ends (or if the sessionId was never seen). Platform-
+   * agnostic by design: the gateway returns a generic `PlatformAdapter` and
+   * never learns which concrete platform is in play.
+   */
+  resolveApprovalRoute(sessionId: string): SessionRouting | undefined {
+    return this.approvalRoutes.get(sessionId);
   }
 
   /**
@@ -837,6 +923,9 @@ export class Gateway {
     this.lanes.clear();
     this.sessionKeys.clear();
     this.activeTurns.clear();
+    this.sessionRouting.clear();
+    this.approvalRoutes.clear();
+    this.sessionIdByKey.clear();
   }
 
   // ---------------------------------------------------------------------------
