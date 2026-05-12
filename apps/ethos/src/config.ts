@@ -690,7 +690,7 @@ export function validateBotBindings(
     if (bind.type === 'team' && !deps.teamNames.has(bind.name)) {
       errors.push(
         `${label}: bind.name='${bind.name}' is not a known team. ` +
-          'Add a team manifest at ~/.ethos/teams/<name>/team.yaml, or fix the binding.',
+          `Add a team manifest at ~/.ethos/teams/${bind.name}.yaml, or fix the binding.`,
       );
     }
   };

@@ -372,6 +372,11 @@ describe('validateBotBindings', () => {
     );
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatch(/not a known team/);
+    // The remediation path the message tells the operator to create
+    // MUST match where the validator actually looks (Codex caught this
+    // mismatch on Phase 1 — message said `<name>/team.yaml`, validator
+    // looked at `<name>.yaml`).
+    expect(errors[0]).toContain('~/.ethos/teams/missing.yaml');
   });
 
   it('detects duplicate botKeys across telegram + slack (global namespace)', () => {

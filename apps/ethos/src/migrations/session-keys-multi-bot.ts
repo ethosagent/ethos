@@ -33,7 +33,7 @@ export async function migrateSessionKeysIfNeeded(opts: {
     // First-ever boot: nothing to migrate. Drop the marker so subsequent
     // boots don't keep re-checking.
     await opts.storage.write(marker, new Date().toISOString());
-    return { migrated: 0, alreadyMigrated: 0, skippedNoBot: 0 };
+    return { migrated: 0, alreadyMigrated: 0, skippedNoBot: 0, skippedTargetExists: 0 };
   }
 
   // Build the platform → known/primary botKey lookups from the resolved
@@ -55,12 +55,14 @@ export async function migrateSessionKeysIfNeeded(opts: {
   const result = migrateSessionKeys({ dbPath, knownByPlatform, primaryByPlatform });
   await opts.storage.write(marker, new Date().toISOString());
   opts.logger?.info(
-    `[session-keys] migration done: ${result.migrated} migrated, ${result.alreadyMigrated} already, ${result.skippedNoBot} skipped`,
+    `[session-keys] migration done: ${result.migrated} migrated, ${result.alreadyMigrated} already, ` +
+      `${result.skippedTargetExists} skipped (target exists), ${result.skippedNoBot} skipped (no bot)`,
     {
       component: 'gateway',
       migrated: result.migrated,
       alreadyMigrated: result.alreadyMigrated,
       skippedNoBot: result.skippedNoBot,
+      skippedTargetExists: result.skippedTargetExists,
     },
   );
   return result;

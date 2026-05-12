@@ -24,6 +24,11 @@ export interface SessionKeyMigrationResult {
   migrated: number;
   alreadyMigrated: number;
   skippedNoBot: number;
+  /** Legacy rows whose new key already exists in the table — they
+   *  represent stale sessions superseded by a later post-migration row.
+   *  Left in place (not rewritten, not deleted) so history stays
+   *  forensically readable. */
+  skippedTargetExists: number;
 }
 
 /** @internal — one-shot migration options. */
@@ -94,6 +99,7 @@ export function migrateSessionKeys(opts: MigrateSessionKeysOptions): SessionKeyM
   let migrated = 0;
   let alreadyMigrated = 0;
   let skippedNoBot = 0;
+  let skippedTargetExists = 0;
   try {
     const rows = db.prepare('SELECT id, key FROM sessions').all() as Array<{
       id: string;
@@ -115,12 +121,20 @@ export function migrateSessionKeys(opts: MigrateSessionKeysOptions): SessionKeyM
         continue;
       }
       const { newKey } = decision;
+      // Target already in the table: the new row is the live session
+      // (created by a previous partial migration or a post-upgrade
+      // chat). Leave the legacy row alone — it's superseded but
+      // useful as historical context, and rewriting would explode on
+      // the UNIQUE constraint. Idempotent on re-run.
       if (existingKeys.has(newKey) && newKey !== row.key) {
-        collisions.push(
-          `${row.key} → ${newKey} (target already exists). Inspect ${opts.dbPath} manually.`,
-        );
+        skippedTargetExists++;
         continue;
       }
+      // Two legacy rows in this pass that decide to the same target —
+      // a structural impossibility under the current key shape (each
+      // chatId → one ${botKey}:${chatId} target), but if the shape
+      // ever evolves we want the failure mode to be loud, not a
+      // silently-overwritten row.
       const dupe = targets.get(newKey);
       if (dupe) {
         collisions.push(`${row.key} and (id=${dupe}) both decide to ${newKey}.`);
@@ -147,5 +161,5 @@ export function migrateSessionKeys(opts: MigrateSessionKeysOptions): SessionKeyM
   } finally {
     db.close();
   }
-  return { migrated, alreadyMigrated, skippedNoBot };
+  return { migrated, alreadyMigrated, skippedNoBot, skippedTargetExists };
 }

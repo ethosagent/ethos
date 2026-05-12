@@ -298,12 +298,7 @@ try {
         const gwResult = await runSetup('messaging');
         if (gwResult?.launchChat) await runChat(gwResult.config);
       } else if (sub === 'start') {
-        const config = await readConfig(getStorage());
-        if (!config) {
-          console.error('Run ethos setup first.');
-          process.exit(1);
-        }
-        await runGatewayStart(config);
+        await runGatewayStart();
       } else {
         console.log('Usage: ethos gateway [setup | start]');
       }

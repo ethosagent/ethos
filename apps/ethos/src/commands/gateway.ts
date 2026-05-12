@@ -11,10 +11,10 @@ import { createPersonalityRegistry } from '@ethosagent/personalities';
 // them must not crash the CLI for users who don't run that platform.
 import type { InboundMessage, PlatformAdapter } from '@ethosagent/types';
 import {
-  applyPlatformShim,
   deriveBotKey,
   type EthosConfig,
   ethosDir,
+  loadConfigStrict,
   readConfig,
   type SlackAppConfig,
   type TelegramBotConfig,
@@ -109,15 +109,27 @@ export async function runGatewaySetup(): Promise<void> {
 // ethos gateway start
 // ---------------------------------------------------------------------------
 
-export async function runGatewayStart(config: EthosConfig): Promise<void> {
-  // Apply the legacy → list-shape shim before any platform inspection so
-  // single-bot configs and multi-bot configs flow through the same code
-  // path below. Operators see the deprecation warnings up front.
-  const shimmed = applyPlatformShim(config);
-  config = shimmed.config;
-  for (const note of shimmed.deprecations) {
+export async function runGatewayStart(): Promise<void> {
+  // Load config through the strict path so parse-time errors (typos in
+  // bind.type, missing bot tokens) surface here instead of silently
+  // booting zero bots. The strict loader also applies the legacy →
+  // list-shape shim and returns the deprecation messages we should
+  // surface before any other work.
+  const storage = getStorage();
+  const loaded = await loadConfigStrict(storage);
+  if (!loaded) {
+    console.error('Run ethos setup first.');
+    process.exit(1);
+  }
+  if (loaded.parseErrors.length > 0) {
+    console.log(`${c.red}Config parse errors:${c.reset}`);
+    for (const err of loaded.parseErrors) console.log(`  • ${err}`);
+    process.exit(1);
+  }
+  for (const note of loaded.deprecations) {
     console.log(`${c.yellow}⚠ deprecation${c.reset} ${c.dim}${note}${c.reset}`);
   }
+  const config = loaded.config;
 
   const hasEmailConfig =
     config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost;
@@ -135,6 +147,25 @@ export async function runGatewayStart(config: EthosConfig): Promise<void> {
     process.exit(1);
   }
 
+  // Cheap config invariants first — before constructing any AgentLoop.
+  // Phase 1 supports one bot per platform; refusing the config here
+  // means we don't spin up LLM providers, plugin loaders, or team
+  // supervisors only to immediately exit. Phase 2 lifts this limit.
+  if ((config.telegram?.bots.length ?? 0) > 1) {
+    console.log(
+      `${c.red}Phase 1 supports one telegram bot per gateway. ` +
+        `Configure exactly one entry under 'telegram.bots' or wait for Phase 2.${c.reset}`,
+    );
+    process.exit(1);
+  }
+  if ((config.slack?.apps.length ?? 0) > 1) {
+    console.log(
+      `${c.red}Phase 1 supports one slack app per gateway. ` +
+        `Configure exactly one entry under 'slack.apps' or wait for Phase 2.${c.reset}`,
+    );
+    process.exit(1);
+  }
+
   // Validate bot bindings against the on-disk personality registry and
   // team manifests. Fail loudly here rather than letting messages route
   // to a non-existent destination at first request.
@@ -148,7 +179,7 @@ export async function runGatewayStart(config: EthosConfig): Promise<void> {
   // Migrate persisted session keys to the new `${platform}:${botKey}:
   // ${chatId}` shape if we haven't already. Idempotent — subsequent
   // boots see the marker and short-circuit.
-  const migration = await migrateSessionKeysIfNeeded({ storage: getStorage(), config });
+  const migration = await migrateSessionKeysIfNeeded({ storage, config });
   if (migration && migration.migrated > 0) {
     console.log(
       `${c.dim}Migrated ${migration.migrated} session key(s) to the multi-bot lane format.${c.reset}`,
@@ -180,26 +211,6 @@ export async function runGatewayStart(config: EthosConfig): Promise<void> {
     console.log(
       `${c.dim}bot${c.reset} ${c.bold}${bot.botKey}${c.reset} ${c.dim}→ ${bot.binding.type}:${bot.binding.name}${c.reset}`,
     );
-  }
-  // Phase-1 single-adapter bridge: each platform can have at most one
-  // bot until Phase 2 introduces per-bot adapter instances. A
-  // multi-bot config on a single-adapter platform would silently route
-  // all inbound traffic to bot zero, which is exactly the failure
-  // mode that creates an apparently-multi-bot deployment that is
-  // actually single-bot. Fail loudly instead.
-  if ((config.telegram?.bots.length ?? 0) > 1) {
-    console.log(
-      `${c.red}Phase 1 supports one telegram bot per gateway. ` +
-        `Configure exactly one entry under 'telegram.bots' or wait for Phase 2.${c.reset}`,
-    );
-    process.exit(1);
-  }
-  if ((config.slack?.apps.length ?? 0) > 1) {
-    console.log(
-      `${c.red}Phase 1 supports one slack app per gateway. ` +
-        `Configure exactly one entry under 'slack.apps' or wait for Phase 2.${c.reset}`,
-    );
-    process.exit(1);
   }
   const telegramBotKey = config.telegram?.bots[0] ? deriveBotKey(config.telegram.bots[0]) : null;
   const slackBotKey = config.slack?.apps[0] ? deriveBotKey(config.slack.apps[0]) : null;

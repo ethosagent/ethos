@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { decideMigration } from '../session-key-migration';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import Database from 'better-sqlite3';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { SQLiteSessionStore } from '../index';
+import { decideMigration, migrateSessionKeys } from '../session-key-migration';
 
 // Multi-bot routing session-key migration. Pure decision logic is
 // unit-tested here; the SQLite-touching `migrateSessionKeys` wrapper
@@ -62,5 +67,138 @@ describe('decideMigration', () => {
     expect(decideMigration(first.newKey, known, primary)).toEqual({
       kind: 'skip-already-migrated',
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// migrateSessionKeys — SQLite-backed integration tests.
+//
+// The decision function is pure and unit-tested above; this block covers
+// the actual DB rewrite, including the case that motivated the fix:
+// a partially-migrated database where the same logical chat appears as
+// both `telegram:42` (legacy) and `telegram:<botKey>:42` (post-migration).
+// ---------------------------------------------------------------------------
+
+describe('migrateSessionKeys (SQLite integration)', () => {
+  let tempDir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'session-keys-mig-'));
+    dbPath = join(tempDir, 'sessions.db');
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function seed(rows: Array<{ key: string; platform: string }>): void {
+    // Use SQLiteSessionStore to set up the schema, then write rows
+    // directly via SQL — bypassing createSession's `usage` requirement
+    // since the migration only inspects `key`.
+    const store = new SQLiteSessionStore(dbPath);
+    store.close();
+    const db = new Database(dbPath);
+    try {
+      const insert = db.prepare(
+        `INSERT INTO sessions (id, key, platform, model, provider, created_at, updated_at)
+         VALUES (?, ?, ?, 'm', 'p', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+      );
+      for (const [i, r] of rows.entries()) {
+        insert.run(`id-${i}`, r.key, r.platform);
+      }
+    } finally {
+      db.close();
+    }
+  }
+
+  function readAllKeys(): string[] {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const rows = db.prepare('SELECT key FROM sessions ORDER BY key').all() as Array<{
+        key: string;
+      }>;
+      return rows.map((r) => r.key);
+    } finally {
+      db.close();
+    }
+  }
+
+  const known = new Map<string, Set<string>>([['telegram', new Set(['t1key'])]]);
+  const primary = new Map<string, string>([['telegram', 't1key']]);
+
+  it('rewrites a clean legacy DB to the new key shape', async () => {
+    seed([
+      { key: 'telegram:42', platform: 'telegram' },
+      { key: 'telegram:99:1700000000000', platform: 'telegram' },
+    ]);
+    const result = migrateSessionKeys({
+      dbPath,
+      knownByPlatform: known,
+      primaryByPlatform: primary,
+    });
+    expect(result).toEqual({
+      migrated: 2,
+      alreadyMigrated: 0,
+      skippedNoBot: 0,
+      skippedTargetExists: 0,
+    });
+    expect(readAllKeys()).toEqual(['telegram:t1key:42', 'telegram:t1key:99:1700000000000']);
+  });
+
+  it('is idempotent on a fully-migrated DB (re-run is a no-op)', async () => {
+    seed([{ key: 'telegram:t1key:42', platform: 'telegram' }]);
+    const result = migrateSessionKeys({
+      dbPath,
+      knownByPlatform: known,
+      primaryByPlatform: primary,
+    });
+    expect(result).toEqual({
+      migrated: 0,
+      alreadyMigrated: 1,
+      skippedNoBot: 0,
+      skippedTargetExists: 0,
+    });
+    expect(readAllKeys()).toEqual(['telegram:t1key:42']);
+  });
+
+  it('handles a partially-migrated DB without aborting (mixed legacy + migrated rows for the same chat)', async () => {
+    // The pathological case that motivated the fix:
+    //   - `telegram:42` is the legacy row.
+    //   - `telegram:t1key:42` is a row that was either already migrated
+    //     by an earlier partial run, or freshly created post-upgrade.
+    //   - A naive preflight would see "target exists" for the legacy
+    //     row and abort the whole migration forever. The corrected
+    //     policy: leave the legacy row alone (dead history), count it.
+    seed([
+      { key: 'telegram:42', platform: 'telegram' },
+      { key: 'telegram:t1key:42', platform: 'telegram' },
+    ]);
+
+    const result = migrateSessionKeys({
+      dbPath,
+      knownByPlatform: known,
+      primaryByPlatform: primary,
+    });
+    expect(result).toEqual({
+      migrated: 0,
+      alreadyMigrated: 1, // telegram:t1key:42
+      skippedNoBot: 0,
+      skippedTargetExists: 1, // telegram:42 (target taken)
+    });
+    // Both rows still present; nothing was clobbered.
+    expect(readAllKeys()).toEqual(['telegram:42', 'telegram:t1key:42']);
+  });
+
+  it('skips rows whose platform has no configured bot', async () => {
+    seed([{ key: 'discord:42', platform: 'discord' }]);
+    const result = migrateSessionKeys({
+      dbPath,
+      knownByPlatform: known,
+      primaryByPlatform: primary,
+    });
+    expect(result.migrated).toBe(0);
+    expect(result.skippedNoBot).toBe(1);
+    expect(readAllKeys()).toEqual(['discord:42']);
   });
 });
