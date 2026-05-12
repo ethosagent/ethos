@@ -87,6 +87,25 @@ export interface EthosConfig {
   /** Show per-turn timing summary after every response. */
   verbose?: boolean;
   /**
+   * FW-10 — chat-surface verbosity. Cycles via `/verbose`.
+   *   `quiet`    final assistant text only — pipe-clean output
+   *   `default`  text + tool chips + spinner + usage line
+   *   `verbose`  also surfaces internal tool_progress events
+   *   `debug`    also dumps raw event JSON
+   */
+  displayVerbosity?: 'quiet' | 'default' | 'verbose' | 'debug';
+  /**
+   * FW-9 — what Enter does mid-turn.
+   *   `interrupt` (default) — abort in-flight run, start a new turn
+   *   `queue`     FIFO-queue the input, run it after the current turn ends
+   *   `steer`     inject as `[USER STEER]` on the next iteration's user message
+   */
+  displayBusyInputMode?: 'interrupt' | 'queue' | 'steer';
+  /**
+   * FW-11 — tool feed arg truncation. 0 = no truncation (default).
+   */
+  displayToolPreviewLength?: number;
+  /**
    * Named skin override (see `@ethosagent/design-tokens` built-in skins:
    * `default`, `mono`, `paper`). When set, the resolved tokens are wired
    * into both the TUI SkinContext and the Web ConfigProvider so the
@@ -137,6 +156,11 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   if (config.slackAppToken) lines.push(`slackAppToken: ${config.slackAppToken}`);
   if (config.slackSigningSecret) lines.push(`slackSigningSecret: ${config.slackSigningSecret}`);
   if (config.verbose) lines.push('verbose: true');
+  if (config.displayVerbosity) lines.push(`display.verbosity: ${config.displayVerbosity}`);
+  if (config.displayBusyInputMode)
+    lines.push(`display.busy_input_mode: ${config.displayBusyInputMode}`);
+  if (config.displayToolPreviewLength !== undefined)
+    lines.push(`display.tool_preview_length: ${config.displayToolPreviewLength}`);
   if (config.skin) lines.push(`skin: ${config.skin}`);
   if (config.retention) {
     for (const [key, val] of retentionToLines(config.retention)) {
@@ -162,6 +186,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const providersKv: Record<number, Record<string, string>> = {};
   const retentionKv: Record<string, string> = {};
   const personalitiesRetKv: Record<string, Record<string, string>> = {};
+  const displayKv: Record<string, string> = {};
   for (const line of src.split('\n')) {
     // providers.<index>.<field>: <value>
     const prov = line.match(/^providers\.(\d+)\.(\S+):\s*(.+)$/);
@@ -185,6 +210,12 @@ function parseConfigYaml(src: string): EthosConfig {
     const ret = line.match(/^retention\.(events\.)?(\w+):\s*(.+)$/);
     if (ret) {
       retentionKv[`${ret[1] ?? ''}${ret[2]}`] = ret[3].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // display.<field>: <value>
+    const disp = line.match(/^display\.([a-z_]+):\s*(.+)$/);
+    if (disp) {
+      displayKv[disp[1]] = disp[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // modelRouting.<personality>: <model>
@@ -251,10 +282,28 @@ function parseConfigYaml(src: string): EthosConfig {
     emailSmtpHost: kv.emailSmtpHost,
     emailSmtpPort: kv.emailSmtpPort ? Number(kv.emailSmtpPort) : undefined,
     verbose: kv.verbose === 'true' ? true : undefined,
+    displayVerbosity: parseVerbosity(displayKv.verbosity),
+    displayBusyInputMode: parseBusyMode(displayKv.busy_input_mode),
+    displayToolPreviewLength: parseToolPreviewLength(displayKv.tool_preview_length),
     skin: kv.skin || undefined,
     retention,
     personalitiesConfig,
   };
+}
+
+function parseVerbosity(v: string | undefined): EthosConfig['displayVerbosity'] {
+  return v === 'quiet' || v === 'default' || v === 'verbose' || v === 'debug' ? v : undefined;
+}
+
+function parseBusyMode(v: string | undefined): EthosConfig['displayBusyInputMode'] {
+  return v === 'interrupt' || v === 'queue' || v === 'steer' ? v : undefined;
+}
+
+function parseToolPreviewLength(v: string | undefined): number | undefined {
+  if (!v) return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return undefined;
+  return n;
 }
 
 function buildRetentionConfig(kv: Record<string, string>): RetentionConfig | undefined {

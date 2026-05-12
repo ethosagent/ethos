@@ -38,7 +38,13 @@ export const SessionSchema = z.object({
 });
 export type Session = z.infer<typeof SessionSchema>;
 
-export const MessageRoleSchema = z.enum(['user', 'assistant', 'tool_result', 'system']);
+export const MessageRoleSchema = z.enum([
+  'user',
+  'assistant',
+  'tool_result',
+  'system',
+  'user_steer',
+]);
 export type MessageRole = z.infer<typeof MessageRoleSchema>;
 
 export const ToolCallSchema = z.object({

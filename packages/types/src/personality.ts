@@ -238,6 +238,24 @@ export interface PersonalityConfig {
    * surfaces a warning.
    */
   skin?: string;
+  /**
+   * FW-9 — busy input mode for the live chat REPL. Overrides
+   * `display.busy_input_mode` in ~/.ethos/config.yaml when present.
+   *   `interrupt` (default at global level) — abort in-flight run on Enter
+   *   `queue`     FIFO-queue the input, runs after current turn ends
+   *   `steer`     fold as `[USER STEER]` text on the next iteration
+   * Channel adapters (telegram/slack/etc.) ignore this — they serialize per
+   * SessionLane already.
+   */
+  busyInputMode?: 'interrupt' | 'queue' | 'steer';
+  /**
+   * FW-10 — chat-surface verbosity. Overrides `display.verbosity` when set.
+   *   `quiet`    final assistant text only
+   *   `default`  text + tool chips + spinner + usage
+   *   `verbose`  also internal tool_progress events
+   *   `debug`    also raw event JSON
+   */
+  verbosity?: 'quiet' | 'default' | 'verbose' | 'debug';
 }
 
 export interface PersonalityRegistry {

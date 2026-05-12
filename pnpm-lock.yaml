@@ -70,6 +70,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.39.0
         version: 0.39.0
+      '@ethosagent/agent-bridge':
+        specifier: workspace:*
+        version: link:../../packages/agent-bridge
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core

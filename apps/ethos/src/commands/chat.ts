@@ -1,8 +1,14 @@
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
+import { InMemorySteerSink } from '@ethosagent/agent-bridge';
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
 import type { SplashInventory } from '@ethosagent/tui';
+import type { SteerSink } from '@ethosagent/types';
 import type { EthosConfig } from '../config';
+import { SpinnerState } from '../lib/spinner';
+import { renderStatusBar, type Threshold } from '../lib/status-bar';
+import { formatToolFeedLine } from '../lib/tool-feed';
+import { isVerbosity, nextVerbosity, projectEvent, type Verbosity } from '../lib/verbosity';
 import { resolveActiveLoop, startNightlyPrune } from '../wiring';
 import { runPairingCommand } from './pairing-commands';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
@@ -49,22 +55,77 @@ const c = {
   green: '\x1b[32m',
   red: '\x1b[31m',
   yellow: '\x1b[33m',
+  orange: '\x1b[38;5;208m',
 };
 
 const out = (s: string) => process.stdout.write(s);
 
+function colorForThreshold(t: Threshold): string {
+  switch (t) {
+    case 'red':
+      return c.red;
+    case 'orange':
+      return c.orange;
+    case 'yellow':
+      return c.yellow;
+    case 'green':
+      return c.green;
+  }
+}
+
+// FW-1 — model context window. Conservative default of 200K matches Anthropic
+// Sonnet/Opus and the OpenAI Compat default. Specific routes can refine later.
+const DEFAULT_CONTEXT_MAX = 200_000;
+
 // ---------------------------------------------------------------------------
-// Mutable chat state (shared between REPL and slash commands)
+// Mutable chat state
 // ---------------------------------------------------------------------------
+
+type BusyInputMode = 'interrupt' | 'queue' | 'steer';
 
 interface ChatState {
   sessionKey: string;
   personalityId: string;
   usage: { inputTokens: number; outputTokens: number; costUsd: number };
+  /** FW-1 — running max-of-turn context tokens for the status bar. */
+  contextTokens: number;
+  startedAt: number;
+  verbosity: Verbosity;
+  busyMode: BusyInputMode;
+  toolPreviewLength: number;
+  modelName: string;
+  /** Steer sink used by AgentLoop when `busyMode === 'steer'`. */
+  steerSink: SteerSink;
+  /** Inputs typed during an in-flight turn (`queue` mode). FIFO. */
+  inputQueue: string[];
+  /** Currently running turn — null when idle. */
+  abort: AbortController | null;
+  /** Total in-flight iterations seen this turn (for steer pre-first-iteration fallback). */
+  iterationsThisTurn: number;
+  /**
+   * True from the moment the user submits a normal turn through the end of
+   * queue-draining. Distinct from `abort` (which is null between consecutive
+   * drained turns). Prevents a second `'line'` event from spawning an
+   * overlapping `runTurn` while we're mid-drain. (Codex P2 finding #4.)
+   */
+  draining: boolean;
 }
 
 interface RunChatOptions {
   singleQuery?: string;
+}
+
+function renderStatusBarLine(state: ChatState): void {
+  const cols = process.stdout.columns ?? 80;
+  const bar = renderStatusBar({
+    model: state.modelName,
+    contextTokens: state.contextTokens,
+    contextMax: DEFAULT_CONTEXT_MAX,
+    elapsedSecs: Math.floor((Date.now() - state.startedAt) / 1000),
+    columns: cols,
+  });
+  const color = colorForThreshold(bar.threshold);
+  out(`${c.dim}⚕ ${color}${bar.text}${c.reset}\n`);
 }
 
 // ---------------------------------------------------------------------------
@@ -111,18 +172,22 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     sessionKey: `cli:${basename(process.cwd())}`,
     personalityId,
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+    contextTokens: 0,
+    startedAt: Date.now(),
+    verbosity: config.displayVerbosity ?? (config.verbose ? 'verbose' : 'default'),
+    busyMode: config.displayBusyInputMode ?? 'interrupt',
+    toolPreviewLength: config.displayToolPreviewLength ?? 0,
+    modelName: config.model,
+    steerSink: new InMemorySteerSink(),
+    inputQueue: [],
+    abort: null,
+    iterationsThisTurn: 0,
+    draining: false,
   };
 
-  // Session-scoped verbose flag. --verbose flag or config sets initial value;
-  // /verbose toggles within the session without writing to disk.
-  const verbose = { active: config.verbose ?? false };
-
-  let abort: AbortController | null = null;
-
-  // First Ctrl+C aborts the running turn. If nothing is running, it exits.
   rl.on('SIGINT', () => {
-    if (abort) {
-      abort.abort();
+    if (state.abort) {
+      state.abort.abort();
       out(`\n${c.dim}[aborted — press Ctrl+C again to exit]${c.reset}\n`);
     } else {
       out('\n');
@@ -135,139 +200,390 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   // Welcome
   out(`${c.bold}ethos${c.reset}  ${c.dim}${config.model} · ${displayName} · /help${c.reset}\n\n`);
 
-  // REPL loop
-  for (;;) {
-    let input: string;
-    try {
-      input = await prompt(rl);
-    } catch {
-      break; // readline closed
+  if (state.verbosity !== 'quiet') renderStatusBarLine(state);
+
+  // Switch from blocking rl.question to event-driven rl.on('line') so mid-turn
+  // input can be dispatched on busyMode.
+  rl.setPrompt(`${c.cyan}You${c.reset} > `);
+  rl.prompt();
+
+  rl.on('line', (raw) => {
+    const input = raw.trim();
+    if (!input) {
+      rl.prompt();
+      return;
     }
 
-    if (!input) continue;
-
-    if (input.startsWith('/')) {
-      await handleSlashCommand(input, state, verbose, loop, rl, config);
-      continue;
+    // Slash commands are always dispatched immediately — even mid-turn — except
+    // /busy and /steer which have special busy-state semantics handled below.
+    const isBusySlash = input.startsWith('/busy') || input.startsWith('/steer');
+    if (input.startsWith('/') && !isBusySlash) {
+      handleSlashCommand(input, state, loop, rl, config)
+        .then(() => {
+          // Only re-prompt when idle; a running turn will prompt on completion.
+          if (!state.draining && !state.abort) rl.prompt();
+        })
+        .catch((err) => {
+          out(`${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
+          if (!state.draining && !state.abort) rl.prompt();
+        });
+      return;
     }
 
-    // Agent turn
-    abort = new AbortController();
-
-    // Live elapsed spinner — always on
-    let elapsedSecs = 0;
-    let spinnerCleared = false;
-    out(`\n${c.bold}ethos${c.reset} ${c.dim}thinking 0s${c.reset}`);
-    const spinnerInterval = setInterval(() => {
-      elapsedSecs++;
-      if (!spinnerCleared) {
-        out(`\r${c.bold}ethos${c.reset} ${c.dim}thinking ${elapsedSecs}s${c.reset}`);
-      }
-    }, 1000);
-
-    function clearSpinner(): void {
-      if (spinnerCleared) return;
-      spinnerCleared = true;
-      clearInterval(spinnerInterval);
+    // Mid-drain / mid-turn: route non-slash input (and /busy, /steer) through
+    // the busy handler so two consecutive 'line' events can't spawn overlapping turns.
+    if (state.draining || state.abort) {
+      handleBusyInput(input, state);
+      return;
     }
 
-    // Per-turn timing state
-    const turnStart = Date.now();
-    let firstTextDeltaAt: number | null = null;
-    const toolDurations: number[] = [];
-    let turnUsage: TurnTiming['turnUsage'] = null;
-
-    const toolTimers = new Map<string, number>();
-    let hasText = false;
-
-    try {
-      for await (const event of loop.run(input, {
-        sessionKey: state.sessionKey,
-        personalityId: state.personalityId,
-        abortSignal: abort.signal,
-      })) {
-        // Phase 5: surface resolved model + source in verbose mode at turn start.
-        if (event.type === 'run_start' && verbose.active) {
-          out(`\r${c.dim}↳ ${event.provider}/${event.model} (${event.source})${c.reset}\n`);
-        }
-
-        // Timing bookkeeping + spinner transitions
-        if (event.type === 'text_delta' && firstTextDeltaAt === null) {
-          firstTextDeltaAt = Date.now();
-          clearSpinner();
-          out(`\r${c.bold}ethos${c.reset} > `);
-        }
-        if (event.type === 'tool_start' && !spinnerCleared) {
-          clearSpinner();
-          out('\n'); // move past spinner line before tool chip
-        }
-        if (event.type === 'tool_end') {
-          toolDurations.push(event.durationMs);
-        }
-        if (event.type === 'usage') {
-          turnUsage = {
-            inputTokens: event.inputTokens,
-            outputTokens: event.outputTokens,
-            estimatedCostUsd: event.estimatedCostUsd,
-          };
-        }
-        if (event.type === 'error') {
-          clearSpinner();
-        }
-
-        renderEvent(event, toolTimers, state.usage, hasText);
-        if (event.type === 'text_delta') hasText = true;
-
-        if (event.type === 'done') {
-          clearSpinner();
-          if (verbose.active) {
-            const summary = formatVerboseSummary({
-              turnStart,
-              turnEnd: Date.now(),
-              firstTextDeltaAt,
-              toolDurations,
-              turnUsage,
-            });
-            out(`\n${c.dim}${summary}${c.reset}`);
+    state.draining = true;
+    runTurn(input, state, loop)
+      .then(() => {
+        const drainNext = () => {
+          const next = state.inputQueue.shift();
+          if (!next) {
+            state.draining = false;
+            if (state.verbosity !== 'quiet') renderStatusBarLine(state);
+            rl.prompt();
+            return;
           }
-        }
-      }
-    } catch (err) {
-      clearSpinner();
-      if (!abort?.signal.aborted) {
-        out(`\n${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}`);
-      }
-    } finally {
-      clearInterval(spinnerInterval); // safety net
-      abort = null;
-      out('\n\n');
+          out(`${c.dim}[draining queue → ${next}]${c.reset}\n`);
+          runTurn(next, state, loop)
+            .then(drainNext)
+            .catch((err) => {
+              state.draining = false;
+              out(`${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
+              rl.prompt();
+            });
+        };
+        drainNext();
+      })
+      .catch((err) => {
+        state.draining = false;
+        out(`${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
+        rl.prompt();
+      });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// FW-9 — busy-input dispatch
+// ---------------------------------------------------------------------------
+
+function handleBusyInput(input: string, state: ChatState): void {
+  // /steer <text> and /busy <mode|status> always work regardless of mode.
+  if (input.startsWith('/steer ')) {
+    const text = input.slice('/steer '.length).trim();
+    pushSteer(text, state);
+    return;
+  }
+  if (input.startsWith('/busy')) {
+    const arg = input.slice('/busy'.length).trim();
+    handleBusyCommand(arg, state);
+    return;
+  }
+
+  switch (state.busyMode) {
+    case 'interrupt': {
+      state.abort?.abort();
+      // Queue the new input — it fires on the next prompt cycle after the
+      // current turn unwinds.
+      state.inputQueue.unshift(input);
+      out(`${c.dim}[interrupted — restarting with new input]${c.reset}\n`);
+      return;
+    }
+    case 'queue': {
+      state.inputQueue.push(input);
+      out(`${c.dim}[queued — depth ${state.inputQueue.length}]${c.reset}\n`);
+      return;
+    }
+    case 'steer': {
+      pushSteer(input, state);
+      return;
     }
   }
 }
+
+function pushSteer(text: string, state: ChatState): void {
+  if (!text) return;
+  // Pre-first-iteration steers fall back to queue (LLM hasn't called yet, so
+  // no tool_results to attach to). Iterations >0 reach the seam.
+  if (state.iterationsThisTurn === 0) {
+    state.inputQueue.push(text);
+    out(
+      `${c.dim}[steer → queued (pre-first-iteration), depth ${state.inputQueue.length}]${c.reset}\n`,
+    );
+    return;
+  }
+  const ok = state.steerSink.push(text);
+  if (!ok) {
+    out(`${c.red}[steer sink full — dropped]${c.reset}\n`);
+    return;
+  }
+  out(`${c.dim}[steer queued — folds in at next iteration]${c.reset}\n`);
+}
+
+function handleBusyCommand(arg: string, state: ChatState): void {
+  if (!arg || arg === 'status') {
+    out(`${c.dim}busy mode: ${state.busyMode}${c.reset}\n`);
+    return;
+  }
+  if (arg === 'interrupt' || arg === 'queue' || arg === 'steer') {
+    state.busyMode = arg;
+    out(`${c.dim}busy mode: ${arg}${c.reset}\n`);
+    return;
+  }
+  out(`${c.dim}Usage: /busy [interrupt|queue|steer|status]${c.reset}\n`);
+}
+
+// ---------------------------------------------------------------------------
+// Turn runner
+// ---------------------------------------------------------------------------
+
+async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promise<void> {
+  state.abort = new AbortController();
+  state.iterationsThisTurn = 0;
+
+  const reducedMotion = process.env.ETHOS_NO_SPINNER_ANIMATION === '1';
+  const spinner = new SpinnerState({ reducedMotion });
+  spinner.start(Date.now());
+
+  let spinnerCleared = false;
+  if (state.verbosity !== 'quiet') {
+    out(
+      `${c.bold}ethos${c.reset} ${c.dim}${spinner.frame()} thinking ${spinner.elapsed()}${c.reset}`,
+    );
+  }
+  const spinnerInterval = setInterval(
+    () => {
+      spinner.tick(Date.now());
+      if (!spinnerCleared && state.verbosity !== 'quiet') {
+        out(
+          `\r${c.bold}ethos${c.reset} ${c.dim}${spinner.frame()} thinking ${spinner.elapsed()}${c.reset}`,
+        );
+      }
+    },
+    reducedMotion ? 500 : 100,
+  );
+
+  function clearSpinner(): void {
+    if (spinnerCleared) return;
+    spinnerCleared = true;
+    spinner.stop(Date.now());
+    clearInterval(spinnerInterval);
+    if (state.verbosity !== 'quiet') {
+      // Wipe the spinner line cleanly so trailing chars don't bleed into output.
+      out('\r\x1b[2K');
+    }
+  }
+
+  const turnStart = Date.now();
+  let firstTextDeltaAt: number | null = null;
+  const toolDurations: number[] = [];
+  let turnUsage: TurnTiming['turnUsage'] = null;
+  const toolStartTimes = new Map<string, number>();
+  const toolArgs = new Map<string, unknown>();
+  const toolNames = new Map<string, string>();
+  let hasText = false;
+
+  try {
+    for await (const event of loop.run(input, {
+      sessionKey: state.sessionKey,
+      personalityId: state.personalityId,
+      abortSignal: state.abort.signal,
+      ...(state.busyMode === 'steer' ? { steerSink: state.steerSink } : {}),
+    })) {
+      // Track iteration count — proxy by counting `run_start`+tool_start sequences.
+      // Per AgentLoop, an iteration starts on before_llm_call hook. We don't get
+      // that event externally, so use first tool_start or text_delta as proxy.
+      if (event.type === 'text_delta' || event.type === 'tool_start') {
+        if (state.iterationsThisTurn === 0) state.iterationsThisTurn = 1;
+      }
+      if (event.type === 'tool_end') {
+        // A tool_end -> next iteration boundary, so the steer drain fires next.
+        state.iterationsThisTurn++;
+      }
+
+      if (event.type === 'tool_start') {
+        toolStartTimes.set(event.toolCallId, Date.now());
+        toolArgs.set(event.toolCallId, event.args);
+        toolNames.set(event.toolCallId, event.toolName);
+      }
+      if (event.type === 'text_delta' && firstTextDeltaAt === null) {
+        firstTextDeltaAt = Date.now();
+        clearSpinner();
+        if (state.verbosity !== 'quiet') out(`${c.bold}ethos${c.reset} > `);
+      }
+      if (event.type === 'tool_start' && !spinnerCleared) {
+        clearSpinner();
+        if (state.verbosity !== 'quiet') out('\n');
+      }
+      if (event.type === 'tool_end') {
+        toolDurations.push(event.durationMs);
+      }
+      if (event.type === 'usage') {
+        turnUsage = {
+          inputTokens: event.inputTokens,
+          outputTokens: event.outputTokens,
+          estimatedCostUsd: event.estimatedCostUsd,
+        };
+        state.contextTokens = event.inputTokens + event.outputTokens;
+      }
+      if (event.type === 'error') clearSpinner();
+
+      renderEventForVerbosity(event, state, {
+        hasText,
+        toolStartTimes,
+        toolArgs,
+        toolNames,
+      });
+
+      if (event.type === 'text_delta') hasText = true;
+
+      if (event.type === 'done') {
+        clearSpinner();
+        if (state.verbosity === 'verbose' || state.verbosity === 'debug') {
+          const summary = formatVerboseSummary({
+            turnStart,
+            turnEnd: Date.now(),
+            firstTextDeltaAt,
+            toolDurations,
+            turnUsage,
+          });
+          out(`\n${c.dim}${summary}${c.reset}`);
+        }
+      }
+    }
+  } catch (err) {
+    clearSpinner();
+    if (!state.abort?.signal.aborted) {
+      out(`\n${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}`);
+    }
+  } finally {
+    clearInterval(spinnerInterval);
+    state.abort = null;
+    // Codex P2 #2 — steers attach to an iteration seam (tool_results). A
+    // text-only turn (no tools) has no seam, so a steer typed during it
+    // would otherwise linger and fold into a later, unrelated turn. Drop
+    // anything still queued when this turn ends.
+    const stranded = state.steerSink.drain();
+    if (stranded.length > 0 && state.verbosity !== 'quiet') {
+      out(
+        `${c.yellow}[discarded ${stranded.length} unread steer${stranded.length === 1 ? '' : 's'} — no tool seam in turn]${c.reset}\n`,
+      );
+    }
+    if (state.verbosity !== 'quiet') out('\n\n');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Event renderer
+// ---------------------------------------------------------------------------
+
+interface RenderContext {
+  hasText: boolean;
+  toolStartTimes: Map<string, number>;
+  toolArgs: Map<string, unknown>;
+  toolNames: Map<string, string>;
+}
+
+function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: RenderContext): void {
+  const lines = projectEvent(event, state.verbosity);
+  if (lines.length === 0) return;
+
+  switch (event.type) {
+    case 'text_delta':
+      out(event.text);
+      break;
+
+    case 'tool_start':
+      if (state.verbosity === 'verbose' || state.verbosity === 'debug') {
+        if (ctx.hasText) out('\n');
+        out(`${c.dim}  ⟳ ${event.toolName}${c.reset}\n`);
+      }
+      break;
+
+    case 'tool_progress':
+      if (state.verbosity === 'default' && event.audience !== 'user') break;
+      if (event.toolName === '_watcher') {
+        out(`${c.yellow}  ${event.message}${c.reset}\n`);
+      } else {
+        out(`${c.dim}  · ${event.toolName}: ${event.message}${c.reset}\n`);
+      }
+      break;
+
+    case 'tool_end': {
+      const startedAt = ctx.toolStartTimes.get(event.toolCallId) ?? Date.now();
+      const ms = Date.now() - startedAt;
+      ctx.toolStartTimes.delete(event.toolCallId);
+      const args = ctx.toolArgs.get(event.toolCallId) ?? {};
+      ctx.toolArgs.delete(event.toolCallId);
+      ctx.toolNames.delete(event.toolCallId);
+      const line = formatToolFeedLine({
+        toolName: event.toolName,
+        args,
+        durationMs: event.durationMs ?? ms,
+        previewLength: state.toolPreviewLength,
+      });
+      const mark = event.ok ? `${c.green}✓${c.reset}` : `${c.red}✗${c.reset}`;
+      out(`${c.dim}  ${mark} ${line}${c.reset}\n`);
+      break;
+    }
+
+    case 'usage':
+      state.usage.inputTokens += event.inputTokens;
+      state.usage.outputTokens += event.outputTokens;
+      state.usage.costUsd += event.estimatedCostUsd;
+      break;
+
+    case 'error':
+      out(`\n${c.red}[${event.code}] ${event.error}${c.reset}`);
+      break;
+
+    case 'run_start':
+      if (state.verbosity === 'verbose' || state.verbosity === 'debug') {
+        out(`${c.dim}↳ ${event.provider}/${event.model} (${event.source})${c.reset}\n`);
+      }
+      break;
+
+    case 'thinking_delta':
+    case 'done':
+    case 'context_meta':
+      // Not surfaced in the rendered stream.
+      break;
+  }
+
+  // Debug verbosity: dump raw JSON for every event (after primary render).
+  if (state.verbosity === 'debug') {
+    out(`${c.dim}[debug] ${JSON.stringify(event)}${c.reset}\n`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Single-query (non-interactive) runner
+// ---------------------------------------------------------------------------
 
 async function runSingleQuery(
   loop: AgentLoop,
   config: EthosConfig,
   input: { query: string; sessionKey: string; personalityId: string },
 ): Promise<void> {
+  const verbosity: Verbosity = config.displayVerbosity ?? (config.verbose ? 'verbose' : 'default');
   const turnStart = Date.now();
   let firstTextDeltaAt: number | null = null;
   const toolDurations: number[] = [];
   let turnUsage: TurnTiming['turnUsage'] = null;
-  const toolTimers = new Map<string, number>();
-  let hasText = false;
 
   for await (const event of loop.run(input.query, {
     sessionKey: input.sessionKey,
     personalityId: input.personalityId,
   })) {
-    if (event.type === 'text_delta' && firstTextDeltaAt === null) {
-      firstTextDeltaAt = Date.now();
-      out(`${c.bold}ethos${c.reset} > `);
+    if (event.type === 'text_delta') {
+      if (firstTextDeltaAt === null) firstTextDeltaAt = Date.now();
+      out(event.text);
     }
-    if (event.type === 'tool_end') {
-      toolDurations.push(event.durationMs);
-    }
+    if (event.type === 'tool_end') toolDurations.push(event.durationMs);
     if (event.type === 'usage') {
       turnUsage = {
         inputTokens: event.inputTokens,
@@ -275,11 +591,7 @@ async function runSingleQuery(
         estimatedCostUsd: event.estimatedCostUsd,
       };
     }
-
-    renderEvent(event, toolTimers, { inputTokens: 0, outputTokens: 0, costUsd: 0 }, hasText);
-    if (event.type === 'text_delta') hasText = true;
-
-    if (event.type === 'done' && config.verbose) {
+    if (event.type === 'done' && (verbosity === 'verbose' || verbosity === 'debug')) {
       const summary = formatVerboseSummary({
         turnStart,
         turnEnd: Date.now(),
@@ -294,104 +606,12 @@ async function runSingleQuery(
 }
 
 // ---------------------------------------------------------------------------
-// Prompt helper (wraps readline.question as a Promise)
-// ---------------------------------------------------------------------------
-
-function prompt(rl: ReturnType<typeof createInterface>): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (!process.stdin.readable) {
-      reject(new Error('stdin closed'));
-      return;
-    }
-    rl.question(`${c.cyan}You${c.reset} > `, resolve);
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Event renderer
-// ---------------------------------------------------------------------------
-
-function renderEvent(
-  event: AgentEvent,
-  toolTimers: Map<string, number>,
-  usage: ChatState['usage'],
-  hasText: boolean,
-): void {
-  switch (event.type) {
-    case 'text_delta':
-      out(event.text);
-      break;
-
-    case 'thinking_delta':
-      // Hidden by default — surface with /think toggle if needed
-      break;
-
-    case 'tool_start': {
-      // Newline before first tool if text preceded it
-      if (hasText) out('\n');
-      out(`${c.dim}  ⟳ ${event.toolName}${c.reset}`);
-      toolTimers.set(event.toolCallId, Date.now());
-      break;
-    }
-
-    case 'tool_progress': {
-      // Phase 30.2 — only surface tool progress the tool explicitly tagged
-      // for the user. Internal/default progress stays in logs/telemetry.
-      // Framework-emitted budget warnings always tag `audience: 'user'`.
-      if (event.audience !== 'user') break;
-      if (hasText) out('\n');
-      // Ch.6a — _watcher chips render in yellow so safety-relevant
-      // decisions (rate limit, suspicious sequence, compounding error,
-      // token budget) visually pop next to ordinary tool progress.
-      if (event.toolName === '_watcher') {
-        out(`${c.yellow}  ${event.message}${c.reset}\n`);
-      } else {
-        out(`${c.dim}  · ${event.toolName}: ${event.message}${c.reset}\n`);
-      }
-      break;
-    }
-
-    case 'tool_end': {
-      const ms = Date.now() - (toolTimers.get(event.toolCallId) ?? Date.now());
-      toolTimers.delete(event.toolCallId);
-      const mark = event.ok ? `${c.green}✓${c.reset}` : `${c.red}✗${c.reset}`;
-      // \r overwrites the ⟳ spinner line with the completion status
-      out(`\r${c.dim}  ${mark} ${c.reset}${c.dim}${event.toolName} ${ms}ms${c.reset}\n`);
-      break;
-    }
-
-    case 'usage':
-      usage.inputTokens += event.inputTokens;
-      usage.outputTokens += event.outputTokens;
-      usage.costUsd += event.estimatedCostUsd;
-      break;
-
-    case 'error':
-      out(`\n${c.red}[${event.code}] ${event.error}${c.reset}`);
-      break;
-
-    case 'done':
-      // Nothing to render — verbose summary handled in the turn loop
-      break;
-
-    case 'run_start':
-      // Handled inline in the turn loop (verbose mode only); silent here.
-      break;
-
-    case 'context_meta':
-      // Internal metadata from context injectors; not surfaced in the CLI.
-      break;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Slash commands
 // ---------------------------------------------------------------------------
 
 async function handleSlashCommand(
   raw: string,
   state: ChatState,
-  verbose: { active: boolean },
   loop: AgentLoop,
   rl: ReturnType<typeof createInterface>,
   _config: EthosConfig,
@@ -413,7 +633,11 @@ async function handleSlashCommand(
           `  /usage                show token and cost stats\n` +
           `  /budget               show session spend against cap\n` +
           `  /budget reset         reset the session budget counter\n` +
-          `  /verbose              toggle per-turn timing summary (on/off)\n` +
+          `  /verbose              cycle quiet → default → verbose → debug\n` +
+          `  /verbose <level>      set level directly\n` +
+          `  /verbose status       show current level\n` +
+          `  /busy <mode|status>   busy-input mode (interrupt/queue/steer)\n` +
+          `  /steer <text>         inject [USER STEER] mid-turn\n` +
           `  /allow <code>         approve a pending channel sender by pairing code\n` +
           `  /deny <platform> <id> revoke an approved channel sender\n` +
           `  /communications       list approved senders + pending pairing codes\n` +
@@ -426,6 +650,8 @@ async function handleSlashCommand(
     case 'reset':
       loop.resetSessionCost(state.sessionKey);
       state.sessionKey = `cli:${basename(process.cwd())}:${Date.now()}`;
+      state.contextTokens = 0;
+      state.startedAt = Date.now();
       out(`${c.dim}[new session started]${c.reset}\n`);
       break;
 
@@ -451,7 +677,6 @@ async function handleSlashCommand(
         out(`${c.dim}Current model: ${_config.model}${c.reset}\n`);
         break;
       }
-      // Model switching requires a new AgentLoop — note for Phase 5
       out(
         `${c.yellow}Model switching takes effect on next restart. Edit ~/.ethos/config.yaml to persist.${c.reset}\n`,
       );
@@ -499,15 +724,46 @@ async function handleSlashCommand(
     }
 
     case 'verbose': {
-      verbose.active = !verbose.active;
-      out(`${c.dim}verbose: ${verbose.active ? 'on' : 'off'}${c.reset}\n`);
+      if (!arg) {
+        state.verbosity = nextVerbosity(state.verbosity);
+        out(`${c.dim}verbosity: ${state.verbosity}${c.reset}\n`);
+        break;
+      }
+      if (arg === 'status') {
+        out(`${c.dim}verbosity: ${state.verbosity}${c.reset}\n`);
+        break;
+      }
+      if (isVerbosity(arg)) {
+        state.verbosity = arg;
+        out(`${c.dim}verbosity: ${arg}${c.reset}\n`);
+        break;
+      }
+      out(
+        `${c.yellow}Invalid level '${arg}' — falling back to default. Valid: quiet|default|verbose|debug${c.reset}\n`,
+      );
+      state.verbosity = 'default';
       break;
     }
 
+    case 'busy':
+      handleBusyCommand(arg, state);
+      break;
+
+    case 'steer':
+      // When idle, /steer queues as a fresh turn (no in-flight run to steer).
+      if (!arg) {
+        out(`${c.dim}Usage: /steer <text>${c.reset}\n`);
+        break;
+      }
+      if (!state.abort) {
+        state.inputQueue.push(arg);
+        out(`${c.dim}[idle — /steer queued as a turn]${c.reset}\n`);
+        break;
+      }
+      pushSteer(arg, state);
+      break;
+
     case 'allow': {
-      // /allow <code>
-      // Consume a pairing code AND mark the sender approved on the
-      // pairing.db that the gateway shares with us.
       if (!arg) {
         out(`${c.dim}Usage: /allow <code>${c.reset}\n`);
         break;
@@ -518,7 +774,6 @@ async function handleSlashCommand(
     }
 
     case 'deny': {
-      // /deny <platform> <senderId>
       const tokens = arg.split(/\s+/).filter(Boolean);
       if (tokens.length < 2) {
         out(`${c.dim}Usage: /deny <platform> <senderId>${c.reset}\n`);

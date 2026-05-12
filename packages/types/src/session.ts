@@ -26,7 +26,7 @@ export interface SessionUsage {
   compactionCount: number;
 }
 
-export type MessageRole = 'user' | 'assistant' | 'tool_result' | 'system';
+export type MessageRole = 'user' | 'assistant' | 'tool_result' | 'system' | 'user_steer';
 
 export interface StoredMessage {
   id: string;

@@ -595,6 +595,17 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         : {}),
       ...(skillEvolution !== undefined ? { skill_evolution: skillEvolution } : {}),
       ...(cfg.skin ? { skin: cfg.skin } : {}),
+      ...(cfg.busyInputMode === 'interrupt' ||
+      cfg.busyInputMode === 'queue' ||
+      cfg.busyInputMode === 'steer'
+        ? { busyInputMode: cfg.busyInputMode as PersonalityConfig['busyInputMode'] }
+        : {}),
+      ...(cfg.verbosity === 'quiet' ||
+      cfg.verbosity === 'default' ||
+      cfg.verbosity === 'verbose' ||
+      cfg.verbosity === 'debug'
+        ? { verbosity: cfg.verbosity as PersonalityConfig['verbosity'] }
+        : {}),
     };
 
     validateUnsafeCombinations(id, config);

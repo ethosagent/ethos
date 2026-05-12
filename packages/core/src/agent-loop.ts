@@ -23,6 +23,7 @@ import type {
   PersonalityRegistry,
   PromptContext,
   SessionStore,
+  SteerSink,
   Storage,
   StoredMessage,
   ToolFilterOpts,
@@ -204,6 +205,17 @@ export interface RunOptions {
    * `MAX_SPAWN_DEPTH` can be enforced across recursive sub-agent calls.
    */
   agentId?: string;
+  /**
+   * FW-9 — `steer` busy-input mode. Surfaces (CLI REPL) push user-typed text
+   * here while the agent is mid-turn. AgentLoop drains the sink at the
+   * iteration seam (after tool_results land, before the next LLM call) and
+   * folds each entry in as a `[USER STEER]: <text>` text block on the user
+   * message carrying the tool_results.
+   *
+   * Pre-first-iteration (no tool_results yet) and idle (no run in flight)
+   * steering falls back to `queue` at the surface, never reaching AgentLoop.
+   */
+  steerSink?: SteerSink;
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,6 +1123,22 @@ export class AgentLoop {
         dgRemaining = dgTurns;
       }
 
+      // FW-9 — drain SteerSink at the iteration seam. Each entry becomes a
+      // `[USER STEER]: <text>` text block appended to the tool_results user
+      // message. Also persisted as a `user_steer` row for transcript fidelity
+      // so a future getMessages() call replays the steer cleanly.
+      if (opts.steerSink) {
+        const steers = opts.steerSink.drain();
+        for (const steerText of steers) {
+          toolResultContent.push({ type: 'text', text: `[USER STEER]: ${steerText}` });
+          await this.session.appendMessage({
+            sessionId,
+            role: 'user_steer',
+            content: steerText,
+          });
+        }
+      }
+
       // Feed all tool results back to LLM as a single user message with content blocks
       llmMessages.push({ role: 'user', content: toolResultContent });
     }
@@ -1243,6 +1271,11 @@ export class AgentLoop {
         } else {
           messages.push({ role: 'user', content: [resultBlock] });
         }
+      } else if (msg.role === 'user_steer') {
+        // Steer text is already embedded as a [USER STEER]: <text> block inside
+        // the tool_result user message that was constructed live during the turn.
+        // The stored user_steer row exists for transcript fidelity / debugging
+        // only — it must NOT be replayed as a standalone LLM message.
       }
     }
 

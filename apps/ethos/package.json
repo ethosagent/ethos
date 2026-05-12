@@ -43,6 +43,7 @@
     "build": "tsup"
   },
   "dependencies": {
+    "@ethosagent/agent-bridge": "workspace:*",
     "@ethosagent/core": "workspace:*",
     "@ethosagent/logger": "workspace:*",
     "@ethosagent/safety-channel": "workspace:*",
