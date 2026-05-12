@@ -207,7 +207,9 @@ function TelegramPanel() {
                 ]}
                 value={bindType}
                 onChange={(v) => {
-                  setBindType(v as BindType);
+                  const t = v as BindType;
+                  setBindType(t);
+                  form.setFieldValue('bindType', t);
                   form.setFieldValue('bindName', undefined);
                 }}
               />
@@ -227,7 +229,6 @@ function TelegramPanel() {
                   bindType === 'personality' ? personalitiesQuery.isLoading : teamsQuery.isLoading
                 }
                 options={bindOptions}
-                onChange={() => form.setFieldValue('bindType', bindType)}
               />
             </Form.Item>
 
@@ -445,7 +446,9 @@ function SlackPanel() {
                 ]}
                 value={bindType}
                 onChange={(v) => {
-                  setBindType(v as BindType);
+                  const t = v as BindType;
+                  setBindType(t);
+                  form.setFieldValue('bindType', t);
                   form.setFieldValue('bindName', undefined);
                 }}
               />
@@ -465,7 +468,6 @@ function SlackPanel() {
                   bindType === 'personality' ? personalitiesQuery.isLoading : teamsQuery.isLoading
                 }
                 options={bindOptions}
-                onChange={() => form.setFieldValue('bindType', bindType)}
               />
             </Form.Item>
 
