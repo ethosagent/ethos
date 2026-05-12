@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve as resolvePath } from 'node:path';
 import type { MemberRuntime } from '@ethosagent/team-supervisor';
 import {
@@ -254,6 +254,65 @@ async function runTeamStop(name: string | undefined): Promise<void> {
       throw err;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// destroy — wipe the team directory including the board (irreversible)
+// ---------------------------------------------------------------------------
+
+// Allowed characters mirror what `ethos team create` accepts: letters, digits,
+// dashes, dots, underscores. Crucially: no path separators, no `.`/`..` alone.
+// Without this check, `ethos team destroy .. --yes` would resolve `teamDir` to
+// the parent of `teamsDir()` and `rmSync(recursive)` would wipe far beyond one
+// team. Fail-closed here.
+const TEAM_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function assertSafeTeamName(name: string): void {
+  if (name === '.' || name === '..' || !TEAM_NAME_PATTERN.test(name)) {
+    console.error(
+      `Invalid team name "${name}". Allowed: letters, digits, dashes, dots, underscores; no path separators; cannot be "." or "..".`,
+    );
+    process.exit(1);
+  }
+}
+
+async function runTeamDestroy(name: string | undefined, args: string[]): Promise<void> {
+  if (!name) {
+    console.error('Usage: ethos team destroy <name> [--yes]');
+    process.exit(1);
+  }
+  assertSafeTeamName(name);
+
+  const rt = readRuntime(name);
+  if (runtimeHealth(rt) === 'running') {
+    console.error(
+      `Team "${name}" is still running. Stop it first: ${c.cyan}ethos team stop ${name}${c.reset}`,
+    );
+    process.exit(1);
+  }
+
+  const teamDir = join(teamsDir(), name);
+  const manifestFile = join(teamsDir(), `${name}.yaml`);
+  const teamDirExists = existsSync(teamDir);
+  const manifestExists = existsSync(manifestFile);
+  if (!teamDirExists && !manifestExists) {
+    console.error(`No team data found for "${name}".`);
+    process.exit(1);
+  }
+
+  const yes = args.includes('--yes') || args.includes('-y');
+  if (!yes) {
+    console.log(`This will ${c.red}permanently delete${c.reset}:`);
+    if (manifestExists) console.log(`  - ${manifestFile}`);
+    if (teamDirExists) console.log(`  - ${teamDir} (logs, runtime, kanban board.db)`);
+    console.log('');
+    console.log(`Re-run with ${c.bold}--yes${c.reset} to confirm.`);
+    process.exit(1);
+  }
+
+  if (manifestExists) rmSync(manifestFile);
+  if (teamDirExists) rmSync(teamDir, { recursive: true, force: true });
+  console.log(`Team "${name}" destroyed.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -518,6 +577,9 @@ export async function runTeamCommand(sub: string, args: string[]): Promise<void>
     case 'stop':
       await runTeamStop(args[0]);
       break;
+    case 'destroy':
+      await runTeamDestroy(args[0], args.slice(1));
+      break;
     case 'status':
       await runTeamStatus(args[0]);
       break;
@@ -533,7 +595,7 @@ export async function runTeamCommand(sub: string, args: string[]): Promise<void>
         await runTeamMemberRemove(sub, args[1]);
       } else {
         console.log(
-          'Usage: ethos team [list | create <name> | start <name> | stop <name> | status <name> | logs <name> | <name> add <personality> | <name> remove <personality>]',
+          'Usage: ethos team [list | create <name> | start <name> | stop <name> | destroy <name> [--yes] | status <name> | logs <name> | <name> add <personality> | <name> remove <personality>]',
         );
       }
     }

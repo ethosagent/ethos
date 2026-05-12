@@ -1,3 +1,10 @@
+export {
+  type DispatchCall,
+  Dispatcher,
+  type DispatcherOptions,
+  defaultDispatchCall,
+  type SupervisorState,
+} from './dispatcher';
 export type { HealthResponse, ProbedMember, ProbeFunction } from './health';
 export { probeHealth, startHealthProbeLoop } from './health';
 export type { SupervisorEventKind, SupervisorLogEntry } from './logger';
@@ -9,6 +16,7 @@ export type { MemberRuntime, MemberStatus, TeamRuntime } from './runtime';
 export {
   pidFilePath,
   readRuntime,
+  readRuntimeFrom,
   removeRuntime,
   runtimePath,
   teamLogDir,

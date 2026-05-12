@@ -177,6 +177,7 @@ describe('contract router', () => {
       'cron',
       'eval',
       'evolver',
+      'kanban',
       'memory',
       'mesh',
       'onboarding',

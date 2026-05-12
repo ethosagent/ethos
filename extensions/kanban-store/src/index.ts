@@ -628,6 +628,91 @@ export class KanbanStore {
     return rows.map(rowToTask);
   }
 
+  // ---------------------------------------------------------------------------
+  // Plan B dispatcher helpers — promote / reclaim / dispatch queries
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Promote `todo` tasks whose blocking parents are all `done` to `ready`.
+   *
+   * A "blocking parent" is a parent with a real assignee. Parents created via
+   * `kanban_create_goal` carry `assignee=NULL` and are treated as transparent
+   * containers — they organize tasks without gating them. Without that rule,
+   * a coordinator's `kanban_create_goal` + `kanban_create(parents=[goal])`
+   * flow deadlocks: the goal has no assignee, so nothing closes it, so the
+   * child never promotes.
+   *
+   * Archived parents stay as blockers (archive = abandoned, not satisfied),
+   * matching the same semantics `kanban_unblock` uses.
+   */
+  promoteReady(actor = 'system'): string[] {
+    const candidates = this.db
+      .prepare(
+        `SELECT t.id FROM tasks t
+         WHERE t.status = 'todo'
+           AND NOT EXISTS (
+             SELECT 1 FROM task_links l
+             JOIN tasks p ON p.id = l.parent_id
+             WHERE l.child_id = t.id
+               AND p.assignee IS NOT NULL
+               AND p.status != 'done'
+           )`,
+      )
+      .all() as Array<{ id: string }>;
+    for (const c of candidates) {
+      this.updateStatus(c.id, 'ready', 'parents done', actor);
+    }
+    return candidates.map((c) => c.id);
+  }
+
+  /**
+   * Promote `scheduled` tasks whose `scheduled_for` is in the past to `ready`.
+   * Returns the promoted task ids.
+   */
+  promoteScheduled(nowMs: number = Date.now(), actor = 'system'): string[] {
+    const candidates = this.db
+      .prepare(
+        `SELECT id FROM tasks WHERE status = 'scheduled' AND scheduled_for IS NOT NULL
+         AND scheduled_for <= ?`,
+      )
+      .all(nowMs) as Array<{ id: string }>;
+    for (const c of candidates) {
+      this.updateStatus(c.id, 'ready', 'scheduled time reached', actor);
+    }
+    return candidates.map((c) => c.id);
+  }
+
+  /**
+   * Find open runs whose `last_heartbeat_at` is older than `cutoffMs` ago.
+   * The caller (typically the dispatcher) decides what to do — usually
+   * `blockRun(id, 'stalled')`.
+   */
+  findStalledRuns(cutoffMs: number, nowMs: number = Date.now()): TaskRun[] {
+    const threshold = nowMs - cutoffMs;
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM task_runs WHERE ended_at IS NULL AND last_heartbeat_at < ?
+         ORDER BY last_heartbeat_at ASC`,
+      )
+      .all(threshold) as TaskRunRow[];
+    return rows.map(rowToRun);
+  }
+
+  /**
+   * Tasks ready for the dispatcher to claim: status=ready, an assignee is set,
+   * and there is no current run yet.
+   */
+  findReadyToDispatch(): Task[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM tasks
+         WHERE status = 'ready' AND assignee IS NOT NULL AND current_run_id IS NULL
+         ORDER BY priority DESC, created_at ASC`,
+      )
+      .all() as TaskRow[];
+    return rows.map(rowToTask);
+  }
+
   listEvents(taskId: string): TaskEvent[] {
     const rows = this.db
       .prepare('SELECT * FROM task_events WHERE task_id = ? ORDER BY created_at ASC, id ASC')

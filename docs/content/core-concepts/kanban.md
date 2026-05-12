@@ -1,6 +1,11 @@
 ---
 sidebar_position: 7
 title: Kanban
+description: A durable SQLite-backed task substrate any personality can opt into, with FTS5 search and an append-only audit trail.
+kind: reference
+audience: shared
+slug: kanban
+updated: 2026-05-11
 ---
 
 # Kanban — Durable Task Substrate

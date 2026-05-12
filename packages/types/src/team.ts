@@ -3,6 +3,8 @@
 
 export type DispatchMode = 'coordinator' | 'self-routing' | 'broadcast';
 
+export type TeamMemberRole = 'coordinator' | 'member';
+
 export interface TeamMember {
   /** Personality id to boot for this slot. */
   personality: string;
@@ -12,6 +14,12 @@ export interface TeamMember {
   capabilities?: string[];
   /** When true, the supervisor restarts this member on crash (with exponential back-off). */
   auto_restart?: boolean;
+  /**
+   * Team-relative role. Drives the Plan B kanban role-gate hook. Defaults to `member`.
+   * `dispatch_mode: coordinator` teams must declare exactly one member with `role: coordinator`
+   * whose `personality` matches the `coordinator` field.
+   */
+  role?: TeamMemberRole;
 }
 
 export interface TeamManifest {
@@ -37,4 +45,17 @@ export interface TeamManifest {
   mesh?: string;
   /** Agents to boot as part of this team. */
   members: TeamMember[];
+  /** Plan B — kanban dispatcher tuning. Optional; all fields have sane defaults. */
+  kanban?: {
+    /**
+     * Milliseconds a task can run without a heartbeat before the dispatcher
+     * marks it `blocked` ("stalled — no heartbeat"). Default: 90000.
+     */
+    stale_ms?: number;
+    /**
+     * Dispatcher polling cadence in ms. Default: 1000. The in-process event
+     * bus makes this mostly a fallback for cross-process board mutations.
+     */
+    poll_ms?: number;
+  };
 }

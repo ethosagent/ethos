@@ -9,6 +9,10 @@ import {
   EvalScorerSchema,
   EvolveConfigSchema,
   EvolverRunSchema,
+  KanbanBoardSnapshotSchema,
+  KanbanTaskSchema,
+  KanbanTaskStatusSchema,
+  KanbanTeamSummarySchema,
   McpServerInfoSchema,
   MemoryFileSchema,
   MemoryStoreSchema,
@@ -609,6 +613,36 @@ const evalNs = {
 };
 
 // ---------------------------------------------------------------------------
+// Kanban — Plan B Control Center surface
+//
+// Read-only for now (`list`, `getBoard`); mutations are deferred to a later
+// pass so the Codex-driven correctness guarantees in `@ethosagent/kanban-store`
+// stay the single source of truth. The board itself lives at
+// `~/.ethos/teams/<name>/board.db`; the service opens it read-only.
+// ---------------------------------------------------------------------------
+
+const KanbanListOutput = z.object({ teams: z.array(KanbanTeamSummarySchema) });
+
+const KanbanGetBoardInput = z.object({
+  team: z.string().min(1),
+});
+const KanbanGetBoardOutput = z.object({ board: KanbanBoardSnapshotSchema });
+
+const KanbanUpdateStatusInput = z.object({
+  team: z.string().min(1),
+  taskId: z.string().min(1),
+  status: KanbanTaskStatusSchema,
+  reason: z.string().optional(),
+});
+const KanbanUpdateStatusOutput = z.object({ task: KanbanTaskSchema });
+
+const kanban = {
+  list: oc.output(KanbanListOutput),
+  getBoard: oc.input(KanbanGetBoardInput).output(KanbanGetBoardOutput),
+  updateStatus: oc.input(KanbanUpdateStatusInput).output(KanbanUpdateStatusOutput),
+};
+
+// ---------------------------------------------------------------------------
 // Root contract — every namespace mounted under one symbol
 // ---------------------------------------------------------------------------
 
@@ -628,6 +662,7 @@ export const contract = {
   platforms,
   batch,
   eval: evalNs,
+  kanban,
 };
 
 export type Contract = typeof contract;

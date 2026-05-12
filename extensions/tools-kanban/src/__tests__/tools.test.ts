@@ -44,7 +44,7 @@ describe('kanban tools', () => {
     store.close();
   });
 
-  it('exposes 12 tools in the kanban toolset with the right maxResultChars', () => {
+  it('exposes 13 tools in the kanban toolset with the right maxResultChars', () => {
     const names = Object.keys(tools).sort();
     expect(names).toEqual([
       'kanban_archive',
@@ -53,6 +53,7 @@ describe('kanban tools', () => {
       'kanban_comment',
       'kanban_complete',
       'kanban_create',
+      'kanban_create_goal',
       'kanban_heartbeat',
       'kanban_link',
       'kanban_list',
@@ -84,6 +85,29 @@ describe('kanban tools', () => {
 
   it('kanban_create rejects missing title with input_invalid', async () => {
     const result = await (tools.kanban_create as Tool).execute({}, makeCtx());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('input_invalid');
+  });
+
+  // ---------------------------------------------------------------------------
+  // kanban_create_goal
+  // ---------------------------------------------------------------------------
+
+  it('kanban_create_goal creates a task with assignee=null (the goal-as-parent-task pattern)', async () => {
+    const out = await call<{ task_id: string; status: string }>(
+      tools.kanban_create_goal as Tool,
+      { title: 'Q3 Analytics Roadmap', description: 'top-level goal' },
+      makeCtx('coordinator'),
+    );
+    expect(out.task_id).toMatch(/^t_[0-9a-f]{16}$/);
+    const stored = store.getTask(out.task_id);
+    expect(stored?.assignee).toBeNull();
+    expect(stored?.title).toBe('Q3 Analytics Roadmap');
+    expect(stored?.body).toBe('top-level goal');
+  });
+
+  it('kanban_create_goal rejects missing title', async () => {
+    const result = await (tools.kanban_create_goal as Tool).execute({}, makeCtx());
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('input_invalid');
   });

@@ -13,3 +13,14 @@
 - todo_update
 - todo_list
 - todo_clear
+# Plan B — kanban participation tools. The role gate authorises only the
+# task's assignee to close their own work; commenting/listing is open to any
+# team member. Outside a team, these are inert (no kanban store wired).
+- kanban_show
+- kanban_list
+- kanban_comment
+- kanban_update_status
+- kanban_complete
+- kanban_block
+- kanban_unblock
+- kanban_heartbeat

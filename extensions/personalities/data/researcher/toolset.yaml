@@ -6,3 +6,12 @@
 - memory_read
 - memory_write
 - session_search
+# Plan B — kanban participation tools (see engineer/toolset.yaml for rationale).
+- kanban_show
+- kanban_list
+- kanban_comment
+- kanban_update_status
+- kanban_complete
+- kanban_block
+- kanban_unblock
+- kanban_heartbeat
