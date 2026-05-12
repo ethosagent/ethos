@@ -42,6 +42,7 @@ export interface StoredMessage {
 
 export interface SessionFilter {
   platform?: string;
+  keyPrefix?: string;
   personalityId?: string;
   workingDir?: string;
   since?: Date;

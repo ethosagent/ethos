@@ -11,10 +11,18 @@ export interface RecapResult {
 
 function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
-  // Walk back to avoid splitting multi-byte sequences
-  let end = maxLen;
-  while (end > 0 && (text.charCodeAt(end) & 0xc0) === 0x80) end--;
-  return `${text.slice(0, end)}…`;
+  // Collect whole code points until we fill maxLen UTF-16 code units.
+  // This avoids splitting surrogate pairs while keeping the original length gate.
+  const codePoints = Array.from(text);
+  let charCount = 0;
+  let cpIdx = 0;
+  while (cpIdx < codePoints.length) {
+    const cp = codePoints[cpIdx] ?? '';
+    if (charCount + cp.length > maxLen) break;
+    charCount += cp.length;
+    cpIdx++;
+  }
+  return `${codePoints.slice(0, cpIdx).join('')}…`;
 }
 
 export function formatRecap(

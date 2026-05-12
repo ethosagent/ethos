@@ -198,6 +198,10 @@ export class SQLiteSessionStore implements SessionStore {
       conditions.push('platform = ?');
       values.push(filter.platform);
     }
+    if (filter?.keyPrefix) {
+      conditions.push("key LIKE ? ESCAPE '\\'");
+      values.push(`${filter.keyPrefix.replace(/[%_\\]/g, '\\$&')}%`);
+    }
     if (filter?.personalityId) {
       conditions.push('personality_id = ?');
       values.push(filter.personalityId);
@@ -376,11 +380,19 @@ export class SQLiteSessionStore implements SessionStore {
   // FW-2 — resume lookup
   // ---------------------------------------------------------------------------
 
-  async findMostRecent(): Promise<Session | null> {
+  async findMostRecent(platform?: string): Promise<Session | null> {
     // rowid tie-breaks same-millisecond timestamps (higher rowid = later insert/update)
-    const row = this.db
-      .prepare('SELECT *, rowid AS _row FROM sessions ORDER BY updated_at DESC, rowid DESC LIMIT 1')
-      .get();
+    const row = platform
+      ? this.db
+          .prepare(
+            'SELECT *, rowid AS _row FROM sessions WHERE platform = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1',
+          )
+          .get(platform)
+      : this.db
+          .prepare(
+            'SELECT *, rowid AS _row FROM sessions ORDER BY updated_at DESC, rowid DESC LIMIT 1',
+          )
+          .get();
     return row ? rowToSession(row as SessionRow) : null;
   }
 

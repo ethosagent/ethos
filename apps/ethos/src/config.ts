@@ -438,10 +438,11 @@ function parseConfigYaml(src: string): EthosConfig {
     displayBusyInputMode: parseBusyMode(displayKv.busy_input_mode),
     displayToolPreviewLength: parseToolPreviewLength(displayKv.tool_preview_length),
     displayResumeHint: displayKv.resume_hint === 'false' ? false : undefined,
-    displayResumeRecapTurns:
-      displayKv.resume_recap_turns !== undefined
-        ? Math.min(10, Math.max(0, parseInt(displayKv.resume_recap_turns, 10) || 3))
-        : undefined,
+    displayResumeRecapTurns: (() => {
+      if (displayKv.resume_recap_turns === undefined) return undefined;
+      const n = parseInt(displayKv.resume_recap_turns, 10);
+      return Number.isFinite(n) ? Math.min(10, Math.max(0, n)) : undefined;
+    })(),
     skin: kv.skin || undefined,
     retention,
     personalitiesConfig,

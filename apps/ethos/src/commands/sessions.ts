@@ -35,7 +35,8 @@ export async function resolveResumeSession(
   target: ResumeTarget,
 ): Promise<Session | null> {
   if (target.type === 'continue') {
-    return store.findMostRecent();
+    // Scope to CLI sessions so --continue never crosses into gateway/telegram sessions.
+    return store.findMostRecent('cli');
   }
 
   const { query } = target;
@@ -67,16 +68,10 @@ export async function listSessions(
   opts: { limit?: number; keyPrefix?: string },
 ): Promise<SessionListItem[]> {
   const limit = opts.limit ?? 20;
-  const all = await store.listSessions({ limit: limit * 4 }); // over-fetch, then filter
+  // Push keyPrefix into SQL so limit is respected against the filtered set.
+  const sessions = await store.listSessions({ limit, keyPrefix: opts.keyPrefix });
 
-  const filtered = opts.keyPrefix ? all.filter((s) => s.key.startsWith(opts.keyPrefix ?? '')) : all;
-
-  // Sort by updatedAt desc, take limit
-  const sorted = filtered
-    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
-    .slice(0, limit);
-
-  return sorted.map((s) => ({
+  return sessions.map((s) => ({
     id: s.id,
     key: s.key,
     title: s.title,
@@ -180,8 +175,7 @@ export async function runSessionsCommand(sub: string, argv: string[]): Promise<v
         const idW = 24;
         const titleW = 24;
         const keyW = 16;
-        const header =
-          'ID'.padEnd(idW) + 'TITLE'.padEnd(titleW) + 'KEY'.padEnd(keyW) + 'LAST ACTIVE';
+        const header = `${'ID'.padEnd(idW) + 'TITLE'.padEnd(titleW) + 'KEY'.padEnd(keyW)}LAST ACTIVE`;
         console.log(`\n${header}`);
         console.log('-'.repeat(header.length));
         for (const item of items) {

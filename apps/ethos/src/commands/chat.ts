@@ -120,6 +120,8 @@ interface RunChatOptions {
   resumeSessionKey?: string;
   /** FW-2 — session ID to display in the resume hint and recap. */
   resumeSessionId?: string;
+  /** FW-5 — suppress the resume hint on exit regardless of config. */
+  noResumeHint?: boolean;
 }
 
 function renderStatusBarLine(state: ChatState): void {
@@ -203,7 +205,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   });
 
   rl.on('close', async () => {
-    if (config.displayResumeHint !== false) {
+    if (config.displayResumeHint !== false && !opts.noResumeHint) {
       try {
         const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
         const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));

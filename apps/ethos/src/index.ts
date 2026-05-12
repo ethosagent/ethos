@@ -51,7 +51,9 @@ const args = process.argv.slice(2);
 const command = args[0] ?? '';
 const inferredChatFromQueryFlag =
   command === '-q' || command === '--query' || command.startsWith('--query=');
-const effectiveCommand = inferredChatFromQueryFlag ? 'chat' : command;
+const inferredChatFromResumeFlag =
+  command === '--continue' || command === '-c' || command === '--resume' || command === '-r';
+const effectiveCommand = inferredChatFromQueryFlag || inferredChatFromResumeFlag ? 'chat' : command;
 
 function extractSingleQuery(argv: string[]): {
   query?: string;
@@ -132,6 +134,8 @@ try {
       const resumeFlagIdx =
         chatArgs.indexOf('--resume') !== -1 ? chatArgs.indexOf('--resume') : chatArgs.indexOf('-r');
       const resumeQuery = resumeFlagIdx !== -1 ? chatArgs[resumeFlagIdx + 1] : undefined;
+      // FW-5 — --no-resume-hint suppresses the exit hint for this session
+      const noResumeHintFlag = chatArgs.includes('--no-resume-hint');
 
       const { query, queryFlagUsed } = extractSingleQuery(chatArgs);
       if (queryFlagUsed && (!query || query.trim().length === 0)) {
@@ -179,6 +183,7 @@ try {
           await runChat(withFlags, {
             ...(query ? { singleQuery: query } : {}),
             ...(resumeSessionKey ? { resumeSessionKey, resumeSessionId } : {}),
+            ...(noResumeHintFlag ? { noResumeHint: true } : {}),
           });
           if (query) process.exit(0);
         }
@@ -190,6 +195,7 @@ try {
         await runChat(withFlags, {
           ...(query ? { singleQuery: query } : {}),
           ...(resumeSessionKey ? { resumeSessionKey, resumeSessionId } : {}),
+          ...(noResumeHintFlag ? { noResumeHint: true } : {}),
         });
         if (query) process.exit(0);
       }
