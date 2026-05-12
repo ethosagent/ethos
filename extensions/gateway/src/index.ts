@@ -97,10 +97,46 @@ export class SessionLane {
 // Gateway config
 // ---------------------------------------------------------------------------
 
-export interface GatewayConfig {
-  /** The agent loop used to process messages. */
+/**
+ * Per-bot routing entry. The Gateway maintains one `AgentLoop` per bot;
+ * inbound messages carrying `InboundMessage.botKey` route to the entry
+ * with the matching `botKey`. Each bot is statically bound to a single
+ * destination (a personality or a team's coordinator).
+ *
+ * `binding.type === 'team'` means the supplied `loop` is the team's
+ * coordinator loop (constructed via `createTeamAgentLoop`). The Gateway
+ * does not override the personality on team turns — the coordinator's
+ * personality is baked into the loop. `binding.type === 'personality'`
+ * means the loop is the shared CLI loop and the Gateway passes
+ * `binding.name` as the per-turn personality id.
+ *
+ * `binding.allowSlashSwitch` defaults to false: the `/personality`
+ * command is soft-rejected for identity-bound bots so the bot's
+ * external identity remains a stable contract with the user.
+ */
+export interface GatewayBotConfig {
+  botKey: string;
   loop: AgentLoop;
-  /** Default personality ID used for all sessions. */
+  binding: {
+    type: 'personality' | 'team';
+    name: string;
+    allowSlashSwitch?: boolean;
+  };
+}
+
+export interface GatewayConfig {
+  /**
+   * Multi-bot routing: one entry per bot. The Gateway keys its lane state
+   * by `${platform}:${botKey}:${chatId}` so concurrent conversations
+   * across bots stay isolated. Exactly one of `bots` / `loop` must be set;
+   * single-adapter deployments may continue to pass `loop` directly.
+   */
+  bots?: GatewayBotConfig[];
+  /** Back-compat shorthand for single-bot deployments. Ignored when
+   *  `bots` is non-empty. Internally synthesized into a one-entry list
+   *  with `botKey: 'default'` and binding `{ type: 'personality', name: defaultPersonality }`. */
+  loop?: AgentLoop;
+  /** Default personality ID for the back-compat single-bot path. */
   defaultPersonality?: string;
   /** Maximum concurrent active sessions. Excess sessions are queued per-lane. */
   maxConcurrentSessions?: number;
@@ -178,8 +214,12 @@ const PLATFORM_COMMANDS: Record<
 // ---------------------------------------------------------------------------
 
 export class Gateway {
-  private readonly loop: AgentLoop;
-  private readonly defaultPersonality: string | undefined;
+  /** Bot routing table keyed by `botKey`. */
+  private readonly bots: Map<string, GatewayBotConfig>;
+  /** The botKey used when `InboundMessage.botKey` is absent (single-bot
+   *  deployments). When the config supplies multiple bots, this is null
+   *  and a message without `botKey` is treated as an unknown route. */
+  private readonly defaultBotKey: string | null;
   private readonly lanes = new Map<string, SessionLane>();
   /** Effective session key per lane (allows /new to fork a fresh session). */
   private readonly sessionKeys = new Map<string, string>();
@@ -210,8 +250,35 @@ export class Gateway {
     | undefined;
 
   constructor(config: GatewayConfig) {
-    this.loop = config.loop;
-    this.defaultPersonality = config.defaultPersonality;
+    const botEntries: GatewayBotConfig[] =
+      config.bots && config.bots.length > 0
+        ? config.bots
+        : config.loop !== undefined
+          ? [
+              {
+                // Back-compat: synthesize a one-entry routing table from the
+                // legacy `loop` + `defaultPersonality` shorthand. `default`
+                // is the lane-key segment for these messages.
+                botKey: 'default',
+                loop: config.loop,
+                binding: {
+                  type: 'personality',
+                  name: config.defaultPersonality ?? 'default',
+                  // The legacy single-bot path used to allow /personality
+                  // switching freely. Preserve that.
+                  allowSlashSwitch: true,
+                },
+              },
+            ]
+          : [];
+    if (botEntries.length === 0) {
+      throw new Error('Gateway: provide either `bots: [...]` or `loop` in GatewayConfig.');
+    }
+    this.bots = new Map(botEntries.map((b) => [b.botKey, b]));
+    if (this.bots.size !== botEntries.length) {
+      throw new Error('Gateway: duplicate botKey in GatewayConfig.bots.');
+    }
+    this.defaultBotKey = botEntries.length === 1 ? botEntries[0].botKey : null;
     this.dedupWindow = config.dedupWindow ?? 1024;
     this.maxChats = config.maxChats ?? 4096;
     // ttlMs <= 0 disables dedup inside the cache itself (shouldSend always returns true).
@@ -240,10 +307,15 @@ export class Gateway {
    * window (and records the key for future drops). Returns false for
    * never-before-seen keys, or when the message has no `messageId` (we can't
    * dedup what isn't keyed).
+   *
+   * The dedup key is platform-, bot-, chat-, and message-scoped: the same
+   * `messageId` arriving through two different bots is two distinct
+   * inbounds, not a duplicate. (Without the botKey segment, multi-bot
+   * routing would silently drop one of them.)
    */
-  private isDuplicate(message: InboundMessage): boolean {
+  private isDuplicate(message: InboundMessage, botKey: string): boolean {
     if (this.dedupWindow <= 0 || !message.messageId) return false;
-    const key = `${message.platform}:${message.chatId}:${message.messageId}`;
+    const key = `${message.platform}:${botKey}:${message.chatId}:${message.messageId}`;
     if (this.seenMessages.has(key)) return true;
     this.seenMessages.add(key);
     // Bound the set — drop the oldest entry once we exceed the window.
@@ -260,8 +332,11 @@ export class Gateway {
 
   async handleMessage(message: InboundMessage, adapter: PlatformAdapter): Promise<void> {
     // Drop duplicates BEFORE any work — billing-relevant. See OpenClaw #71761
-    // (channel messages injected twice → 2× cost).
-    if (this.isDuplicate(message)) return;
+    // (channel messages injected twice → 2× cost). Use the resolved botKey
+    // (message.botKey or the synthesized default) so multi-bot routing
+    // doesn't accidentally cross-dedupe.
+    const dedupBotKey = message.botKey ?? this.defaultBotKey ?? '';
+    if (this.isDuplicate(message, dedupBotKey)) return;
 
     // --- Chapter 1: before_inbound channel safety filter ---
     if (this.channelFilter) {
@@ -303,7 +378,21 @@ export class Gateway {
       }
     }
 
-    const laneKey = `${message.platform}:${message.chatId}`;
+    // Resolve which bot this message is for. `message.botKey` wins when
+    // adapters populate it; single-bot deployments fall back to the
+    // synthesized default. Multi-bot deployments with a missing botKey
+    // are a configuration error — log and drop rather than silently
+    // route to a wrong personality.
+    const botKey = message.botKey ?? this.defaultBotKey ?? '';
+    const bot = botKey ? this.bots.get(botKey) : undefined;
+    if (!bot) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.unknown_botKey',
+        details: { platform: message.platform, chatId: message.chatId, botKey: message.botKey },
+      });
+      return;
+    }
+    const laneKey = `${message.platform}:${bot.botKey}:${message.chatId}`;
     const lane = this.getOrCreateLane(laneKey);
     const text = message.text?.trim() ?? '';
 
@@ -331,15 +420,20 @@ export class Gateway {
     }
 
     if (cmdType === 'help') {
-      const current = this.personalityIds.get(laneKey) ?? this.defaultPersonality ?? 'default';
+      const current = this.activePersonalityFor(laneKey, bot);
+      const personalityLines = this.personalitySwitchAllowed(bot)
+        ? [
+            `/personality — show current personality (${current})`,
+            `/personality list — available personalities`,
+            `/personality <id> — switch personality`,
+          ]
+        : [`/personality — show current binding (${current}; switching disabled)`];
       await adapter
         .send(message.chatId, {
           text:
             `/new — start a fresh session\n` +
             `/stop — abort current response\n` +
-            `/personality — show current personality (${current})\n` +
-            `/personality list — available personalities\n` +
-            `/personality <id> — switch personality\n` +
+            `${personalityLines.join('\n')}\n` +
             `/usage — token and cost stats\n` +
             `/help — this message`,
         })
@@ -349,11 +443,28 @@ export class Gateway {
 
     if (cmdType === 'personality') {
       const arg = text.split(/\s+/).slice(1).join(' ').trim();
-      const current = this.personalityIds.get(laneKey) ?? this.defaultPersonality ?? 'default';
+      const current = this.activePersonalityFor(laneKey, bot);
 
       if (!arg) {
         await adapter
           .send(message.chatId, { text: `Current personality: ${current}` })
+          .catch(() => {});
+        return;
+      }
+
+      // Identity-bound bots reject the switch — the bot's external
+      // identity is the routing contract. The user sees a clear pointer
+      // to the right surface to switch to. Team-bots reject regardless
+      // of allowSlashSwitch because the coordinator is structurally part
+      // of the loop, not a runtime hat.
+      if (!this.personalitySwitchAllowed(bot)) {
+        await adapter
+          .send(message.chatId, {
+            text:
+              `This bot is bound to ${bot.binding.type} '${bot.binding.name}'. ` +
+              `Switching personalities is disabled for identity-bound bots. ` +
+              `To talk to a different agent, message that agent's bot.`,
+          })
           .catch(() => {});
         return;
       }
@@ -573,7 +684,14 @@ export class Gateway {
 
     await lane.enqueue(async (signal) => {
       const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
-      const personalityId = this.personalityIds.get(laneKey) ?? this.defaultPersonality;
+      // For team bots the coordinator personality is part of the loop;
+      // we don't override per turn. For personality bots, the binding's
+      // name is the default, and an in-lane /personality override (only
+      // possible when allowSlashSwitch is on) takes precedence.
+      const personalityId =
+        bot.binding.type === 'team'
+          ? undefined
+          : (this.personalityIds.get(laneKey) ?? bot.binding.name);
 
       // Track this turn so graceful shutdown can notify the user (P1-1).
       this.activeTurns.set(laneKey, { adapter, chatId: message.chatId });
@@ -588,7 +706,7 @@ export class Gateway {
         let responseText = '';
         let errored: { error: string; code: string } | null = null;
 
-        for await (const event of this.loop.run(text, {
+        for await (const event of bot.loop.run(text, {
           sessionKey,
           personalityId,
           abortSignal: signal,
@@ -666,6 +784,25 @@ export class Gateway {
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
+
+  /** Whether `/personality` switching is permitted for this lane's bot.
+   *  Team bots always reject (coordinator is structural). Personality
+   *  bots reject unless `binding.allowSlashSwitch` is on. */
+  private personalitySwitchAllowed(bot: GatewayBotConfig): boolean {
+    if (bot.binding.type === 'team') return false;
+    return bot.binding.allowSlashSwitch === true;
+  }
+
+  /** The personality identifier surfaced by `/personality` (no arg) and
+   *  `/help` for a given lane. Honors the per-lane override only when
+   *  the bot permits slash-switching. */
+  private activePersonalityFor(laneKey: string, bot: GatewayBotConfig): string {
+    if (this.personalitySwitchAllowed(bot)) {
+      const override = this.personalityIds.get(laneKey);
+      if (override) return override;
+    }
+    return bot.binding.name;
+  }
 
   private getOrCreateLane(key: string): SessionLane {
     const existing = this.lanes.get(key);

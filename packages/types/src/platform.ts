@@ -25,6 +25,15 @@ export interface InboundMessage {
    * See plan/IMPROVEMENT.md P2-2 / OpenClaw #71761.
    */
   messageId?: string;
+  /**
+   * Stable identifier of the bot this message arrived through, when the
+   * adapter is bound to a specific bot via multi-bot routing. The Gateway
+   * uses this as part of the lane key (`${platform}:${botKey}:${chatId}`)
+   * so concurrent conversations across multiple bots stay isolated and
+   * route to the correct personality/team binding. Optional for back-compat:
+   * single-adapter deployments may omit it.
+   */
+  botKey?: string;
   raw: unknown;
 }
 

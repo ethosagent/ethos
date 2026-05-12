@@ -509,3 +509,314 @@ describe('Gateway', () => {
     expect(order[1]).toBe('chat1');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Multi-bot routing — plan/phases/multi_bot_routing.md (Phase 1).
+//
+// The Gateway routes inbound messages to the bot identified by
+// `InboundMessage.botKey`. Each bot has its own AgentLoop and its own
+// binding (a personality or a team's coordinator). Lane keys include the
+// botKey so concurrent conversations across bots stay isolated.
+// ---------------------------------------------------------------------------
+
+describe('Gateway — multi-bot routing', () => {
+  function botLoop(label: string, runs: Array<{ botKey: string; text: string }>) {
+    async function* mockRun(text: string): AsyncGenerator<AgentEvent> {
+      runs.push({ botKey: label, text });
+      yield { type: 'text_delta', text: `[${label}] ${text}` };
+      yield { type: 'done', text: `[${label}] ${text}`, turnCount: 1 };
+    }
+    return {
+      run: (text: string) => mockRun(text),
+    } as unknown as import('@ethosagent/core').AgentLoop;
+  }
+
+  it('routes message.botKey to the matching bot entry', async () => {
+    const runs: Array<{ botKey: string; text: string }> = [];
+    const gateway = new Gateway({
+      bots: [
+        {
+          botKey: 'researcher-bot',
+          loop: botLoop('researcher-bot', runs),
+          binding: { type: 'personality', name: 'researcher' },
+        },
+        {
+          botKey: 'coder-bot',
+          loop: botLoop('coder-bot', runs),
+          binding: { type: 'personality', name: 'coder' },
+        },
+      ],
+    });
+    const { adapter, sent } = makeAdapter();
+
+    await gateway.handleMessage(
+      { ...makeMessage('hello', 'chatA'), messageId: 'a-1', botKey: 'researcher-bot' },
+      adapter,
+    );
+    await gateway.handleMessage(
+      { ...makeMessage('hello', 'chatB'), messageId: 'b-1', botKey: 'coder-bot' },
+      adapter,
+    );
+
+    expect(runs).toEqual([
+      { botKey: 'researcher-bot', text: 'hello' },
+      { botKey: 'coder-bot', text: 'hello' },
+    ]);
+    // Each bot's reply is prefixed with its own label.
+    expect(sent).toContain('[researcher-bot] hello');
+    expect(sent).toContain('[coder-bot] hello');
+  });
+
+  it('lanes are isolated across bots even for the same chatId', async () => {
+    // Both bots receive the same chatId, but the lane keys differ in the
+    // botKey segment so they don't share session/personality state.
+    const runs: Array<{ botKey: string; text: string }> = [];
+    const gateway = new Gateway({
+      bots: [
+        {
+          botKey: 'a',
+          loop: botLoop('a', runs),
+          binding: { type: 'personality', name: 'p1' },
+        },
+        {
+          botKey: 'b',
+          loop: botLoop('b', runs),
+          binding: { type: 'personality', name: 'p2' },
+        },
+      ],
+    });
+    const { adapter, sent } = makeAdapter();
+    const baseMsg = { ...makeMessage('same content', '42'), messageId: 'shared-1' };
+
+    await gateway.handleMessage({ ...baseMsg, botKey: 'a' }, adapter);
+    await gateway.handleMessage({ ...baseMsg, botKey: 'b' }, adapter);
+
+    // Both bots ran — the inbound dedup is platform:botKey:chatId scoped,
+    // so identical chatId+messageId across bots is NOT a duplicate.
+    expect(runs).toHaveLength(2);
+    expect(sent).toContain('[a] same content');
+    expect(sent).toContain('[b] same content');
+  });
+
+  it('drops messages with an unknown botKey instead of routing them somewhere wrong', async () => {
+    const runs: Array<{ botKey: string; text: string }> = [];
+    const gateway = new Gateway({
+      bots: [
+        {
+          botKey: 'known',
+          loop: botLoop('known', runs),
+          binding: { type: 'personality', name: 'p' },
+        },
+      ],
+    });
+    const { adapter, sent } = makeAdapter();
+
+    await gateway.handleMessage(
+      { ...makeMessage('hi', 'chat'), messageId: 'm-1', botKey: 'ghost' },
+      adapter,
+    );
+
+    // Loop never ran, nothing was sent — the gateway dropped the message
+    // silently rather than guessing which bot it might have been for.
+    expect(runs).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('falls back to the synthesized default when InboundMessage.botKey is absent and only one bot is configured', async () => {
+    // Single-bot deployments (the back-compat `loop` shorthand) shouldn't
+    // require every adapter to populate botKey immediately.
+    const runs: Array<{ botKey: string; text: string }> = [];
+    const gateway = new Gateway({
+      bots: [
+        {
+          botKey: 'solo',
+          loop: botLoop('solo', runs),
+          binding: { type: 'personality', name: 'p' },
+        },
+      ],
+    });
+    const { adapter } = makeAdapter();
+
+    await gateway.handleMessage({ ...makeMessage('hello'), messageId: 'm-1' }, adapter);
+
+    expect(runs).toEqual([{ botKey: 'solo', text: 'hello' }]);
+  });
+
+  it('rejects /personality on identity-bound personality bots (allowSlashSwitch=false default)', async () => {
+    const runs: Array<{ botKey: string; text: string }> = [];
+    const gateway = new Gateway({
+      bots: [
+        {
+          botKey: 'researcher-bot',
+          loop: botLoop('researcher-bot', runs),
+          binding: { type: 'personality', name: 'researcher' },
+        },
+      ],
+    });
+    const { adapter, sent } = makeAdapter();
+
+    await gateway.handleMessage(
+      { ...makeMessage('/personality coder'), messageId: 'm-1', botKey: 'researcher-bot' },
+      adapter,
+    );
+
+    expect(sent.some((s) => s.includes('disabled for identity-bound bots'))).toBe(true);
+    expect(runs).toEqual([]);
+  });
+
+  it('honors /personality when bind.allowSlashSwitch is true', async () => {
+    const runs: Array<{ botKey: string; text: string }> = [];
+    const gateway = new Gateway({
+      bots: [
+        {
+          botKey: 'flex',
+          loop: botLoop('flex', runs),
+          binding: { type: 'personality', name: 'researcher', allowSlashSwitch: true },
+        },
+      ],
+    });
+    const { adapter, sent } = makeAdapter();
+
+    await gateway.handleMessage(
+      { ...makeMessage('/personality coder'), messageId: 'm-1', botKey: 'flex' },
+      adapter,
+    );
+
+    expect(sent.some((s) => s.includes('Switched to coder'))).toBe(true);
+  });
+
+  it('rejects /personality on team-bound bots regardless of allowSlashSwitch', async () => {
+    const runs: Array<{ botKey: string; text: string }> = [];
+    const gateway = new Gateway({
+      bots: [
+        {
+          botKey: 'eng-bot',
+          loop: botLoop('eng-bot', runs),
+          binding: { type: 'team', name: 'eng', allowSlashSwitch: true },
+        },
+      ],
+    });
+    const { adapter, sent } = makeAdapter();
+
+    await gateway.handleMessage(
+      { ...makeMessage('/personality coder'), messageId: 'm-1', botKey: 'eng-bot' },
+      adapter,
+    );
+
+    expect(sent.some((s) => s.includes('disabled for identity-bound bots'))).toBe(true);
+    expect(runs).toEqual([]);
+  });
+
+  it('does not pass personalityId for team-bound bots (coordinator is structural)', async () => {
+    const personalityIds: Array<string | undefined> = [];
+    const loop = {
+      run: (text: string, opts: { personalityId?: string }) => {
+        personalityIds.push(opts.personalityId);
+        return (async function* (): AsyncGenerator<AgentEvent> {
+          yield { type: 'done', text, turnCount: 1 };
+        })();
+      },
+    } as unknown as import('@ethosagent/core').AgentLoop;
+
+    const gateway = new Gateway({
+      bots: [
+        {
+          botKey: 'eng-bot',
+          loop,
+          binding: { type: 'team', name: 'eng' },
+        },
+      ],
+    });
+    const { adapter } = makeAdapter();
+
+    await gateway.handleMessage(
+      { ...makeMessage('build feature X'), messageId: 'm-1', botKey: 'eng-bot' },
+      adapter,
+    );
+
+    expect(personalityIds).toEqual([undefined]);
+  });
+
+  it('passes binding.name as personalityId for personality-bound bots', async () => {
+    const personalityIds: Array<string | undefined> = [];
+    const loop = {
+      run: (text: string, opts: { personalityId?: string }) => {
+        personalityIds.push(opts.personalityId);
+        return (async function* (): AsyncGenerator<AgentEvent> {
+          yield { type: 'done', text, turnCount: 1 };
+        })();
+      },
+    } as unknown as import('@ethosagent/core').AgentLoop;
+
+    const gateway = new Gateway({
+      bots: [
+        {
+          botKey: 'r-bot',
+          loop,
+          binding: { type: 'personality', name: 'researcher' },
+        },
+      ],
+    });
+    const { adapter } = makeAdapter();
+
+    await gateway.handleMessage(
+      { ...makeMessage('hi'), messageId: 'm-1', botKey: 'r-bot' },
+      adapter,
+    );
+
+    expect(personalityIds).toEqual(['researcher']);
+  });
+
+  it('outbound dedup is bot-scoped (same final to two bots both deliver)', async () => {
+    // Outbound dedup keys on the sessionId; sessionId now contains botKey,
+    // so identical final content from two bots in the same chat does not
+    // suppress one of them. (Without bot-scoping, two bots both replying
+    // "PONG" to the same chatId on the same tick would drop one reply.)
+    const loop1 = makeLoop('PONG');
+    const loop2 = makeLoop('PONG');
+    const gateway = new Gateway({
+      outboundDedupTtlMs: 60_000,
+      bots: [
+        { botKey: 'a', loop: loop1, binding: { type: 'personality', name: 'p' } },
+        { botKey: 'b', loop: loop2, binding: { type: 'personality', name: 'p' } },
+      ],
+    });
+    const { adapter, sent } = makeAdapter();
+
+    await gateway.handleMessage(
+      { ...makeMessage('hi', 'chat1'), messageId: 'a-1', botKey: 'a' },
+      adapter,
+    );
+    await gateway.handleMessage(
+      { ...makeMessage('hi', 'chat1'), messageId: 'b-1', botKey: 'b' },
+      adapter,
+    );
+
+    const pongCount = sent.filter((s) => s === 'PONG').length;
+    expect(pongCount).toBe(2);
+  });
+
+  it('rejects construction with neither bots[] nor loop', () => {
+    expect(() => new Gateway({} as never)).toThrow(/provide either/);
+  });
+
+  it('rejects construction with duplicate botKeys', () => {
+    expect(
+      () =>
+        new Gateway({
+          bots: [
+            {
+              botKey: 'dup',
+              loop: makeLoop('a'),
+              binding: { type: 'personality', name: 'p' },
+            },
+            {
+              botKey: 'dup',
+              loop: makeLoop('b'),
+              binding: { type: 'personality', name: 'q' },
+            },
+          ],
+        }),
+    ).toThrow(/duplicate botKey/);
+  });
+});
