@@ -36,7 +36,7 @@ const STATUS_LABEL: Record<KanbanTaskStatus, string> = {
   scheduled: 'scheduled',
 };
 
-export function TeamControlCenter(): JSX.Element {
+export function TeamControlCenter() {
   const { name = '' } = useParams<{ name: string }>();
   const navigate = useNavigate();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -128,7 +128,7 @@ function Board({
   teamName: string;
   showArchived: boolean;
   onSelect: (id: string) => void;
-}): JSX.Element {
+}) {
   const byStatus = useMemo(() => {
     const map = new Map<KanbanTaskStatus, KanbanTask[]>();
     for (const status of [...STATUS_COLUMNS, ARCHIVED_STATUS]) map.set(status, []);
@@ -181,7 +181,7 @@ function BoardColumn({
   childCounts: Map<string, { total: number; done: number }>;
   teamName: string;
   onSelect: (id: string) => void;
-}): JSX.Element {
+}) {
   return (
     <div className="cc-column">
       <header className="cc-column-header">
@@ -224,7 +224,7 @@ function TaskTile({
   childCount?: { total: number; done: number };
   teamName: string;
   onSelect: (id: string) => void;
-}): JSX.Element {
+}) {
   const queryClient = useQueryClient();
   const { notification } = AntApp.useApp();
 
@@ -326,7 +326,7 @@ function Activity({
   events: KanbanEvent[];
   tasks: KanbanTask[];
   onSelect: (id: string) => void;
-}): JSX.Element {
+}) {
   const taskTitle = useMemo(() => {
     const m = new Map<string, string>();
     for (const t of tasks) m.set(t.id, t.title);
@@ -379,7 +379,7 @@ function Activity({
 // Roster pane
 // ---------------------------------------------------------------------------
 
-function Roster({ snapshot }: { snapshot: KanbanBoardSnapshot }): JSX.Element {
+function Roster({ snapshot }: { snapshot: KanbanBoardSnapshot }) {
   const workingByAssignee = useMemo(() => {
     const m = new Map<string, KanbanTask>();
     for (const t of snapshot.tasks) {
@@ -446,7 +446,7 @@ function TaskDrawer({
   board: KanbanBoardSnapshot;
   teamName: string;
   onClose: () => void;
-}): JSX.Element {
+}) {
   const queryClient = useQueryClient();
   const { notification } = AntApp.useApp();
 

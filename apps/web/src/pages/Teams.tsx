@@ -114,7 +114,7 @@ export function Teams() {
   );
 }
 
-function HealthBadge({ health }: { health: KanbanTeamSummary['health'] }): JSX.Element {
+function HealthBadge({ health }: { health: KanbanTeamSummary['health'] }) {
   if (health === 'running') return <Badge status="success" text="running" />;
   if (health === 'stale') return <Badge status="warning" text="stale" />;
   return <Badge status="default" text="stopped" />;

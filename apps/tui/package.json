@@ -16,10 +16,10 @@
     "@ethosagent/types": "workspace:*",
     "@ethosagent/web-contracts": "workspace:*",
     "@ethosagent/wiring": "workspace:*",
-    "ink": "^5.0.0",
-    "react": "^18.3.0"
+    "ink": "^7.0.0",
+    "react": "19.2.6"
   },
   "devDependencies": {
-    "@types/react": "^18.3.0"
+    "@types/react": "^19.0.0"
   }
 }

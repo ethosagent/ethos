@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from 'ink';
-import { type Reducer, useEffect, useReducer } from 'react';
+import { useEffect, useReducer } from 'react';
 import { DESIGN, personalityAccent } from '../skin';
 import {
   getStepOrder,
@@ -69,7 +69,10 @@ interface WizardProps {
 export function Wizard({ existing, startAtStep, singleStep, onComplete }: WizardProps) {
   const initialMode: WizardMode = startAtStep && isFullOnlyStep(startAtStep) ? 'full' : 'quick';
 
-  const [state, dispatch] = useReducer<Reducer<WizardState, WizardAction>>(reducer, {
+  // React 19 dropped the single-generic `useReducer<Reducer<S, A>>` overload.
+  // The supported form is `useReducer<S, A>` directly; TS infers it from
+  // `reducer`'s signature here, so no explicit args needed.
+  const [state, dispatch] = useReducer(reducer, {
     step: startAtStep ?? 'entry',
     mode: initialMode,
     answers: existing ?? {},
