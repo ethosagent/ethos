@@ -58,6 +58,8 @@ export type EthosErrorCode =
   | 'PLUGIN_CONTRACT_INCOMPATIBLE'
   // Team manifest (Teamwork Core)
   | 'TEAM_MANIFEST_INVALID'
+  // Memory
+  | 'MEMORY_CONFLICT'
   // Web API (Phase 26)
   | 'UNAUTHORIZED'
   | 'SESSION_NOT_FOUND'
@@ -161,7 +163,7 @@ export function formatError(err: EthosError, opts: FormatOptions = {}): string {
  * Callers may catch `MemoryConflictError` and retry after re-reading the
  * current entry.
  */
-export class MemoryConflictError extends Error {
+export class MemoryConflictError extends EthosError {
   readonly key: string;
   readonly scopeId: string;
   /** mtime recorded when the caller last read the entry (ms). */
@@ -170,10 +172,14 @@ export class MemoryConflictError extends Error {
   readonly currentAt: number;
 
   constructor(opts: { key: string; scopeId: string; recordedAt: number; currentAt: number }) {
-    super(
+    const cause =
       `Conflict on "${opts.key}" in scope "${opts.scopeId}": ` +
-        `entry modified at ${opts.currentAt} but caller last read at ${opts.recordedAt}`,
-    );
+      `entry modified at ${opts.currentAt} but caller last read at ${opts.recordedAt}`;
+    super({
+      code: 'MEMORY_CONFLICT',
+      cause,
+      action: 'Re-read the entry and retry the sync.',
+    });
     this.name = 'MemoryConflictError';
     this.key = opts.key;
     this.scopeId = opts.scopeId;

@@ -132,6 +132,10 @@ export class LastWriteWinsPolicy implements MemoryProvider {
 
   constructor(private readonly inner: MemoryProvider) {}
 
+  // Snapshot entries from prefetch() are not added to the conflict tracker.
+  // Callers that rely on conflict detection must use read() before sync().
+  // In current wiring, LazyOnDemandPolicy suppresses prefetch() before it
+  // reaches this layer, so this is safe.
   prefetch(ctx: MemoryContext): Promise<MemorySnapshot | null> {
     return this.inner.prefetch(ctx);
   }
@@ -171,6 +175,10 @@ export class LastWriteWinsPolicy implements MemoryProvider {
    * For each key that was previously read, check the current mtime against
    * the recorded read-timestamp.  Rejects the entire call if any key has been
    * modified by another writer since the caller last read it.
+   *
+   * After a successful write, updates `lastReadAt` baselines so that a second
+   * `sync()` call on the same key does not spuriously fail.  Keys that were
+   * deleted are removed from the tracker so they can be re-added later.
    */
   async sync(updates: MemoryUpdate[], ctx: MemoryContext): Promise<void> {
     // Collect distinct keys that have updates (excluding deletes on unseen keys).
@@ -183,10 +191,13 @@ export class LastWriteWinsPolicy implements MemoryProvider {
     }
 
     // Fetch current mtimes for all keys that need a precondition check.
+    // Collect them so we can update baselines after the write without re-reading.
+    const fetchedMtimes = new Map<string, number | undefined>();
     await Promise.all(
       [...keysToCheck].map(async (key) => {
         const current = await this.inner.read(key, ctx);
         const currentMtime = current?.metadata?.lastUpdatedAt;
+        fetchedMtimes.set(key, currentMtime);
         const readAt = this.lastReadAt.get(`${ctx.scopeId}:${key}`);
         if (readAt !== undefined && currentMtime !== undefined && currentMtime > readAt) {
           throw new MemoryConflictError({
@@ -199,7 +210,24 @@ export class LastWriteWinsPolicy implements MemoryProvider {
       }),
     );
 
-    return this.inner.sync(updates, ctx);
+    await this.inner.sync(updates, ctx);
+
+    // Update baselines so that a subsequent sync() on the same keys does not
+    // spuriously conflict.  Use the mtime that was "current" at check time as
+    // the new baseline (the write will have bumped it, but we record the
+    // pre-write value as the minimum safe baseline; the next read() will
+    // refresh it properly).  For deletes, remove the key from the tracker so
+    // it can be re-added later without a spurious conflict.
+    for (const u of updates) {
+      const mapKey = `${ctx.scopeId}:${u.key}`;
+      if (u.action === 'delete') {
+        this.lastReadAt.delete(mapKey);
+      } else if (this.lastReadAt.has(mapKey)) {
+        // Only update keys we were already tracking (blind adds have no entry).
+        const baseline = fetchedMtimes.get(u.key) ?? Date.now();
+        this.lastReadAt.set(mapKey, baseline);
+      }
+    }
   }
 
   list(ctx: MemoryContext, opts?: ListOpts): Promise<MemoryEntryRef[]> {
@@ -212,6 +240,7 @@ export class LastWriteWinsPolicy implements MemoryProvider {
 // ---------------------------------------------------------------------------
 
 /**
+ * @internal
  * Placeholder for future role-based access control on memory operations.
  * TODO: implement scope × role × operation permission matrix.
  * Not wired — stub only.

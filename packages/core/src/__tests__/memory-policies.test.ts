@@ -383,6 +383,56 @@ describe('LastWriteWinsPolicy', () => {
     ).rejects.toThrow(MemoryConflictError);
   });
 
+  it('read → sync → sync on the same key succeeds without spurious conflict', async () => {
+    const inner = new InMemoryMemoryProvider();
+    inner.seed('team:alpha', 'decisions.md', '# Decisions', 5000);
+    const policy = new LastWriteWinsPolicy(inner);
+
+    // Read records mtime 5000.
+    await policy.read('decisions.md', makeCtx('team:alpha'));
+
+    // First sync — should succeed.
+    await expect(
+      policy.sync(
+        [{ action: 'add', key: 'decisions.md', content: 'line A' }],
+        makeCtx('team:alpha'),
+      ),
+    ).resolves.toBeUndefined();
+
+    // Second sync without an intervening read — must also succeed (no spurious conflict).
+    await expect(
+      policy.sync(
+        [{ action: 'add', key: 'decisions.md', content: 'line B' }],
+        makeCtx('team:alpha'),
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it('re-add after delete does not spuriously conflict', async () => {
+    const inner = new InMemoryMemoryProvider();
+    inner.seed('team:alpha', 'temp.md', 'original', 3000);
+    const policy = new LastWriteWinsPolicy(inner);
+
+    // Read records mtime 3000.
+    await policy.read('temp.md', makeCtx('team:alpha'));
+
+    // Delete the key — should clear the tracker entry.
+    await expect(
+      policy.sync([{ action: 'delete', key: 'temp.md' }], makeCtx('team:alpha')),
+    ).resolves.toBeUndefined();
+
+    // External actor re-adds the key.
+    inner.seed('team:alpha', 'temp.md', 're-created', 7000);
+
+    // Re-add via sync should succeed (stale tracker entry was removed on delete).
+    await expect(
+      policy.sync(
+        [{ action: 'add', key: 'temp.md', content: 'new content' }],
+        makeCtx('team:alpha'),
+      ),
+    ).resolves.toBeUndefined();
+  });
+
   it('does not overwrite a prior read mtime with a later search result (stale-state laundering guard)', async () => {
     const inner = new InMemoryMemoryProvider();
     inner.seed('team:alpha', 'decisions.md', 'we use TypeScript', 1000);

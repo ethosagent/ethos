@@ -17,7 +17,6 @@ export { NoopMemoryProvider } from './defaults/noop-memory';
 export { DefaultPersonalityRegistry } from './defaults/noop-personality';
 export { DefaultHookRegistry } from './hook-registry';
 export {
-  AuthorisationPolicy,
   EagerPrefetchPolicy,
   LastWriteWinsPolicy,
   LazyOnDemandPolicy,
