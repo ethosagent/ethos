@@ -14,7 +14,7 @@ import type { KanbanReader } from '../commands/kanban';
 import type { MemoryReader } from '../commands/memory';
 import { extractRecentEntries } from '../commands/memory';
 import type { Binding, ChannelMode } from '../config';
-import { buildHomeView, HOME_REFRESH_ACTION_ID } from './view';
+import { buildHomeView, HOME_REFRESH_ACTION_ID, type SlackHomeView } from './view';
 
 /** Minimal recent-session shape the home view consumes. The wiring layer
  *  adapts `SessionStore.listSessions` (filtered to this bot) to this surface
@@ -47,46 +47,55 @@ export interface HomeEventDeps {
 /** Number of MEMORY.md entries surfaced in the home tab. */
 const MEMORY_SNIPPET_COUNT = 5;
 
+/** The one Bolt `client` capability the home handlers use. We narrow the Bolt
+ *  client to this at the call site for the same reason `blocks/` uses
+ *  `SlackBlock` — keep the single method we call type-checked without taking a
+ *  direct `@slack/web-api` dependency. */
+type HomeClient = {
+  views: { publish: (args: { user_id: string; view: SlackHomeView }) => Promise<unknown> };
+};
+
 export function registerHomeEvents(app: App, deps: HomeEventDeps): void {
-  const publishHome = async (
-    client: { views: { publish: (args: unknown) => Promise<unknown> } },
-    userId: string,
-  ): Promise<void> => {
+  const publishHome = async (client: HomeClient, userId: string): Promise<void> => {
+    const [sessions, kanbanTickets, memorySnippets] = await Promise.all([
+      gatherSessions(deps),
+      gatherKanban(deps),
+      gatherMemory(deps),
+    ]);
+    // `buildHomeView` is pure first-party code — a bug here should surface via
+    // Bolt's error handling, not be swallowed below into a blank Home tab.
+    const view = buildHomeView({
+      bot: { displayName: deps.displayName, binding: deps.binding },
+      sessions,
+      kanbanTickets,
+      memorySnippets,
+      channelModes: deps.channelOverrides?.entries() ?? [],
+      webUiBaseUrl: deps.webUiBaseUrl,
+    });
     try {
-      const [sessions, kanbanTickets, memorySnippets] = await Promise.all([
-        gatherSessions(deps),
-        gatherKanban(deps),
-        gatherMemory(deps),
-      ]);
-      const view = buildHomeView({
-        bot: { displayName: deps.displayName, binding: deps.binding },
-        sessions,
-        kanbanTickets,
-        memorySnippets,
-        channelModes: deps.channelOverrides?.entries() ?? [],
-        webUiBaseUrl: deps.webUiBaseUrl,
-      });
       await client.views.publish({ user_id: userId, view });
     } catch {
-      // Slack is the one thing we don't control — a publish failure or Bolt
-      // API drift must not throw inside the event loop.
+      // Slack is the one thing we don't control — a `views.publish` failure or
+      // Bolt API drift must not throw inside the event loop.
     }
   };
 
   app.event('app_home_opened', async ({ event, client }) => {
     const evt = event as { user?: string; tab?: string };
     // `app_home_opened` also fires for the Messages tab — only the Home tab
-    // has a view to publish.
+    // has a view to publish. A missing `tab` falls through and publishes: the
+    // real Slack event always carries `tab`, so absence means a malformed
+    // payload, and a Home publish is the safe default.
     if (evt.tab && evt.tab !== 'home') return;
     if (!evt.user) return;
-    await publishHome(client as never, evt.user);
+    await publishHome(client as HomeClient, evt.user);
   });
 
   app.action(HOME_REFRESH_ACTION_ID, async ({ ack, body, client }) => {
     await ack();
     const userId = (body as { user?: { id?: string } }).user?.id;
     if (!userId) return;
-    await publishHome(client as never, userId);
+    await publishHome(client as HomeClient, userId);
   });
 }
 
