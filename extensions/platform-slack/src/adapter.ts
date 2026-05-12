@@ -59,10 +59,15 @@ function deriveDefaultBotKey(botToken: string): string {
  * Normalize a configured `webUiBaseUrl`. The value is interpolated directly
  * into Slack mrkdwn link syntax (`<url|text>`) in `blocks/session.ts`, so a
  * bad value containing `>` or `|` would break the markup. We validate it once
- * here at the boundary: accept only `http:` / `https:` URLs, strip trailing
- * slashes, and treat anything absent or invalid as absent — the home view
- * already degrades gracefully to plain-text session rows when there's no base
- * URL. A misconfigured optional cosmetic field must not crash startup.
+ * here at the boundary: accept only `http:` / `https:` URLs, and return the
+ * parser-canonicalized `href` — not the raw string — so any character that
+ * would otherwise breach the `<url|text>` delimiters is already percent-
+ * encoded by `URL`. Trailing slashes are stripped so `${base}/sessions/<id>`
+ * concatenation stays clean (path-prefixed deployments are still supported —
+ * `href` preserves the path). Anything absent or invalid is treated as absent:
+ * the home view already degrades gracefully to plain-text session rows when
+ * there's no base URL, and a misconfigured optional cosmetic field must not
+ * crash startup.
  */
 function normalizeWebUiBaseUrl(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
@@ -73,7 +78,7 @@ function normalizeWebUiBaseUrl(raw: string | undefined): string | undefined {
     return undefined;
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
-  return raw.replace(/\/+$/, '');
+  return url.href.replace(/\/+$/, '');
 }
 
 export interface SlackAdapterConfig {

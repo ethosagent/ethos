@@ -170,6 +170,20 @@ describe('SlackAdapter — webUiBaseUrl normalization', () => {
     expect(baseUrlOf(make('https://ok|broken>markup'))).toBeUndefined();
   });
 
+  it('canonicalizes chars that would breach Slack mrkdwn link delimiters', () => {
+    // A `>` in the path parses fine but would close the `<url|text>` markup
+    // if interpolated raw. We return the parser-encoded `href`, so it can't.
+    const normalized = baseUrlOf(make('https://ethos.example.com/app>x'));
+    expect(normalized).toBe('https://ethos.example.com/app%3Ex');
+    expect(normalized).not.toContain('>');
+  });
+
+  it('preserves a path-prefixed base URL', () => {
+    expect(baseUrlOf(make('https://company.example.com/ethos'))).toBe(
+      'https://company.example.com/ethos',
+    );
+  });
+
   it('treats an absent value as absent', () => {
     expect(baseUrlOf(make(undefined))).toBeUndefined();
   });
