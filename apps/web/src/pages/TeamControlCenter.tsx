@@ -264,7 +264,11 @@ function TaskTile({
     >
       <div className="cc-task-top">
         <span className="cc-task-id">{task.id.slice(0, 8)}</span>
-        {task.priority !== 0 && <span className="cc-task-priority">p{task.priority}</span>}
+        {task.priority !== 0 && (
+          <span className="cc-task-priority" data-p={task.priority}>
+            p{task.priority}
+          </span>
+        )}
         {isGoal && <span className="cc-task-goal-badge">goal</span>}
         <span className="cc-spacer" />
         {childCount && childCount.total > 0 && (
@@ -353,14 +357,6 @@ function Activity({
                   key={`${e.taskId}:${e.id}`}
                   className="cc-activity-row"
                   onClick={() => onSelect(e.taskId)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    padding: '6px 0',
-                    textAlign: 'left',
-                    color: 'inherit',
-                  }}
                 >
                   <span className="cc-activity-actor" style={{ color: accent }}>
                     {e.actor}

@@ -99,6 +99,17 @@
   margin: 0 auto 32px;
 }
 
+.heroSubtitle code {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 14px;
+  background: var(--ethos-bg-overlay);
+  border: 1px solid var(--ethos-border-subtle);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--ethos-text-primary);
+  white-space: nowrap;
+}
+
 /* Word-stagger entrance — opacity + transform only, never width.
    Stagger via custom prop --i. Single easing token. */
 .heroWord {

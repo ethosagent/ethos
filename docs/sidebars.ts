@@ -40,6 +40,7 @@ const sidebars: SidebarsConfig = {
             'using/how-to/run-as-daemon',
             'using/how-to/migrate-from-openclaw',
             'using/how-to/use-as-mcp-server',
+            'using/how-to/run-a-team-with-kanban',
           ],
         },
         {
@@ -107,6 +108,7 @@ const sidebars: SidebarsConfig = {
             'building/reference/storage-interface',
             'building/reference/plugin-sdk',
             'building/reference/personality-registry',
+            'building/reference/kanban-tools',
           ],
         },
         {

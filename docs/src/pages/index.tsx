@@ -1,26 +1,26 @@
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 
 import PersonalityShowcase from '../components/PersonalityShowcase';
 import styles from './index.module.css';
 
+const HERO_TITLE_WORDS = ['Personality', 'is', 'architecture.'];
+
 const doors = [
   {
+    number: '01',
     label: 'Using Ethos',
-    description:
-      'Install the CLI, configure a provider, run your first chat, ship a Telegram bot. Five minutes to first message.',
-    cta: 'Quickstart →',
+    description: 'Install the CLI, configure a provider, run your first chat, ship a Telegram bot.',
+    cta: 'Quickstart · 5 min →',
     to: '/docs/using/quickstart',
-    time: '5 min',
   },
   {
+    number: '02',
     label: 'Building on Ethos',
-    description:
-      'Write a tool, add an LLM provider, build a channel adapter, publish a plugin. Ten minutes to first commit.',
-    cta: 'Contributor quickstart →',
+    description: 'Write a tool, add an LLM provider, build a channel adapter, publish a plugin.',
+    cta: 'Contributor quickstart · 10 min →',
     to: '/docs/building/quickstart',
-    time: '10 min',
   },
 ];
 
@@ -31,9 +31,15 @@ function Hero() {
         <div className={styles.heroStripe} aria-hidden="true" />
         <p className={styles.heroEyebrow}>ethos</p>
         <h1 className={styles.heroTitle}>
-          <span className={styles.heroWord}>Personality</span>{' '}
-          <span className={styles.heroWord}>is</span>{' '}
-          <span className={styles.heroWord}>architecture.</span>
+          {HERO_TITLE_WORDS.map((word, i) => (
+            <span
+              key={word}
+              className={styles.heroWord}
+              style={{ ['--i' as never]: i } as CSSProperties}
+            >
+              {word}
+            </span>
+          ))}
         </h1>
         <p className={styles.heroSubtitle}>
           A personality is a directory of three files — <code>ETHOS.md</code>,{' '}
@@ -64,7 +70,7 @@ function TwoDoors() {
         <div className={styles.pathRows}>
           {doors.map((p) => (
             <Link key={p.label} to={p.to} className={styles.pathRow}>
-              <span className={styles.pathNumber}>{p.time}</span>
+              <span className={styles.pathNumber}>{p.number}</span>
               <span className={styles.pathLabel}>{p.label}</span>
               <span className={styles.pathDescription}>{p.description}</span>
               <span className={styles.pathCta}>{p.cta}</span>
@@ -80,15 +86,13 @@ function OrientationLinks() {
   return (
     <section className={styles.teaser}>
       <div className="container">
-        <div className={styles.teaserInner}>
-          <p className={styles.teaserText}>
-            <strong>New here?</strong> Read{' '}
-            <Link to="/docs/getting-started/what-is-ethos">What is Ethos?</Link> for the 90-second
-            mental model, <Link to="/docs/getting-started/why-ethos">Why Ethos?</Link> for the
-            comparison to LangChain / CrewAI / OpenClaw / Hermes, and{' '}
-            <Link to="/docs/getting-started/glossary">Glossary</Link> for every domain term.
-          </p>
-        </div>
+        <p className={styles.teaserText}>
+          <strong>New here?</strong> Read{' '}
+          <Link to="/docs/getting-started/what-is-ethos">What is Ethos?</Link> for the 90-second
+          mental model, <Link to="/docs/getting-started/why-ethos">Why Ethos?</Link> for the
+          comparison to LangChain / CrewAI / OpenClaw / Hermes, and{' '}
+          <Link to="/docs/getting-started/glossary">Glossary</Link> for every domain term.
+        </p>
       </div>
     </section>
   );

@@ -4,7 +4,7 @@ title: Run a team with a shared kanban board
 description: Stand up a multi-personality team whose work is captured on a durable kanban board the coordinator manages and the dispatcher routes.
 kind: how-to
 audience: user
-slug: teamwork-kanban
+slug: run-a-team-with-kanban
 time: 15 min
 updated: 2026-05-11
 ---
@@ -15,7 +15,7 @@ You end with a running team, a populated `~/.ethos/teams/<name>/board.db`, and a
 
 ## Prereqs
 
-- Ethos installed and `ethos chat` working solo. (See [Quickstart](../getting-started/quickstart).)
+- Ethos installed and `ethos chat` working solo. (See [Quickstart](../quickstart).)
 - A working LLM provider configured (the coordinator and members all hit it).
 - A team manifest authored at `~/.ethos/teams/<name>.yaml` or `./team.yaml` — see step 1.
 
@@ -141,6 +141,6 @@ Any `running` task whose worker was killed mid-flight lands in `blocked` on the 
 
 ## See also
 
-- [Kanban primitive (Plan A — solo)](../core-concepts/kanban) — what the team board is built on
-- [Teams and meshes](../core-concepts/teams-and-meshes) — supervisor, port allocation, dispatch modes
-- [`ethos team` CLI reference](../cli-reference) — every subcommand including the new `destroy`
+- [Kanban primitive (Plan A — solo)](../../building/reference/kanban-tools) — what the team board is built on
+- [Teams and meshes](../../building/explanation/teams-and-meshes) — supervisor, port allocation, dispatch modes
+- [`ethos team` CLI reference](../reference/cli) — every subcommand including the new `destroy`
