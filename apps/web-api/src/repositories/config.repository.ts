@@ -73,7 +73,7 @@ export class ConfigRepository {
         if (id && value) config.modelRouting[id] = stripQuotes(value);
         continue;
       }
-      const kv = line.match(/^(\w+):\s*(.+)$/);
+      const kv = line.match(/^([\w.]+):\s*(.+)$/);
       if (!kv) continue;
       const key = kv[1]?.trim();
       const value = kv[2] !== undefined ? stripQuotes(kv[2].trim()) : '';
