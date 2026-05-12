@@ -9,7 +9,7 @@ import { SpinnerState } from '../lib/spinner';
 import { renderStatusBar, type Threshold } from '../lib/status-bar';
 import { formatToolFeedLine } from '../lib/tool-feed';
 import { isVerbosity, nextVerbosity, projectEvent, type Verbosity } from '../lib/verbosity';
-import { resolveActiveLoop, startNightlyPrune } from '../wiring';
+import { resolveActiveLoop, startEvolverCron, startNightlyPrune } from '../wiring';
 import { runPairingCommand } from './pairing-commands';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
 
@@ -134,6 +134,10 @@ function renderStatusBarLine(state: ChatState): void {
 
 export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): Promise<void> {
   startNightlyPrune(config.retention, config.personalitiesConfig);
+  if (config.evolverCronEnabled) {
+    const schedule = config.evolverSchedule ?? '0 3 * * *';
+    void startEvolverCron(schedule);
+  }
   const { loop, personalityId, displayName } = await resolveActiveLoop(config);
 
   if (opts.singleQuery) {

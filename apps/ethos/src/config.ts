@@ -119,6 +119,14 @@ export interface EthosConfig {
    * Only `retention` sub-block is supported here.
    */
   personalitiesConfig?: Record<string, { retention?: RetentionConfig }>;
+  /**
+   * FW-29 — skill evolver cron registration.
+   *   `evolverCronEnabled` — when true, registers an in-process cron job that
+   *     runs `ethos evolve run --quiet` on the configured schedule.
+   *   `evolverSchedule`   — 5-field cron expression (default: "0 3 * * *").
+   */
+  evolverCronEnabled?: boolean;
+  evolverSchedule?: string;
 }
 
 export function ethosDir(): string {
@@ -187,6 +195,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const retentionKv: Record<string, string> = {};
   const personalitiesRetKv: Record<string, Record<string, string>> = {};
   const displayKv: Record<string, string> = {};
+  const evolverKv: Record<string, string> = {};
   for (const line of src.split('\n')) {
     // providers.<index>.<field>: <value>
     const prov = line.match(/^providers\.(\d+)\.(\S+):\s*(.+)$/);
@@ -216,6 +225,12 @@ function parseConfigYaml(src: string): EthosConfig {
     const disp = line.match(/^display\.([a-z_]+):\s*(.+)$/);
     if (disp) {
       displayKv[disp[1]] = disp[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // evolver.<field>: <value>
+    const evlv = line.match(/^evolver\.([a-z_]+):\s*(.+)$/);
+    if (evlv) {
+      evolverKv[evlv[1]] = evlv[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // modelRouting.<personality>: <model>
@@ -288,6 +303,8 @@ function parseConfigYaml(src: string): EthosConfig {
     skin: kv.skin || undefined,
     retention,
     personalitiesConfig,
+    evolverCronEnabled: evolverKv.cron_enabled === 'true' ? true : undefined,
+    evolverSchedule: evolverKv.schedule || undefined,
   };
 }
 

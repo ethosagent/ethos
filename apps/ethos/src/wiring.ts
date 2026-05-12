@@ -102,6 +102,29 @@ export function stopNightlyPrune(): void {
   }
 }
 
+let evolverCronStop: (() => void) | undefined;
+
+/**
+ * Register the skill-evolver cron job. Idempotent — second call is a no-op.
+ * Returns a stop function. Dynamic import keeps `croner` out of the startup
+ * bundle for users who never enable evolver cron.
+ */
+export async function startEvolverCron(schedule: string): Promise<() => void> {
+  if (!evolverCronStop) {
+    const { registerEvolverCron } = await import('@ethosagent/skill-evolver');
+    evolverCronStop = registerEvolverCron(schedule);
+  }
+  return evolverCronStop;
+}
+
+/** Stop the evolver cron job if it was started. */
+export function stopEvolverCron(): void {
+  if (evolverCronStop) {
+    evolverCronStop();
+    evolverCronStop = undefined;
+  }
+}
+
 async function withRotation(config: EthosConfig) {
   const rotationKeys = config.provider === 'anthropic' ? await readKeys(getStorage()) : [];
   return { ...config, rotationKeys };
