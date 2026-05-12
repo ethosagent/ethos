@@ -66,7 +66,7 @@ Three places enforce it:
 
 - **`apps/ethos/src/commands/chat.ts`** — the CLI's interactive chat REPL. Filters `tool_progress` and successful `tool_end` events on `audience: 'user'` before rendering. The verbose flag (`--verbose`) flips the filter off so developers can see everything.
 - **`extensions/gateway/src/`** — the channel-adapter gateway. Each adapter (telegram, discord, slack, whatsapp, email) consumes the agent event stream and gates on the audience field before sending an outbound message. Adapters do not roll their own logic; the gateway is the chokepoint.
-- **Framework-internal consumers** — `apps/ethos/src/logger.ts`, `extensions/observability-sqlite/`, the watcher in `extensions/safety-watcher/`. These read every event. They are the audit trail; they care about everything that happened.
+- **Framework-internal consumers** — `apps/ethos/src/logger.ts`, `extensions/observability-sqlite/`, the watcher in `packages/safety/watcher/`. These read every event. They are the audit trail; they care about everything that happened.
 
 The pattern: surface code reads `event.audience === 'user'`. Framework code reads everything. The framework does not filter; it merely tags.
 

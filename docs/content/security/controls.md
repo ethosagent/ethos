@@ -17,13 +17,13 @@ The controls fire in the order documented in the [runtime precedence diagram](./
 
 | Layer | Source |
 |---|---|
-| Channel controls | [`extensions/safety-channel/src/`](https://github.com/MiteshSharma/ethos/tree/main/extensions/safety-channel/src/) |
+| Channel controls | [`packages/safety/channel/src/`](https://github.com/MiteshSharma/ethos/tree/main/packages/safety/channel/src/) |
 | Tool boundary | [`packages/core/src/tool-registry.ts`](../../../packages/core/src/tool-registry.ts) |
 | Filesystem boundary | [`packages/storage-fs/src/scoped-storage.ts`](../../../packages/storage-fs/src/scoped-storage.ts) |
-| Network reach | [`extensions/safety-network/src/`](https://github.com/MiteshSharma/ethos/tree/main/extensions/safety-network/src/) |
-| Injection defenses | [`extensions/safety-injection/src/`](https://github.com/MiteshSharma/ethos/tree/main/extensions/safety-injection/src/) |
-| Watcher | [`extensions/safety-watcher/src/`](https://github.com/MiteshSharma/ethos/tree/main/extensions/safety-watcher/src/) |
-| Install scanner | [`extensions/safety-scanner/src/`](https://github.com/MiteshSharma/ethos/tree/main/extensions/safety-scanner/src/) |
+| Network reach | [`packages/safety/network/src/`](https://github.com/MiteshSharma/ethos/tree/main/packages/safety/network/src/) |
+| Injection defenses | [`packages/safety/injection/src/`](https://github.com/MiteshSharma/ethos/tree/main/packages/safety/injection/src/) |
+| Watcher | [`packages/safety/watcher/src/`](https://github.com/MiteshSharma/ethos/tree/main/packages/safety/watcher/src/) |
+| Install scanner | [`packages/safety/scanner/src/`](https://github.com/MiteshSharma/ethos/tree/main/packages/safety/scanner/src/) |
 | Redaction + audit | [`extensions/observability-sqlite/src/`](https://github.com/MiteshSharma/ethos/tree/main/extensions/observability-sqlite/src/) |
 | Personality schema | [`packages/types/src/personality.ts`](../../../packages/types/src/personality.ts) (`PersonalitySafetyConfig`) |
 
@@ -45,8 +45,8 @@ A channel adapter is the front door. If anyone who knows your bot's handle can D
 
 Per-platform sender allowlists. A Telegram numeric user ID, a Discord snowflake, a Slack `U…` ID, or an email glob. Senders not on the list are dropped before the message reaches the [agent loop](../getting-started/glossary.md#agent-loop).
 
-- Source: `extensions/safety-channel/src/channel-filter.ts`
-- Tests: `extensions/safety-channel/src/__tests__/channel-filter.test.ts`
+- Source: `packages/safety/channel/src/channel-filter.ts`
+- Tests: `packages/safety/channel/src/__tests__/channel-filter.test.ts`
 - Audit category: `channel.allow` / `channel.deny`
 
 ### One-time DM pairing codes {#one-time-dm-pairing-codes}
@@ -55,8 +55,8 @@ Per-platform sender allowlists. A Telegram numeric user ID, a Discord snowflake,
 
 To add a new sender, the operator issues a one-time pairing code. The code is sender-bound (only redeemable by the sender it was issued to), nonce-bound (cryptographic random; never reused), atomically consumed (the consume is the only allowed transition; replay fails), and rate-limited.
 
-- Source: `extensions/safety-channel/src/pairing-store.ts`
-- Tests: `extensions/safety-channel/src/__tests__/pairing-store.test.ts`
+- Source: `packages/safety/channel/src/pairing-store.ts`
+- Tests: `packages/safety/channel/src/__tests__/pairing-store.test.ts`
 - Audit category: `channel.pairing`
 
 ### Mention-gate (groups only) {#mention-gate}
@@ -65,7 +65,7 @@ To add a new sender, the operator issues a one-time pairing code. The code is se
 
 In a multi-user channel (group chat, Slack workspace), the agent only responds when explicitly mentioned. Drive-by hijacking by pasting a wall of text into a public channel doesn't reach the LLM at all. The owner can bypass the gate (the `/allow` flow needs to work from any channel) — non-owners cannot.
 
-- Source: `extensions/safety-channel/src/channel-filter.ts`
+- Source: `packages/safety/channel/src/channel-filter.ts`
 
 ### Context-visibility filter {#context-visibility-filter}
 
@@ -73,7 +73,7 @@ In a multi-user channel (group chat, Slack workspace), the agent only responds w
 
 Quoted text and forwarded content are treated as untrusted by default — they enter the LLM context with provenance markers (see [Provenance wrapping](#provenance-wrapping)) so the LLM and the runtime classifier both know "this is content the user did not author." The mode is per-channel: `all` (everything visible), `allowlist` (only allowlisted senders' content visible), `allowlist_quote` (allowlisted senders + their quoted context).
 
-- Source: `extensions/safety-channel/src/channel-filter.ts`
+- Source: `packages/safety/channel/src/channel-filter.ts`
 
 ## Tool-level controls {#tool-level-controls}
 
@@ -101,8 +101,8 @@ A small set of operations is always-deny, regardless of personality, regardless 
 
 Every tool call is scored against a pattern-based classifier (regex floor) and an LLM-based classifier (Tier-2). The score determines whether the call goes through, requires approval, or is blocked. Sandbox attestation can relax the classifier for execution backends that declare strict confinement properties (read-only root, no host mounts, egress controls, no docker socket, non-root) — but only attested-strict backends earn the relaxation.
 
-- Pattern source: `extensions/safety-injection/src/pattern-check.ts`
-- LLM classifier: `extensions/safety-injection/src/classifier.ts`
+- Pattern source: `packages/safety/injection/src/pattern-check.ts`
+- LLM classifier: `packages/safety/injection/src/classifier.ts`
 - Sandbox attestation contract: `packages/types/src/sandbox.ts`
 
 ### Approval modal {#approval-modal}
@@ -165,8 +165,8 @@ A personality's `config.yaml` declares its network reach (hosts, ports, protocol
 
 The `safe-fetch` wrapper rejects requests to private IP ranges, link-local addresses, loopback, and the cloud metadata endpoints (AWS `169.254.169.254`, GCP `metadata.google.internal`, Azure equivalents).
 
-- Source: `extensions/safety-network/src/safe-fetch.ts`
-- Cloud metadata blocklist: `extensions/safety-network/src/cloud-metadata.ts`
+- Source: `packages/safety/network/src/safe-fetch.ts`
+- Cloud metadata blocklist: `packages/safety/network/src/cloud-metadata.ts`
 
 ### Scheme allowlist {#scheme-allowlist}
 
@@ -174,7 +174,7 @@ The `safe-fetch` wrapper rejects requests to private IP ranges, link-local addre
 
 URLs must use `http` or `https`. `file://`, `gopher://`, `ftp://`, and `data:` are always rejected. The check fires on the original URL **and on every redirect hop** — a server-side `302` to `file:///etc/passwd` is rejected at the redirect, not at the request.
 
-- Source: `extensions/safety-network/src/scheme.ts`
+- Source: `packages/safety/network/src/scheme.ts`
 
 ### DNS pinning per HTTP client {#dns-pinning-per-http-client}
 
@@ -184,7 +184,7 @@ URLs must use `http` or `https`. `file://`, `gopher://`, `ftp://`, and `data:` a
 
 The transport-level pinning that prevents a re-resolution between the SSRF check and the connect (undici `connect.lookup` override, native `http.request` agent override) is the next step. Designed for, not yet wired in. Documented in the source comments at the linked path.
 
-- Source: `extensions/safety-network/src/safe-fetch.ts`
+- Source: `packages/safety/network/src/safe-fetch.ts`
 
 ## Prompt-injection defenses {#prompt-injection-defenses}
 
@@ -196,7 +196,7 @@ Tool results that re-enter the LLM context are the dominant vector for indirect 
 
 Every tool result is wrapped with provenance markers identifying the source (skill, web fetch, channel quote) before it enters the LLM context. The system prompt instructs the model to treat wrapped content as untrusted.
 
-- Source: `extensions/safety-injection/src/wrap.ts`
+- Source: `packages/safety/injection/src/wrap.ts`
 - System prompt: `INJECTION_DEFENSE_PRELUDE` injected into every personality's prompt
 
 ### Two-tier classifier {#two-tier-classifier}
@@ -205,7 +205,7 @@ Every tool result is wrapped with provenance markers identifying the source (ski
 
 Tier 1 is a regex-based pattern check covering the obvious phrases ("ignore previous instructions", "override system prompt", base64-encoded blobs, hidden Unicode). Tier 2 is an LLM-based classifier that runs over longer content with a sampling budget. Short suspicious payloads still get the structured short-pattern check — there's no fixed-threshold gate that lets sub-128-character injections through.
 
-- Sources: `extensions/safety-injection/src/classifier.ts`, `extensions/safety-injection/src/pattern-check.ts`
+- Sources: `packages/safety/injection/src/classifier.ts`, `packages/safety/injection/src/pattern-check.ts`
 
 ### Post-read tool downgrade {#post-read-tool-downgrade}
 
@@ -213,7 +213,7 @@ Tier 1 is a regex-based pattern check covering the obvious phrases ("ignore prev
 
 After a read from an untrusted source flags the classifier, a configurable subset of tools is locked out for the next two turns. The hijacked agent can't immediately turn around and call `web_post` to exfiltrate.
 
-- Source: `extensions/safety-injection/src/downgrade.ts`
+- Source: `packages/safety/injection/src/downgrade.ts`
 - Audit category: `audit.injection_flag`
 - Per-personality knob: `safety.injectionDefense` — `strict` | `balanced` | `off`. Default is `balanced`.
 
@@ -225,7 +225,7 @@ Ethos's agent loop is a typed `AsyncGenerator<AgentEvent>` over the [agent event
 
 The watcher returns `pause` / `terminate` / `allow` decisions. A pause holds the next tool call for human review; a terminate ends the turn.
 
-- Source: `extensions/safety-watcher/src/watcher.ts`, `extensions/safety-watcher/src/rules.ts`
+- Source: `packages/safety/watcher/src/watcher.ts`, `packages/safety/watcher/src/rules.ts`
 - Audit category: `audit.watcher`
 - Per-personality knob: `safety.watcher` — `{ enabled, rules: [...] }`.
 
@@ -249,7 +249,7 @@ The patterns cover Anthropic API keys (`sk-ant-…`), OpenAI API keys (`sk-…`)
 
 Newly installed skills and plugins are scanned for prompt-injection patterns (hidden Unicode, base64 blobs, instructions to call sensitive tools), declared-but-unused permissions, and required-tool inflation (a "format-a-date" skill that declares `required_tools: [bash, web_post]`).
 
-- Source: `extensions/safety-scanner/src/skill-scanner.ts`, `extensions/safety-scanner/src/plugin-scanner.ts`
+- Source: `packages/safety/scanner/src/skill-scanner.ts`, `packages/safety/scanner/src/plugin-scanner.ts`
 - Audit category: `install.scan`
 
 ### Trust tiers {#trust-tiers}
@@ -258,7 +258,7 @@ Newly installed skills and plugins are scanned for prompt-injection patterns (hi
 
 A skill is `community` (third-party) by default. Operators can promote skills to `partner` or `internal` tiers, which relax certain checks (e.g. an internal skill may declare `bash` without a scanner warning). Promotion is a deliberate operator action and is audit-logged.
 
-- Source: `extensions/safety-scanner/src/trust-tiers.ts`
+- Source: `packages/safety/scanner/src/trust-tiers.ts`
 
 ### MCP environment minimization {#mcp-environment-minimization}
 
@@ -266,7 +266,7 @@ A skill is `community` (third-party) by default. Operators can promote skills to
 
 When Ethos spawns an MCP server subprocess, it strips `HOME`, sensitive env vars, and the inherited env tail before the child starts. The MCP server gets a sanitized temp `HOME` per server so credential files (`.npmrc`, `.aws/credentials`, etc.) cannot be read by inheriting the host environment.
 
-- Source: `extensions/safety-scanner/src/mcp-env.ts`
+- Source: `packages/safety/scanner/src/mcp-env.ts`
 
 ### Allowed skill permissions {#allowed-skill-permissions}
 

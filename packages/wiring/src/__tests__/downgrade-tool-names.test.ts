@@ -16,7 +16,7 @@
 //
 // On failure, fix one of:
 //   - tool was renamed: update DEFAULT_DOWNGRADED_TOOLS in
-//     extensions/safety-injection/src/downgrade.ts
+//     packages/safety/injection/src/downgrade.ts
 //   - tool was removed: remove the entry from the default list
 //
 // Tests live in wiring (not safety-injection) because only this layer
@@ -56,7 +56,7 @@ describe('Ch.3d default downgrade list — drift gate', () => {
 
     expect(
       missing,
-      `Default downgrade list contains tool names that are no longer registered: ${missing.join(', ')}. Update extensions/safety-injection/src/downgrade.ts.`,
+      `Default downgrade list contains tool names that are no longer registered: ${missing.join(', ')}. Update packages/safety/injection/src/downgrade.ts.`,
     ).toEqual([]);
   });
 });

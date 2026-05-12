@@ -63,10 +63,10 @@ importers:
         version: link:../../packages/core
       '@ethosagent/safety-channel':
         specifier: workspace:*
-        version: link:../../extensions/safety-channel
+        version: link:../../packages/safety/channel
       '@ethosagent/safety-scanner':
         specifier: workspace:*
-        version: link:../../extensions/safety-scanner
+        version: link:../../packages/safety/scanner
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -463,7 +463,7 @@ importers:
     dependencies:
       '@ethosagent/safety-channel':
         specifier: workspace:*
-        version: link:../safety-channel
+        version: link:../../packages/safety/channel
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -647,46 +647,10 @@ importers:
         version: link:../../packages/plugin-sdk
       '@ethosagent/safety-scanner':
         specifier: workspace:*
-        version: link:../safety-scanner
+        version: link:../../packages/safety/scanner
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
-      '@ethosagent/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-
-  extensions/safety-channel:
-    dependencies:
-      '@ethosagent/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-      '@types/better-sqlite3':
-        specifier: ^7.6.12
-        version: 7.6.13
-      better-sqlite3:
-        specifier: ^12.9.0
-        version: 12.9.0
-
-  extensions/safety-injection:
-    dependencies:
-      '@ethosagent/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-
-  extensions/safety-network:
-    dependencies:
-      '@ethosagent/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-
-  extensions/safety-scanner:
-    dependencies:
-      '@ethosagent/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-
-  extensions/safety-watcher:
-    dependencies:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -726,7 +690,7 @@ importers:
     dependencies:
       '@ethosagent/safety-scanner':
         specifier: workspace:*
-        version: link:../safety-scanner
+        version: link:../../packages/safety/scanner
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
@@ -772,7 +736,7 @@ importers:
         version: 0.39.0
       '@ethosagent/safety-network':
         specifier: workspace:*
-        version: link:../safety-network
+        version: link:../../packages/safety/network
       '@ethosagent/tools-web':
         specifier: workspace:*
         version: link:../tools-web
@@ -845,7 +809,7 @@ importers:
     dependencies:
       '@ethosagent/safety-scanner':
         specifier: workspace:*
-        version: link:../safety-scanner
+        version: link:../../packages/safety/scanner
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
@@ -890,7 +854,7 @@ importers:
     dependencies:
       '@ethosagent/safety-network':
         specifier: workspace:*
-        version: link:../safety-network
+        version: link:../../packages/safety/network
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -977,10 +941,10 @@ importers:
     dependencies:
       '@ethosagent/safety-injection':
         specifier: workspace:*
-        version: link:../../extensions/safety-injection
+        version: link:../safety/injection
       '@ethosagent/safety-watcher':
         specifier: workspace:*
-        version: link:../../extensions/safety-watcher
+        version: link:../safety/watcher
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../types
@@ -1012,6 +976,42 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../types
+
+  packages/safety/channel:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../types
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
+      better-sqlite3:
+        specifier: ^12.9.0
+        version: 12.9.0
+
+  packages/safety/injection:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../types
+
+  packages/safety/network:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../types
+
+  packages/safety/scanner:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../types
+
+  packages/safety/watcher:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../types
 
   packages/storage-fs:
     dependencies:
@@ -1058,10 +1058,10 @@ importers:
         version: link:../../extensions/personalities
       '@ethosagent/safety-injection':
         specifier: workspace:*
-        version: link:../../extensions/safety-injection
+        version: link:../safety/injection
       '@ethosagent/safety-watcher':
         specifier: workspace:*
-        version: link:../../extensions/safety-watcher
+        version: link:../safety/watcher
       '@ethosagent/sandbox-docker':
         specifier: workspace:*
         version: link:../../extensions/sandbox-docker

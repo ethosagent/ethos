@@ -32,7 +32,7 @@ Run the Ethos [gateway](../getting-started/glossary.md#gateway) against a Slack 
 - `extensions/platform-slack/src/index.ts` — `SlackAdapter` (Bolt SDK in `socketMode: true`, chunking, edit-in-place).
 - `extensions/platform-slack/src/validate.ts` — `auth.test`-based bot-token validation called by setup.
 - `extensions/gateway/src/index.ts` — routing, slash commands, dedup, allowlist enforcement.
-- `extensions/safety-channel/src/channel-filter.ts` — sender allowlist, mention gate, DM policy.
+- `packages/safety/channel/src/channel-filter.ts` — sender allowlist, mention gate, DM policy.
 - `apps/ethos/src/commands/gateway.ts` — adapter wiring (`new SlackAdapter({ botToken, appToken, signingSecret })`).
 
 ## Steps
@@ -97,7 +97,7 @@ The adapter skips messages with any `subtype` (bot messages, edits, joins) — B
 
 ### 5. Restrict who can talk to the bot
 
-Configure under `channelFilter.slack` (`extensions/safety-channel/src/channel-filter.ts`):
+Configure under `channelFilter.slack` (`packages/safety/channel/src/channel-filter.ts`):
 
 ```yaml
 channelFilter:
@@ -204,7 +204,7 @@ The inbound message had no `thread_ts`. Reply to one of the bot's existing messa
 The outbound `MessageDedupCache` suppresses identical `(sessionId, content)` within 30 seconds. Change one character, wait 30 seconds, or set `ETHOS_DEDUP_LEGACY=1` to disable.
 
 **Pairing code expired.**
-Codes have a TTL in `extensions/safety-channel/src/pairing-store.ts`. If the DM author waited too long, they need to DM again. Owners can `/communications approve-all` to approve every pending sender.
+Codes have a TTL in `packages/safety/channel/src/pairing-store.ts`. If the DM author waited too long, they need to DM again. Owners can `/communications approve-all` to approve every pending sender.
 
 **Socket Mode reconnects every few minutes.**
 Slack rotates the WebSocket; Bolt reconnects automatically. Persistent flapping points at a network or proxy issue between the host and `wss.slack.com`. The signing secret is only checked for HTTP event endpoints, so it does not cause socket disconnects.

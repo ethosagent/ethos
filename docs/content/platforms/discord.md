@@ -32,7 +32,7 @@ Run the Ethos [gateway](../getting-started/glossary.md#gateway) against a Discor
 - `extensions/platform-discord/src/index.ts` — `DiscordAdapter` (`discord.js` v14 gateway client, intents, mention gate, chunking, edit-in-place).
 - `extensions/platform-discord/src/validate.ts` — `users/@me`-based token validation called by setup.
 - `extensions/gateway/src/index.ts` — routing, slash commands, dedup, allowlist enforcement.
-- `extensions/safety-channel/src/channel-filter.ts` — sender allowlist, mention gate, DM policy.
+- `packages/safety/channel/src/channel-filter.ts` — sender allowlist, mention gate, DM policy.
 - `apps/ethos/src/commands/gateway.ts` — adapter wiring (`new DiscordAdapter({ token: config.discordToken })`).
 
 ## Steps
@@ -86,7 +86,7 @@ To respond to every message a server channel produces, construct the adapter wit
 
 ### 5. Restrict who can talk to the bot
 
-Configure under `channelFilter.discord` (`extensions/safety-channel/src/channel-filter.ts`):
+Configure under `channelFilter.discord` (`packages/safety/channel/src/channel-filter.ts`):
 
 ```yaml
 channelFilter:
@@ -201,7 +201,7 @@ Expected. Discord caps outbound text at 2,000 characters; `chunkText` splits at 
 The outbound `MessageDedupCache` suppresses identical `(sessionId, content)` within 30 seconds. Change one character, wait 30 seconds, or set `ETHOS_DEDUP_LEGACY=1` to disable.
 
 **Pairing code expired.**
-Codes have a TTL in `extensions/safety-channel/src/pairing-store.ts`. If the DM author waited too long, they need to DM again — a new code is issued. Owners can `/communications approve-all` to approve every pending sender.
+Codes have a TTL in `packages/safety/channel/src/pairing-store.ts`. If the DM author waited too long, they need to DM again — a new code is issued. Owners can `/communications approve-all` to approve every pending sender.
 
 **Bot does not appear in `member.roles` or replies to a role mention.**
 Role mentions are not the same as user mentions; the adapter only checks `message.mentions.has(client.user)`. Mention the bot directly (`@Ethos`) rather than a role the bot has.

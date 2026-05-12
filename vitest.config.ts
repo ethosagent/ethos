@@ -14,7 +14,7 @@ const srcAliases = {
   '@ethosagent/batch-runner': resolve('./extensions/batch-runner/src'),
   '@ethosagent/eval-harness': resolve('./extensions/eval-harness/src'),
   '@ethosagent/memory-vector': resolve('./extensions/memory-vector/src'),
-  '@ethosagent/safety-scanner': resolve('./extensions/safety-scanner/src'),
+  '@ethosagent/safety-scanner': resolve('./packages/safety/scanner/src'),
 };
 
 export default defineConfig({
@@ -22,6 +22,7 @@ export default defineConfig({
   test: {
     include: [
       'packages/*/src/**/*.test.ts',
+      'packages/safety/*/src/**/*.test.ts',
       'extensions/*/src/**/*.test.ts',
       'apps/*/src/**/*.test.ts',
       'examples/plugins/*/src/**/*.test.ts',

@@ -17,10 +17,10 @@ In May 2026, before any of the safety framework was released to customers, the d
 |---|---|
 | Schema for `PersonalitySafetyConfig` | [`packages/types/src/personality.ts`](../../../packages/types/src/personality.ts) |
 | Field-count gate | [`packages/types/src/__tests__/personality-field-count.test.ts`](../../../packages/types/src/__tests__/personality-field-count.test.ts) |
-| Injection defenses | [`extensions/safety-injection/src/`](https://github.com/MiteshSharma/ethos/tree/main/extensions/safety-injection/src/) |
-| Network defenses | [`extensions/safety-network/src/`](https://github.com/MiteshSharma/ethos/tree/main/extensions/safety-network/src/) |
-| Channel defenses | [`extensions/safety-channel/src/`](https://github.com/MiteshSharma/ethos/tree/main/extensions/safety-channel/src/) |
-| Install scanner | [`extensions/safety-scanner/src/`](https://github.com/MiteshSharma/ethos/tree/main/extensions/safety-scanner/src/) |
+| Injection defenses | [`packages/safety/injection/src/`](https://github.com/MiteshSharma/ethos/tree/main/packages/safety/injection/src/) |
+| Network defenses | [`packages/safety/network/src/`](https://github.com/MiteshSharma/ethos/tree/main/packages/safety/network/src/) |
+| Channel defenses | [`packages/safety/channel/src/`](https://github.com/MiteshSharma/ethos/tree/main/packages/safety/channel/src/) |
+| Install scanner | [`packages/safety/scanner/src/`](https://github.com/MiteshSharma/ethos/tree/main/packages/safety/scanner/src/) |
 | Filesystem boundary | [`extensions/tools-file/src/`](https://github.com/MiteshSharma/ethos/tree/main/extensions/tools-file/src/) |
 | Redaction | [`extensions/observability-sqlite/src/redact.ts`](../../../extensions/observability-sqlite/src/redact.ts) |
 
@@ -57,7 +57,7 @@ The numbering below is the original review order, preserved for traceability wit
 
 **Fix.** Configuration validation rejects the combination at config-load time. The personality fails to start until either approvals are turned on or the channel ingress is removed.
 
-- **Status:** Partial — the channel-ingress check ships in `extensions/safety-channel`; the cross-personality config-load validator that links it to `approvalMode` is in flight in the wiring layer.
+- **Status:** Partial — the channel-ingress check ships in `packages/safety/channel`; the cross-personality config-load validator that links it to `approvalMode` is in flight in the wiring layer.
 
 ### 3. Sandbox-relaxes-classifier keyed on capability attestation {#3-sandbox-attestation-not-backend-name}
 
@@ -80,8 +80,8 @@ The numbering below is the original review order, preserved for traceability wit
 **Fix.** The fixed-threshold gate is removed. Short payloads run through a structured short-pattern check; long payloads run through budget-driven LLM sampling. Both code paths are mandatory; neither can be bypassed by length alone.
 
 - **Status:** Shipped.
-- Sources: `extensions/safety-injection/src/pattern-check.ts`, `extensions/safety-injection/src/classifier.ts`
-- Tests: `extensions/safety-injection/src/__tests__/`
+- Sources: `packages/safety/injection/src/pattern-check.ts`, `packages/safety/injection/src/classifier.ts`
+- Tests: `packages/safety/injection/src/__tests__/`
 
 ### 5. Network policy revalidates every redirect hop {#5-redirect-revalidation}
 
@@ -92,8 +92,8 @@ The numbering below is the original review order, preserved for traceability wit
 **Fix.** Scheme is allowlisted to `http` and `https` only — every other scheme is rejected. The check fires on the original URL and on every redirect hop. A `302` from an allowed host to a denied scheme is rejected at the redirect, not at the original request.
 
 - **Status:** Shipped.
-- Sources: `extensions/safety-network/src/scheme.ts`, `extensions/safety-network/src/safe-fetch.ts`
-- Tests: `extensions/safety-network/src/__tests__/`
+- Sources: `packages/safety/network/src/scheme.ts`, `packages/safety/network/src/safe-fetch.ts`
+- Tests: `packages/safety/network/src/__tests__/`
 
 ### 6. MCP env minimization removes HOME and sensitive vars {#6-mcp-env-minimization}
 
@@ -104,7 +104,7 @@ The numbering below is the original review order, preserved for traceability wit
 **Fix.** MCP servers spawn with a sanitized environment. `HOME` is set to a per-server temp directory. AWS / GCP / Azure credential vars are stripped. The set of vars passed through is an explicit allowlist, not an inherited tail.
 
 - **Status:** Shipped.
-- Source: `extensions/safety-scanner/src/mcp-env.ts`
+- Source: `packages/safety/scanner/src/mcp-env.ts`
 
 ### 7. Pairing flow: one-time + sender-bound + nonce-bound + atomic-consume {#7-pairing-flow}
 
@@ -115,8 +115,8 @@ The numbering below is the original review order, preserved for traceability wit
 **Fix.** Pairing codes are one-time (consumed atomically; no second redemption), sender-bound (issued for a specific sender ID; another sender presenting the same code is rejected), nonce-bound (cryptographic random; never reused, never predictable), and atomic-consume (the consume is the only allowed transition; a partial-state attack returns the code to "issued" and the redemption is rejected). Plus rate-limiting on issuance and redemption to defeat brute-force.
 
 - **Status:** Shipped.
-- Source: `extensions/safety-channel/src/pairing-store.ts`
-- Tests: `extensions/safety-channel/src/__tests__/pairing-store.test.ts`
+- Source: `packages/safety/channel/src/pairing-store.ts`
+- Tests: `packages/safety/channel/src/__tests__/pairing-store.test.ts`
 
 ### 8. Symlink misdirection + safe non-existent-target handling {#8-symlink-misdirection}
 
@@ -160,7 +160,7 @@ The numbering below is the original review order, preserved for traceability wit
 **Fix.** DNS pinning specifies the transport mechanism per Node HTTP client. `undici` clients use `connect.lookup` to return the pinned IP. Native `http.request` / `https.request` clients use an agent override with a custom `lookup`. The hostname stays in the SNI; the IP is locked to the resolved value at safe-fetch time.
 
 - **Status:** Partial. The resolve-and-validate-IP-before-connect path ships in `safe-fetch` and blocks the canonical "allowlisted hostname → private IP" case at request time. The transport-level pinning that closes the rebind window between the SSRF check and the connect (the per-client `lookup` override) is the next step. Documented in the source comments.
-- Source: `extensions/safety-network/src/safe-fetch.ts`
+- Source: `packages/safety/network/src/safe-fetch.ts`
 
 ### 12. Network egress allowlisting is in scope {#12-egress-allowlisting-in-scope}
 

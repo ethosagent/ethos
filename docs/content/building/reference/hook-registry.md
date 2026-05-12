@@ -173,8 +173,8 @@ Result types follow the same naming (`BeforeToolCallResult`, etc.) and only carr
 | `packages/core/src/agent-loop.ts` | Fires every hook in the turn cycle. |
 | `extensions/gateway/src/` | Fires `inbound_claim`, `before_dispatch`, `message_received`, `message_sent`. |
 | `extensions/tools-terminal/src/guard.ts` | Registers a `before_tool_call` handler for command allowlisting. |
-| `extensions/safety-channel/src/` | Channel-safety guards via `before_dispatch` and `message_received`. |
-| `extensions/safety-injection/src/` | Injects classifier verdicts via `before_prompt_build` and `before_tool_call`. |
+| `packages/safety/channel/src/` | Channel-safety guards via `before_dispatch` and `message_received`. |
+| `packages/safety/injection/src/` | Injects classifier verdicts via `before_prompt_build` and `before_tool_call`. |
 | `extensions/skill-evolver/src/evolver.ts` | Listens on `agent_done` to queue skill-candidate analysis. |
 | `extensions/observability-sqlite/src/` | Persists `usage`, `tool_end`, and `agent_done` via void hooks. |
 | `packages/plugin-sdk/src/index.ts` | `EthosPluginApi.registerVoidHook` / `registerModifyingHook` delegate here. |

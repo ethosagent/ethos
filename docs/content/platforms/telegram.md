@@ -34,7 +34,7 @@ For zero-to-first-message, follow [Deploy your first Telegram agent](../using/tu
 - `extensions/platform-telegram/src/index.ts` — `TelegramAdapter` (long-polling via `grammy`, chunking, edit-in-place).
 - `extensions/platform-telegram/src/validate.ts` — `getMe`-based token validation called by setup.
 - `extensions/gateway/src/index.ts` — routing, slash commands, dedup, allowlist enforcement.
-- `extensions/safety-channel/src/channel-filter.ts` — sender allowlist, mention gate, DM policy.
+- `packages/safety/channel/src/channel-filter.ts` — sender allowlist, mention gate, DM policy.
 - `apps/ethos/src/commands/gateway.ts` — adapter wiring (`new TelegramAdapter({ token, dropPendingUpdates: true })`).
 
 ## Steps
@@ -81,7 +81,7 @@ Group chats share one session across every member. To give each user their own t
 
 ### 4. Restrict who can talk to the bot
 
-Default behaviour is **deny by default in groups, pairing flow in DMs.** Configure under `channelFilter.telegram` (`extensions/safety-channel/src/channel-filter.ts`):
+Default behaviour is **deny by default in groups, pairing flow in DMs.** Configure under `channelFilter.telegram` (`packages/safety/channel/src/channel-filter.ts`):
 
 ```yaml
 channelFilter:
