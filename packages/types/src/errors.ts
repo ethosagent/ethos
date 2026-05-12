@@ -29,6 +29,8 @@ export type EthosErrorCode =
   | 'STREAM_TIMEOUT'
   // CLI input
   | 'INVALID_INPUT'
+  | 'INVALID_PROVIDER'
+  | 'INVALID_TOOLSET'
   | 'FILE_NOT_FOUND'
   | 'BATCH_INVALID_LINE'
   | 'EVAL_INVALID_LINE'
@@ -51,6 +53,7 @@ export type EthosErrorCode =
   | 'SKILL_INSTALL_FAILED'
   | 'SKILL_NOT_FOUND'
   | 'SKILL_EXISTS'
+  | 'MISSING_SKILL'
   // Plugins (Phase 30.6 surface)
   | 'PLUGIN_CONTRACT_INCOMPATIBLE'
   // Team manifest (Teamwork Core)

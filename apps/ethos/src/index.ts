@@ -3,6 +3,7 @@
 // in TypeScript trip on tsup's bundler.
 import { join } from 'node:path';
 import { formatError, toEthosError } from '@ethosagent/types';
+import { applyCliOverrides, parseCliOverrideFlags } from './cli-overrides';
 import { runAcp } from './commands/acp';
 import { runArchive } from './commands/archive';
 import { runAudit } from './commands/audit';
@@ -51,6 +52,10 @@ const command = args[0] ?? '';
 const inferredChatFromQueryFlag =
   command === '-q' || command === '--query' || command.startsWith('--query=');
 const effectiveCommand = inferredChatFromQueryFlag ? 'chat' : command;
+
+// FW-8: parse CLI override flags from the full argv. These override
+// ~/.ethos/config.yaml for this invocation only and are never written back.
+const cliOverrideFlags = parseCliOverrideFlags(args);
 
 function extractSingleQuery(argv: string[]): {
   query?: string;
@@ -137,20 +142,24 @@ try {
         const setupResult = await runSetup();
         if (setupResult) {
           const { config: fresh } = setupResult;
-          const withFlags = { ...fresh };
+          let withFlags = { ...fresh };
           if (verboseFlag) withFlags.verbose = true;
           if (skinFlag) withFlags.skin = skinFlag;
           if (teamFlag) withFlags.activeContext = { type: 'team', name: teamFlag };
+          // FW-8: apply CLI overrides after config is available.
+          withFlags = await applyCliOverrides(withFlags, cliOverrideFlags, getStorage());
           await runChat(withFlags, {
             ...(query ? { singleQuery: query } : {}),
           });
           if (query) process.exit(0);
         }
       } else {
-        const withFlags = { ...config };
+        let withFlags = { ...config };
         if (verboseFlag) withFlags.verbose = true;
         if (skinFlag) withFlags.skin = skinFlag;
         if (teamFlag) withFlags.activeContext = { type: 'team', name: teamFlag };
+        // FW-8: apply CLI overrides after config is available.
+        withFlags = await applyCliOverrides(withFlags, cliOverrideFlags, getStorage());
         await runChat(withFlags, {
           ...(query ? { singleQuery: query } : {}),
         });

@@ -112,6 +112,18 @@ export interface EthosConfig {
    * visible palette matches the user's choice on every surface.
    */
   skin?: string;
+  /**
+   * FW-8 — CLI toolset override. Set by `--toolsets <list>` for this
+   * invocation only. Never written to config.yaml.
+   * @internal
+   */
+  cliToolsets?: string[];
+  /**
+   * FW-8 — CLI skill preload. Set by `-s <list>` for this invocation only.
+   * Never written to config.yaml.
+   * @internal
+   */
+  cliSkills?: string[];
   /** Global retention settings. Per-category TTLs. */
   retention?: RetentionConfig;
   /**
