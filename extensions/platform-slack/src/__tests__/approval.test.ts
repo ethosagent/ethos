@@ -73,6 +73,22 @@ describe('blocks/approval — pending', () => {
     expect(rendered.match(/```/g)?.length).toBe(2);
   });
 
+  it('escapes mrkdwn metacharacters in toolName and reason', () => {
+    // toolName comes from the registry, reason from the danger predicate —
+    // both model/config-influenced. An unescaped `<@U…>` or `<http…|text>`
+    // would inject a live mention or link onto this privileged surface.
+    const blocks = approvalPendingBlocks({
+      approvalId: 'a1',
+      toolName: 'tool<@U999>',
+      reason: 'see <https://evil.test|click here>',
+      args: {},
+    });
+    const text = plaintextFallback(blocks);
+    expect(text).not.toContain('<@U999>');
+    expect(text).not.toContain('<https://evil.test|click here>');
+    expect(text).toContain('&lt;@U999&gt;');
+  });
+
   it('truncates very long args previews', () => {
     const blocks = approvalPendingBlocks({
       approvalId: 'a1',
@@ -145,5 +161,14 @@ describe('blocks/approval — resolved', () => {
     });
     expect(plaintextFallback(blocks)).not.toContain('<@U1>');
     expect(plaintextFallback(blocks)).not.toContain('<!channel');
+  });
+
+  it('escapes mrkdwn metacharacters in toolName', () => {
+    const blocks = approvalResolvedBlocks({
+      toolName: 'tool<@U999>',
+      decision: 'allow',
+      decidedBy: 'U07AB12CD',
+    });
+    expect(plaintextFallback(blocks)).not.toContain('<@U999>');
   });
 });

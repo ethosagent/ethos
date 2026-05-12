@@ -31,6 +31,18 @@ function renderDecider(decidedBy: string): string {
   return SLACK_USER_ID.test(decidedBy) ? `<@${decidedBy}>` : 'the system';
 }
 
+/**
+ * Escape the three characters Slack mrkdwn treats as markup delimiters. Every
+ * string on this card except Slack-typed literals is model/config-influenced
+ * — `toolName` from the registry, `reason` from the danger predicate — and an
+ * unescaped `<@U…>` or `<http…|text>` would inject a live mention or link
+ * onto a privileged approval surface. `args` is hardened separately (it needs
+ * code-fence handling too); this covers the inline-text fields.
+ */
+function escapeMrkdwn(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 export interface ApprovalPendingInput {
   approvalId: string;
   toolName: string;
@@ -42,10 +54,10 @@ export interface ApprovalPendingInput {
 export function approvalPendingBlocks(input: ApprovalPendingInput): SlackBlock[] {
   const blocks: SlackBlock[] = [
     header('Approval required'),
-    section(`\`${input.toolName}\` wants to run.`),
+    section(`\`${escapeMrkdwn(input.toolName)}\` wants to run.`),
   ];
   if (input.reason) {
-    blocks.push(section(`*Why:* ${input.reason}`));
+    blocks.push(section(`*Why:* ${escapeMrkdwn(input.reason)}`));
   }
   blocks.push(section(`\`\`\`${formatArgs(input.args)}\`\`\``));
   blocks.push({
@@ -80,7 +92,7 @@ export interface ApprovalResolvedInput {
 export function approvalResolvedBlocks(input: ApprovalResolvedInput): SlackBlock[] {
   const verb = input.decision === 'allow' ? 'Approved' : 'Denied';
   return [
-    section(`${verb}: \`${input.toolName}\``),
+    section(`${verb}: \`${escapeMrkdwn(input.toolName)}\``),
     context([`${verb.toLowerCase()} by ${renderDecider(input.decidedBy)}`]),
   ];
 }

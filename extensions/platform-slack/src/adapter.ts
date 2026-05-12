@@ -259,7 +259,15 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
         action?: { action_id?: string; value?: string };
       };
       if (typeof evt.ack === 'function') {
-        await (evt.ack as () => Promise<void>)().catch(() => {});
+        // `ack()` is the one call we can't reason about — a Bolt/Slack API
+        // change could make it throw synchronously, not just reject. Wrap the
+        // invocation itself, not only the returned promise, so a bad ack can
+        // never escape this handler and poison Bolt's event loop.
+        try {
+          await (evt.ack as () => Promise<void>)();
+        } catch {
+          // best-effort ack — proceed with the decision regardless
+        }
       }
       const handler = this.approvalDecisionHandler;
       if (!handler) return;
