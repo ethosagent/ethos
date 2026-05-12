@@ -192,21 +192,12 @@ export function createMemoryTools(memory: MemoryProvider, session: SessionStore)
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Build the `MemoryContext` the new five-method provider contract expects.
- *
- * `scopeId` follows the documented opaque-prefix convention: when the
- * active personality is in `per-personality` memoryScope, we stamp
- * `personality:<id>`. Anything else (global scope, no personality) maps
- * to the shared `global` scope. Task 2 (Phase 2) revisits this — the
- * AgentLoop will eventually resolve the scope and hand it through ctx.
- */
 function buildMemoryContext(ctx: ToolContext): MemoryContext {
-  const personalityId = ctx.personalityId;
   const scopeId =
-    ctx.memoryScope === 'per-personality' && personalityId
-      ? `personality:${personalityId}`
-      : 'global';
+    ctx.memoryScopeId ??
+    (ctx.memoryScope === 'per-personality' && ctx.personalityId
+      ? `personality:${ctx.personalityId}`
+      : 'global');
   return {
     scopeId,
     sessionId: ctx.sessionId,

@@ -38,6 +38,11 @@ export interface ToolContext {
   personalityId?: string;
   /** Resolved memory scope for the active personality (filled by AgentLoop). */
   memoryScope?: 'global' | 'per-personality';
+  /**
+   * Opaque scope id resolved by AgentLoop. When present, memory tools use it directly instead
+   * of deriving `personality:<id>` from personalityId and memoryScope.
+   */
+  memoryScopeId?: string;
   currentTurn: number;
   messageCount: number;
   abortSignal: AbortSignal;
