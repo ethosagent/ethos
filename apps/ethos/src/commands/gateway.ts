@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { AgentLoop } from '@ethosagent/core';
@@ -5,6 +6,7 @@ import { CronScheduler } from '@ethosagent/cron';
 import { Gateway, type GatewayBotConfig } from '@ethosagent/gateway';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
+import { readRuntime, removeRuntime } from '@ethosagent/team-supervisor';
 // Platform adapters are loaded LAZILY in runGatewayStart() — see plan/IMPROVEMENT.md P0-3.
 // Their underlying SDKs (grammy, discord.js, @slack/bolt, imapflow…) are
 // optionalDependencies of @ethosagent/cli. A failed install for any one of
@@ -24,6 +26,12 @@ import {
 } from '../config';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';
 import { createAgentLoop, createTeamAgentLoop, getStorage } from '../wiring';
+import {
+  ensureTeamSupervisors,
+  stopTeamSupervisors,
+  type TeamSupervisorDeps,
+} from './supervisor-lifecycle';
+import { isPidAlive } from './team-runtime';
 
 // Best-effort dynamic import. Returns null and logs a clear warning if the
 // module can't be loaded — typically because its underlying SDK isn't
@@ -194,10 +202,27 @@ export async function runGatewayStart(): Promise<void> {
     `${c.dim}Runs in the foreground. For always-on production, see https://ethosagent.ai/docs/guides/run-as-daemon (launchd / systemd / pm2). For interactive use, run ${c.reset}${c.bold}ethos chat${c.reset}${c.dim}.${c.reset}`,
   );
 
-  // Build one AgentLoop per configured bot. Personality bots get the
-  // shared `createAgentLoop`; team bots get `createTeamAgentLoop` (the
-  // supervisor lifecycle wiring lands in Phase 3).
+  // Build one AgentLoop per configured bot. Personality bots use
+  // `createAgentLoop`; team bots use `createTeamAgentLoop`.
   const bots = await buildGatewayBots(config);
+
+  // Phase 3: for each team-bound bot, ensure the supervisor is running.
+  const supervisorDeps: TeamSupervisorDeps = {
+    readRuntime,
+    removeRuntime,
+    isPidAlive,
+    spawn,
+    kill: (pid, signal) => process.kill(pid, signal as NodeJS.Signals),
+  };
+  const entryPoint = process.argv[1] ?? '';
+  const supervisorResults = await ensureTeamSupervisors(bots, entryPoint, supervisorDeps);
+  for (const [teamName, result] of supervisorResults) {
+    console.log(
+      result.status === 'spawned'
+        ? `${c.dim}team supervisor${c.reset} ${c.bold}${teamName}${c.reset} ${c.dim}spawned (PID ${result.pid ?? '?'})${c.reset}`
+        : `${c.dim}team supervisor${c.reset} ${c.bold}${teamName}${c.reset} ${c.dim}already running (PID ${result.pid ?? '?'})${c.reset}`,
+    );
+  }
   // System loop used by cron — not bot-bound. Cron jobs route through
   // their own `job.personality` field, not through the platform bot
   // routing table.
@@ -283,6 +308,7 @@ export async function runGatewayStart(): Promise<void> {
         '⚠ Ethos was interrupted while answering. Please resend your last message — your session history is preserved.',
     });
     await Promise.allSettled(adapters.map((a) => a.stop()));
+    stopTeamSupervisors(bots, config.teams ?? {}, supervisorDeps);
     process.exit(0);
   };
 
