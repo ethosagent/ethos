@@ -75,11 +75,19 @@ const SessionForkOutput = z.object({ session: SessionSchema });
 const SessionDeleteInput = z.object({ id: z.string() });
 const SessionDeleteOutput = z.object({ ok: z.literal(true) });
 
+const SessionUpdateInput = z.object({
+  id: z.string(),
+  /** New human-readable title. Pass null to clear the title. */
+  title: z.string().max(200).nullable(),
+});
+const SessionUpdateOutput = z.object({ session: SessionSchema });
+
 const sessions = {
   list: oc.input(SessionListInput).output(SessionListOutput),
   get: oc.input(SessionGetInput).output(SessionGetOutput),
   fork: oc.input(SessionForkInput).output(SessionForkOutput),
   delete: oc.input(SessionDeleteInput).output(SessionDeleteOutput),
+  update: oc.input(SessionUpdateInput).output(SessionUpdateOutput),
 };
 
 // ---------------------------------------------------------------------------
