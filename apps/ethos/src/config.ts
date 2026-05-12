@@ -209,6 +209,15 @@ export interface EthosConfig {
    */
   evolverCronEnabled?: boolean;
   evolverSchedule?: string;
+  /**
+   * FW-13 — background sessions.
+   *   `backgroundMaxConcurrent` — max simultaneous background agent tasks (default 4).
+   *     Config key: background.max_concurrent
+   *   `displayBellOnComplete` — ring the terminal bell when a background task finishes.
+   *     Config key: display.bell_on_complete
+   */
+  backgroundMaxConcurrent?: number;
+  displayBellOnComplete?: boolean;
 }
 
 export function ethosDir(): string {
@@ -307,6 +316,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const personalitiesRetKv: Record<string, Record<string, string>> = {};
   const displayKv: Record<string, string> = {};
   const evolverKv: Record<string, string> = {};
+  const backgroundKv: Record<string, string> = {};
   // Indexed list shapes: telegram.bots.<n>.<field> and slack.apps.<n>.<field>,
   // plus their nested `.bind.<field>` sub-keys. Per-team config keyed by name.
   const telegramBotsKv: Record<number, Record<string, string>> = {};
@@ -389,6 +399,12 @@ function parseConfigYaml(src: string): EthosConfig {
       evolverKv[evlv[1]] = evlv[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // background.<field>: <value>
+    const bg = line.match(/^background\.([a-z_]+):\s*(.+)$/);
+    if (bg) {
+      backgroundKv[bg[1]] = bg[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     // modelRouting.<personality>: <model>
     const mr = line.match(/^modelRouting\.(\S+):\s*(.+)$/);
     if (mr) {
@@ -468,6 +484,10 @@ function parseConfigYaml(src: string): EthosConfig {
     teams,
     evolverCronEnabled: evolverKv.cron_enabled === 'true' ? true : undefined,
     evolverSchedule: evolverKv.schedule || undefined,
+    backgroundMaxConcurrent: backgroundKv.max_concurrent
+      ? Number(backgroundKv.max_concurrent)
+      : undefined,
+    displayBellOnComplete: displayKv.bell_on_complete === 'true' ? true : undefined,
   };
   // Stash parse errors so the strict loader can surface them at boot.
   // readConfig (used by CLI commands that don't gateway-boot) ignores them
