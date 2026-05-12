@@ -486,9 +486,7 @@ const platforms = {
   list: oc.output(PlatformsListOutput),
   set: oc.input(PlatformsSetInput).output(PlatformsSetOutput),
   clear: oc.input(PlatformsClearInput).output(PlatformsClearOutput),
-  botsListTelegram: oc.output(
-    z.object({ bots: z.array(TelegramBotEntrySchema) }),
-  ),
+  botsListTelegram: oc.output(z.object({ bots: z.array(TelegramBotEntrySchema) })),
   botsAddTelegram: oc
     .input(
       z.object({
@@ -501,9 +499,7 @@ const platforms = {
     .input(z.object({ botKey: z.string() }))
     .output(z.object({ ok: z.literal(true) })),
 
-  botsListSlack: oc.output(
-    z.object({ bots: z.array(SlackAppEntrySchema) }),
-  ),
+  botsListSlack: oc.output(z.object({ bots: z.array(SlackAppEntrySchema) })),
   botsAddSlack: oc
     .input(
       z.object({
