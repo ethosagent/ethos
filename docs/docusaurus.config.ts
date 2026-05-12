@@ -1,6 +1,8 @@
 import type * as Preset from '@docusaurus/preset-classic';
 import type { Config } from '@docusaurus/types';
 import { themes as prismThemes } from 'prism-react-renderer';
+import jsonLdPlugin from './plugins/json-ld';
+import rawMarkdownPlugin from './plugins/raw-markdown';
 
 const config: Config = {
   title: 'Ethos',
@@ -52,8 +54,24 @@ const config: Config = {
     ],
   ],
 
+  // Phase 6 — agent-readable surface. Both plugins run at postBuild time
+  // (after Docusaurus emits HTML) so they can see the canonical content
+  // tree and the final route layout simultaneously.
+  //
+  //   ethos-raw-markdown  → mirrors every doc as <path>.md in the build dir
+  //   ethos-json-ld       → injects Schema.org JSON-LD per page based on kind
+  //
+  // llms.txt + llms-full.txt are emitted by `tsx scripts/generate-llms.ts`,
+  // wired as a `prebuild` script in package.json — sits under static/ so
+  // the standard static-asset pipeline serves them at /llms.txt and
+  // /llms-full.txt with no extra config.
+  plugins: [rawMarkdownPlugin, jsonLdPlugin],
+
   themeConfig: {
-    image: 'img/ethos-og-card.png',
+    // Fallback for pages that don't get a per-page card rewrite (404, opt-out).
+    // Real pages get their unique card via the json-ld plugin's postBuild
+    // pass, sourced from `docs/static/img/og/<slug>.png` generated at prebuild.
+    image: 'img/og/default.png',
     metadata: [
       {
         name: 'keywords',

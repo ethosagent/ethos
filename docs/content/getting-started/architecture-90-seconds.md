@@ -1,5 +1,5 @@
 ---
-title: "Architecture in 90 seconds"
+title: "What does Ethos look like in 90 seconds?"
 description: "How Ethos works: AgentLoop streams typed events, components are injected at construction, every extension point is an interface in @ethosagent/types."
 kind: explanation
 audience: shared
