@@ -193,16 +193,11 @@ export function createMemoryTools(memory: MemoryProvider, session: SessionStore)
 // ---------------------------------------------------------------------------
 
 function buildMemoryContext(ctx: ToolContext): MemoryContext {
-  const scopeId =
-    ctx.memoryScopeId ??
-    (ctx.memoryScope === 'per-personality' && ctx.personalityId
-      ? `personality:${ctx.personalityId}`
-      : 'global');
   return {
-    scopeId,
+    scopeId: ctx.memoryScopeId ?? 'global',
     sessionId: ctx.sessionId,
     sessionKey: ctx.sessionKey,
     platform: ctx.platform,
-    workingDir: ctx.workingDir ?? '',
+    workingDir: ctx.workingDir,
   };
 }
