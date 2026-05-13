@@ -239,11 +239,10 @@ export async function runGatewayStart(): Promise<void> {
         // the legacy single-loop construction for the email path.
         new Gateway({ loop: systemLoop, defaultPersonality: config.personality })
       : new Gateway({ bots });
-  for (const bot of bots) {
-    console.log(
-      `${c.dim}bot${c.reset} ${c.bold}${bot.botKey}${c.reset} ${c.dim}→ ${bot.binding.type}:${bot.binding.name}${c.reset}`,
-    );
-  }
+
+  // Index bots by botKey so health-check lines can show the binding inline.
+  const botByKey = new Map(bots.map((b) => [b.botKey, b]));
+
   // Build and register all configured adapters. Each loads lazily so a missing
   // SDK in node_modules only takes down its own platform, not the gateway.
   const adapters = await buildAdapters(config, loadAdapterModule);
@@ -290,14 +289,22 @@ export async function runGatewayStart(): Promise<void> {
   // Start all adapters
   await Promise.all(adapters.map((a) => a.start()));
 
-  // Health checks
+  // Health checks — include botKey and binding for multi-bot adapters so the
+  // startup log shows exactly which bot is live and what it's bound to.
   for (const adapter of adapters) {
     const health = await adapter.health();
+    // adapter.id is `${platform}:${botKey}` for telegram/slack; the botKey is
+    // everything after the first colon.
+    const adapterBotKey = adapter.id.includes(':') ? adapter.id.split(':').slice(1).join(':') : '';
+    const bot = botByKey.get(adapterBotKey);
+    const bindingSuffix = bot
+      ? ` ${c.dim}→ ${bot.binding.type}:${c.reset}${c.bold}${bot.binding.name}${c.reset}`
+      : '';
     if (health.ok) {
-      const ms = health.latencyMs ? ` (${health.latencyMs}ms)` : '';
-      console.log(`${c.green}✓ ${adapter.displayName} online${c.reset}${c.dim}${ms}${c.reset}`);
+      const ms = health.latencyMs ? `${c.dim} (${health.latencyMs}ms)${c.reset}` : '';
+      console.log(`${c.green}✓${c.reset} ${c.bold}${adapter.id}${c.reset}${bindingSuffix}${ms}`);
     } else {
-      console.log(`${c.yellow}⚠ ${adapter.displayName} health check failed${c.reset}`);
+      console.log(`${c.yellow}⚠ ${adapter.id} health check failed${c.reset}${bindingSuffix}`);
     }
   }
 

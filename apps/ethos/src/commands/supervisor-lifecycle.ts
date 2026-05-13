@@ -1,4 +1,4 @@
-import type { SpawnOptionsWithoutStdio } from 'node:child_process';
+import type { SpawnOptions } from 'node:child_process';
 import { join } from 'node:path';
 import { type TeamRuntime, teamsDir } from '@ethosagent/team-supervisor';
 import type { TeamRuntimeConfig } from '../config';
@@ -22,7 +22,7 @@ export interface SupervisorLifecycleDeps {
   readRuntime: (name: string) => TeamRuntime | null;
   isPidAlive: (pid: number) => boolean;
   removeRuntime: (name: string) => void;
-  spawn: (exe: string, args: string[], opts: SpawnOptionsWithoutStdio) => ChildProcessLike;
+  spawn: (exe: string, args: string[], opts: SpawnOptions) => ChildProcessLike;
   /** Milliseconds to wait after spawning before re-reading the runtime file. Default 500. */
   waitMs?: number;
 }

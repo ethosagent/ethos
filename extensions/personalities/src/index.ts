@@ -344,6 +344,9 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     if (patch.ethosMd !== undefined) {
       await this.storage.write(join(dir, 'ETHOS.md'), patch.ethosMd);
     }
+    // Invalidate the mtime-based fingerprint so a rapid second write within
+    // the same millisecond is not silently skipped by loadOne's cache guard.
+    this.fingerprintCache.delete(dir);
     await this.refreshUserDir();
     const refreshed = this.describe(id);
     if (!refreshed) {

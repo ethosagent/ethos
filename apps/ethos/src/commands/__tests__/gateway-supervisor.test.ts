@@ -44,7 +44,7 @@ describe('ensureTeamSupervisors', () => {
     await ensureTeamSupervisors(bots, ENTRY, deps);
 
     expect(deps.spawn).toHaveBeenCalledOnce();
-    const [, args] = deps.spawn.mock.calls[0] as [unknown, string[], unknown];
+    const [, args] = vi.mocked(deps.spawn).mock.calls[0] as [unknown, string[], unknown];
     expect(args).toContain('eng');
   });
 

@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-telegram
 time: "15 min"
-updated: 2026-05-12
+updated: 2026-05-13
 ---
 
 ## Task
@@ -48,6 +48,30 @@ telegramToken: "123456789:ABCdefGhIJklmNopQRstuVwxYZ"
 
 `ethos gateway setup` validates the token against `https://api.telegram.org/bot<TOKEN>/getMe` and writes the value for you. The portion before the colon is the numeric bot id; everything after is the secret — treat it like a password.
 
+### 1a. Run multiple bots from one process
+
+The `telegramToken` scalar wires one bot. To run two or more bots from the same gateway process, replace it with the `telegram.bots` list:
+
+```yaml
+# ~/.ethos/config.yaml
+
+telegram.bots.0.token: "123456:ABCdefGhIJklmNopQRstuVwxYZ"
+telegram.bots.0.id: researcher-bot
+telegram.bots.0.bind.type: personality
+telegram.bots.0.bind.name: researcher
+
+telegram.bots.1.token: "654321:XYZabcDeFgHijKlMnOpqRsTuV"
+telegram.bots.1.id: coder-bot
+telegram.bots.1.bind.type: personality
+telegram.bots.1.bind.name: engineer
+```
+
+Each entry in `telegram.bots` creates one `TelegramAdapter` and one `AgentLoop`. The `id` field is a stable key for session lane names and log output — set it once and do not change it.
+
+The old scalar shape still works and is not going away in the current major version. When both `telegramToken` and `telegram.bots` are present, `telegram.bots` takes precedence and the scalar is ignored with a deprecation warning.
+
+For a full walkthrough, see [Run multiple Telegram bots from one process](../using/how-to/run-multi-bot-telegram.md).
+
 ### 2. Start the gateway
 
 ```bash
@@ -66,7 +90,9 @@ For production, wrap the same command in `launchd`, `systemd`, or `pm2` — see 
 
 ### 3. Understand routing
 
-`TelegramAdapter.start()` registers a `bot.on('message')` listener and forwards every text or caption as an `InboundMessage`. The gateway keys per `(platform, chatId)`:
+`TelegramAdapter.start()` registers a `bot.on('message')` listener and forwards every text or caption as an `InboundMessage`. The gateway keys each session per `(platform, botKey, chatId)`. `botKey` is the `id` field from config (or its sha256-derived default).
+
+In **single-bot** mode (legacy `telegramToken` scalar), the session key omits the bot segment:
 
 | Chat type | `chatId` | `isDm` | `isGroupMention` | Effective session key |
 |---|---|---|---|---|
@@ -74,6 +100,8 @@ For production, wrap the same command in `launchd`, `systemd`, or `pm2` — see 
 | Group (bot is `@mentioned`) | negative group id | `false` | `true` | `telegram:<group-id>` |
 | Group (reply to bot) | negative group id | `false` | `false` | `telegram:<group-id>` |
 | Group (random chatter) | negative group id | `false` | `false` | dropped by the mention gate |
+
+In **multi-bot** mode (`telegram.bots` list), the session key includes the `botKey` segment — `telegram:<botKey>:<chatId>` — so each bot maintains fully isolated histories even when the same Telegram user id appears in both bots' chats.
 
 The session key forks when `/new` or `/personality <id>` runs in the chat — both append `:${Date.now()}` so the agent loses prior context cleanly. The previous session's outbound dedup keys are cleared at the same boundary.
 
@@ -205,6 +233,8 @@ Both bots share a `recipientAllowlist` entry and both are members of the same gr
 ## See also
 
 - [Deploy your first Telegram agent](../using/tutorials/first-deploy-telegram.md) — narrative tutorial covering BotFather, daemons, and the pairing flow end-to-end.
+- [Run multiple Telegram bots from one process](../using/how-to/run-multi-bot-telegram.md) — full walkthrough of the `telegram.bots` list shape and per-bot personality binding.
+- [Connect a Telegram bot to a team](../using/how-to/connect-telegram-to-team.md) — bind a bot to a team coordinator and auto-start the team supervisor.
 - [Discord adapter](discord.md), [Slack adapter](slack.md) — the other channel adapters share the same gateway boundary.
 - [Run Ethos as a daemon](../using/how-to/run-as-daemon.md) — `launchd`, `systemd`, `pm2`.
 - [Glossary](../getting-started/glossary.md) — [`gateway`](../getting-started/glossary.md#gateway), [`session`](../getting-started/glossary.md#session), [`audience boundary`](../getting-started/glossary.md#audience-boundary).
