@@ -97,6 +97,14 @@ export function spawnDetached(
     stdio: ['ignore', outFd, errFd],
   });
 
+  // A detached spawn can fail asynchronously (e.g. a non-existent cwd emits
+  // 'error' with ENOENT instead of throwing synchronously). Without a listener
+  // that 'error' event becomes an uncaught exception. The synchronous
+  // `child.pid === undefined` check below already converts the failure into a
+  // thrown error that process_start surfaces as SPAWN_FAILED — this listener
+  // just keeps the async event from crashing the process.
+  child.on('error', () => {});
+
   child.on('exit', (code, signal) => {
     // Killed by an external signal -> orphan; clean exit -> exited.
     const patch =

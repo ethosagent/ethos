@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import type { Tool, ToolResult } from '@ethosagent/types';
+import { join, resolve } from 'node:path';
+import { BoundaryError, type Tool, type ToolResult } from '@ethosagent/types';
 import {
   isAlive,
   loadRegistry,
@@ -13,11 +13,17 @@ import {
 } from './registry';
 import { rotateLogIfNeeded, spawnDetached } from './spawn';
 
-const MAX_CONCURRENT = 8;
+// Default per-personality concurrency cap. The plan calls the cap
+// "configurable" and floats a per-personality config field — but
+// PersonalityConfig is a frozen schema, so we do NOT add a field there.
+// `createProcessTools` accepts an optional `capMax` override for light
+// configurability; per-personality cap *values* are deliberately deferred.
+const DEFAULT_MAX_CONCURRENT = 8;
 const DEFAULT_LOG_LINES = 200;
 const DEFAULT_WAIT_TIMEOUT_S = 30;
 const WAIT_POLL_MS = 200;
 const SIGTERM_GRACE_MS = 5_000;
+const SUPPORTED_SIGNALS = ['SIGTERM', 'SIGKILL'] as const;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,8 +38,15 @@ function readLastLines(path: string, n: number, prefix: string): string[] {
   return lines.slice(-n).map((l) => `[${prefix}] ${l}`);
 }
 
-function runningCount(entries: ProcessEntry[]): number {
-  return entries.filter((e) => e.status === 'running').length;
+/**
+ * Count running entries owned by `personalityId`. The cap applies per
+ * personality, not globally — so one personality at the cap cannot starve
+ * another.
+ */
+function runningCountFor(entries: ProcessEntry[], personalityId: string): number {
+  return entries.filter(
+    (e) => e.status === 'running' && (e.started_by ?? 'unknown') === personalityId,
+  ).length;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -44,11 +57,12 @@ function sleep(ms: number): Promise<void> {
 // process_start
 // ---------------------------------------------------------------------------
 
-function makeProcessStart(dataDir: string): Tool {
+function makeProcessStart(dataDir: string, capMax: number): Tool {
   return {
     name: 'process_start',
     description: 'Start a long-running process in the background. Returns an id for tracking.',
     toolset: 'process',
+    maxResultChars: 1024,
     schema: {
       type: 'object',
       properties: {
@@ -74,10 +88,36 @@ function makeProcessStart(dataDir: string): Tool {
       if (!command) return { ok: false, error: 'command is required', code: 'input_invalid' };
 
       const id = randomUUID();
-      const effectiveCwd = cwd ?? ctx.workingDir;
+      // Resolve cwd to an absolute path ONCE. The same value is validated,
+      // stored in the registry, and handed to spawnDetached — validating one
+      // path and executing another (Node resolves a relative spawn cwd against
+      // the parent process cwd, not ctx.workingDir) would be a boundary leak.
+      // ctx.workingDir is absolute, so it is a sound base for a relative cwd.
+      const effectiveCwd = cwd === undefined ? ctx.workingDir : resolve(ctx.workingDir, cwd);
       const effectiveName = name ?? command.slice(0, 40);
       const startedAt = new Date().toISOString();
       const startedBy = ctx.personalityId ?? 'unknown';
+
+      // When an explicit cwd is given and a ScopedStorage is wired, probe it
+      // through the personality's filesystem allowlist. A BoundaryError means
+      // the cwd is outside the allowlist -> INVALID_CWD. `exists` is a read
+      // probe: it returns false (not throws) for an in-allowlist path that is
+      // simply absent, so a not-yet-created cwd is NOT treated as INVALID_CWD —
+      // that case falls through to spawnDetached, which surfaces SPAWN_FAILED.
+      if (cwd !== undefined && ctx.storage) {
+        try {
+          await ctx.storage.exists(effectiveCwd);
+        } catch (err) {
+          if (err instanceof BoundaryError) {
+            return {
+              ok: false,
+              error: `INVALID_CWD: ${effectiveCwd} is outside the personality filesystem allowlist`,
+              code: 'input_invalid',
+            };
+          }
+          throw err;
+        }
+      }
 
       // Cap-check + spawn + add run under ONE lock acquisition so two parallel
       // process_start calls can't both pass the cap-check and over-commit.
@@ -85,10 +125,10 @@ function makeProcessStart(dataDir: string): Tool {
         const registry = loadRegistry(dataDir);
         const entries = Object.values(registry);
 
-        if (runningCount(entries) >= MAX_CONCURRENT) {
+        if (runningCountFor(entries, startedBy) >= capMax) {
           return {
             ok: false,
-            error: 'PROCESS_CAP_EXCEEDED: max 8 concurrent processes',
+            error: `PROCESS_CAP_EXCEEDED: max ${capMax} concurrent processes per personality`,
             code: 'execution_failed',
           };
         }
@@ -100,7 +140,7 @@ function makeProcessStart(dataDir: string): Tool {
         } catch (err) {
           return {
             ok: false,
-            error: `Failed to spawn: ${err instanceof Error ? err.message : String(err)}`,
+            error: `SPAWN_FAILED: ${err instanceof Error ? err.message : String(err)}`,
             code: 'execution_failed',
           };
         }
@@ -199,7 +239,7 @@ function makeProcessLogs(dataDir: string): Tool {
     name: 'process_logs',
     description: 'Return the last N lines from a process log. Interleaves stdout and stderr.',
     toolset: 'process',
-    maxResultChars: 40_000,
+    maxResultChars: 64_000,
     outputIsUntrusted: true,
     schema: {
       type: 'object',
@@ -229,7 +269,11 @@ function makeProcessLogs(dataDir: string): Tool {
       const registry = loadRegistry(dataDir);
       const entry = registry[id];
       if (!entry) {
-        return { ok: false, error: `Process ${id} not found`, code: 'execution_failed' };
+        return {
+          ok: false,
+          error: `PROCESS_NOT_FOUND: process ${id} not found`,
+          code: 'execution_failed',
+        };
       }
 
       const n = lines ?? DEFAULT_LOG_LINES;
@@ -276,6 +320,7 @@ function makeProcessStop(dataDir: string): Tool {
     name: 'process_stop',
     description: 'Send a signal to stop a running process.',
     toolset: 'process',
+    maxResultChars: 1024,
     schema: {
       type: 'object',
       properties: {
@@ -293,13 +338,27 @@ function makeProcessStop(dataDir: string): Tool {
 
       if (!id) return { ok: false, error: 'id is required', code: 'input_invalid' };
 
+      const sig = signal ?? 'SIGTERM';
+      // The JSON schema constrains `signal` to an enum, but be defensive: a
+      // caller bypassing schema validation must not reach process.kill with
+      // an arbitrary signal name.
+      if (!SUPPORTED_SIGNALS.includes(sig)) {
+        return {
+          ok: false,
+          error: `SIGNAL_NOT_SUPPORTED: signal ${sig} is not supported (use SIGTERM or SIGKILL)`,
+          code: 'input_invalid',
+        };
+      }
+
       const registry = loadRegistry(dataDir);
       const entry = registry[id];
       if (!entry) {
-        return { ok: false, error: `Process ${id} not found`, code: 'execution_failed' };
+        return {
+          ok: false,
+          error: `PROCESS_NOT_FOUND: process ${id} not found`,
+          code: 'execution_failed',
+        };
       }
-
-      const sig = signal ?? 'SIGTERM';
 
       if (entry.status !== 'running') {
         return {
@@ -318,7 +377,9 @@ function makeProcessStop(dataDir: string): Tool {
         }
         return {
           ok: false,
-          error: `Failed to send ${sig}: ${err instanceof Error ? err.message : String(err)}`,
+          error: `SIGNAL_FAILED: could not send ${sig}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
           code: 'execution_failed',
         };
       }
@@ -363,6 +424,7 @@ function makeProcessWait(dataDir: string): Tool {
     name: 'process_wait',
     description: 'Wait for a process to exit, up to timeout_s seconds.',
     toolset: 'process',
+    maxResultChars: 1024,
     schema: {
       type: 'object',
       properties: {
@@ -382,7 +444,11 @@ function makeProcessWait(dataDir: string): Tool {
       const registry = loadRegistry(dataDir);
       const entry = registry[id];
       if (!entry) {
-        return { ok: false, error: `Process ${id} not found`, code: 'execution_failed' };
+        return {
+          ok: false,
+          error: `PROCESS_NOT_FOUND: process ${id} not found`,
+          code: 'execution_failed',
+        };
       }
 
       if (entry.status !== 'running') {
@@ -420,9 +486,17 @@ function makeProcessWait(dataDir: string): Tool {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createProcessTools(dataDir: string): Tool[] {
+export function createProcessTools(dataDir: string, opts?: { capMax?: number }): Tool[] {
+  // Guard the public option: a non-positive / non-integer capMax would either
+  // disable the cap (NaN, Infinity) or wedge the tool (0, negative). Fall back
+  // to the default rather than honoring a nonsensical value.
+  const requested = opts?.capMax;
+  const capMax =
+    typeof requested === 'number' && Number.isInteger(requested) && requested > 0
+      ? requested
+      : DEFAULT_MAX_CONCURRENT;
   return [
-    makeProcessStart(dataDir),
+    makeProcessStart(dataDir, capMax),
     makeProcessList(dataDir),
     makeProcessLogs(dataDir),
     makeProcessStop(dataDir),
