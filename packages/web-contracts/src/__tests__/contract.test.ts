@@ -160,6 +160,21 @@ describe('SSE event union', () => {
       }),
     ).toThrow();
   });
+
+  it('accepts tool_progress with audience: dashboard', () => {
+    const event = SseEventSchema.parse({
+      type: 'tool_progress',
+      toolName: 'bash',
+      message: 'rendering…',
+      audience: 'dashboard',
+    });
+    expect(event).toEqual({
+      type: 'tool_progress',
+      toolName: 'bash',
+      message: 'rendering…',
+      audience: 'dashboard',
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

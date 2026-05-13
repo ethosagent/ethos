@@ -87,6 +87,7 @@ const SessionUpdateInput = z.object({
 });
 const SessionUpdateOutput = z.object({ session: SessionSchema });
 
+/** @stable v1 */
 const sessions = {
   list: oc.input(SessionListInput).output(SessionListOutput),
   get: oc.input(SessionGetInput).output(SessionGetOutput),
@@ -195,6 +196,7 @@ const PersonalitySkillsImportInput = z.object({
 });
 const PersonalitySkillsImportOutput = z.object({ imported: z.array(PersonalitySkillSchema) });
 
+/** @stable v1 — read-only at v1 */
 const personalities = {
   list: oc.output(PersonalityListOutput),
   get: oc.input(PersonalityGetInput).output(PersonalityGetOutput),
@@ -236,6 +238,7 @@ const ChatSendOutput = z.object({
 const ChatAbortInput = z.object({ sessionId: z.string() });
 const ChatAbortOutput = z.object({ ok: z.literal(true) });
 
+/** @stable v1 */
 const chat = {
   send: oc.input(ChatSendInput).output(ChatSendOutput),
   abort: oc.input(ChatAbortInput).output(ChatAbortOutput),
@@ -262,6 +265,7 @@ const ToolDenyInput = z.object({
 });
 const ToolDenyOutput = z.object({ ok: z.literal(true) });
 
+/** @experimental */
 const tools = {
   approve: oc.input(ToolApproveInput).output(ToolApproveOutput),
   deny: oc.input(ToolDenyInput).output(ToolDenyOutput),
@@ -282,6 +286,7 @@ const ClarifyRespondInput = z.object({
 });
 const ClarifyRespondOutput = z.object({ ok: z.literal(true) });
 
+/** @experimental */
 const clarify = {
   respond: oc.input(ClarifyRespondInput).output(ClarifyRespondOutput),
 };
@@ -319,6 +324,7 @@ const OnboardingCompleteInput = z.object({
 });
 const OnboardingCompleteOutput = z.object({ ok: z.literal(true) });
 
+/** @experimental */
 const onboarding = {
   state: oc.output(OnboardingStateOutput),
   validateProvider: oc
@@ -360,6 +366,7 @@ const ConfigUpdateInput = z.object({
 });
 const ConfigUpdateOutput = z.object({ ok: z.literal(true) });
 
+/** @experimental */
 const config = {
   get: oc.output(ConfigGetOutput),
   update: oc.input(ConfigUpdateInput).output(ConfigUpdateOutput),
@@ -406,6 +413,7 @@ const CronHistoryInput = z.object({
 });
 const CronHistoryOutput = z.object({ runs: z.array(CronRunSchema) });
 
+/** @experimental */
 const cron = {
   list: oc.output(CronListOutput),
   get: oc.input(CronGetInput).output(CronGetOutput),
@@ -455,6 +463,7 @@ const SkillUpdateOutput = z.object({ skill: SkillSchema });
 const SkillDeleteInput = z.object({ id: z.string().min(1) });
 const SkillOkOutput = z.object({ ok: z.literal(true) });
 
+/** @experimental */
 const skills = {
   list: oc.output(SkillListOutput),
   get: oc.input(SkillGetInput).output(SkillGetOutput),
@@ -481,6 +490,7 @@ const EvolverPendingActionInput = z.object({ id: z.string().min(1) });
 const EvolverHistoryInput = z.object({ limit: z.number().int().min(1).max(100).optional() });
 const EvolverHistoryOutput = z.object({ runs: z.array(EvolverRunSchema) });
 
+/** @experimental */
 const evolver = {
   configGet: oc.output(EvolverConfigGetOutput),
   configUpdate: oc.input(EvolverConfigUpdateInput).output(EvolverConfigUpdateOutput),
@@ -514,6 +524,7 @@ const PlatformsSetOutput = z.object({ platform: PlatformStatusSchema });
 const PlatformsClearInput = z.object({ id: PlatformIdSchema });
 const PlatformsClearOutput = z.object({ platform: PlatformStatusSchema });
 
+/** @experimental */
 const platforms = {
   list: oc.output(PlatformsListOutput),
   set: oc.input(PlatformsSetInput).output(PlatformsSetOutput),
@@ -560,6 +571,7 @@ const PluginsListOutput = z.object({
   mcpServers: z.array(McpServerInfoSchema),
 });
 
+/** @experimental */
 const plugins = {
   list: oc.output(PluginsListOutput),
 };
@@ -584,6 +596,7 @@ const MemoryWriteInput = z.object({
 });
 const MemoryWriteOutput = z.object({ file: MemoryFileSchema });
 
+/** @stable v1 */
 const memory = {
   list: oc.output(MemoryListOutput),
   get: oc.input(MemoryGetInput).output(MemoryGetOutput),
@@ -607,6 +620,7 @@ const MeshRouteTestInput = z.object({
 });
 const MeshRouteTestOutput = MeshRouteResultSchema;
 
+/** @experimental */
 const mesh = {
   list: oc.output(MeshListOutput),
   routeTest: oc.input(MeshRouteTestInput).output(MeshRouteTestOutput),
@@ -640,6 +654,7 @@ const BatchGetOutput = z.object({ run: BatchRunInfoSchema });
 const BatchOutputInput = z.object({ id: z.string() });
 const BatchOutputOutput = z.object({ content: z.string() });
 
+/** @experimental */
 const batch = {
   list: oc.output(BatchListOutput),
   start: oc.input(BatchStartInput).output(BatchStartOutput),
@@ -673,6 +688,7 @@ const EvalGetOutput = z.object({ run: EvalRunInfoSchema });
 const EvalOutputInput = z.object({ id: z.string() });
 const EvalOutputOutput = z.object({ content: z.string() });
 
+/** @experimental */
 const evalNs = {
   list: oc.output(EvalListOutput),
   start: oc.input(EvalStartInput).output(EvalStartOutput),
@@ -704,6 +720,7 @@ const KanbanUpdateStatusInput = z.object({
 });
 const KanbanUpdateStatusOutput = z.object({ task: KanbanTaskSchema });
 
+/** @experimental */
 const kanban = {
   list: oc.output(KanbanListOutput),
   getBoard: oc.input(KanbanGetBoardInput).output(KanbanGetBoardOutput),
@@ -754,6 +771,7 @@ const ApiKeyListOutput = z.object({ keys: z.array(ApiKeyMetadataSchema) });
 const ApiKeyRevokeInput = z.object({ id: z.string() });
 const ApiKeyRevokeOutput = z.object({ ok: z.literal(true) });
 
+/** @experimental */
 const apiKeys = {
   create: oc.input(ApiKeyCreateInput).output(ApiKeyCreateOutput),
   list: oc.output(ApiKeyListOutput),
@@ -772,6 +790,7 @@ const MetaCapabilitiesOutput = z.object({
   capabilities: z.record(z.string(), z.boolean()),
 });
 
+/** @stable v1 */
 const meta = {
   capabilities: oc.output(MetaCapabilitiesOutput),
 };

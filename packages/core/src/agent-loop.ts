@@ -59,7 +59,7 @@ export type AgentEvent =
       toolName: string;
       message: string;
       percent?: number;
-      audience: 'internal' | 'user';
+      audience: 'internal' | 'user' | 'dashboard';
     }
   | {
       type: 'tool_end';
@@ -69,7 +69,7 @@ export type AgentEvent =
       durationMs: number;
       // Phase 30.2 — same boundary applies to tool_end success rendering.
       // Failures (`ok: false`) ignore the field and always render.
-      audience?: 'internal' | 'user';
+      audience?: 'internal' | 'user' | 'dashboard';
       /**
        * Tool output body — the success value when `ok`, or the error
        * message when `ok: false`. Optional so consumers that only care
@@ -911,7 +911,7 @@ export class AgentLoop {
         toolName: string;
         message: string;
         percent?: number;
-        audience: 'internal' | 'user';
+        audience: 'internal' | 'user' | 'dashboard';
       }> = [];
 
       const scopedStorage = this.buildScopedStorage(personality);
@@ -941,7 +941,7 @@ export class AgentLoop {
           toolName: string;
           message: string;
           percent?: number;
-          audience?: 'internal' | 'user';
+          audience?: 'internal' | 'user' | 'dashboard';
         }) => {
           progressBuffer.push({
             toolName: event.toolName,
