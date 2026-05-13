@@ -1093,10 +1093,17 @@ export class KanbanStore {
       this.db
         .prepare('UPDATE tasks SET status = ?, current_run_id = NULL, updated_at = ? WHERE id = ?')
         .run('ready', now, taskId);
-      // The member whose claim was just reclaimed gets an orphaned tally. The
-      // task keeps its `assignee` across a reclaim (the dispatcher re-POSTs to
-      // the same member), so `row.assignee` is the member that lost the claim.
-      this.bumpMemberStat(row.assignee, 'tickets_orphaned');
+      // The member whose claim was just reclaimed gets an orphaned tally — but
+      // only when the task was actually `running`. A reclaim of a task in any
+      // other status is a re-queue, not a real orphan; counting it would
+      // inflate the member's failure rate. The task keeps its `assignee` across
+      // a reclaim (the dispatcher re-POSTs to the same member), so `row.assignee`
+      // is the member that lost the claim. Gating on `row.status` keeps the
+      // invariant local — it doesn't depend on the caller only passing
+      // `running` tasks.
+      if (row.status === 'running') {
+        this.bumpMemberStat(row.assignee, 'tickets_orphaned');
+      }
       if (runCancelled) {
         this.emit(taskId, 'run_completed', actor, { outcome: 'cancelled', summary: null });
       }

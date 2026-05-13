@@ -99,13 +99,6 @@ const DEFAULT_DISPATCH_TIMEOUT_MS = 300_000;
 const DEFAULT_ORPHAN_GRACE_MS = 60_000;
 const DEFAULT_STALENESS_THRESHOLD_MS = 300_000;
 const DISPATCH_HOST = 'localhost';
-/**
- * Cold-start success ratio for the `dispatch_prefer_reliable` tie-breaker: an
- * assignee with no recorded outcomes sorts just below a proven 100%-success
- * member but above anyone with a real failure on record. Just under 1 so it
- * never ties with — and so never jumps ahead of — a genuine perfect record.
- */
-const UNKNOWN_RATIO = 0.999_999;
 
 export class Dispatcher {
   private readonly board: KanbanStore;
@@ -251,27 +244,42 @@ export class Dispatcher {
    * incoming `created_at ASC` order. The success ratio comes from the board's
    * `team_member_stats`.
    *
-   * Cold-start policy: an assignee with no recorded outcomes is given a
-   * `UNKNOWN_RATIO` just under a perfect record — it sorts *after* a proven
-   * 100%-success member but *ahead* of any member with a real failure on
-   * record. This neither penalizes newcomers (the plan forbids that) nor
+   * Cold-start policy: an assignee with no recorded outcomes sorts *after* a
+   * proven 100%-success member but *ahead* of any member with a real failure
+   * on record. This neither penalizes newcomers (the plan forbids that) nor
    * pretends unknown equals perfect (which would let a fresh member outrank a
-   * long-running 99%-reliable one). Reordering only — nothing is excluded.
+   * long-running 99%-reliable one). It falls out of a clean two-key compare:
+   * a newcomer is scored with `ratio = 1` (so it ties a perfect member) but
+   * `hasRecord = false` (so it loses that tie). Sort by ratio first, then by
+   * `hasRecord` — a perfect member (ratio 1, has record) leads, a newcomer
+   * (ratio 1, no record) follows, and anyone with a failure (ratio < 1)
+   * trails. Reordering only — nothing is excluded.
    */
   private orderForDispatch(ready: Task[]): Task[] {
     if (!this.preferReliable || ready.length < 2) return ready;
     const stats = this.board.getMemberStats();
-    const ratioOf = (assignee: string | null): number => {
-      if (assignee === null) return UNKNOWN_RATIO;
+    // `ratio`: success ratio — newcomers are scored 1 so they tie a perfect
+    // member on this key. `hasRecord`: whether there is a real record behind
+    // that ratio — breaks the newcomer-vs-perfect tie in the perfect member's
+    // favour.
+    const reliabilityOf = (assignee: string | null): { ratio: number; hasRecord: boolean } => {
+      if (assignee === null) return { ratio: 1, hasRecord: false };
       const s = stats.get(assignee);
-      if (s === undefined) return UNKNOWN_RATIO;
+      if (s === undefined) return { ratio: 1, hasRecord: false };
       const total = s.ticketsCompleted + s.ticketsFailed + s.ticketsOrphaned;
-      if (total === 0) return UNKNOWN_RATIO;
-      return s.ticketsCompleted / total;
+      if (total === 0) return { ratio: 1, hasRecord: false };
+      return { ratio: s.ticketsCompleted / total, hasRecord: true };
     };
     return [...ready].sort((a, b) => {
       if (a.priority !== b.priority) return b.priority - a.priority;
-      return ratioOf(b.assignee) - ratioOf(a.assignee);
+      const ra = reliabilityOf(a.assignee);
+      const rb = reliabilityOf(b.assignee);
+      if (ra.ratio !== rb.ratio) return rb.ratio - ra.ratio;
+      // Equal ratio: a member with a real record sorts ahead of a newcomer.
+      // Two newcomers tie here, so the stable sort keeps their incoming
+      // `created_at ASC` order.
+      if (ra.hasRecord !== rb.hasRecord) return ra.hasRecord ? -1 : 1;
+      return 0;
     });
   }
 

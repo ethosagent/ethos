@@ -2853,7 +2853,10 @@ body,
 
 .cc-roster-row {
   display: flex;
-  align-items: center;
+  /* flex-start, not center: the row holds a two-line detail block (name +
+     stats), and centering would float the 8px mark dot against the gap
+     between the lines. The mark aligns to the name line via margin-top. */
+  align-items: flex-start;
   gap: 8px;
   padding: 10px 20px;
   border-bottom: 1px solid var(--ethos-border);
@@ -2867,6 +2870,9 @@ body,
   height: 8px;
   border-radius: 50%;
   flex: 0 0 8px;
+  /* Center the 8px dot within the ~16px name line so it reads as aligned to
+     the member name, not the taller detail block. */
+  margin-top: 4px;
 }
 
 .cc-roster-detail {
@@ -2909,6 +2915,9 @@ body,
   border-radius: 50%;
   background: var(--ethos-border-strong, var(--ethos-border));
   flex: 0 0 8px;
+  /* Row is `align-items: flex-start`; match the mark's name-line offset so the
+     status dot stays aligned to the member name rather than jumping to the top. */
+  margin-top: 4px;
 }
 .cc-roster-status-running {
   background: #4ade80;

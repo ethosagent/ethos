@@ -1494,6 +1494,22 @@ describe('KanbanStore', () => {
       }
     });
 
+    it('does NOT increment tickets_orphaned when a non-running task is reclaimed', () => {
+      // `reclaimTask` flips any status to `ready`, but only a task that was
+      // actually `running` is a real orphan. Reclaiming a `ready` task is a
+      // re-queue and must not inflate the member's orphan tally.
+      const s = teamStore();
+      try {
+        const t = s.createTask({ title: 'never ran', assignee: 'engineer' });
+        s.updateStatus(t.id, 'ready', undefined, 'engineer');
+        s.reclaimTask(t.id, 'orphan_stale', 'dispatcher');
+        expect(s.getTask(t.id)?.status).toBe('ready');
+        expect(s.getMemberStats().get('engineer')).toBeUndefined();
+      } finally {
+        s.close();
+      }
+    });
+
     it('accumulates stats across multiple terminal transitions per member', () => {
       const s = teamStore();
       try {
