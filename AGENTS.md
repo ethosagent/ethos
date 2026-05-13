@@ -34,6 +34,20 @@ Define success criteria. Loop until verified.
 "Fix the bug" → write a test that reproduces it, then make it pass.
 Always run pnpm check (typecheck + lint + test) before declaring done.
 Always run pnpm lint before pushing. CI fails on lint errors; catching them locally is one command. If lint reports fixable issues, run pnpm lint:fix and re-check before git push. Don't push code that hasn't been linted.
+
+5. Follow the constitution
+[ARCHITECTURE.md](./ARCHITECTURE.md) is the constitutional source of truth for this codebase. It defines the layer model, dependency direction, frozen schemas, safety rules, and the laws the validator enforces. Read it before:
+
+- Adding or moving any package, extension, or app.
+- Adding a workspace dependency, especially one that crosses layers.
+- Changing a contract interface under `packages/types/`.
+- Touching any `safety-*` module.
+- Modifying a frozen schema (personality, plugin contract, storage, agent event, etc.).
+- Introducing raw `node:fs` calls in any module that participates in a personality boundary.
+- Adding `console.*` calls in library code.
+
+If your change conflicts with the constitution, either refactor to fit or open a constitutional amendment per [ARCHITECTURE.md §VI](./ARCHITECTURE.md). Do not introduce constitutional violations to land a feature faster — the cost compounds.
+
 What this is
 Ethos is a TypeScript agent framework where personality is architecture. A personality (ETHOS.md + toolset.yaml + config.yaml) is a structural component — not a system prompt string — that shapes tool access, memory filtering, model routing, and communication style simultaneously.
 
