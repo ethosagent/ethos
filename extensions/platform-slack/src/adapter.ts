@@ -379,8 +379,6 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       session: this.sessionUnfurl,
       kanban: this.kanbanUnfurl,
       personality: this.personalityUnfurl,
-      memory: this.memory,
-      memoryScope: this.binding?.name,
     });
 
     await this.app.start();

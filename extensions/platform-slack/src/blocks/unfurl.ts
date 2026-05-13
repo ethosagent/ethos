@@ -1,5 +1,5 @@
 // Pure Block Kit builders for `link_shared` URL unfurls — one per Ethos web UI
-// URL type (session / kanban / personality / memory). `(data) => SlackBlock[]`,
+// URL type (session / kanban / personality). `(data) => SlackBlock[]`,
 // no I/O, no Slack-client dependency, like every other `blocks/` module.
 //
 // Each builder's input is already-resolved data: the `events/links.ts` registrar
@@ -22,13 +22,6 @@ const ASSIGNEE_MAX = 120;
 const GOAL_MAX = 300;
 const DESCRIPTION_MAX = 600;
 const SCOPE_MAX = 200;
-const ENTRY_MAX = 600;
-
-/** Recent-memory entries surfaced in a memory-page unfurl. The registrar in
- *  `events/links.ts` owns the cap — it passes this to `extractRecentEntries`
- *  so the builder renders whatever it's handed (same split as
- *  `home/handlers.ts` / `MEMORY_SNIPPET_COUNT`). */
-export const MEMORY_ENTRY_COUNT = 3;
 
 function clean(text: string, max: number): string {
   return escapeMrkdwn(truncate(text, max));
@@ -91,22 +84,4 @@ export function personalityUnfurlBlocks(data: PersonalityUnfurlData): SlackBlock
     section(`*${clean(data.name, NAME_MAX)}*\n${clean(data.description, DESCRIPTION_MAX)}`),
     context([`Memory scope: \`${clean(data.memoryScope, SCOPE_MAX)}\``]),
   ];
-}
-
-export interface MemoryUnfurlData {
-  /** Memory scope label — the bound personality/team name. */
-  scope: string;
-  /** Recent `MEMORY.md` entries, oldest-first as the reader returned them. */
-  entries: string[];
-}
-
-export function memoryUnfurlBlocks(data: MemoryUnfurlData): SlackBlock[] {
-  const blocks: SlackBlock[] = [
-    header('Ethos memory'),
-    section(`Recent entries for \`${clean(data.scope, SCOPE_MAX)}\`:`),
-  ];
-  for (const entry of data.entries) {
-    blocks.push(section(clean(entry, ENTRY_MAX)));
-  }
-  return blocks;
 }

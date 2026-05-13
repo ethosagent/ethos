@@ -304,7 +304,6 @@ When someone pastes an Ethos web UI URL into Slack, the adapter unfurls it into 
 | `/sessions/<id>` | Session id, the personality it ran under, last activity. |
 | `/kanban/<ticket>` | Ticket title, status, assignee, parent goal. |
 | `/personalities/<id>` | Personality name, description, memory scope. |
-| `/memory` | A snippet of recent `MEMORY.md` entries for the bound scope. |
 
 It uses the `link_shared` event and `chat.unfurl`; the manifest in [§1.1](#11-create-the-app) carries the `links:read` / `links:write` scopes and the `link_shared` bot event.
 
@@ -388,7 +387,7 @@ src/
 | `SlackAdapterConfig.kanban` | `./adapter` | Optional — wires `/ethos kanban list` and the App Home kanban section for team bots. |
 | `SlackAdapterConfig.session` | `./adapter` | Optional — wires the App Home "Recent sessions" section. |
 | `SlackAdapterConfig.webUiBaseUrl` | `./adapter` | Optional — Ethos web UI origin; when set, App Home session rows deep-link to `<base>/sessions/<id>` and `link_shared` URL unfurling is enabled. |
-| `SlackAdapterConfig.sessionUnfurl` / `kanbanUnfurl` / `personalityUnfurl` | `./adapter` | Optional lookup-by-id readers — wire the session / kanban / personality URL unfurls. The memory URL unfurl reuses `SlackAdapterConfig.memory`. |
+| `SlackAdapterConfig.sessionUnfurl` / `kanbanUnfurl` / `personalityUnfurl` | `./adapter` | Optional lookup-by-id readers — wire the session / kanban / personality URL unfurls. |
 
 ### Why pure Block Kit builders
 

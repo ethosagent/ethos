@@ -1,11 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { plaintextFallback } from '../blocks/shared';
-import {
-  kanbanUnfurlBlocks,
-  memoryUnfurlBlocks,
-  personalityUnfurlBlocks,
-  sessionUnfurlBlocks,
-} from '../blocks/unfurl';
+import { kanbanUnfurlBlocks, personalityUnfurlBlocks, sessionUnfurlBlocks } from '../blocks/unfurl';
 import { matchEthosUrl, registerLinkEvents } from '../events/links';
 
 // ---------------------------------------------------------------------------
@@ -35,10 +30,6 @@ describe('matchEthosUrl', () => {
       kind: 'personality',
       id: 'researcher',
     });
-  });
-
-  it('matches the memory page URL', () => {
-    expect(matchEthosUrl(`${base}/memory`, base)).toEqual({ kind: 'memory' });
   });
 
   it('url-decodes the path id segment', () => {
@@ -153,14 +144,6 @@ describe('blocks/unfurl', () => {
     expect(text).toContain('personality:researcher');
   });
 
-  it('memoryUnfurlBlocks renders recent entries', () => {
-    const text = plaintextFallback(
-      memoryUnfurlBlocks({ scope: 'researcher', entries: ['- learned a thing'] }),
-    );
-    expect(text).toContain('researcher');
-    expect(text).toContain('learned a thing');
-  });
-
   it('escapes mrkdwn metacharacters in every model-influenced field', () => {
     const sessionJson = JSON.stringify(
       sessionUnfurlBlocks({
@@ -195,12 +178,6 @@ describe('blocks/unfurl', () => {
     );
     expect(personalityJson).not.toContain('<!everyone>');
     expect(personalityJson).not.toContain('<script>');
-
-    const memoryJson = JSON.stringify(
-      memoryUnfurlBlocks({ scope: 'researcher', entries: ['<!channel> watch out'] }),
-    );
-    expect(memoryJson).not.toContain('<!channel>');
-    expect(memoryJson).toContain('&lt;!channel&gt;');
   });
 
   it('truncates oversized fields well under the Slack ~3000-char section limit', () => {
@@ -238,9 +215,6 @@ describe('blocks/unfurl', () => {
         }),
       ),
     ).toBeLessThan(3000);
-    expect(longest(memoryUnfurlBlocks({ scope: 'x', entries: ['m'.repeat(10_000)] }))).toBeLessThan(
-      3000,
-    );
   });
 });
 
@@ -291,11 +265,6 @@ const fullDeps = {
       memoryScope: `personality:${id}`,
     }),
   },
-  memory: {
-    read: async () => '- a memory entry',
-    append: async () => {},
-  },
-  memoryScope: 'researcher',
 };
 
 describe('events/links — registerLinkEvents', () => {
@@ -336,7 +305,7 @@ describe('events/links — registerLinkEvents', () => {
     expect(Object.keys(arg.unfurls)).toEqual([`${base}/sessions/s1`]);
   });
 
-  it('unfurls each of the four URL types', async () => {
+  it('unfurls each of the three URL types', async () => {
     const app = fakeApp();
     registerLinkEvents(app as never, fullDeps);
     const unfurl = vi.fn().mockResolvedValue(undefined);
@@ -350,19 +319,13 @@ describe('events/links — registerLinkEvents', () => {
           { url: `${base}/sessions/s1` },
           { url: `${base}/kanban/t1` },
           { url: `${base}/personalities/p1` },
-          { url: `${base}/memory` },
         ],
       },
       client: { chat: { unfurl } },
     });
     const arg = unfurl.mock.calls[0]?.[0] as { unfurls: Record<string, unknown> };
     expect(Object.keys(arg.unfurls).sort()).toEqual(
-      [
-        `${base}/kanban/t1`,
-        `${base}/memory`,
-        `${base}/personalities/p1`,
-        `${base}/sessions/s1`,
-      ].sort(),
+      [`${base}/kanban/t1`, `${base}/personalities/p1`, `${base}/sessions/s1`].sort(),
     );
   });
 
@@ -440,27 +403,6 @@ describe('events/links — registerLinkEvents', () => {
     });
     const arg = unfurl.mock.calls[0]?.[0] as { unfurls: Record<string, unknown> };
     expect(Object.keys(arg.unfurls)).toEqual([`${base}/sessions/s1`]);
-  });
-
-  it('skips the memory URL when the reader is wired but no scope is supplied', async () => {
-    const app = fakeApp();
-    registerLinkEvents(app as never, {
-      webUiBaseUrl: base,
-      memory: { read: async () => '- a memory entry', append: async () => {} },
-      // memoryScope intentionally omitted
-    });
-    const unfurl = vi.fn().mockResolvedValue(undefined);
-    const handler = app.handlers.get('event:link_shared');
-    if (!handler) throw new Error('handler not registered');
-    await handler({
-      event: {
-        channel: 'C1',
-        message_ts: '111.222',
-        links: [{ url: `${base}/memory` }],
-      },
-      client: { chat: { unfurl } },
-    });
-    expect(unfurl).not.toHaveBeenCalled();
   });
 
   it('does not call chat.unfurl when no link matched', async () => {

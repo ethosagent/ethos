@@ -3,6 +3,9 @@
 // and `home/handlers.ts`: `registerLinkEvents(app, deps)` registers the event,
 // gathers data from the injected lookup readers, and calls `chat.unfurl`.
 //
+// Three URL types unfurl: `/sessions/<id>`, `/kanban/<ticket>`, and
+// `/personalities/<id>` — all id-addressed metadata.
+//
 // `matchEthosUrl` is the pure, testable core: it answers "is this shared URL
 // under our configured web UI base, and what does its path point to?". Matching
 // strictly against the configured origin is also the cross-workspace guard —
@@ -20,15 +23,11 @@ import type { SlackBlock } from '../blocks/shared';
 import {
   type KanbanUnfurlData,
   kanbanUnfurlBlocks,
-  MEMORY_ENTRY_COUNT,
-  memoryUnfurlBlocks,
   type PersonalityUnfurlData,
   personalityUnfurlBlocks,
   type SessionUnfurlData,
   sessionUnfurlBlocks,
 } from '../blocks/unfurl';
-import type { MemoryReader } from '../commands/memory';
-import { extractRecentEntries } from '../commands/memory';
 
 /** Lookup-by-id readers the unfurl handler needs. A `link_shared` URL carries a
  *  specific id, so unlike the list-oriented readers used by `/ethos` commands
@@ -54,13 +53,6 @@ export interface LinkEventDeps {
   session?: SessionUnfurlReader;
   kanban?: KanbanUnfurlReader;
   personality?: PersonalityUnfurlReader;
-  /** Reused from the `/ethos memory` command — the memory page unfurl shows a
-   *  snippet of recent `MEMORY.md` entries. */
-  memory?: MemoryReader;
-  /** Memory scope label (the bound personality/team name) shown on the memory
-   *  unfurl card. Supplied alongside `memory`; without it the memory URL is
-   *  skipped. */
-  memoryScope?: string;
 }
 
 /** The one Bolt `client` capability the link handler uses. Narrowed at the call
@@ -77,13 +69,11 @@ type LinkClient = {
   };
 };
 
-/** A recognized Ethos web UI URL. `memory` is the only id-less variant — the
- *  memory page is a single scope-bound view, not an id-addressed resource. */
+/** A recognized Ethos web UI URL — each variant is an id-addressed resource. */
 export type EthosUrlMatch =
   | { kind: 'session'; id: string }
   | { kind: 'kanban'; id: string }
-  | { kind: 'personality'; id: string }
-  | { kind: 'memory' };
+  | { kind: 'personality'; id: string };
 
 /**
  * Match a shared URL against the configured Ethos web UI base. Returns the
@@ -123,9 +113,6 @@ export function matchEthosUrl(
 
   const segments = rest.split('/').filter((s) => s.length > 0);
 
-  if (segments.length === 1 && segments[0] === 'memory') {
-    return { kind: 'memory' };
-  }
   if (segments.length === 2) {
     const [collection, rawId] = segments;
     // `decodeURIComponent` throws `URIError` on malformed percent-encoding
@@ -223,13 +210,6 @@ async function buildUnfurl(
         if (!deps.personality) return null;
         const data = await deps.personality.lookupPersonality(match.id);
         return data ? personalityUnfurlBlocks(data) : null;
-      }
-      case 'memory': {
-        if (!deps.memory || !deps.memoryScope) return null;
-        const body = await deps.memory.read();
-        const entries = extractRecentEntries(body, MEMORY_ENTRY_COUNT);
-        if (entries.length === 0) return null;
-        return memoryUnfurlBlocks({ scope: deps.memoryScope, entries });
       }
     }
   } catch {

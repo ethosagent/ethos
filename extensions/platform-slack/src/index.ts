@@ -18,7 +18,6 @@ export type { KanbanTicket } from './blocks/kanban';
 export type { SessionSummary } from './blocks/session';
 export type {
   KanbanUnfurlData,
-  MemoryUnfurlData,
   PersonalityUnfurlData,
   SessionUnfurlData,
 } from './blocks/unfurl';
