@@ -4,6 +4,7 @@ import { BoundaryError, type Tool, type ToolResult } from '@ethosagent/types';
 import {
   DEFAULT_LOG_LINES,
   listProcesses,
+  markDeadRunningAsOrphan,
   readProcessLogs,
   STOP_SUPPORTED_SIGNALS,
   type StopSignal,
@@ -113,6 +114,13 @@ function makeProcessStart(dataDir: string, capMax: number): Tool {
       // process_start calls can't both pass the cap-check and over-commit.
       return withRegistryLock(dataDir, (): ToolResult => {
         const registry = loadRegistry(dataDir);
+
+        // Liveness sweep before the cap-check: entries still marked `running`
+        // whose pid is dead would otherwise falsely consume cap slots (plan
+        // principle #5 — liveness is observed, not trusted). Reuse the shared
+        // dead->orphan rule; the swept registry is the one we keep mutating,
+        // so the single saveRegistry below persists the orphan flips too.
+        markDeadRunningAsOrphan(registry);
         const entries = Object.values(registry);
 
         if (runningCountFor(entries, startedBy) >= capMax) {

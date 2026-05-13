@@ -89,11 +89,20 @@ function extractSingleQuery(argv: string[]): {
   return { query, rest, queryFlagUsed };
 }
 
+// Pure-metadata commands (`--version`/`--help`) do no registry work, so skip
+// the startup crash-recovery scan for them — no point acquiring the registry
+// lock + scanning files to print a version string.
+const isMetadataCommand =
+  effectiveCommand === '--version' ||
+  effectiveCommand === '-v' ||
+  effectiveCommand === '--help' ||
+  effectiveCommand === '-h';
+
 try {
   // Startup crash-recovery scan: flips any `running` registry entry with a dead
   // pid to `orphan`. Best-effort and never throws (a missing/corrupt registry
   // must not block startup); idempotent, so re-running it is harmless.
-  await reconcileRegistry(ethosDir());
+  if (!isMetadataCommand) await reconcileRegistry(ethosDir());
 
   switch (effectiveCommand) {
     case '--version':

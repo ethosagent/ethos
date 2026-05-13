@@ -47,7 +47,7 @@ function readLastLines(path: string, n: number, prefix: string): string[] {
  * save. Shared by `listProcesses` (per-call liveness) and `reconcileRegistry`
  * (startup crash recovery) so the rule lives in exactly one place.
  */
-function markDeadRunningAsOrphan(reg: Registry): boolean {
+export function markDeadRunningAsOrphan(reg: Registry): boolean {
   let dirty = false;
   for (const entry of Object.values(reg)) {
     if (entry.status !== 'running') continue;
