@@ -1,0 +1,136 @@
+# Ethos Control-Plane SDK
+
+> Agent-readable summary for LLMs building Mission Controls against the Ethos API.
+
+## What it is
+
+@ethosagent/sdk is a TypeScript client for the Ethos control-plane HTTP API.
+It provides typed RPC calls (via oRPC) and an SSE streaming client for
+real-time turn events. The contract is defined in @ethosagent/web-contracts
+and shared between client and server — both fail to compile if the shapes drift.
+
+## Install
+
+```
+pnpm add @ethosagent/sdk
+```
+
+The package exports: EthosClient, EventStream, and key types
+(EthosClientOptions, EventStreamOptions, EventStreamSubscription,
+Contract, SseEvent, ApiKeyScope, ApiKeyMetadata).
+
+## Authentication
+
+Two modes:
+
+1. API key (bearer token): pass `apiKey` to the constructor. Every request
+   sends `Authorization: Bearer <key>`. Keys are scoped — see "Scopes" below.
+
+2. Cookie-auth: omit `apiKey`. Requests use `credentials: 'include'` for
+   browser session cookies. Required for the `apiKeys` admin namespace.
+
+## EthosClient
+
+```typescript
+import { EthosClient } from '@ethosagent/sdk';
+const client = new EthosClient({ baseUrl: 'http://localhost:2400', apiKey: 'esk_...' });
+```
+
+Constructor options:
+- baseUrl (string, required) — server origin, trailing slashes stripped
+- apiKey (string, optional) — bearer token
+- fetch (typeof fetch, optional) — custom fetch implementation
+
+Access RPC methods via `client.rpc.<namespace>.<method>(input)`.
+
+## Stable namespaces (semver-protected)
+
+### sessions
+- list({ q?, limit?, cursor?, personalityId? }) → { sessions, nextCursor }
+- get({ id }) → { session, messages }
+- fork({ id, personalityId? }) → { session }
+- delete({ id }) → { ok }
+- update({ id, title }) → { session }
+
+### chat
+- send({ sessionId?, clientId, text, personalityId? }) → { sessionId, turnId }
+- abort({ sessionId }) → { ok }
+
+chat.send is fire-and-forget. The response streams over SSE, not this RPC.
+
+### personalities
+- list() → { personalities, defaultId }
+- get({ id }) → { personality, ethosMd }
+- characterSheet({ id }) → { markdown }
+- create({ id, name, ... }) → { personality }
+- update({ id, ... }) → { personality }
+- delete({ id }) → { ok }
+- duplicate({ id, newId }) → { personality }
+- skillsList/Get/Create/Update/Delete/ImportGlobal — per-personality skills
+
+### memory
+- list() → { files }
+- get({ store }) → { file } — store is 'memory' or 'user'
+- write({ store, content }) → { file }
+
+### meta
+- capabilities() → { capabilities } — Record<string, boolean>
+
+## Experimental namespaces (may change in minor releases)
+
+tools, clarify, onboarding, config, cron, skills, evolver,
+mesh, plugins, platforms, batch, eval, kanban, apiKeys.
+
+## SSE streaming (EventStream)
+
+```typescript
+import { EventStream } from '@ethosagent/sdk';
+const sub = EventStream({
+  baseUrl: 'http://localhost:2400',
+  apiKey: 'esk_...',
+  sessionId: 'ses_abc123',
+  onEvent(event, seq) { /* handle event */ },
+  onError(err) { /* handle error */ },
+});
+sub.close(); // when done
+```
+
+Connects to: GET <baseUrl>/sse/sessions/<sessionId>
+Auto-reconnects with 3s delay, resumes via lastEventId.
+
+### Per-turn SSE event types
+- text_delta { text }
+- thinking_delta { thinking }
+- tool_start { toolCallId, toolName, args }
+- tool_progress { toolName, message, percent?, audience }
+- tool_end { toolCallId, toolName, ok, durationMs, result? }
+- usage { inputTokens, outputTokens, estimatedCostUsd }
+- context_meta { data }
+- done { text, turnCount }
+- error { error, code }
+- message_persisted { messageId, role }
+
+### Push SSE event types (system-wide, not turn-scoped)
+- tool.approval_required { request }
+- approval.resolved { approvalId, decision, decidedBy }
+- clarify.request { requestId, question, options?, default?, defaultDeadlineAt }
+- clarify.resolved { requestId, source }
+- cron.fired { jobId, ranAt, outputPath? }
+- mesh.changed { agents }
+- evolve.skill_pending { skillId, personalityId?, proposedAt }
+- protocol.upgrade_required { serverVersion, clientVersionExpected }
+
+## API key scopes
+
+sessions:read, sessions:write, chat:send, personalities:read,
+memory:read, memory:write, tools:approve, events:subscribe.
+
+Minimum for a chat UI: chat:send + events:subscribe + sessions:read.
+
+## Key types
+
+Session: { id, key, platform, model, provider, personalityId, title, usage, ... }
+StoredMessage: { id, sessionId, role, content, toolCalls, timestamp }
+Personality: { id, name, description, model, toolset, capabilities, memoryScope, ... }
+MemoryFile: { store, content, path, modifiedAt }
+SseEvent: discriminated union on `type` — see event types above.
