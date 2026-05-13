@@ -1,3 +1,4 @@
+import { apiKeysRouter } from './api-keys';
 import { batchRouter } from './batch';
 import { chatRouter } from './chat';
 import { clarifyRouter } from './clarify';
@@ -8,6 +9,7 @@ import { evolverRouter } from './evolver';
 import { kanbanRouter } from './kanban';
 import { memoryRouter } from './memory';
 import { meshRouter } from './mesh';
+import { metaRouter } from './meta';
 import { onboardingRouter } from './onboarding';
 import { personalitiesRouter } from './personalities';
 import { platformsRouter } from './platforms';
@@ -56,6 +58,8 @@ export const apiRouter = {
   batch: batchRouter,
   eval: evalRouter,
   kanban: kanbanRouter,
+  apiKeys: apiKeysRouter,
+  meta: metaRouter,
 };
 
 export type ApiRouter = typeof apiRouter;

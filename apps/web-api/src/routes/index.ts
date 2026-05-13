@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { authMiddleware } from '../middleware/auth';
 import type { ApiKeyAuthStore } from '../middleware/bearer-auth';
 import { csrfMiddleware } from '../middleware/csrf';
+import { cookieOnlyGuard, dualAuth, resolveScope } from '../middleware/dual-auth';
 import { errorHandler } from '../middleware/error-envelope';
 import type { WebTokenRepository } from '../repositories/web-token.repository';
 import type { ChatService } from '../services/chat.service';
@@ -57,6 +58,7 @@ export interface ServiceContainer {
   lab: import('../services/lab.service').LabService;
   kanban: import('../services/kanban.service').KanbanService;
   completions: import('../services/completions.service').CompletionsService;
+  apiKeys: import('../services/api-keys.service').ApiKeysService;
 }
 
 export function createRoutes(opts: CreateRoutesOptions): Hono {
@@ -72,17 +74,34 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     authRoutes({ tokens: opts.tokens, ...(opts.secureCookie ? { secureCookie: true } : {}) }),
   );
 
-  // Everything below requires the cookie. The OpenAPI surface (browseable
-  // docs + REST endpoints derived from the contract) lives here too — same
-  // single-user posture, so devs sign in once and the cookie carries.
-  app.use('/rpc/*', authMiddleware({ tokens: opts.tokens }));
-  app.use('/sse/*', authMiddleware({ tokens: opts.tokens }));
+  // RPC + SSE auth: dual-auth (cookie OR bearer) when an api-key store
+  // is wired; cookie-only otherwise (backward-compatible default).
+  if (opts.apiKeys) {
+    const dual = dualAuth({
+      tokens: opts.tokens,
+      apiKeys: opts.apiKeys,
+      scopeForPath: resolveScope,
+    });
+    app.use('/rpc/*', dual);
+    app.use('/sse/*', dual);
+    // apiKeys namespace rejects bearer auth — cookie only.
+    app.use('/rpc/apiKeys.*', cookieOnlyGuard());
+  } else {
+    app.use('/rpc/*', authMiddleware({ tokens: opts.tokens }));
+    app.use('/sse/*', authMiddleware({ tokens: opts.tokens }));
+  }
+
+  // OpenAPI surface always requires cookie auth (browseable docs).
   app.use('/openapi/*', authMiddleware({ tokens: opts.tokens }));
 
   // Origin / CSRF check on state-changing methods. Localhost-default; pass an
-  // explicit list when the server binds beyond localhost.
+  // explicit list when the server binds beyond localhost. Skipped for
+  // bearer-auth requests — the API key is the auth, not a cookie.
   const csrf = csrfMiddleware(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {});
-  app.use('/rpc/*', csrf);
+  app.use('/rpc/*', async (c, next) => {
+    if (c.get('authMethod') === 'bearer') return next();
+    return csrf(c, next);
+  });
   app.use('/openapi/*', csrf);
 
   app.route('/rpc', rpcRoutes({ services: opts.services }));

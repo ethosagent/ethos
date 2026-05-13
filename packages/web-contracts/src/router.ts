@@ -1,6 +1,8 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
 import {
+  ApiKeyMetadataSchema,
+  ApiKeyScopeSchema,
   ApprovalScopeSchema,
   BatchRunInfoSchema,
   BotBindingSchema,
@@ -709,6 +711,72 @@ const kanban = {
 };
 
 // ---------------------------------------------------------------------------
+// API Keys — admin CRUD (cookie-auth-gated only)
+//
+// Minting, listing, and revoking API keys for external Mission Controls.
+// The plaintext secret is returned only from `create` — subsequent reads
+// never expose the raw key. This namespace rejects bearer-token auth to
+// prevent privilege escalation (a stolen key must not mint more keys).
+// ---------------------------------------------------------------------------
+
+const OriginSchema = z
+  .string()
+  .transform((s) => {
+    try {
+      const u = new URL(s);
+      return u.origin;
+    } catch {
+      return s;
+    }
+  })
+  .refine((s) => {
+    try {
+      const u = new URL(s);
+      return u.origin === s;
+    } catch {
+      return false;
+    }
+  }, 'Must be a valid origin (scheme + host + optional port, no path/query/fragment)');
+
+const ApiKeyCreateInput = z.object({
+  name: z.string().min(1).max(100),
+  scopes: z.array(ApiKeyScopeSchema).min(1),
+  allowedOrigins: z.array(OriginSchema).min(1),
+});
+const ApiKeyCreateOutput = z.object({
+  /** Plaintext secret — shown once, then never again. */
+  secret: z.string(),
+  key: ApiKeyMetadataSchema,
+});
+
+const ApiKeyListOutput = z.object({ keys: z.array(ApiKeyMetadataSchema) });
+
+const ApiKeyRevokeInput = z.object({ id: z.string() });
+const ApiKeyRevokeOutput = z.object({ ok: z.literal(true) });
+
+const apiKeys = {
+  create: oc.input(ApiKeyCreateInput).output(ApiKeyCreateOutput),
+  list: oc.output(ApiKeyListOutput),
+  revoke: oc.input(ApiKeyRevokeInput).output(ApiKeyRevokeOutput),
+};
+
+// ---------------------------------------------------------------------------
+// Meta — server capabilities (stable from v1)
+//
+// Open-shape `Record<string, boolean>` describing what this server
+// supports. Today: `{ byok: true }`. Absence means unsupported. Keys
+// are added additively — the shape never changes, only its contents grow.
+// ---------------------------------------------------------------------------
+
+const MetaCapabilitiesOutput = z.object({
+  capabilities: z.record(z.string(), z.boolean()),
+});
+
+const meta = {
+  capabilities: oc.output(MetaCapabilitiesOutput),
+};
+
+// ---------------------------------------------------------------------------
 // Root contract — every namespace mounted under one symbol
 // ---------------------------------------------------------------------------
 
@@ -730,6 +798,8 @@ export const contract = {
   batch,
   eval: evalNs,
   kanban,
+  apiKeys,
+  meta,
 };
 
 export type Contract = typeof contract;

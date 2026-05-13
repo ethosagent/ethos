@@ -593,3 +593,34 @@ export const KanbanBoardSnapshotSchema = z.object({
   memberStats: z.array(KanbanMemberStatsSchema),
 });
 export type KanbanBoardSnapshot = z.infer<typeof KanbanBoardSnapshotSchema>;
+
+// ---------------------------------------------------------------------------
+// API Keys — Control-Plane SDK auth
+//
+// Metadata returned by the admin namespace. The plaintext secret is only
+// returned on create; subsequent reads never expose it.
+// ---------------------------------------------------------------------------
+
+export const ApiKeyScopeSchema = z.enum([
+  'sessions:read',
+  'sessions:write',
+  'chat:send',
+  'personalities:read',
+  'memory:read',
+  'memory:write',
+  'tools:approve',
+  'events:subscribe',
+]);
+export type ApiKeyScope = z.infer<typeof ApiKeyScopeSchema>;
+
+export const ApiKeyMetadataSchema = z.object({
+  id: z.string(),
+  prefix: z.string(),
+  name: z.string(),
+  scopes: z.array(ApiKeyScopeSchema),
+  allowedOrigins: z.array(z.string()),
+  createdAt: z.string(), // ISO-8601
+  lastUsed: z.string().nullable(), // ISO-8601
+  revokedAt: z.string().nullable(), // ISO-8601
+});
+export type ApiKeyMetadata = z.infer<typeof ApiKeyMetadataSchema>;
