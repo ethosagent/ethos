@@ -55,7 +55,7 @@ Exactly one of `file_path` / `file_url` / `file_base64` must be set.
 | `format.type` | `'json_schema'` | no | Ask the model for parseable JSON. |
 | `format.schema` | JSON Schema | no | Top-level `type` must be `'object'` in v1. |
 
-### Return envelope (success)
+### Return envelope (success) {#return-envelope-success}
 
 ```json
 {
