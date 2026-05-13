@@ -349,9 +349,8 @@ export async function runGatewayStart(): Promise<void> {
 
   // Wire the interactive tool-approval flow. Registers a `before_tool_call`
   // hook on every bot loop that suspends a dangerous tool call until the
-  // user clicks Allow / Deny on a Slack card. No-op for deployments without
-  // a Slack adapter — the hook still suspends, but the card never posts, so
-  // we only register it when at least one Slack adapter is present.
+  // user clicks Allow / Deny on an approval card (Slack or Telegram).
+  // No-op for deployments without an approval-capable adapter.
   wireApprovalFlow(gateway, bots, adapters);
 
   // Start cron scheduler — runs inside the gateway process
@@ -448,7 +447,7 @@ async function buildGatewayBots(config: EthosConfig): Promise<GatewayBotConfig[]
 }
 
 // ---------------------------------------------------------------------------
-// Interactive tool-approval flow (Slack)
+// Interactive tool-approval flow (Slack, Telegram, any ApprovalCapableAdapter)
 // ---------------------------------------------------------------------------
 
 // `import type` only — erased at runtime, so `@ethosagent/platform-slack`
@@ -477,24 +476,17 @@ function isApprovalCapable(
 }
 
 /**
- * Connect the agent loop's `before_tool_call` hook to Slack approval cards.
+ * Connect the agent loop's `before_tool_call` hook to approval cards.
  *
  * Three wires:
- *   1. `before_tool_call` hook on every *Slack-served* bot loop →
- *      `ApprovalCoordinator` suspends dangerous calls. The danger source is
- *      `createDangerPredicate` (terminal hardline still hard-blocks
- *      separately via the synchronous guard `createAgentLoop` registers —
- *      this hook is the approval path for the always-ask set). The hook is
- *      registered ONLY on loops whose bot has a Slack adapter: a loop with
- *      no card surface would suspend a dangerous call forever.
+ *   1. `before_tool_call` hook on every approval-capable bot loop →
+ *      `ApprovalCoordinator` suspends dangerous calls.
  *   2. `coordinator.onPending` → resolve the sessionId to its adapter/chat/
  *      thread via the gateway and post an approval card.
- *   3. each Slack adapter's button-click event → `coordinator.approve/deny`
- *      and an in-place `chat.update` of the card.
+ *   3. each adapter's button-click event → `coordinator.approve/deny`
+ *      and an in-place update of the card.
  *
- * Skipped entirely when no Slack adapter is configured — no Slack surface
- * means no card to post, and the synchronous terminal guard already covers
- * the hardline case.
+ * Skipped entirely when no approval-capable adapter is configured.
  */
 function wireApprovalFlow(
   gateway: Gateway,
@@ -517,22 +509,18 @@ function wireApprovalFlow(
     { adapter: ApprovalCapableAdapter; chatId: string; messageTs: string; toolName: string }
   >();
   // Resolutions that landed BEFORE the card finished posting (e.g. a session
-  // cancel races the Slack API call). Keyed by `approvalId`. The post
+  // cancel races the API call). Keyed by `approvalId`. The post
   // `.then()` drains this so a card posted into an already-resolved approval
   // is updated immediately instead of being left with live buttons forever.
   const resolvedBeforePost = new Map<string, { decision: 'allow' | 'deny'; decidedBy: string }>();
   // `approvalId`s with a `postApprovalCard` call genuinely in flight. Gates
   // `resolvedBeforePost`: without it, a fail-closed deny (no route / no
-  // Slack adapter / post failure) would record an outcome that no post
+  // adapter / post failure) would record an outcome that no post
   // `.then()` ever drains — an unbounded leak.
   const inFlightPosts = new Set<string>();
 
-  // Resolve a `sessionId` to its Slack approval target. Returns `undefined`
-  // — meaning "no Slack approval surface, pass the call through" — for any
-  // turn whose route isn't an approval-capable adapter. This is the seam
-  // that keeps the hook from coupling Slack to other platforms: a
-  // Discord/Email turn that fell back to a Slack-bound bot's shared loop
-  // resolves to a non-Slack adapter here and the hook leaves it untouched.
+  // Resolve a `sessionId` to its approval target. Returns `undefined` for
+  // any turn whose route isn't an approval-capable adapter.
   const resolveApprovalTarget = (sessionId: string) => {
     const route = gateway.resolveApprovalRoute(sessionId);
     if (!route || !isApprovalCapable(route.adapter)) return undefined;
@@ -541,10 +529,8 @@ function wireApprovalFlow(
     return { requesterUserId: route.requesterUserId };
   };
 
-  // Register the approval hook only on loops whose bot is served by a Slack
-  // adapter. Registering it on a non-Slack-served loop would be dead weight;
-  // the `resolveApprovalTarget` pass-through above handles the case where a
-  // Slack-served loop also fields non-Slack turns.
+  // Register the approval hook only on loops whose bot has an
+  // approval-capable adapter.
   const approvalBotKeys = new Set(approvalAdapters.map((a) => a.botKey));
   for (const bot of bots) {
     if (!approvalBotKeys.has(bot.botKey)) continue;
