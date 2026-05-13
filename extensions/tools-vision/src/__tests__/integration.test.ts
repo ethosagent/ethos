@@ -25,6 +25,7 @@
 //     signature this test stubs.
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DefaultToolRegistry } from '@ethosagent/core';
@@ -122,8 +123,13 @@ function makeCtx(workingDir: string): ToolContext {
 // ---------------------------------------------------------------------------
 
 let tmpDir = '';
-beforeEach(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), 'vision-integ-'));
+beforeEach(async () => {
+  // Canonicalize through realpath — on macOS tmpdir() returns /var/folders/...
+  // which is a symlink to /private/var/folders/...; the resolver canonicalizes
+  // the request path, so the ScopedStorage allowlist prefix must already be
+  // canonical or the boundary check sees a /private/var path against a /var
+  // prefix (matches the unit test pattern in input-resolver.test.ts).
+  tmpDir = await realpath(mkdtempSync(join(tmpdir(), 'vision-integ-')));
 });
 afterEach(() => {
   if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });

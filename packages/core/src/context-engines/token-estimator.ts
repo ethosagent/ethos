@@ -20,6 +20,15 @@ function messageContentChars(content: string | MessageContent[]): number {
     else if (block.type === 'tool_use')
       total += JSON.stringify(block.input).length + block.name.length;
     else if (block.type === 'tool_result') total += block.content.length;
+    // Note: 'image' / 'document' MessageContent variants are intentionally
+    // unhandled here. They are ephemeral — produced and consumed inside a
+    // single one-shot tool call (e.g. vision_analyze's internal
+    // provider.complete()), and never persisted onto the main-loop session
+    // history. If a future feature ever places image/document blocks onto a
+    // Message that flows through compaction, this estimator must be extended
+    // (image: ~1.6k tokens per Anthropic; document: per-page) — silently
+    // counting their base64 length as zero would be wrong, and counting it
+    // as data.length would over-count by ~4x. Be deliberate at that point.
   }
   return total;
 }
