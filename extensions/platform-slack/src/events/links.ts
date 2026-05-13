@@ -20,6 +20,7 @@ import type { SlackBlock } from '../blocks/shared';
 import {
   type KanbanUnfurlData,
   kanbanUnfurlBlocks,
+  MEMORY_ENTRY_COUNT,
   memoryUnfurlBlocks,
   type PersonalityUnfurlData,
   personalityUnfurlBlocks,
@@ -192,7 +193,7 @@ async function buildUnfurl(
       case 'memory': {
         if (!deps.memory || !deps.memoryScope) return null;
         const body = await deps.memory.read();
-        const entries = extractRecentEntries(body, 3);
+        const entries = extractRecentEntries(body, MEMORY_ENTRY_COUNT);
         if (entries.length === 0) return null;
         return memoryUnfurlBlocks({ scope: deps.memoryScope, entries });
       }
