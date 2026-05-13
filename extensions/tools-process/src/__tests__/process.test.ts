@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Tool } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createProcessTools } from '../index';
 import { loadRegistry, saveRegistry } from '../registry';
+import { LOG_MAX_BYTES } from '../spawn';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -122,6 +123,27 @@ describe('process_start', () => {
     process.kill(data.pid, 'SIGKILL');
   });
 
+  it('records started_by from ctx.personalityId', async () => {
+    const start = getTool(tools, 'process_start');
+    const ctx = { ...makeCtx(workDir), personalityId: 'archivist' };
+    const result = await start.execute({ command: 'sleep 30' }, ctx);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { id, pid } = JSON.parse(result.value) as { id: string; pid: number };
+    expect(loadRegistry(dataDir)[id]?.started_by).toBe('archivist');
+    process.kill(pid, 'SIGKILL');
+  });
+
+  it("records started_by as 'unknown' when ctx has no personalityId", async () => {
+    const start = getTool(tools, 'process_start');
+    const result = await start.execute({ command: 'sleep 30' }, makeCtx(workDir));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { id, pid } = JSON.parse(result.value) as { id: string; pid: number };
+    expect(loadRegistry(dataDir)[id]?.started_by).toBe('unknown');
+    process.kill(pid, 'SIGKILL');
+  });
+
   it('returns input_invalid when command is missing', async () => {
     const start = getTool(tools, 'process_start');
     const result = await start.execute({}, makeCtx(workDir));
@@ -143,6 +165,7 @@ describe('process_start', () => {
         status: 'running',
         startedAt: new Date().toISOString(),
         lastTouchedAt: new Date().toISOString(),
+        started_by: 'test',
       };
     }
     saveRegistry(dataDir, registry);
@@ -221,6 +244,54 @@ describe('process_list', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(JSON.parse(result.value)).toEqual([]);
+  });
+
+  it('does NOT rotate the log of a running process (live fd must not be renamed)', async () => {
+    // A running detached child holds an open fd to its log inode. process_list
+    // must leave that log alone even when it is oversized.
+    const start = getTool(tools, 'process_start');
+    const startResult = await start.execute({ command: 'sleep 30' }, makeCtx(workDir));
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+    const { id, pid } = JSON.parse(startResult.value) as { id: string; pid: number };
+
+    // Inflate its stdout log past the threshold while it is still running.
+    const stdoutLog = join(dataDir, 'processes', id, 'stdout.log');
+    writeFileSync(stdoutLog, 'x'.repeat(LOG_MAX_BYTES + 1), 'utf8');
+
+    await getTool(tools, 'process_list').execute({}, makeCtx(workDir));
+
+    expect(existsSync(`${stdoutLog}.1`)).toBe(false);
+    expect(statSync(stdoutLog).size).toBe(LOG_MAX_BYTES + 1);
+
+    process.kill(pid, 'SIGKILL');
+  });
+
+  it('rotates the oversized log of a terminal process', async () => {
+    const id = 'exited-big-log';
+    const procDir = join(dataDir, 'processes', id);
+    mkdirSync(procDir, { recursive: true });
+    const stdoutLog = join(procDir, 'stdout.log');
+    writeFileSync(stdoutLog, 'x'.repeat(LOG_MAX_BYTES + 1), 'utf8');
+    saveRegistry(dataDir, {
+      [id]: {
+        id,
+        name: id,
+        pid: 999999,
+        command: 'echo done',
+        cwd: workDir,
+        status: 'exited',
+        exitCode: 0,
+        startedAt: new Date().toISOString(),
+        lastTouchedAt: new Date().toISOString(),
+        started_by: 'test',
+      },
+    });
+
+    await getTool(tools, 'process_list').execute({}, makeCtx(workDir));
+
+    expect(existsSync(`${stdoutLog}.1`)).toBe(true);
+    expect(statSync(stdoutLog).size).toBe(0);
   });
 });
 
@@ -366,6 +437,7 @@ describe('process_stop', () => {
       exitCode: 0,
       startedAt: new Date().toISOString(),
       lastTouchedAt: new Date().toISOString(),
+      started_by: 'test',
     };
     saveRegistry(dataDir, registry);
 
@@ -448,6 +520,7 @@ describe('process_wait', () => {
       exitCode: 0,
       startedAt: new Date().toISOString(),
       lastTouchedAt: new Date().toISOString(),
+      started_by: 'test',
     };
     saveRegistry(dataDir, registry);
 

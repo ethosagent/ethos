@@ -9,8 +9,9 @@ import {
   reapStale,
   saveRegistry,
   updateEntry,
+  withRegistryLock,
 } from './registry';
-import { spawnDetached } from './spawn';
+import { rotateLogIfNeeded, spawnDetached } from './spawn';
 
 const MAX_CONCURRENT = 8;
 const DEFAULT_LOG_LINES = 200;
@@ -72,50 +73,56 @@ function makeProcessStart(dataDir: string): Tool {
 
       if (!command) return { ok: false, error: 'command is required', code: 'input_invalid' };
 
-      const registry = loadRegistry(dataDir);
-      const entries = Object.values(registry);
-
-      if (runningCount(entries) >= MAX_CONCURRENT) {
-        return {
-          ok: false,
-          error: 'PROCESS_CAP_EXCEEDED: max 8 concurrent processes',
-          code: 'execution_failed',
-        };
-      }
-
       const id = randomUUID();
       const effectiveCwd = cwd ?? ctx.workingDir;
       const effectiveName = name ?? command.slice(0, 40);
       const startedAt = new Date().toISOString();
+      const startedBy = ctx.personalityId ?? 'unknown';
 
-      let pid: number;
-      try {
-        const result = spawnDetached(id, command, effectiveCwd, env, dataDir);
-        pid = result.pid;
-      } catch (err) {
-        return {
-          ok: false,
-          error: `Failed to spawn: ${err instanceof Error ? err.message : String(err)}`,
-          code: 'execution_failed',
+      // Cap-check + spawn + add run under ONE lock acquisition so two parallel
+      // process_start calls can't both pass the cap-check and over-commit.
+      return withRegistryLock(dataDir, (): ToolResult => {
+        const registry = loadRegistry(dataDir);
+        const entries = Object.values(registry);
+
+        if (runningCount(entries) >= MAX_CONCURRENT) {
+          return {
+            ok: false,
+            error: 'PROCESS_CAP_EXCEEDED: max 8 concurrent processes',
+            code: 'execution_failed',
+          };
+        }
+
+        let pid: number;
+        try {
+          const result = spawnDetached(id, command, effectiveCwd, env, dataDir);
+          pid = result.pid;
+        } catch (err) {
+          return {
+            ok: false,
+            error: `Failed to spawn: ${err instanceof Error ? err.message : String(err)}`,
+            code: 'execution_failed',
+          };
+        }
+
+        registry[id] = {
+          id,
+          name: effectiveName,
+          pid,
+          command,
+          cwd: effectiveCwd,
+          status: 'running',
+          startedAt,
+          lastTouchedAt: startedAt,
+          started_by: startedBy,
         };
-      }
+        saveRegistry(dataDir, registry);
 
-      registry[id] = {
-        id,
-        name: effectiveName,
-        pid,
-        command,
-        cwd: effectiveCwd,
-        status: 'running',
-        startedAt,
-        lastTouchedAt: startedAt,
-      };
-      saveRegistry(dataDir, registry);
-
-      return {
-        ok: true,
-        value: JSON.stringify({ id, pid, name: effectiveName, started_at: startedAt }),
-      };
+        return {
+          ok: true,
+          value: JSON.stringify({ id, pid, name: effectiveName, started_at: startedAt }),
+        };
+      });
     },
   };
 }
@@ -131,25 +138,38 @@ function makeProcessList(dataDir: string): Tool {
     toolset: 'process',
     schema: { type: 'object', properties: {} },
     async execute(): Promise<ToolResult> {
-      let registry = loadRegistry(dataDir);
+      const registry = await withRegistryLock(dataDir, () => {
+        let reg = loadRegistry(dataDir);
 
-      // liveness check and reap
-      let dirty = false;
-      for (const entry of Object.values(registry)) {
-        if (entry.status !== 'running') continue;
-        if (!isAlive(entry.pid)) {
-          registry[entry.id] = {
-            ...entry,
-            status: 'orphan',
-            lastTouchedAt: new Date().toISOString(),
-          };
-          dirty = true;
+        // liveness check and reap
+        let dirty = false;
+        for (const entry of Object.values(reg)) {
+          if (entry.status !== 'running') continue;
+          if (!isAlive(entry.pid)) {
+            reg[entry.id] = {
+              ...entry,
+              status: 'orphan',
+              lastTouchedAt: new Date().toISOString(),
+            };
+            dirty = true;
+          }
         }
+
+        reg = reapStale(reg);
+
+        if (dirty) saveRegistry(dataDir, reg);
+        return reg;
+      });
+
+      // rotate-on-touch: cap oversized logs, but ONLY for processes that have
+      // reached a terminal state. A running detached child still holds an open
+      // fd to its log inode — renaming it would orphan the child's writes.
+      for (const entry of Object.values(registry)) {
+        if (entry.status === 'running') continue;
+        const procDir = join(dataDir, 'processes', entry.id);
+        rotateLogIfNeeded(join(procDir, 'stdout.log'));
+        rotateLogIfNeeded(join(procDir, 'stderr.log'));
       }
-
-      registry = reapStale(registry);
-
-      if (dirty) saveRegistry(dataDir, registry);
 
       const now = Date.now();
       const items = Object.values(registry).map((e) => {
@@ -215,17 +235,27 @@ function makeProcessLogs(dataDir: string): Tool {
       const n = lines ?? DEFAULT_LOG_LINES;
       const which = stream ?? 'both';
       const dir = join(dataDir, 'processes', id);
+      const stdoutPath = join(dir, 'stdout.log');
+      const stderrPath = join(dir, 'stderr.log');
 
       let combined: string[];
       if (which === 'stdout') {
-        combined = readLastLines(join(dir, 'stdout.log'), n, 'stdout');
+        combined = readLastLines(stdoutPath, n, 'stdout');
       } else if (which === 'stderr') {
-        combined = readLastLines(join(dir, 'stderr.log'), n, 'stderr');
+        combined = readLastLines(stderrPath, n, 'stderr');
       } else {
         // interleave: read both full files, combine, take last n
-        const out = readLastLines(join(dir, 'stdout.log'), n, 'stdout');
-        const err = readLastLines(join(dir, 'stderr.log'), n, 'stderr');
+        const out = readLastLines(stdoutPath, n, 'stdout');
+        const err = readLastLines(stderrPath, n, 'stderr');
         combined = [...out, ...err].slice(-n);
+      }
+
+      // rotate-on-touch: only safe once the process is terminal (no live fd).
+      // Rotate after reading so this call still returns the tail; the
+      // oversized content is preserved in the .log.1 generation.
+      if (entry.status !== 'running') {
+        rotateLogIfNeeded(stdoutPath);
+        rotateLogIfNeeded(stderrPath);
       }
 
       if (combined.length === 0) {
@@ -283,7 +313,7 @@ function makeProcessStop(dataDir: string): Tool {
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
         if (code === 'ESRCH') {
-          updateEntry(dataDir, id, { status: 'orphan' });
+          await updateEntry(dataDir, id, { status: 'orphan' });
           return { ok: true, value: JSON.stringify({ stopped: false }) };
         }
         return {
@@ -312,7 +342,7 @@ function makeProcessStop(dataDir: string): Tool {
       // Read exit_code if the spawn exit handler already recorded it
       const finalEntry = loadRegistry(dataDir)[id];
       const exitCode = finalEntry?.exitCode;
-      updateEntry(dataDir, id, { status: 'killed' });
+      await updateEntry(dataDir, id, { status: 'killed' });
       return {
         ok: true,
         value: JSON.stringify({
@@ -376,7 +406,7 @@ function makeProcessWait(dataDir: string): Tool {
           };
         }
         if (!isAlive(current.pid)) {
-          updateEntry(dataDir, id, { status: 'orphan' });
+          await updateEntry(dataDir, id, { status: 'orphan' });
           return { ok: true, value: JSON.stringify({ exited: true }) };
         }
       }
