@@ -1855,6 +1855,167 @@ describe('KanbanStore', () => {
     }
   });
 
+  it('a fully-migrated v1->v4 DB is structurally identical to a fresh v4 DB', () => {
+    // Frozen-schema gate: the stepwise migration chain must land on EXACTLY the
+    // shape a fresh `KanbanStore` produces — same tables, columns, types, CHECK
+    // constraints, indexes, FTS triggers, and user_version. A drift here means
+    // a migration step diverged from SCHEMA.
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-converge-'));
+    const migratedPath = join(dir, 'migrated.db');
+    const freshPath = join(dir, 'fresh.db');
+    try {
+      // Build a v1-shaped DB, then open it with the current code to run the
+      // full v1->v2->v3->v4 migration chain.
+      const v1 = new Database(migratedPath);
+      v1.pragma('journal_mode = WAL');
+      v1.pragma('foreign_keys = ON');
+      v1.exec(`
+        CREATE TABLE tasks (
+          id              TEXT PRIMARY KEY,
+          title           TEXT NOT NULL,
+          body            TEXT NOT NULL DEFAULT '',
+          assignee        TEXT,
+          status          TEXT NOT NULL
+                          CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled')),
+          priority        INTEGER NOT NULL DEFAULT 0,
+          workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
+                          CHECK (workspace_mode IN ('scratch','worktree','dir')),
+          workspace_path  TEXT,
+          scheduled_for   INTEGER,
+          idempotency_key TEXT,
+          current_run_id  TEXT,
+          created_at      INTEGER NOT NULL,
+          updated_at      INTEGER NOT NULL
+        ) STRICT;
+        CREATE UNIQUE INDEX tasks_idem ON tasks(idempotency_key)
+          WHERE idempotency_key IS NOT NULL;
+        CREATE INDEX tasks_status_assignee ON tasks(status, assignee);
+        CREATE INDEX tasks_scheduled ON tasks(scheduled_for)
+          WHERE scheduled_for IS NOT NULL;
+        CREATE TABLE task_comments (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, author TEXT NOT NULL,
+          body TEXT NOT NULL, created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_comments_task ON task_comments(task_id, created_at);
+        CREATE TABLE task_links (
+          parent_id TEXT NOT NULL, child_id TEXT NOT NULL,
+          PRIMARY KEY (parent_id, child_id),
+          FOREIGN KEY (parent_id) REFERENCES tasks(id) ON DELETE CASCADE,
+          FOREIGN KEY (child_id)  REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_links_child ON task_links(child_id);
+        CREATE TABLE task_runs (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, started_at INTEGER NOT NULL,
+          ended_at INTEGER,
+          outcome TEXT CHECK (outcome IS NULL OR outcome IN ('completed','blocked','stalled','cancelled')),
+          summary TEXT, last_heartbeat_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_runs_task ON task_runs(task_id, started_at);
+        CREATE UNIQUE INDEX task_runs_open_one ON task_runs(task_id)
+          WHERE ended_at IS NULL;
+        CREATE TABLE task_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+          kind TEXT NOT NULL
+               CHECK (kind IN ('created','status_changed','commented','assigned','linked','unlinked','run_started','run_completed','heartbeat','archived')),
+          actor TEXT NOT NULL, data_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_events_task ON task_events(task_id, created_at);
+        CREATE INDEX task_events_recent ON task_events(created_at);
+        CREATE VIRTUAL TABLE task_fts USING fts5(
+          task_id UNINDEXED, title, body, comments, tokenize = 'porter'
+        );
+        CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+          INSERT INTO task_fts(task_id, title, body, comments)
+          VALUES (new.id, new.title, new.body, '');
+        END;
+        CREATE TRIGGER tasks_fts_au AFTER UPDATE OF title, body ON tasks BEGIN
+          UPDATE task_fts SET title = new.title, body = new.body WHERE task_id = new.id;
+        END;
+        CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+          DELETE FROM task_fts WHERE task_id = old.id;
+        END;
+        CREATE TRIGGER comments_fts_ai AFTER INSERT ON task_comments BEGIN
+          UPDATE task_fts
+          SET comments = (
+            SELECT COALESCE(GROUP_CONCAT(body, ' '), '')
+            FROM task_comments WHERE task_id = new.task_id
+          )
+          WHERE task_id = new.task_id;
+        END;
+      `);
+      v1.pragma('user_version = 1');
+      v1.close();
+
+      new KanbanStore(migratedPath, { teamId: 'team-a' }).close();
+      // A fresh DB built straight from SCHEMA at the current version.
+      new KanbanStore(freshPath, { teamId: 'team-a' }).close();
+
+      // Snapshot a DB's structure: every object's normalized SQL text, the
+      // `tasks` column shape, and the schema version.
+      const snapshot = (path: string) => {
+        const db = new Database(path);
+        try {
+          const objects = (
+            db
+              .prepare(
+                `SELECT type, name, sql FROM sqlite_master
+                 WHERE name NOT LIKE 'sqlite_%'
+                 ORDER BY type, name`,
+              )
+              .all() as Array<{ type: string; name: string; sql: string | null }>
+          ).map((r) => ({
+            type: r.type,
+            name: r.name,
+            // Normalize for false drift: collapse whitespace (indentation differs
+            // between SCHEMA and the migration DDL), and strip double-quote
+            // identifier quoting — SQLite emits `CREATE TABLE "tasks"` after a
+            // table rebuild but `CREATE TABLE tasks` for a fresh create. String
+            // literals in the DDL use single quotes, so dropping `"` is safe.
+            sql: (r.sql ?? '').replace(/\s+/g, ' ').replace(/"/g, '').trim(),
+          }));
+          const tasksColumns = (
+            db.pragma('table_info(tasks)') as Array<{
+              name: string;
+              type: string;
+              notnull: number;
+              dflt_value: unknown;
+              pk: number;
+            }>
+          ).map((c) => ({
+            name: c.name,
+            type: c.type,
+            notnull: c.notnull,
+            dflt_value: c.dflt_value,
+            pk: c.pk,
+          }));
+          const userVersion = (db.pragma('user_version') as Array<{ user_version: number }>)[0]
+            ?.user_version;
+          return { objects, tasksColumns, userVersion };
+        } finally {
+          db.close();
+        }
+      };
+
+      const migrated = snapshot(migratedPath);
+      const fresh = snapshot(freshPath);
+
+      expect(migrated.userVersion).toBe(4);
+      expect(migrated.userVersion).toBe(fresh.userVersion);
+      // `tasks` columns + types (covers the v1->v2 max_retries / retry_count and
+      // v2->v3 acceptance_criteria additions converging on the fresh shape).
+      expect(migrated.tasksColumns).toEqual(fresh.tasksColumns);
+      // Every table/index/trigger — including CHECK constraints embedded in the
+      // table SQL and the FTS triggers — must match the fresh DB exactly.
+      expect(migrated.objects).toEqual(fresh.objects);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('stats survive a close/reopen of the same on-disk board', () => {
     const dir = mkdtempSync(join(tmpdir(), 'kanban-stats-persist-'));
     const dbPath = join(dir, 'board.db');

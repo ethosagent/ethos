@@ -171,7 +171,11 @@ export class KanbanService {
     if (!existsSync(boardPath)) {
       throw new Error(`team board not found: ${opts.team}`);
     }
-    const store = new KanbanStore(boardPath);
+    // Open with the team name as `teamId` so terminal transitions (failed,
+    // needs_revision) recorded here update the same per-member stats ledger the
+    // dispatcher writes through — keeping the ledger consistent regardless of
+    // whether a human or an agent drove the transition.
+    const store = new KanbanStore(boardPath, { teamId: opts.team });
     try {
       const updated = store.updateStatus(opts.taskId, opts.status, opts.reason, opts.actor);
       return { task: toWireTask(updated) };
