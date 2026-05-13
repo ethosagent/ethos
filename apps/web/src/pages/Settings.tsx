@@ -1,17 +1,25 @@
 import { BUILTIN_SKIN_NAMES, BUILTIN_SKINS } from '@ethosagent/design-tokens';
+import type { ApiKeyMetadata, ApiKeyScope } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   App as AntApp,
   Button,
   Card,
+  Checkbox,
   Form,
   Input,
+  Modal,
   Radio,
   Select,
+  Space,
   Spin,
   Switch,
+  Table,
+  Tag,
+  Tooltip,
   Typography,
 } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { rpc } from '../rpc';
@@ -231,6 +239,362 @@ export function Settings() {
         </Typography.Paragraph>
         <Button onClick={() => navigate('/onboarding')}>Run setup wizard</Button>
       </Card>
+
+      <ApiKeysSection />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// API Keys management section
+// ---------------------------------------------------------------------------
+
+const ALL_SCOPES: ApiKeyScope[] = [
+  'sessions:read',
+  'sessions:write',
+  'chat:send',
+  'personalities:read',
+  'memory:read',
+  'memory:write',
+  'tools:approve',
+  'events:subscribe',
+];
+
+interface CreateKeyForm {
+  name: string;
+  scopes: ApiKeyScope[];
+  origins: string[];
+}
+
+function ApiKeysSection() {
+  const qc = useQueryClient();
+  const { notification, modal } = AntApp.useApp();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
+  const [form] = Form.useForm<CreateKeyForm>();
+
+  const keysQuery = useQuery({
+    queryKey: ['apiKeys'],
+    queryFn: () => rpc.apiKeys.list(),
+  });
+
+  const createMut = useMutation({
+    mutationFn: (input: { name: string; scopes: ApiKeyScope[]; allowedOrigins: string[] }) =>
+      rpc.apiKeys.create(input),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['apiKeys'] });
+      setCreateOpen(false);
+      form.resetFields();
+      setRevealedSecret(data.secret);
+    },
+    onError: (err) =>
+      notification.error({
+        message: 'Failed to create API key',
+        description: (err as Error).message,
+      }),
+  });
+
+  const revokeMut = useMutation({
+    mutationFn: (id: string) => rpc.apiKeys.revoke({ id }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['apiKeys'] });
+      notification.success({ message: 'API key revoked', placement: 'topRight' });
+    },
+    onError: (err) =>
+      notification.error({
+        message: 'Failed to revoke API key',
+        description: (err as Error).message,
+      }),
+  });
+
+  const handleRevoke = (id: string, name: string) => {
+    modal.confirm({
+      title: 'Revoke API key',
+      content: `Revoke "${name}"? External Mission Controls using this key will lose access immediately.`,
+      okText: 'Revoke',
+      okButtonProps: { danger: true },
+      onOk: () => revokeMut.mutate(id),
+    });
+  };
+
+  const handleCreate = (values: CreateKeyForm) => {
+    createMut.mutate({
+      name: values.name,
+      scopes: values.scopes,
+      allowedOrigins: values.origins.filter((o) => o.trim().length > 0),
+    });
+  };
+
+  const copySecret = async () => {
+    if (!revealedSecret) return;
+    try {
+      await navigator.clipboard.writeText(revealedSecret);
+      notification.success({ message: 'Copied to clipboard', placement: 'topRight' });
+    } catch {
+      notification.error({ message: 'Copy failed — select and copy manually' });
+    }
+  };
+
+  const columns: ColumnsType<ApiKeyMetadata> = [
+    {
+      title: 'Name',
+      dataIndex: 'name',
+      key: 'name',
+      ellipsis: true,
+    },
+    {
+      title: 'Prefix',
+      dataIndex: 'prefix',
+      key: 'prefix',
+      render: (prefix: string) => (
+        <Typography.Text code style={{ fontSize: 12 }}>
+          {prefix}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: 'Scopes',
+      dataIndex: 'scopes',
+      key: 'scopes',
+      render: (scopes: ApiKeyScope[]) => (
+        <span style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {scopes.map((s) => (
+            <Tag key={s} style={{ margin: 0, fontSize: 11 }}>
+              {s}
+            </Tag>
+          ))}
+        </span>
+      ),
+    },
+    {
+      title: 'Allowed Origins',
+      dataIndex: 'allowedOrigins',
+      key: 'allowedOrigins',
+      render: (origins: string[]) =>
+        origins.length > 0 ? (
+          <Tooltip title={origins.join(', ')}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {origins.length} origin{origins.length !== 1 ? 's' : ''}
+            </Typography.Text>
+          </Tooltip>
+        ) : (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            none
+          </Typography.Text>
+        ),
+    },
+    {
+      title: 'Created',
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      render: (v: string) => (
+        <Typography.Text style={{ fontSize: 12 }}>
+          {new Date(v).toLocaleDateString()}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: 'Last Used',
+      dataIndex: 'lastUsed',
+      key: 'lastUsed',
+      render: (v: string | null) => (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {v ? new Date(v).toLocaleDateString() : 'never'}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: 'Status',
+      key: 'status',
+      render: (_: unknown, record: ApiKeyMetadata) =>
+        record.revokedAt ? <Tag color="default">Revoked</Tag> : <Tag color="green">Active</Tag>,
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_: unknown, record: ApiKeyMetadata) =>
+        record.revokedAt ? null : (
+          <Button
+            size="small"
+            danger
+            onClick={() => handleRevoke(record.id, record.name)}
+            loading={revokeMut.isPending}
+          >
+            Revoke
+          </Button>
+        ),
+    },
+  ];
+
+  const keys = keysQuery.data?.keys ?? [];
+
+  return (
+    <div style={{ marginTop: 32 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8 }}>
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          API Keys
+        </Typography.Title>
+        <Button type="primary" size="small" onClick={() => setCreateOpen(true)}>
+          Create API Key
+        </Button>
+      </div>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0, marginBottom: 16 }}>
+        Bearer tokens for external Mission Controls. Each key is scoped to specific operations and
+        origins.
+      </Typography.Paragraph>
+
+      <Table<ApiKeyMetadata>
+        columns={columns}
+        dataSource={keys}
+        rowKey="id"
+        size="small"
+        loading={keysQuery.isLoading}
+        pagination={false}
+        locale={{ emptyText: 'No API keys created yet.' }}
+        rowClassName={(record) => (record.revokedAt ? 'api-key-revoked' : '')}
+        scroll={{ x: true }}
+      />
+
+      {/* Create modal */}
+      <Modal
+        title="Create API Key"
+        open={createOpen}
+        onCancel={() => {
+          setCreateOpen(false);
+          form.resetFields();
+        }}
+        onOk={() => form.submit()}
+        confirmLoading={createMut.isPending}
+        okText="Create"
+        destroyOnClose
+      >
+        <Form<CreateKeyForm>
+          form={form}
+          layout="vertical"
+          onFinish={handleCreate}
+          initialValues={{ origins: [''] }}
+        >
+          <Form.Item
+            label="Name"
+            name="name"
+            rules={[
+              { required: true, message: 'Name is required' },
+              { max: 100, message: 'Max 100 characters' },
+            ]}
+          >
+            <Input placeholder="e.g. Production frontend" />
+          </Form.Item>
+
+          <Form.Item
+            label="Scopes"
+            name="scopes"
+            rules={[{ required: true, message: 'Select at least one scope' }]}
+          >
+            <Checkbox.Group
+              options={ALL_SCOPES.map((s) => ({ label: s, value: s }))}
+              style={{ display: 'flex', flexDirection: 'column', gap: 4 }}
+            />
+          </Form.Item>
+
+          <Form.Item label="Allowed Origins">
+            <Form.List
+              name="origins"
+              rules={[
+                {
+                  validator: async (_, origins: string[]) => {
+                    const filled = (origins ?? []).filter((o) => o.trim().length > 0);
+                    if (filled.length === 0) {
+                      throw new Error('At least one origin is required');
+                    }
+                  },
+                },
+              ]}
+            >
+              {(fields, { add, remove }, { errors }) => (
+                <>
+                  {fields.map((field) => (
+                    <Space
+                      key={field.key}
+                      align="start"
+                      style={{ display: 'flex', marginBottom: 8 }}
+                    >
+                      <Form.Item
+                        {...field}
+                        validateTrigger={['onChange', 'onBlur']}
+                        rules={[
+                          {
+                            validator: async (_, value: string) => {
+                              if (!value || value.trim().length === 0) return;
+                              try {
+                                const u = new URL(value);
+                                if (u.origin !== value) {
+                                  throw new Error(
+                                    'Must be a valid origin (scheme + host, no path)',
+                                  );
+                                }
+                              } catch {
+                                throw new Error(
+                                  'Must be a valid origin (e.g. https://example.com)',
+                                );
+                              }
+                            },
+                          },
+                        ]}
+                        noStyle
+                      >
+                        <Input placeholder="https://example.com" style={{ width: 300 }} />
+                      </Form.Item>
+                      {fields.length > 1 ? (
+                        <Button size="small" onClick={() => remove(field.name)}>
+                          Remove
+                        </Button>
+                      ) : null}
+                    </Space>
+                  ))}
+                  <Form.Item>
+                    <Button type="dashed" onClick={() => add('')} style={{ width: 300 }}>
+                      Add origin
+                    </Button>
+                    <Form.ErrorList errors={errors} />
+                  </Form.Item>
+                </>
+              )}
+            </Form.List>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Secret reveal modal */}
+      <Modal
+        title="Copy your API key"
+        open={revealedSecret !== null}
+        onCancel={() => setRevealedSecret(null)}
+        footer={[
+          <Button key="copy" type="primary" onClick={copySecret}>
+            Copy to clipboard
+          </Button>,
+          <Button key="close" onClick={() => setRevealedSecret(null)}>
+            Done
+          </Button>,
+        ]}
+        closable
+      >
+        <Typography.Paragraph type="warning" style={{ marginBottom: 12 }}>
+          This secret will not be shown again. Copy it now and store it securely.
+        </Typography.Paragraph>
+        <Input.TextArea
+          value={revealedSecret ?? ''}
+          readOnly
+          autoSize
+          style={{ fontFamily: 'Geist Mono, monospace', fontSize: 13 }}
+        />
+      </Modal>
+
+      <style>{`
+        .api-key-revoked {
+          opacity: 0.5;
+        }
+      `}</style>
     </div>
   );
 }
