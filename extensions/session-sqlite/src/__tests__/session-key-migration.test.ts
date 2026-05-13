@@ -141,7 +141,7 @@ describe('migrateSessionKeys (SQLite integration)', () => {
       migrated: 2,
       alreadyMigrated: 0,
       skippedNoBot: 0,
-      skippedTargetExists: 0,
+      quarantinedStale: 0,
     });
     expect(readAllKeys()).toEqual(['telegram:t1key:42', 'telegram:t1key:99:1700000000000']);
   });
@@ -157,19 +157,19 @@ describe('migrateSessionKeys (SQLite integration)', () => {
       migrated: 0,
       alreadyMigrated: 1,
       skippedNoBot: 0,
-      skippedTargetExists: 0,
+      quarantinedStale: 0,
     });
     expect(readAllKeys()).toEqual(['telegram:t1key:42']);
   });
 
-  it('handles a partially-migrated DB without aborting (mixed legacy + migrated rows for the same chat)', async () => {
-    // The pathological case that motivated the fix:
-    //   - `telegram:42` is the legacy row.
-    //   - `telegram:t1key:42` is a row that was either already migrated
-    //     by an earlier partial run, or freshly created post-upgrade.
-    //   - A naive preflight would see "target exists" for the legacy
-    //     row and abort the whole migration forever. The corrected
-    //     policy: leave the legacy row alone (dead history), count it.
+  it('quarantines stale legacy rows when the canonical target is taken', async () => {
+    // Mixed legacy + migrated rows for the same chat — the legacy row
+    // is dead history, the new one is the live session. The fix is
+    // not to skip the legacy row (Codex flagged that as a maintenance
+    // trap: both keys live in the main namespace forever); instead the
+    // legacy row gets quarantined under `__legacy:` so any future
+    // session-listing / search / retention code can filter it cleanly
+    // by prefix.
     seed([
       { key: 'telegram:42', platform: 'telegram' },
       { key: 'telegram:t1key:42', platform: 'telegram' },
@@ -184,10 +184,33 @@ describe('migrateSessionKeys (SQLite integration)', () => {
       migrated: 0,
       alreadyMigrated: 1, // telegram:t1key:42
       skippedNoBot: 0,
-      skippedTargetExists: 1, // telegram:42 (target taken)
+      quarantinedStale: 1, // telegram:42 → __legacy:telegram:42
     });
-    // Both rows still present; nothing was clobbered.
-    expect(readAllKeys()).toEqual(['telegram:42', 'telegram:t1key:42']);
+    // Stale row was renamed; live row untouched. The main namespace
+    // contains only the canonical key plus the quarantined ghost.
+    expect(readAllKeys()).toEqual(['__legacy:telegram:42', 'telegram:t1key:42']);
+  });
+
+  it('quarantine is idempotent — already-quarantined rows are left alone on re-run', async () => {
+    seed([
+      { key: '__legacy:telegram:42', platform: 'telegram' },
+      { key: 'telegram:t1key:42', platform: 'telegram' },
+    ]);
+
+    const result = migrateSessionKeys({
+      dbPath,
+      knownByPlatform: known,
+      primaryByPlatform: primary,
+    });
+    // `__legacy:*` rows are skipped entirely (they're dead history);
+    // the live row is recognized as already-migrated.
+    expect(result).toEqual({
+      migrated: 0,
+      alreadyMigrated: 1,
+      skippedNoBot: 0,
+      quarantinedStale: 0,
+    });
+    expect(readAllKeys()).toEqual(['__legacy:telegram:42', 'telegram:t1key:42']);
   });
 
   it('skips rows whose platform has no configured bot', async () => {

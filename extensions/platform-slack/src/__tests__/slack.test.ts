@@ -94,4 +94,36 @@ describe('SlackAdapter — botKey identity', () => {
     expect(a.botKey).toBe('a');
     expect(b.botKey).toBe('b');
   });
+
+  it('derives a stable botKey from botToken when omitted (back-compat for direct constructors)', () => {
+    const a = new SlackAdapter({
+      botToken: 'xoxb-stable',
+      appToken: 'xapp-1',
+      signingSecret: 's1',
+    });
+    const b = new SlackAdapter({
+      botToken: 'xoxb-stable',
+      appToken: 'xapp-2',
+      signingSecret: 's2',
+    });
+    expect(a.botKey).toBe(b.botKey);
+    expect(a.botKey).toMatch(/^[0-9a-f]{24}$/);
+    expect(a.id).toBe(`slack:${a.botKey}`);
+  });
+
+  it('explicit botKey wins over the derived default', () => {
+    const a = new SlackAdapter({
+      botToken: 'xoxb-1',
+      appToken: 'xapp-1',
+      signingSecret: 's1',
+    });
+    const b = new SlackAdapter({
+      botToken: 'xoxb-1',
+      appToken: 'xapp-1',
+      signingSecret: 's1',
+      botKey: 'explicit',
+    });
+    expect(a.botKey).not.toBe(b.botKey);
+    expect(b.botKey).toBe('explicit');
+  });
 });

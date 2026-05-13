@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   DeliveryResult,
   InboundMessage,
@@ -5,6 +6,16 @@ import type {
   PlatformAdapter,
 } from '@ethosagent/types';
 import { Bot } from 'grammy';
+
+// First 24 hex chars of sha256(token). Matches the derivation in
+// `apps/ethos/src/config.ts:deriveBotKey` so an adapter constructed
+// directly (without going through the gateway boot path) ends up with
+// the same routing identity it would have if the operator had wired
+// it through `telegram.bots[]`. 96 bits is wide enough that collision
+// is cosmologically unlikely.
+function deriveDefaultBotKey(token: string): string {
+  return createHash('sha256').update(token).digest('hex').slice(0, 24);
+}
 
 // ---------------------------------------------------------------------------
 // Text chunking — Telegram has a 4096 char limit per message
@@ -80,12 +91,13 @@ export interface TelegramAdapterConfig {
   /**
    * Stable identifier of the bot this adapter is bound to. Stamped on every
    * inbound `InboundMessage.botKey` so the Gateway can route to the right
-   * `AgentLoop` in multi-bot deployments. Required: there's no sensible
-   * default — the value originates in the resolved `telegram.bots[].id` /
-   * derived `deriveBotKey()` from config. Single-bot configs pass the
-   * Gateway's synthesized `'default'` botKey.
+   * `AgentLoop` in multi-bot deployments. Optional: when omitted the
+   * adapter derives the same 24-hex sha256(token) prefix the config
+   * layer's `deriveBotKey()` produces, so a direct constructor call
+   * without `botKey` round-trips with the same identity the boot path
+   * would have produced from the same token.
    */
-  botKey: string;
+  botKey?: string;
   /** Whether to drop updates that arrived while the bot was offline. Default true. */
   dropPendingUpdates?: boolean;
 }
@@ -110,11 +122,12 @@ export class TelegramAdapter implements PlatformAdapter {
   constructor(config: TelegramAdapterConfig) {
     this.bot = new Bot(config.token);
     this.dropPendingUpdates = config.dropPendingUpdates ?? true;
-    this.botKey = config.botKey;
+    this.botKey = config.botKey ?? deriveDefaultBotKey(config.token);
     // Multi-bot logs disambiguate by including the botKey. Single-bot
-    // deployments pass 'default' here and see `telegram:default` — the
-    // shape is identical, the value carries the routing identity.
-    this.id = `telegram:${config.botKey}`;
+    // deployments pass 'default' (or omit and let the derived hash
+    // stand in) and see `telegram:<key>` — the shape is identical, the
+    // value carries the routing identity.
+    this.id = `telegram:${this.botKey}`;
   }
 
   // ---------------------------------------------------------------------------

@@ -19,16 +19,28 @@ import Database from 'better-sqlite3';
 // handle marker-file bookkeeping via the Storage contract and orchestrate
 // when to run.
 
+/**
+ * Quarantine prefix for legacy rows whose new key was already taken by
+ * a post-migration row. The legacy row carries dead history; we rename
+ * it into a clearly non-active namespace so session-listing / search /
+ * retention paths can filter cleanly by checking for this prefix
+ * (anything starting with `LEGACY_KEY_PREFIX` is forensic-only).
+ *
+ * Picked underscore-leading because no production lane key starts with
+ * an underscore (lane keys begin with a platform identifier like
+ * `telegram` / `slack` / `email`).
+ */
+export const LEGACY_KEY_PREFIX = '__legacy:';
+
 /** @internal — one-shot migration result; do not depend on this beyond the upgrade flow. */
 export interface SessionKeyMigrationResult {
   migrated: number;
   alreadyMigrated: number;
   skippedNoBot: number;
-  /** Legacy rows whose new key already exists in the table — they
-   *  represent stale sessions superseded by a later post-migration row.
-   *  Left in place (not rewritten, not deleted) so history stays
-   *  forensically readable. */
-  skippedTargetExists: number;
+  /** Legacy rows whose canonical new key was already taken by a
+   *  post-migration row. Renamed into the `__legacy:` quarantine
+   *  namespace so the main key namespace stays free of dead history. */
+  quarantinedStale: number;
 }
 
 /** @internal — one-shot migration options. */
@@ -99,7 +111,7 @@ export function migrateSessionKeys(opts: MigrateSessionKeysOptions): SessionKeyM
   let migrated = 0;
   let alreadyMigrated = 0;
   let skippedNoBot = 0;
-  let skippedTargetExists = 0;
+  let quarantinedStale = 0;
   try {
     const rows = db.prepare('SELECT id, key FROM sessions').all() as Array<{
       id: string;
@@ -108,9 +120,13 @@ export function migrateSessionKeys(opts: MigrateSessionKeysOptions): SessionKeyM
     const existingKeys = new Set(rows.map((r) => r.key));
     const targets = new Map<string, string>(); // newKey → rowId
     const collisions: string[] = [];
-    type Plan = { id: string; newKey: string };
+    type Plan = { id: string; newKey: string; kind: 'migrate' | 'quarantine' };
     const plan: Plan[] = [];
     for (const row of rows) {
+      // Rows already in the quarantine namespace are dead history;
+      // never re-process them (their original platform segment is
+      // hidden behind the `__legacy:` prefix anyway).
+      if (row.key.startsWith(LEGACY_KEY_PREFIX)) continue;
       const decision = decideMigration(row.key, opts.knownByPlatform, opts.primaryByPlatform);
       if (decision.kind === 'skip-already-migrated') {
         alreadyMigrated++;
@@ -123,11 +139,19 @@ export function migrateSessionKeys(opts: MigrateSessionKeysOptions): SessionKeyM
       const { newKey } = decision;
       // Target already in the table: the new row is the live session
       // (created by a previous partial migration or a post-upgrade
-      // chat). Leave the legacy row alone — it's superseded but
-      // useful as historical context, and rewriting would explode on
-      // the UNIQUE constraint. Idempotent on re-run.
+      // chat). Move the legacy row into the `__legacy:` quarantine
+      // namespace so the main key space stays free of dead history.
+      // Idempotent on re-run because we skip `__legacy:` rows above.
       if (existingKeys.has(newKey) && newKey !== row.key) {
-        skippedTargetExists++;
+        const quarantineKey = `${LEGACY_KEY_PREFIX}${row.key}`;
+        if (existingKeys.has(quarantineKey)) {
+          collisions.push(
+            `${row.key} → cannot quarantine: ${quarantineKey} already exists. Inspect ${opts.dbPath} manually.`,
+          );
+          continue;
+        }
+        targets.set(quarantineKey, row.id);
+        plan.push({ id: row.id, newKey: quarantineKey, kind: 'quarantine' });
         continue;
       }
       // Two legacy rows in this pass that decide to the same target —
@@ -141,7 +165,7 @@ export function migrateSessionKeys(opts: MigrateSessionKeysOptions): SessionKeyM
         continue;
       }
       targets.set(newKey, row.id);
-      plan.push({ id: row.id, newKey });
+      plan.push({ id: row.id, newKey, kind: 'migrate' });
     }
     if (collisions.length > 0) {
       throw new Error(
@@ -154,12 +178,13 @@ export function migrateSessionKeys(opts: MigrateSessionKeysOptions): SessionKeyM
     const tx = db.transaction((items: Plan[]) => {
       for (const item of items) {
         update.run(item.newKey, item.id);
-        migrated++;
+        if (item.kind === 'quarantine') quarantinedStale++;
+        else migrated++;
       }
     });
     tx(plan);
   } finally {
     db.close();
   }
-  return { migrated, alreadyMigrated, skippedNoBot, skippedTargetExists };
+  return { migrated, alreadyMigrated, skippedNoBot, quarantinedStale };
 }

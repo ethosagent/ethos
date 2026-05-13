@@ -33,7 +33,7 @@ export async function migrateSessionKeysIfNeeded(opts: {
     // First-ever boot: nothing to migrate. Drop the marker so subsequent
     // boots don't keep re-checking.
     await opts.storage.write(marker, new Date().toISOString());
-    return { migrated: 0, alreadyMigrated: 0, skippedNoBot: 0, skippedTargetExists: 0 };
+    return { migrated: 0, alreadyMigrated: 0, skippedNoBot: 0, quarantinedStale: 0 };
   }
 
   // Build the platform → known/primary botKey lookups from the resolved
@@ -53,16 +53,33 @@ export async function migrateSessionKeysIfNeeded(opts: {
   }
 
   const result = migrateSessionKeys({ dbPath, knownByPlatform, primaryByPlatform });
-  await opts.storage.write(marker, new Date().toISOString());
+  // Only write the marker when every legacy row had a configured bot
+  // to migrate to. If the operator's current config doesn't cover a
+  // platform that has historical rows (e.g. they upgrade with Slack
+  // history but only Telegram bots configured), we leave those rows
+  // alone AND skip writing the marker so a later boot — once Slack
+  // is configured — will re-run and migrate them.
+  //
+  // Idempotency stays cheap: rows for already-handled platforms are
+  // recognized by `decideMigration` as `skip-already-migrated` (their
+  // 2nd segment matches a known botKey), so the re-runs only touch
+  // genuinely-stale rows. The cost is one SELECT per boot until every
+  // historical platform has been covered.
+  if (result.skippedNoBot === 0) {
+    await opts.storage.write(marker, new Date().toISOString());
+  }
   opts.logger?.info(
     `[session-keys] migration done: ${result.migrated} migrated, ${result.alreadyMigrated} already, ` +
-      `${result.skippedTargetExists} skipped (target exists), ${result.skippedNoBot} skipped (no bot)`,
+      `${result.quarantinedStale} quarantined (stale), ${result.skippedNoBot} skipped (no bot)` +
+      (result.skippedNoBot > 0
+        ? ' — marker not written; will re-run if more bots are configured'
+        : ''),
     {
       component: 'gateway',
       migrated: result.migrated,
       alreadyMigrated: result.alreadyMigrated,
       skippedNoBot: result.skippedNoBot,
-      skippedTargetExists: result.skippedTargetExists,
+      quarantinedStale: result.quarantinedStale,
     },
   );
   return result;

@@ -108,4 +108,23 @@ describe('TelegramAdapter — botKey identity', () => {
     expect(a.botKey).toBe('a');
     expect(b.botKey).toBe('b');
   });
+
+  it('derives a stable botKey from the token when omitted (back-compat for direct constructors)', () => {
+    // Adapter was historically `new TelegramAdapter({ token })` with no
+    // botKey. Phase 2 makes botKey optional and derives the same
+    // 24-hex sha256(token) prefix the config layer's deriveBotKey
+    // produces, so old call sites keep working with a stable identity.
+    const a = new TelegramAdapter({ token: '123:ABC' });
+    const b = new TelegramAdapter({ token: '123:ABC' });
+    expect(a.botKey).toBe(b.botKey);
+    expect(a.botKey).toMatch(/^[0-9a-f]{24}$/);
+    expect(a.id).toBe(`telegram:${a.botKey}`);
+  });
+
+  it('explicit botKey wins over the derived default', () => {
+    const a = new TelegramAdapter({ token: '123:ABC' });
+    const b = new TelegramAdapter({ token: '123:ABC', botKey: 'explicit' });
+    expect(a.botKey).not.toBe(b.botKey);
+    expect(b.botKey).toBe('explicit');
+  });
 });
