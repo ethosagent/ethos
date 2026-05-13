@@ -113,7 +113,10 @@ describe('reconcileRegistry', () => {
   });
 
   it('is a no-op and does not throw on a missing registry', async () => {
-    const emptyDir = join(tmpdir(), `ethos-lifecycle-empty-${Date.now()}`);
+    const emptyDir = join(
+      tmpdir(),
+      `ethos-lifecycle-empty-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
     mkdirSync(emptyDir, { recursive: true });
     try {
       await expect(reconcileRegistry(emptyDir)).resolves.toBeUndefined();
@@ -147,7 +150,7 @@ describe('reconcileRegistry', () => {
     expect(after.crashed).toBeDefined();
     expect(after.crashed?.status).toBe('orphan');
     expect(after.survivor?.status).toBe('running');
-
-    process.kill(alive.pid, 'SIGKILL');
+    // The survivor is left for afterEach to SIGKILL — it still has a `running`
+    // entry in the registry, so cleanup handles it.
   });
 });

@@ -90,14 +90,9 @@ function extractSingleQuery(argv: string[]): {
 }
 
 try {
-  // Startup crash-recovery scan: if a previous `ethos chat` crashed mid-session,
-  // its detached children outlive it but the registry still lists them
-  // `running`. reconcileRegistry flips any `running` entry with a dead pid to
-  // `orphan` so `process_list` shows the aftermath instead of a stale state.
-  // Best-effort and never throws (a missing/corrupt registry must not block
-  // startup); cheap and idempotent, so running it for every invocation is fine
-  // — `ethos process list` does its own reconciliation, which is harmless to
-  // double-run. The `ethosDir()` here is the same dataDir the process tools use.
+  // Startup crash-recovery scan: flips any `running` registry entry with a dead
+  // pid to `orphan`. Best-effort and never throws (a missing/corrupt registry
+  // must not block startup); idempotent, so re-running it is harmless.
   await reconcileRegistry(ethosDir());
 
   switch (effectiveCommand) {
