@@ -31,16 +31,39 @@ export class SessionsRepository {
   constructor(private readonly store: SessionStore) {}
 
   async list(opts: ListOptions): Promise<ListPage> {
+    if (opts.q?.trim()) {
+      // store.search() uses a phrase-quoted FTS5 query, so multi-word queries
+      // require per-term searches intersected by sessionId. Single-word queries
+      // go through as-is.
+      const terms = opts.q.trim().split(/\s+/).filter(Boolean);
+      // Use a large internal limit so the intersection isn't artificially
+      // truncated — a session that matches all terms might rank outside the
+      // top opts.limit results for a single term.
+      const termLimit = Math.max(opts.limit * 10, 100);
+      const termResults = await Promise.all(
+        terms.map((t) => this.store.search(t, { limit: termLimit })),
+      );
+      // Build a set of session IDs that appear in ALL term result sets.
+      const sets = termResults.map((rs) => new Set(rs.map((r) => r.sessionId)));
+      const [firstSet, ...restSets] = sets;
+      const intersected = firstSet
+        ? [...firstSet].filter((id) => restSets.every((s) => s.has(id)))
+        : [];
+      // Apply the caller's limit after intersection.
+      const matchedIds = intersected.slice(0, opts.limit);
+      const sessions = (
+        await Promise.all(matchedIds.map((id) => this.store.getSession(id)))
+      ).filter((s): s is Session => s !== null);
+      return { sessions, nextCursor: null };
+    }
+
     const offset = decodeCursor(opts.cursor);
     const filter: SessionFilter = {
-      limit: opts.limit + 1, // peek for `nextCursor`
+      limit: opts.limit + 1,
       offset,
     };
     if (opts.personalityId) filter.personalityId = opts.personalityId;
 
-    // TODO(26.3): FTS5-backed `q` filter. Today: `q` is accepted to keep the
-    // contract honest but ignored — list-by-recency only. Adding a session-
-    // level FTS query needs a `searchSessions` method on `SessionStore`.
     const rows = await this.store.listSessions(filter);
     const more = rows.length > opts.limit;
     const sessions = more ? rows.slice(0, opts.limit) : rows;
@@ -88,6 +111,14 @@ export class SessionsRepository {
 
   async delete(id: string): Promise<void> {
     return this.store.deleteSession(id);
+  }
+
+  async update(id: string, patch: { title: string | null }): Promise<void> {
+    const exists = await this.store.getSession(id);
+    if (!exists) throw new Error(`session not found: ${id}`);
+    // updateSession only sets fields that !== undefined; null IS NOT undefined,
+    // so passing null here will set the DB column to NULL (clears the title).
+    await this.store.updateSession(id, { title: patch.title as string | undefined });
   }
 
   async search(query: string, limit = 20): Promise<SearchResult[]> {
