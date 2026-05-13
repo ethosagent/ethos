@@ -198,6 +198,10 @@ export class SQLiteSessionStore implements SessionStore {
       conditions.push('platform = ?');
       values.push(filter.platform);
     }
+    if (filter?.keyPrefix) {
+      conditions.push("key LIKE ? ESCAPE '\\'");
+      values.push(`${filter.keyPrefix.replace(/[%_\\]/g, '\\$&')}%`);
+    }
     if (filter?.personalityId) {
       conditions.push('personality_id = ?');
       values.push(filter.personalityId);
@@ -220,7 +224,9 @@ export class SQLiteSessionStore implements SessionStore {
     const offset = filter?.offset ?? 0;
 
     const rows = this.db
-      .prepare(`SELECT * FROM sessions ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+      .prepare(
+        `SELECT *, rowid AS _row FROM sessions ${where} ORDER BY updated_at DESC, rowid DESC LIMIT ? OFFSET ?`,
+      )
       .all(...values, limit, offset);
 
     return (rows as SessionRow[]).map(rowToSession);
@@ -362,6 +368,51 @@ export class SQLiteSessionStore implements SessionStore {
   // ---------------------------------------------------------------------------
   // Maintenance
   // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // FW-4 — title management
+  // ---------------------------------------------------------------------------
+
+  async setTitle(sessionId: string, title: string | null): Promise<void> {
+    const now = new Date().toISOString();
+    this.db
+      .prepare('UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?')
+      .run(title, now, sessionId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // FW-2 — resume lookup
+  // ---------------------------------------------------------------------------
+
+  async findMostRecent(platform?: string): Promise<Session | null> {
+    // rowid tie-breaks same-millisecond timestamps (higher rowid = later insert/update)
+    const row = platform
+      ? this.db
+          .prepare(
+            'SELECT *, rowid AS _row FROM sessions WHERE platform = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1',
+          )
+          .get(platform)
+      : this.db
+          .prepare(
+            'SELECT *, rowid AS _row FROM sessions ORDER BY updated_at DESC, rowid DESC LIMIT 1',
+          )
+          .get();
+    return row ? rowToSession(row as SessionRow) : null;
+  }
+
+  async findByTitle(query: string): Promise<Session[]> {
+    const lower = query.toLowerCase();
+    // 1. Exact match (case-insensitive)
+    const exact = this.db
+      .prepare('SELECT * FROM sessions WHERE LOWER(title) = ?')
+      .all(lower) as SessionRow[];
+    if (exact.length > 0) return exact.map(rowToSession);
+    // 2. Fragment match (case-insensitive substring)
+    const fragment = this.db
+      .prepare('SELECT * FROM sessions WHERE LOWER(title) LIKE ?')
+      .all(`%${lower}%`) as SessionRow[];
+    return fragment.map(rowToSession);
+  }
 
   async pruneOldSessions(olderThan: Date): Promise<number> {
     const result = this.db

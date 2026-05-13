@@ -170,6 +170,16 @@ export interface EthosConfig {
    */
   displayToolPreviewLength?: number;
   /**
+   * FW-5 — show resume hint on chat exit. Defaults to true.
+   * Set to false via `display.resume_hint: false` in config.yaml.
+   */
+  displayResumeHint?: boolean;
+  /**
+   * FW-6 — how many turn pairs to show in the recap panel on resume.
+   * 0 disables the panel. Default 3. Range 0–10.
+   */
+  displayResumeRecapTurns?: number;
+  /**
    * Named skin override (see `@ethosagent/design-tokens` built-in skins:
    * `default`, `mono`, `paper`). When set, the resolved tokens are wired
    * into both the TUI SkinContext and the Web ConfigProvider so the
@@ -476,6 +486,12 @@ function parseConfigYaml(src: string): EthosConfig {
     displayVerbosity: parseVerbosity(displayKv.verbosity),
     displayBusyInputMode: parseBusyMode(displayKv.busy_input_mode),
     displayToolPreviewLength: parseToolPreviewLength(displayKv.tool_preview_length),
+    displayResumeHint: displayKv.resume_hint === 'false' ? false : undefined,
+    displayResumeRecapTurns: (() => {
+      if (displayKv.resume_recap_turns === undefined) return undefined;
+      const n = parseInt(displayKv.resume_recap_turns, 10);
+      return Number.isFinite(n) ? Math.min(10, Math.max(0, n)) : undefined;
+    })(),
     skin: kv.skin || undefined,
     retention,
     personalitiesConfig,
