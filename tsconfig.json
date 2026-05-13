@@ -36,6 +36,9 @@
       "@ethosagent/platform-telegram/clarify-surface": [
         "./extensions/platform-telegram/src/clarify-surface"
       ],
+      "@ethosagent/platform-telegram/personality": [
+        "./extensions/platform-telegram/src/blocks/personality"
+      ],
       "@ethosagent/openclaw-compat": ["./extensions/openclaw-compat/src"],
       "@ethosagent/skills": ["./extensions/skills/src"],
       "@ethosagent/skills-coding": ["./extensions/skills-coding/src"],

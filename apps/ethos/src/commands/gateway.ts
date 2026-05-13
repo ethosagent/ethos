@@ -303,6 +303,13 @@ export async function runGatewayStart(): Promise<void> {
         }
       : undefined;
 
+  // Telegram personality card reader + greeting provider — wired when any
+  // Telegram adapter is configured. The card reader powers `/personality rich`;
+  // the greeting provider powers `/start`.
+  const hasTelegram = adapters.some((a) => a.id.startsWith('telegram:'));
+  const telegramCardReader = hasTelegram ? await createTelegramPersonalityCardReader() : undefined;
+  const telegramGreetingProvider = hasTelegram ? await createTelegramGreetingProvider() : undefined;
+
   const gateway: Gateway =
     bots.length === 0
       ? // Email-only deployment (no telegram/slack bots configured). Keep
@@ -311,6 +318,8 @@ export async function runGatewayStart(): Promise<void> {
       : new Gateway({
           bots,
           ...(clarifyMessageCorrelator ? { clarifyMessageCorrelator } : {}),
+          ...(telegramCardReader ? { personalityCardReader: telegramCardReader } : {}),
+          ...(telegramGreetingProvider ? { greetingProvider: telegramGreetingProvider } : {}),
         });
   gatewayRef = gateway;
 
@@ -773,6 +782,81 @@ async function createSlackPersonalityCardReader() {
   };
 }
 
+/**
+ * Build the Telegram `/personality rich` card reader. Mirrors the Slack
+ * reader but renders the card as Telegram Markdown text via the Telegram
+ * personality module. Lazily imports `@ethosagent/platform-telegram` so
+ * the function stays safe when the Telegram adapter SDK isn't installed.
+ */
+async function createTelegramPersonalityCardReader() {
+  const storage = getStorage();
+  const personalitiesDir = join(ethosDir(), 'personalities');
+  const registry = await createPersonalityRegistry({
+    storage,
+    userPersonalitiesDir: personalitiesDir,
+  });
+  const { skillsInjector } = createInjectors(registry, {
+    trustedFirstPartySources: [bundledCodingSkillsSource()],
+  });
+  // Lazily import the Telegram personality renderer. The import type is
+  // erased at runtime; the `as` cast is safe because we catch import failure.
+  let renderFn: ((card: Record<string, unknown>) => string) | null = null;
+  try {
+    const mod = await import('@ethosagent/platform-telegram/personality');
+    renderFn = mod.personalityRichMessage as unknown as (card: Record<string, unknown>) => string;
+  } catch {
+    // Telegram personality module not available — reader will return null.
+  }
+  return {
+    async read(personalityId: string): Promise<{ text: string } | null> {
+      if (!renderFn) return null;
+      await registry.loadFromDirectory(personalitiesDir);
+      const config = registry.get(personalityId);
+      if (!config) return null;
+      const ethosMd = await registry.readEthosMd(personalityId);
+      const resolved = await skillsInjector.resolveSkills(personalityId);
+      const card = {
+        id: config.id,
+        name: config.name,
+        description: config.description ?? '',
+        prose: firstParagraph(ethosMd),
+        model: config.model ?? '(engine default)',
+        provider: config.provider ?? '(engine default)',
+        toolset: config.toolset ?? [],
+        skills: resolved.map((r) => ({ id: r.id, source: r.source })),
+      };
+      return { text: renderFn(card) };
+    },
+  };
+}
+
+/**
+ * Build the Telegram `/start` greeting provider. Returns a personality-aware
+ * greeting composed of the personality's description (or first paragraph of
+ * ETHOS.md), plus a pointer to `/help`.
+ */
+async function createTelegramGreetingProvider() {
+  const storage = getStorage();
+  const personalitiesDir = join(ethosDir(), 'personalities');
+  const registry = await createPersonalityRegistry({
+    storage,
+    userPersonalitiesDir: personalitiesDir,
+  });
+  return {
+    async greet(personalityId: string): Promise<string> {
+      await registry.loadFromDirectory(personalitiesDir);
+      const config = registry.get(personalityId);
+      if (!config) {
+        return `Hello! I'm *${personalityId}*. Send a message to get started, or try /help for available commands.`;
+      }
+      const ethosMd = await registry.readEthosMd(personalityId).catch(() => '');
+      const prose = firstParagraph(ethosMd);
+      const intro = prose || config.description || config.name;
+      return `${intro}\n\nUse /help to see available commands.`;
+    },
+  };
+}
+
 export async function buildAdapters(
   config: EthosConfig,
   loadAdapter: AdapterModuleLoader,
@@ -786,12 +870,35 @@ export async function buildAdapters(
       'Telegram',
     );
     if (mod) {
+      // Resolve identity for personality-bound bots from the registry.
+      const storage = getStorage();
+      const personalitiesDir = join(ethosDir(), 'personalities');
+      const registry = await createPersonalityRegistry({
+        storage,
+        userPersonalitiesDir: personalitiesDir,
+      });
+      await registry.loadFromDirectory(personalitiesDir);
+
       for (const botCfg of config.telegram?.bots ?? []) {
+        let identity: { name: string; shortDescription: string; description: string } | undefined;
+        if (botCfg.bind.type === 'personality') {
+          const pConfig = registry.get(botCfg.bind.name);
+          if (pConfig) {
+            const ethosMd = await registry.readEthosMd(botCfg.bind.name).catch(() => '');
+            const prose = firstParagraph(ethosMd);
+            identity = {
+              name: pConfig.name,
+              shortDescription: pConfig.description ?? pConfig.name,
+              description: prose || pConfig.description || pConfig.name,
+            };
+          }
+        }
         adapters.push(
           new mod.TelegramAdapter({
             token: botCfg.token,
             botKey: deriveBotKey(botCfg),
             dropPendingUpdates: true,
+            ...(identity ? { identity } : {}),
           }),
         );
       }

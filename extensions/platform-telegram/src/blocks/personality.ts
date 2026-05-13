@@ -1,0 +1,84 @@
+/**
+ * Telegram character sheet card — the `/personality rich` rendering for
+ * Telegram. Mirrors the Slack `personalityRichBlocks` but outputs plain
+ * Markdown text instead of Block Kit. Same redactions as Slack: fs_reach,
+ * MCP servers, and plugins are omitted.
+ */
+
+/**
+ * The resolved character-sheet data behind `/personality rich`. Structural
+ * clone of the Slack `PersonalityCard` — defined locally so the Telegram
+ * package doesn't depend on `@ethosagent/platform-slack`. Both surfaces
+ * consume the same shape; the gateway wiring builds the card once and
+ * passes it to whichever surface needs it.
+ */
+export interface PersonalityCard {
+  id: string;
+  name: string;
+  description: string;
+  /** First paragraph of ETHOS.md — the personality's own voice. '' when absent. */
+  prose: string;
+  model: string;
+  provider: string;
+  toolset: string[];
+  skills: Array<{ id: string; source: 'personality' | 'global' }>;
+}
+
+// Per-section caps so one field can't blow past Telegram's 4096-char limit.
+const TOOLS_MAX = 1200;
+const SKILLS_MAX = 1200;
+const TOTAL_MAX = 4096;
+
+function truncate(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit - 1)}…`;
+}
+
+export function personalityRichMessage(card: PersonalityCard): string {
+  const lines: string[] = [];
+
+  // Header
+  lines.push(`*${card.name}*`);
+  lines.push('');
+
+  // Identity — description plus the personality's own ETHOS.md voice.
+  if (card.description) lines.push(card.description);
+  if (card.prose) lines.push(`_${card.prose}_`);
+  if (card.description || card.prose) lines.push('');
+
+  // Routing
+  lines.push(`*Runs on:* ${card.model} via ${card.provider}`);
+  lines.push('*Remembers:* MEMORY.md, USER.md');
+  lines.push('');
+
+  // Tools
+  const toolCount = card.toolset.length;
+  const toolLabel = `*What it can do* — ${toolCount} tool${toolCount === 1 ? '' : 's'}`;
+  if (toolCount > 0) {
+    const toolList = truncate(card.toolset.map((t) => `\`${t}\``).join(', '), TOOLS_MAX);
+    lines.push(toolLabel);
+    lines.push(toolList);
+  } else {
+    lines.push(toolLabel);
+    lines.push('_No tools — this personality can only converse._');
+  }
+  lines.push('');
+
+  // Skills
+  const skillCount = card.skills.length;
+  const skillLabel = `*What it knows* — ${skillCount} skill${skillCount === 1 ? '' : 's'}`;
+  if (skillCount > 0) {
+    const skillList = truncate(
+      card.skills.map((s) => `\`${s.id}\` (${s.source})`).join('\n'),
+      SKILLS_MAX,
+    );
+    lines.push(skillLabel);
+    lines.push(skillList);
+  } else {
+    lines.push(skillLabel);
+    lines.push('_No skills resolved for this personality._');
+  }
+
+  const result = lines.join('\n');
+  return truncate(result, TOTAL_MAX);
+}

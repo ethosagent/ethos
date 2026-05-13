@@ -45,6 +45,19 @@ function deriveDefaultBotKey(token: string): string {
   return createHash('sha256').update(token).digest('hex').slice(0, 24);
 }
 
+// grammy's ReactionTypeEmoji.emoji is a strict union of specific emoji
+// literals. We define a type alias so config strings can be cast cleanly.
+type TelegramEmoji = '👀';
+
+// ---------------------------------------------------------------------------
+// Truncation utility — BotFather fields have strict char limits
+// ---------------------------------------------------------------------------
+
+export function truncateWithEllipsis(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit - 1)}…`;
+}
+
 // ---------------------------------------------------------------------------
 // Text chunking — Telegram has a 4096 char limit per message
 // ---------------------------------------------------------------------------
@@ -128,6 +141,22 @@ export interface TelegramAdapterConfig {
   botKey?: string;
   /** Whether to drop updates that arrived while the bot was offline. Default true. */
   dropPendingUpdates?: boolean;
+  /**
+   * Bot identity pushed to BotFather at start(). Personality-bound bots
+   * populate this from the personality config so the Telegram profile
+   * reflects the agent's name and description. Best-effort — failures
+   * are swallowed. Omit for team bindings (don't change BotFather settings).
+   */
+  identity?: {
+    name: string;
+    shortDescription: string;
+    description: string;
+  };
+  /**
+   * Emoji reaction set on inbound messages to acknowledge receipt.
+   * Cleared when the agent's reply lands. Default '👀'.
+   */
+  receiptReaction?: string;
 }
 
 export class TelegramAdapter implements PlatformAdapter {
@@ -135,24 +164,30 @@ export class TelegramAdapter implements PlatformAdapter {
   readonly displayName = 'Telegram';
   readonly canSendTyping = true;
   readonly canEditMessage = true;
-  readonly canReact = false;
+  readonly canReact = true;
   readonly canSendFiles = false;
   readonly maxMessageLength = 4096;
 
   readonly botKey: string;
   private readonly bot: Bot;
   private readonly dropPendingUpdates: boolean;
+  private readonly identity: TelegramAdapterConfig['identity'];
+  private readonly receiptReaction: string;
   private messageHandler?: (message: InboundMessage) => void;
   /** Registered by the clarify surface to receive inline-keyboard taps. */
   private callbackQueryHandler?: (event: CallbackQueryEvent) => void;
   /** Chunk-id ledger so editMessage can re-flow multi-chunk responses. */
   private readonly chunkMap = new Map<string, string[]>();
   private readonly chunkMapMaxEntries = 1024;
+  /** Tracks inbound message ids per chat for reaction clearing on reply. */
+  private readonly pendingReactions = new Map<string, number>();
 
   constructor(config: TelegramAdapterConfig) {
     this.bot = new Bot(config.token);
     this.dropPendingUpdates = config.dropPendingUpdates ?? true;
     this.botKey = config.botKey ?? deriveDefaultBotKey(config.token);
+    this.identity = config.identity;
+    this.receiptReaction = config.receiptReaction ?? '👀';
     // Multi-bot logs disambiguate by including the botKey. Single-bot
     // deployments pass 'default' (or omit and let the derived hash
     // stand in) and see `telegram:<key>` — the shape is identical, the
@@ -165,22 +200,57 @@ export class TelegramAdapter implements PlatformAdapter {
   // ---------------------------------------------------------------------------
 
   async start(): Promise<void> {
+    // --- Bot identity from personality (best-effort) ---
+    if (this.identity) {
+      const id = this.identity;
+      await this.bot.api.setMyName(truncateWithEllipsis(id.name, 64)).catch(() => {});
+      await this.bot.api
+        .setMyShortDescription(truncateWithEllipsis(id.shortDescription, 120))
+        .catch(() => {});
+      await this.bot.api
+        .setMyDescription(truncateWithEllipsis(id.description, 512))
+        .catch(() => {});
+    }
+
+    // --- Commands menu (best-effort) ---
+    await this.bot.api
+      .setMyCommands([
+        { command: 'start', description: 'Introduce the bot' },
+        { command: 'new', description: 'Start a fresh session' },
+        { command: 'help', description: 'Show available commands' },
+        { command: 'personality', description: 'Show the bound personality' },
+        { command: 'usage', description: 'Session tokens + cost' },
+        { command: 'stop', description: 'Abort the current reply' },
+      ])
+      .catch(() => {});
+
     this.bot.on('message', (ctx) => {
       if (!this.messageHandler) return;
 
       const text = ctx.message.text ?? ctx.message.caption ?? '';
       if (!text) return;
 
+      const chatId = ctx.chat.id;
+      const messageId = ctx.message.message_id;
+
+      // --- Reaction on receipt (best-effort, non-blocking) ---
+      // The emoji field is typed as a strict union by grammy; we cast to the
+      // union's first member so the call compiles. Invalid emoji strings are
+      // rejected by the Telegram API and the .catch() swallows the error.
+      const reaction = [{ type: 'emoji' as const, emoji: this.receiptReaction as TelegramEmoji }];
+      this.bot.api.setMessageReaction(chatId, messageId, reaction).catch(() => {});
+      this.pendingReactions.set(String(chatId), messageId);
+
       const msg: InboundMessage = {
         platform: 'telegram',
         botKey: this.botKey,
-        chatId: String(ctx.chat.id),
+        chatId: String(chatId),
         userId: ctx.from ? String(ctx.from.id) : undefined,
         username: ctx.from?.username,
         text,
         isDm: ctx.chat.type === 'private',
         isGroupMention: ctx.message.text?.includes(`@${ctx.me.username}`) ?? false,
-        messageId: String(ctx.message.message_id),
+        messageId: String(messageId),
         replyToId: ctx.message.reply_to_message
           ? String(ctx.message.reply_to_message.message_id)
           : undefined,
@@ -274,6 +344,13 @@ export class TelegramAdapter implements PlatformAdapter {
           };
         }
       }
+    }
+
+    // Clear receipt reaction now that the reply has landed.
+    const trackedMsgId = this.pendingReactions.get(chatId);
+    if (trackedMsgId !== undefined) {
+      this.bot.api.setMessageReaction(Number(chatId), trackedMsgId, []).catch(() => {});
+      this.pendingReactions.delete(chatId);
     }
 
     this.rememberChunkIds(ids);

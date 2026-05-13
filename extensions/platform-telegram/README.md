@@ -1,49 +1,169 @@
 # @ethosagent/platform-telegram
 
-Telegram `PlatformAdapter` — long-polls the Bot API via `grammy` and adapts updates into Ethos `InboundMessage`s.
+Telegram `PlatformAdapter` for Ethos — long-polls the Bot API via `grammy` so your agent works from your phone with no public URL.
 
-## Why this exists
+This README walks an operator from zero to a working bot in about five minutes, then documents the slash commands, group behaviour, and troubleshooting paths. Contributors looking for the architectural picture jump to [Internals](#internals).
 
-Telegram is the cheapest path from "agent works on my laptop" to "agent works on my phone." Long-polling needs no public URL and survives NAT and restarts. This package wraps `grammy` in the `PlatformAdapter` contract so the same `AgentLoop` can serve private chats, group mentions, and captioned media equally.
+---
 
-## What it provides
+## What you can do
 
-- `TelegramAdapter` — implements `PlatformAdapter` from `@ethosagent/types`.
-- `TelegramAdapterConfig` — `{ token, dropPendingUpdates? }`.
-- `chunkText(text, maxLength)` — splitter that prefers newline boundaries, then falls back to spaces, both above 60% of the limit. Default 4096 chars.
+- **Chat with your Ethos personality from Telegram** — DM the bot, @mention it in a group, or reply in a thread; the personality answers with its configured prompt, tools, and memory.
+- **Run multiple bots on one gateway** — one Telegram bot per personality (or per team coordinator). Each bot's conversations stay on its own lane.
+- **See the bot acknowledge your message** — inbound messages get an eyes reaction; the reaction clears when the reply lands.
+- **Get a personality-aware greeting** — `/start` introduces the bot in its personality's voice.
+- **Inspect the bot's character sheet** — `/personality rich` renders the full identity, model, tools, and skills as a formatted message.
 
-## How it works
+---
 
-Connection is grammy's long-polling loop launched non-blocking with `void this.bot.start({ drop_pending_updates })` (`src/index.ts:97`). On `start()`, the adapter registers a `'message'` listener that maps grammy's `Context` into an `InboundMessage`, setting `text` to either `ctx.message.text` or `ctx.message.caption` so photo/document captions also reach the agent (`src/index.ts:78`).
+## Quickstart — five minutes to your first reply
 
-`chatId` is the Telegram chat id stringified (`src/index.ts:83`). Gateway derives `telegram:<chatId>` as the session lane, so each private chat and each group has its own conversation history. `isGroupMention` is set when the message text contains `@<bot username>`; the adapter does not strip the mention from the text. `messageId` is set so Gateway can dedup retries from polling reconnects.
+You'll create a Telegram bot, copy the token into Ethos, start the gateway, and DM the bot.
 
-Outbound text is split into 4096-char chunks (Telegram's hard limit) and sent in order via `bot.api.sendMessage` with `parse_mode: 'Markdown'` (or `'HTML'`) (`src/index.ts:118-123`). If a Markdown chunk fails parsing, the adapter retries that single chunk **as plain text** silently (`src/index.ts:127-129`); other errors are returned. `sendTyping` posts a `'typing'` chat action (the Gateway re-fires this on a 4-second interval since Telegram only shows it for ~5 seconds).
+### Prereqs
 
-## Configuration
+- `@ethosagent/cli` installed and `ethos setup` has been run (so you have a `~/.ethos/config.yaml` and at least one personality).
+- A Telegram account.
+- About five minutes.
 
-Constructor config:
+### Step 1 - Create the bot
 
-| Field | Required | Notes |
+1. Open Telegram and message [@BotFather](https://t.me/BotFather).
+2. Send `/newbot`, follow the prompts to pick a name and username.
+3. BotFather replies with a token like `123456789:ABCdefGHI...`. Copy it.
+
+### Step 2 - Add the bot to `~/.ethos/config.yaml`
+
+Each Telegram bot gets one entry under `telegram.bots.<n>`. Pick any non-negative integer for `<n>`:
+
+```yaml
+telegram.bots.0.token: 123456789:ABCdefGHI...
+telegram.bots.0.bind.type: personality       # or 'team'
+telegram.bots.0.bind.name: researcher        # personality id or team manifest name
+# Optional: stable identifier surfaced in logs + gateway lane keys.
+# Defaults to a 24-char sha256(token) prefix when omitted.
+telegram.bots.0.id: researcher-bot
+```
+
+Declare as many bots as you want; each binds to exactly one personality or team coordinator.
+
+### Step 3 - Start the gateway
+
+```bash
+ethos gateway start
+```
+
+Boot validates that every `bind.name` resolves to a known personality or team and refuses to start otherwise. On success you'll see one health line per bot — including the bound personality — and `Listening for messages.`
+
+The bot's BotFather profile (name, description, commands menu) is updated automatically from the bound personality's config.
+
+### Step 4 - DM the bot and say hello
+
+1. Open Telegram and search for your bot's username.
+2. Tap **Start** (or type `/start`) to see the personality-aware greeting.
+3. Send a message. You should see an eyes reaction appear, then a reply within a few seconds.
+
+If you don't see a reply, jump to [Troubleshooting](#troubleshooting).
+
+---
+
+## `/` commands reference
+
+These commands are registered in Telegram's slash menu (visible when you type `/` in the chat).
+
+| Command | What it does |
+|---|---|
+| `/start` | Personality-aware greeting — introduces the bot and points to `/help`. |
+| `/new` | Start a fresh session. Aborts any in-flight reply and clears session state. |
+| `/help` | Lists available commands with the current personality binding. |
+| `/personality` | Shows the current personality. |
+| `/personality rich` | Full character sheet — identity, model, tools, and resolved skills. Personality bindings only; team bindings show the compact view. |
+| `/personality list` | Available personalities (only when switching is enabled). |
+| `/personality <id>` | Switch personality (only when switching is enabled). |
+| `/usage` | Session token count and estimated cost. |
+| `/stop` | Abort the current reply. |
+
+---
+
+## Group behaviour
+
+### Privacy mode
+
+By default, Telegram bots in groups only receive messages that:
+
+- Start with `/` (commands)
+- `@mention` the bot
+- Reply to one of the bot's messages
+
+To receive all group messages, disable **Group Privacy** in BotFather:
+
+1. Message @BotFather.
+2. Send `/mybots`, pick the bot, then **Bot Settings** > **Group Privacy** > **Turn off**.
+
+### @mention and reply-tree
+
+- `@mention` triggers the bot in any group mode. The `@bot` prefix is **not** stripped from the text — the agent sees the raw `@bot Hello`.
+- Reply-tree: the adapter stamps `replyToId` and `replyToUserId` so the agent has context about which message was replied to.
+
+### One session per chat
+
+Each Telegram chat (private or group) maps to its own session lane: `telegram:<botKey>:<chatId>`. Groups share a single conversation history across all participants.
+
+---
+
+## Troubleshooting
+
+If something looks wrong after Step 4, work top-to-bottom — earlier rows block later ones.
+
+| Symptom | Likely cause | Fix |
 |---|---|---|
-| `token` | yes | Bot token from `@BotFather`. |
-| `dropPendingUpdates` | no | Default `true`. When `false`, the bot processes the full backlog accumulated while it was offline. |
+| `ethos gateway start` exits with `bind.name does not resolve` | A `telegram.bots.<n>.bind.name` doesn't match any personality or team on disk | Run `ethos personality list` (and check `~/.ethos/teams/`); correct the `bind.name` |
+| Boot succeeds but the bot health line shows `⚠ telegram:<key> health check failed` | Wrong bot token | Re-copy the token from BotFather |
+| Bot never replies in a group | Group privacy mode is on (default) and you didn't `@mention` the bot | Either `@mention` the bot, reply to its message, or disable group privacy in BotFather |
+| Long replies look chopped | Telegram's 4096-char limit; the adapter chunks automatically | Working as intended — chunks land as separate messages |
+| Markdown formatting disappears | Markdown parse error; the adapter retries as plain text | Check the agent's output for unclosed formatting tokens |
+| Eyes reaction never clears | The reply failed or was dropped by outbound dedup | Check gateway logs for send errors |
+| `/start` returns a generic greeting | Personality config has no description or ETHOS.md | Add a `description:` to the personality's `config.yaml` or write an ETHOS.md |
 
-For the bot to receive group messages without `@mention`, disable group privacy mode in BotFather. Otherwise it only sees mentions, replies to its own messages, and commands.
+---
 
-## Gotchas
+## Internals
 
-- Markdown parse errors silently fall back to plain text — formatting just disappears for that chunk. There is no error returned to the caller, no log, no telemetry. If you see Telegram messages mysteriously rendering as plain text, this is why.
-- `send()` returns the **first** chunk's `message_id` (the primary anchor). A bounded chunk-id ledger (`chunkMap`, 1024 entries with FIFO eviction) lets `editMessage()` re-flow the new text via `editMessageText` / `sendMessage` / `deleteMessage`.
-- `bot.start()` is fire-and-forget (`void`-ed) so the long-poll loop runs concurrently with the rest of `start()`. If the token is invalid, the failure surfaces inside the loop, not as a rejected promise from `start()`.
-- The `@mention` token is **not** stripped from inbound text — the agent sees the raw `@bot Hello`.
-- `chatId` and `messageId` are stringified `number`s; `send`/`editMessage` parse them back with `Number()`. Telegram chat ids fit safely in JS `number`.
-- `canReact` is `false` and `canSendFiles` is `false` — neither is implemented yet.
+### Connection model
+
+Long-polling via grammy's `bot.start()`. No webhook, no public URL. The polling loop runs non-blocking inside `start()` — if the token is invalid, the failure surfaces inside the loop and is logged, not thrown.
+
+### Text chunking
+
+Outbound text is split into 4096-char chunks and sent in order. The splitter prefers newline boundaries, then spaces, both above 60% of the limit. `editMessage()` re-flows chunks via a bounded chunk-id ledger (1024 entries, FIFO eviction).
+
+### Reaction on receipt
+
+On inbound message: set `receiptReaction` (default eyes). On `send()` success: clear it. Both are best-effort, non-blocking.
+
+### Bot identity
+
+At `start()`, personality-bound bots push their identity to BotFather:
+
+- `setMyName` (64-char limit)
+- `setMyShortDescription` (120-char limit)
+- `setMyDescription` (512-char limit)
+
+All best-effort; team bindings skip this.
+
+### Commands menu
+
+At `start()`, `setMyCommands` registers 6 commands visible in Telegram's slash picker.
+
+---
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `src/index.ts` | `TelegramAdapter`, `chunkText`, config types. |
-| `src/__tests__/` | Unit tests for chunking and inbound mapping. |
+| `src/index.ts` | `TelegramAdapter`, `TelegramAdapterConfig`, `chunkText`, `truncateWithEllipsis`. |
+| `src/blocks/personality.ts` | `personalityRichMessage` — Telegram character sheet renderer. |
+| `src/clarify-surface.ts` | Telegram clarify surface (inline keyboards + force-reply). |
+| `src/validate.ts` | Config validation helpers. |
+| `src/__tests__/` | Unit tests for chunking, identity, commands, reactions, personality card. |
 | `package.json` | Workspace package, depends on `grammy` ^1.26. |

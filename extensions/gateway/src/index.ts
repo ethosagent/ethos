@@ -235,6 +235,22 @@ export interface GatewayConfig {
    * per plan. Set to 0 to disable (tests).
    */
   clarifySweepIntervalMs?: number;
+  /**
+   * Optional card reader for `/personality rich`. When set, the gateway
+   * renders a character-sheet card for the bound personality. Slack handles
+   * this in its own slash handler; Telegram routes through the gateway, so
+   * the reader is wired here.
+   */
+  personalityCardReader?: {
+    read(personalityId: string): Promise<{ text: string } | null>;
+  };
+  /**
+   * Optional greeting provider for `/start`. Returns a personality-aware
+   * greeting string. When absent, `/start` returns a generic message.
+   */
+  greetingProvider?: {
+    greet(personalityId: string): Promise<string>;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -243,7 +259,7 @@ export interface GatewayConfig {
 
 const PLATFORM_COMMANDS: Record<
   string,
-  'new' | 'usage' | 'stop' | 'help' | 'personality' | 'allow' | 'deny' | 'communications'
+  'new' | 'usage' | 'stop' | 'help' | 'personality' | 'allow' | 'deny' | 'communications' | 'start'
 > = {
   '/new': 'new',
   '/reset': 'new',
@@ -254,6 +270,7 @@ const PLATFORM_COMMANDS: Record<
   '/allow': 'allow',
   '/deny': 'deny',
   '/communications': 'communications',
+  '/start': 'start',
 };
 
 // ---------------------------------------------------------------------------
@@ -339,6 +356,12 @@ export class Gateway {
   private readonly onAllowlistChange:
     | ((platform: string, userId: string, action: 'add' | 'remove') => void | Promise<void>)
     | undefined;
+  /** Optional card reader for `/personality rich`. */
+  private readonly personalityCardReader:
+    | { read(personalityId: string): Promise<{ text: string } | null> }
+    | undefined;
+  /** Optional greeting provider for `/start`. */
+  private readonly greetingProvider: { greet(personalityId: string): Promise<string> } | undefined;
 
   constructor(config: GatewayConfig) {
     // The two construction shapes are mutually exclusive. Silent
@@ -403,6 +426,8 @@ export class Gateway {
     this.observability = config.observability;
     this.onAllowlistChange = config.onAllowlistChange;
     this.clarifyCorrelator = config.clarifyMessageCorrelator;
+    this.personalityCardReader = config.personalityCardReader;
+    this.greetingProvider = config.greetingProvider;
 
     // Clarify sweep — fires on a single timer for all bots' bridges so a
     // multi-bot deployment doesn't pile up N timers. Each bridge owns its own
@@ -605,6 +630,23 @@ export class Gateway {
       return;
     }
 
+    if (cmdType === 'start') {
+      const personalityId = this.activePersonalityFor(laneKey, bot);
+      if (this.greetingProvider) {
+        const greeting = await this.greetingProvider.greet(personalityId).catch(() => null);
+        if (greeting) {
+          await adapter.send(message.chatId, { text: greeting }).catch(() => {});
+          return;
+        }
+      }
+      await adapter
+        .send(message.chatId, {
+          text: `Hello! I'm running as *${personalityId}*. Send a message to get started, or try /help for available commands.`,
+        })
+        .catch(() => {});
+      return;
+    }
+
     if (cmdType === 'personality') {
       const arg = text.split(/\s+/).slice(1).join(' ').trim();
       const current = this.activePersonalityFor(laneKey, bot);
@@ -614,6 +656,21 @@ export class Gateway {
           .send(message.chatId, { text: `Current personality: ${current}` })
           .catch(() => {});
         return;
+      }
+
+      // `/personality rich` — full character sheet. Works for personality
+      // bindings even when switching is disabled; team bindings fall through
+      // to the compact view.
+      if (
+        arg.toLowerCase() === 'rich' &&
+        this.personalityCardReader &&
+        bot.binding.type === 'personality'
+      ) {
+        const card = await this.personalityCardReader.read(current).catch(() => null);
+        if (card) {
+          await adapter.send(message.chatId, { text: card.text }).catch(() => {});
+          return;
+        }
       }
 
       // Identity-bound bots reject the switch — the bot's external
