@@ -187,5 +187,4 @@ Tool failures carry a domain-code prefix in the `error` string so callers can pa
 
 - [`extensions/tools-vision/README.md`](https://github.com/MiteshSharma/ethos/blob/main/extensions/tools-vision/README.md) — package-level reference with the same surface plus the file map.
 - [Personality config reference](../../using/reference/personality-yaml.md#toolset-yaml) — how `toolset.yaml` gates which personalities see `vision_analyze`.
-- [Kanban tools reference](./kanban-tools.md) — the other tool family that has a dedicated reference page; same documentation shape.
 - [`config.yaml` reference](../../using/reference/config-yaml.md) — every field these subcommands read, including `auxiliary.*`.

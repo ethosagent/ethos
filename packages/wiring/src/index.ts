@@ -448,7 +448,13 @@ export async function createAgentLoop(
       return null;
     },
     defaultModel: config.model,
-    ...(auxVisionConfig ? { auxiliaryVisionModel: auxVisionConfig.model } : {}),
+    // Skip threading the aux model when it collides with the primary: the
+    // fallback chain already collapses (both right operands resolve to
+    // `defaultModel`), so the spread would be dead. Keep the call honest about
+    // whether an auxiliary model is actually in effect.
+    ...(auxVisionConfig && !auxVisionCollidesWithPrimary
+      ? { auxiliaryVisionModel: auxVisionConfig.model }
+      : {}),
   })) {
     tools.register(tool);
   }
