@@ -113,6 +113,9 @@ describe('supervisor reconstruction — kanban is the sole source of truth', () 
 
     // A dispatch transport that never resolves — the dispatches stay in-flight,
     // exactly the state a supervisor would be in when it crashes mid-dispatch.
+    // Intentionally ignores the abort `signal` so the promise stays pending
+    // forever — do not "fix" it to honor the signal (its .finally() would then
+    // run after board1 is closed → use-after-close).
     const hang: DispatchCall = () => new Promise<string>(() => {});
     const dispatcher1 = new Dispatcher({ board: board1, supervisor: sup1, dispatch: hang });
 
@@ -195,6 +198,9 @@ describe('supervisor reconstruction — kanban is the sole source of truth', () 
     board1.updateStatus(t1.id, 'ready');
     board1.updateStatus(t2.id, 'ready');
 
+    // Intentionally ignores the abort `signal` so the promise stays pending
+    // forever — do not "fix" it to honor the signal (its .finally() would then
+    // run after board1 is closed → use-after-close).
     const hang: DispatchCall = () => new Promise<string>(() => {});
     const dispatcher1 = new Dispatcher({ board: board1, supervisor: sup1, dispatch: hang });
 
@@ -211,7 +217,6 @@ describe('supervisor reconstruction — kanban is the sole source of truth', () 
     // descriptor on process death; it does NOT close the open `task_runs`
     // rows, so the durable board still carries the in-flight runs as `running`.
     board1.close();
-    void dispatcher1;
 
     // --- Supervisor instance #2 — brand-new handle against the same file. ---
     const board2 = new KanbanStore(boardPath);
@@ -292,6 +297,9 @@ describe('supervisor reconstruction — kanban is the sole source of truth', () 
     const t = board1.createTask({ title: 'fix bug', assignee: 'engineer' });
     board1.updateStatus(t.id, 'ready');
 
+    // Intentionally ignores the abort `signal` so the promise stays pending
+    // forever — do not "fix" it to honor the signal (its .finally() would then
+    // run after board1 is closed → use-after-close).
     const hang: DispatchCall = () => new Promise<string>(() => {});
     const dispatcher1 = new Dispatcher({ board: board1, supervisor: sup1, dispatch: hang });
     await dispatcher1.tick();
@@ -301,7 +309,6 @@ describe('supervisor reconstruction — kanban is the sole source of truth', () 
     // ungracefully. board1.close() only models the OS reclaiming the fd; the
     // open run stays `running` on the durable board.
     board1.close();
-    void dispatcher1;
 
     // Fresh supervisor — but `engineer` failed to re-spawn (status: 'failed').
     const board2 = new KanbanStore(boardPath);
