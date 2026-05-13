@@ -33,7 +33,7 @@ You need one Slack app per Ethos bot. The same workspace can host many apps; eac
 
 1. Open the [Slack API dashboard](https://api.slack.com/apps) → **Create New App** → **From an app manifest**.
 2. Pick the workspace.
-3. Paste the manifest below. Replace `<DISPLAY-NAME>` with what you want users to see (e.g. `Researcher`, `Eng Coordinator`).
+3. Paste the manifest below. Replace `<DISPLAY-NAME>` with what you want users to see (e.g. `Researcher`, `Eng Coordinator`), and `<WEB-UI-DOMAIN>` with the host of your configured `webUiBaseUrl` (see [§9](#9-url-unfurling)) — e.g. `ethos.example.com`.
 
 ```yaml
 display_information:
@@ -46,6 +46,8 @@ features:
   bot_user:
     display_name: "<DISPLAY-NAME>"
     always_online: true
+  unfurl_domains:
+    - "<WEB-UI-DOMAIN>"
   slash_commands:
     - command: /ethos
       description: "Ethos commands (ask, personality, memory, kanban, channel-mode, help)"
@@ -85,7 +87,9 @@ settings:
   token_rotation_enabled: false
 ```
 
-> The `commands` block is what makes `/ethos` show up in Slack's command picker. The Socket Mode bit makes the bot dial out to Slack so you don't need a public webhook. The `app_home` block enables the **App Home** tab (see [§8](#8-app-home-tab)); the `app_home_opened` bot event is what lets the adapter publish the tab when a user opens it. The `links:read` / `links:write` scopes plus the `link_shared` bot event power **URL unfurling** (see [§9](#9-url-unfurling)).
+> The `commands` block is what makes `/ethos` show up in Slack's command picker. The Socket Mode bit makes the bot dial out to Slack so you don't need a public webhook. The `app_home` block enables the **App Home** tab (see [§8](#8-app-home-tab)); the `app_home_opened` bot event is what lets the adapter publish the tab when a user opens it. The `links:read` / `links:write` scopes plus the `link_shared` bot event power **URL unfurling** (see [§9](#9-url-unfurling)) — and `features.unfurl_domains` is what tells Slack *which* domains to emit `link_shared` for. Without the domain registered, Slack never dispatches the event and unfurling is a silent no-op, so `<WEB-UI-DOMAIN>` must be the bare host of your `webUiBaseUrl` (no scheme, no path; Slack allows at most 5 domains). It's operator-specific, so unlike the rest of the manifest it can't be a shared constant. If you have no web UI deployment yet, drop the `unfurl_domains` block — you can add it on the next manifest edit + reinstall.
+
+> Editing `unfurl_domains` (like any scope or event change) requires re-installing the app to the workspace before it takes effect — see [§7.4](#74-required-scopes--quick-check).
 
 ### 1.2 Generate tokens
 
@@ -268,6 +272,7 @@ If the bot misbehaves silently, check that the manifest in [§1.1](#11-create-th
 | Channel messages don't reach the bot | `message.channels` (or `message.groups`) not in `event_subscriptions.bot_events` |
 | `member_joined_channel` greeting never fires | event not subscribed, or bot lacks `chat:write` for that channel |
 | App Home tab is blank or shows "Sending messages to this app has been turned off" | `app_home.home_tab_enabled` missing from the manifest, or `app_home_opened` not in `event_subscriptions.bot_events` |
+| Pasting an Ethos web UI link never unfurls (no error anywhere) | `features.unfurl_domains` missing the host of `webUiBaseUrl`, or `link_shared` not in `event_subscriptions.bot_events`, or `webUiBaseUrl` unset in Ethos config — see [§9](#9-url-unfurling) |
 | Block Kit renders but plaintext fallback shows mrkdwn | this is intentional — Slack strips client-side for notifications |
 
 ---
@@ -302,6 +307,10 @@ When someone pastes an Ethos web UI URL into Slack, the adapter unfurls it into 
 | `/memory` | A snippet of recent `MEMORY.md` entries for the bound scope. |
 
 It uses the `link_shared` event and `chat.unfurl`; the manifest in [§1.1](#11-create-the-app) carries the `links:read` / `links:write` scopes and the `link_shared` bot event.
+
+**Slack only emits `link_shared` for domains the app explicitly registers.** The `features.unfurl_domains` entry in the manifest ([§1.1](#11-create-the-app)) must list the host of your `webUiBaseUrl` — if it doesn't, Slack never dispatches the event and the handler never fires, with no error to tell you why. That's why `<WEB-UI-DOMAIN>` is operator-specific and can't be hardcoded in the shared manifest: it has to match wherever *your* Ethos web UI lives.
+
+Registration is by **domain** only — Slack can't filter by path. The adapter is stricter: a URL is only recognized when its origin *and* path prefix match the adapter's configured `webUiBaseUrl` (the `matchEthosUrl` matcher checks both). So for a path-prefixed deployment (e.g. `https://example.com/ethos`), you register the bare domain `example.com` with Slack, and the adapter still rejects any URL under `example.com` that isn't beneath the `/ethos` prefix.
 
 Unfurling is **scoped to the bot's own workspace**. A URL is only recognized when its origin *and* path prefix match the adapter's configured `webUiBaseUrl` — a link to another deployment's web UI is ignored entirely, so one workspace's bot can never unfurl another's session or ticket.
 
