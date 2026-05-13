@@ -26,6 +26,14 @@ export interface InboundMessage {
    */
   messageId?: string;
   /**
+   * Set to `true` by adapters when this message is a re-delivery of a
+   * previously-sent message that the user edited on the platform. The
+   * gateway uses this to bypass inbound dedup (same `messageId`, different
+   * content) and — when the original message is still within the adapter's
+   * edit window — to abort the in-flight turn and re-issue.
+   */
+  isEdit?: boolean;
+  /**
    * Stable identifier of the bot this message arrived through, when the
    * adapter is bound to a specific bot via multi-bot routing. The Gateway
    * uses this as part of the lane key (`${platform}:${botKey}:${chatId}`)
@@ -41,8 +49,9 @@ export interface InboundMessage {
    *
    * Leave undefined for top-level / unsplit conversations — the Gateway
    * routes those to an unthreaded lane scoped by `(platform, botKey,
-   * chatId)`. Adapters with no sub-chat concept (Telegram, Discord DMs,
-   * Email) always leave it undefined.
+   * chatId)`. Adapters with no sub-chat concept (Discord DMs, Email)
+   * always leave it undefined. Telegram sets it for forum-mode topics
+   * (message_thread_id > 1); the General topic (id 1) maps to undefined.
    *
    * Contract: a stable, opaque identifier scoped within `(platform,
    * botKey, chatId)`. The Gateway treats it opaquely — no parsing, no

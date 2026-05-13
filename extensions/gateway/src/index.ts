@@ -490,9 +490,11 @@ export class Gateway {
     // Drop duplicates BEFORE any work — billing-relevant. See OpenClaw #71761
     // (channel messages injected twice → 2× cost). Use the resolved botKey
     // (message.botKey or the synthesized default) so multi-bot routing
-    // doesn't accidentally cross-dedupe.
+    // doesn't accidentally cross-dedupe. Edited messages (`isEdit: true`)
+    // bypass dedup because they intentionally re-use the same `messageId`
+    // with different content.
     const dedupBotKey = message.botKey ?? this.defaultBotKey ?? '';
-    if (this.isDuplicate(message, dedupBotKey)) return;
+    if (!message.isEdit && this.isDuplicate(message, dedupBotKey)) return;
 
     // --- Clarify correlator: short-circuit force-reply + `/cancel` ---
     // Runs BEFORE the safety filter's mention gate so an approved sender's

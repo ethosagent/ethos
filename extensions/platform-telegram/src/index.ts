@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type {
+  Attachment,
   DeliveryResult,
   InboundMessage,
   OutboundMessage,
@@ -124,6 +125,147 @@ export async function reflowChunks(
 }
 
 // ---------------------------------------------------------------------------
+// Media helpers — detect + download inbound file attachments
+// ---------------------------------------------------------------------------
+
+/** Maximum file size in bytes that we'll download into memory. */
+const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
+
+interface MediaDescriptor {
+  fileId: string;
+  type: Attachment['type'];
+  mimeType: string;
+  filename?: string;
+  fileSize?: number;
+}
+
+/** Map Telegram media type placeholders for captionless messages. */
+const MEDIA_PLACEHOLDER: Record<Attachment['type'], string> = {
+  image: '(attached image)',
+  file: '(attached file)',
+  audio: '(attached audio)',
+  video: '(attached video)',
+};
+
+/**
+ * Extract media descriptors from a Telegram message object.
+ * Checks photo, document, voice, audio, video, animation, sticker in priority order.
+ * Returns an empty array when the message has no media.
+ */
+function extractMedia(msg: Record<string, unknown>): MediaDescriptor[] {
+  const results: MediaDescriptor[] = [];
+
+  // photo → array of PhotoSize; pick the last (highest resolution)
+  if (Array.isArray(msg.photo) && msg.photo.length > 0) {
+    const largest = msg.photo[msg.photo.length - 1] as Record<string, unknown>;
+    results.push({
+      fileId: String(largest.file_id),
+      type: 'image',
+      mimeType: 'image/jpeg',
+      fileSize: typeof largest.file_size === 'number' ? largest.file_size : undefined,
+    });
+  }
+
+  // document
+  if (msg.document && typeof msg.document === 'object') {
+    const doc = msg.document as Record<string, unknown>;
+    results.push({
+      fileId: String(doc.file_id),
+      type: 'file',
+      mimeType: typeof doc.mime_type === 'string' ? doc.mime_type : 'application/octet-stream',
+      filename: typeof doc.file_name === 'string' ? doc.file_name : undefined,
+      fileSize: typeof doc.file_size === 'number' ? doc.file_size : undefined,
+    });
+  }
+
+  // voice
+  if (msg.voice && typeof msg.voice === 'object') {
+    const v = msg.voice as Record<string, unknown>;
+    results.push({
+      fileId: String(v.file_id),
+      type: 'audio',
+      mimeType: typeof v.mime_type === 'string' ? v.mime_type : 'audio/ogg',
+      fileSize: typeof v.file_size === 'number' ? v.file_size : undefined,
+    });
+  }
+
+  // audio
+  if (msg.audio && typeof msg.audio === 'object') {
+    const a = msg.audio as Record<string, unknown>;
+    results.push({
+      fileId: String(a.file_id),
+      type: 'audio',
+      mimeType: typeof a.mime_type === 'string' ? a.mime_type : 'audio/mpeg',
+      filename: typeof a.file_name === 'string' ? a.file_name : undefined,
+      fileSize: typeof a.file_size === 'number' ? a.file_size : undefined,
+    });
+  }
+
+  // video
+  if (msg.video && typeof msg.video === 'object') {
+    const v = msg.video as Record<string, unknown>;
+    results.push({
+      fileId: String(v.file_id),
+      type: 'video',
+      mimeType: typeof v.mime_type === 'string' ? v.mime_type : 'video/mp4',
+      fileSize: typeof v.file_size === 'number' ? v.file_size : undefined,
+    });
+  }
+
+  // animation (GIF)
+  if (msg.animation && typeof msg.animation === 'object') {
+    const a = msg.animation as Record<string, unknown>;
+    results.push({
+      fileId: String(a.file_id),
+      type: 'video',
+      mimeType: typeof a.mime_type === 'string' ? a.mime_type : 'video/mp4',
+      fileSize: typeof a.file_size === 'number' ? a.file_size : undefined,
+    });
+  }
+
+  // sticker
+  if (msg.sticker && typeof msg.sticker === 'object') {
+    const s = msg.sticker as Record<string, unknown>;
+    results.push({
+      fileId: String(s.file_id),
+      type: 'image',
+      mimeType: 'image/webp',
+      fileSize: typeof s.file_size === 'number' ? s.file_size : undefined,
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Download a single file from the Telegram Bot API. Returns a Buffer on
+ * success, null on failure. Best-effort — callers handle the null case.
+ */
+async function downloadTelegramFile(
+  botApi: { getFile: (fileId: string) => Promise<{ file_path?: string; file_size?: number }> },
+  token: string,
+  descriptor: MediaDescriptor,
+): Promise<{ data: Buffer; fileSize: number } | null> {
+  try {
+    const fileInfo = await botApi.getFile(descriptor.fileId);
+    const fileSize = fileInfo.file_size ?? descriptor.fileSize ?? 0;
+
+    if (fileSize > MAX_FILE_SIZE) return null;
+
+    if (!fileInfo.file_path) return null;
+
+    const url = `https://api.telegram.org/file/bot${token}/${fileInfo.file_path}`;
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+
+    const arrayBuf = await resp.arrayBuffer();
+    return { data: Buffer.from(arrayBuf), fileSize };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // TelegramAdapter
 // ---------------------------------------------------------------------------
 
@@ -157,6 +299,12 @@ export interface TelegramAdapterConfig {
    * Cleared when the agent's reply lands. Default '👀'.
    */
   receiptReaction?: string;
+  /**
+   * How long after the original message an edit is still accepted for
+   * re-processing (milliseconds). Edits outside this window are ignored.
+   * Default 60 000 (60 seconds).
+   */
+  editWindowMs?: number;
 }
 
 export class TelegramAdapter implements PlatformAdapter {
@@ -181,6 +329,9 @@ export class TelegramAdapter implements PlatformAdapter {
   private readonly chunkMapMaxEntries = 1024;
   /** Tracks inbound message ids per chat for reaction clearing on reply. */
   private readonly pendingReactions = new Map<string, number>();
+  private readonly editWindowMs: number;
+  /** Anti-thrashing debounce timers for edited_message, keyed by messageId. */
+  private readonly editDebounce = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(config: TelegramAdapterConfig) {
     this.bot = new Bot(config.token);
@@ -188,6 +339,7 @@ export class TelegramAdapter implements PlatformAdapter {
     this.botKey = config.botKey ?? deriveDefaultBotKey(config.token);
     this.identity = config.identity;
     this.receiptReaction = config.receiptReaction ?? '👀';
+    this.editWindowMs = config.editWindowMs ?? 60_000;
     // Multi-bot logs disambiguate by including the botKey. Single-bot
     // deployments pass 'default' (or omit and let the derived hash
     // stand in) and see `telegram:<key>` — the shape is identical, the
@@ -227,20 +379,33 @@ export class TelegramAdapter implements PlatformAdapter {
     this.bot.on('message', (ctx) => {
       if (!this.messageHandler) return;
 
-      const text = ctx.message.text ?? ctx.message.caption ?? '';
-      if (!text) return;
+      const rawMsg = ctx.message as unknown as Record<string, unknown>;
+      const media = extractMedia(rawMsg);
+      const caption = (ctx.message.text ?? ctx.message.caption ?? '') as string;
+      const hasMedia = media.length > 0;
+
+      // A message with neither text nor media is unprocessable.
+      if (!caption && !hasMedia) return;
+
+      // For captionless media messages, use a type-appropriate placeholder.
+      const text = caption || (hasMedia ? MEDIA_PLACEHOLDER[media[0].type] : '');
 
       const chatId = ctx.chat.id;
       const messageId = ctx.message.message_id;
 
+      // --- Forum-mode topic isolation (3.2) ---
+      const rawThreadId =
+        typeof rawMsg.message_thread_id === 'number' ? rawMsg.message_thread_id : undefined;
+      // General topic (id 1) is treated as no thread for backward compat.
+      const threadId =
+        rawThreadId !== undefined && rawThreadId !== 1 ? String(rawThreadId) : undefined;
+
       // --- Reaction on receipt (best-effort, non-blocking) ---
-      // The emoji field is typed as a strict union by grammy; we cast to the
-      // union's first member so the call compiles. Invalid emoji strings are
-      // rejected by the Telegram API and the .catch() swallows the error.
       const reaction = [{ type: 'emoji' as const, emoji: this.receiptReaction as TelegramEmoji }];
       this.bot.api.setMessageReaction(chatId, messageId, reaction).catch(() => {});
       this.pendingReactions.set(String(chatId), messageId);
 
+      // --- Build initial message (attachments filled async below) ---
       const msg: InboundMessage = {
         platform: 'telegram',
         botKey: this.botKey,
@@ -251,6 +416,7 @@ export class TelegramAdapter implements PlatformAdapter {
         isDm: ctx.chat.type === 'private',
         isGroupMention: ctx.message.text?.includes(`@${ctx.me.username}`) ?? false,
         messageId: String(messageId),
+        threadId,
         replyToId: ctx.message.reply_to_message
           ? String(ctx.message.reply_to_message.message_id)
           : undefined,
@@ -260,7 +426,83 @@ export class TelegramAdapter implements PlatformAdapter {
         raw: ctx,
       };
 
-      this.messageHandler(msg);
+      if (!hasMedia) {
+        this.messageHandler(msg);
+        return;
+      }
+
+      // Async media download — best-effort. If download fails, forward
+      // the message without attachments so the agent still sees the caption.
+      void this.downloadAndAttach(msg, media).then((enriched) => {
+        if (this.messageHandler) this.messageHandler(enriched);
+      });
+    });
+
+    // --- edited_message handler (3.3) ---
+    this.bot.on('edited_message', (ctx) => {
+      if (!this.messageHandler) return;
+
+      const rawMsg = ctx.editedMessage as unknown as Record<string, unknown>;
+      const caption = (rawMsg.text ?? rawMsg.caption ?? '') as string;
+      const media = extractMedia(rawMsg);
+      const hasMedia = media.length > 0;
+
+      if (!caption && !hasMedia) return;
+
+      const text = caption || (hasMedia ? MEDIA_PLACEHOLDER[media[0].type] : '');
+
+      const date = typeof rawMsg.date === 'number' ? rawMsg.date : 0;
+      const editDate = typeof rawMsg.edit_date === 'number' ? rawMsg.edit_date : 0;
+      const ageMs = (editDate - date) * 1000;
+
+      // Reject edits outside the configured window.
+      if (ageMs > this.editWindowMs) return;
+
+      const chatId = ctx.chat.id;
+      const messageId = typeof rawMsg.message_id === 'number' ? rawMsg.message_id : 0;
+
+      // Forum-mode thread isolation
+      const rawThreadId =
+        typeof rawMsg.message_thread_id === 'number' ? rawMsg.message_thread_id : undefined;
+      const threadId =
+        rawThreadId !== undefined && rawThreadId !== 1 ? String(rawThreadId) : undefined;
+
+      const msg: InboundMessage = {
+        platform: 'telegram',
+        botKey: this.botKey,
+        chatId: String(chatId),
+        userId: ctx.from ? String(ctx.from.id) : undefined,
+        username: ctx.from?.username,
+        text,
+        isEdit: true,
+        isDm: ctx.chat.type === 'private',
+        isGroupMention: false,
+        messageId: String(messageId),
+        threadId,
+        replyToId: rawMsg.reply_to_message
+          ? String((rawMsg.reply_to_message as Record<string, unknown>).message_id)
+          : undefined,
+        raw: ctx,
+      };
+
+      // Anti-thrashing: debounce rapid edits for the same messageId (200ms).
+      const debounceKey = `${chatId}:${messageId}`;
+      const existing = this.editDebounce.get(debounceKey);
+      if (existing) clearTimeout(existing);
+
+      this.editDebounce.set(
+        debounceKey,
+        setTimeout(() => {
+          this.editDebounce.delete(debounceKey);
+          if (!hasMedia) {
+            this.messageHandler?.(msg);
+            return;
+          }
+          void this.downloadAndAttach(msg, media).then((enriched) => {
+            this.messageHandler?.(enriched);
+          });
+        }, 200),
+      );
     });
 
     // Inline-keyboard taps arrive as `callback_query` updates — a separate
@@ -316,12 +558,62 @@ export class TelegramAdapter implements PlatformAdapter {
   }
 
   // ---------------------------------------------------------------------------
+  // Media download helper
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Download media descriptors and attach them to the message. Best-effort:
+   * files that exceed the size cap get a text note appended; files that fail
+   * to download are silently skipped. Returns the enriched message.
+   */
+  private async downloadAndAttach(
+    msg: InboundMessage,
+    media: MediaDescriptor[],
+  ): Promise<InboundMessage> {
+    const attachments: Attachment[] = [];
+    let textSuffix = '';
+
+    for (const m of media) {
+      // Early size check from the descriptor (before getFile round-trip)
+      if (m.fileSize !== undefined && m.fileSize > MAX_FILE_SIZE) {
+        textSuffix += '\n(File too large — 25 MB limit)';
+        continue;
+      }
+
+      const result = await downloadTelegramFile(this.bot.api, this.bot.token, m);
+
+      if (result === null) {
+        // getFile told us it's too large, or network failure
+        if (m.fileSize !== undefined && m.fileSize > MAX_FILE_SIZE) {
+          textSuffix += '\n(File too large — 25 MB limit)';
+        }
+        continue;
+      }
+
+      attachments.push({
+        type: m.type,
+        mimeType: m.mimeType,
+        data: result.data,
+        filename: m.filename,
+      });
+    }
+
+    const enrichedText = textSuffix ? `${msg.text}${textSuffix}` : msg.text;
+    return {
+      ...msg,
+      text: enrichedText,
+      attachments: attachments.length > 0 ? attachments : undefined,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // Sending
   // ---------------------------------------------------------------------------
 
   async send(chatId: string, message: OutboundMessage): Promise<DeliveryResult> {
     const chunks = chunkText(message.text, this.maxMessageLength);
     const ids: string[] = [];
+    const threadOpt = message.threadId ? { message_thread_id: Number(message.threadId) } : {};
 
     for (const chunk of chunks) {
       try {
@@ -330,12 +622,15 @@ export class TelegramAdapter implements PlatformAdapter {
           reply_parameters: message.replyToId
             ? { message_id: Number(message.replyToId) }
             : undefined,
+          ...threadOpt,
         });
         ids.push(String(sent.message_id));
       } catch (err) {
         // Markdown parse errors — retry as plain text
         if (String(err).includes('parse')) {
-          const sent = await this.bot.api.sendMessage(Number(chatId), chunk).catch(() => null);
+          const sent = await this.bot.api
+            .sendMessage(Number(chatId), chunk, threadOpt)
+            .catch(() => null);
           if (sent) ids.push(String(sent.message_id));
         } else {
           return {
