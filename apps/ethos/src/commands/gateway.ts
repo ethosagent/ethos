@@ -453,10 +453,9 @@ async function buildGatewayBots(config: EthosConfig): Promise<GatewayBotConfig[]
 
 // `import type` only — erased at runtime, so `@ethosagent/platform-slack`
 // stays lazily loaded via `loadAdapterModule` and the layering is unchanged.
-// This replaces what was a structural duck-typed interface: the approval
-// contract now has a single named owner (`ApprovalCapableAdapter` in the
-// Slack package) that `SlackAdapter` deliberately implements.
-type ApprovalCapableAdapter = import('@ethosagent/platform-slack').ApprovalCapableAdapter;
+// The approval contract lives in `@ethosagent/types` so any adapter
+// (Slack, Telegram, future) can implement it without cross-platform imports.
+type ApprovalCapableAdapter = import('@ethosagent/types').ApprovalCapableAdapter;
 
 /**
  * Runtime narrowing for the approval surface. The adapter list is typed as
@@ -502,8 +501,8 @@ function wireApprovalFlow(
   bots: GatewayBotConfig[],
   adapters: PlatformAdapter[],
 ): void {
-  const slackAdapters = adapters.filter(isApprovalCapable);
-  if (slackAdapters.length === 0) return;
+  const approvalAdapters = adapters.filter(isApprovalCapable);
+  if (approvalAdapters.length === 0) return;
 
   const coordinator = new ApprovalCoordinator();
   const isDangerous = createDangerPredicate();
@@ -546,9 +545,9 @@ function wireApprovalFlow(
   // adapter. Registering it on a non-Slack-served loop would be dead weight;
   // the `resolveApprovalTarget` pass-through above handles the case where a
   // Slack-served loop also fields non-Slack turns.
-  const slackBotKeys = new Set(slackAdapters.map((a) => a.botKey));
+  const approvalBotKeys = new Set(approvalAdapters.map((a) => a.botKey));
   for (const bot of bots) {
-    if (!slackBotKeys.has(bot.botKey)) continue;
+    if (!approvalBotKeys.has(bot.botKey)) continue;
     bot.loop.hooks.registerModifying(
       'before_tool_call',
       createSlackApprovalHook({ coordinator, isDangerous, resolveApprovalTarget }),
@@ -660,7 +659,7 @@ function wireApprovalFlow(
   // Button click → resolve the approval through the coordinator. The card
   // update is handled by the `onResolved` handler above, so a click and a
   // timeout converge on the same render path.
-  for (const adapter of slackAdapters) {
+  for (const adapter of approvalAdapters) {
     adapter.onApprovalDecision((event) => {
       if (event.decision === 'allow') {
         void coordinator.approve(event.approvalId, event.decidedBy);

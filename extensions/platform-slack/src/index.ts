@@ -6,7 +6,8 @@
 // keeping `index.ts` a thin barrel makes it easy to refactor internals
 // without rippling through every consumer.
 
-export type { ApprovalCapableAdapter, SlackAdapterConfig } from './adapter';
+export type { ApprovalCapableAdapter, ApprovalDecisionEvent } from '@ethosagent/types';
+export type { SlackAdapterConfig } from './adapter';
 export { SlackAdapter } from './adapter';
 export {
   APPROVE_ACTION_ID,
@@ -36,4 +37,3 @@ export type {
 } from './events/links';
 export type { SessionReader } from './home/handlers';
 export { buildHomeView, type HomeViewInput, type SlackHomeView } from './home/view';
-export type { ApprovalDecisionEvent } from './interactions/actions';

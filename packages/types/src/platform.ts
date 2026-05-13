@@ -106,3 +106,47 @@ export interface PlatformAdapter {
   onMessage(handler: (message: InboundMessage) => void): void;
   health(): Promise<{ ok: boolean; latencyMs?: number }>;
 }
+
+// ---------------------------------------------------------------------------
+// Approval surface — interactive tool-call approval
+//
+// A PlatformAdapter extension for adapters that can post interactive
+// approve/deny cards. The gateway narrows to this interface via duck-typing
+// (`isApprovalCapable`) so it can drive the approval flow on any platform
+// that implements it. Originally lived in @ethosagent/platform-slack; moved
+// here so multiple adapters can implement it without cross-platform imports.
+// ---------------------------------------------------------------------------
+
+/** The decision event forwarded by an adapter when a user clicks Approve or Deny. */
+export interface ApprovalDecisionEvent {
+  approvalId: string;
+  decision: 'allow' | 'deny';
+  decidedBy: string;
+  channelId: string;
+  messageTs: string;
+}
+
+/**
+ * Interactive tool-approval surface. Adapters that can post inline approve/deny
+ * cards implement this so the gateway's approval coordinator can drive them.
+ */
+export interface ApprovalCapableAdapter {
+  /** Stable per-bot identifier — matches a gateway `botKey`. */
+  readonly botKey: string;
+  postApprovalCard(input: {
+    chatId: string;
+    threadId?: string;
+    approvalId: string;
+    toolName: string;
+    reason: string | null;
+    args: unknown;
+  }): Promise<{ messageTs: string } | { error: string }>;
+  updateApprovalCard(input: {
+    chatId: string;
+    messageTs: string;
+    toolName: string;
+    decision: 'allow' | 'deny';
+    decidedBy: string;
+  }): Promise<DeliveryResult>;
+  onApprovalDecision(handler: (event: ApprovalDecisionEvent) => void): void;
+}

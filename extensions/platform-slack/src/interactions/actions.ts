@@ -6,7 +6,10 @@
 // unit-testable without standing up a real Slack app — same pattern as
 // `commands/index.ts`.
 
+import type { ApprovalDecisionEvent } from '@ethosagent/types';
 import { APPROVE_ACTION_ID, DENY_ACTION_ID } from '../blocks/approval';
+
+export type { ApprovalDecisionEvent } from '@ethosagent/types';
 
 /** The interaction fields the adapter extracts from a Bolt `block_actions`. */
 export interface ApprovalActionPayload {
@@ -19,15 +22,6 @@ export interface ApprovalActionPayload {
   /** Channel the approval card lives in. */
   channelId: string;
   /** `ts` of the approval card message — used for the in-place `chat.update`. */
-  messageTs: string;
-}
-
-/** The decision the handler forwards once it's parsed a valid click. */
-export interface ApprovalDecisionEvent {
-  approvalId: string;
-  decision: 'allow' | 'deny';
-  decidedBy: string;
-  channelId: string;
   messageTs: string;
 }
 

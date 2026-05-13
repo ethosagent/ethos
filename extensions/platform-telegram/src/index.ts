@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import type {
+  ApprovalCapableAdapter,
+  ApprovalDecisionEvent,
   Attachment,
   DeliveryResult,
   InboundMessage,
@@ -7,6 +9,7 @@ import type {
   PlatformAdapter,
 } from '@ethosagent/types';
 import { Bot, InlineKeyboard } from 'grammy';
+import { chunkHash, markdownToTelegramHtml } from './format';
 
 // ---------------------------------------------------------------------------
 // Clarify interactive shapes — used by the Telegram clarify surface to post
@@ -305,9 +308,14 @@ export interface TelegramAdapterConfig {
    * Default 60 000 (60 seconds).
    */
   editWindowMs?: number;
+  /**
+   * Outbound parse mode. `'html'` (default) translates agent Markdown to
+   * Telegram HTML. `'plain'` skips translation and HTML escaping entirely.
+   */
+  parseMode?: 'html' | 'plain';
 }
 
-export class TelegramAdapter implements PlatformAdapter {
+export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   readonly id: string;
   readonly displayName = 'Telegram';
   readonly canSendTyping = true;
@@ -321,9 +329,12 @@ export class TelegramAdapter implements PlatformAdapter {
   private readonly dropPendingUpdates: boolean;
   private readonly identity: TelegramAdapterConfig['identity'];
   private readonly receiptReaction: string;
+  private readonly parseMode: 'html' | 'plain';
   private messageHandler?: (message: InboundMessage) => void;
   /** Registered by the clarify surface to receive inline-keyboard taps. */
   private callbackQueryHandler?: (event: CallbackQueryEvent) => void;
+  /** Approval-card button-click handler, wired by the approval coordinator. */
+  private approvalDecisionHandler?: (event: ApprovalDecisionEvent) => void;
   /** Chunk-id ledger so editMessage can re-flow multi-chunk responses. */
   private readonly chunkMap = new Map<string, string[]>();
   private readonly chunkMapMaxEntries = 1024;
@@ -340,6 +351,7 @@ export class TelegramAdapter implements PlatformAdapter {
     this.identity = config.identity;
     this.receiptReaction = config.receiptReaction ?? '👀';
     this.editWindowMs = config.editWindowMs ?? 60_000;
+    this.parseMode = config.parseMode ?? 'html';
     // Multi-bot logs disambiguate by including the botKey. Single-bot
     // deployments pass 'default' (or omit and let the derived hash
     // stand in) and see `telegram:<key>` — the shape is identical, the
@@ -506,18 +518,21 @@ export class TelegramAdapter implements PlatformAdapter {
     });
 
     // Inline-keyboard taps arrive as `callback_query` updates — a separate
-    // channel from `message`. The clarify surface registers via
-    // `onCallbackQuery()`; we surface only the minimal envelope it needs so
-    // it doesn't depend on grammy directly.
+    // channel from `message`. Route by callback_data prefix:
+    //   clr:*         → clarify surface (via callbackQueryHandler)
+    //   approve:*     → approval handler
+    //   deny:*        → approval handler
+    //   (other)       → clarify surface (backward compat)
     this.bot.on('callback_query:data', (ctx) => {
-      if (!this.callbackQueryHandler) return;
       const cq = ctx.callbackQuery;
       const messageId = cq.message?.message_id;
       const chatId = cq.message?.chat?.id;
       if (messageId === undefined || chatId === undefined) return;
-      this.callbackQueryHandler({
+
+      const data = cq.data;
+      const event: CallbackQueryEvent = {
         queryId: cq.id,
-        data: cq.data,
+        data,
         chatId: String(chatId),
         messageId: String(messageId),
         userId: cq.from ? String(cq.from.id) : undefined,
@@ -525,7 +540,39 @@ export class TelegramAdapter implements PlatformAdapter {
         answer: async (text) => {
           await ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {});
         },
-      });
+      };
+
+      // Route approval callbacks to the approval handler.
+      if (data.startsWith('approve:') || data.startsWith('deny:')) {
+        if (this.approvalDecisionHandler) {
+          const isApprove = data.startsWith('approve:');
+          const approvalId = data.slice(isApprove ? 8 : 5);
+          if (approvalId) {
+            const decision: 'allow' | 'deny' = isApprove ? 'allow' : 'deny';
+            const decisionEvent: ApprovalDecisionEvent = {
+              approvalId,
+              decision,
+              decidedBy: event.username ?? event.userId ?? 'unknown',
+              channelId: event.chatId,
+              messageTs: event.messageId,
+            };
+            void Promise.resolve()
+              .then(() => this.approvalDecisionHandler?.(decisionEvent))
+              .then(() => event.answer())
+              .catch(() => event.answer());
+          } else {
+            void event.answer();
+          }
+        } else {
+          void event.answer('No approval handler registered.');
+        }
+        return;
+      }
+
+      // Everything else → clarify surface.
+      if (this.callbackQueryHandler) {
+        this.callbackQueryHandler(event);
+      }
     });
 
     // Non-blocking: bot.start() runs the polling loop in the background.
@@ -611,14 +658,20 @@ export class TelegramAdapter implements PlatformAdapter {
   // ---------------------------------------------------------------------------
 
   async send(chatId: string, message: OutboundMessage): Promise<DeliveryResult> {
+    const useHtml = this.parseMode === 'html';
     const chunks = chunkText(message.text, this.maxMessageLength);
+    const totalChunks = chunks.length;
     const ids: string[] = [];
     const threadOpt = message.threadId ? { message_thread_id: Number(message.threadId) } : {};
 
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      const raw = chunks[i];
+      const body = useHtml ? markdownToTelegramHtml(raw) : raw;
+      const parseOpt = useHtml ? 'HTML' : undefined;
+
       try {
-        const sent = await this.bot.api.sendMessage(Number(chatId), chunk, {
-          parse_mode: message.parseMode === 'html' ? 'HTML' : 'Markdown',
+        const sent = await this.bot.api.sendMessage(Number(chatId), body, {
+          ...(parseOpt ? { parse_mode: parseOpt } : {}),
           reply_parameters: message.replyToId
             ? { message_id: Number(message.replyToId) }
             : undefined,
@@ -626,10 +679,13 @@ export class TelegramAdapter implements PlatformAdapter {
         });
         ids.push(String(sent.message_id));
       } catch (err) {
-        // Markdown parse errors — retry as plain text
+        // HTML/Markdown parse errors — retry as plain text (observable fallback)
         if (String(err).includes('parse')) {
+          console.warn(
+            `[telegram] HTML parse fallback chunk=${i + 1}/${totalChunks} hash=${chunkHash(raw)}`,
+          );
           const sent = await this.bot.api
-            .sendMessage(Number(chatId), chunk, threadOpt)
+            .sendMessage(Number(chatId), raw, threadOpt)
             .catch(() => null);
           if (sent) ids.push(String(sent.message_id));
         } else {
@@ -657,20 +713,23 @@ export class TelegramAdapter implements PlatformAdapter {
   }
 
   async editMessage(chatId: string, messageId: string, text: string): Promise<DeliveryResult> {
+    const useHtml = this.parseMode === 'html';
     try {
       const newChunks = chunkText(text, this.maxMessageLength);
       const existingIds = this.chunkMap.get(messageId) ?? [messageId];
 
       const updatedIds = await reflowChunks(newChunks, existingIds, {
         edit: async (id, chunk) => {
-          await this.bot.api.editMessageText(Number(chatId), Number(id), chunk, {
-            parse_mode: 'Markdown',
+          const body = useHtml ? markdownToTelegramHtml(chunk) : chunk;
+          await this.bot.api.editMessageText(Number(chatId), Number(id), body, {
+            ...(useHtml ? { parse_mode: 'HTML' as const } : {}),
           });
           return id;
         },
         append: async (chunk) => {
-          const sent = await this.bot.api.sendMessage(Number(chatId), chunk, {
-            parse_mode: 'Markdown',
+          const body = useHtml ? markdownToTelegramHtml(chunk) : chunk;
+          const sent = await this.bot.api.sendMessage(Number(chatId), body, {
+            ...(useHtml ? { parse_mode: 'HTML' as const } : {}),
           });
           return String(sent.message_id);
         },
@@ -772,5 +831,69 @@ export class TelegramAdapter implements PlatformAdapter {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tool-approval cards (ApprovalCapableAdapter)
+  //
+  // Mirrors the Slack adapter's approval surface. The gateway's approval
+  // coordinator drives these methods: post a card when a dangerous tool call
+  // is gated, update it in place once the user decides. The adapter never
+  // imports the gateway — the coordinator hands it a plain chatId/threadId.
+  // ---------------------------------------------------------------------------
+
+  /** Post the pending approval card with Approve/Deny inline buttons.
+   *  Returns the message id (as `messageTs` for interface compat with Slack). */
+  async postApprovalCard(input: {
+    chatId: string;
+    threadId?: string;
+    approvalId: string;
+    toolName: string;
+    reason: string | null;
+    args: unknown;
+  }): Promise<{ messageTs: string } | { error: string }> {
+    const reasonLine = input.reason ? `\nReason: ${input.reason}` : '';
+    const argsLine = input.args ? `\nArgs: ${JSON.stringify(input.args)}` : '';
+    const text = `Tool approval required: ${input.toolName}${reasonLine}${argsLine}`;
+
+    const rows: InlineButton[][] = [
+      [
+        { label: '✅ Approve', data: `approve:${input.approvalId}` },
+        { label: '❌ Deny', data: `deny:${input.approvalId}` },
+      ],
+    ];
+    const threadOpt = input.threadId ? { message_thread_id: Number(input.threadId) } : {};
+
+    try {
+      const kb = new InlineKeyboard();
+      for (const btn of rows[0]) kb.text(btn.label, btn.data);
+      const sent = await this.bot.api.sendMessage(Number(input.chatId), text, {
+        reply_markup: kb,
+        ...threadOpt,
+      });
+      return { messageTs: String(sent.message_id) };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Replace a posted approval card with its resolved state — removes the
+   *  buttons so the card can't be clicked twice. */
+  async updateApprovalCard(input: {
+    chatId: string;
+    messageTs: string;
+    toolName: string;
+    decision: 'allow' | 'deny';
+    decidedBy: string;
+  }): Promise<DeliveryResult> {
+    const verb = input.decision === 'allow' ? 'Approved' : 'Denied';
+    const text = `Tool: ${input.toolName} — ${verb} by @${input.decidedBy}`;
+    return this.editToPlainText(input.chatId, input.messageTs, text);
+  }
+
+  /** Register the approval-card button-click handler. The coordinator wires
+   *  this to its approve() / deny() calls. */
+  onApprovalDecision(handler: (event: ApprovalDecisionEvent) => void): void {
+    this.approvalDecisionHandler = handler;
   }
 }

@@ -7,6 +7,8 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type {
+  ApprovalCapableAdapter,
+  ApprovalDecisionEvent,
   DeliveryResult,
   InboundMessage,
   OutboundMessage,
@@ -46,11 +48,7 @@ import {
 import { registerMemberEvents } from './events/members';
 import { registerMessageEvents } from './events/messages';
 import { type ClarifyHomeReader, registerHomeEvents, type SessionReader } from './home/handlers';
-import {
-  type ApprovalActionPayload,
-  type ApprovalDecisionEvent,
-  handleApprovalAction,
-} from './interactions/actions';
+import { type ApprovalActionPayload, handleApprovalAction } from './interactions/actions';
 import {
   type ClarifyActionEvent,
   type ClarifyActionPayload,
@@ -146,35 +144,6 @@ export interface SlackAdapterConfig {
   kanbanUnfurl?: KanbanUnfurlReader;
   /** Optional lookup-by-id reader for unfurling `<base>/personalities/<id>` URLs. */
   personalityUnfurl?: PersonalityUnfurlReader;
-}
-
-/**
- * The interactive tool-approval surface — a `PlatformAdapter` extension that
- * only Slack implements today. Declared as an explicit, named contract so
- * the gateway can depend on it via `import type` (erased at runtime, so the
- * adapter stays lazily loaded) instead of duck-typing the method shape. A
- * future approval-capable adapter implements this deliberately rather than
- * matching by coincidence.
- */
-export interface ApprovalCapableAdapter {
-  /** Stable per-bot identifier — matches a gateway `botKey`. */
-  readonly botKey: string;
-  postApprovalCard(input: {
-    chatId: string;
-    threadId?: string;
-    approvalId: string;
-    toolName: string;
-    reason: string | null;
-    args: unknown;
-  }): Promise<{ messageTs: string } | { error: string }>;
-  updateApprovalCard(input: {
-    chatId: string;
-    messageTs: string;
-    toolName: string;
-    decision: 'allow' | 'deny';
-    decidedBy: string;
-  }): Promise<DeliveryResult>;
-  onApprovalDecision(handler: (event: ApprovalDecisionEvent) => void): void;
 }
 
 export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
