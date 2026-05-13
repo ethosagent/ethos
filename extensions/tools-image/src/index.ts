@@ -28,10 +28,17 @@ function parseSize(size: string): { width: number; height: number } {
   return { width: w ?? 1024, height: h ?? 1024 };
 }
 
-const defaultProviders: ImageGenProvider[] = [
-  new OpenAIDalleProvider(),
-  new ReplicateFluxProvider(),
-];
+function buildDefaultProviders(opts?: {
+  openaiApiKey?: string;
+  replicateApiToken?: string;
+}): ImageGenProvider[] {
+  const oaiKey = opts?.openaiApiKey;
+  const repKey = opts?.replicateApiToken;
+  return [
+    new OpenAIDalleProvider(oaiKey ? { apiKey: oaiKey } : undefined),
+    new ReplicateFluxProvider(repKey ? { apiKey: repKey } : undefined),
+  ];
+}
 
 let fallbackStorage: FsStorage | undefined;
 function storageOf(ctx: ToolContext): Storage {
@@ -126,7 +133,8 @@ function buildImageGenerateTool(providers: ImageGenProvider[]): Tool {
         };
       }
 
-      const outPath = output_path ?? join(dataDir, 'generated', `${Date.now()}.png`);
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const outPath = output_path ?? join(dataDir, 'generated', `${stamp}.png`);
 
       let buffer: Buffer;
       let cost_usd: number;
@@ -220,9 +228,18 @@ function buildImageGenerateTool(providers: ImageGenProvider[]): Tool {
   };
 }
 
-export const imageGenerateTool: Tool = buildImageGenerateTool(defaultProviders);
+export const imageGenerateTool: Tool = buildImageGenerateTool(buildDefaultProviders());
 
-export function createImageTools(opts?: { providers?: ImageGenProvider[] }): Tool[] {
-  const providers = opts?.providers ?? defaultProviders;
+export function createImageTools(opts?: {
+  providers?: ImageGenProvider[];
+  openaiApiKey?: string;
+  replicateApiToken?: string;
+}): Tool[] {
+  const providers =
+    opts?.providers ??
+    buildDefaultProviders({
+      openaiApiKey: opts?.openaiApiKey,
+      replicateApiToken: opts?.replicateApiToken,
+    });
   return [buildImageGenerateTool(providers)];
 }

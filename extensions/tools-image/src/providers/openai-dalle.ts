@@ -9,9 +9,14 @@ const COST: Record<string, Record<string, number>> = {
 
 export class OpenAIDalleProvider implements ImageGenProvider {
   readonly name = 'openai-dalle';
+  private readonly apiKey: string | undefined;
+
+  constructor(opts?: { apiKey?: string }) {
+    this.apiKey = opts?.apiKey;
+  }
 
   isAvailable(): boolean {
-    return Boolean(process.env.OPENAI_API_KEY);
+    return Boolean(this.apiKey || process.env.OPENAI_API_KEY);
   }
 
   supports(size: string, _quality: string): boolean {
@@ -19,10 +24,11 @@ export class OpenAIDalleProvider implements ImageGenProvider {
   }
 
   async generate(opts: GenerateOpts): Promise<GenerateResult> {
+    const key = this.apiKey || process.env.OPENAI_API_KEY;
     // biome-ignore lint/suspicious/noExplicitAny: openai is an optional dep — no static types at this call site
     const mod = await import('openai' as any);
     const OpenAI = mod.default ?? mod;
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const client = new OpenAI({ apiKey: key });
 
     const response = await client.images.generate({
       model: 'dall-e-3',

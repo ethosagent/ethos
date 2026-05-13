@@ -84,7 +84,7 @@ When `provider` is `auto` (default) or omitted, the tool picks the first availab
 - **No local Stable Diffusion.** Only cloud providers (OpenAI, Replicate) are supported.
 - **No auto-retry on policy rejection.** A rejected prompt fails immediately; the agent must rephrase.
 - **PNG only.** Output is always PNG regardless of the output_path extension.
-- **Replicate polling.** Flux uses HTTP polling with a 120 s timeout; long generations may hit this ceiling.
+- **Replicate polling.** Flux uses HTTP polling with a 30 s timeout; long generations may hit this ceiling.
 
 ## Files
 

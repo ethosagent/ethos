@@ -233,6 +233,43 @@ describe('image_generate integration', () => {
   });
 
   // -----------------------------------------------------------------------
+  // 5. cost_usd is surfaced on ToolResult for budget-cap enforcement
+  //    Budget-cap enforcement is tested in packages/core/__tests__/agent-loop.test.ts
+  //    (describe('budget cap (budgetCapUsd)')). This test verifies the tool
+  //    sets cost_usd so the AgentLoop gate at agent-loop.ts:367 can read it.
+  // -----------------------------------------------------------------------
+
+  it('ToolResult.cost_usd is set on a successful generation for budgetCapUsd enforcement', async () => {
+    const mockProvider = makeMockProvider('openai-dalle', true, 0.12);
+    const registry = new DefaultToolRegistry();
+    const tools = createImageTools({ providers: [mockProvider] });
+    registry.registerAll(tools);
+
+    const results = await registry.executeParallel(
+      [
+        {
+          toolCallId: 'budget-1',
+          name: 'image_generate',
+          args: { prompt: 'budget cap test', output_path: outPath },
+        },
+      ],
+      makeCtx(),
+      ['image_generate'],
+    );
+
+    expect(results).toHaveLength(1);
+    const r = results[0]?.result;
+    expect(r).toBeDefined();
+    expect(r?.ok).toBe(true);
+    if (r?.ok) {
+      // cost_usd must be present and match the provider's reported cost
+      // so AgentLoop can accumulate it against budgetCapUsd
+      expect(r.cost_usd).toBe(0.12);
+      expect(typeof r.cost_usd).toBe('number');
+    }
+  });
+
+  // -----------------------------------------------------------------------
   // Registration shape
   // -----------------------------------------------------------------------
 

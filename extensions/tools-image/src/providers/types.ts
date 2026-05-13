@@ -1,7 +1,7 @@
 export interface GenerateOpts {
   prompt: string;
   size: string;
-  quality: string;
+  quality: 'standard' | 'hd';
   onProgress?: (msg: string) => void;
 }
 
@@ -12,7 +12,7 @@ export interface GenerateResult {
 }
 
 export interface ImageGenProvider {
-  name: string;
+  readonly name: string;
   generate(opts: GenerateOpts): Promise<GenerateResult>;
   supports(size: string, quality: string): boolean;
   isAvailable(): boolean;

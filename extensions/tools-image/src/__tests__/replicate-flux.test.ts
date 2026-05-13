@@ -165,7 +165,7 @@ describe('ReplicateFluxProvider', () => {
     });
 
     // Use a very short timeout to make test fast
-    // We need to override the timeout — the provider uses POLL_TIMEOUT_MS = 120_000
+    // We need to override the timeout — the provider uses POLL_TIMEOUT_MS = 30_000
     // We'll test that the timeout mechanism works by mocking Date.now
     const realDateNow = Date.now;
     let callCount = 0;
@@ -173,7 +173,7 @@ describe('ReplicateFluxProvider', () => {
       callCount++;
       // First call sets deadline, subsequent calls exceed it
       if (callCount <= 1) return 1000;
-      return 200_000; // well past the 120s timeout
+      return 50_000; // well past the 30s timeout
     });
 
     await expect(
