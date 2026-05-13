@@ -85,7 +85,8 @@
       "@ethosagent/safety-injection": ["./packages/safety/injection/src"],
       "@ethosagent/safety-network": ["./packages/safety/network/src"],
       "@ethosagent/safety-scanner": ["./packages/safety/scanner/src"],
-      "@ethosagent/safety-watcher": ["./packages/safety/watcher/src"]
+      "@ethosagent/safety-watcher": ["./packages/safety/watcher/src"],
+      "@ethosagent/example-mission-control": ["./examples/mission-control/src"]
     }
   },
   "include": [

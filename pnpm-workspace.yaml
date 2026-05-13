@@ -4,4 +4,5 @@ packages:
   - "extensions/*"
   - "apps/*"
   - "examples/plugins/*"
+  - "examples/mission-control"
   - "docs"
