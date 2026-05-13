@@ -1,4 +1,4 @@
-import type { ImageGenProvider } from './types';
+import type { GenerateOpts, GenerateResult, ImageGenProvider } from './types';
 
 const REPLICATE_API_BASE = 'https://api.replicate.com/v1';
 const FLUX_MODEL = 'black-forest-labs/flux-schnell';
@@ -23,11 +23,7 @@ export class ReplicateFluxProvider implements ImageGenProvider {
     return true;
   }
 
-  async generate(opts: {
-    prompt: string;
-    size: string;
-    quality: string;
-  }): Promise<{ buffer: Buffer; cost_usd: number }> {
+  async generate(opts: GenerateOpts): Promise<GenerateResult> {
     const token = process.env.REPLICATE_API_TOKEN;
     if (!token) throw new Error('REPLICATE_API_TOKEN not set');
 
@@ -58,9 +54,13 @@ export class ReplicateFluxProvider implements ImageGenProvider {
       urls?: { get: string };
     };
 
-    const deadline = Date.now() + POLL_TIMEOUT_MS;
+    const startTime = Date.now();
+    const deadline = startTime + POLL_TIMEOUT_MS;
     while (prediction.status !== 'succeeded' && prediction.status !== 'failed') {
       if (Date.now() > deadline) throw new Error('Replicate prediction timed out');
+
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      opts.onProgress?.(`generating (Flux polling: ${elapsed}s)`);
 
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
 
@@ -90,6 +90,10 @@ export class ReplicateFluxProvider implements ImageGenProvider {
     if (!imgRes.ok) throw new Error(`Failed to download image: ${imgRes.status}`);
 
     const arrayBuffer = await imgRes.arrayBuffer();
-    return { buffer: Buffer.from(arrayBuffer), cost_usd: COST_PER_IMAGE };
+    return {
+      buffer: Buffer.from(arrayBuffer),
+      cost_usd: COST_PER_IMAGE,
+      prompt_used: opts.prompt,
+    };
   }
 }

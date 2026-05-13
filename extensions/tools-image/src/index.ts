@@ -41,7 +41,7 @@ export const imageGenerateTool: Tool = {
   description:
     'Generate an image from a text prompt using DALL-E 3 or Replicate Flux. Returns the file path, dimensions, cost, and provider used. Requires OPENAI_API_KEY or REPLICATE_API_TOKEN.',
   toolset: 'image',
-  maxResultChars: 2_000,
+  maxResultChars: 1_000,
   isAvailable() {
     return providers.some((p) => p.isAvailable());
   },
@@ -116,7 +116,7 @@ export const imageGenerateTool: Tool = {
     if (!provider.supports(size, quality)) {
       return {
         ok: false,
-        error: `Provider "${provider.name}" does not support size="${size}" quality="${quality}"`,
+        error: `INVALID_SIZE_FOR_PROVIDER: provider "${provider.name}" does not support size="${size}" quality="${quality}"`,
         code: 'input_invalid',
       };
     }
@@ -125,16 +125,56 @@ export const imageGenerateTool: Tool = {
 
     let buffer: Buffer;
     let cost_usd: number;
+    let prompt_used: string;
     try {
-      ({ buffer, cost_usd } = await provider.generate({ prompt, size, quality }));
+      const onProgress = (msg: string) =>
+        ctx.emit({
+          type: 'progress',
+          toolName: 'image_generate',
+          message: msg,
+          audience: 'user',
+        });
+      ({ buffer, cost_usd, prompt_used } = await provider.generate({
+        prompt,
+        size,
+        quality,
+        onProgress,
+      }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      const lower = msg.toLowerCase();
       if (
-        msg.toLowerCase().includes('content policy') ||
-        msg.toLowerCase().includes('safety') ||
-        msg.toLowerCase().includes('rejected')
+        lower.includes('content policy') ||
+        lower.includes('safety') ||
+        lower.includes('rejected')
       ) {
         return { ok: false, error: `IMAGE_GEN_REJECTED: ${msg}`, code: 'execution_failed' };
+      }
+      if (
+        lower.includes('rate limit') ||
+        lower.includes('429') ||
+        lower.includes('too many requests')
+      ) {
+        return {
+          ok: false,
+          error: `IMAGE_GEN_QUOTA_EXCEEDED: ${msg}`,
+          code: 'execution_failed',
+        };
+      }
+      if (
+        lower.includes('5xx') ||
+        lower.includes('server error') ||
+        lower.includes('500') ||
+        lower.includes('503') ||
+        lower.includes('unavailable') ||
+        lower.includes('timeout') ||
+        lower.includes('timed out')
+      ) {
+        return {
+          ok: false,
+          error: `IMAGE_GEN_PROVIDER_UNAVAILABLE: ${msg}`,
+          code: 'execution_failed',
+        };
       }
       return { ok: false, error: msg, code: 'execution_failed' };
     }
@@ -149,7 +189,7 @@ export const imageGenerateTool: Tool = {
       if (err instanceof BoundaryError) {
         return {
           ok: false,
-          error: `Filesystem boundary: ${err.kind} of "${err.path}" is outside this personality's fs_reach allowlist.`,
+          error: `OUTPUT_PATH_DENIED: ${err.kind} of "${err.path}" is outside this personality's fs_reach allowlist.`,
           code: 'execution_failed',
         };
       }
@@ -169,6 +209,7 @@ export const imageGenerateTool: Tool = {
         dimensions: { width, height },
         cost_usd,
         provider: provider.name,
+        prompt_used,
       }),
     };
   },
