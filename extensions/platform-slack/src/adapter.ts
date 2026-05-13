@@ -30,6 +30,12 @@ import {
 } from './commands';
 import type { Binding, ChannelMode } from './config';
 import { DEFAULT_CHANNEL_MODE } from './config';
+import {
+  type KanbanUnfurlReader,
+  type PersonalityUnfurlReader,
+  registerLinkEvents,
+  type SessionUnfurlReader,
+} from './events/links';
 import { registerMemberEvents } from './events/members';
 import { registerMessageEvents } from './events/messages';
 import { registerHomeEvents, type SessionReader } from './home/handlers';
@@ -112,8 +118,17 @@ export interface SlackAdapterConfig {
   session?: SessionReader;
   /** Ethos web UI origin (no trailing slash). When set, App Home session rows
    *  deep-link to `<base>/sessions/<id>`; when absent they render as plain
-   *  text. There is no web-UI base URL elsewhere in the adapter config today. */
+   *  text. Also gates `link_shared` URL unfurling — without it the adapter
+   *  can't recognize Ethos URLs and the `link_shared` handler is not
+   *  registered. There is no web-UI base URL elsewhere in the adapter config
+   *  today. */
   webUiBaseUrl?: string;
+  /** Optional lookup-by-id reader for unfurling `<base>/sessions/<id>` URLs. */
+  sessionUnfurl?: SessionUnfurlReader;
+  /** Optional lookup-by-id reader for unfurling `<base>/kanban/<ticket>` URLs. */
+  kanbanUnfurl?: KanbanUnfurlReader;
+  /** Optional lookup-by-id reader for unfurling `<base>/personalities/<id>` URLs. */
+  personalityUnfurl?: PersonalityUnfurlReader;
 }
 
 /**
@@ -165,6 +180,9 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   private readonly memory: MemoryReader | undefined;
   private readonly kanban: KanbanReader | undefined;
   private readonly session: SessionReader | undefined;
+  private readonly sessionUnfurl: SessionUnfurlReader | undefined;
+  private readonly kanbanUnfurl: KanbanUnfurlReader | undefined;
+  private readonly personalityUnfurl: PersonalityUnfurlReader | undefined;
   private readonly webUiBaseUrl: string | undefined;
   private readonly storage: Storage | undefined;
   private messageHandler?: (message: InboundMessage) => void;
@@ -196,6 +214,9 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     this.memory = config.memory;
     this.kanban = config.kanban;
     this.session = config.session;
+    this.sessionUnfurl = config.sessionUnfurl;
+    this.kanbanUnfurl = config.kanbanUnfurl;
+    this.personalityUnfurl = config.personalityUnfurl;
     this.webUiBaseUrl = normalizeWebUiBaseUrl(config.webUiBaseUrl);
 
     if (config.storage) {
@@ -347,6 +368,19 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       memory: this.memory,
       kanban: this.kanban,
       webUiBaseUrl: this.webUiBaseUrl,
+    });
+
+    // `link_shared` URL unfurling. `registerLinkEvents` is a no-op when
+    // `webUiBaseUrl` is unset (it can't recognize an Ethos URL without a base
+    // to match against); the lookup readers are optional and each URL type
+    // degrades to a skipped unfurl when its reader is absent.
+    registerLinkEvents(this.app, {
+      webUiBaseUrl: this.webUiBaseUrl,
+      session: this.sessionUnfurl,
+      kanban: this.kanbanUnfurl,
+      personality: this.personalityUnfurl,
+      memory: this.memory,
+      memoryScope: this.binding?.name,
     });
 
     await this.app.start();

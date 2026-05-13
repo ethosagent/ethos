@@ -20,7 +20,8 @@ This README covers everything an operator needs to install the Slack app, config
 | Block Kit responses for slash commands | shipped (Phase 1) |
 | Tool-call approval cards (interactive buttons) | upcoming (Phase 2) |
 | **App Home tab** (sessions / kanban / memory / channel-mode dashboard) | shipped (Phase 3) |
-| URL unfurling, inbound files | upcoming (Phase 4) |
+| **URL unfurling** for Ethos web UI deep links | shipped (Phase 4) |
+| Inbound file handling (images, text, PDFs) | upcoming |
 
 ---
 
@@ -61,6 +62,8 @@ oauth_config:
       - im:history
       - im:read
       - im:write
+      - links:read
+      - links:write
       - mpim:history
       - mpim:read
       - users:read
@@ -69,6 +72,7 @@ settings:
     bot_events:
       - app_home_opened
       - app_mention
+      - link_shared
       - member_joined_channel
       - message.channels
       - message.groups
@@ -81,7 +85,7 @@ settings:
   token_rotation_enabled: false
 ```
 
-> The `commands` block is what makes `/ethos` show up in Slack's command picker. The Socket Mode bit makes the bot dial out to Slack so you don't need a public webhook. The `app_home` block enables the **App Home** tab (see [§8](#8-app-home-tab)); the `app_home_opened` bot event is what lets the adapter publish the tab when a user opens it.
+> The `commands` block is what makes `/ethos` show up in Slack's command picker. The Socket Mode bit makes the bot dial out to Slack so you don't need a public webhook. The `app_home` block enables the **App Home** tab (see [§8](#8-app-home-tab)); the `app_home_opened` bot event is what lets the adapter publish the tab when a user opens it. The `links:read` / `links:write` scopes plus the `link_shared` bot event power **URL unfurling** (see [§9](#9-url-unfurling)).
 
 ### 1.2 Generate tokens
 
@@ -99,9 +103,10 @@ These will be required once the corresponding phases land — request them now i
 
 | Scope | Phase | Why |
 |---|---|---|
-| `files:read` | 4 | Read files Ethos receives. |
-| `links:read`, `links:write` | 4 | URL unfurling for Ethos web UI deep links. |
+| `files:read` | future | Read files Ethos receives (inbound file handling). |
 | `reactions:read`, `reactions:write` | future | Reaction-driven actions (👀 / ✅ / 📋). |
+
+`links:read` / `links:write` are already in the manifest in [§1.1](#11-create-the-app) — they power [URL unfurling](#9-url-unfurling).
 
 ---
 
@@ -285,6 +290,28 @@ To enable it, the Slack app manifest needs the `app_home.home_tab_enabled` featu
 
 ---
 
+## 9 · URL unfurling
+
+When someone pastes an Ethos web UI URL into Slack, the adapter unfurls it into a rich Block Kit card — title plus a short summary — instead of leaving a bare link.
+
+| URL pattern | Unfurl shows |
+|---|---|
+| `/sessions/<id>` | Session id, the personality it ran under, last activity. |
+| `/kanban/<ticket>` | Ticket title, status, assignee, parent goal. |
+| `/personalities/<id>` | Personality name, description, memory scope. |
+| `/memory` | A snippet of recent `MEMORY.md` entries for the bound scope. |
+
+It uses the `link_shared` event and `chat.unfurl`; the manifest in [§1.1](#11-create-the-app) carries the `links:read` / `links:write` scopes and the `link_shared` bot event.
+
+Unfurling is **scoped to the bot's own workspace**. A URL is only recognized when its origin *and* path prefix match the adapter's configured `webUiBaseUrl` — a link to another deployment's web UI is ignored entirely, so one workspace's bot can never unfurl another's session or ticket.
+
+It **degrades gracefully**, the same way the `/ethos` commands and the App Home tab do:
+
+- No `webUiBaseUrl` configured → the adapter can't recognize Ethos URLs, so the `link_shared` handler isn't registered at all.
+- A URL type whose lookup reader isn't wired (or whose id doesn't resolve) → that URL is skipped. An unfurl is all-or-nothing per URL: a blank card is worse than no card, so nothing is posted unless there's real data to show. *(Reader wiring lands in a follow-up, the same as the `/ethos memory` and `/ethos kanban` commands.)*
+
+---
+
 ## Internals
 
 ### Directory layout
@@ -298,7 +325,8 @@ src/
 │
 ├── events/
 │   ├── messages.ts          # message + app_mention → triage → onEnvelope
-│   └── members.ts           # member_joined_channel → greeting
+│   ├── members.ts           # member_joined_channel → greeting
+│   └── links.ts             # link_shared → matchEthosUrl → chat.unfurl
 │
 ├── routing/
 │   ├── triage.ts            # raw event → InboundMessage envelope; channel-mode + threadId
@@ -321,6 +349,7 @@ src/
 │   ├── kanban.ts
 │   ├── session.ts
 │   ├── approval.ts
+│   ├── unfurl.ts            # link_shared URL unfurl cards
 │   └── channel-mode.ts
 │
 ├── home/                    # App Home tab — pure view builder + Bolt registrar
@@ -349,7 +378,8 @@ src/
 | `SlackAdapterConfig.memory` | `./adapter` | Optional — wires `/ethos memory show|add` and the App Home memory section when supplied. |
 | `SlackAdapterConfig.kanban` | `./adapter` | Optional — wires `/ethos kanban list` and the App Home kanban section for team bots. |
 | `SlackAdapterConfig.session` | `./adapter` | Optional — wires the App Home "Recent sessions" section. |
-| `SlackAdapterConfig.webUiBaseUrl` | `./adapter` | Optional — Ethos web UI origin; when set, App Home session rows deep-link to `<base>/sessions/<id>`. |
+| `SlackAdapterConfig.webUiBaseUrl` | `./adapter` | Optional — Ethos web UI origin; when set, App Home session rows deep-link to `<base>/sessions/<id>` and `link_shared` URL unfurling is enabled. |
+| `SlackAdapterConfig.sessionUnfurl` / `kanbanUnfurl` / `personalityUnfurl` | `./adapter` | Optional lookup-by-id readers — wire the session / kanban / personality URL unfurls. The memory URL unfurl reuses `SlackAdapterConfig.memory`. |
 
 ### Why pure Block Kit builders
 
@@ -381,7 +411,7 @@ The adapter calls `client.auth.test()` once during `start()` to resolve the bot'
 | `src/adapter.ts` | The `PlatformAdapter` implementation. |
 | `src/chunking.ts` | `chunkText` + `reflowChunks` (3000-char Slack message limit). |
 | `src/config.ts` | Zod schemas for adapter-internal shapes. |
-| `src/events/` | Bolt event handlers — message, app_mention, member_joined_channel. |
+| `src/events/` | Bolt event handlers — message, app_mention, member_joined_channel, link_shared. |
 | `src/routing/` | Triage + channel-mode pure decisions. |
 | `src/commands/` | Slash subcommands + dispatcher. |
 | `src/blocks/` | Block Kit builders. |
@@ -395,8 +425,8 @@ The adapter calls `client.auth.test()` once during `start()` to resolve the bot'
 
 ## Future phases
 
-This README documents Phases 0–3. The remaining phase from `plan/phases/slack_solidify.md`:
+This README documents Phases 0–4. Still upcoming:
 
-- **Phase 4** — URL unfurling for Ethos web UI deep links + inbound file handling (images, text, PDFs).
+- **Inbound file handling** — accepting images, text, and PDFs that users send the bot. Deferred until the codebase has a multimodal LLM pipeline to feed them into.
 
-When it lands, the manifest in [§1.1](#11-create-the-app) needs the additional scopes listed in [§1.3](#13-future-scopes) and the `link_shared` / `file_shared` events.
+When it lands, the manifest in [§1.1](#11-create-the-app) needs the `files:read` scope listed in [§1.3](#13-future-scopes) and the `file_shared` event.
