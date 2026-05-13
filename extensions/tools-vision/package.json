@@ -1,0 +1,25 @@
+{
+  "name": "@ethosagent/tools-vision",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts",
+      "production": "./dist/index.js"
+    },
+    "./input-resolver": {
+      "import": "./src/input-resolver.ts",
+      "types": "./src/input-resolver.ts",
+      "production": "./dist/input-resolver.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/input-resolver.ts --format esm --dts"
+  },
+  "dependencies": {
+    "@ethosagent/safety-network": "workspace:*",
+    "@ethosagent/types": "workspace:*"
+  }
+}

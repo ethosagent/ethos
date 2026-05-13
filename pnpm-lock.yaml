@@ -956,6 +956,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/tools-vision:
+    dependencies:
+      '@ethosagent/safety-network':
+        specifier: workspace:*
+        version: link:../../packages/safety/network
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/tools-web:
     dependencies:
       '@ethosagent/safety-network':

@@ -110,24 +110,42 @@ export function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam
 }
 
 function toAnthropicBlock(block: MessageContent): Anthropic.ContentBlockParam {
-  if (block.type === 'text') {
-    return { type: 'text', text: block.text };
+  switch (block.type) {
+    case 'text':
+      return { type: 'text', text: block.text };
+    case 'tool_use':
+      return {
+        type: 'tool_use',
+        id: block.id,
+        name: block.name,
+        input: block.input as Record<string, unknown>,
+      };
+    case 'tool_result':
+      return {
+        type: 'tool_result',
+        tool_use_id: block.tool_use_id,
+        content: block.content,
+        is_error: block.is_error,
+      };
+    case 'image':
+      return {
+        type: 'image',
+        source: { type: 'base64', media_type: block.mediaType, data: block.data },
+      };
+    case 'document':
+      // Anthropic PDF support (Base64PDFSource)
+      return {
+        type: 'document',
+        source: { type: 'base64', media_type: block.mediaType, data: block.data },
+      };
+    default: {
+      // Exhaustiveness guard — adding a new MessageContent variant without
+      // teaching this mapper about it is a compile error, not silent fall-
+      // through. The `never` cast surfaces the gap at the source.
+      const _exhaustive: never = block;
+      throw new Error(`unhandled MessageContent type: ${JSON.stringify(_exhaustive)}`);
+    }
   }
-  if (block.type === 'tool_use') {
-    return {
-      type: 'tool_use',
-      id: block.id,
-      name: block.name,
-      input: block.input as Record<string, unknown>,
-    };
-  }
-  // tool_result
-  return {
-    type: 'tool_result',
-    tool_use_id: block.tool_use_id,
-    content: block.content,
-    is_error: block.is_error,
-  };
 }
 
 // context_compression F2 — place `cache_control` markers on message-history

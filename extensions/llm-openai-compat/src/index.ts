@@ -71,7 +71,8 @@ function isGeminiEndpoint(baseUrl: string): boolean {
 // Message conversion: our Message[] → OpenAI ChatCompletionMessageParam[]
 // ---------------------------------------------------------------------------
 
-function toOpenAIMessages(
+// Exported for adapter tests — pure function over Message[] with no side effects.
+export function toOpenAIMessages(
   messages: Message[],
   system?: string,
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
@@ -92,17 +93,43 @@ function toOpenAIMessages(
       // Collect tool_result blocks as tool messages
       const toolResults: Array<{ tool_call_id: string; content: string }> = [];
       const textParts: string[] = [];
+      // Vision / document parts (OpenAI Chat Completions multipart content).
+      const mediaParts: OpenAI.Chat.ChatCompletionContentPart[] = [];
 
       for (const block of msg.content) {
         if (block.type === 'tool_result') {
           toolResults.push({ tool_call_id: block.tool_use_id, content: block.content });
         } else if (block.type === 'text') {
           textParts.push(block.text);
+        } else if (block.type === 'image') {
+          // OpenAI Chat Completions vision: data: URI inside image_url.
+          mediaParts.push({
+            type: 'image_url',
+            image_url: { url: `data:${block.mediaType};base64,${block.data}` },
+          });
+        } else if (block.type === 'document') {
+          // OpenAI Chat Completions PDF: `file` content part with base64
+          // file_data + filename. Documented for the OpenAI API itself; some
+          // OpenAI-compat backends (Ollama, older Gemini surfaces) reject it
+          // — the capability table in vision_analyze (P2) gates by provider.
+          mediaParts.push({
+            type: 'file',
+            file: {
+              file_data: `data:${block.mediaType};base64,${block.data}`,
+              filename: 'document.pdf',
+            },
+          });
         }
       }
 
-      // User text content
-      if (textParts.length > 0) {
+      // User content: if any media is present we MUST emit a multipart array
+      // because OpenAI rejects an image_url block inside a plain string.
+      if (mediaParts.length > 0) {
+        const parts: OpenAI.Chat.ChatCompletionContentPart[] = [];
+        for (const t of textParts) parts.push({ type: 'text', text: t });
+        for (const m of mediaParts) parts.push(m);
+        result.push({ role: 'user', content: parts });
+      } else if (textParts.length > 0) {
         result.push({ role: 'user', content: textParts.join('\n') });
       }
 
