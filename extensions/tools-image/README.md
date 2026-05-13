@@ -1,18 +1,24 @@
 # @ethosagent/tools-image
 
-Image generation tool — generate images from text prompts using DALL-E 3 or Replicate Flux, with automatic provider selection and cost tracking.
+Text-to-image generation via DALL-E 3 or Replicate Flux, with automatic provider selection, cost tracking, and personality toolset gating.
 
 ## Why this exists
 
-Agents working on visual tasks (UI mockups, product images, presentation assets) shouldn't need to leave the conversation to generate images. This package brings image generation inline, writes the output to disk, and reports cost so `budgetCapUsd` accounts for it.
+| Without `image_generate` | With `image_generate` |
+|---|---|
+| Agent tries `terminal` + `curl` to hit image APIs | Structured tool with typed args and error codes |
+| No cost visibility — spend is invisible | `cost_usd` on every `ToolResult` feeds usage telemetry |
+| Prompt the LLM actually sent is unknown | `prompt_used` surfaces DALL-E's revised prompt |
+| Manual provider selection or hardcoded choice | Auto-pick prefers DALL-E when both keys are set |
+| File write can corrupt on partial failure | Atomic write via `Storage.writeAtomic` |
 
-## Tools provided
+## Tool provided
 
 | Tool name | Toolset | Purpose |
 |---|---|---|
-| `image_generate` | `image` | Generate a PNG from a text prompt; returns the file path and cost. |
+| `image_generate` | `image` | Generate a PNG image from a text prompt. |
 
-Factory: `createImageTools(): Tool[]`. No dependencies beyond the optional `openai` or `replicate` API keys.
+Factory: `createImageTools(): Tool[]`
 
 ## Tool reference
 
@@ -20,66 +26,77 @@ Factory: `createImageTools(): Tool[]`. No dependencies beyond the optional `open
 
 ```
 image_generate({
-  prompt: string,
-  output_path?: string,      // default: ~/.ethos/generated/<timestamp>.png
-  size?: '512x512' | '1024x1024' | '1024x1792' | '1792x1024',  // default 1024x1024
-  quality?: 'standard' | 'hd',  // default standard
-  provider?: 'openai-dalle' | 'replicate-flux' | 'auto',        // default auto
-}) → { path, dimensions: { width, height }, cost_usd, provider }
+  prompt: string,                          // required — text description
+  output_path?: string,                    // default: ~/.ethos/generated/<timestamp>.png
+  size?: '512x512' | '1024x1024' | '1024x1792' | '1792x1024',  // default: 1024x1024
+  quality?: 'standard' | 'hd',            // default: standard
+  provider?: 'openai-dalle' | 'replicate-flux' | 'auto',        // default: auto
+})
 ```
 
-**Error codes:**
-- `IMAGE_GEN_NO_PROVIDER` — neither `OPENAI_API_KEY` nor `REPLICATE_API_TOKEN` is set.
-- `IMAGE_GEN_REJECTED` — provider rejected the prompt (content policy / safety filter).
+Returns a JSON string:
 
-**Cost tracking:** `cost_usd` is returned both in the JSON `value` and as a top-level field on the `ToolResult`, so `AgentLoop` aggregates it into the session's running cost (visible via `/usage` and counted against `budgetCapUsd`).
+```json
+{
+  "path": "/home/user/.ethos/generated/1715600000000.png",
+  "dimensions": { "width": 1024, "height": 1024 },
+  "cost_usd": 0.04,
+  "provider": "openai-dalle",
+  "prompt_used": "A photorealistic cat sitting on a windowsill..."
+}
+```
 
-## Providers
+`ToolResult.cost_usd` is also set at the top level for usage telemetry. `maxResultChars: 1000`.
 
-### DALL-E 3 (`openai-dalle`)
+## Provider matrix
 
-Requires `OPENAI_API_KEY`. Uses `dall-e-3` with `response_format: 'b64_json'`.
+| Provider | Env var | Model | Sizes | Quality | Cost |
+|---|---|---|---|---|---|
+| `openai-dalle` | `OPENAI_API_KEY` | DALL-E 3 | 512x512, 1024x1024, 1024x1792, 1792x1024 | standard, hd (hd unavailable at 512x512) | See table below |
+| `replicate-flux` | `REPLICATE_API_TOKEN` | Flux Schnell | All sizes | standard only (quality param ignored) | $0.003/image |
 
-| Size | Quality | Cost |
+### DALL-E 3 pricing (USD per image)
+
+| Size | Standard | HD |
 |---|---|---|
-| 1024×1024 | standard | $0.040 |
-| 1024×1024 | hd | $0.080 |
-| 1024×1792 or 1792×1024 | standard | $0.080 |
-| 1024×1792 or 1792×1024 | hd | $0.120 |
+| 512x512 | $0.018 | N/A |
+| 1024x1024 | $0.04 | $0.08 |
+| 1024x1792 | $0.08 | $0.12 |
+| 1792x1024 | $0.08 | $0.12 |
 
-Does not support `512×512` + `hd`.
+### Auto-pick logic
 
-### Replicate Flux (`replicate-flux`)
+When `provider` is `auto` (default) or omitted, the tool picks the first available provider in order: `openai-dalle`, then `replicate-flux`. A provider is available when its env var is set.
 
-Requires `REPLICATE_API_TOKEN`. Uses `black-forest-labs/flux-schnell` via the Replicate REST API. Polls until `succeeded`. Flat cost: **$0.003** per generation regardless of size.
+## Error codes
 
-### Auto selection
+| Code | Meaning |
+|---|---|
+| `IMAGE_GEN_NO_PROVIDER` | Neither `OPENAI_API_KEY` nor `REPLICATE_API_TOKEN` is set. |
+| `INVALID_SIZE_FOR_PROVIDER` | The chosen provider does not support the requested size/quality combination. |
+| `IMAGE_GEN_REJECTED` | The provider refused the prompt (content policy / safety filter). |
+| `IMAGE_GEN_QUOTA_EXCEEDED` | Rate limit or quota hit (HTTP 429 or equivalent). |
+| `IMAGE_GEN_PROVIDER_UNAVAILABLE` | Provider returned a server error or timed out. |
+| `OUTPUT_PATH_DENIED` | The output path is outside the personality's `fs_reach` allowlist (ScopedStorage boundary). |
 
-`provider: 'auto'` (the default) picks the first available provider in order: DALL-E → Flux. If both keys are set, DALL-E is preferred. If neither is set, the tool returns `not_available`.
+## Known limitations
 
-## How it works
-
-1. Validates `size`, `quality`, and `provider` args.
-2. `pickProvider` selects the active backend based on `provider` arg + `isAvailable()` checks.
-3. `provider.supports(size, quality)` gates size/quality combos — DALL-E rejects `512x512 hd`.
-4. Provider `generate()` returns `{ buffer: Buffer, cost_usd: number }`.
-5. `mkdirSync` + `writeFile` saves the buffer to `output_path` (default `~/.ethos/generated/<ts>.png`).
-6. Returns path, dimensions, cost, and provider name.
-
-## Gotchas
-
-- The output directory (`~/.ethos/generated/`) is created automatically on first use.
-- Replicate Flux always returns a `1024×1024` image regardless of the `size` arg (the API ignores it). The `dimensions` in the result reflect the requested size, not the actual output.
-- `512×512` is only supported by DALL-E with `quality: 'standard'`. Requesting `512×512` with `provider: 'auto'` and only `REPLICATE_API_TOKEN` set will fail.
-- Cost is reported per-call only. There is no session-level image spend subtotal beyond what `/usage` shows.
+- **No editing, inpainting, or variations.** The tool generates from a text prompt only.
+- **No local Stable Diffusion.** Only cloud providers (OpenAI, Replicate) are supported.
+- **No auto-retry on policy rejection.** A rejected prompt fails immediately; the agent must rephrase.
+- **PNG only.** Output is always PNG regardless of the output_path extension.
+- **Replicate polling.** Flux uses HTTP polling with a 120 s timeout; long generations may hit this ceiling.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `src/index.ts` | `imageGenerateTool` definition, `createImageTools()`. |
-| `src/auto-pick.ts` | `pickProvider` — selects provider by name or auto-picks first available. |
-| `src/providers/types.ts` | `ImageGenProvider` interface: `{ name, generate, supports, isAvailable }`. |
-| `src/providers/openai-dalle.ts` | DALL-E 3 provider; dynamic `import('openai')` so the package doesn't hard-fail without the SDK. |
-| `src/providers/replicate-flux.ts` | Replicate Flux provider; pure `fetch`, no SDK dependency. |
-| `src/__tests__/image.test.ts` | Unit tests for provider selection, input validation, and output file integrity. |
+| `src/index.ts` | `imageGenerateTool` definition, `createImageTools()` factory, error classifier, storage wiring. |
+| `src/auto-pick.ts` | `pickProvider()` — auto-selection logic across available providers. |
+| `src/providers/types.ts` | `ImageGenProvider`, `GenerateOpts`, `GenerateResult` interfaces. |
+| `src/providers/openai-dalle.ts` | `OpenAIDalleProvider` — DALL-E 3 via the OpenAI SDK, b64_json response format. |
+| `src/providers/replicate-flux.ts` | `ReplicateFluxProvider` — Flux Schnell via Replicate HTTP API with polling. |
+| `src/__tests__/image.test.ts` | Unit tests for pickProvider, tool validation, size parsing, PNG output integrity. |
+| `src/__tests__/openai-dalle.test.ts` | Provider-specific tests for OpenAIDalleProvider. |
+| `src/__tests__/replicate-flux.test.ts` | Provider-specific tests for ReplicateFluxProvider. |
+| `src/__tests__/integration.test.ts` | Integration test using real `DefaultToolRegistry` with mock providers. |

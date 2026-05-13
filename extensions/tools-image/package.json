@@ -16,6 +16,9 @@
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/types": "workspace:*"
   },
+  "devDependencies": {
+    "@ethosagent/core": "workspace:*"
+  },
   "optionalDependencies": {
     "openai": "*"
   }

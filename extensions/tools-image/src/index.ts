@@ -162,7 +162,6 @@ export const imageGenerateTool: Tool = {
         };
       }
       if (
-        lower.includes('5xx') ||
         lower.includes('server error') ||
         lower.includes('500') ||
         lower.includes('503') ||
