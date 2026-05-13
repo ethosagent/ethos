@@ -25,6 +25,7 @@ import { runMcp } from './commands/mcp';
 import { runMeshCommand } from './commands/mesh';
 import { runPerf } from './commands/perf';
 import { runPlugin } from './commands/plugin';
+import { runProcessCommand } from './commands/process';
 import { runRetention } from './commands/retention';
 import { runSecurityAudit } from './commands/security-audit';
 import { runServe } from './commands/serve';
@@ -47,7 +48,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [setup | chat | sessions | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
+  'Usage: ethos [setup | chat | sessions | serve | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -472,6 +473,11 @@ try {
 
     case 'mesh': {
       await runMeshCommand(args[1] ?? 'list', args.slice(2));
+      break;
+    }
+
+    case 'process': {
+      await runProcessCommand(args[1] ?? 'list', args.slice(2));
       break;
     }
 

@@ -1,17 +1,23 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { BoundaryError, type Tool, type ToolResult } from '@ethosagent/types';
+import {
+  DEFAULT_LOG_LINES,
+  listProcesses,
+  readProcessLogs,
+  STOP_SUPPORTED_SIGNALS,
+  type StopSignal,
+  stopProcess,
+} from './operations';
 import {
   isAlive,
   loadRegistry,
   type ProcessEntry,
-  reapStale,
   saveRegistry,
   updateEntry,
   withRegistryLock,
 } from './registry';
-import { rotateLogIfNeeded, spawnDetached } from './spawn';
+import { spawnDetached } from './spawn';
 
 // Default per-personality concurrency cap. The plan calls the cap
 // "configurable" and floats a per-personality config field — but
@@ -19,24 +25,8 @@ import { rotateLogIfNeeded, spawnDetached } from './spawn';
 // `createProcessTools` accepts an optional `capMax` override for light
 // configurability; per-personality cap *values* are deliberately deferred.
 const DEFAULT_MAX_CONCURRENT = 8;
-const DEFAULT_LOG_LINES = 200;
 const DEFAULT_WAIT_TIMEOUT_S = 30;
 const WAIT_POLL_MS = 200;
-const SIGTERM_GRACE_MS = 5_000;
-const SUPPORTED_SIGNALS = ['SIGTERM', 'SIGKILL'] as const;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function readLastLines(path: string, n: number, prefix: string): string[] {
-  if (!existsSync(path)) return [];
-  const content = readFileSync(path, 'utf8');
-  const lines = content.split('\n');
-  // remove trailing empty line that split creates
-  if (lines[lines.length - 1] === '') lines.pop();
-  return lines.slice(-n).map((l) => `[${prefix}] ${l}`);
-}
 
 /**
  * Count running entries owned by `personalityId`. The cap applies per
@@ -178,53 +168,7 @@ function makeProcessList(dataDir: string): Tool {
     toolset: 'process',
     schema: { type: 'object', properties: {} },
     async execute(): Promise<ToolResult> {
-      const registry = await withRegistryLock(dataDir, () => {
-        let reg = loadRegistry(dataDir);
-
-        // liveness check and reap
-        let dirty = false;
-        for (const entry of Object.values(reg)) {
-          if (entry.status !== 'running') continue;
-          if (!isAlive(entry.pid)) {
-            reg[entry.id] = {
-              ...entry,
-              status: 'orphan',
-              lastTouchedAt: new Date().toISOString(),
-            };
-            dirty = true;
-          }
-        }
-
-        reg = reapStale(reg);
-
-        if (dirty) saveRegistry(dataDir, reg);
-        return reg;
-      });
-
-      // rotate-on-touch: cap oversized logs, but ONLY for processes that have
-      // reached a terminal state. A running detached child still holds an open
-      // fd to its log inode — renaming it would orphan the child's writes.
-      for (const entry of Object.values(registry)) {
-        if (entry.status === 'running') continue;
-        const procDir = join(dataDir, 'processes', entry.id);
-        rotateLogIfNeeded(join(procDir, 'stdout.log'));
-        rotateLogIfNeeded(join(procDir, 'stderr.log'));
-      }
-
-      const now = Date.now();
-      const items = Object.values(registry).map((e) => {
-        const durationMs = now - new Date(e.startedAt).getTime();
-        return {
-          id: e.id,
-          name: e.name,
-          pid: e.pid,
-          status: e.status,
-          started_at: e.startedAt,
-          ...(e.exitCode !== undefined ? { exit_code: e.exitCode } : {}),
-          duration_ms: durationMs,
-        };
-      });
-
+      const items = await listProcesses(dataDir);
       return { ok: true, value: JSON.stringify(items, null, 2) };
     },
   };
@@ -266,47 +210,16 @@ function makeProcessLogs(dataDir: string): Tool {
 
       if (!id) return { ok: false, error: 'id is required', code: 'input_invalid' };
 
-      const registry = loadRegistry(dataDir);
-      const entry = registry[id];
-      if (!entry) {
-        return {
-          ok: false,
-          error: `PROCESS_NOT_FOUND: process ${id} not found`,
-          code: 'execution_failed',
-        };
+      const result = await readProcessLogs(dataDir, id, { lines, stream });
+      if (!result.ok) {
+        return { ok: false, error: result.error, code: 'execution_failed' };
       }
 
-      const n = lines ?? DEFAULT_LOG_LINES;
-      const which = stream ?? 'both';
-      const dir = join(dataDir, 'processes', id);
-      const stdoutPath = join(dir, 'stdout.log');
-      const stderrPath = join(dir, 'stderr.log');
-
-      let combined: string[];
-      if (which === 'stdout') {
-        combined = readLastLines(stdoutPath, n, 'stdout');
-      } else if (which === 'stderr') {
-        combined = readLastLines(stderrPath, n, 'stderr');
-      } else {
-        // interleave: read both full files, combine, take last n
-        const out = readLastLines(stdoutPath, n, 'stdout');
-        const err = readLastLines(stderrPath, n, 'stderr');
-        combined = [...out, ...err].slice(-n);
-      }
-
-      // rotate-on-touch: only safe once the process is terminal (no live fd).
-      // Rotate after reading so this call still returns the tail; the
-      // oversized content is preserved in the .log.1 generation.
-      if (entry.status !== 'running') {
-        rotateLogIfNeeded(stdoutPath);
-        rotateLogIfNeeded(stderrPath);
-      }
-
-      if (combined.length === 0) {
+      if (result.lines.length === 0) {
         return { ok: true, value: '(no output)' };
       }
 
-      return { ok: true, value: combined.join('\n') };
+      return { ok: true, value: result.lines.join('\n') };
     },
   };
 }
@@ -334,15 +247,16 @@ function makeProcessStop(dataDir: string): Tool {
       required: ['id'],
     },
     async execute(args): Promise<ToolResult> {
-      const { id, signal } = args as { id: string; signal?: 'SIGTERM' | 'SIGKILL' };
+      const { id, signal } = args as { id: string; signal?: StopSignal };
 
       if (!id) return { ok: false, error: 'id is required', code: 'input_invalid' };
 
       const sig = signal ?? 'SIGTERM';
       // The JSON schema constrains `signal` to an enum, but be defensive: a
       // caller bypassing schema validation must not reach process.kill with
-      // an arbitrary signal name.
-      if (!SUPPORTED_SIGNALS.includes(sig)) {
+      // an arbitrary signal name. stopProcess re-checks, but classifying the
+      // error code as input_invalid (vs execution_failed) stays the tool's job.
+      if (!STOP_SUPPORTED_SIGNALS.includes(sig)) {
         return {
           ok: false,
           error: `SIGNAL_NOT_SUPPORTED: signal ${sig} is not supported (use SIGTERM or SIGKILL)`,
@@ -350,65 +264,16 @@ function makeProcessStop(dataDir: string): Tool {
         };
       }
 
-      const registry = loadRegistry(dataDir);
-      const entry = registry[id];
-      if (!entry) {
-        return {
-          ok: false,
-          error: `PROCESS_NOT_FOUND: process ${id} not found`,
-          code: 'execution_failed',
-        };
+      const result = await stopProcess(dataDir, id, sig);
+      if (!result.ok) {
+        return { ok: false, error: result.error, code: 'execution_failed' };
       }
 
-      if (entry.status !== 'running') {
-        return {
-          ok: true,
-          value: JSON.stringify({ stopped: false, exit_code: entry.exitCode }),
-        };
-      }
-
-      try {
-        process.kill(entry.pid, sig);
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code === 'ESRCH') {
-          await updateEntry(dataDir, id, { status: 'orphan' });
-          return { ok: true, value: JSON.stringify({ stopped: false }) };
-        }
-        return {
-          ok: false,
-          error: `SIGNAL_FAILED: could not send ${sig}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-          code: 'execution_failed',
-        };
-      }
-
-      // For SIGTERM, wait up to 5s for graceful exit then escalate to SIGKILL.
-      if (sig === 'SIGTERM') {
-        const deadline = Date.now() + SIGTERM_GRACE_MS;
-        while (Date.now() < deadline) {
-          await sleep(WAIT_POLL_MS);
-          if (!isAlive(entry.pid)) break;
-        }
-        if (isAlive(entry.pid)) {
-          try {
-            process.kill(entry.pid, 'SIGKILL');
-          } catch {
-            // ESRCH means it exited just before SIGKILL — fine
-          }
-        }
-      }
-
-      // Read exit_code if the spawn exit handler already recorded it
-      const finalEntry = loadRegistry(dataDir)[id];
-      const exitCode = finalEntry?.exitCode;
-      await updateEntry(dataDir, id, { status: 'killed' });
       return {
         ok: true,
         value: JSON.stringify({
-          stopped: true,
-          ...(exitCode !== undefined && { exit_code: exitCode }),
+          stopped: result.stopped,
+          ...(result.exit_code !== undefined && { exit_code: result.exit_code }),
         }),
       };
     },
@@ -503,3 +368,27 @@ export function createProcessTools(dataDir: string, opts?: { capMax?: number }):
     makeProcessWait(dataDir),
   ];
 }
+
+// Re-export the shared list/logs/stop operations so apps (the `ethos process`
+// CLI) can drive the same code path the tools use without constructing a fake
+// ToolContext. Registry types are re-exported alongside for completeness.
+export {
+  type LogsResult,
+  listProcesses,
+  type ProcessListItem,
+  readProcessLogs,
+  type StopResult,
+  type StopSignal,
+  stopProcess,
+} from './operations';
+export {
+  isAlive,
+  loadRegistry,
+  type ProcessEntry,
+  type ProcessStatus,
+  type Registry,
+  reapStale,
+  saveRegistry,
+  updateEntry,
+  withRegistryLock,
+} from './registry';

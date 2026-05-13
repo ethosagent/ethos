@@ -167,6 +167,9 @@ importers:
       '@ethosagent/team-supervisor':
         specifier: workspace:*
         version: link:../../extensions/team-supervisor
+      '@ethosagent/tools-process':
+        specifier: workspace:*
+        version: link:../../extensions/tools-process
       '@ethosagent/web-api':
         specifier: workspace:*
         version: link:../web-api
