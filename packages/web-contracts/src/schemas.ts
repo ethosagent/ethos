@@ -481,6 +481,7 @@ export const KanbanTaskStatusSchema = z.enum([
   'done',
   'archived',
   'scheduled',
+  'failed',
 ]);
 export type KanbanTaskStatus = z.infer<typeof KanbanTaskStatusSchema>;
 
@@ -495,6 +496,10 @@ export const KanbanTaskSchema = z.object({
   workspacePath: z.string().nullable(),
   scheduledFor: z.string().nullable(), // ISO-8601
   currentRunId: z.string().nullable(),
+  /** Times the task has been re-claimed after a prior run ended. */
+  retryCount: z.number().int().nonnegative(),
+  /** Retry budget; `null` = unlimited. */
+  maxRetries: z.number().int().nonnegative().nullable(),
   createdAt: z.string(), // ISO-8601
   updatedAt: z.string(), // ISO-8601
 });

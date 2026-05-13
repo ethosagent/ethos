@@ -23,7 +23,14 @@ import { rpc } from '../rpc';
 // scroll containment, hover states, status colors) lives in styles.css under
 // the `.cc-*` namespace.
 
-const STATUS_COLUMNS: KanbanTaskStatus[] = ['todo', 'ready', 'running', 'blocked', 'done'];
+const STATUS_COLUMNS: KanbanTaskStatus[] = [
+  'todo',
+  'ready',
+  'running',
+  'blocked',
+  'failed',
+  'done',
+];
 const ARCHIVED_STATUS: KanbanTaskStatus = 'archived';
 const ALL_STATUSES: KanbanTaskStatus[] = [...STATUS_COLUMNS, ARCHIVED_STATUS, 'scheduled'];
 const STATUS_LABEL: Record<KanbanTaskStatus, string> = {
@@ -34,6 +41,7 @@ const STATUS_LABEL: Record<KanbanTaskStatus, string> = {
   done: 'done',
   archived: 'archived',
   scheduled: 'scheduled',
+  failed: 'failed',
 };
 
 export function TeamControlCenter() {
@@ -296,6 +304,18 @@ function TaskTile({
           </span>
         )}
         {isGoal && <span className="cc-task-goal-badge">goal</span>}
+        {task.retryCount > 0 && (
+          <span
+            className="cc-task-retry"
+            title={
+              task.maxRetries !== null
+                ? `Re-claimed ${task.retryCount} of ${task.maxRetries} allowed retries`
+                : `Re-claimed ${task.retryCount} time(s)`
+            }
+          >
+            ↻ {task.maxRetries !== null ? `${task.retryCount}/${task.maxRetries}` : task.retryCount}
+          </span>
+        )}
         <span className="cc-spacer" />
         {childCount && childCount.total > 0 && (
           <span className="cc-task-progress">

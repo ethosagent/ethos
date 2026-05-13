@@ -153,11 +153,20 @@ export class Dispatcher {
 
       // Claim atomically; if a concurrent claim already moved it to running,
       // findReadyToDispatch wouldn't have returned it — still, guard.
+      //
+      // `updateStatus` owns the retry-budget invariant: a re-claim that would
+      // push retry_count past max_retries lands the task in 'failed' instead of
+      // 'running'. So after the claim we check what status it actually reached —
+      // if it's not 'running', the budget was exhausted and there's nothing to
+      // dispatch. This is the "agent keeps retrying the impossible task forever"
+      // guard.
+      let claimed: Task;
       try {
-        this.board.updateStatus(task.id, 'running', 'dispatched', 'dispatcher');
+        claimed = this.board.updateStatus(task.id, 'running', 'dispatched', 'dispatcher');
       } catch {
         continue;
       }
+      if (claimed.status !== 'running') continue;
 
       const controller = new AbortController();
       this.inflight.set(task.id, controller);

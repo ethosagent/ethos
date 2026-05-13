@@ -223,6 +223,8 @@ function toWireTask(t: Task): KanbanTask {
     workspacePath: t.workspacePath,
     scheduledFor: t.scheduledFor !== null ? new Date(t.scheduledFor).toISOString() : null,
     currentRunId: t.currentRunId,
+    retryCount: t.retryCount,
+    maxRetries: t.maxRetries,
     createdAt: new Date(t.createdAt).toISOString(),
     updatedAt: new Date(t.updatedAt).toISOString(),
   };

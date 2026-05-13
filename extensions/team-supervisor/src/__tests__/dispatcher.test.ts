@@ -84,6 +84,29 @@ describe('Dispatcher.tick()', () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
+  it('fails a task that exhausts its retry budget on re-claim instead of dispatching it', async () => {
+    const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+    // maxRetries=0: the task gets one claim, and any re-claim fails it.
+    const t = board.createTask({ title: 'impossible', assignee: 'engineer', maxRetries: 0 });
+
+    // Simulate a first run that ended badly, leaving the task ready to be re-claimed.
+    board.updateStatus(t.id, 'ready');
+    board.updateStatus(t.id, 'running', 'first attempt');
+    board.blockRun(t.id, 'failed');
+    board.updateStatus(t.id, 'ready');
+
+    const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+    const dispatcher = new Dispatcher({ board, supervisor: sup, dispatch });
+
+    await dispatcher.tick();
+
+    // The dispatcher's claim re-claimed the task past budget — updateStatus
+    // landed it in 'failed', so nothing was dispatched.
+    expect(board.getTask(t.id)?.status).toBe('failed');
+    await new Promise((r) => setImmediate(r));
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   // ---------------------------------------------------------------------------
   // Promotion path — parents-done unlocks children
   // ---------------------------------------------------------------------------

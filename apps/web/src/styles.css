@@ -2658,6 +2658,20 @@ body,
   font-variant-numeric: tabular-nums;
 }
 
+/* Retry badge — amber soft-warning, shown only when retry_count > 0. */
+.cc-task-retry {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.04em;
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  font-variant-numeric: tabular-nums;
+}
+
 .cc-task-title {
   font-size: 14px;
   font-weight: 500;
@@ -2755,6 +2769,11 @@ body,
   color: #67e8f9;
   background: rgba(103, 232, 249, 0.1);
   border-color: rgba(103, 232, 249, 0.28);
+}
+.cc-status-failed {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.32);
 }
 
 /* ── Activity feed — one row per event, scannable ─────────────────── */

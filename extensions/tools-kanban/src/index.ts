@@ -62,6 +62,7 @@ const STATUS_VALUES: TaskStatus[] = [
   'done',
   'archived',
   'scheduled',
+  'failed',
 ];
 const WORKSPACE_MODES: WorkspaceMode[] = ['scratch', 'worktree', 'dir'];
 
@@ -81,6 +82,8 @@ function summariseTask(t: Task) {
     assignee: t.assignee,
     priority: t.priority,
     current_run_id: t.currentRunId,
+    retry_count: t.retryCount,
+    max_retries: t.maxRetries,
     updated_at: t.updatedAt,
   };
 }
@@ -97,6 +100,8 @@ function fullTask(t: Task) {
     workspace_path: t.workspacePath,
     scheduled_for: t.scheduledFor,
     current_run_id: t.currentRunId,
+    retry_count: t.retryCount,
+    max_retries: t.maxRetries,
     created_at: t.createdAt,
     updated_at: t.updatedAt,
   };
@@ -154,6 +159,7 @@ interface CreateArgs {
   workspace_mode?: WorkspaceMode;
   scheduled_for?: number | null;
   idempotency_key?: string | null;
+  max_retries?: number | null;
 }
 
 function createKanbanCreate(store: KanbanStore): Tool {
@@ -180,6 +186,12 @@ function createKanbanCreate(store: KanbanStore): Tool {
         workspace_mode: { type: 'string', enum: WORKSPACE_MODES },
         scheduled_for: { type: 'integer', description: 'Epoch ms; sets status=scheduled' },
         idempotency_key: { type: 'string' },
+        max_retries: {
+          type: ['integer', 'null'],
+          description:
+            'Retry budget. Omit (or null) for unlimited retries. When set, the task is ' +
+            'moved to status=failed once it has been re-claimed more than this many times.',
+        },
       },
     },
     async execute(rawArgs, ctx) {
@@ -234,6 +246,13 @@ function createKanbanCreate(store: KanbanStore): Tool {
           'input_invalid',
         );
       }
+      if (
+        args.max_retries !== undefined &&
+        args.max_retries !== null &&
+        (!Number.isInteger(args.max_retries) || args.max_retries < 0)
+      ) {
+        return errorResult('max_retries must be a non-negative integer or null', 'input_invalid');
+      }
       try {
         const task = store.createTask({
           title: args.title,
@@ -244,6 +263,7 @@ function createKanbanCreate(store: KanbanStore): Tool {
           ...(args.workspace_mode !== undefined ? { workspaceMode: args.workspace_mode } : {}),
           ...(args.scheduled_for !== undefined ? { scheduledFor: args.scheduled_for } : {}),
           ...(args.idempotency_key !== undefined ? { idempotencyKey: args.idempotency_key } : {}),
+          ...(args.max_retries !== undefined ? { maxRetries: args.max_retries } : {}),
           actor: actorOf(ctx),
         });
         return jsonResult({ task_id: task.id, status: task.status });

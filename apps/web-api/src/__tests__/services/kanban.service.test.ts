@@ -146,6 +146,36 @@ members:
     expect(kinds).toContain('run_started');
   });
 
+  it('getBoard threads retryCount and maxRetries into the ticket response shape', async () => {
+    writeManifest(
+      'analytics',
+      `
+name: analytics
+description: x
+domain_capabilities: [x]
+members:
+  - personality: engineer
+`,
+    );
+    const store = openBoard('analytics');
+    // A task with a retry budget that has been re-claimed once.
+    const task = store.createTask({ title: 'flaky task', maxRetries: 3, assignee: 'engineer' });
+    store.updateStatus(task.id, 'running', undefined, 'engineer');
+    store.blockRun(task.id, 'stalled', 'engineer');
+    store.updateStatus(task.id, 'running', undefined, 'engineer'); // re-claim -> retryCount 1
+    // A plain task with no budget configured.
+    const plain = store.createTask({ title: 'plain task' });
+    store.close();
+
+    const { board } = await service.getBoard('analytics');
+    const wire = board.tasks.find((t) => t.id === task.id);
+    expect(wire?.retryCount).toBe(1);
+    expect(wire?.maxRetries).toBe(3);
+    const wirePlain = board.tasks.find((t) => t.id === plain.id);
+    expect(wirePlain?.retryCount).toBe(0);
+    expect(wirePlain?.maxRetries).toBeNull();
+  });
+
   it('getBoard returns an empty snapshot when no board.db exists yet', async () => {
     writeManifest(
       'analytics',
