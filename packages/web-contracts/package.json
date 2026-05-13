@@ -1,8 +1,19 @@
 {
   "name": "@ethosagent/web-contracts",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "type": "module",
+  "description": "Typed oRPC contract and Zod schemas for the Ethos web API",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ethosagent/ethos",
+    "directory": "packages/web-contracts"
+  },
+  "keywords": ["ethos", "agent", "sdk", "contracts", "orpc", "zod"],
+  "files": ["dist", "src", "package.json", "README.md"],
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "import": "./src/index.ts",
