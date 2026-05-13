@@ -97,8 +97,8 @@ describe('createWebApi — auth + rpc happy path', () => {
       body: JSON.stringify({ json: {} }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { json: { sessions: unknown[]; nextCursor: null } };
-    expect(body.json.sessions).toEqual([]);
+    const body = (await res.json()) as { json: { items: unknown[]; nextCursor: null } };
+    expect(body.json.items).toEqual([]);
     expect(body.json.nextCursor).toBeNull();
   });
 

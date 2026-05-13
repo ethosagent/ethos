@@ -35,6 +35,8 @@ export const SessionSchema = z.object({
   usage: SessionUsageSchema,
   createdAt: z.string(), // ISO-8601
   updatedAt: z.string(), // ISO-8601
+  /** Optimistic-concurrency version. v1 always returns 1. */
+  version: z.number().int(),
 });
 export type Session = z.infer<typeof SessionSchema>;
 
@@ -94,6 +96,8 @@ export const PersonalitySchema = z.object({
    *  (read-only). User-created personalities under `~/.ethos/personalities/`
    *  are mutable. */
   builtin: z.boolean(),
+  /** Optimistic-concurrency version. v1 always returns 1. */
+  version: z.number().int(),
 });
 export type Personality = z.infer<typeof PersonalitySchema>;
 

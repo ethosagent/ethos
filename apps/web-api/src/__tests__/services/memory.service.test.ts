@@ -49,7 +49,7 @@ describe('MemoryService', () => {
   it('list returns both files in [memory, user] order', async () => {
     await service.write('memory', 'm');
     await service.write('user', 'u');
-    const { files } = await service.list();
-    expect(files.map((f) => f.store)).toEqual(['memory', 'user']);
+    const { items } = await service.list();
+    expect(items.map((f) => f.store)).toEqual(['memory', 'user']);
   });
 });

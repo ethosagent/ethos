@@ -59,7 +59,7 @@ export function Settings() {
 
   const personalitiesQuery = useQuery({
     queryKey: ['personalities', 'list'],
-    queryFn: () => rpc.personalities.list(),
+    queryFn: () => rpc.personalities.list({}),
   });
 
   // Hydrate the form once the config arrives. Don't include `apiKey` —
@@ -107,7 +107,7 @@ export function Settings() {
     );
   }
 
-  const personalities = personalitiesQuery.data?.personalities ?? [];
+  const personalities = personalitiesQuery.data?.items ?? [];
 
   const onFinish = (values: FormShape) => {
     // Build the patch — drop unchanged fields and the empty apiKey.
@@ -275,7 +275,7 @@ function ApiKeysSection() {
 
   const keysQuery = useQuery({
     queryKey: ['apiKeys'],
-    queryFn: () => rpc.apiKeys.list(),
+    queryFn: () => rpc.apiKeys.list({}),
   });
 
   const createMut = useMutation({
@@ -426,7 +426,7 @@ function ApiKeysSection() {
     },
   ];
 
-  const keys = keysQuery.data?.keys ?? [];
+  const keys = keysQuery.data?.items ?? [];
 
   return (
     <div style={{ marginTop: 32 }}>

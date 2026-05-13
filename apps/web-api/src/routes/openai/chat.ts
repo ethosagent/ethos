@@ -169,7 +169,7 @@ function resolveModel(model: string, personalities: PersonalitiesService): Resol
   if (model === 'ethos-default') {
     return { kind: 'personality', personalityId: undefined };
   }
-  const found = personalities.list().personalities.find((p) => p.id === model);
+  const found = personalities.list().items.find((p) => p.id === model);
   if (!found) return { kind: 'unknown' };
   return { kind: 'personality', personalityId: model };
 }

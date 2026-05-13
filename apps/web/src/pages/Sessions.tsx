@@ -56,7 +56,7 @@ export function Sessions() {
       getNextPageParam: (last) => last.nextCursor,
     });
 
-  const flat = useMemo(() => data?.pages.flatMap((p) => p.sessions) ?? [], [data]);
+  const flat = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
 
   // --- mutations ---
 

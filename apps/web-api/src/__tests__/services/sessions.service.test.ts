@@ -68,8 +68,8 @@ describe('SessionsService', () => {
       list: async () => ({ sessions: [aSession], nextCursor: null }),
     });
     const result = await service.list({});
-    expect(result.sessions[0]?.createdAt).toBe('2026-04-01T00:00:00.000Z');
-    expect(result.sessions[0]?.updatedAt).toBe('2026-04-02T00:00:00.000Z');
+    expect(result.items[0]?.createdAt).toBe('2026-04-01T00:00:00.000Z');
+    expect(result.items[0]?.updatedAt).toBe('2026-04-02T00:00:00.000Z');
   });
 
   it('get throws SESSION_NOT_FOUND when the repository returns null', async () => {

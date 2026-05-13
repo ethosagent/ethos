@@ -70,7 +70,7 @@ export function CommandPalette({ open, onClose, onToggleDrawer }: CommandPalette
   });
   const personalitiesQuery = useQuery({
     queryKey: ['palette', 'personalities'],
-    queryFn: () => rpc.personalities.list(),
+    queryFn: () => rpc.personalities.list({}),
     enabled: open,
   });
 
@@ -95,7 +95,7 @@ export function CommandPalette({ open, onClose, onToggleDrawer }: CommandPalette
       page('Eval', '/eval', ['lab', 'score', 'expected', 'judge']),
     ].map((p) => ({ ...p, run: closeAfter(p.run) }));
 
-    const sessions: CommandItem[] = (sessionsQuery.data?.sessions ?? []).map((s) => ({
+    const sessions: CommandItem[] = (sessionsQuery.data?.items ?? []).map((s) => ({
       id: `session:${s.id}`,
       group: 'Sessions' as const,
       label: s.title || titleize(s.key) || s.id,
@@ -127,7 +127,7 @@ export function CommandPalette({ open, onClose, onToggleDrawer }: CommandPalette
         keywords: ['stream', 'notifications', 'tools'],
         run: closeAfter(() => onToggleDrawer()),
       },
-      ...(personalitiesQuery.data?.personalities ?? []).map<CommandItem>((p) => ({
+      ...(personalitiesQuery.data?.items ?? []).map<CommandItem>((p) => ({
         id: `action:personality:${p.id}`,
         group: 'Actions',
         label: `Switch personality → ${p.name}`,

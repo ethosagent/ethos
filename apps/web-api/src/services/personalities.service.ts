@@ -22,9 +22,10 @@ export interface PersonalitiesServiceOptions {
 export class PersonalitiesService {
   constructor(private readonly opts: PersonalitiesServiceOptions) {}
 
-  list(): { personalities: Personality[]; defaultId: string } {
+  list(): { items: Personality[]; nextCursor: string | null; defaultId: string } {
     return {
-      personalities: this.opts.personalities.describeAll().map(toWire),
+      items: this.opts.personalities.describeAll().map(toWire),
+      nextCursor: null,
       defaultId: this.opts.personalities.getDefault().id,
     };
   }
@@ -157,6 +158,7 @@ function toWire(d: DescribedPersonality): Personality {
     mcp_servers: c.mcp_servers ?? null,
     plugins: c.plugins ?? null,
     builtin: d.builtin,
+    version: 1,
   };
 }
 

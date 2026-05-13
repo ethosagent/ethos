@@ -18,8 +18,8 @@ export function SidePanel({ personalityId, onPersonalityChange }: SidePanelProps
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await ethos.rpc.personalities.list();
-        setPersonalities(res.personalities);
+        const res = await ethos.rpc.personalities.list({});
+        setPersonalities(res.items);
         if (!personalityId && res.defaultId) {
           onPersonalityChange(res.defaultId);
         }
@@ -35,8 +35,8 @@ export function SidePanel({ personalityId, onPersonalityChange }: SidePanelProps
   const fetchMemory = useCallback(async () => {
     setLoadingMemory(true);
     try {
-      const res = await ethos.rpc.memory.list();
-      setMemoryFiles(res.files);
+      const res = await ethos.rpc.memory.list({});
+      setMemoryFiles(res.items);
     } catch (err) {
       console.error('Failed to fetch memory:', err);
     } finally {

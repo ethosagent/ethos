@@ -16,7 +16,7 @@ export function SessionList({ activeSessionId, onSelectSession }: SessionListPro
   const fetchSessions = useCallback(async () => {
     try {
       const res = await ethos.rpc.sessions.list({ limit: 50 });
-      setSessions(res.sessions);
+      setSessions(res.items);
     } catch (err) {
       console.error('Failed to fetch sessions:', err);
     } finally {

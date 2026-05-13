@@ -38,7 +38,7 @@ export function Plugins() {
 
   const { data: personalitiesData, isLoading: persLoading } = useQuery({
     queryKey: ['personalities', 'list'],
-    queryFn: () => rpc.personalities.list(),
+    queryFn: () => rpc.personalities.list({}),
   });
 
   const isLoading = pluginsLoading || persLoading;
@@ -53,7 +53,7 @@ export function Plugins() {
 
   const plugins = pluginsData?.plugins ?? [];
   const mcpServers = pluginsData?.mcpServers ?? [];
-  const personalities = personalitiesData?.personalities ?? [];
+  const personalities = personalitiesData?.items ?? [];
 
   return (
     <div className="plugins-tab">
@@ -254,16 +254,17 @@ function AttachCell({
     onMutate: async (next) => {
       await qc.cancelQueries({ queryKey: ['personalities', 'list'] });
       const prev = qc.getQueryData<{
-        personalities: import('@ethosagent/web-contracts').Personality[];
+        items: import('@ethosagent/web-contracts').Personality[];
       }>(['personalities', 'list']);
       qc.setQueryData<{
-        personalities: import('@ethosagent/web-contracts').Personality[];
+        items: import('@ethosagent/web-contracts').Personality[];
+        nextCursor: string | null;
         defaultId: string;
       }>(['personalities', 'list'], (old) => {
         if (!old) return old;
         return {
           ...old,
-          personalities: old.personalities.map((p) =>
+          items: old.items.map((p) =>
             p.id === personality.id ? { ...p, plugins: next } : p,
           ),
         };
@@ -371,9 +372,9 @@ function McpTable({ servers }: { servers: McpServerInfo[] }) {
 function AttachedPersonalitiesCell({ serverName }: { serverName: string }) {
   const { data } = useQuery({
     queryKey: ['personalities', 'list'],
-    queryFn: () => rpc.personalities.list(),
+    queryFn: () => rpc.personalities.list({}),
   });
-  const attached = (data?.personalities ?? []).filter((p) =>
+  const attached = (data?.items ?? []).filter((p) =>
     (p.mcp_servers ?? []).includes(serverName),
   );
   if (attached.length === 0) {

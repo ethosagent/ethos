@@ -61,7 +61,7 @@ const SessionListInput = z.object({
   personalityId: z.string().optional(),
 });
 const SessionListOutput = z.object({
-  sessions: z.array(SessionSchema),
+  items: z.array(SessionSchema),
   nextCursor: z.string().nullable(),
 });
 
@@ -74,16 +74,24 @@ const SessionGetOutput = z.object({
 const SessionForkInput = z.object({
   id: z.string(),
   personalityId: z.string().optional(),
+  /** Optimistic-concurrency guard. v1 ignores this. */
+  expectedVersion: z.number().int().optional(),
 });
 const SessionForkOutput = z.object({ session: SessionSchema });
 
-const SessionDeleteInput = z.object({ id: z.string() });
+const SessionDeleteInput = z.object({
+  id: z.string(),
+  /** Optimistic-concurrency guard. v1 ignores this. */
+  expectedVersion: z.number().int().optional(),
+});
 const SessionDeleteOutput = z.object({ ok: z.literal(true) });
 
 const SessionUpdateInput = z.object({
   id: z.string(),
   /** New human-readable title. Pass null to clear the title. */
   title: z.string().max(200).nullable(),
+  /** Optimistic-concurrency guard. v1 ignores this. */
+  expectedVersion: z.number().int().optional(),
 });
 const SessionUpdateOutput = z.object({ session: SessionSchema });
 
@@ -100,8 +108,15 @@ const sessions = {
 // Personalities (v0 read-only — create/edit lands in v1)
 // ---------------------------------------------------------------------------
 
+const PersonalityListInput = z.object({
+  /** Page size. */
+  limit: z.number().int().positive().optional(),
+  /** Opaque cursor from the previous response's `nextCursor`. */
+  cursor: z.string().optional(),
+});
 const PersonalityListOutput = z.object({
-  personalities: z.array(PersonalitySchema),
+  items: z.array(PersonalitySchema),
+  nextCursor: z.string().nullable(),
   defaultId: z.string(),
 });
 const PersonalityGetInput = z.object({ id: z.string() });
@@ -198,7 +213,7 @@ const PersonalitySkillsImportOutput = z.object({ imported: z.array(PersonalitySk
 
 /** @stable v1 — read-only at v1 */
 const personalities = {
-  list: oc.output(PersonalityListOutput),
+  list: oc.input(PersonalityListInput).output(PersonalityListOutput),
   get: oc.input(PersonalityGetInput).output(PersonalityGetOutput),
   characterSheet: oc.input(PersonalityCharacterSheetInput).output(PersonalityCharacterSheetOutput),
   create: oc.input(PersonalityCreateInput).output(PersonalityCreateOutput),
@@ -585,7 +600,16 @@ const plugins = {
 // both. Vector-mode chunk CRUD lands later.
 // ---------------------------------------------------------------------------
 
-const MemoryListOutput = z.object({ files: z.array(MemoryFileSchema) });
+const MemoryListInput = z.object({
+  /** Page size. */
+  limit: z.number().int().positive().optional(),
+  /** Opaque cursor from the previous response's `nextCursor`. */
+  cursor: z.string().optional(),
+});
+const MemoryListOutput = z.object({
+  items: z.array(MemoryFileSchema),
+  nextCursor: z.string().nullable(),
+});
 
 const MemoryGetInput = z.object({ store: MemoryStoreSchema });
 const MemoryGetOutput = z.object({ file: MemoryFileSchema });
@@ -598,7 +622,7 @@ const MemoryWriteOutput = z.object({ file: MemoryFileSchema });
 
 /** @stable v1 */
 const memory = {
-  list: oc.output(MemoryListOutput),
+  list: oc.input(MemoryListInput).output(MemoryListOutput),
   get: oc.input(MemoryGetInput).output(MemoryGetOutput),
   write: oc.input(MemoryWriteInput).output(MemoryWriteOutput),
 };
@@ -766,7 +790,16 @@ const ApiKeyCreateOutput = z.object({
   key: ApiKeyMetadataSchema,
 });
 
-const ApiKeyListOutput = z.object({ keys: z.array(ApiKeyMetadataSchema) });
+const ApiKeyListInput = z.object({
+  /** Page size. */
+  limit: z.number().int().positive().optional(),
+  /** Opaque cursor from the previous response's `nextCursor`. */
+  cursor: z.string().optional(),
+});
+const ApiKeyListOutput = z.object({
+  items: z.array(ApiKeyMetadataSchema),
+  nextCursor: z.string().nullable(),
+});
 
 const ApiKeyRevokeInput = z.object({ id: z.string() });
 const ApiKeyRevokeOutput = z.object({ ok: z.literal(true) });
@@ -774,7 +807,7 @@ const ApiKeyRevokeOutput = z.object({ ok: z.literal(true) });
 /** @experimental */
 const apiKeys = {
   create: oc.input(ApiKeyCreateInput).output(ApiKeyCreateOutput),
-  list: oc.output(ApiKeyListOutput),
+  list: oc.input(ApiKeyListInput).output(ApiKeyListOutput),
   revoke: oc.input(ApiKeyRevokeInput).output(ApiKeyRevokeOutput),
 };
 

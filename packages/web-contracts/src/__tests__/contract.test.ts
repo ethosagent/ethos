@@ -35,6 +35,7 @@ describe('entity schemas', () => {
       },
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      version: 1,
     };
     expect(SessionSchema.parse(s)).toEqual(s);
   });
@@ -80,6 +81,7 @@ describe('entity schemas', () => {
       mcp_servers: null,
       plugins: null,
       builtin: true,
+      version: 1,
     };
     const parsed = PersonalitySchema.parse(p);
     expect(parsed).toEqual(p);

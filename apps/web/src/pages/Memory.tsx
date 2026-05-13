@@ -24,7 +24,7 @@ export function Memory() {
 
   const listQuery = useQuery({
     queryKey: ['memory', 'list'],
-    queryFn: () => rpc.memory.list(),
+    queryFn: () => rpc.memory.list({}),
   });
 
   const configQuery = useQuery({
@@ -47,7 +47,7 @@ export function Memory() {
     );
   }
 
-  const files = listQuery.data?.files ?? [];
+  const files = listQuery.data?.items ?? [];
   const fileByStore = new Map(files.map((f) => [f.store, f] as const));
   const memoryMode = configQuery.data?.memory ?? 'markdown';
 

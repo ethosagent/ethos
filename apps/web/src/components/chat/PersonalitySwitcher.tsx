@@ -23,10 +23,10 @@ export interface PersonalitySwitcherProps {
 export function PersonalitySwitcher({ current, onSelect }: PersonalitySwitcherProps) {
   const { data } = useQuery({
     queryKey: ['personalities'],
-    queryFn: () => rpc.personalities.list(),
+    queryFn: () => rpc.personalities.list({}),
   });
 
-  const personalities = data?.personalities ?? [];
+  const personalities = data?.items ?? [];
   const items: MenuProps['items'] = personalities.map((p) => ({
     key: p.id,
     label: <PersonalityMenuRow personality={p} active={p.id === current} />,

@@ -46,7 +46,7 @@ export function Personalities() {
 
   const listQuery = useQuery({
     queryKey: ['personalities', 'list'],
-    queryFn: () => rpc.personalities.list(),
+    queryFn: () => rpc.personalities.list({}),
   });
 
   if (listQuery.isLoading) {
@@ -64,7 +64,7 @@ export function Personalities() {
     );
   }
 
-  const personalities = listQuery.data?.personalities ?? [];
+  const personalities = listQuery.data?.items ?? [];
   const defaultId = listQuery.data?.defaultId ?? null;
 
   return (

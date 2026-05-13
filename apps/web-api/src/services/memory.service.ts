@@ -14,9 +14,9 @@ export interface MemoryServiceOptions {
 export class MemoryService {
   constructor(private readonly opts: MemoryServiceOptions) {}
 
-  async list(): Promise<{ files: MemoryFile[] }> {
+  async list(): Promise<{ items: MemoryFile[]; nextCursor: string | null }> {
     const [memory, user] = await Promise.all([this.read('memory'), this.read('user')]);
-    return { files: [memory, user] };
+    return { items: [memory, user], nextCursor: null };
   }
 
   async get(store: MemoryStoreId): Promise<{ file: MemoryFile }> {

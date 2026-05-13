@@ -27,7 +27,7 @@ export function openAiModelsRoutes(opts: OpenAiModelsRouteOptions): Hono {
   const app = new Hono();
 
   app.get('/', async (c) => {
-    const personalities = opts.personalities.list().personalities;
+    const personalities = opts.personalities.list().items;
     const teams = opts.listTeams ? await opts.listTeams() : [];
     const data: OpenAiModel[] = [
       ...personalities.map((p) => modelEntry(p.id)),

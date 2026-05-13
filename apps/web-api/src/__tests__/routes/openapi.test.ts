@@ -113,8 +113,8 @@ describe('createWebApi — OpenAPI surface', () => {
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { sessions: unknown[]; nextCursor: string | null };
-    expect(body.sessions).toEqual([]);
+    const body = (await res.json()) as { items: unknown[]; nextCursor: string | null };
+    expect(body.items).toEqual([]);
     expect(body.nextCursor).toBeNull();
   });
 });

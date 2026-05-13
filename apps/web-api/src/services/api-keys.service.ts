@@ -47,10 +47,10 @@ export class ApiKeysService {
     return { secret: result.secret, key: toMetadata(result.record) };
   }
 
-  async list(): Promise<{ keys: ApiKeyMetadata[] }> {
+  async list(): Promise<{ items: ApiKeyMetadata[]; nextCursor: string | null }> {
     const store = this.requireStore();
     const records = await store.list();
-    return { keys: records.map(toMetadata) };
+    return { items: records.map(toMetadata), nextCursor: null };
   }
 
   async revoke(id: string): Promise<{ ok: true }> {

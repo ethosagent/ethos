@@ -43,7 +43,7 @@ export function Cron() {
 
   const personalitiesQuery = useQuery({
     queryKey: ['personalities', 'list'],
-    queryFn: () => rpc.personalities.list(),
+    queryFn: () => rpc.personalities.list({}),
   });
 
   if (isLoading) {
@@ -83,7 +83,7 @@ export function Cron() {
             value={filterPersonality}
             onChange={(v) => setFilterPersonality(v ?? null)}
             loading={personalitiesQuery.isLoading}
-            options={(personalitiesQuery.data?.personalities ?? []).map((p) => ({
+            options={(personalitiesQuery.data?.items ?? []).map((p) => ({
               value: p.id,
               label: p.name,
             }))}
@@ -286,7 +286,7 @@ function CreateJobModal({ open, onClose }: { open: boolean; onClose: () => void 
 
   const personalities = useQuery({
     queryKey: ['personalities'],
-    queryFn: () => rpc.personalities.list(),
+    queryFn: () => rpc.personalities.list({}),
   });
 
   const create = useMutation({
@@ -370,7 +370,7 @@ function CreateJobModal({ open, onClose }: { open: boolean; onClose: () => void 
             allowClear
             placeholder="Defaults to your active personality"
             loading={personalities.isLoading}
-            options={(personalities.data?.personalities ?? []).map((p) => ({
+            options={(personalities.data?.items ?? []).map((p) => ({
               value: p.id,
               label: p.name,
             }))}
