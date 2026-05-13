@@ -1,13 +1,25 @@
-// Storage abstraction — plan criterion 2.
+// Law 7 enforcement — `forbid_raw_filesystem_on_personality_boundary`.
 //
-// Library code (packages/*, extensions/*) must NOT import from `node:fs` or
-// `node:fs/promises` directly. All ~/.ethos/ reads and writes go through the
-// `Storage` interface from `@ethosagent/types` so that:
-//   - Tests can use InMemoryStorage without tmpdir scaffolding.
-//   - ScopedStorage enforces per-personality path allowlists at one chokepoint.
-//   - AuditedStorage (future) can log every access without patching each call site.
+// Per ARCHITECTURE.md §III Law 7: modules that read or write user-authored
+// files on a personality's behalf MUST use the `Storage` contract (from
+// `@ethosagent/types`). All other filesystem access — internal state,
+// logs, pidfiles, database-driver files, system paths, build-time
+// tooling, app composition roots — may use raw `node:fs` directly.
 //
-// Documented exceptions — these are permanent carve-outs, not technical debt:
+// Scope of this scan: `packages/` + `extensions/`. That covers everything
+// reachable from tool execution and hook execution, which is where the
+// personality boundary lives. Tools and hooks ship from extensions/tools-*
+// and extensions/hooks-*; the framework engine (packages/core/) routes
+// them; safety / wiring / storage primitives sit in packages/.
+//
+// `apps/` is deliberately NOT scanned: apps are composition roots. They
+// boot servers, wire dependencies, and run CLI commands — none of which
+// participate in the personality boundary directly. If a future change
+// moves tool execution into an app (e.g. an in-process gateway running
+// its own toolset bypassing the registry), the scan list here must be
+// widened first.
+//
+// Documented exceptions inside the scanned tree — permanent carve-outs:
 //
 //   packages/storage-fs/         The Storage implementation itself. Obviously must
 //                                 use node:fs — it IS the fs adapter.
@@ -29,8 +41,8 @@
 //                                 out of scope per the storage abstraction plan.
 //
 // If you need to add a new exception, document WHY here and in CLAUDE.md before
-// adding it to ALLOWED_PATHS below. The default answer to "can I use node:fs?"
-// in library code is NO.
+// adding it to ALLOWED_PATHS below. The default answer for code on the
+// personality boundary is "use Storage."
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative } from 'node:path';
@@ -81,7 +93,7 @@ function walkTs(dir: string): string[] {
   return out;
 }
 
-describe('storage abstraction: no raw node:fs imports in library code', () => {
+describe('Law 7: no raw node:fs imports on the personality boundary', () => {
   it('packages/ and extensions/ do not import node:fs outside the documented allowlist', () => {
     const offenders: string[] = [];
 

@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type {
+  GlobalMemoryEntry,
   MemoryContext,
   MemoryLoadContext,
   MemoryProvider,
@@ -67,15 +68,12 @@ export class MarkdownFileMemoryProvider implements MemoryProvider {
     return { content, source: 'markdown', truncated };
   }
 
-  /**
-   * Direct read of a single global file (`MEMORY.md` or `USER.md`) for
-   * the web-api Memory tab. Returns content, the absolute path, and the
-   * file's modification time as ISO-8601 (or null if the file doesn't
-   * exist yet — the editor hydrates with an empty body in that case).
-   */
-  async readGlobalFile(
-    store: 'memory' | 'user',
-  ): Promise<{ content: string; path: string; modifiedAt: string | null }> {
+  // Implements GlobalMemoryStore from @ethosagent/types — the narrow
+  // editor capability the web-api Memory tab consumes. Returns content
+  // plus the on-disk path (the markdown backend has one; other backends
+  // can return null per the contract) and the file's modification time
+  // as ISO-8601 (null if absent).
+  async readGlobalEntry(store: 'memory' | 'user'): Promise<GlobalMemoryEntry> {
     const path = this.globalPath(store);
     const content = (await this.storage.read(path)) ?? '';
     const mtime = await this.storage.mtime(path);
@@ -86,15 +84,11 @@ export class MarkdownFileMemoryProvider implements MemoryProvider {
     };
   }
 
-  /** Direct write of a single global file (`MEMORY.md` or `USER.md`). */
-  async writeGlobalFile(
-    store: 'memory' | 'user',
-    content: string,
-  ): Promise<{ content: string; path: string; modifiedAt: string | null }> {
+  async writeGlobalEntry(store: 'memory' | 'user', content: string): Promise<GlobalMemoryEntry> {
     await this.storage.mkdir(this.dir);
     const path = this.globalPath(store);
     await this.storage.write(path, content);
-    return this.readGlobalFile(store);
+    return this.readGlobalEntry(store);
   }
 
   private globalPath(store: 'memory' | 'user'): string {

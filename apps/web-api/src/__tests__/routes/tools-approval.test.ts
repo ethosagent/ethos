@@ -6,7 +6,11 @@ import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi, WebTokenRepository } from '../../index';
-import { makeStubAgentLoop, makeStubPersonalityRegistry } from '../test-helpers';
+import {
+  makeStubAgentLoop,
+  makeStubMemoryProvider,
+  makeStubPersonalityRegistry,
+} from '../test-helpers';
 
 // End-to-end exercise of the 26.3c contract:
 //   1. The agent loop's before_tool_call hook fires.
@@ -29,6 +33,7 @@ describe('tools.approve / tools.deny — full inversion loop', () => {
     app = createWebApi({
       dataDir: dir,
       sessionStore: store,
+      memoryProvider: makeStubMemoryProvider(),
       agentLoop: loop,
       personalities: makeStubPersonalityRegistry(),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },

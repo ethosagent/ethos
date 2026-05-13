@@ -4,7 +4,11 @@ import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi, WebTokenRepository } from '../../index';
-import { makeStubAgentLoop, makeStubPersonalityRegistry } from '../test-helpers';
+import {
+  makeStubAgentLoop,
+  makeStubMemoryProvider,
+  makeStubPersonalityRegistry,
+} from '../test-helpers';
 
 // End-to-end SSE test: chat.send kicks off a turn, /sse/sessions/:id replays
 // buffered events. We don't need a real network — Hono's `app.request(...)`
@@ -23,6 +27,7 @@ describe('SSE — chat.send → /sse/sessions/:id', () => {
     app = createWebApi({
       dataDir: dir,
       sessionStore: store,
+      memoryProvider: makeStubMemoryProvider(),
       // Slow-ish stub so the SSE consumer reliably catches events live AND
       // exercises the replay path on reconnect.
       agentLoop: makeStubAgentLoop({

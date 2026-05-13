@@ -4,7 +4,11 @@ import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi, WebTokenRepository } from '../../index';
-import { makeStubAgentLoop, makeStubPersonalityRegistry } from '../test-helpers';
+import {
+  makeStubAgentLoop,
+  makeStubMemoryProvider,
+  makeStubPersonalityRegistry,
+} from '../test-helpers';
 
 // Route-level tests via Hono's `app.request(...)` helper. No real port; the
 // app handles a `Request` directly and returns a `Response`. This catches
@@ -23,6 +27,7 @@ describe('createWebApi — auth + rpc happy path', () => {
     app = createWebApi({
       dataDir: dir,
       sessionStore: store,
+      memoryProvider: makeStubMemoryProvider(),
       agentLoop: makeStubAgentLoop(),
       personalities: makeStubPersonalityRegistry(),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },

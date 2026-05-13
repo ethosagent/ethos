@@ -4,7 +4,11 @@ import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi, WebTokenRepository } from '../../index';
-import { makeStubAgentLoop, makeStubPersonalityRegistry } from '../test-helpers';
+import {
+  makeStubAgentLoop,
+  makeStubMemoryProvider,
+  makeStubPersonalityRegistry,
+} from '../test-helpers';
 
 // OpenAPI surface tests. Three things must work:
 //   1. /openapi/spec.json — auto-generated from the Zod contract, lists every
@@ -28,6 +32,7 @@ describe('createWebApi — OpenAPI surface', () => {
     app = createWebApi({
       dataDir: dir,
       sessionStore: store,
+      memoryProvider: makeStubMemoryProvider(),
       agentLoop: makeStubAgentLoop(),
       personalities: makeStubPersonalityRegistry(),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },

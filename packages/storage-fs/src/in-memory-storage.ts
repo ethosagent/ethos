@@ -173,16 +173,22 @@ export class InMemoryStorage implements Storage {
       });
       return;
     }
-    // Append only makes sense on text — append on a binary node decodes
-    // the bytes (replacing invalid sequences) so the trace stays
-    // string-shaped. Use writeAtomic for binary blobs instead.
-    const existingText =
-      typeof existing.content === 'string'
-        ? existing.content
-        : new TextDecoder('utf-8').decode(existing.content);
+    // Append is utf-8 only: mixing a string append onto raw bytes
+    // would silently lossy-decode invalid sequences as U+FFFD. Throw
+    // instead so test fakes catch the same mistake FsStorage would —
+    // FsStorage.append takes a `string` and writes utf-8; if the file
+    // on disk is binary, the bytes get concatenated verbatim and the
+    // file is corrupt either way. Use writeAtomic for binary blobs.
+    if (typeof existing.content !== 'string') {
+      const err = new Error(
+        `EINVAL: cannot append text to a binary file '${path}'. Use writeAtomic for binary content.`,
+      );
+      (err as NodeJS.ErrnoException).code = 'EINVAL';
+      throw err;
+    }
     this.nodes.set(path, {
       ...existing,
-      content: existingText + content,
+      content: existing.content + content,
       mtimeMs: this.nextMtime(),
     });
   }

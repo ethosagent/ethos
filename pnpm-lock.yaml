@@ -1077,6 +1077,9 @@ importers:
       '@ethosagent/personalities':
         specifier: workspace:*
         version: link:../../extensions/personalities
+      '@ethosagent/plugin-loader':
+        specifier: workspace:*
+        version: link:../../extensions/plugin-loader
       '@ethosagent/safety-injection':
         specifier: workspace:*
         version: link:../safety/injection

@@ -459,8 +459,9 @@ async function handleSlashCommand(
     }
 
     case 'memory': {
-      const { MarkdownFileMemoryProvider } = await import('@ethosagent/memory-markdown');
-      const mem = new MarkdownFileMemoryProvider();
+      const { createMemoryProvider } = await import('@ethosagent/wiring');
+      const { ethosDir } = await import('../config');
+      const mem = createMemoryProvider({ dataDir: ethosDir() });
       const result = await mem.prefetch({
         sessionId: '',
         sessionKey: state.sessionKey,

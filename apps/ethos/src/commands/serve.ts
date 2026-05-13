@@ -6,9 +6,12 @@ import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
 import { CronScheduler } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
-import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { type ChatService, createWebApi, WebTokenRepository } from '@ethosagent/web-api';
-import { createDangerPredicate } from '@ethosagent/wiring';
+import {
+  createDangerPredicate,
+  createMemoryProvider,
+  createSessionStore,
+} from '@ethosagent/wiring';
 import { type EthosConfig, ethosDir } from '../config';
 import { createAgentLoop, createTeamAgentLoop } from '../wiring';
 import { hasFlag, parseFlagValue, parsePort } from './serve-helpers';
@@ -21,8 +24,8 @@ import { listenWithFallback } from './serve-listen';
 // Web is opt-in to keep current users' boots unchanged. Flag rename when
 // 26.x leaves experimental — for now it matches plan/phases/26-web-ui.md.
 //
-// Both servers share one `SQLiteSessionStore` so chat from web and from ACP
-// land in the same database. SIGINT / SIGTERM cleans up both before exiting.
+// Both servers share one `SessionStore` so chat from web and from ACP land
+// in the same database. SIGINT / SIGTERM cleans up both before exiting.
 
 const ACP_PORT_DEFAULT = 3001;
 const WEB_PORT_DEFAULT = 3000;
@@ -92,7 +95,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
       meshRegistryPath: meshRegistryPath(activeMeshName),
     });
   }
-  const session = new SQLiteSessionStore(join(dir, 'sessions.db'));
+  const session = createSessionStore({ dataDir: dir });
   const mesh = new AgentMesh(meshRegistryPath(activeMeshName));
 
   // ACP server (existing behavior — kept first so any breakage is obvious).
@@ -175,6 +178,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     const created = createWebApi({
       dataDir: dir,
       sessionStore: session,
+      memoryProvider: createMemoryProvider({ dataDir: dir }),
       agentLoop: loop,
       // The same registry the agent loop loaded above is reused so mtime
       // hot-reloads of personality files reach both surfaces in one tick.

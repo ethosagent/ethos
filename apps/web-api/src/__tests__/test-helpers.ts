@@ -1,6 +1,6 @@
 import { type AgentEvent, type AgentLoop, DefaultHookRegistry } from '@ethosagent/core';
 import { FilePersonalityRegistry } from '@ethosagent/personalities';
-import type { PersonalityConfig } from '@ethosagent/types';
+import type { GlobalMemoryEntry, GlobalMemoryStore, PersonalityConfig } from '@ethosagent/types';
 
 // Test helpers shared by route + service tests. Building a real `AgentLoop`
 // requires LLM creds + tools + memory + personalities — overkill for tests
@@ -56,4 +56,23 @@ export function makeStubPersonalityRegistry(
   for (const p of personalities) registry.define(p);
   if (personalities[0]) registry.setDefault(personalities[0].id);
   return registry;
+}
+
+// ---------------------------------------------------------------------------
+// GlobalMemoryStore stub
+//
+// HTTP/route tests don't exercise the memory tab, but `createWebApi`
+// requires the editor capability via options. Returns null path to
+// exercise the backend-neutral path of the contract.
+// ---------------------------------------------------------------------------
+
+export function makeStubMemoryProvider(): GlobalMemoryStore {
+  return {
+    async readGlobalEntry(): Promise<GlobalMemoryEntry> {
+      return { content: '', path: null, modifiedAt: null };
+    },
+    async writeGlobalEntry(_store, content): Promise<GlobalMemoryEntry> {
+      return { content, path: null, modifiedAt: null };
+    },
+  };
 }

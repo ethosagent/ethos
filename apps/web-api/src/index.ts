@@ -3,11 +3,10 @@ import { SessionStreamBuffer } from '@ethosagent/agent-bridge';
 import { AgentMesh } from '@ethosagent/agent-mesh';
 import type { AgentLoop } from '@ethosagent/core';
 import type { CronScheduler } from '@ethosagent/cron';
-import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import type { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { SkillsLibrary } from '@ethosagent/skills';
 import { FsStorage } from '@ethosagent/storage-fs';
-import type { SessionStore, Storage } from '@ethosagent/types';
+import type { GlobalMemoryStore, SessionStore, Storage } from '@ethosagent/types';
 import type { SseEvent } from '@ethosagent/web-contracts';
 import type { Hono } from 'hono';
 import { AllowlistRepository } from './repositories/allowlist.repository';
@@ -46,6 +45,12 @@ export interface CreateWebApiOptions {
   /** SQLite-backed session store, already initialised. Shared with ACP /
    *  gateway so the same DB rows back every surface. */
   sessionStore: SessionStore;
+  /** Direct read/write for the global memory entries (Memory + User
+   *  tabs). The agent loop owns the full MemoryProvider contract — the
+   *  web surface only needs the narrow editor capability, which is what
+   *  this option declares. Construct via `createMemoryProvider` from
+   *  `@ethosagent/wiring`; the returned value satisfies both halves. */
+  memoryProvider: GlobalMemoryStore;
   /** Agent loop the chat surface drives. Must already be wired with tools,
    *  hooks, providers etc. (typically via `@ethosagent/wiring`). */
   agentLoop: AgentLoop;
@@ -115,7 +120,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // just read it via @ethosagent/agent-mesh directly — the wire-format
   // mapping lives in the service.
   const mesh = new AgentMesh(join(opts.dataDir, 'mesh-registry.json'));
-  const memoryProvider = new MarkdownFileMemoryProvider({ dir: opts.dataDir });
+  const memoryProvider = opts.memoryProvider;
   const platformsRepo = new PlatformsRepository({ config: configRepo });
   const storage: Storage = opts.storage ?? new FsStorage();
 

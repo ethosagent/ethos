@@ -69,4 +69,24 @@ describe('ConsoleLogger', () => {
     child.info('hello');
     expect(spies.log).toHaveBeenCalledWith('[child] hello');
   });
+
+  it('renders non-component meta as key=value suffix', () => {
+    const log = new ConsoleLogger({ component: 'cron' });
+    log.warn('job late', { jobId: 'sweep', delayMs: 250 });
+    expect(spies.warn).toHaveBeenCalledWith('[cron] job late jobId=sweep delayMs=250');
+  });
+
+  it('renders err meta as a stack-bearing line', () => {
+    const log = new ConsoleLogger();
+    const err = new Error('boom');
+    err.stack = 'Error: boom\n    at /fake/path:1:1';
+    log.error('caught', { err });
+    expect(spies.error).toHaveBeenCalledWith('caught Error: boom\n    at /fake/path:1:1');
+  });
+
+  it('renders non-Error err values via formatValue fallback', () => {
+    const log = new ConsoleLogger();
+    log.error('strange', { err: 'a string' });
+    expect(spies.error).toHaveBeenCalledWith('strange err=a string');
+  });
 });

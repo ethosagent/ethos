@@ -413,11 +413,12 @@ export type MemoryStoreId = z.infer<typeof MemoryStoreSchema>;
 
 export const MemoryFileSchema = z.object({
   store: MemoryStoreSchema,
-  /** Markdown body. Empty string when the file doesn't exist on disk. */
+  /** Markdown body. Empty string when the entry doesn't exist yet. */
   content: z.string(),
-  /** Server-side absolute path. Used for diagnostic display only. */
-  path: z.string(),
-  /** ISO-8601 mtime, or null when the file doesn't exist. */
+  /** Backend-local address (file path for the markdown backend; null for
+   *  remote / DB / encrypted backends without one). Diagnostic display only. */
+  path: z.string().nullable(),
+  /** ISO-8601 mtime, or null when the entry doesn't exist. */
   modifiedAt: z.string().nullable(),
 });
 export type MemoryFile = z.infer<typeof MemoryFileSchema>;

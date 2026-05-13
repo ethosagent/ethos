@@ -34,7 +34,14 @@ import { createProcessTools } from '@ethosagent/tools-process';
 import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-terminal';
 import { createTodoTools, InMemoryTodoStore } from '@ethosagent/tools-todo';
 import { createWebTools } from '@ethosagent/tools-web';
-import type { ContextInjector, LLMProvider, Logger } from '@ethosagent/types';
+import type {
+  ContextInjector,
+  GlobalMemoryStore,
+  LLMProvider,
+  Logger,
+  MemoryProvider,
+  SessionStore,
+} from '@ethosagent/types';
 import { resolveKanbanDbPath } from './kanban-path';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
 
@@ -98,12 +105,6 @@ export interface WiringConfig {
 
 export type WiringProfile = 'cli' | 'tui' | 'web' | 'acp';
 
-// WiringLogger is kept as an alias of the Logger contract from
-// @ethosagent/types — wiring used to ship a one-method ad-hoc shape, but
-// the framework now has a real Logger contract that downstream packages
-// (cron, plugin-loader, tools-mcp, team-supervisor) consume directly.
-export type WiringLogger = Logger;
-
 export interface CreateAgentLoopOptions {
   /** Root data directory (typically `~/.ethos`). Sessions DB, memory, and
    *  user personalities all resolve under this path. */
@@ -118,7 +119,7 @@ export interface CreateAgentLoopOptions {
   disableDocker?: boolean;
   /** Optional log sink for non-fatal warnings (e.g. Docker missing, skill
    *  skipped). Defaults to a no-op so the package stays headless. */
-  logger?: WiringLogger;
+  logger?: Logger;
   /** Absolute path to the mesh registry file this agent belongs to.
    *  Controls which peers route_to_agent and broadcast_to_agents can see.
    *  Defaults to the 'default' mesh (~/.ethos/meshes/default/registry.json).
@@ -439,7 +440,7 @@ export interface CreateSessionStoreOptions {
   dataDir: string;
 }
 
-export function createSessionStore(opts: CreateSessionStoreOptions): SQLiteSessionStore {
+export function createSessionStore(opts: CreateSessionStoreOptions): SessionStore {
   return new SQLiteSessionStore(join(opts.dataDir, 'sessions.db'));
 }
 
@@ -450,9 +451,13 @@ export interface CreateMemoryProviderOptions {
   maxChars?: number;
 }
 
+// The markdown backend supports MEMORY.md / USER.md direct read/write
+// (GlobalMemoryStore) alongside the contract methods. The factory
+// advertises both via intersection so apps that need only one half
+// narrow at the use site.
 export function createMemoryProvider(
   opts: CreateMemoryProviderOptions,
-): MarkdownFileMemoryProvider {
+): MemoryProvider & GlobalMemoryStore {
   return new MarkdownFileMemoryProvider({ dir: opts.dataDir, maxChars: opts.maxChars });
 }
 

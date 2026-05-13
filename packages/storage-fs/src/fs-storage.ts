@@ -82,6 +82,12 @@ export class FsStorage implements Storage {
   }
 
   async append(path: string, content: string): Promise<void> {
+    // Asymmetry with InMemoryStorage.append: InMemoryStorage throws
+    // EINVAL when appending to a binary node, but FsStorage cannot
+    // detect that here without an extra stat + first-byte read. If the
+    // file on disk is binary, this silently concatenates utf-8 bytes
+    // and produces a malformed file. Callers writing binary content
+    // must use writeAtomic, not append.
     await appendFile(path, content, 'utf-8');
   }
 

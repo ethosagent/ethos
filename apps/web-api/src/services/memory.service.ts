@@ -1,15 +1,14 @@
-import type { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
+import type { GlobalMemoryStore } from '@ethosagent/types';
 import type { MemoryFile, MemoryStoreId } from '@ethosagent/web-contracts';
 
 // Memory service. Three reads and one write — list, get, write — all
-// over the global MEMORY.md / USER.md pair. Calls into
-// MarkdownFileMemoryProvider directly via its `readGlobalFile` /
-// `writeGlobalFile` helpers, which sit alongside the existing
-// prefetch/sync interface so per-personality + vector evolutions can
-// extend without re-introducing a separate repo.
+// over the global MEMORY.md / USER.md pair. Depends on the
+// `GlobalMemoryStore` contract (in @ethosagent/types) rather than a
+// concrete provider class; wiring's `createMemoryProvider` returns a
+// value that satisfies it.
 
 export interface MemoryServiceOptions {
-  memory: MarkdownFileMemoryProvider;
+  memory: GlobalMemoryStore;
 }
 
 export class MemoryService {
@@ -25,12 +24,12 @@ export class MemoryService {
   }
 
   async write(store: MemoryStoreId, content: string): Promise<{ file: MemoryFile }> {
-    const out = await this.opts.memory.writeGlobalFile(store, content);
+    const out = await this.opts.memory.writeGlobalEntry(store, content);
     return { file: { store, ...out } };
   }
 
   private async read(store: MemoryStoreId): Promise<MemoryFile> {
-    const out = await this.opts.memory.readGlobalFile(store);
+    const out = await this.opts.memory.readGlobalEntry(store);
     return { store, ...out };
   }
 }

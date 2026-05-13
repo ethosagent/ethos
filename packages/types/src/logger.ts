@@ -11,7 +11,10 @@
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
-export type LogMeta = Record<string, unknown>;
+// Convention: `err` carries the underlying Error (pino-compatible) so
+// implementations can render its message + stack uniformly without
+// every call site having to pre-stringify. Other keys flow as-is.
+export type LogMeta = { err?: unknown } & Record<string, unknown>;
 
 export interface Logger {
   debug(message: string, meta?: LogMeta): void;

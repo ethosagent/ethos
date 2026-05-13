@@ -6,9 +6,9 @@ import type {
   StoredMessage,
 } from '@ethosagent/types';
 
-// Thin wrapper over `@ethosagent/session-sqlite`'s `SessionStore`. Hides the
-// store's exact method names and Date/string conversions from the service
-// layer so swapping backends (e.g. an in-memory store for tests, or a future
+// Thin wrapper over the `SessionStore` contract. Hides the store's exact
+// method names and Date/string conversions from the service layer so
+// swapping backends (e.g. an in-memory store for tests, or a future
 // vector-aware variant) doesn't require service changes.
 //
 // Cursor pagination uses base64-encoded offsets for now. Switching to a

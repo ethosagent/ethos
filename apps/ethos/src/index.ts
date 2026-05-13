@@ -258,8 +258,9 @@ try {
         }
         mem.close();
       } else {
-        const { MarkdownFileMemoryProvider } = await import('@ethosagent/memory-markdown');
-        const mem = new MarkdownFileMemoryProvider();
+        const { createMemoryProvider } = await import('@ethosagent/wiring');
+        const { ethosDir: getDir } = await import('./config');
+        const mem = createMemoryProvider({ dataDir: getDir() });
 
         if (sub === 'show' || sub === '') {
           const result = await mem.prefetch({ sessionId: '', sessionKey: 'cli', platform: 'cli' });

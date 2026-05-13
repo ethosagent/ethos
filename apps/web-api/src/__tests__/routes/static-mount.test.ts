@@ -4,7 +4,11 @@ import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi } from '../../index';
-import { makeStubAgentLoop, makeStubPersonalityRegistry } from '../test-helpers';
+import {
+  makeStubAgentLoop,
+  makeStubMemoryProvider,
+  makeStubPersonalityRegistry,
+} from '../test-helpers';
 
 // Confirms the static mount lights up when `webDist` is supplied — the
 // last piece of the v0 web foundation (26.W1). Auth + RPC + SSE wiring
@@ -38,6 +42,7 @@ describe('createWebApi — static SPA mount', () => {
     return createWebApi({
       dataDir: dir,
       sessionStore: store,
+      memoryProvider: makeStubMemoryProvider(),
       agentLoop: makeStubAgentLoop(),
       personalities: makeStubPersonalityRegistry(),
       chatDefaults: { model: 'm', provider: 'p' },
