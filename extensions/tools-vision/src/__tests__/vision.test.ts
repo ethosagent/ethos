@@ -192,10 +192,8 @@ describe('vision_analyze — happy path (image)', () => {
       defaultModel: 'claude-opus-4-7',
     });
 
-    const result = await tool.execute(
-      { file_path: path, prompt: 'what color?' },
-      makeCtx({ workingDir: tmpDir, allowed: [tmpDir] }),
-    );
+    const ctx = makeCtx({ workingDir: tmpDir, allowed: [tmpDir] });
+    const result = await tool.execute({ file_path: path, prompt: 'what color?' }, ctx);
 
     if (!result.ok) throw new Error(`unexpected failure: ${result.code} ${result.error}`);
     const parsed = JSON.parse(result.value);
@@ -217,6 +215,8 @@ describe('vision_analyze — happy path (image)', () => {
     expect(content[1]).toMatchObject({ type: 'text', text: 'what color?' });
     // modelOverride threaded so the provider call routes to the right model.
     expect(calls[0]?.options.modelOverride).toBe('claude-opus-4-7');
+    // abortSignal threaded so caller cancellation reaches the provider.
+    expect(calls[0]?.options.abortSignal).toBe(ctx.abortSignal);
     // No tools wired — this is a one-shot prompt.
     expect(calls[0]?.tools).toEqual([]);
   });
@@ -483,6 +483,34 @@ describe('vision_analyze — format.json_schema', () => {
     expect(result.code).toBe('execution_failed');
     expect(result.error).toContain('RESPONSE_NOT_JSON');
     expect(result.error).toContain('not json');
+  });
+
+  it('rejects non-object top-level schema types up front (v1 limitation)', async () => {
+    const path = join(tmpDir, 'one.png');
+    writeFileSync(path, TINY_PNG);
+    const provider = makeStubProvider({ chunks: happyImageChunks('x') });
+    const tool = getVision({
+      resolveProvider: () => provider,
+      defaultModel: 'claude-opus-4-7',
+    });
+    const result = await tool.execute(
+      {
+        file_path: path,
+        prompt: 'extract',
+        format: {
+          type: 'json_schema',
+          // An array-rooted schema would silently accept any parseable JSON
+          // (e.g. `{"foo":1}`) without this guard — fail loud instead.
+          schema: { type: 'array', items: { type: 'string' } },
+        },
+      },
+      makeCtx({ workingDir: tmpDir, allowed: [tmpDir] }),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('input_invalid');
+    expect(result.error).toContain('INVALID_INPUT:');
+    expect(result.error).toContain('format.schema.type must be "object"');
   });
 
   it('returns RESPONSE_NOT_JSON when JSON parses but a required field is missing', async () => {

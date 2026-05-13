@@ -50,7 +50,7 @@ export interface VisionAnalyzeArgs {
   file_base64?: string;
   prompt?: string;
   model?: string;
-  format?: { type: 'json_schema'; schema: Record<string, unknown>; name?: string };
+  format?: { type: 'json_schema'; schema: Record<string, unknown> };
 }
 
 export interface VisionToolsOptions {
@@ -60,6 +60,14 @@ export interface VisionToolsOptions {
    * either the auxiliary vision provider (when `auxiliary.vision.model` is
    * set) or the primary provider (when the personality's main model is
    * vision-capable). Tests pass a stub.
+   *
+   * Why a function instead of a fixed `provider` (cf. compression's
+   * `SummarizerFn` which closes over a single provider built at wiring time):
+   * compression's auxiliary model is decided once at wiring time, so a
+   * single LLMProvider instance suffices. Vision's resolved model comes from
+   * three sources picked per request — `args.model | auxiliaryVisionModel |
+   * defaultModel` — and the provider that can serve it differs accordingly.
+   * The tool therefore needs a lookup callback, not a baked-in instance.
    */
   resolveProvider: (model: string) => LLMProvider | null;
   /**
@@ -112,7 +120,8 @@ export function makeVisionAnalyze(opts: VisionToolsOptions): Tool {
       'Analyze an image (PNG/JPEG/GIF/WEBP) or PDF with a vision-capable LLM. ' +
       'Provide exactly one of file_path (personality-allowlisted), file_url (HTTPS, SSRF-checked), ' +
       "or file_base64. Returns the model's text response plus token usage and cost. " +
-      'Pass format.json_schema to receive a parsed JSON object alongside the text.',
+      'Pass format.json_schema to receive a parsed JSON object alongside the text. ' +
+      'v1 limitation: format.schema must have type "object" (array / primitive top-level types are not supported).',
     toolset: 'vision',
     maxResultChars: MAX_RESULT_CHARS,
     // Tool output is the LLM's interpretation of an image / document the user
@@ -151,12 +160,12 @@ export function makeVisionAnalyze(opts: VisionToolsOptions): Tool {
         format: {
           type: 'object',
           description:
-            'When set to { type: "json_schema", schema, name? }, the tool appends a ' +
-            'schema-binding instruction to the prompt and parses the response as JSON.',
+            'When set to { type: "json_schema", schema }, the tool appends a schema-binding ' +
+            'instruction to the prompt and parses the response as JSON. v1 only supports ' +
+            'schemas with top-level type "object" — array / primitive root types are rejected.',
           properties: {
             type: { type: 'string', enum: ['json_schema'] },
             schema: { type: 'object' },
-            name: { type: 'string' },
           },
           required: ['type', 'schema'],
         },
@@ -194,6 +203,18 @@ async function executeVision(
     }
     if (typeof f.schema !== 'object' || f.schema === null) {
       return fail('input_invalid', 'INVALID_INPUT: format.schema must be an object');
+    }
+    // v1 only supports object-rooted schemas. The downstream validator
+    // (`tryParseJsonAgainstSchema`) silently no-ops on any other top-level
+    // type, which would mean `{ type: 'array' }` — or `{}` with no type at
+    // all — accepts any parseable JSON. Require an explicit `type: 'object'`
+    // so the contract matches the validator (CLAUDE.md "Simplicity first" —
+    // extend when a real caller asks).
+    if (f.schema.type !== 'object') {
+      return fail(
+        'input_invalid',
+        'INVALID_INPUT: format.schema.type must be "object" (other top-level types are not supported in v1)',
+      );
     }
   }
 
