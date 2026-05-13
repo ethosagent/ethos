@@ -83,7 +83,9 @@ describe('spawnDetached', () => {
       'utf8',
     );
     // Run the parent to completion — execFileSync returns only after it exits.
-    execFileSync(process.execPath, [tsxBin, parentScript]);
+    // Cap the wait so a stuck subprocess fails this test fast instead of
+    // wedging the whole vitest run.
+    execFileSync(process.execPath, [tsxBin, parentScript], { timeout: 30_000 });
     const grandchildPid = Number(readFileSync(pidFile, 'utf8').trim());
     spawnedPids.push(grandchildPid);
     // Parent process has fully exited; grandchild must still be alive.
@@ -167,13 +169,7 @@ describe('rotateLogIfNeeded', () => {
     const log = join(dir, 'stdout.log');
     writeFileSync(log, 'x'.repeat(LOG_MAX_BYTES + 1), 'utf8');
     // spawnDetached should rotate the oversized log before re-opening it for append
-    const result = spawnDetached(
-      'p5',
-      'echo after-rotate',
-      dir.replace(/\/processes\/p5$/, ''),
-      undefined,
-      dataDir,
-    );
+    const result = spawnDetached('p5', 'echo after-rotate', dataDir, undefined, dataDir);
     spawnedPids.push(result.pid);
     expect(existsSync(`${log}.1`)).toBe(true);
     await waitFor(() => readFileSync(log, 'utf8').includes('after-rotate'));
