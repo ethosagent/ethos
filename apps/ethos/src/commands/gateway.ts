@@ -1,14 +1,37 @@
+import { spawn } from 'node:child_process';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import type { AgentLoop } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
-import { Gateway } from '@ethosagent/gateway';
+import { Gateway, type GatewayBotConfig } from '@ethosagent/gateway';
 import { ConsoleLogger } from '@ethosagent/logger';
+import { createPersonalityRegistry } from '@ethosagent/personalities';
+import { readRuntime, removeRuntime } from '@ethosagent/team-supervisor';
 // Platform adapters are loaded LAZILY in runGatewayStart() — see plan/IMPROVEMENT.md P0-3.
 // Their underlying SDKs (grammy, discord.js, @slack/bolt, imapflow…) are
 // optionalDependencies of @ethosagent/cli. A failed install for any one of
 // them must not crash the CLI for users who don't run that platform.
-import type { PlatformAdapter } from '@ethosagent/types';
-import { type EthosConfig, readConfig, writeConfig } from '../config';
-import { createAgentLoop, getStorage } from '../wiring';
+import type { InboundMessage, PlatformAdapter } from '@ethosagent/types';
+import {
+  applyPlatformShim,
+  deriveBotKey,
+  type EthosConfig,
+  ethosDir,
+  loadConfigStrict,
+  readConfig,
+  type SlackAppConfig,
+  type TelegramBotConfig,
+  validateBotBindings,
+  writeConfig,
+} from '../config';
+import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';
+import { createAgentLoop, createTeamAgentLoop, getStorage } from '../wiring';
+import {
+  ensureTeamSupervisors,
+  stopTeamSupervisors,
+  type TeamSupervisorDeps,
+} from './supervisor-lifecycle';
+import { isPidAlive } from './team-runtime';
 
 // Best-effort dynamic import. Returns null and logs a clear warning if the
 // module can't be loaded — typically because its underlying SDK isn't
@@ -95,7 +118,28 @@ export async function runGatewaySetup(): Promise<void> {
 // ethos gateway start
 // ---------------------------------------------------------------------------
 
-export async function runGatewayStart(config: EthosConfig): Promise<void> {
+export async function runGatewayStart(): Promise<void> {
+  // Load config through the strict path so parse-time errors (typos in
+  // bind.type, missing bot tokens) surface here instead of silently
+  // booting zero bots. The strict loader also applies the legacy →
+  // list-shape shim and returns the deprecation messages we should
+  // surface before any other work.
+  const storage = getStorage();
+  const loaded = await loadConfigStrict(storage);
+  if (!loaded) {
+    console.error('Run ethos setup first.');
+    process.exit(1);
+  }
+  if (loaded.parseErrors.length > 0) {
+    console.log(`${c.red}Config parse errors:${c.reset}`);
+    for (const err of loaded.parseErrors) console.log(`  • ${err}`);
+    process.exit(1);
+  }
+  for (const note of loaded.deprecations) {
+    console.log(`${c.yellow}⚠ deprecation${c.reset} ${c.dim}${note}${c.reset}`);
+  }
+  const config = loaded.config;
+
   const hasEmailConfig =
     config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost;
 
@@ -103,11 +147,52 @@ export async function runGatewayStart(config: EthosConfig): Promise<void> {
     config.telegramToken ||
     config.discordToken ||
     (config.slackBotToken && config.slackAppToken && config.slackSigningSecret) ||
+    (config.telegram?.bots.length ?? 0) > 0 ||
+    (config.slack?.apps.length ?? 0) > 0 ||
     hasEmailConfig;
 
   if (!hasAnyPlatform) {
     console.log(`${c.red}No platform configured. Run: ethos gateway setup${c.reset}`);
     process.exit(1);
+  }
+
+  // Multi-bot routing has a known limitation in v1: email and discord
+  // continue to use a single legacy adapter without botKey stamping.
+  // When multi-bot telegram/slack is configured alongside email/discord,
+  // those legacy adapters' messages have no botKey, and the Gateway has
+  // no `defaultBotKey` to fall back on (defaultBotKey only fires for
+  // single-bot deployments). Warn at boot so operators know.
+  const multiBotConfigured =
+    (config.telegram?.bots.length ?? 0) + (config.slack?.apps.length ?? 0) > 1;
+  const legacyAdapterConfigured =
+    !!config.discordToken ||
+    !!(config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost);
+  if (multiBotConfigured && legacyAdapterConfigured) {
+    console.log(
+      `${c.yellow}⚠${c.reset} ${c.dim}Multi-bot routing is configured alongside email/discord. ` +
+        `Email and Discord inbound messages will not be routed in v1 — they have no botKey. ` +
+        `Use single-bot configs or wait for v1.1 multi-bot email/discord.${c.reset}`,
+    );
+  }
+
+  // Validate bot bindings against the on-disk personality registry and
+  // team manifests. Fail loudly here rather than letting messages route
+  // to a non-existent destination at first request.
+  const bindErrors = await validateBindings(config);
+  if (bindErrors.length > 0) {
+    console.log(`${c.red}Bot binding errors:${c.reset}`);
+    for (const err of bindErrors) console.log(`  • ${err}`);
+    process.exit(1);
+  }
+
+  // Migrate persisted session keys to the new `${platform}:${botKey}:
+  // ${chatId}` shape if we haven't already. Idempotent — subsequent
+  // boots see the marker and short-circuit.
+  const migration = await migrateSessionKeysIfNeeded({ storage, config });
+  if (migration && migration.migrated > 0) {
+    console.log(
+      `${c.dim}Migrated ${migration.migrated} session key(s) to the multi-bot lane format.${c.reset}`,
+    );
   }
 
   console.log(`${c.bold}ethos gateway${c.reset}  ${c.dim}starting...${c.reset}`);
@@ -117,80 +202,50 @@ export async function runGatewayStart(config: EthosConfig): Promise<void> {
     `${c.dim}Runs in the foreground. For always-on production, see https://ethosagent.ai/docs/guides/run-as-daemon (launchd / systemd / pm2). For interactive use, run ${c.reset}${c.bold}ethos chat${c.reset}${c.dim}.${c.reset}`,
   );
 
-  // Build the shared agent loop
-  const loop = await createAgentLoop(config);
+  // Build one AgentLoop per configured bot. Personality bots use
+  // `createAgentLoop`; team bots use `createTeamAgentLoop`.
+  const bots = await buildGatewayBots(config);
 
-  // Build gateway
-  const gateway = new Gateway({ loop, defaultPersonality: config.personality });
+  // Phase 3: for each team-bound bot, ensure the supervisor is running.
+  const supervisorDeps: TeamSupervisorDeps = {
+    readRuntime,
+    removeRuntime,
+    isPidAlive,
+    spawn,
+    kill: (pid, signal) => process.kill(pid, signal as NodeJS.Signals),
+  };
+  const entryPoint = process.argv[1] ?? '';
+  const supervisorResults = await ensureTeamSupervisors(bots, entryPoint, supervisorDeps);
+  for (const [teamName, result] of supervisorResults) {
+    if (result.status === 'spawned' && result.pid === undefined) {
+      console.log(
+        `${c.yellow}⚠ team supervisor${c.reset} ${c.bold}${teamName}${c.reset} ${c.yellow}spawned but did not publish a runtime file — team routing may be broken. Run 'ethos team status ${teamName}' to diagnose.${c.reset}`,
+      );
+    } else {
+      console.log(
+        result.status === 'spawned'
+          ? `${c.dim}team supervisor${c.reset} ${c.bold}${teamName}${c.reset} ${c.dim}spawned (PID ${result.pid})${c.reset}`
+          : `${c.dim}team supervisor${c.reset} ${c.bold}${teamName}${c.reset} ${c.dim}already running (PID ${result.pid})${c.reset}`,
+      );
+    }
+  }
+  // System loop used by cron — not bot-bound. Cron jobs route through
+  // their own `job.personality` field, not through the platform bot
+  // routing table.
+  const systemLoop = await createAgentLoop(config);
+  const gateway: Gateway =
+    bots.length === 0
+      ? // Email-only deployment (no telegram/slack bots configured). Keep
+        // the legacy single-loop construction for the email path.
+        new Gateway({ loop: systemLoop, defaultPersonality: config.personality })
+      : new Gateway({ bots });
+
+  // Index bots by botKey so health-check lines can show the binding inline.
+  const botByKey = new Map(bots.map((b) => [b.botKey, b]));
 
   // Build and register all configured adapters. Each loads lazily so a missing
   // SDK in node_modules only takes down its own platform, not the gateway.
-  const adapters: PlatformAdapter[] = [];
-
-  if (config.telegramToken) {
-    const mod = await loadAdapterModule<typeof import('@ethosagent/platform-telegram')>(
-      '@ethosagent/platform-telegram',
-      'Telegram',
-    );
-    if (mod) {
-      adapters.push(
-        new mod.TelegramAdapter({
-          token: config.telegramToken,
-          dropPendingUpdates: true,
-        }),
-      );
-    }
-  }
-
-  if (config.discordToken) {
-    const mod = await loadAdapterModule<typeof import('@ethosagent/platform-discord')>(
-      '@ethosagent/platform-discord',
-      'Discord',
-    );
-    if (mod) {
-      adapters.push(new mod.DiscordAdapter({ token: config.discordToken }));
-    }
-  }
-
-  if (config.slackBotToken && config.slackAppToken && config.slackSigningSecret) {
-    const mod = await loadAdapterModule<typeof import('@ethosagent/platform-slack')>(
-      '@ethosagent/platform-slack',
-      'Slack',
-    );
-    if (mod) {
-      adapters.push(
-        new mod.SlackAdapter({
-          botToken: config.slackBotToken,
-          appToken: config.slackAppToken,
-          signingSecret: config.slackSigningSecret,
-        }),
-      );
-    }
-  }
-
-  if (hasEmailConfig) {
-    // Re-narrow for the type checker. hasEmailConfig already proves all four
-    // are truthy (see line 97-98); the inner check is unreachable at runtime.
-    const { emailImapHost, emailUser, emailPassword, emailSmtpHost } = config;
-    if (emailImapHost && emailUser && emailPassword && emailSmtpHost) {
-      const mod = await loadAdapterModule<typeof import('@ethosagent/platform-email')>(
-        '@ethosagent/platform-email',
-        'Email',
-      );
-      if (mod) {
-        adapters.push(
-          new mod.EmailAdapter({
-            imapHost: emailImapHost,
-            imapPort: config.emailImapPort ?? 993,
-            user: emailUser,
-            password: emailPassword,
-            smtpHost: emailSmtpHost,
-            smtpPort: config.emailSmtpPort ?? 587,
-          }),
-        );
-      }
-    }
-  }
+  const adapters = await buildAdapters(config, loadAdapterModule);
 
   if (adapters.length === 0) {
     console.log(
@@ -199,9 +254,14 @@ export async function runGatewayStart(config: EthosConfig): Promise<void> {
     process.exit(1);
   }
 
-  // Wire all adapters → gateway
+  // Wire all adapters → gateway. Telegram and Slack adapters stamp
+  // `InboundMessage.botKey` themselves (from the `botKey` field passed
+  // at construction). Email and Discord don't stamp; their messages
+  // fall back to `defaultBotKey` in single-bot deployments and are
+  // dropped by the gateway with an observability event in multi-bot
+  // ones (warned about at boot above).
   for (const adapter of adapters) {
-    adapter.onMessage((message) => {
+    adapter.onMessage((message: InboundMessage) => {
       void gateway.handleMessage(message, adapter).catch((err) => {
         console.error(`[gateway:${adapter.id}] Error:`, err);
       });
@@ -214,7 +274,7 @@ export async function runGatewayStart(config: EthosConfig): Promise<void> {
     runJob: async (job) => {
       const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
       let output = '';
-      for await (const event of loop.run(job.prompt, {
+      for await (const event of systemLoop.run(job.prompt, {
         sessionKey,
         personalityId: job.personality ?? config.personality,
       })) {
@@ -229,14 +289,22 @@ export async function runGatewayStart(config: EthosConfig): Promise<void> {
   // Start all adapters
   await Promise.all(adapters.map((a) => a.start()));
 
-  // Health checks
+  // Health checks — include botKey and binding for multi-bot adapters so the
+  // startup log shows exactly which bot is live and what it's bound to.
   for (const adapter of adapters) {
     const health = await adapter.health();
+    // adapter.id is `${platform}:${botKey}` for telegram/slack; the botKey is
+    // everything after the first colon.
+    const adapterBotKey = adapter.id.includes(':') ? adapter.id.split(':').slice(1).join(':') : '';
+    const bot = botByKey.get(adapterBotKey);
+    const bindingSuffix = bot
+      ? ` ${c.dim}→ ${bot.binding.type}:${c.reset}${c.bold}${bot.binding.name}${c.reset}`
+      : '';
     if (health.ok) {
-      const ms = health.latencyMs ? ` (${health.latencyMs}ms)` : '';
-      console.log(`${c.green}✓ ${adapter.displayName} online${c.reset}${c.dim}${ms}${c.reset}`);
+      const ms = health.latencyMs ? `${c.dim} (${health.latencyMs}ms)${c.reset}` : '';
+      console.log(`${c.green}✓${c.reset} ${c.bold}${adapter.id}${c.reset}${bindingSuffix}${ms}`);
     } else {
-      console.log(`${c.yellow}⚠ ${adapter.displayName} health check failed${c.reset}`);
+      console.log(`${c.yellow}⚠ ${adapter.id} health check failed${c.reset}${bindingSuffix}`);
     }
   }
 
@@ -253,6 +321,7 @@ export async function runGatewayStart(config: EthosConfig): Promise<void> {
         '⚠ Ethos was interrupted while answering. Please resend your last message — your session history is preserved.',
     });
     await Promise.allSettled(adapters.map((a) => a.stop()));
+    stopTeamSupervisors(bots, config.teams ?? {}, supervisorDeps);
     process.exit(0);
   };
 
@@ -261,4 +330,154 @@ export async function runGatewayStart(config: EthosConfig): Promise<void> {
 
   // Keep the process alive (adapter polling runs async)
   await new Promise(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1 helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the per-bot routing table the Gateway needs. Walks both
+ * `config.telegram.bots` and `config.slack.apps`, resolving each
+ * binding to either a personality-scoped AgentLoop (`createAgentLoop`)
+ * or a team coordinator loop (`createTeamAgentLoop`). The botKey
+ * matches what adapters will stamp on inbound messages.
+ */
+async function buildGatewayBots(config: EthosConfig): Promise<GatewayBotConfig[]> {
+  const out: GatewayBotConfig[] = [];
+  const buildOne = async (bot: TelegramBotConfig | SlackAppConfig): Promise<GatewayBotConfig> => {
+    const botKey = deriveBotKey(bot);
+    let loop: AgentLoop;
+    if (bot.bind.type === 'team') {
+      const team = await createTeamAgentLoop(config, bot.bind.name);
+      loop = team.loop;
+    } else {
+      loop = await createAgentLoop({ ...config, personality: bot.bind.name });
+    }
+    return { botKey, loop, binding: { ...bot.bind } };
+  };
+  for (const bot of config.telegram?.bots ?? []) out.push(await buildOne(bot));
+  for (const app of config.slack?.apps ?? []) out.push(await buildOne(app));
+  return out;
+}
+
+/**
+ * Validate that every bot binding points at a real personality or team
+ * on disk. Personality set comes from the same `FilePersonalityRegistry`
+ * the agent loop uses at runtime — no duplicated roster of built-ins
+ * to drift the next time built-ins change. Team set comes from
+ * `~/.ethos/teams/<name>.yaml`.
+ */
+async function validateBindings(config: EthosConfig): Promise<string[]> {
+  const storage = getStorage();
+  const registry = await createPersonalityRegistry({
+    storage,
+    userPersonalitiesDir: join(ethosDir(), 'personalities'),
+  });
+  // `loadFromDirectory` uses Storage.list, which returns [] for a
+  // missing directory — so we don't pre-check existence. Genuine
+  // load errors (corrupt personality file, parse failure, permission
+  // denied) propagate here at validation time rather than crashing
+  // the first inbound message later.
+  await registry.loadFromDirectory(join(ethosDir(), 'personalities'));
+  const personalityIds = new Set<string>(registry.list().map((p) => p.id));
+
+  // Team manifests live at ~/.ethos/teams/<name>.yaml. Storage.listEntries
+  // is the constitution-approved listing primitive and yields an empty
+  // list for a missing directory, so no pre-check needed.
+  const teamNames = new Set<string>();
+  for (const entry of await storage.listEntries(join(ethosDir(), 'teams'))) {
+    if (entry.name.endsWith('.yaml')) teamNames.add(entry.name.replace(/\.yaml$/, ''));
+  }
+  return validateBotBindings(config, { personalityIds, teamNames });
+}
+
+/**
+ * Construct one PlatformAdapter per configured bot/app, in addition to
+ * single legacy adapters for discord + email. Exported so tests can
+ * exercise the multi-bot adapter loop with a mocked module loader
+ * (avoiding a real grammy / @slack/bolt construction in unit tests).
+ *
+ * Applies `applyPlatformShim` defensively so callers that pass a
+ * legacy single-bot config (`telegramToken` / `slackBotToken` etc.)
+ * still construct adapters correctly. The shim is idempotent — when
+ * the boot path already normalized via `loadConfigStrict`, the
+ * second pass is a no-op.
+ */
+export type AdapterModuleLoader = <T>(modulePath: string, label: string) => Promise<T | null>;
+
+export async function buildAdapters(
+  config: EthosConfig,
+  loadAdapter: AdapterModuleLoader,
+): Promise<PlatformAdapter[]> {
+  config = applyPlatformShim(config).config;
+  const adapters: PlatformAdapter[] = [];
+
+  if ((config.telegram?.bots.length ?? 0) > 0) {
+    const mod = await loadAdapter<typeof import('@ethosagent/platform-telegram')>(
+      '@ethosagent/platform-telegram',
+      'Telegram',
+    );
+    if (mod) {
+      for (const botCfg of config.telegram?.bots ?? []) {
+        adapters.push(
+          new mod.TelegramAdapter({
+            token: botCfg.token,
+            botKey: deriveBotKey(botCfg),
+            dropPendingUpdates: true,
+          }),
+        );
+      }
+    }
+  }
+
+  if ((config.slack?.apps.length ?? 0) > 0) {
+    const mod = await loadAdapter<typeof import('@ethosagent/platform-slack')>(
+      '@ethosagent/platform-slack',
+      'Slack',
+    );
+    if (mod) {
+      for (const appCfg of config.slack?.apps ?? []) {
+        adapters.push(
+          new mod.SlackAdapter({
+            botToken: appCfg.botToken,
+            appToken: appCfg.appToken,
+            signingSecret: appCfg.signingSecret,
+            botKey: deriveBotKey(appCfg),
+          }),
+        );
+      }
+    }
+  }
+
+  if (config.discordToken) {
+    const mod = await loadAdapter<typeof import('@ethosagent/platform-discord')>(
+      '@ethosagent/platform-discord',
+      'Discord',
+    );
+    if (mod) {
+      adapters.push(new mod.DiscordAdapter({ token: config.discordToken }));
+    }
+  }
+
+  if (config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost) {
+    const mod = await loadAdapter<typeof import('@ethosagent/platform-email')>(
+      '@ethosagent/platform-email',
+      'Email',
+    );
+    if (mod) {
+      adapters.push(
+        new mod.EmailAdapter({
+          imapHost: config.emailImapHost,
+          imapPort: config.emailImapPort ?? 993,
+          user: config.emailUser,
+          password: config.emailPassword,
+          smtpHost: config.emailSmtpHost,
+          smtpPort: config.emailSmtpPort ?? 587,
+        }),
+      );
+    }
+  }
+
+  return adapters;
 }

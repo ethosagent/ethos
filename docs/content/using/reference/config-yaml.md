@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model, channel t
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-05-12
+updated: 2026-05-13
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. The parser ignores quotes around values.
@@ -120,15 +120,86 @@ providers.1.apiKey: sk-or-...
 providers.1.model: anthropic/claude-opus-4-7
 ```
 
+## telegram.bots.\* {#telegram-bots}
+
+Multi-bot list shape. When set, the gateway creates one `TelegramAdapter` and one `AgentLoop` per entry. `telegram.bots` takes precedence over the legacy `telegramToken` scalar when both are present.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `telegram.bots.<i>.token` | string | — | Bot token from BotFather. Required per entry. |
+| `telegram.bots.<i>.id` | string | `sha256(token)[:24]` | Stable, human-readable bot key. Used in session lane names (`telegram:<botKey>:<chatId>`), log output, and the internal `Map<botKey, AgentLoop>`. Set once; do not change after the bot goes live. |
+| `telegram.bots.<i>.bind.type` | `personality` \| `team` | — | Required. `personality` routes to a named personality. `team` routes to the team's coordinator personality and auto-starts the team supervisor. |
+| `telegram.bots.<i>.bind.name` | string | — | Required. Personality id (for `personality`) or team name (for `team`). |
+| `telegram.bots.<i>.bind.allowSlashSwitch` | boolean | `false` | Allow per-chat `/personality` switching. Disabled by default for identity-bound bots. |
+
+```yaml
+telegram.bots.0.token: "123456:ABCdefGhIJklmNopQRstuVwxYZ"
+telegram.bots.0.id: researcher-bot
+telegram.bots.0.bind.type: personality
+telegram.bots.0.bind.name: researcher
+
+telegram.bots.1.token: "654321:XYZabcDeFgHijKlMnOpqRsTuV"
+telegram.bots.1.id: coder-bot
+telegram.bots.1.bind.type: personality
+telegram.bots.1.bind.name: engineer
+```
+
+Notes:
+
+- Session key format in multi-bot mode: `telegram:<botKey>:<chatId>`. This differs from single-bot mode (`telegram:<chatId>`).
+- `deriveBotKey()` in [`apps/ethos/src/config.ts`](../../../../apps/ethos/src/config.ts) computes the sha256-derived default when `id` is omitted.
+- See [Run multiple Telegram bots from one process](../how-to/run-multi-bot-telegram.md) for a full walkthrough.
+
 ## telegramToken {#telegram-token}
 
-Type: string · Default: unset
+Type: string · Default: unset · **Deprecated** (use `telegram.bots` instead)
 
-Bot token for the Telegram gateway. Required when `ethos gateway start` should bind a Telegram bot.
+Legacy scalar shape — wires one bot bound to the default `personality`. Still supported; creates a single-element entry in the gateway's internal bot list. When both `telegramToken` and `telegram.bots` are set, `telegram.bots` takes precedence and this field is ignored with a deprecation warning.
 
 ```yaml
 telegramToken: 123456:ABC-DEF...
 ```
+
+## slack.apps.\* {#slack-apps}
+
+Multi-app list shape for Slack. Each entry creates one Slack adapter bound to a personality or team. Supersedes the legacy scalar fields `slackBotToken`, `slackAppToken`, and `slackSigningSecret` when set.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `slack.apps.<i>.botToken` | string | — | `xoxb-` bot token. Required per entry. |
+| `slack.apps.<i>.appToken` | string | — | `xapp-` app-level token for Socket Mode. Required per entry. |
+| `slack.apps.<i>.signingSecret` | string | — | Signing secret for inbound webhook verification. Required per entry. |
+| `slack.apps.<i>.id` | string | `sha256(botToken)[:24]` | Stable, human-readable app key. Used in session lane names and log output. Set once; do not change after the app goes live. |
+| `slack.apps.<i>.bind.type` | `personality` \| `team` | — | Required. Same semantics as the Telegram equivalent. |
+| `slack.apps.<i>.bind.name` | string | — | Required. Personality id or team name. |
+| `slack.apps.<i>.bind.allowSlashSwitch` | boolean | `false` | Allow per-channel `/personality` switching. |
+
+```yaml
+slack.apps.0.botToken: "xoxb-..."
+slack.apps.0.appToken: "xapp-..."
+slack.apps.0.signingSecret: "abc123..."
+slack.apps.0.id: eng-slack
+slack.apps.0.bind.type: team
+slack.apps.0.bind.name: eng
+```
+
+## teams.\* {#teams}
+
+Per-team runtime knobs. These apply to teams that the gateway auto-starts via `bind.type: team` in `telegram.bots` or `slack.apps`.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `teams.<name>.autoStop` | boolean | `true` | When `true`, the gateway stops the team supervisor when the gateway shuts down. Set to `false` to leave the supervisor running across gateway restarts. |
+
+```yaml
+teams.eng.autoStop: false
+```
+
+Notes:
+
+- `<name>` must match the team manifest filename stem at `~/.ethos/teams/<name>.yaml`.
+- With `autoStop: false`, stop the supervisor manually with `ethos team stop <name>`.
+- See [Connect a Telegram bot to a team](../how-to/connect-telegram-to-team.md) for a usage example.
 
 ## discordToken {#discord-token}
 
@@ -282,4 +353,6 @@ The directory can be relocated with the `ETHOS_DIR` env var.
 - [CLI reference](./cli.md) — every `ethos` subcommand and the flags that override what config.yaml sets
 - [Personality config reference](./personality-yaml.md) — the per-personality `config.yaml` and `toolset.yaml` (different file, different schema)
 - [How to configure providers](../how-to/configure-providers.md) — task-shaped recipe for switching between Anthropic, OpenAI, OpenRouter, and Ollama
+- [Run multiple Telegram bots from one process](../how-to/run-multi-bot-telegram.md) — `telegram.bots` list shape in practice
+- [Connect a Telegram bot to a team](../how-to/connect-telegram-to-team.md) — `bind.type: team` and `teams.*` knobs in practice
 - [Glossary: personality](../../getting-started/glossary.md#personality) — what the term means everywhere else in the docs

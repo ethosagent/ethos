@@ -69,12 +69,14 @@
   "devDependencies": {
     "@ethosagent/agent-mesh": "workspace:*",
     "@ethosagent/cron": "workspace:*",
+    "@ethosagent/gateway": "workspace:*",
     "@ethosagent/mcp-server": "workspace:*",
     "@ethosagent/observability-sqlite": "workspace:*",
     "@ethosagent/personalities": "workspace:*",
     "@ethosagent/skills": "workspace:*",
     "@ethosagent/skills-coding": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
+    "@ethosagent/session-sqlite": "workspace:*",
     "@ethosagent/team-supervisor": "workspace:*",
     "@ethosagent/web-api": "workspace:*",
     "@ethosagent/wiring": "workspace:*"

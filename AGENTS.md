@@ -126,10 +126,12 @@ The same gate applies to the tool_progress AgentEvent. Surface code (CLI chat, c
 Channel adapter contract
 Every outbound channel message — including streaming finals and edits — flows through a single dedup path in the gateway: MessageDedupCache keyed by (sessionId, sha256(content)) with a 30s TTL. Adapters call adapter.send(); the gateway gates the call with cache.shouldSend(sessionId, content) and silently drops duplicates.
 
-Adapters do NOT roll their own dedup. A new adapter does not need an idempotency layer. If you find adapter-local dedup logic, it's a bug.
+Adapters do NOT roll their own dedup. A new adapter does not need an idempotency layer. If you find adapter-local dedup logic, it's a bug. A new adapter MUST populate `InboundMessage.botKey` from the token/credentials it was constructed with. Use `deriveBotKey()` from `apps/ethos/src/config.ts` to derive a stable default when no explicit `id` is configured.
 Configuration: GatewayConfig.outboundDedupTtlMs (default 30_000). Set to 0 to disable, or set the env var ETHOS_DEDUP_LEGACY=1 for the hard-off rollback hatch (one-release escape valve; remove in next minor).
 Session boundaries: /new and /personality clear the previous session's dedup keys so the same response text can be sent again under the fresh session key.
 See extensions/gateway/src/dedup.ts and the tests in extensions/gateway/src/__tests__/dedup.test.ts.
+
+In multi-bot deployments, the gateway holds a `Map<botKey, AgentLoop>` — one loop per configured bot. The lane key is `${platform}:${botKey}:${chatId}` (not `${platform}:${chatId}` as in single-bot mode). Every adapter stamps `InboundMessage.botKey` so the gateway can route to the right loop. Adapters that do not support `botKey` (Discord, Email) fall back to the `defaultBotKey` in single-bot deployments; in multi-bot deployments their messages are dropped with an observability event. The per-bot botKey must be stable across restarts — use the optional `id:` field in config, or accept the sha256-derived default.
 
 Storage abstraction
 All filesystem reads and writes under ~/.ethos/ go through the Storage interface from @ethosagent/types. New code must NOT import from node:fs/promises (or node:fs) for ~/.ethos/ access — wire a Storage in via the constructor.

@@ -140,6 +140,9 @@ importers:
       '@ethosagent/cron':
         specifier: workspace:*
         version: link:../../extensions/cron
+      '@ethosagent/gateway':
+        specifier: workspace:*
+        version: link:../../extensions/gateway
       '@ethosagent/mcp-server':
         specifier: workspace:*
         version: link:../mcp-server
@@ -149,6 +152,9 @@ importers:
       '@ethosagent/personalities':
         specifier: workspace:*
         version: link:../../extensions/personalities
+      '@ethosagent/session-sqlite':
+        specifier: workspace:*
+        version: link:../../extensions/session-sqlite
       '@ethosagent/skills':
         specifier: workspace:*
         version: link:../../extensions/skills

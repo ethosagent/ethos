@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   DeliveryResult,
   InboundMessage,
@@ -9,6 +10,14 @@ import boltPkg from '@slack/bolt';
 
 const { App } = boltPkg;
 type App = InstanceType<typeof App>;
+
+// First 24 hex chars of sha256(botToken). Matches the derivation in
+// `apps/ethos/src/config.ts:deriveBotKey` so an adapter constructed
+// directly without `botKey` ends up with the same routing identity
+// the gateway boot path would have produced from the same token.
+function deriveDefaultBotKey(botToken: string): string {
+  return createHash('sha256').update(botToken).digest('hex').slice(0, 24);
+}
 
 // ---------------------------------------------------------------------------
 // Text chunking — Slack 4000 char limit per block
@@ -76,10 +85,20 @@ export interface SlackAdapterConfig {
   appToken: string;
   /** Signing secret from Slack app config */
   signingSecret: string;
+  /**
+   * Stable identifier of the Slack app this adapter is bound to. Stamped on
+   * every inbound `InboundMessage.botKey` so the Gateway can route to the
+   * right `AgentLoop` in multi-bot deployments. Optional: when omitted the
+   * adapter derives the same 24-hex sha256(botToken) prefix the config
+   * layer's `deriveBotKey()` produces, so a direct constructor call
+   * without `botKey` round-trips with the same identity the boot path
+   * would have produced.
+   */
+  botKey?: string;
 }
 
 export class SlackAdapter implements PlatformAdapter {
-  readonly id = 'slack';
+  readonly id: string;
   readonly displayName = 'Slack';
   readonly canSendTyping = false; // Slack doesn't support persistent typing indicator
   readonly canEditMessage = true;
@@ -87,6 +106,7 @@ export class SlackAdapter implements PlatformAdapter {
   readonly canSendFiles = false;
   readonly maxMessageLength = 3000;
 
+  readonly botKey: string;
   private readonly app: App;
   private readonly client: App['client'];
   private messageHandler?: (message: InboundMessage) => void;
@@ -103,6 +123,8 @@ export class SlackAdapter implements PlatformAdapter {
     });
 
     this.client = this.app.client;
+    this.botKey = config.botKey ?? deriveDefaultBotKey(config.botToken);
+    this.id = `slack:${this.botKey}`;
   }
 
   // ---------------------------------------------------------------------------
@@ -125,6 +147,7 @@ export class SlackAdapter implements PlatformAdapter {
       const ts = 'ts' in msg ? String(msg.ts) : undefined;
       this.messageHandler({
         platform: 'slack',
+        botKey: this.botKey,
         chatId: String(msg.channel),
         userId: 'user' in msg ? String(msg.user) : undefined,
         text,
@@ -144,6 +167,7 @@ export class SlackAdapter implements PlatformAdapter {
 
       this.messageHandler({
         platform: 'slack',
+        botKey: this.botKey,
         chatId: event.channel,
         userId: event.user,
         text,
