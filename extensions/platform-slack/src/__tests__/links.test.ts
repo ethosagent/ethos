@@ -72,6 +72,14 @@ describe('matchEthosUrl', () => {
     expect(matchEthosUrl(`${base}/sessions/abc`, prefixed)).toBeNull();
   });
 
+  it('respects the path-segment boundary of a prefixed base', () => {
+    // base `/app` must not match `/appmemory` or `/appsessions/abc` — a bare
+    // `startsWith` would, leaking same-domain links outside the configured base.
+    const prefixed = 'https://ethos.example.com/app';
+    expect(matchEthosUrl('https://ethos.example.com/appmemory', prefixed)).toBeNull();
+    expect(matchEthosUrl('https://ethos.example.com/appsessions/abc', prefixed)).toBeNull();
+  });
+
   it('returns null for a malformed shared URL', () => {
     expect(matchEthosUrl('not a url', base)).toBeNull();
   });

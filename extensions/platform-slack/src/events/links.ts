@@ -110,8 +110,15 @@ export function matchEthosUrl(
 
   // Strip the base's path prefix so path-prefixed deployments
   // (`https://host/app`) work — the resource path is whatever follows it.
+  // The match must respect a path-segment boundary: a bare `startsWith`
+  // would let base `/app` also match `/appmemory` or `/appsessions/abc`,
+  // unfurling same-domain links that aren't under the configured base.
+  // Require the path to equal the prefix or continue with a `/`. An empty
+  // `basePath` (no prefix) trivially passes — every path starts with `/`.
   const basePath = base.pathname.replace(/\/+$/, '');
-  if (!url.pathname.startsWith(basePath)) return null;
+  if (url.pathname !== basePath && !url.pathname.startsWith(`${basePath}/`)) {
+    return null;
+  }
   const rest = url.pathname.slice(basePath.length);
 
   const segments = rest.split('/').filter((s) => s.length > 0);
