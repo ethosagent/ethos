@@ -68,7 +68,6 @@
       "@ethosagent/mcp-server": ["./apps/mcp-server/src"],
       "@ethosagent/tools-image": ["./extensions/tools-image/src"],
       "@ethosagent/tools-process": ["./extensions/tools-process/src"],
-      "@ethosagent/tools-vision": ["./extensions/tools-vision/src"],
       "@ethosagent/tools-vision/input-resolver": ["./extensions/tools-vision/src/input-resolver"],
       "@ethosagent/observability-sqlite": ["./extensions/observability-sqlite/src"],
       "@ethosagent/safety-channel": ["./packages/safety/channel/src"],

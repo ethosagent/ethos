@@ -6,6 +6,11 @@
 //   - SSRF / boundary error translation
 //   - invalid input shapes (0 keys, >=2 keys)
 
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { FsStorage, ScopedStorage } from '@ethosagent/storage-fs';
 import { BoundaryError, type Storage } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveFile, VisionInputError } from '../input-resolver';
@@ -118,10 +123,6 @@ class BoundaryStorage implements Storage {
 // validating the path against ScopedStorage. The fake storage above only
 // records WHICH paths are allowed.
 // ---------------------------------------------------------------------------
-
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 let tmpDir = '';
 
@@ -270,6 +271,77 @@ describe('resolveFile — file_path branch', () => {
     await expect(resolveFile({ file_path: path }, { storage })).rejects.toMatchObject({
       code: 'UNSUPPORTED_FILE_TYPE',
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Path-traversal — wired against real ScopedStorage to prove that the
+// resolver collapses `..`/`.` segments AND canonicalizes symlinks before the
+// allowlist check fires. Without these, ScopedStorage's lexical prefix match
+// (packages/storage-fs/src/scoped-storage.ts:isPathAllowed) would accept
+// `/safe/../etc/passwd` and `/safe/innocent.png → /etc/passwd`, then
+// fs.readFile would resolve those to paths outside the allowlist.
+// ---------------------------------------------------------------------------
+
+describe('resolveFile — file_path branch / path-traversal defenses', () => {
+  let safeDir: string;
+  let outsideDir: string;
+
+  beforeEach(async () => {
+    // Canonicalize through realpath — on macOS tmpdir() lives under
+    // /var/folders/... which is a symlink to /private/var/folders/...; the
+    // resolver canonicalizes the request path, so the allowlist prefix must
+    // already be canonical or the prefix check sees a /private/var path
+    // against a /var prefix.
+    safeDir = await realpath(mkdtempSync(join(tmpdir(), 'vision-safe-')));
+    outsideDir = await realpath(mkdtempSync(join(tmpdir(), 'vision-outside-')));
+  });
+
+  afterEach(() => {
+    rmSync(safeDir, { recursive: true, force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  function scopedFor(prefix: string): ScopedStorage {
+    return new ScopedStorage(new FsStorage(), {
+      read: [`${prefix}/`],
+      write: [`${prefix}/`],
+    });
+  }
+
+  it('rejects an absolute path whose lexical prefix is allowed but normalizes outside the allowlist', async () => {
+    // Place a real target outside the allowlist that fs.readFile WOULD reach
+    // after `..` normalization — proves the resolver normalizes BEFORE the
+    // boundary check, not just after.
+    writeFileSync(join(outsideDir, 'secret.png'), TINY_PNG);
+    const escapePath = `${safeDir}/../${outsideDir.split('/').pop()}/secret.png`;
+    const storage = scopedFor(safeDir);
+
+    await expect(
+      resolveFile({ file_path: escapePath }, { storage, workingDir: safeDir }),
+    ).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' });
+  });
+
+  it('rejects a relative path with `..` that escapes the workingDir outside the allowlist', async () => {
+    writeFileSync(join(outsideDir, 'secret.png'), TINY_PNG);
+    const relativeEscape = `../${outsideDir.split('/').pop()}/secret.png`;
+    const storage = scopedFor(safeDir);
+
+    await expect(
+      resolveFile({ file_path: relativeEscape }, { storage, workingDir: safeDir }),
+    ).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' });
+  });
+
+  it('rejects a symlink inside the allowlist that points to a file outside it', async () => {
+    const realTarget = join(outsideDir, 'secret.png');
+    writeFileSync(realTarget, TINY_PNG);
+    const linkInsideSafe = join(safeDir, 'innocent.png');
+    symlinkSync(realTarget, linkInsideSafe);
+    const storage = scopedFor(safeDir);
+
+    await expect(
+      resolveFile({ file_path: linkInsideSafe }, { storage, workingDir: safeDir }),
+    ).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' });
   });
 });
 

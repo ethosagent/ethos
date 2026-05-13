@@ -22,6 +22,44 @@ import { type NetworkPolicy, safeFetch } from '@ethosagent/safety-network';
 import { BoundaryError, type Storage } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
+// Path normalization — security-critical
+// ---------------------------------------------------------------------------
+//
+// Both branches MUST run `resolvePath()` to collapse `..` / `.` segments.
+// Without this, an absolute path like `/safe/../etc/passwd` would lexically
+// start with an allowed `/safe/` prefix at the ScopedStorage gate (which uses
+// `startsWith` — see packages/storage-fs/src/scoped-storage.ts:133-145) and
+// then escape via `fs.readFile`, which DOES normalize. This is the exact bug
+// the comment on `tools-file/src/index.ts:expandPath` warns about.
+//
+// `canonicalizeForRead` then runs `realpath()` to defeat symlinks: a link at
+// `/safe/innocent.png → /etc/passwd` passes the lexical allowlist but reads
+// outside it. Falls back to the lexical path when the file doesn't exist
+// (realpath throws ENOENT); the caller then surfaces FILE_NOT_FOUND, which
+// is also the right outcome for boundary-blocked-then-missing.
+//
+// Same v1-floor disclaimer as `tools-file/src/index.ts:canonicalizeForRead`:
+// `realpath` shrinks but does not close the TOCTOU window between the
+// boundary check (`exists`) and the byte read (`fs.readFile`). A symlink
+// swapped between those two syscalls can still race. The project's accepted
+// floor is the same realpath-then-check pattern; full O_NOFOLLOW / dirfd
+// defense is deferred to a shared native helper (see the comment in
+// tools-file). When that helper lands, this resolver should adopt it too.
+function normalizeAbsolute(filePath: string, workingDir: string | undefined): string {
+  return isAbsolute(filePath)
+    ? resolvePath(filePath)
+    : resolvePath(workingDir ?? process.cwd(), filePath);
+}
+
+async function canonicalizeForRead(path: string): Promise<string> {
+  try {
+    return await fs.realpath(path);
+  } catch {
+    return path;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -107,8 +145,11 @@ export async function resolveFile(input: ResolveInput, ctx: ResolveContext): Pro
     buffer = await readFromPath(input.file_path, ctx);
   } else if (input.file_url !== undefined) {
     buffer = await readFromUrl(input.file_url, ctx);
+  } else if (input.file_base64 !== undefined) {
+    buffer = decodeBase64(input.file_base64);
   } else {
-    buffer = decodeBase64(input.file_base64 ?? '');
+    // Unreachable — the `keysSet === 1` check above guarantees one is set.
+    throw new VisionInputError('INVALID_INPUT', 'no input key set');
   }
 
   const mediaType = detectMediaType(buffer);
@@ -135,9 +176,11 @@ async function readFromPath(filePath: string, ctx: ResolveContext): Promise<Buff
     );
   }
 
-  const absolutePath = isAbsolute(filePath)
-    ? filePath
-    : resolvePath(ctx.workingDir ?? process.cwd(), filePath);
+  // Normalize first so `..`/`.` segments collapse before ScopedStorage sees
+  // them — otherwise `/safe/../etc/passwd` lexically starts with `/safe/` and
+  // sneaks past the prefix check. Then `realpath` to defeat symlinks.
+  const lexical = normalizeAbsolute(filePath, ctx.workingDir);
+  const absolutePath = await canonicalizeForRead(lexical);
 
   // Trigger the ScopedStorage boundary check. Storage.read() returns utf-8
   // text only, so we use exists() purely for the gate and then read bytes via
