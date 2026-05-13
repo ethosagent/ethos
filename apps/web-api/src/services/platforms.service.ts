@@ -1,4 +1,10 @@
-import type { PlatformId, PlatformStatus } from '@ethosagent/web-contracts';
+import type {
+  BotBinding,
+  PlatformId,
+  PlatformStatus,
+  SlackAppEntry,
+  TelegramBotEntry,
+} from '@ethosagent/web-contracts';
 import type { PlatformsRepository } from '../repositories/platforms.repository';
 
 // Communications service. Pass-through over PlatformsRepository today
@@ -28,5 +34,34 @@ export class PlatformsService {
 
   async clear(id: PlatformId): Promise<{ platform: PlatformStatus }> {
     return { platform: await this.opts.repo.clear(id) };
+  }
+
+  async listTelegramBots(): Promise<{ bots: TelegramBotEntry[] }> {
+    return { bots: await this.opts.repo.listTelegramBots() };
+  }
+
+  async addTelegramBot(token: string, bind: BotBinding): Promise<{ bot: TelegramBotEntry }> {
+    return { bot: await this.opts.repo.addTelegramBot(token, bind) };
+  }
+
+  async removeTelegramBot(botKey: string): Promise<{ ok: true }> {
+    await this.opts.repo.removeTelegramBot(botKey);
+    return { ok: true };
+  }
+
+  async listSlackApps(): Promise<{ bots: SlackAppEntry[] }> {
+    return { bots: await this.opts.repo.listSlackApps() };
+  }
+
+  async addSlackApp(
+    tokens: { botToken: string; appToken: string; signingSecret: string },
+    bind: BotBinding,
+  ): Promise<{ bot: SlackAppEntry }> {
+    return { bot: await this.opts.repo.addSlackApp(tokens, bind) };
+  }
+
+  async removeSlackApp(botKey: string): Promise<{ ok: true }> {
+    await this.opts.repo.removeSlackApp(botKey);
+    return { ok: true };
   }
 }

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   ApprovalScopeSchema,
   BatchRunInfoSchema,
+  BotBindingSchema,
   CronJobSchema,
   CronRunSchema,
   EvalRunInfoSchema,
@@ -29,7 +30,9 @@ import {
   ProviderIdSchema,
   SessionSchema,
   SkillSchema,
+  SlackAppEntrySchema,
   StoredMessageSchema,
+  TelegramBotEntrySchema,
 } from './schemas';
 
 // oRPC contract — single source of truth for the web control plane.
@@ -483,6 +486,33 @@ const platforms = {
   list: oc.output(PlatformsListOutput),
   set: oc.input(PlatformsSetInput).output(PlatformsSetOutput),
   clear: oc.input(PlatformsClearInput).output(PlatformsClearOutput),
+  botsListTelegram: oc.output(z.object({ bots: z.array(TelegramBotEntrySchema) })),
+  botsAddTelegram: oc
+    .input(
+      z.object({
+        token: z.string().min(1),
+        bind: BotBindingSchema,
+      }),
+    )
+    .output(z.object({ bot: TelegramBotEntrySchema })),
+  botsRemoveTelegram: oc
+    .input(z.object({ botKey: z.string() }))
+    .output(z.object({ ok: z.literal(true) })),
+
+  botsListSlack: oc.output(z.object({ bots: z.array(SlackAppEntrySchema) })),
+  botsAddSlack: oc
+    .input(
+      z.object({
+        botToken: z.string().min(1),
+        appToken: z.string().min(1),
+        signingSecret: z.string().min(1),
+        bind: BotBindingSchema,
+      }),
+    )
+    .output(z.object({ bot: SlackAppEntrySchema })),
+  botsRemoveSlack: oc
+    .input(z.object({ botKey: z.string() }))
+    .output(z.object({ ok: z.literal(true) })),
 };
 
 // ---------------------------------------------------------------------------
