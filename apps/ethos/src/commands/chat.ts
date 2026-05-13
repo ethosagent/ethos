@@ -2,12 +2,18 @@ import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { BackgroundRunner, InMemorySteerSink } from '@ethosagent/agent-bridge';
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { SplashInventory } from '@ethosagent/tui';
-import type { SteerSink } from '@ethosagent/types';
-import type { EthosConfig } from '../config';
+import type { SteerSink, Storage } from '@ethosagent/types';
+import type { EthosConfig, QuickCommandConfig } from '../config';
 import { ethosDir } from '../config';
+import { makeCompleter } from '../lib/autocomplete';
+import { grantQuickCommandConsent, hasQuickCommandConsent } from '../lib/onboarding';
+import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
 import { formatRecap } from '../lib/recap';
 import { formatResumeHint } from '../lib/resume-hint';
+import { refreshSkillIfStale, type SkillMeta, scanSkillsIntoRegistry } from '../lib/skill-slash';
+import { buildBaseRegistry, type SlashCommandRegistry } from '../lib/slash-commands';
 import { SpinnerState } from '../lib/spinner';
 import { renderStatusBar, type Threshold } from '../lib/status-bar';
 import { formatToolFeedLine } from '../lib/tool-feed';
@@ -114,6 +120,10 @@ interface ChatState {
    * overlapping `runTurn` while we're mid-drain. (Codex P2 finding #4.)
    */
   draining: boolean;
+  /** FW-15/16 — set by handleSlashCommand when a skill/quick command wants to run a turn. */
+  pendingTurn?: string;
+  /** FW-16 — true while awaiting yes/no consent for quick commands. */
+  awaitingConsent: boolean;
 }
 
 interface RunChatOptions {
@@ -155,6 +165,34 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   }
   const { loop, personalityId, displayName } = await resolveActiveLoop(config);
 
+  // FW-14 — build the shared slash command registry. FW-15 and FW-16 extend it.
+  const registry = buildBaseRegistry();
+
+  // FW-15 — scan global and per-personality skill directories into the registry.
+  const storage: Storage = new FsStorage();
+  const skillCache = new Map<string, SkillMeta>();
+  const globalSkillsDir = join(ethosDir(), 'skills');
+  const personalitySkillsDir = join(ethosDir(), 'personalities', personalityId, 'skills');
+  await scanSkillsIntoRegistry(
+    storage,
+    globalSkillsDir,
+    personalitySkillsDir,
+    registry,
+    skillCache,
+  );
+
+  // FW-16 — register user-defined quick commands.
+  const quickCommands: Record<string, QuickCommandConfig> = config.quick_commands ?? {};
+  for (const [name, qc] of Object.entries(quickCommands)) {
+    registry.register({
+      name,
+      description: `Run: ${qc.command}`,
+      usage: `/${name}`,
+      prefix: '[quick]',
+    });
+  }
+  let quickConsentGiven = await hasQuickCommandConsent(ethosDir());
+
   if (opts.singleQuery) {
     await runSingleQuery(loop, config, {
       query: opts.singleQuery,
@@ -181,10 +219,12 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     return;
   }
 
+  const completer = makeCompleter(registry);
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal: true,
+    ...(completer ? { completer } : {}),
   });
 
   const bgRunner = new BackgroundRunner({ maxConcurrent: config.backgroundMaxConcurrent ?? 4 });
@@ -205,6 +245,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     iterationsThisTurn: 0,
     draining: false,
     bgRunner,
+    awaitingConsent: false,
   };
 
   bgRunner.onComplete((task) => {
@@ -289,12 +330,27 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
 
   if (state.verbosity !== 'quiet') renderStatusBarLine(state);
 
+  // FW-15/16 — build the slash handler context (skill cache + quick commands).
+  const slashCtx: SlashHandlerContext = {
+    skillCache,
+    storage,
+    quickCommands,
+    isQuickConsentGiven: () => quickConsentGiven,
+    grantConsent: async () => {
+      quickConsentGiven = true;
+      await grantQuickCommandConsent(ethosDir());
+    },
+  };
+
   // Switch from blocking rl.question to event-driven rl.on('line') so mid-turn
   // input can be dispatched on busyMode.
   rl.setPrompt(`${c.cyan}You${c.reset} > `);
   rl.prompt();
 
   rl.on('line', (raw) => {
+    // FW-16 — block all input while the consent prompt is active.
+    if (state.awaitingConsent) return;
+
     const input = raw.trim();
     if (!input) {
       rl.prompt();
@@ -305,8 +361,27 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     // /busy and /steer which have special busy-state semantics handled below.
     const isBusySlash = input.startsWith('/busy') || input.startsWith('/steer');
     if (input.startsWith('/') && !isBusySlash) {
-      handleSlashCommand(input, state, loop, rl, config)
+      handleSlashCommand(input, state, loop, rl, config, registry, slashCtx)
         .then(() => {
+          if (state.pendingTurn) {
+            const pending = state.pendingTurn;
+            state.pendingTurn = undefined;
+            state.draining = true;
+            runTurn(pending, state, loop)
+              .then(() => {
+                state.draining = false;
+                if (state.verbosity !== 'quiet') renderStatusBarLine(state);
+                rl.prompt();
+              })
+              .catch((err) => {
+                state.draining = false;
+                out(
+                  `${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`,
+                );
+                rl.prompt();
+              });
+            return;
+          }
           // Only re-prompt when idle; a running turn will prompt on completion.
           if (!state.draining && !state.abort) rl.prompt();
         })
@@ -696,12 +771,22 @@ async function runSingleQuery(
 // Slash commands
 // ---------------------------------------------------------------------------
 
+interface SlashHandlerContext {
+  skillCache: Map<string, SkillMeta>;
+  storage: Storage;
+  quickCommands: Record<string, QuickCommandConfig>;
+  isQuickConsentGiven: () => boolean;
+  grantConsent: () => Promise<void>;
+}
+
 async function handleSlashCommand(
   raw: string,
   state: ChatState,
   loop: AgentLoop,
   rl: ReturnType<typeof createInterface>,
   _config: EthosConfig,
+  registry: SlashCommandRegistry,
+  ctx: SlashHandlerContext,
 ): Promise<void> {
   const parts = raw.slice(1).trim().split(/\s+/);
   const name = parts[0]?.toLowerCase() ?? '';
@@ -924,8 +1009,46 @@ async function handleSlashCommand(
       handleBackgroundCommand(arg, state, loop);
       break;
 
-    default:
+    default: {
+      const cmd = registry.get(name);
+      if (cmd?.prefix === '[skill]') {
+        const meta = await refreshSkillIfStale(ctx.storage, name, ctx.skillCache);
+        if (meta) {
+          if (!arg && meta.usage) {
+            out(`${c.dim}Usage: ${meta.usage}${c.reset}\n`);
+            break;
+          }
+          state.pendingTurn = arg
+            ? `[Skill: ${name}]\n\n${meta.content}\n\n${arg}`
+            : `[Skill: ${name}]\n\n${meta.content}`;
+        }
+        break;
+      }
+      if (cmd?.prefix === '[quick]') {
+        const qcfg = ctx.quickCommands[name];
+        if (!qcfg) break;
+        if (!ctx.isQuickConsentGiven()) {
+          state.awaitingConsent = true;
+          process.stdout.write(
+            `Quick commands let you run shell commands as \`${process.env.USER ?? 'user'}\`. Continue? [y/N] `,
+          );
+          const answer = await new Promise<string>((resolve) => {
+            rl.once('line', (line) => resolve(line.trim()));
+          });
+          state.awaitingConsent = false;
+          if (answer.toLowerCase() !== 'y') {
+            out(`${c.dim}[quick command cancelled]${c.reset}\n`);
+            break;
+          }
+          await ctx.grantConsent();
+        }
+        const result = runQuickCommand(qcfg.command);
+        out(`${formatQuickCommandOutput(result)}\n`);
+        break;
+      }
       out(`${c.dim}Unknown command /${name} — type /help${c.reset}\n`);
+      break;
+    }
   }
 }
 

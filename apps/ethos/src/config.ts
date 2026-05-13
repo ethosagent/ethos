@@ -82,6 +82,11 @@ export interface ProviderConfig {
   baseUrl?: string;
 }
 
+export interface QuickCommandConfig {
+  type: 'exec';
+  command: string;
+}
+
 export interface EthosConfig {
   provider: string;
   model: string;
@@ -204,6 +209,13 @@ export interface EthosConfig {
    * @internal
    */
   cliSkillContents?: string[];
+  /**
+   * FW-16 — user-defined shell shortcuts, registered as `[quick]` slash commands.
+   * Config format:
+   *   quick_commands.status.type: exec
+   *   quick_commands.status.command: git status
+   */
+  quick_commands?: Record<string, QuickCommandConfig>;
   /** Global retention settings. Per-category TTLs. */
   retention?: RetentionConfig;
   /**
@@ -314,6 +326,12 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       if (tcfg.autoStop) lines.push(`teams.${name}.autoStop: true`);
     }
   }
+  if (config.quick_commands) {
+    for (const [name, qc] of Object.entries(config.quick_commands)) {
+      lines.push(`quick_commands.${name}.type: ${qc.type}`);
+      lines.push(`quick_commands.${name}.command: ${qc.command}`);
+    }
+  }
   await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`);
 }
 
@@ -332,6 +350,8 @@ function parseConfigYaml(src: string): EthosConfig {
   const telegramBotsKv: Record<number, Record<string, string>> = {};
   const slackAppsKv: Record<number, Record<string, string>> = {};
   const teamsKv: Record<string, Record<string, string>> = {};
+  // FW-16 — quick_commands.<name>.<field>: <value>
+  const qcKv: Record<string, Record<string, string>> = {};
   for (const line of src.split('\n')) {
     // telegram.bots.<index>.bind.<field>: <value>
     const tbind = line.match(/^telegram\.bots\.(\d+)\.bind\.(\S+):\s*(.+)$/);
@@ -427,6 +447,14 @@ function parseConfigYaml(src: string): EthosConfig {
       activeContextKv[ac[1].trim()] = ac[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // quick_commands.<name>.<field>: <value>
+    const qc = line.match(/^quick_commands\.([^.]+)\.(\S+):\s*(.+)$/);
+    if (qc) {
+      const qname = qc[1];
+      qcKv[qname] ??= {};
+      (qcKv[qname] as Record<string, string>)[qc[2]] = qc[3].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     const m = line.match(/^(\w+):\s*(.+)$/);
     if (m) kv[m[1].trim()] = m[2].trim().replace(/^["']|["']$/g, '');
   }
@@ -459,6 +487,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const telegramResult = buildTelegramBots(telegramBotsKv);
   const slackResult = buildSlackApps(slackAppsKv);
   const teams = buildTeamsConfig(teamsKv);
+  const quick_commands = buildQuickCommands(qcKv);
   const parseErrors = [...telegramResult.errors, ...slackResult.errors];
 
   const config: EthosConfig = {
@@ -504,6 +533,7 @@ function parseConfigYaml(src: string): EthosConfig {
       ? Number(backgroundKv.max_concurrent)
       : undefined,
     displayBellOnComplete: displayKv.bell_on_complete === 'true' ? true : undefined,
+    quick_commands,
   };
   // Stash parse errors so the strict loader can surface them at boot.
   // readConfig (used by CLI commands that don't gateway-boot) ignores them
@@ -825,6 +855,18 @@ export function validateBotBindings(
     rejectUnsafeIdent(`teams.<key>`, name, errors);
   }
   return errors;
+}
+
+function buildQuickCommands(
+  kv: Record<string, Record<string, string>>,
+): Record<string, QuickCommandConfig> | undefined {
+  const result: Record<string, QuickCommandConfig> = {};
+  for (const [name, fields] of Object.entries(kv)) {
+    if (fields.type === 'exec' && fields.command) {
+      result[name] = { type: 'exec', command: fields.command };
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function buildPersonalitiesConfig(
