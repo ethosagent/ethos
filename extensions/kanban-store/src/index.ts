@@ -15,7 +15,8 @@ export type TaskStatus =
   | 'done'
   | 'archived'
   | 'scheduled'
-  | 'failed';
+  | 'failed'
+  | 'needs_revision';
 
 export type WorkspaceMode = 'scratch' | 'worktree' | 'dir';
 
@@ -49,6 +50,8 @@ export interface Task {
   maxRetries: number | null;
   /** Times this task has been re-claimed after a prior run ended. Starts at 0. */
   retryCount: number;
+  /** Optional acceptance criteria a `before_ticket_complete` verifier checks. `null` = none set. */
+  acceptanceCriteria: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -96,6 +99,8 @@ export interface CreateTaskInput {
   idempotencyKey?: string | null;
   /** Retry budget. `null` (the default) = unlimited. `retryCount` always starts at 0. */
   maxRetries?: number | null;
+  /** Optional acceptance criteria. `null`/omitted = none set. */
+  acceptanceCriteria?: string | null;
   actor?: string;
 }
 
@@ -118,7 +123,7 @@ const SCHEMA = `
     body            TEXT NOT NULL DEFAULT '',
     assignee        TEXT,
     status          TEXT NOT NULL
-                    CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled','failed')),
+                    CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled','failed','needs_revision')),
     priority        INTEGER NOT NULL DEFAULT 0,
     workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
                     CHECK (workspace_mode IN ('scratch','worktree','dir')),
@@ -128,6 +133,7 @@ const SCHEMA = `
     current_run_id  TEXT,
     max_retries     INTEGER CHECK (max_retries IS NULL OR max_retries >= 0),
     retry_count     INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+    acceptance_criteria TEXT,
     created_at      INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL
   ) STRICT;
@@ -247,19 +253,26 @@ export class KanbanStore {
     // Version check FIRST — refuse to touch a DB whose schema is newer than this code.
     const versionRows = this.db.pragma('user_version') as Array<{ user_version: number }>;
     const currentVersion = versionRows[0]?.user_version ?? 0;
-    if (currentVersion > 2) {
+    if (currentVersion > 3) {
       throw new Error(
-        `kanban-store: database user_version=${currentVersion} is newer than code (2); refusing to open to avoid downgrade`,
+        `kanban-store: database user_version=${currentVersion} is newer than code (3); refusing to open to avoid downgrade`,
       );
     }
-    // SCHEMA describes the current (v2) shape. A fresh DB (user_version=0) gets it
-    // directly via CREATE TABLE IF NOT EXISTS; an existing v1 DB skips the table
-    // creation (IF NOT EXISTS) and is brought forward by migrateV1ToV2 below.
+    // SCHEMA describes the current (v3) shape. A fresh DB (user_version=0) gets it
+    // directly via CREATE TABLE IF NOT EXISTS; an existing v1/v2 DB skips the table
+    // creation (IF NOT EXISTS) and is brought forward by the migration chain below.
     this.db.exec(SCHEMA);
     if (currentVersion === 0) {
-      this.db.pragma('user_version = 2');
-    } else if (currentVersion === 1) {
-      this.migrateV1ToV2();
+      this.db.pragma('user_version = 3');
+    } else {
+      // Stepwise migration chain: a v1 DB runs v1->v2 then v2->v3; a v2 DB runs
+      // only v2->v3. Each migrator bumps user_version inside its own transaction.
+      if (currentVersion === 1) {
+        this.migrateV1ToV2();
+      }
+      if (currentVersion <= 2) {
+        this.migrateV2ToV3();
+      }
     }
   }
 
@@ -360,6 +373,99 @@ export class KanbanStore {
     }
   }
 
+  /**
+   * Bring a v2 board forward to v3: add the `acceptance_criteria` column and
+   * widen the `tasks.status` CHECK to include `'needs_revision'`.
+   *
+   * Modelled exactly on `migrateV1ToV2`: `ALTER TABLE ADD COLUMN` handles the
+   * new nullable column, but widening a CHECK constraint needs the standard
+   * SQLite table-rebuild dance — build the new table, copy rows, drop the old
+   * one, rename, then recreate the indexes and FTS triggers that referenced
+   * `tasks`. The ADD COLUMN, the rebuild, and the `user_version` bump all run
+   * inside ONE transaction so the migration is atomic. `PRAGMA foreign_keys`
+   * is set OFF outside (it is a no-op inside a transaction); a
+   * `foreign_key_check` runs before commit.
+   */
+  private migrateV2ToV3(): void {
+    this.db.pragma('foreign_keys = OFF');
+    try {
+      const rebuild = this.db.transaction(() => {
+        this.db.exec(`
+          ALTER TABLE tasks ADD COLUMN acceptance_criteria TEXT;
+
+          DROP TRIGGER IF EXISTS tasks_fts_ai;
+          DROP TRIGGER IF EXISTS tasks_fts_au;
+          DROP TRIGGER IF EXISTS tasks_fts_ad;
+          DROP INDEX IF EXISTS tasks_idem;
+          DROP INDEX IF EXISTS tasks_status_assignee;
+          DROP INDEX IF EXISTS tasks_scheduled;
+
+          CREATE TABLE tasks_new (
+            id              TEXT PRIMARY KEY,
+            title           TEXT NOT NULL,
+            body            TEXT NOT NULL DEFAULT '',
+            assignee        TEXT,
+            status          TEXT NOT NULL
+                            CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled','failed','needs_revision')),
+            priority        INTEGER NOT NULL DEFAULT 0,
+            workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
+                            CHECK (workspace_mode IN ('scratch','worktree','dir')),
+            workspace_path  TEXT,
+            scheduled_for   INTEGER,
+            idempotency_key TEXT,
+            current_run_id  TEXT,
+            max_retries     INTEGER CHECK (max_retries IS NULL OR max_retries >= 0),
+            retry_count     INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+            acceptance_criteria TEXT,
+            created_at      INTEGER NOT NULL,
+            updated_at      INTEGER NOT NULL
+          ) STRICT;
+
+          INSERT INTO tasks_new
+            SELECT id, title, body, assignee, status, priority, workspace_mode,
+                   workspace_path, scheduled_for, idempotency_key, current_run_id,
+                   max_retries, retry_count, acceptance_criteria, created_at, updated_at
+            FROM tasks;
+
+          DROP TABLE tasks;
+          ALTER TABLE tasks_new RENAME TO tasks;
+
+          CREATE UNIQUE INDEX tasks_idem ON tasks(idempotency_key)
+            WHERE idempotency_key IS NOT NULL;
+          CREATE INDEX tasks_status_assignee ON tasks(status, assignee);
+          CREATE INDEX tasks_scheduled ON tasks(scheduled_for)
+            WHERE scheduled_for IS NOT NULL;
+
+          CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+            INSERT INTO task_fts(task_id, title, body, comments)
+            VALUES (new.id, new.title, new.body, '');
+          END;
+
+          CREATE TRIGGER tasks_fts_au AFTER UPDATE OF title, body ON tasks BEGIN
+            UPDATE task_fts SET title = new.title, body = new.body
+            WHERE task_id = new.id;
+          END;
+
+          CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+            DELETE FROM task_fts WHERE task_id = old.id;
+          END;
+        `);
+        const violations = this.db.pragma('foreign_key_check') as unknown[];
+        if (violations.length > 0) {
+          throw new Error(
+            `kanban-store: v2→v3 migration left ${violations.length} foreign-key violation(s)`,
+          );
+        }
+        // Bump inside the transaction so version and schema move together: a
+        // rollback leaves a clean v2 DB, never a v2-versioned DB with v3 columns.
+        this.db.pragma('user_version = 3');
+      });
+      rebuild();
+    } finally {
+      this.db.pragma('foreign_keys = ON');
+    }
+  }
+
   createTask(input: CreateTaskInput): Task {
     const idempotencyKey = input.idempotencyKey ?? null;
     const id = newTaskId();
@@ -374,6 +480,7 @@ export class KanbanStore {
     if (maxRetries !== null && (!Number.isInteger(maxRetries) || maxRetries < 0)) {
       throw new Error(`createTask: maxRetries must be a non-negative integer or null`);
     }
+    const acceptanceCriteria = input.acceptanceCriteria ?? null;
     const parents = input.parents ?? [];
     const actor = input.actor ?? 'system';
 
@@ -381,8 +488,8 @@ export class KanbanStore {
       `INSERT INTO tasks
        (id, title, body, assignee, status, priority, workspace_mode, workspace_path,
         scheduled_for, idempotency_key, current_run_id, max_retries, retry_count,
-        created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        acceptance_criteria, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     );
 
     const tx = this.db.transaction((): string => {
@@ -413,6 +520,7 @@ export class KanbanStore {
           null,
           maxRetries,
           0,
+          acceptanceCriteria,
           now,
           now,
         );
@@ -1063,6 +1171,7 @@ interface TaskRow {
   current_run_id: string | null;
   max_retries: number | null;
   retry_count: number;
+  acceptance_criteria: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -1142,6 +1251,7 @@ function rowToTask(r: TaskRow): Task {
     currentRunId: r.current_run_id,
     maxRetries: r.max_retries,
     retryCount: r.retry_count,
+    acceptanceCriteria: r.acceptance_criteria,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

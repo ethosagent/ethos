@@ -1,3 +1,4 @@
+import { DefaultHookRegistry } from '@ethosagent/core';
 import { KanbanStore } from '@ethosagent/kanban-store';
 import type { Tool, ToolContext } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -85,6 +86,33 @@ describe('kanban tools', () => {
 
   it('kanban_create rejects missing title with input_invalid', async () => {
     const result = await (tools.kanban_create as Tool).execute({}, makeCtx());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('input_invalid');
+  });
+
+  it('kanban_create persists acceptance_criteria', async () => {
+    const out = await call<{ task_id: string }>(
+      tools.kanban_create as Tool,
+      { title: 'verified task', acceptance_criteria: 'output must contain SHIPPED' },
+      makeCtx(),
+    );
+    expect(store.getTask(out.task_id)?.acceptanceCriteria).toBe('output must contain SHIPPED');
+  });
+
+  it('kanban_create rejects a non-string acceptance_criteria', async () => {
+    const result = await (tools.kanban_create as Tool).execute(
+      { title: 'x', acceptance_criteria: 123 },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('input_invalid');
+  });
+
+  it('kanban_create rejects an over-long acceptance_criteria', async () => {
+    const result = await (tools.kanban_create as Tool).execute(
+      { title: 'x', acceptance_criteria: 'a'.repeat(64_001) },
+      makeCtx(),
+    );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('input_invalid');
   });
@@ -339,5 +367,100 @@ describe('kanban tools', () => {
       makeCtx(),
     );
     expect(out.status).toBe('archived');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// before_ticket_complete hook — opt-in verification gate on kanban_complete
+// ---------------------------------------------------------------------------
+
+describe('kanban_complete before_ticket_complete hook', () => {
+  let store: KanbanStore;
+
+  beforeEach(() => {
+    store = new KanbanStore(':memory:');
+  });
+
+  afterEach(() => {
+    store.close();
+  });
+
+  it('blocks completion and sets needs_revision when a verifier rejects', async () => {
+    const hooks = new DefaultHookRegistry();
+    // A verifier that rejects unless the summary contains a required substring.
+    hooks.registerClaiming('before_ticket_complete', async (payload) => {
+      if (payload.acceptanceCriteria && !payload.summary.includes(payload.acceptanceCriteria)) {
+        return { handled: true, reason: `summary missing "${payload.acceptanceCriteria}"` };
+      }
+      return { handled: false };
+    });
+    const tools = toolsByName(createKanbanTools({ store, hooks }));
+
+    const t = store.createTask({ title: 'verified task', acceptanceCriteria: 'SHIPPED' });
+    store.updateStatus(t.id, 'running');
+
+    const out = await call<{ status: string }>(
+      tools.kanban_complete as Tool,
+      { task_id: t.id, summary: 'did some work' },
+      makeCtx('engineer'),
+    );
+    expect(out.status).toBe('needs_revision');
+
+    // The rejection reason landed in the audit trail.
+    const reasons = store
+      .listEvents(t.id)
+      .filter((e) => e.kind === 'status_changed')
+      .map((e) => e.data.reason);
+    expect(reasons).toContain('summary missing "SHIPPED"');
+    // The run was auto-cancelled by the needs_revision transition (not completed).
+    expect(store.listRuns(t.id).every((r) => r.outcome !== 'completed')).toBe(true);
+  });
+
+  it('proceeds to done when the verifier passes', async () => {
+    const hooks = new DefaultHookRegistry();
+    hooks.registerClaiming('before_ticket_complete', async (payload) => {
+      if (payload.acceptanceCriteria && !payload.summary.includes(payload.acceptanceCriteria)) {
+        return { handled: true, reason: 'rejected' };
+      }
+      return { handled: false };
+    });
+    const tools = toolsByName(createKanbanTools({ store, hooks }));
+
+    const t = store.createTask({ title: 'verified task', acceptanceCriteria: 'SHIPPED' });
+    store.updateStatus(t.id, 'running');
+
+    const out = await call<{ status: string }>(
+      tools.kanban_complete as Tool,
+      { task_id: t.id, summary: 'work is SHIPPED' },
+      makeCtx('engineer'),
+    );
+    expect(out.status).toBe('done');
+  });
+
+  it('completion proceeds unchanged when no verifier is registered (default no-op)', async () => {
+    const tools = toolsByName(createKanbanTools({ store }));
+    const t = store.createTask({ title: 'plain task' });
+    store.updateStatus(t.id, 'running');
+
+    const out = await call<{ status: string }>(
+      tools.kanban_complete as Tool,
+      { task_id: t.id, summary: 'anything goes' },
+      makeCtx('engineer'),
+    );
+    expect(out.status).toBe('done');
+  });
+
+  it('completion proceeds when a HookRegistry is wired but has no verifier registered', async () => {
+    const hooks = new DefaultHookRegistry();
+    const tools = toolsByName(createKanbanTools({ store, hooks }));
+    const t = store.createTask({ title: 'plain task' });
+    store.updateStatus(t.id, 'running');
+
+    const out = await call<{ status: string }>(
+      tools.kanban_complete as Tool,
+      { task_id: t.id, summary: 'anything goes' },
+      makeCtx('engineer'),
+    );
+    expect(out.status).toBe('done');
   });
 });

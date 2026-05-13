@@ -482,6 +482,7 @@ export const KanbanTaskStatusSchema = z.enum([
   'archived',
   'scheduled',
   'failed',
+  'needs_revision',
 ]);
 export type KanbanTaskStatus = z.infer<typeof KanbanTaskStatusSchema>;
 
@@ -500,6 +501,8 @@ export const KanbanTaskSchema = z.object({
   retryCount: z.number().int().nonnegative(),
   /** Retry budget; `null` = unlimited. */
   maxRetries: z.number().int().nonnegative().nullable(),
+  /** Acceptance criteria a `before_ticket_complete` verifier checks; `null` = none set. */
+  acceptanceCriteria: z.string().nullable(),
   createdAt: z.string(), // ISO-8601
   updatedAt: z.string(), // ISO-8601
 });

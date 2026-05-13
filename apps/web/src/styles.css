@@ -2775,6 +2775,11 @@ body,
   background: rgba(248, 113, 113, 0.1);
   border-color: rgba(248, 113, 113, 0.32);
 }
+.cc-status-needs_revision {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.1);
+  border-color: rgba(251, 191, 36, 0.32);
+}
 
 /* ── Activity feed — one row per event, scannable ─────────────────── */
 

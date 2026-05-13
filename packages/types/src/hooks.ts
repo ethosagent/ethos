@@ -132,6 +132,21 @@ export interface BeforeDispatchResult {
   handled: boolean;
 }
 
+export interface BeforeTicketCompletePayload {
+  taskId: string;
+  /** The completion summary the assignee submitted (the "ticket output" a verifier checks). */
+  summary: string;
+  /** The ticket's acceptance criteria, if set. */
+  acceptanceCriteria?: string;
+}
+
+export interface BeforeTicketCompleteResult {
+  /** true = this handler rejects the completion (the "claiming" semantics: it claims the completion as blocked). */
+  handled: boolean;
+  /** Why the completion was rejected. Required when handled is true. */
+  reason?: string;
+}
+
 export interface PersonalitySwitchedPayload {
   sessionId: string;
   from?: string;
@@ -193,6 +208,11 @@ export interface ModifyingHooks {
 export interface ClaimingHooks {
   inbound_claim: [InboundClaimPayload, InboundClaimResult];
   before_dispatch: [BeforeDispatchPayload, BeforeDispatchResult];
+  // The plan's conceptual `{ rejected: true, reason }` maps onto the existing
+  // claiming contract as `{ handled: true, reason }` — `handled: true` means
+  // "completion rejected". `fireClaiming` returns `{ handled: false }` when no
+  // handler claims, so the completion proceeds (the default no-op behaviour).
+  before_ticket_complete: [BeforeTicketCompletePayload, BeforeTicketCompleteResult];
 }
 
 export type HookName = keyof VoidHooks | keyof ModifyingHooks | keyof ClaimingHooks;

@@ -28,6 +28,7 @@ const STATUS_COLUMNS: KanbanTaskStatus[] = [
   'ready',
   'running',
   'blocked',
+  'needs_revision',
   'failed',
   'done',
 ];
@@ -42,6 +43,7 @@ const STATUS_LABEL: Record<KanbanTaskStatus, string> = {
   archived: 'archived',
   scheduled: 'scheduled',
   failed: 'failed',
+  needs_revision: 'needs revision',
 };
 
 export function TeamControlCenter() {

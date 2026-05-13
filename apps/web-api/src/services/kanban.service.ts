@@ -225,6 +225,7 @@ function toWireTask(t: Task): KanbanTask {
     currentRunId: t.currentRunId,
     retryCount: t.retryCount,
     maxRetries: t.maxRetries,
+    acceptanceCriteria: t.acceptanceCriteria,
     createdAt: new Date(t.createdAt).toISOString(),
     updatedAt: new Date(t.updatedAt).toISOString(),
   };
