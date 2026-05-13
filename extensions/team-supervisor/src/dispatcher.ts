@@ -76,6 +76,17 @@ export interface DispatcherOptions {
    * Default: 5 min.
    */
   stalenessThresholdMs?: number;
+  /**
+   * Opt-in from `TeamManifest.dispatch_prefer_reliable`. When true, the dispatch
+   * loop uses each assignee's success ratio (`tickets_completed / (completed +
+   * failed + orphaned)`, from `team_member_stats`) as an *additional
+   * tie-breaker within the same priority*: among equal-priority ready tasks,
+   * those whose assignee has a higher success ratio dispatch first. It is never
+   * an exclusion — every ready+assigned task is still dispatched, and priority
+   * always dominates. A member with no recorded outcomes yet is treated as a
+   * perfect record (ratio 1) so new members are not penalized. Default: false.
+   */
+  preferReliable?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +99,13 @@ const DEFAULT_DISPATCH_TIMEOUT_MS = 300_000;
 const DEFAULT_ORPHAN_GRACE_MS = 60_000;
 const DEFAULT_STALENESS_THRESHOLD_MS = 300_000;
 const DISPATCH_HOST = 'localhost';
+/**
+ * Cold-start success ratio for the `dispatch_prefer_reliable` tie-breaker: an
+ * assignee with no recorded outcomes sorts just below a proven 100%-success
+ * member but above anyone with a real failure on record. Just under 1 so it
+ * never ties with — and so never jumps ahead of — a genuine perfect record.
+ */
+const UNKNOWN_RATIO = 0.999_999;
 
 export class Dispatcher {
   private readonly board: KanbanStore;
@@ -100,6 +118,7 @@ export class Dispatcher {
   private readonly coordinator: string | null;
   private readonly orphanGracePeriodMs: number;
   private readonly stalenessThresholdMs: number;
+  private readonly preferReliable: boolean;
   private readonly inflight = new Map<string, AbortController>();
   private timer: NodeJS.Timeout | null = null;
   private running = false;
@@ -115,6 +134,7 @@ export class Dispatcher {
     this.coordinator = opts.coordinator ?? null;
     this.orphanGracePeriodMs = opts.orphanGracePeriodMs ?? DEFAULT_ORPHAN_GRACE_MS;
     this.stalenessThresholdMs = opts.stalenessThresholdMs ?? DEFAULT_STALENESS_THRESHOLD_MS;
+    this.preferReliable = opts.preferReliable ?? false;
   }
 
   /**
@@ -183,7 +203,14 @@ export class Dispatcher {
     //    The claim (status flip + open run + current_run_id) happens via
     //    updateStatus(running). If the assignee isn't reachable, we mark the
     //    task blocked so it surfaces on the board instead of disappearing.
-    for (const task of this.board.findReadyToDispatch()) {
+    //
+    //    `findReadyToDispatch()` already orders by `priority DESC, created_at
+    //    ASC`. When `preferReliable` is set, we re-sort that list to add a
+    //    success-ratio tie-breaker *within* each priority band — higher-success
+    //    assignees dispatch first. It is never an exclusion: every task in the
+    //    list is still dispatched, just possibly in a different order.
+    const readyToDispatch = this.orderForDispatch(this.board.findReadyToDispatch());
+    for (const task of readyToDispatch) {
       if (this.inflight.has(task.id)) continue; // already in-flight from a prior tick
       const assignee = task.assignee;
       if (assignee === null) continue;
@@ -214,6 +241,38 @@ export class Dispatcher {
         this.inflight.delete(task.id);
       });
     }
+  }
+
+  /**
+   * Apply the optional `dispatch_prefer_reliable` tie-breaker to the
+   * already-ordered ready list. With the flag off this is a pass-through. With
+   * it on, tasks are re-sorted by `priority DESC, successRatio DESC` — and
+   * because `Array.prototype.sort` is stable, ties on both keys keep the
+   * incoming `created_at ASC` order. The success ratio comes from the board's
+   * `team_member_stats`.
+   *
+   * Cold-start policy: an assignee with no recorded outcomes is given a
+   * `UNKNOWN_RATIO` just under a perfect record — it sorts *after* a proven
+   * 100%-success member but *ahead* of any member with a real failure on
+   * record. This neither penalizes newcomers (the plan forbids that) nor
+   * pretends unknown equals perfect (which would let a fresh member outrank a
+   * long-running 99%-reliable one). Reordering only — nothing is excluded.
+   */
+  private orderForDispatch(ready: Task[]): Task[] {
+    if (!this.preferReliable || ready.length < 2) return ready;
+    const stats = this.board.getMemberStats();
+    const ratioOf = (assignee: string | null): number => {
+      if (assignee === null) return UNKNOWN_RATIO;
+      const s = stats.get(assignee);
+      if (s === undefined) return UNKNOWN_RATIO;
+      const total = s.ticketsCompleted + s.ticketsFailed + s.ticketsOrphaned;
+      if (total === 0) return UNKNOWN_RATIO;
+      return s.ticketsCompleted / total;
+    };
+    return [...ready].sort((a, b) => {
+      if (a.priority !== b.priority) return b.priority - a.priority;
+      return ratioOf(b.assignee) - ratioOf(a.assignee);
+    });
   }
 
   /** Start the polling loop. Safe to call once; no-op if already running. */

@@ -176,6 +176,40 @@ members:
     expect(wirePlain?.maxRetries).toBeNull();
   });
 
+  it('getBoard threads per-member stats into the board snapshot', async () => {
+    writeManifest(
+      'analytics',
+      `
+name: analytics
+description: x
+domain_capabilities: [x]
+members:
+  - personality: engineer
+`,
+    );
+    // Open the board WITH a teamId so terminal transitions record member stats.
+    mkdirSync(join(dir, 'analytics'), { recursive: true });
+    const store = new KanbanStore(join(dir, 'analytics', 'board.db'), { teamId: 'analytics' });
+    const done = store.createTask({ title: 'done task', assignee: 'engineer' });
+    store.updateStatus(done.id, 'running', undefined, 'engineer');
+    store.completeRun(done.id, 'ok', 'engineer');
+    const failed = store.createTask({ title: 'failed task', assignee: 'engineer' });
+    store.updateStatus(failed.id, 'running', undefined, 'engineer');
+    store.updateStatus(failed.id, 'needs_revision', 'nope', 'reviewer');
+    store.close();
+
+    const { board } = await service.getBoard('analytics');
+    expect(board.memberStats).toHaveLength(1);
+    const stat = board.memberStats[0];
+    expect(stat).toMatchObject({
+      teamId: 'analytics',
+      memberId: 'engineer',
+      ticketsCompleted: 1,
+      ticketsFailed: 1,
+      ticketsOrphaned: 0,
+    });
+  });
+
   it('getBoard returns an empty snapshot when no board.db exists yet', async () => {
     writeManifest(
       'analytics',
@@ -191,6 +225,7 @@ members:
     expect(board.tasks).toEqual([]);
     expect(board.links).toEqual([]);
     expect(board.recentEvents).toEqual([]);
+    expect(board.memberStats).toEqual([]);
   });
 
   it('getBoard rejects unknown teams', async () => {

@@ -1056,7 +1056,7 @@ describe('KanbanStore', () => {
     const dbPath = join(dir, 'board.db');
     try {
       const future = new Database(dbPath);
-      future.pragma('user_version = 4');
+      future.pragma('user_version = 5');
       future.close();
       expect(() => new KanbanStore(dbPath)).toThrow(/newer than code/);
     } finally {
@@ -1239,7 +1239,7 @@ describe('KanbanStore', () => {
     }
   });
 
-  it('migrates a v1 database all the way to v3 via the stepwise v1->v2->v3 chain', () => {
+  it('migrates a v1 database through the stepwise v1->v2->v3 chain (columns + statuses)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'kanban-mig13-'));
     const dbPath = join(dir, 'board.db');
     try {
@@ -1348,12 +1348,14 @@ describe('KanbanStore', () => {
         store.close();
       }
 
-      // user_version landed at 3.
+      // The stepwise chain runs v1->v2->v3 then the additive v3->v4 bump, so the
+      // DB lands at the current code version (4). The dedicated v1->v4 test
+      // asserts the full chain; here we just confirm the chain doesn't stall.
       const raw = new Database(dbPath);
       try {
         const version = (raw.pragma('user_version') as Array<{ user_version: number }>)[0]
           ?.user_version;
-        expect(version).toBe(3);
+        expect(version).toBe(4);
       } finally {
         raw.close();
       }
@@ -1411,5 +1413,450 @@ describe('KanbanStore', () => {
 
     const without = store.createTask({ title: 'no criteria' });
     expect(without.acceptanceCriteria).toBeNull();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 5 — team member stats
+  // ---------------------------------------------------------------------------
+
+  describe('team member stats', () => {
+    function teamStore() {
+      return new KanbanStore(':memory:', { teamId: 'team-a' });
+    }
+
+    it('increments tickets_completed when a claimed task reaches done', () => {
+      const s = teamStore();
+      try {
+        const t = s.createTask({ title: 'ship it', assignee: 'engineer' });
+        s.updateStatus(t.id, 'running', undefined, 'engineer');
+        s.completeRun(t.id, 'done', 'engineer');
+        const stats = s.getMemberStats();
+        expect(stats.get('engineer')).toMatchObject({
+          teamId: 'team-a',
+          memberId: 'engineer',
+          ticketsCompleted: 1,
+          ticketsFailed: 0,
+          ticketsOrphaned: 0,
+        });
+        expect(stats.get('engineer')?.lastUpdatedAt).toBeGreaterThan(0);
+      } finally {
+        s.close();
+      }
+    });
+
+    it('increments tickets_failed when a claimed task reaches failed via budget exhaustion', () => {
+      const s = teamStore();
+      try {
+        const t = s.createTask({ title: 'flaky', assignee: 'engineer', maxRetries: 0 });
+        s.updateStatus(t.id, 'running', undefined, 'engineer');
+        s.blockRun(t.id, 'attempt 1', 'engineer');
+        // Re-claim past budget -> failed.
+        expect(s.updateStatus(t.id, 'running', undefined, 'engineer').status).toBe('failed');
+        expect(s.getMemberStats().get('engineer')).toMatchObject({
+          ticketsCompleted: 0,
+          ticketsFailed: 1,
+          ticketsOrphaned: 0,
+        });
+      } finally {
+        s.close();
+      }
+    });
+
+    it('increments tickets_failed when a claimed task reaches needs_revision', () => {
+      const s = teamStore();
+      try {
+        const t = s.createTask({ title: 'needs work', assignee: 'engineer' });
+        s.updateStatus(t.id, 'running', undefined, 'engineer');
+        s.updateStatus(t.id, 'needs_revision', 'missing tests', 'reviewer');
+        expect(s.getMemberStats().get('engineer')).toMatchObject({
+          ticketsCompleted: 0,
+          ticketsFailed: 1,
+          ticketsOrphaned: 0,
+        });
+      } finally {
+        s.close();
+      }
+    });
+
+    it('increments tickets_orphaned when a claimed task is reclaimed', () => {
+      const s = teamStore();
+      try {
+        const t = s.createTask({ title: 'stuck', assignee: 'engineer' });
+        s.updateStatus(t.id, 'running', undefined, 'engineer');
+        s.reclaimTask(t.id, 'orphan_stale', 'dispatcher');
+        expect(s.getMemberStats().get('engineer')).toMatchObject({
+          ticketsCompleted: 0,
+          ticketsFailed: 0,
+          ticketsOrphaned: 1,
+        });
+      } finally {
+        s.close();
+      }
+    });
+
+    it('accumulates stats across multiple terminal transitions per member', () => {
+      const s = teamStore();
+      try {
+        for (let i = 0; i < 3; i++) {
+          const t = s.createTask({ title: `done ${i}`, assignee: 'engineer' });
+          s.updateStatus(t.id, 'running', undefined, 'engineer');
+          s.completeRun(t.id, 'ok', 'engineer');
+        }
+        const failed = s.createTask({ title: 'fail', assignee: 'engineer' });
+        s.updateStatus(failed.id, 'running', undefined, 'engineer');
+        s.updateStatus(failed.id, 'needs_revision', 'nope', 'reviewer');
+
+        const orphaned = s.createTask({ title: 'orphan', assignee: 'researcher' });
+        s.updateStatus(orphaned.id, 'running', undefined, 'researcher');
+        s.reclaimTask(orphaned.id, 'orphan_no_owner', 'dispatcher');
+
+        const stats = s.getMemberStats();
+        expect(stats.get('engineer')).toMatchObject({
+          ticketsCompleted: 3,
+          ticketsFailed: 1,
+          ticketsOrphaned: 0,
+        });
+        expect(stats.get('researcher')).toMatchObject({
+          ticketsCompleted: 0,
+          ticketsFailed: 0,
+          ticketsOrphaned: 1,
+        });
+      } finally {
+        s.close();
+      }
+    });
+
+    it('skips the stats update entirely when teamId is unset (solo board)', () => {
+      // Default constructor — no teamId. Terminal transitions must not write rows.
+      const t = store.createTask({ title: 'solo', assignee: 'engineer' });
+      store.updateStatus(t.id, 'running', undefined, 'engineer');
+      store.completeRun(t.id, 'done', 'engineer');
+      expect(store.getMemberStats().size).toBe(0);
+    });
+
+    it('skips the stats update when a transitioning task has a null assignee', () => {
+      const s = teamStore();
+      try {
+        // A goal-style task with no assignee that somehow lands in a terminal state.
+        const t = s.createTask({ title: 'unassigned' });
+        s.updateStatus(t.id, 'needs_revision', 'no owner', 'reviewer');
+        expect(s.getMemberStats().size).toBe(0);
+      } finally {
+        s.close();
+      }
+    });
+
+    it('does not double-count: a non-terminal status change writes no stats', () => {
+      const s = teamStore();
+      try {
+        const t = s.createTask({ title: 'moving', assignee: 'engineer' });
+        s.updateStatus(t.id, 'ready', undefined, 'engineer');
+        s.updateStatus(t.id, 'running', undefined, 'engineer');
+        s.updateStatus(t.id, 'blocked', 'paused', 'engineer');
+        expect(s.getMemberStats().size).toBe(0);
+      } finally {
+        s.close();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Schema migration v3 -> v4 (team_member_stats — additive table)
+  // ---------------------------------------------------------------------------
+
+  it('refuses to open a database whose user_version is newer than v4', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-ver5-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      const future = new Database(dbPath);
+      future.pragma('user_version = 5');
+      future.close();
+      expect(() => new KanbanStore(dbPath)).toThrow(/newer than code/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a fresh database opens at user_version 4 with the team_member_stats table', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-fresh4-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      const store = new KanbanStore(dbPath, { teamId: 'team-a' });
+      store.close();
+      const raw = new Database(dbPath);
+      try {
+        const version = (raw.pragma('user_version') as Array<{ user_version: number }>)[0]
+          ?.user_version;
+        expect(version).toBe(4);
+        const tables = (
+          raw
+            .prepare(
+              "SELECT name FROM sqlite_master WHERE type='table' AND name='team_member_stats'",
+            )
+            .all() as Array<{ name: string }>
+        ).map((t) => t.name);
+        expect(tables).toEqual(['team_member_stats']);
+      } finally {
+        raw.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates a v3 database to v4: data survives, team_member_stats becomes usable', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-mig34-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      // Build a v3 DB: same shape the current code creates, stamped at version 3
+      // and missing the team_member_stats table.
+      const v3 = new Database(dbPath);
+      v3.pragma('journal_mode = WAL');
+      v3.pragma('foreign_keys = ON');
+      v3.exec(`
+        CREATE TABLE tasks (
+          id              TEXT PRIMARY KEY,
+          title           TEXT NOT NULL,
+          body            TEXT NOT NULL DEFAULT '',
+          assignee        TEXT,
+          status          TEXT NOT NULL
+                          CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled','failed','needs_revision')),
+          priority        INTEGER NOT NULL DEFAULT 0,
+          workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
+                          CHECK (workspace_mode IN ('scratch','worktree','dir')),
+          workspace_path  TEXT,
+          scheduled_for   INTEGER,
+          idempotency_key TEXT,
+          current_run_id  TEXT,
+          max_retries     INTEGER CHECK (max_retries IS NULL OR max_retries >= 0),
+          retry_count     INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+          acceptance_criteria TEXT,
+          created_at      INTEGER NOT NULL,
+          updated_at      INTEGER NOT NULL
+        ) STRICT;
+        CREATE UNIQUE INDEX tasks_idem ON tasks(idempotency_key)
+          WHERE idempotency_key IS NOT NULL;
+        CREATE INDEX tasks_status_assignee ON tasks(status, assignee);
+        CREATE INDEX tasks_scheduled ON tasks(scheduled_for)
+          WHERE scheduled_for IS NOT NULL;
+        CREATE TABLE task_comments (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, author TEXT NOT NULL,
+          body TEXT NOT NULL, created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_comments_task ON task_comments(task_id, created_at);
+        CREATE TABLE task_links (
+          parent_id TEXT NOT NULL, child_id TEXT NOT NULL,
+          PRIMARY KEY (parent_id, child_id),
+          FOREIGN KEY (parent_id) REFERENCES tasks(id) ON DELETE CASCADE,
+          FOREIGN KEY (child_id)  REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_links_child ON task_links(child_id);
+        CREATE TABLE task_runs (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, started_at INTEGER NOT NULL,
+          ended_at INTEGER,
+          outcome TEXT CHECK (outcome IS NULL OR outcome IN ('completed','blocked','stalled','cancelled')),
+          summary TEXT, last_heartbeat_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_runs_task ON task_runs(task_id, started_at);
+        CREATE UNIQUE INDEX task_runs_open_one ON task_runs(task_id)
+          WHERE ended_at IS NULL;
+        CREATE TABLE task_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+          kind TEXT NOT NULL
+               CHECK (kind IN ('created','status_changed','commented','assigned','linked','unlinked','run_started','run_completed','heartbeat','archived')),
+          actor TEXT NOT NULL, data_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_events_task ON task_events(task_id, created_at);
+        CREATE INDEX task_events_recent ON task_events(created_at);
+        CREATE VIRTUAL TABLE task_fts USING fts5(
+          task_id UNINDEXED, title, body, comments, tokenize = 'porter'
+        );
+        CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+          INSERT INTO task_fts(task_id, title, body, comments)
+          VALUES (new.id, new.title, new.body, '');
+        END;
+        CREATE TRIGGER tasks_fts_au AFTER UPDATE OF title, body ON tasks BEGIN
+          UPDATE task_fts SET title = new.title, body = new.body WHERE task_id = new.id;
+        END;
+        CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+          DELETE FROM task_fts WHERE task_id = old.id;
+        END;
+        CREATE TRIGGER comments_fts_ai AFTER INSERT ON task_comments BEGIN
+          UPDATE task_fts
+          SET comments = (
+            SELECT COALESCE(GROUP_CONCAT(body, ' '), '')
+            FROM task_comments WHERE task_id = new.task_id
+          )
+          WHERE task_id = new.task_id;
+        END;
+        INSERT INTO tasks (id, title, body, status, priority, workspace_mode, assignee, created_at, updated_at)
+          VALUES ('t_v3', 'v3 task', 'v3 body', 'ready', 0, 'scratch', 'engineer', 100, 100);
+      `);
+      v3.pragma('user_version = 3');
+      v3.close();
+
+      // Opening with the current code stamps v4 and creates team_member_stats.
+      const store = new KanbanStore(dbPath, { teamId: 'team-a' });
+      try {
+        const t = store.getTask('t_v3');
+        expect(t?.title).toBe('v3 task');
+        expect(t?.body).toBe('v3 body');
+        // The new table is usable: a terminal transition records a stat row.
+        store.updateStatus('t_v3', 'running', undefined, 'engineer');
+        store.completeRun('t_v3', 'ok', 'engineer');
+        expect(store.getMemberStats().get('engineer')?.ticketsCompleted).toBe(1);
+      } finally {
+        store.close();
+      }
+
+      const raw = new Database(dbPath);
+      try {
+        const version = (raw.pragma('user_version') as Array<{ user_version: number }>)[0]
+          ?.user_version;
+        expect(version).toBe(4);
+      } finally {
+        raw.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates a v1 database all the way to v4 via the stepwise chain', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-mig14-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      const v1 = new Database(dbPath);
+      v1.pragma('journal_mode = WAL');
+      v1.pragma('foreign_keys = ON');
+      v1.exec(`
+        CREATE TABLE tasks (
+          id              TEXT PRIMARY KEY,
+          title           TEXT NOT NULL,
+          body            TEXT NOT NULL DEFAULT '',
+          assignee        TEXT,
+          status          TEXT NOT NULL
+                          CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled')),
+          priority        INTEGER NOT NULL DEFAULT 0,
+          workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
+                          CHECK (workspace_mode IN ('scratch','worktree','dir')),
+          workspace_path  TEXT,
+          scheduled_for   INTEGER,
+          idempotency_key TEXT,
+          current_run_id  TEXT,
+          created_at      INTEGER NOT NULL,
+          updated_at      INTEGER NOT NULL
+        ) STRICT;
+        CREATE UNIQUE INDEX tasks_idem ON tasks(idempotency_key)
+          WHERE idempotency_key IS NOT NULL;
+        CREATE INDEX tasks_status_assignee ON tasks(status, assignee);
+        CREATE INDEX tasks_scheduled ON tasks(scheduled_for)
+          WHERE scheduled_for IS NOT NULL;
+        CREATE TABLE task_comments (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, author TEXT NOT NULL,
+          body TEXT NOT NULL, created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_comments_task ON task_comments(task_id, created_at);
+        CREATE TABLE task_links (
+          parent_id TEXT NOT NULL, child_id TEXT NOT NULL,
+          PRIMARY KEY (parent_id, child_id),
+          FOREIGN KEY (parent_id) REFERENCES tasks(id) ON DELETE CASCADE,
+          FOREIGN KEY (child_id)  REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_links_child ON task_links(child_id);
+        CREATE TABLE task_runs (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, started_at INTEGER NOT NULL,
+          ended_at INTEGER,
+          outcome TEXT CHECK (outcome IS NULL OR outcome IN ('completed','blocked','stalled','cancelled')),
+          summary TEXT, last_heartbeat_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_runs_task ON task_runs(task_id, started_at);
+        CREATE UNIQUE INDEX task_runs_open_one ON task_runs(task_id)
+          WHERE ended_at IS NULL;
+        CREATE TABLE task_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+          kind TEXT NOT NULL
+               CHECK (kind IN ('created','status_changed','commented','assigned','linked','unlinked','run_started','run_completed','heartbeat','archived')),
+          actor TEXT NOT NULL, data_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_events_task ON task_events(task_id, created_at);
+        CREATE INDEX task_events_recent ON task_events(created_at);
+        CREATE VIRTUAL TABLE task_fts USING fts5(
+          task_id UNINDEXED, title, body, comments, tokenize = 'porter'
+        );
+        CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+          INSERT INTO task_fts(task_id, title, body, comments)
+          VALUES (new.id, new.title, new.body, '');
+        END;
+        CREATE TRIGGER tasks_fts_au AFTER UPDATE OF title, body ON tasks BEGIN
+          UPDATE task_fts SET title = new.title, body = new.body WHERE task_id = new.id;
+        END;
+        CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+          DELETE FROM task_fts WHERE task_id = old.id;
+        END;
+        CREATE TRIGGER comments_fts_ai AFTER INSERT ON task_comments BEGIN
+          UPDATE task_fts
+          SET comments = (
+            SELECT COALESCE(GROUP_CONCAT(body, ' '), '')
+            FROM task_comments WHERE task_id = new.task_id
+          )
+          WHERE task_id = new.task_id;
+        END;
+        INSERT INTO tasks (id, title, body, status, priority, workspace_mode, created_at, updated_at)
+          VALUES ('t_v1', 'v1 task', 'v1 body', 'ready', 0, 'scratch', 100, 100);
+      `);
+      v1.pragma('user_version = 1');
+      v1.close();
+
+      const store = new KanbanStore(dbPath, { teamId: 'team-a' });
+      try {
+        const t = store.getTask('t_v1');
+        expect(t?.title).toBe('v1 task');
+        expect(t?.maxRetries).toBeNull();
+        expect(t?.acceptanceCriteria).toBeNull();
+      } finally {
+        store.close();
+      }
+
+      const raw = new Database(dbPath);
+      try {
+        const version = (raw.pragma('user_version') as Array<{ user_version: number }>)[0]
+          ?.user_version;
+        expect(version).toBe(4);
+      } finally {
+        raw.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('stats survive a close/reopen of the same on-disk board', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-stats-persist-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      const s1 = new KanbanStore(dbPath, { teamId: 'team-a' });
+      const t = s1.createTask({ title: 'persist', assignee: 'engineer' });
+      s1.updateStatus(t.id, 'running', undefined, 'engineer');
+      s1.completeRun(t.id, 'ok', 'engineer');
+      s1.close();
+
+      const s2 = new KanbanStore(dbPath, { teamId: 'team-a' });
+      try {
+        expect(s2.getMemberStats().get('engineer')?.ticketsCompleted).toBe(1);
+      } finally {
+        s2.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -112,6 +112,35 @@ export interface ListTasksFilter {
   limit?: number;
 }
 
+/**
+ * Per-member work outcome counters for one team board. Maintained by the store
+ * itself: each terminal task transition (`done`, `failed`/`needs_revision`,
+ * orphan-reclaim) bumps the matching counter in the same transaction as the
+ * transition, so the stats are a reconstructable function of board content
+ * rather than a separate ledger the supervisor has to keep in sync.
+ */
+export interface TeamMemberStats {
+  teamId: string;
+  memberId: string;
+  /** Tasks this member completed (`done` via `completeRun`). */
+  ticketsCompleted: number;
+  /** Tasks that ended `failed` or `needs_revision` while claimed by this member. */
+  ticketsFailed: number;
+  /** Tasks whose claim by this member was reclaimed by another agent. */
+  ticketsOrphaned: number;
+  /** Epoch-ms of the most recent counter bump. */
+  lastUpdatedAt: number;
+}
+
+export interface KanbanStoreOptions {
+  /**
+   * The team this board belongs to. When set, terminal task transitions record
+   * per-member outcome counters in `team_member_stats`. Unset on solo
+   * personality boards — stats are skipped entirely.
+   */
+  teamId?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------
@@ -230,6 +259,20 @@ const SCHEMA = `
     )
     WHERE task_id = new.task_id;
   END;
+
+  -- team_member_stats: per-member work outcome counters for a team board.
+  -- Purely additive — CREATE TABLE IF NOT EXISTS is safe on every DB version,
+  -- so the v3 to v4 bump needs no table rebuild. The store updates these rows
+  -- atomically inside each terminal-transition transaction.
+  CREATE TABLE IF NOT EXISTS team_member_stats (
+    team_id           TEXT NOT NULL,
+    member_id         TEXT NOT NULL,
+    tickets_completed INTEGER NOT NULL DEFAULT 0 CHECK (tickets_completed >= 0),
+    tickets_failed    INTEGER NOT NULL DEFAULT 0 CHECK (tickets_failed >= 0),
+    tickets_orphaned  INTEGER NOT NULL DEFAULT 0 CHECK (tickets_orphaned >= 0),
+    last_updated_at   INTEGER NOT NULL,
+    PRIMARY KEY (team_id, member_id)
+  ) STRICT;
 `;
 
 // ---------------------------------------------------------------------------
@@ -238,8 +281,14 @@ const SCHEMA = `
 
 export class KanbanStore {
   private readonly db: Database.Database;
+  /**
+   * Team this board belongs to, or `null` for a solo personality board. When
+   * `null`, terminal transitions skip the `team_member_stats` update entirely.
+   */
+  private readonly teamId: string | null;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, opts: KanbanStoreOptions = {}) {
+    this.teamId = opts.teamId ?? null;
     // mkdir -p the parent directory. Same raw-fs exception that session-sqlite uses
     // for path setup (the `Storage` abstraction is for ~/.ethos/ data IO, not for
     // bootstrapping the SQLite file's enclosing directory). `:memory:` has no
@@ -253,25 +302,33 @@ export class KanbanStore {
     // Version check FIRST — refuse to touch a DB whose schema is newer than this code.
     const versionRows = this.db.pragma('user_version') as Array<{ user_version: number }>;
     const currentVersion = versionRows[0]?.user_version ?? 0;
-    if (currentVersion > 3) {
+    if (currentVersion > 4) {
       throw new Error(
-        `kanban-store: database user_version=${currentVersion} is newer than code (3); refusing to open to avoid downgrade`,
+        `kanban-store: database user_version=${currentVersion} is newer than code (4); refusing to open to avoid downgrade`,
       );
     }
-    // SCHEMA describes the current (v3) shape. A fresh DB (user_version=0) gets it
-    // directly via CREATE TABLE IF NOT EXISTS; an existing v1/v2 DB skips the table
-    // creation (IF NOT EXISTS) and is brought forward by the migration chain below.
+    // SCHEMA describes the current (v4) shape. A fresh DB (user_version=0) gets it
+    // directly via CREATE TABLE IF NOT EXISTS; an existing v1/v2/v3 DB skips the
+    // table creation (IF NOT EXISTS) and is brought forward by the migration chain
+    // below. The v3→v4 step is purely additive — `team_member_stats` is created by
+    // `exec(SCHEMA)` above on every version, so v3 needs only the version bump.
     this.db.exec(SCHEMA);
     if (currentVersion === 0) {
-      this.db.pragma('user_version = 3');
+      this.db.pragma('user_version = 4');
     } else {
-      // Stepwise migration chain: a v1 DB runs v1->v2 then v2->v3; a v2 DB runs
-      // only v2->v3. Each migrator bumps user_version inside its own transaction.
+      // Stepwise migration chain: a v1 DB runs v1->v2->v2->v3 then the v3->v4
+      // bump; a v2 DB runs v2->v3 then the bump; a v3 DB just bumps. The v1ToV2
+      // and v2ToV3 migrators bump user_version inside their own transactions;
+      // the v3->v4 step is just `pragma user_version = 4` since the additive
+      // table is already created by `exec(SCHEMA)`.
       if (currentVersion === 1) {
         this.migrateV1ToV2();
       }
       if (currentVersion <= 2) {
         this.migrateV2ToV3();
+      }
+      if (currentVersion <= 3) {
+        this.db.pragma('user_version = 4');
       }
     }
   }
@@ -600,10 +657,13 @@ export class KanbanStore {
 
     const tx = this.db.transaction(() => {
       const row = this.db
-        .prepare('SELECT status, current_run_id, max_retries, retry_count FROM tasks WHERE id = ?')
+        .prepare(
+          'SELECT status, assignee, current_run_id, max_retries, retry_count FROM tasks WHERE id = ?',
+        )
         .get(taskId) as
         | {
             status: TaskStatus;
+            assignee: string | null;
             current_run_id: string | null;
             max_retries: number | null;
             retry_count: number;
@@ -686,6 +746,13 @@ export class KanbanStore {
           to: effectiveStatus,
           reason: effectiveReason,
         });
+        // Terminal-failure transitions credit the assignee's failed counter.
+        // Both Phase 1's budget-exhaustion `failed` and Phase 3's hook-rejection
+        // `needs_revision` flow through here. Gated on an actual status change so
+        // a redundant updateStatus(failed) on an already-failed task is a no-op.
+        if (effectiveStatus === 'failed' || effectiveStatus === 'needs_revision') {
+          this.bumpMemberStat(row.assignee, 'tickets_failed');
+        }
       }
       if (runStarted) this.emit(taskId, 'run_started', actor, {});
       if (runCancelled) {
@@ -720,8 +787,10 @@ export class KanbanStore {
     // a concurrent writer can't end the same run between our read and our write.
     const tx = this.db.transaction((): Task => {
       const row = this.db
-        .prepare('SELECT status, current_run_id FROM tasks WHERE id = ?')
-        .get(taskId) as { status: TaskStatus; current_run_id: string | null } | undefined;
+        .prepare('SELECT status, assignee, current_run_id FROM tasks WHERE id = ?')
+        .get(taskId) as
+        | { status: TaskStatus; assignee: string | null; current_run_id: string | null }
+        | undefined;
       if (!row) throw new Error(`endRun: task ${taskId} not found`);
       if (row.current_run_id === null) {
         throw new Error(`no open run: task ${taskId} has no current run to end`);
@@ -738,6 +807,12 @@ export class KanbanStore {
       this.db
         .prepare('UPDATE tasks SET status = ?, current_run_id = NULL, updated_at = ? WHERE id = ?')
         .run(newStatus, now, taskId);
+      // Terminal transition: a `done` landing credits the assignee's completed
+      // counter. `blocked` is not terminal for stats — the task can be reclaimed
+      // and retried — so only `done` bumps here.
+      if (newStatus === 'done') {
+        this.bumpMemberStat(row.assignee, 'tickets_completed');
+      }
       if (opts.comment !== undefined) {
         const commentId = newCommentId();
         this.db
@@ -1000,8 +1075,10 @@ export class KanbanStore {
     const now = Date.now();
     const tx = this.db.transaction((): Task => {
       const row = this.db
-        .prepare('SELECT status, current_run_id FROM tasks WHERE id = ?')
-        .get(taskId) as { status: TaskStatus; current_run_id: string | null } | undefined;
+        .prepare('SELECT status, assignee, current_run_id FROM tasks WHERE id = ?')
+        .get(taskId) as
+        | { status: TaskStatus; assignee: string | null; current_run_id: string | null }
+        | undefined;
       if (!row) throw new Error(`reclaimTask: task ${taskId} not found`);
       let runCancelled = false;
       if (row.current_run_id !== null) {
@@ -1016,6 +1093,10 @@ export class KanbanStore {
       this.db
         .prepare('UPDATE tasks SET status = ?, current_run_id = NULL, updated_at = ? WHERE id = ?')
         .run('ready', now, taskId);
+      // The member whose claim was just reclaimed gets an orphaned tally. The
+      // task keeps its `assignee` across a reclaim (the dispatcher re-POSTs to
+      // the same member), so `row.assignee` is the member that lost the claim.
+      this.bumpMemberStat(row.assignee, 'tickets_orphaned');
       if (runCancelled) {
         this.emit(taskId, 'run_completed', actor, { outcome: 'cancelled', summary: null });
       }
@@ -1134,6 +1215,66 @@ export class KanbanStore {
         'INSERT INTO task_events (task_id, kind, actor, data_json, created_at) VALUES (?,?,?,?,?)',
       )
       .run(taskId, kind, actor, JSON.stringify(data), Date.now());
+  }
+
+  /**
+   * Bump one `team_member_stats` counter for `(this.teamId, memberId)`.
+   *
+   * No-op when this board has no `teamId` (solo personality board) or when the
+   * transitioning task had a `null` assignee — there is no member to credit.
+   * Callers invoke this inside their own transaction so the counter moves
+   * atomically with the terminal transition that triggered it. UPSERT so the
+   * first outcome for a member creates the row.
+   */
+  private bumpMemberStat(
+    memberId: string | null,
+    column: 'tickets_completed' | 'tickets_failed' | 'tickets_orphaned',
+  ): void {
+    if (this.teamId === null || memberId === null) return;
+    this.db
+      .prepare(
+        `INSERT INTO team_member_stats (team_id, member_id, ${column}, last_updated_at)
+         VALUES (?, ?, 1, ?)
+         ON CONFLICT(team_id, member_id)
+         DO UPDATE SET ${column} = ${column} + 1, last_updated_at = excluded.last_updated_at`,
+      )
+      .run(this.teamId, memberId, Date.now());
+  }
+
+  /**
+   * Per-member outcome counters for this board's team, keyed by `member_id`.
+   * Empty when this board has no `teamId` or no terminal transitions have been
+   * recorded yet. Read-only — the rows are maintained by the terminal-transition
+   * methods themselves.
+   */
+  getMemberStats(): Map<string, TeamMemberStats> {
+    const out = new Map<string, TeamMemberStats>();
+    if (this.teamId === null) return out;
+    const rows = this.db
+      .prepare(
+        `SELECT team_id, member_id, tickets_completed, tickets_failed, tickets_orphaned,
+                last_updated_at
+         FROM team_member_stats WHERE team_id = ?`,
+      )
+      .all(this.teamId) as Array<{
+      team_id: string;
+      member_id: string;
+      tickets_completed: number;
+      tickets_failed: number;
+      tickets_orphaned: number;
+      last_updated_at: number;
+    }>;
+    for (const r of rows) {
+      out.set(r.member_id, {
+        teamId: r.team_id,
+        memberId: r.member_id,
+        ticketsCompleted: r.tickets_completed,
+        ticketsFailed: r.tickets_failed,
+        ticketsOrphaned: r.tickets_orphaned,
+        lastUpdatedAt: r.last_updated_at,
+      });
+    }
+    return out;
   }
 
   searchFts(query: string): Task[] {

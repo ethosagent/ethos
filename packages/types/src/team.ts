@@ -43,6 +43,15 @@ export interface TeamManifest {
   personality_models?: Record<string, string>;
   /** Which mesh this team joins. Defaults to the team's name (isolated mesh per team). */
   mesh?: string;
+  /**
+   * Opt-in dispatch preference. When true, the dispatcher uses each assignee's
+   * success ratio (`tickets_completed / (completed + failed + orphaned)`, from
+   * the board's `team_member_stats`) as a tie-breaker *within the same
+   * priority* — higher-success assignees dispatch first. Never an exclusion:
+   * every ready+assigned task is still dispatched, and priority always
+   * dominates. Defaults to false.
+   */
+  dispatch_prefer_reliable?: boolean;
   /** Agents to boot as part of this team. */
   members: TeamMember[];
   /** Plan B — kanban dispatcher tuning. Optional; all fields have sane defaults. */

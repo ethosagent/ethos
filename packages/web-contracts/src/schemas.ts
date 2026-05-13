@@ -569,11 +569,27 @@ export const KanbanTeamSummarySchema = z.object({
 });
 export type KanbanTeamSummary = z.infer<typeof KanbanTeamSummarySchema>;
 
+export const KanbanMemberStatsSchema = z.object({
+  teamId: z.string(),
+  memberId: z.string(),
+  /** Tasks this member completed (`done`). */
+  ticketsCompleted: z.number().int().nonnegative(),
+  /** Tasks that ended `failed` or `needs_revision` while claimed by this member. */
+  ticketsFailed: z.number().int().nonnegative(),
+  /** Tasks whose claim by this member was reclaimed by another agent. */
+  ticketsOrphaned: z.number().int().nonnegative(),
+  /** ISO-8601 timestamp of the most recent counter bump. */
+  lastUpdatedAt: z.string(),
+});
+export type KanbanMemberStats = z.infer<typeof KanbanMemberStatsSchema>;
+
 export const KanbanBoardSnapshotSchema = z.object({
   team: KanbanTeamSummarySchema,
   tasks: z.array(KanbanTaskSchema),
   links: z.array(KanbanLinkSchema),
   /** Most-recent events, oldest→newest, capped at 100. */
   recentEvents: z.array(KanbanEventSchema),
+  /** Per-member work-outcome stats for the team. Empty on solo boards. */
+  memberStats: z.array(KanbanMemberStatsSchema),
 });
 export type KanbanBoardSnapshot = z.infer<typeof KanbanBoardSnapshotSchema>;

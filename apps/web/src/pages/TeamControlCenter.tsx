@@ -1,6 +1,7 @@
 import type {
   KanbanBoardSnapshot,
   KanbanEvent,
+  KanbanMemberStats,
   KanbanTask,
   KanbanTaskStatus,
 } from '@ethosagent/web-contracts';
@@ -8,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, Button, Descriptions, Drawer, Dropdown, Spin, Typography } from 'antd';
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { formatMemberSuccess } from '../lib/member-stats';
 import { rpc } from '../rpc';
 
 // Per-team Control Center.
@@ -446,13 +448,22 @@ function Roster({ snapshot }: { snapshot: KanbanBoardSnapshot }) {
     return m;
   }, [snapshot.tasks]);
 
-  const seenAssignees = useMemo(() => {
+  const statsByMember = useMemo(() => {
+    const m = new Map<string, KanbanMemberStats>();
+    for (const s of snapshot.memberStats) m.set(s.memberId, s);
+    return m;
+  }, [snapshot.memberStats]);
+
+  // Roster covers anyone who has been assigned a task OR has a recorded stat row
+  // — a member whose tasks all completed still belongs on the roster.
+  const members = useMemo(() => {
     const s = new Set<string>();
     for (const t of snapshot.tasks) {
       if (t.assignee) s.add(t.assignee);
     }
+    for (const stat of snapshot.memberStats) s.add(stat.memberId);
     return Array.from(s).sort();
-  }, [snapshot.tasks]);
+  }, [snapshot.tasks, snapshot.memberStats]);
 
   return (
     <section className="cc-panel cc-roster">
@@ -460,21 +471,25 @@ function Roster({ snapshot }: { snapshot: KanbanBoardSnapshot }) {
         <h3 className="cc-panel-title">Roster</h3>
       </header>
       <div className="cc-panel-body">
-        {seenAssignees.length === 0 ? (
+        {members.length === 0 ? (
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             No assigned tasks yet.
           </Typography.Text>
         ) : (
           <div className="cc-roster-list">
-            {seenAssignees.map((person) => {
+            {members.map((person) => {
               const accent = accentFor(person);
               const running = workingByAssignee.get(person);
+              const stats = statsByMember.get(person);
               return (
                 <div key={person} className="cc-roster-row">
                   <span className="cc-roster-mark" style={{ background: accent }} />
-                  <span className="cc-roster-name" style={{ color: accent }}>
-                    {person}
-                  </span>
+                  <div className="cc-roster-detail">
+                    <span className="cc-roster-name" style={{ color: accent }}>
+                      {person}
+                    </span>
+                    <MemberStatsLine stats={stats} />
+                  </div>
                   <span className="cc-spacer" />
                   <span
                     className={`cc-roster-status-dot ${running ? 'cc-roster-status-running' : ''}`}
@@ -487,6 +502,32 @@ function Roster({ snapshot }: { snapshot: KanbanBoardSnapshot }) {
         )}
       </div>
     </section>
+  );
+}
+
+// Read-only, informational success-rate line under a roster name. Success rate
+// is `completed / (completed + failed + orphaned)`. A member with no recorded
+// terminal outcomes shows a muted "no record yet" rather than a fake 0% or 100%.
+function MemberStatsLine({ stats }: { stats?: KanbanMemberStats }) {
+  const success = formatMemberSuccess(stats);
+  if (success.kind === 'no-record') {
+    return <span className="cc-roster-stats cc-roster-stats--empty">no record yet</span>;
+  }
+  return (
+    <span
+      className="cc-roster-stats"
+      title={
+        stats
+          ? `${stats.ticketsCompleted} completed · ${stats.ticketsFailed} failed · ${stats.ticketsOrphaned} orphaned`
+          : undefined
+      }
+    >
+      {success.ratePercent}% success
+      <span className="cc-roster-stats-breakdown">
+        {' '}
+        ({success.completed}/{success.total})
+      </span>
+    </span>
   );
 }
 
