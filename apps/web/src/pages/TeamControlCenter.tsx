@@ -304,18 +304,28 @@ function TaskTile({
           </span>
         )}
         {isGoal && <span className="cc-task-goal-badge">goal</span>}
-        {task.retryCount > 0 && (
-          <span
-            className="cc-task-retry"
-            title={
-              task.maxRetries !== null
-                ? `Re-claimed ${task.retryCount} of ${task.maxRetries} allowed retries`
-                : `Re-claimed ${task.retryCount} time(s)`
-            }
-          >
-            ↻ {task.maxRetries !== null ? `${task.retryCount}/${task.maxRetries}` : task.retryCount}
-          </span>
-        )}
+        {task.retryCount > 0 &&
+          (() => {
+            // Over budget: a failed task's retryCount can exceed maxRetries
+            // (the re-claim that tripped the budget still counts). Showing
+            // "3/2" reads oddly, so drop the fraction and say it plainly.
+            const overBudget = task.maxRetries !== null && task.retryCount > task.maxRetries;
+            const showFraction = task.maxRetries !== null && !overBudget;
+            return (
+              <span
+                className="cc-task-retry"
+                title={
+                  task.maxRetries === null
+                    ? `Re-claimed ${task.retryCount} time(s)`
+                    : overBudget
+                      ? `Re-claimed ${task.retryCount} time(s) — exhausted its ${task.maxRetries}-retry budget`
+                      : `Re-claimed ${task.retryCount} of ${task.maxRetries} allowed retries`
+                }
+              >
+                ↻ {showFraction ? `${task.retryCount}/${task.maxRetries}` : task.retryCount}
+              </span>
+            );
+          })()}
         <span className="cc-spacer" />
         {childCount && childCount.total > 0 && (
           <span className="cc-task-progress">
