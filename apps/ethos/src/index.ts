@@ -2,6 +2,7 @@
 // Don't put it here - tsx in dev mode doesn't need it and source-level shebangs
 // in TypeScript trip on tsup's bundler.
 import { join } from 'node:path';
+import { reconcileRegistry } from '@ethosagent/tools-process';
 import { formatError, toEthosError } from '@ethosagent/types';
 import { applyCliOverrides, parseCliOverrideFlags } from './cli-overrides';
 import { runAcp } from './commands/acp';
@@ -38,7 +39,7 @@ import { runTail } from './commands/tail';
 import { runTeamCommand } from './commands/team';
 import { runTrace } from './commands/trace';
 import { runUpgrade } from './commands/upgrade';
-import { readConfig } from './config';
+import { ethosDir, readConfig } from './config';
 import { appendErrorLog } from './error-log';
 import { getStorage } from './wiring';
 
@@ -89,6 +90,16 @@ function extractSingleQuery(argv: string[]): {
 }
 
 try {
+  // Startup crash-recovery scan: if a previous `ethos chat` crashed mid-session,
+  // its detached children outlive it but the registry still lists them
+  // `running`. reconcileRegistry flips any `running` entry with a dead pid to
+  // `orphan` so `process_list` shows the aftermath instead of a stale state.
+  // Best-effort and never throws (a missing/corrupt registry must not block
+  // startup); cheap and idempotent, so running it for every invocation is fine
+  // — `ethos process list` does its own reconciliation, which is harmless to
+  // double-run. The `ethosDir()` here is the same dataDir the process tools use.
+  await reconcileRegistry(ethosDir());
+
   switch (effectiveCommand) {
     case '--version':
     case '-v': {

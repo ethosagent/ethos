@@ -101,6 +101,15 @@ ethos process stop <id> [--signal SIGTERM|SIGKILL]
 
 **Orphan detection** — `process_list` probes each running entry with `process.kill(pid, 0)`. If it throws `ESRCH`, the entry is marked `orphan`. The spawn exit handler also marks entries — `exited` when the process exits cleanly (code 0, no signal), `orphan` when killed by an external signal.
 
+**Startup crash recovery** — on every `ethos` startup, `reconcileRegistry` runs the same liveness check: any entry still marked `running` whose pid is no longer alive is flipped to `orphan` with a fresh timestamp. So if `ethos chat` crashes mid-session, the next `ethos` invocation shows the aftermath of the crash, not a stale "is it still running?" state. It is best-effort — a missing or corrupt registry never blocks startup.
+
+## Cancellation and signals
+
+**Ctrl-C in `ethos chat` does not kill background processes. Use `process_stop` or `ethos process stop`.** Processes are spawned detached (`detached: true` + `child.unref()`) by design — that is the whole point of this package. SIGINT / SIGTERM to the parent `ethos chat` ends the chat session only; the children keep running. To actually stop a background process, send it a signal explicitly via the `process_stop` tool (inside chat) or `ethos process stop <id>` (from a shell).
+
+- **SIGINT to `ethos process stop`** behaves as standard Unix: the short-lived CLI process dies. Nothing special is done with the signal — there is no handler swallowing it.
+- **A `cwd` deleted while a process runs** surfaces as a child error in that process's `stderr.log`. The tool does not detect or recover from this — read the logs with `process_logs` to see it.
+
 ## Error codes
 
 Tool failures carry a domain-code prefix in the `error` string so callers can branch on the cause:
@@ -127,7 +136,7 @@ Tool failures carry a domain-code prefix in the `error` string so callers can br
 | File | Purpose |
 |---|---|
 | `src/index.ts` | Five tool definitions (`process_start` / `list` / `logs` / `stop` / `wait`), `createProcessTools()`; re-exports the registry helpers and `operations.ts` for the CLI. |
-| `src/operations.ts` | `listProcesses` / `readProcessLogs` / `stopProcess` — the shared list/logs/stop logic both the tools and the `ethos process` CLI call. |
+| `src/operations.ts` | `listProcesses` / `readProcessLogs` / `stopProcess` — the shared list/logs/stop logic both the tools and the `ethos process` CLI call; `reconcileRegistry` — the startup crash-recovery scan. |
 | `src/registry.ts` | `ProcessEntry` type, `loadRegistry` / `saveRegistry` (atomic), `withRegistryLock` (advisory lock), `isAlive`, `reapStale`, `updateEntry`. |
 | `src/spawn.ts` | `spawnDetached` — creates log dirs, opens fd streams, spawns detached, registers exit handler; `rotateLogIfNeeded`. |
-| `src/__tests__/` | Integration tests (`process.test.ts`) against a real tmp dataDir using actual child processes, plus `registry.test.ts`, `spawn.test.ts`, `operations.test.ts`. |
+| `src/__tests__/` | Integration tests (`process.test.ts`) against a real tmp dataDir using actual child processes, plus `registry.test.ts`, `spawn.test.ts`, `operations.test.ts`, `lifecycle.test.ts` (startup crash recovery). |

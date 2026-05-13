@@ -376,6 +376,7 @@ export {
   listProcesses,
   type ProcessListItem,
   readProcessLogs,
+  reconcileRegistry,
   STOP_SUPPORTED_SIGNALS,
   type StopSignal,
   stopProcess,

@@ -4,6 +4,7 @@ import {
   isAlive,
   loadRegistry,
   type ProcessStatus,
+  type Registry,
   reapStale,
   saveRegistry,
   updateEntry,
@@ -36,6 +37,33 @@ function readLastLines(path: string, n: number, prefix: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// liveness
+// ---------------------------------------------------------------------------
+
+/**
+ * Liveness pass: flip every entry still marked `running` whose `pid` is no
+ * longer alive to `orphan` (with a fresh `lastTouchedAt`). Mutates `reg` in
+ * place; returns true if anything changed so the caller can skip a needless
+ * save. Shared by `listProcesses` (per-call liveness) and `reconcileRegistry`
+ * (startup crash recovery) so the rule lives in exactly one place.
+ */
+function markDeadRunningAsOrphan(reg: Registry): boolean {
+  let dirty = false;
+  for (const entry of Object.values(reg)) {
+    if (entry.status !== 'running') continue;
+    if (!isAlive(entry.pid)) {
+      reg[entry.id] = {
+        ...entry,
+        status: 'orphan',
+        lastTouchedAt: new Date().toISOString(),
+      };
+      dirty = true;
+    }
+  }
+  return dirty;
+}
+
+// ---------------------------------------------------------------------------
 // list
 // ---------------------------------------------------------------------------
 
@@ -59,18 +87,7 @@ export async function listProcesses(dataDir: string): Promise<ProcessListItem[]>
   const registry = await withRegistryLock(dataDir, () => {
     let reg = loadRegistry(dataDir);
 
-    let dirty = false;
-    for (const entry of Object.values(reg)) {
-      if (entry.status !== 'running') continue;
-      if (!isAlive(entry.pid)) {
-        reg[entry.id] = {
-          ...entry,
-          status: 'orphan',
-          lastTouchedAt: new Date().toISOString(),
-        };
-        dirty = true;
-      }
-    }
+    const dirty = markDeadRunningAsOrphan(reg);
 
     reg = reapStale(reg);
 
@@ -96,6 +113,34 @@ export async function listProcesses(dataDir: string): Promise<ProcessListItem[]>
     ...(e.exitCode !== undefined ? { exit_code: e.exitCode } : {}),
     duration_ms: now - new Date(e.startedAt).getTime(),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// reconcile (startup crash recovery)
+// ---------------------------------------------------------------------------
+
+/**
+ * Startup crash-recovery scan. Any registry entry still marked `running` whose
+ * `pid` is no longer alive is flipped to `orphan` with a fresh `lastTouchedAt`
+ * — the same liveness logic `listProcesses` runs, minus the reap/rotate/format
+ * work. Call it once on `ethos` startup so a user who crashed `ethos chat`
+ * mid-session sees the aftermath of the crash, not a stale "is it running?"
+ * state.
+ *
+ * Best-effort and never throws: a missing or corrupt registry must not crash
+ * `ethos` startup. The whole body is wrapped so any failure (lock contention,
+ * unreadable file) is swallowed — the next `process_list` re-runs the same
+ * check anyway.
+ */
+export async function reconcileRegistry(dataDir: string): Promise<void> {
+  try {
+    await withRegistryLock(dataDir, () => {
+      const reg = loadRegistry(dataDir);
+      if (markDeadRunningAsOrphan(reg)) saveRegistry(dataDir, reg);
+    });
+  } catch {
+    // best-effort: startup must not fail because of registry state.
+  }
 }
 
 // ---------------------------------------------------------------------------
