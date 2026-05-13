@@ -121,7 +121,16 @@ export function matchEthosUrl(
   }
   if (segments.length === 2) {
     const [collection, rawId] = segments;
-    const id = decodeURIComponent(rawId);
+    // `decodeURIComponent` throws `URIError` on malformed percent-encoding
+    // (e.g. `/sessions/%E0%A4%A`) — a same-origin URL that parses fine as a
+    // `URL`. This function is contractually total, so a bad encoding is just
+    // "no match", never a throw that escapes into the Bolt event loop.
+    let id: string;
+    try {
+      id = decodeURIComponent(rawId);
+    } catch {
+      return null;
+    }
     if (collection === 'sessions') return { kind: 'session', id };
     if (collection === 'kanban') return { kind: 'kanban', id };
     if (collection === 'personalities') return { kind: 'personality', id };

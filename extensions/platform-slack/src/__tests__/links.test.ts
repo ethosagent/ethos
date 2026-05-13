@@ -75,6 +75,13 @@ describe('matchEthosUrl', () => {
   it('returns null for a malformed shared URL', () => {
     expect(matchEthosUrl('not a url', base)).toBeNull();
   });
+
+  it('returns null for a same-origin URL with a malformed percent-encoded id', () => {
+    // `%E0%A4%A` parses fine as a URL but throws URIError on decode — the
+    // matcher is contractually total, so this is a no-match, never a throw.
+    expect(() => matchEthosUrl(`${base}/sessions/%E0%A4%A`, base)).not.toThrow();
+    expect(matchEthosUrl(`${base}/sessions/%E0%A4%A`, base)).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
