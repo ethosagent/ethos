@@ -622,6 +622,12 @@ function createKanbanComplete(store: KanbanStore, hooks?: HookRegistry): Tool {
         // and completion proceeds: the plan's opt-in "default no-op".
         if (hooks !== undefined) {
           const task = store.getTask(taskId);
+          // Guard the hook path to a running task so it acts on exactly the
+          // states store.completeRun would: that path throws `no open run` for
+          // a non-running task, and wiring a verifier must not widen that.
+          if (task?.status !== 'running') {
+            return errorResult(`no open run: ${taskId}`, 'execution_failed');
+          }
           const verdict = await hooks.fireClaiming('before_ticket_complete', {
             taskId,
             summary,

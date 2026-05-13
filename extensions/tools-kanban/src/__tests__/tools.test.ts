@@ -437,6 +437,28 @@ describe('kanban_complete before_ticket_complete hook', () => {
     expect(out.status).toBe('done');
   });
 
+  it('does not act on a non-running task even when a verifier is wired', async () => {
+    const hooks = new DefaultHookRegistry();
+    let fired = false;
+    hooks.registerClaiming('before_ticket_complete', async () => {
+      fired = true;
+      return { handled: true, reason: 'rejected' };
+    });
+    const tools = toolsByName(createKanbanTools({ store, hooks }));
+
+    const t = store.createTask({ title: 'never started' }); // status=todo
+
+    const result = await (tools.kanban_complete as Tool).execute(
+      { task_id: t.id, summary: 'shipped' },
+      makeCtx('engineer'),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('execution_failed');
+    // The verifier never ran, and the task was not transitioned.
+    expect(fired).toBe(false);
+    expect(store.getTask(t.id)?.status).toBe('todo');
+  });
+
   it('completion proceeds unchanged when no verifier is registered (default no-op)', async () => {
     const tools = toolsByName(createKanbanTools({ store }));
     const t = store.createTask({ title: 'plain task' });
