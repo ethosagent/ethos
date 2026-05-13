@@ -256,15 +256,12 @@ importers:
       '@ethosagent/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@ethosagent/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
       '@ethosagent/web-contracts':
         specifier: workspace:*
         version: link:../../packages/web-contracts
-      '@orpc/client':
-        specifier: ^1.14.0
-        version: 1.14.0
-      '@orpc/contract':
-        specifier: ^1.14.0
-        version: 1.14.0
       '@tanstack/react-query':
         specifier: ^5.59.0
         version: 5.100.5(react@19.2.6)

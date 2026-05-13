@@ -34,4 +34,13 @@ describe('EthosClient', () => {
     expect(client.rpc.meta).toBeDefined();
     expect(client.rpc.apiKeys).toBeDefined();
   });
+
+  it('constructs without apiKey for cookie-auth mode', () => {
+    const client = new EthosClient({
+      baseUrl: 'http://localhost:3000',
+    });
+
+    expect(client.baseUrl).toBe('http://localhost:3000');
+    expect(client.rpc).toBeDefined();
+  });
 });

@@ -2,7 +2,7 @@ import { type SseEvent, SseEventSchema } from '@ethosagent/web-contracts';
 
 export interface EventStreamOptions {
   baseUrl: string;
-  apiKey: string;
+  apiKey?: string;
   sessionId: string;
   sinceSeq?: number;
   signal?: AbortSignal;
@@ -56,11 +56,12 @@ async function consume(
 
   while (!signal.aborted) {
     try {
+      const headers: Record<string, string> = { Accept: 'text/event-stream' };
+      if (opts.apiKey) headers.Authorization = `Bearer ${opts.apiKey}`;
+
       const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${opts.apiKey}`,
-          Accept: 'text/event-stream',
-        },
+        headers,
+        ...(!opts.apiKey ? { credentials: 'include' as RequestCredentials } : {}),
         signal,
       });
 
