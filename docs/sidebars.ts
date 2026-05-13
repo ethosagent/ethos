@@ -109,6 +109,7 @@ const sidebars: SidebarsConfig = {
             'building/reference/plugin-sdk',
             'building/reference/personality-registry',
             'building/reference/kanban-tools',
+            'building/reference/vision-tools',
           ],
         },
         {

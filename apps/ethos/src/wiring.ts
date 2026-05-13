@@ -161,6 +161,7 @@ export async function createAgentLoop(
     ...(config.auxiliary?.compression
       ? { auxiliaryCompression: config.auxiliary.compression }
       : {}),
+    ...(config.auxiliary?.vision ? { auxiliaryVision: config.auxiliary.vision } : {}),
   };
   return packageCreateAgentLoop(wiringConfig, {
     dataDir: ethosDir(),

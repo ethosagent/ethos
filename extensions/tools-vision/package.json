@@ -23,6 +23,7 @@
     "@ethosagent/types": "workspace:*"
   },
   "devDependencies": {
+    "@ethosagent/core": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*"
   }
 }
