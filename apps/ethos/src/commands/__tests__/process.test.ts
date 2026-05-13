@@ -130,4 +130,29 @@ describe('ethos process stop', () => {
     exitSpy.mockRestore();
     errSpy.mockRestore();
   });
+
+  it('targets the id, not the signal value, when --signal precedes the id', async () => {
+    // Regression: `find(a => !a.startsWith('--'))` grabbed 'SIGKILL' as the id.
+    saveRegistry(dataDir, { myid: makeEntry('myid', { status: 'exited', exitCode: 0 }) });
+    const { lines, restore } = captureLog();
+    await runProcessCommand('stop', ['--signal', 'SIGKILL', 'myid'], dataDir);
+    restore();
+    const output = lines.join('\n');
+    expect(output).toContain('myid');
+    expect(output).not.toContain('SIGKILL');
+  });
+
+  it('exits non-zero for an unsupported --signal value', async () => {
+    saveRegistry(dataDir, { a: makeEntry('a', { status: 'exited', exitCode: 0 }) });
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('exit');
+    }) as never);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(runProcessCommand('stop', ['a', '--signal', 'SIGBOGUS'], dataDir)).rejects.toThrow(
+      'exit',
+    );
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('Usage:'));
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+  });
 });

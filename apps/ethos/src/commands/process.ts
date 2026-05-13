@@ -2,6 +2,7 @@ import {
   listProcesses,
   type ProcessListItem,
   readProcessLogs,
+  STOP_SUPPORTED_SIGNALS,
   type StopSignal,
   stopProcess,
 } from '@ethosagent/tools-process';
@@ -142,14 +143,34 @@ async function runProcessLogs(dataDir: string, args: string[]): Promise<void> {
 // stop
 // ---------------------------------------------------------------------------
 
+const STOP_USAGE = 'Usage: ethos process stop <id> [--signal SIGTERM|SIGKILL]';
+
+function parseStopFlags(args: string[]): { id: string | undefined; signal: StopSignal } {
+  let id: string | undefined;
+  let signal: StopSignal = 'SIGTERM';
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--signal') {
+      const raw = args[i + 1];
+      if (raw === undefined || !STOP_SUPPORTED_SIGNALS.includes(raw as StopSignal)) {
+        console.error(STOP_USAGE);
+        process.exit(1);
+      }
+      signal = raw as StopSignal;
+      i++;
+    } else if (a && !a.startsWith('--') && id === undefined) {
+      id = a;
+    }
+  }
+  return { id, signal };
+}
+
 async function runProcessStop(dataDir: string, args: string[]): Promise<void> {
-  const id = args.find((a) => !a.startsWith('--'));
+  const { id, signal } = parseStopFlags(args);
   if (!id) {
-    console.error('Usage: ethos process stop <id> [--signal SIGTERM|SIGKILL]');
+    console.error(STOP_USAGE);
     process.exit(1);
   }
-  const signalIdx = args.indexOf('--signal');
-  const signal = (signalIdx !== -1 ? args[signalIdx + 1] : 'SIGTERM') as StopSignal;
 
   const result = await stopProcess(dataDir, id, signal);
   if (!result.ok) {

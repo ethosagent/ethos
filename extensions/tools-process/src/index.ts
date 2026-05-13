@@ -369,26 +369,15 @@ export function createProcessTools(dataDir: string, opts?: { capMax?: number }):
   ];
 }
 
-// Re-export the shared list/logs/stop operations so apps (the `ethos process`
-// CLI) can drive the same code path the tools use without constructing a fake
-// ToolContext. Registry types are re-exported alongside for completeness.
+// Re-export the shared list/logs/stop operations so the `ethos process` CLI
+// can drive the same code path the tools use without constructing a fake
+// ToolContext. Only the surface a real caller consumes is re-exported.
 export {
-  type LogsResult,
   listProcesses,
   type ProcessListItem,
   readProcessLogs,
-  type StopResult,
+  STOP_SUPPORTED_SIGNALS,
   type StopSignal,
   stopProcess,
 } from './operations';
-export {
-  isAlive,
-  loadRegistry,
-  type ProcessEntry,
-  type ProcessStatus,
-  type Registry,
-  reapStale,
-  saveRegistry,
-  updateEntry,
-  withRegistryLock,
-} from './registry';
+export { type ProcessEntry, saveRegistry } from './registry';
