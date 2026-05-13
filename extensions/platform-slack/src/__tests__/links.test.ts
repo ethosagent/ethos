@@ -523,4 +523,27 @@ describe('events/links — registerLinkEvents', () => {
       }),
     ).resolves.toBeUndefined();
   });
+
+  it('caps reader fan-out at MAX_UNFURLS_PER_EVENT for a link-spamming message', async () => {
+    const app = fakeApp();
+    const lookupSession = vi.fn(async (id: string) => ({
+      id,
+      personalityName: 'Researcher',
+      lastActivity: new Date(0),
+    }));
+    registerLinkEvents(app as never, { webUiBaseUrl: base, session: { lookupSession } });
+    const unfurl = vi.fn().mockResolvedValue(undefined);
+    const handler = app.handlers.get('event:link_shared');
+    if (!handler) throw new Error('handler not registered');
+    // 25 matchable session URLs in one event — the handler must not fan out
+    // one reader call per link unboundedly.
+    const links = Array.from({ length: 25 }, (_, i) => ({ url: `${base}/sessions/s${i}` }));
+    await handler({
+      event: { channel: 'C1', message_ts: '111.222', links },
+      client: { chat: { unfurl } },
+    });
+    expect(lookupSession).toHaveBeenCalledTimes(10);
+    const arg = unfurl.mock.calls[0]?.[0] as { unfurls: Record<string, unknown> };
+    expect(Object.keys(arg.unfurls)).toHaveLength(10);
+  });
 });

@@ -145,6 +145,12 @@ export function matchEthosUrl(
   return null;
 }
 
+/** Upper bound on Ethos URLs resolved per `link_shared` event — caps the
+ *  reader fan-out so a message spamming links can't trigger an unbounded
+ *  burst of lookups. A single Slack message rarely carries more than a
+ *  handful of links worth unfurling. */
+const MAX_UNFURLS_PER_EVENT = 10;
+
 export function registerLinkEvents(app: App, deps: LinkEventDeps): void {
   // No configured web UI base → we can't recognize any Ethos URL, so there is
   // nothing for the handler to do. Don't register it at all.
@@ -158,14 +164,26 @@ export function registerLinkEvents(app: App, deps: LinkEventDeps): void {
     };
     if (!evt.channel || !evt.message_ts || !evt.links) return;
 
-    const unfurls: Record<string, { blocks: SlackBlock[] }> = {};
+    // Match first, then resolve concurrently. Each `buildUnfurl` hits a
+    // backing reader; serializing them would make the handler's latency the
+    // sum of every lookup, and a slow event handler is what Slack retries.
+    // The per-event cap bounds the fan-out — a message spamming Ethos links
+    // can't trigger an unbounded burst of reader calls.
+    const matched: Array<{ url: string; match: EthosUrlMatch }> = [];
     for (const link of evt.links) {
       const url = link.url;
       if (!url) continue;
       const match = matchEthosUrl(url, deps.webUiBaseUrl);
-      if (!match) continue;
+      if (match) matched.push({ url, match });
+      if (matched.length >= MAX_UNFURLS_PER_EVENT) break;
+    }
+
+    const unfurls: Record<string, { blocks: SlackBlock[] }> = {};
+    const resolved = await Promise.all(
+      matched.map(async ({ url, match }) => ({ url, blocks: await buildUnfurl(match, deps) })),
+    );
+    for (const { url, blocks } of resolved) {
       // An unfurl is all-or-nothing: only add a URL once we have real data.
-      const blocks = await buildUnfurl(match, deps);
       if (blocks) unfurls[url] = { blocks };
     }
 
