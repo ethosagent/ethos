@@ -590,6 +590,88 @@ describe('KanbanStore', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Staleness reclaim — stuck `running` tasks get put back to `ready`
+  // ---------------------------------------------------------------------------
+
+  it('heartbeatRun bumps tasks.updated_at so updated_at means "last activity"', async () => {
+    const task = store.createTask({ title: 'long' });
+    store.updateStatus(task.id, 'running');
+    const before = store.getTask(task.id)?.updatedAt ?? 0;
+
+    await new Promise((r) => setTimeout(r, 5));
+    store.heartbeatRun(task.id);
+
+    const after = store.getTask(task.id)?.updatedAt ?? 0;
+    expect(after).toBeGreaterThan(before);
+  });
+
+  it('findStaleRunningTasks returns running tasks whose updated_at is older than the threshold', () => {
+    const fresh = store.createTask({ title: 'fresh' });
+    store.updateStatus(fresh.id, 'running');
+    const stale = store.createTask({ title: 'stale' });
+    store.updateStatus(stale.id, 'running');
+
+    const now = Date.now();
+    // Backdate the stale task's updated_at via direct UPDATE (test-only shortcut).
+    (
+      store as unknown as {
+        db: { prepare: (s: string) => { run: (a: number, b: string) => void } };
+      }
+    ).db
+      .prepare('UPDATE tasks SET updated_at = ? WHERE id = ?')
+      .run(now - 200, stale.id);
+
+    const out = store.findStaleRunningTasks(100, now);
+    expect(out.map((t) => t.id)).toEqual([stale.id]);
+  });
+
+  it('findStaleRunningTasks ignores non-running tasks even if updated_at is old', () => {
+    const ready = store.createTask({ title: 'old ready' });
+    store.updateStatus(ready.id, 'ready');
+    const now = Date.now();
+    (
+      store as unknown as {
+        db: { prepare: (s: string) => { run: (a: number, b: string) => void } };
+      }
+    ).db
+      .prepare('UPDATE tasks SET updated_at = ? WHERE id = ?')
+      .run(now - 10_000, ready.id);
+
+    expect(store.findStaleRunningTasks(100, now)).toEqual([]);
+  });
+
+  it('reclaimTask ends the open run (cancelled) and sets the task back to ready', () => {
+    const task = store.createTask({ title: 'stuck' });
+    store.updateStatus(task.id, 'running');
+
+    const reclaimed = store.reclaimTask(task.id, 'orphan_stale');
+    expect(reclaimed.status).toBe('ready');
+    expect(reclaimed.currentRunId).toBeNull();
+
+    const run = store.listRuns(task.id)[0];
+    expect(run?.outcome).toBe('cancelled');
+    expect(run?.endedAt).not.toBeNull();
+  });
+
+  it('reclaimTask records the reason in the status_changed audit event', () => {
+    const task = store.createTask({ title: 'stuck' });
+    store.updateStatus(task.id, 'running');
+
+    store.reclaimTask(task.id, 'orphan_no_owner', 'dispatcher');
+    const events = store.listEvents(task.id);
+    const statusChange = events.find((e) => e.kind === 'status_changed' && e.data.to === 'ready');
+    expect(statusChange).toBeDefined();
+    expect(statusChange?.data.reason).toBe('orphan_no_owner');
+    expect(statusChange?.actor).toBe('dispatcher');
+  });
+
+  it('reclaimTask on a task with no open run sets it to ready without throwing', () => {
+    const task = store.createTask({ title: 'no run' });
+    const reclaimed = store.reclaimTask(task.id, 'orphan_stale');
+    expect(reclaimed.status).toBe('ready');
+  });
+
+  // ---------------------------------------------------------------------------
   // Cycle prevention — deterministic stress
   // ---------------------------------------------------------------------------
 

@@ -364,6 +364,9 @@ export async function runSupervisor(
     supervisor: supervisorView,
     ...(manifest.kanban?.stale_ms !== undefined ? { staleMs: manifest.kanban.stale_ms } : {}),
     ...(manifest.kanban?.poll_ms !== undefined ? { pollMs: manifest.kanban.poll_ms } : {}),
+    ...(manifest.kanban?.staleness_threshold_ms !== undefined
+      ? { stalenessThresholdMs: manifest.kanban.staleness_threshold_ms }
+      : {}),
     // Pass the coordinator personality id through so orphan tickets (assignee=null,
     // no children) get reassigned to the coordinator each tick. Unset on teams
     // running in self-routing mode — adoption is a no-op there.

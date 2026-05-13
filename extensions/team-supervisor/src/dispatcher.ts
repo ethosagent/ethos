@@ -67,6 +67,15 @@ export interface DispatcherOptions {
    * that add the goal's children. Default 60 s.
    */
   orphanGracePeriodMs?: number;
+  /**
+   * Staleness threshold for reclaiming stuck `running` tasks. A task whose
+   * `updated_at` (last activity — `heartbeatRun` bumps it) is older than this
+   * gets reclaimed back to `ready` with reason `orphan_stale`. This is a
+   * separate mechanism from `staleMs`: `staleMs` blocks heartbeat-stale runs;
+   * this one re-queues them for another attempt (retry budget permitting).
+   * Default: 5 min.
+   */
+  stalenessThresholdMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -77,6 +86,7 @@ const DEFAULT_STALE_MS = 90_000;
 const DEFAULT_POLL_MS = 1_000;
 const DEFAULT_DISPATCH_TIMEOUT_MS = 300_000;
 const DEFAULT_ORPHAN_GRACE_MS = 60_000;
+const DEFAULT_STALENESS_THRESHOLD_MS = 300_000;
 const DISPATCH_HOST = 'localhost';
 
 export class Dispatcher {
@@ -89,6 +99,7 @@ export class Dispatcher {
   private readonly onError: (err: Error, taskId: string) => void;
   private readonly coordinator: string | null;
   private readonly orphanGracePeriodMs: number;
+  private readonly stalenessThresholdMs: number;
   private readonly inflight = new Map<string, AbortController>();
   private timer: NodeJS.Timeout | null = null;
   private running = false;
@@ -103,6 +114,7 @@ export class Dispatcher {
     this.onError = opts.onError ?? (() => {});
     this.coordinator = opts.coordinator ?? null;
     this.orphanGracePeriodMs = opts.orphanGracePeriodMs ?? DEFAULT_ORPHAN_GRACE_MS;
+    this.stalenessThresholdMs = opts.stalenessThresholdMs ?? DEFAULT_STALENESS_THRESHOLD_MS;
   }
 
   /**
@@ -136,6 +148,34 @@ export class Dispatcher {
       } catch {
         // Race: another writer ended the run between our read and our write.
         // Acceptable — they handled it, we don't double-process.
+      }
+    }
+
+    // 2a. Reclaim stuck `running` tasks — a second eligibility path on top of
+    //     step 2's heartbeat-block. A task is stuck if its owner is gone
+    //     (`orphan_no_owner`) or it stopped making progress (`orphan_stale`).
+    //     Unlike step 2, this re-queues the task (`ready`) rather than blocking
+    //     it: the same tick's dispatch loop re-claims it, which routes through
+    //     `updateStatus('running')` and so spends the retry budget. We skip
+    //     tasks still `inflight` from a prior tick — those are healthy.
+    const staleIds = new Set(
+      this.board.findStaleRunningTasks(this.stalenessThresholdMs).map((t) => t.id),
+    );
+    for (const task of this.board.listTasks({ status: 'running' })) {
+      if (this.inflight.has(task.id)) continue;
+      const assignee = task.assignee;
+      const ownerGone = assignee === null || this.supervisor.statusOf(assignee) !== 'running';
+      const reason: 'orphan_no_owner' | 'orphan_stale' | null = ownerGone
+        ? 'orphan_no_owner'
+        : staleIds.has(task.id)
+          ? 'orphan_stale'
+          : null;
+      if (reason === null) continue;
+      try {
+        this.board.reclaimTask(task.id, reason, 'dispatcher');
+      } catch {
+        // Race: another writer ended the run / changed status between our
+        // read and our write. Acceptable — they handled it.
       }
     }
 

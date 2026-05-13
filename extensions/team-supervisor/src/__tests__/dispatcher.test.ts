@@ -252,4 +252,138 @@ describe('Dispatcher.tick()', () => {
     expect(board.getTask(t.id)?.status).toBe('blocked');
     expect(errors).toEqual([{ msg: 'connection refused', id: t.id }]);
   });
+
+  // ---------------------------------------------------------------------------
+  // Staleness in orphan adoption — stuck `running` tasks get reclaimed
+  // ---------------------------------------------------------------------------
+
+  // Backdate a task's updated_at to simulate the passage of time past the
+  // staleness threshold without actually sleeping.
+  function backdateUpdatedAt(taskId: string, ms: number): void {
+    (
+      board as unknown as {
+        db: { prepare: (s: string) => { run: (a: number, b: string) => void } };
+      }
+    ).db
+      .prepare('UPDATE tasks SET updated_at = ? WHERE id = ?')
+      .run(Date.now() - ms, taskId);
+  }
+
+  it('reclaims a running task whose updated_at is past the staleness threshold with reason orphan_stale', async () => {
+    const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+    const t = board.createTask({ title: 'stuck', assignee: 'engineer' });
+    board.updateStatus(t.id, 'ready');
+    board.updateStatus(t.id, 'running', 'dispatched', 'dispatcher');
+    // Push updated_at well past the 1s threshold this dispatcher uses.
+    backdateUpdatedAt(t.id, 5_000);
+
+    const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+    const dispatcher = new Dispatcher({
+      board,
+      supervisor: sup,
+      dispatch,
+      stalenessThresholdMs: 1_000,
+    });
+
+    await dispatcher.tick();
+
+    const events = board.listEvents(t.id);
+    const reclaim = events.find(
+      (e) => e.kind === 'status_changed' && e.data.reason === 'orphan_stale',
+    );
+    expect(reclaim).toBeDefined();
+    // Reclaimed → ready → re-dispatched within the same tick → running again.
+    expect(board.getTask(t.id)?.status).toBe('running');
+    await new Promise((r) => setImmediate(r));
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT reclaim a running task whose updated_at is recent', async () => {
+    const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+    const t = board.createTask({ title: 'healthy', assignee: 'engineer' });
+    board.updateStatus(t.id, 'ready');
+    board.updateStatus(t.id, 'running', 'dispatched', 'dispatcher');
+    // updated_at is fresh (just set by updateStatus) — not stale.
+
+    const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+    const dispatcher = new Dispatcher({
+      board,
+      supervisor: sup,
+      dispatch,
+      stalenessThresholdMs: 60_000,
+    });
+
+    await dispatcher.tick();
+
+    const events = board.listEvents(t.id);
+    const reclaim = events.find(
+      (e) => e.kind === 'status_changed' && e.data.reason === 'orphan_stale',
+    );
+    expect(reclaim).toBeUndefined();
+    expect(board.getTask(t.id)?.status).toBe('running');
+  });
+
+  it('reclaims a running task whose assignee is no longer active with reason orphan_no_owner', async () => {
+    // Assignee exists but its process has failed — supervisor.statusOf is not 'running'.
+    const sup = makeSupervisor({ engineer: { port: 3001, status: 'failed' } });
+    const t = board.createTask({ title: 'abandoned', assignee: 'engineer' });
+    board.updateStatus(t.id, 'ready');
+    board.updateStatus(t.id, 'running', 'dispatched', 'dispatcher');
+    // updated_at is fresh — this is the no-owner path, not the staleness path.
+
+    const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+    const dispatcher = new Dispatcher({
+      board,
+      supervisor: sup,
+      dispatch,
+      stalenessThresholdMs: 60_000,
+    });
+
+    await dispatcher.tick();
+
+    const events = board.listEvents(t.id);
+    const reclaim = events.find(
+      (e) => e.kind === 'status_changed' && e.data.reason === 'orphan_no_owner',
+    );
+    expect(reclaim).toBeDefined();
+    // Owner is gone, so the same-tick dispatch can't re-claim it — stays ready.
+    expect(board.getTask(t.id)?.status).toBe('ready');
+    await new Promise((r) => setImmediate(r));
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('does not reclaim a running task that is still in-flight from a prior tick', async () => {
+    const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+    const t = board.createTask({ title: 'in-flight', assignee: 'engineer' });
+    board.updateStatus(t.id, 'ready');
+
+    // A slow dispatch keeps the task in `inflight` across ticks.
+    let release: () => void = () => {};
+    const dispatch = vi.fn<DispatchCall>(
+      () =>
+        new Promise<string>((resolve) => {
+          release = () => resolve('ok');
+        }),
+    );
+    const dispatcher = new Dispatcher({
+      board,
+      supervisor: sup,
+      dispatch,
+      stalenessThresholdMs: 1_000,
+    });
+
+    await dispatcher.tick(); // claims + dispatches; task is now inflight + running
+    backdateUpdatedAt(t.id, 5_000); // make it look stale
+    await dispatcher.tick(); // should NOT reclaim — still inflight
+
+    const events = board.listEvents(t.id);
+    const reclaim = events.find(
+      (e) => e.kind === 'status_changed' && e.data.reason === 'orphan_stale',
+    );
+    expect(reclaim).toBeUndefined();
+    expect(board.getTask(t.id)?.status).toBe('running');
+
+    release();
+    await new Promise((r) => setImmediate(r));
+  });
 });

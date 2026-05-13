@@ -664,6 +664,11 @@ export class KanbanStore {
       if (result.changes !== 1) {
         throw new Error(`no open run: race ended run ${row.current_run_id} concurrently`);
       }
+      // Bump the task's `updated_at` too so it tracks "last activity" — a
+      // healthy long-running task that heartbeats stays fresh, while a stuck
+      // agent that stopped heartbeating goes stale. The staleness-reclaim path
+      // (findStaleRunningTasks) relies on this.
+      this.db.prepare('UPDATE tasks SET updated_at = ? WHERE id = ?').run(now, taskId);
       this.emit(taskId, 'heartbeat', actor, { note: note ?? null });
     });
     tx();
@@ -851,6 +856,65 @@ export class KanbanStore {
       )
       .all(threshold) as TaskRunRow[];
     return rows.map(rowToRun);
+  }
+
+  /**
+   * Find `running` tasks whose `updated_at` is older than `thresholdMs` ago.
+   * `updated_at` tracks last activity (`heartbeatRun` bumps it), so a stale
+   * task is one whose owner stopped making progress. The caller (the
+   * dispatcher) decides what to do — usually `reclaimTask(id, 'orphan_stale')`.
+   */
+  findStaleRunningTasks(thresholdMs: number, nowMs: number = Date.now()): Task[] {
+    const threshold = nowMs - thresholdMs;
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM tasks WHERE status = 'running' AND updated_at < ?
+         ORDER BY updated_at ASC`,
+      )
+      .all(threshold) as TaskRow[];
+    return rows.map(rowToTask);
+  }
+
+  /**
+   * Reclaim a stuck `running` task: cancel its open run (if any) and put the
+   * task back to `ready` so the dispatcher's normal dispatch loop re-claims it.
+   * The re-claim goes through `updateStatus('running')`, which owns the
+   * retry-budget invariant — so the retry_count increment happens there, not
+   * here.
+   *
+   * `reason` distinguishes why the task was reclaimed (`orphan_stale` =
+   * heartbeat went quiet; `orphan_no_owner` = the assignee process is gone).
+   * It lands in the `status_changed` audit event's `data.reason` so the team
+   * can see why work was re-queued. A task with no open run is reclaimed
+   * gracefully — just the status flip + event.
+   */
+  reclaimTask(taskId: string, reason: 'orphan_stale' | 'orphan_no_owner', actor = 'system'): Task {
+    const now = Date.now();
+    const tx = this.db.transaction((): Task => {
+      const row = this.db
+        .prepare('SELECT status, current_run_id FROM tasks WHERE id = ?')
+        .get(taskId) as { status: TaskStatus; current_run_id: string | null } | undefined;
+      if (!row) throw new Error(`reclaimTask: task ${taskId} not found`);
+      let runCancelled = false;
+      if (row.current_run_id !== null) {
+        const result = this.db
+          .prepare(
+            `UPDATE task_runs SET ended_at = ?, outcome = ?
+             WHERE id = ? AND ended_at IS NULL`,
+          )
+          .run(now, 'cancelled', row.current_run_id);
+        runCancelled = result.changes === 1;
+      }
+      this.db
+        .prepare('UPDATE tasks SET status = ?, current_run_id = NULL, updated_at = ? WHERE id = ?')
+        .run('ready', now, taskId);
+      if (runCancelled) {
+        this.emit(taskId, 'run_completed', actor, { outcome: 'cancelled', summary: null });
+      }
+      this.emit(taskId, 'status_changed', actor, { from: row.status, to: 'ready', reason });
+      return this.getTask(taskId) as Task;
+    });
+    return tx();
   }
 
   /**

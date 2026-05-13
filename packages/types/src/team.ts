@@ -57,5 +57,12 @@ export interface TeamManifest {
      * bus makes this mostly a fallback for cross-process board mutations.
      */
     poll_ms?: number;
+    /**
+     * Milliseconds a `running` task can go without activity (its `updated_at`,
+     * which `kanban_heartbeat` bumps) before the dispatcher reclaims it back to
+     * `ready` for another attempt. Distinct from `stale_ms`, which blocks
+     * heartbeat-stale runs; this one re-queues them. Default: 300000.
+     */
+    staleness_threshold_ms?: number;
   };
 }

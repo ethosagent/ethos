@@ -30,6 +30,7 @@ const TeamManifestSchema: z.ZodType<TeamManifest> = z
       .object({
         stale_ms: z.number().int().positive().optional(),
         poll_ms: z.number().int().positive().optional(),
+        staleness_threshold_ms: z.number().int().positive().optional(),
       })
       .optional(),
   })
