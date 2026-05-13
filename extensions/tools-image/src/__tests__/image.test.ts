@@ -123,9 +123,9 @@ describe('image_generate', () => {
 
   it('returns INVALID_SIZE_FOR_PROVIDER when provider does not support size/quality', async () => {
     process.env.OPENAI_API_KEY = 'test-key';
-    // DALL-E doesn't support 512x512 + hd
+    // DALL-E 3 doesn't support 512x512 at all
     const result = await imageGenerateTool.execute(
-      { prompt: 'a cat', size: '512x512', quality: 'hd' },
+      { prompt: 'a cat', size: '512x512', quality: 'standard' },
       ctx,
     );
     expect(result.ok).toBe(false);

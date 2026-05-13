@@ -37,7 +37,8 @@ describe('OpenAIDalleProvider', () => {
       expect(provider.supports('1024x1024', 'standard')).toBe(true);
     });
 
-    it('returns false for 512x512 hd', () => {
+    it('returns false for 512x512 (DALL-E 3 does not support this size)', () => {
+      expect(provider.supports('512x512', 'standard')).toBe(false);
       expect(provider.supports('512x512', 'hd')).toBe(false);
     });
 

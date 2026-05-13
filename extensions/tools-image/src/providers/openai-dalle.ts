@@ -1,11 +1,10 @@
 import type { GenerateOpts, GenerateResult, ImageGenProvider } from './types';
 
-// Cost table for DALL-E 3 (USD)
+// Cost table for DALL-E 3 (USD) — DALL-E 3 only supports 1024x1024, 1024x1792, 1792x1024
 const COST: Record<string, Record<string, number>> = {
   '1024x1024': { standard: 0.04, hd: 0.08 },
   '1024x1792': { standard: 0.08, hd: 0.12 },
   '1792x1024': { standard: 0.08, hd: 0.12 },
-  '512x512': { standard: 0.018, hd: 0 },
 };
 
 export class OpenAIDalleProvider implements ImageGenProvider {
@@ -15,8 +14,7 @@ export class OpenAIDalleProvider implements ImageGenProvider {
     return Boolean(process.env.OPENAI_API_KEY);
   }
 
-  supports(size: string, quality: string): boolean {
-    if (size === '512x512' && quality === 'hd') return false;
+  supports(size: string, _quality: string): boolean {
     return size in COST;
   }
 

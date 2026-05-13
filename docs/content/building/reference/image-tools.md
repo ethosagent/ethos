@@ -30,7 +30,7 @@ The `image_generate` [tool](../../getting-started/glossary.md#tool) generates PN
 |---|---|---|---|---|
 | `prompt` | `string` | yes | — | Text description of the image to generate. |
 | `output_path` | `string` | no | `~/.ethos/generated/<timestamp>.png` | File path to save the PNG. |
-| `size` | `string` | no | `1024x1024` | One of `512x512`, `1024x1024`, `1024x1792`, `1792x1024`. |
+| `size` | `string` | no | `1024x1024` | One of `512x512` (Flux only), `1024x1024`, `1024x1792`, `1792x1024`. |
 | `quality` | `string` | no | `standard` | `standard` or `hd`. |
 | `provider` | `string` | no | `auto` | `openai-dalle`, `replicate-flux`, or `auto`. |
 
@@ -56,14 +56,13 @@ On success, `ToolResult.value` is a JSON string:
 
 | Provider | Env var | Model | Supported sizes | Quality | Cost model |
 |---|---|---|---|---|---|
-| `openai-dalle` | `OPENAI_API_KEY` | DALL-E 3 | 512x512, 1024x1024, 1024x1792, 1792x1024 | standard, hd (hd unavailable at 512x512) | Per-size/quality table below |
-| `replicate-flux` | `REPLICATE_API_TOKEN` | Flux Schnell | All sizes | quality param ignored | $0.003 flat per image |
+| `openai-dalle` | `OPENAI_API_KEY` | DALL-E 3 | 1024x1024, 1024x1792, 1792x1024 | standard, hd | Per-size/quality table below |
+| `replicate-flux` | `REPLICATE_API_TOKEN` | Flux Schnell | All sizes (including 512x512) | quality param ignored | $0.003 flat per image |
 
 ### DALL-E 3 pricing {#dalle-pricing}
 
 | Size | Standard | HD |
 |---|---|---|
-| 512x512 | $0.018 | N/A |
 | 1024x1024 | $0.04 | $0.08 |
 | 1024x1792 | $0.08 | $0.12 |
 | 1792x1024 | $0.08 | $0.12 |

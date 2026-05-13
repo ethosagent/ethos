@@ -52,14 +52,13 @@ Returns a JSON string:
 
 | Provider | Env var | Model | Sizes | Quality | Cost |
 |---|---|---|---|---|---|
-| `openai-dalle` | `OPENAI_API_KEY` | DALL-E 3 | 512x512, 1024x1024, 1024x1792, 1792x1024 | standard, hd (hd unavailable at 512x512) | See table below |
-| `replicate-flux` | `REPLICATE_API_TOKEN` | Flux Schnell | All sizes | standard only (quality param ignored) | $0.003/image |
+| `openai-dalle` | `OPENAI_API_KEY` | DALL-E 3 | 1024x1024, 1024x1792, 1792x1024 | standard, hd | See table below |
+| `replicate-flux` | `REPLICATE_API_TOKEN` | Flux Schnell | All sizes (including 512x512) | standard only (quality param ignored) | $0.003/image |
 
 ### DALL-E 3 pricing (USD per image)
 
 | Size | Standard | HD |
 |---|---|---|
-| 512x512 | $0.018 | N/A |
 | 1024x1024 | $0.04 | $0.08 |
 | 1024x1792 | $0.08 | $0.12 |
 | 1792x1024 | $0.08 | $0.12 |

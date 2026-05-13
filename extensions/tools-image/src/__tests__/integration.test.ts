@@ -2,7 +2,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DefaultToolRegistry } from '@ethosagent/core';
-import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
+import type { ToolContext, ToolResult } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createImageTools } from '../index';
 import type { ImageGenProvider } from '../providers/types';
@@ -65,26 +65,23 @@ describe('image_generate integration', () => {
   beforeEach(() => {
     tmpDir = join(tmpdir(), `ethos-img-int-${Date.now()}`);
     outPath = join(tmpDir, 'test-output.png');
-
-    // Wire mock providers into the module's env so isAvailable() works
-    process.env.OPENAI_API_KEY = 'test-key-integration';
   });
 
   afterEach(() => {
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.REPLICATE_API_TOKEN;
     if (tmpDir && existsSync(tmpDir)) {
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
   // -----------------------------------------------------------------------
-  // 1. Toolset includes image_generate — the tool runs, writes file, costs
+  // 1. Real tool through DefaultToolRegistry with mock provider — writes
+  //    file via Storage.writeAtomic, returns correct JSON shape + cost
   // -----------------------------------------------------------------------
 
   it('runs image_generate through DefaultToolRegistry and writes a real file', async () => {
+    const mockProvider = makeMockProvider('openai-dalle', true, 0.04);
     const registry = new DefaultToolRegistry();
-    const tools = createImageTools();
+    const tools = createImageTools({ providers: [mockProvider] });
     registry.registerAll(tools);
 
     const results = await registry.executeParallel(
@@ -103,13 +100,31 @@ describe('image_generate integration', () => {
     const r = results[0];
     expect(r).toBeDefined();
     expect(r?.name).toBe('image_generate');
-
-    // The tool runs against the real DALL-E provider stub (OPENAI_API_KEY is set,
-    // but the actual SDK call will fail). Since we can't mock the internal provider
-    // at the registry level, we test the toolset gating and registration path.
-    // The execute path is covered by the direct tool tests in image.test.ts.
-    // What we care about here: the registry accepted the call and routed it.
     expect(r?.toolCallId).toBe('c1');
+
+    const result = r?.result as Extract<ToolResult, { ok: true }>;
+    expect(result.ok).toBe(true);
+    expect(result.cost_usd).toBe(0.04);
+
+    const parsed = JSON.parse(result.value);
+    expect(parsed.path).toBe(outPath);
+    expect(parsed.dimensions).toEqual({ width: 1024, height: 1024 });
+    expect(parsed.cost_usd).toBe(0.04);
+    expect(parsed.provider).toBe('openai-dalle');
+    expect(parsed.prompt_used).toBe('mock revised prompt');
+
+    // File exists and starts with PNG magic bytes
+    expect(existsSync(outPath)).toBe(true);
+    const bytes = readFileSync(outPath);
+    expect(bytes.length).toBeGreaterThan(8);
+    expect(bytes[0]).toBe(0x89);
+    expect(bytes[1]).toBe(0x50); // P
+    expect(bytes[2]).toBe(0x4e); // N
+    expect(bytes[3]).toBe(0x47); // G
+    expect(bytes[4]).toBe(0x0d);
+    expect(bytes[5]).toBe(0x0a);
+    expect(bytes[6]).toBe(0x1a);
+    expect(bytes[7]).toBe(0x0a);
   });
 
   // -----------------------------------------------------------------------
@@ -117,8 +132,9 @@ describe('image_generate integration', () => {
   // -----------------------------------------------------------------------
 
   it('returns not_available when image_generate is not in the allowed toolset', async () => {
+    const mockProvider = makeMockProvider('openai-dalle', true);
     const registry = new DefaultToolRegistry();
-    const tools = createImageTools();
+    const tools = createImageTools({ providers: [mockProvider] });
     registry.registerAll(tools);
 
     const results = await registry.executeParallel(
@@ -141,58 +157,26 @@ describe('image_generate integration', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 3. Cost aggregation — ToolResult.cost_usd is set and non-zero
+  // 3. Cost aggregation — ToolResult.cost_usd is set and non-zero,
+  //    using the real tool with an injectable mock provider
   // -----------------------------------------------------------------------
 
   it('ToolResult carries cost_usd from a successful generation', async () => {
-    // Use the tool directly with a mock provider to verify cost passthrough.
-    // We cannot inject providers into createImageTools(), so we construct a
-    // minimal tool that mimics the real one but with a controllable provider.
     const mockProvider = makeMockProvider('openai-dalle', true, 0.08);
-
-    const tool: Tool = {
-      name: 'image_generate_mock',
-      description: 'Mock image gen for integration test',
-      toolset: 'image',
-      maxResultChars: 1_000,
-      schema: { type: 'object', properties: { prompt: { type: 'string' } }, required: ['prompt'] },
-      async execute(args): Promise<ToolResult> {
-        const { prompt } = args as { prompt: string };
-        const result = await mockProvider.generate({
-          prompt,
-          size: '1024x1024',
-          quality: 'standard',
-        });
-        const { mkdirSync, writeFileSync } = await import('node:fs');
-        mkdirSync(tmpDir, { recursive: true });
-        writeFileSync(outPath, result.buffer);
-        return {
-          ok: true,
-          cost_usd: result.cost_usd,
-          value: JSON.stringify({
-            path: outPath,
-            dimensions: { width: 1024, height: 1024 },
-            cost_usd: result.cost_usd,
-            provider: mockProvider.name,
-            prompt_used: result.prompt_used,
-          }),
-        };
-      },
-    };
-
     const registry = new DefaultToolRegistry();
-    registry.register(tool);
+    const tools = createImageTools({ providers: [mockProvider] });
+    registry.registerAll(tools);
 
     const results = await registry.executeParallel(
       [
         {
           toolCallId: 'c1',
-          name: 'image_generate_mock',
-          args: { prompt: 'cost test' },
+          name: 'image_generate',
+          args: { prompt: 'cost test', output_path: outPath },
         },
       ],
       makeCtx(),
-      ['image_generate_mock'],
+      ['image_generate'],
     );
 
     expect(results).toHaveLength(1);
@@ -208,25 +192,32 @@ describe('image_generate integration', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 4. File presence — PNG file exists with correct magic bytes
+  // 4. File presence — PNG file exists with correct magic bytes,
+  //    written through the real Storage.writeAtomic path
   // -----------------------------------------------------------------------
 
-  it('written PNG file has correct magic bytes', async () => {
+  it('written PNG file has correct magic bytes via Storage.writeAtomic', async () => {
     const mockProvider = makeMockProvider('openai-dalle', true, 0.04);
+    const registry = new DefaultToolRegistry();
+    const tools = createImageTools({ providers: [mockProvider] });
+    registry.registerAll(tools);
 
-    // Write the PNG through the mock provider flow
-    const result = await mockProvider.generate({
-      prompt: 'magic byte test',
-      size: '1024x1024',
-      quality: 'standard',
-    });
+    const results = await registry.executeParallel(
+      [
+        {
+          toolCallId: 'c1',
+          name: 'image_generate',
+          args: { prompt: 'magic byte test', output_path: outPath },
+        },
+      ],
+      makeCtx(),
+      ['image_generate'],
+    );
 
-    const { mkdirSync, writeFileSync } = await import('node:fs');
-    mkdirSync(tmpDir, { recursive: true });
-    writeFileSync(outPath, result.buffer);
+    const r = results[0]?.result as Extract<ToolResult, { ok: true }>;
+    expect(r.ok).toBe(true);
 
     expect(existsSync(outPath)).toBe(true);
-
     const bytes = readFileSync(outPath);
     expect(bytes.length).toBeGreaterThan(8);
 
@@ -246,8 +237,9 @@ describe('image_generate integration', () => {
   // -----------------------------------------------------------------------
 
   it('createImageTools registers image_generate with correct metadata', () => {
+    const mockProvider = makeMockProvider('openai-dalle', true);
     const registry = new DefaultToolRegistry();
-    const tools = createImageTools();
+    const tools = createImageTools({ providers: [mockProvider] });
     registry.registerAll(tools);
 
     const tool = registry.get('image_generate');
@@ -257,8 +249,9 @@ describe('image_generate integration', () => {
   });
 
   it('toDefinitions includes image_generate when in allowedTools', () => {
+    const mockProvider = makeMockProvider('openai-dalle', true);
     const registry = new DefaultToolRegistry();
-    registry.registerAll(createImageTools());
+    registry.registerAll(createImageTools({ providers: [mockProvider] }));
 
     const defs = registry.toDefinitions(['image_generate']);
     expect(defs).toHaveLength(1);
@@ -266,10 +259,21 @@ describe('image_generate integration', () => {
   });
 
   it('toDefinitions excludes image_generate when not in allowedTools', () => {
+    const mockProvider = makeMockProvider('openai-dalle', true);
     const registry = new DefaultToolRegistry();
-    registry.registerAll(createImageTools());
+    registry.registerAll(createImageTools({ providers: [mockProvider] }));
 
     const defs = registry.toDefinitions(['terminal']);
     expect(defs.map((d) => d.name)).not.toContain('image_generate');
+  });
+
+  // -----------------------------------------------------------------------
+  // createImageTools() with no args still works (default providers)
+  // -----------------------------------------------------------------------
+
+  it('createImageTools() with no args uses default providers', () => {
+    const tools = createImageTools();
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.name).toBe('image_generate');
   });
 });
