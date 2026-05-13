@@ -101,6 +101,20 @@ export interface AuxiliaryCompressionConfig {
   baseUrl?: string;
 }
 
+/**
+ * tools-vision P2 — auxiliary vision model wiring. `vision_analyze` uses this
+ * (typically vision-capable) model when the active personality's primary
+ * model can't handle images / PDFs, or when the user wants to route vision
+ * traffic to a cheaper model. `provider` / `apiKey` / `baseUrl` default to
+ * the primary provider's values when unset, same as compression.
+ */
+export interface AuxiliaryVisionConfig {
+  model: string;
+  provider?: string;
+  apiKey?: string;
+  baseUrl?: string;
+}
+
 export interface EthosConfig {
   provider: string;
   model: string;
@@ -262,8 +276,15 @@ export interface EthosConfig {
    *   auxiliary.compression.provider: anthropic   (optional — defaults to `provider`)
    *   auxiliary.compression.apiKey: sk-ant-...     (optional — defaults to `apiKey`)
    *   auxiliary.compression.baseUrl: https://...   (optional — defaults to `baseUrl`)
+   *
+   * tools-vision P2 — `auxiliary.vision` configures the vision-capable model
+   * `vision_analyze` routes to when the personality's primary model can't
+   * process images / PDFs. Same shape as `compression`.
    */
-  auxiliary?: { compression?: AuxiliaryCompressionConfig };
+  auxiliary?: {
+    compression?: AuxiliaryCompressionConfig;
+    vision?: AuxiliaryVisionConfig;
+  };
 }
 
 export function ethosDir(): string {
@@ -363,6 +384,13 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
     if (c.apiKey) lines.push(`auxiliary.compression.apiKey: ${c.apiKey}`);
     if (c.baseUrl) lines.push(`auxiliary.compression.baseUrl: ${c.baseUrl}`);
   }
+  if (config.auxiliary?.vision) {
+    const v = config.auxiliary.vision;
+    lines.push(`auxiliary.vision.model: ${v.model}`);
+    if (v.provider) lines.push(`auxiliary.vision.provider: ${v.provider}`);
+    if (v.apiKey) lines.push(`auxiliary.vision.apiKey: ${v.apiKey}`);
+    if (v.baseUrl) lines.push(`auxiliary.vision.baseUrl: ${v.baseUrl}`);
+  }
   await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`);
 }
 
@@ -377,6 +405,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const evolverKv: Record<string, string> = {};
   const backgroundKv: Record<string, string> = {};
   const auxiliaryCompressionKv: Record<string, string> = {};
+  const auxiliaryVisionKv: Record<string, string> = {};
   // Indexed list shapes: telegram.bots.<n>.<field> and slack.apps.<n>.<field>,
   // plus their nested `.bind.<field>` sub-keys. Per-team config keyed by name.
   const telegramBotsKv: Record<number, Record<string, string>> = {};
@@ -473,6 +502,12 @@ function parseConfigYaml(src: string): EthosConfig {
       auxiliaryCompressionKv[auxc[1]] = auxc[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // auxiliary.vision.<field>: <value>
+    const auxv = line.match(/^auxiliary\.vision\.(\w+):\s*(.+)$/);
+    if (auxv) {
+      auxiliaryVisionKv[auxv[1]] = auxv[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     // modelRouting.<personality>: <model>
     const mr = line.match(/^modelRouting\.(\S+):\s*(.+)$/);
     if (mr) {
@@ -530,6 +565,14 @@ function parseConfigYaml(src: string): EthosConfig {
         ...(auxiliaryCompressionKv.baseUrl ? { baseUrl: auxiliaryCompressionKv.baseUrl } : {}),
       }
     : undefined;
+  const auxiliaryVision: AuxiliaryVisionConfig | undefined = auxiliaryVisionKv.model
+    ? {
+        model: auxiliaryVisionKv.model,
+        ...(auxiliaryVisionKv.provider ? { provider: auxiliaryVisionKv.provider } : {}),
+        ...(auxiliaryVisionKv.apiKey ? { apiKey: auxiliaryVisionKv.apiKey } : {}),
+        ...(auxiliaryVisionKv.baseUrl ? { baseUrl: auxiliaryVisionKv.baseUrl } : {}),
+      }
+    : undefined;
   const telegramResult = buildTelegramBots(telegramBotsKv);
   const slackResult = buildSlackApps(slackAppsKv);
   const teams = buildTeamsConfig(teamsKv);
@@ -580,7 +623,13 @@ function parseConfigYaml(src: string): EthosConfig {
       : undefined,
     displayBellOnComplete: displayKv.bell_on_complete === 'true' ? true : undefined,
     quick_commands,
-    auxiliary: auxiliaryCompression ? { compression: auxiliaryCompression } : undefined,
+    auxiliary:
+      auxiliaryCompression || auxiliaryVision
+        ? {
+            ...(auxiliaryCompression ? { compression: auxiliaryCompression } : {}),
+            ...(auxiliaryVision ? { vision: auxiliaryVision } : {}),
+          }
+        : undefined,
   };
   // Stash parse errors so the strict loader can surface them at boot.
   // readConfig (used by CLI commands that don't gateway-boot) ignores them
