@@ -1,6 +1,8 @@
+import { createServer as createHttpServer } from 'node:http';
 import type { AgentLoop } from '@ethosagent/core';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   GetPromptRequestSchema,
@@ -138,5 +140,45 @@ export class EthosMcpServer {
     const transport = new StdioServerTransport();
     await this._server.connect(transport);
     this._config.logger.info('mcp_server_started', { transport: 'stdio' });
+  }
+
+  async serveHttp(opts: { port: number; host?: string; bindPublic?: boolean }): Promise<void> {
+    const host = opts.host ?? (opts.bindPublic ? '0.0.0.0' : '127.0.0.1');
+    if (host === '0.0.0.0' && !opts.bindPublic) {
+      throw new Error('Binding to 0.0.0.0 requires --bind-public flag. Ethos MCP is not hardened for public internet exposure.');
+    }
+
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => crypto.randomUUID(),
+    });
+    await this._server.connect(transport);
+
+    const httpServer = createHttpServer(async (req, res) => {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      if (url.pathname === '/mcp') {
+        await transport.handleRequest(req, res);
+        return;
+      }
+      // Health check
+      if (url.pathname === '/health' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ok' }));
+        return;
+      }
+      res.writeHead(404);
+      res.end('Not Found');
+    });
+
+    return new Promise((resolve, reject) => {
+      httpServer.on('error', reject);
+      httpServer.listen(opts.port, host, () => {
+        this._config.logger.info('mcp_server_started', {
+          transport: 'streamable-http',
+          host,
+          port: opts.port,
+        });
+        resolve();
+      });
+    });
   }
 }

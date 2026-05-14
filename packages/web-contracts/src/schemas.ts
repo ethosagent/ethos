@@ -422,7 +422,7 @@ export const PluginInfoSchema = z.object({
 });
 export type PluginInfo = z.infer<typeof PluginInfoSchema>;
 
-export const McpTransportSchema = z.enum(['stdio', 'sse']);
+export const McpTransportSchema = z.enum(['stdio', 'sse', 'streamable-http']);
 
 export const McpServerInfoSchema = z.object({
   name: z.string(),

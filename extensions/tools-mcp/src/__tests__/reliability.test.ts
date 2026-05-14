@@ -21,6 +21,7 @@ vi.mock('@modelcontextprotocol/sdk/client', () => ({
     this.listTools = mockListTools;
     this.callTool = mockCallTool;
     this.ping = mockPing;
+    this.setNotificationHandler = vi.fn();
     this.onclose = null;
   }),
 }));
@@ -44,6 +45,10 @@ vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
   SSEClientTransport: vi.fn().mockImplementation(function () {
     return { type: 'sse-transport' };
   }),
+}));
+
+vi.mock('@modelcontextprotocol/sdk/types.js', () => ({
+  ToolListChangedNotificationSchema: { method: 'notifications/tools/list_changed' },
 }));
 
 vi.mock('@ethosagent/safety-scanner', () => ({
