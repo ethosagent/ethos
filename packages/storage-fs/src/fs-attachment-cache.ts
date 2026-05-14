@@ -1,15 +1,14 @@
 import { createHash } from 'node:crypto';
-import { readdir, stat } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import type { AttachmentCache, Storage } from '@ethosagent/types';
 
 function hashSession(sessionKey: string): string {
   return createHash('sha256').update(sessionKey).digest('hex').slice(0, 16);
 }
 
-function sanitizeFilename(filename: string): string {
+function sanitize(value: string): string {
   // Replace any char not in the safe set
-  const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const safe = value.replace(/[^a-zA-Z0-9._-]/g, '_');
   // Collapse consecutive dots to prevent ".." traversal
   return safe.replace(/\.{2,}/g, '_');
 }
@@ -24,7 +23,9 @@ export class FsAttachmentCache implements AttachmentCache {
 
   constructor(storage: Storage, cacheRoot: string) {
     this.storage = storage;
-    this.root = resolve(cacheRoot);
+    // Ensure root always ends with separator for safe prefix checks.
+    const resolved = resolve(cacheRoot);
+    this.root = resolved.endsWith(sep) ? resolved : resolved + sep;
   }
 
   async write(
@@ -32,8 +33,9 @@ export class FsAttachmentCache implements AttachmentCache {
     meta: { sessionKey: string; messageId: string; filename: string; mime: string },
   ): Promise<string> {
     const hash = hashSession(meta.sessionKey);
-    const safeName = sanitizeFilename(meta.filename);
-    const dir = join(this.root, hash, meta.messageId);
+    const safeName = sanitize(meta.filename);
+    const safeMessageId = sanitize(meta.messageId);
+    const dir = join(this.root, hash, safeMessageId);
     const filePath = join(dir, safeName);
 
     await this.storage.mkdir(dir);
@@ -48,6 +50,8 @@ export class FsAttachmentCache implements AttachmentCache {
     }
     const raw = url.slice('file://'.length);
     const absolute = resolve(raw);
+    // this.root always ends with sep, so this prefix check cannot be
+    // fooled by paths like /tmp/cache-evil when root is /tmp/cache/.
     if (!absolute.startsWith(this.root)) {
       throw new Error(`Path outside cache root: ${absolute}`);
     }
@@ -68,23 +72,19 @@ export class FsAttachmentCache implements AttachmentCache {
     const cutoff = Date.now() - olderThanMs;
     let removedCount = 0;
 
-    let entries: string[];
-    try {
-      entries = await readdir(this.root);
-    } catch {
-      return { removedCount: 0 };
-    }
+    const entries = await this.storage.listEntries(this.root);
 
     for (const entry of entries) {
-      const entryPath = join(this.root, entry);
-      try {
-        const s = await stat(entryPath);
-        if (s.isDirectory() && s.mtimeMs < cutoff) {
+      if (!entry.isDir) continue;
+      const entryPath = join(this.root, entry.name);
+      const mt = await this.storage.mtime(entryPath);
+      if (mt !== null && mt < cutoff) {
+        try {
           await this.storage.remove(entryPath, { recursive: true });
           removedCount++;
+        } catch {
+          // Entry disappeared concurrently — skip.
         }
-      } catch {
-        // Entry disappeared between readdir and stat — skip.
       }
     }
 

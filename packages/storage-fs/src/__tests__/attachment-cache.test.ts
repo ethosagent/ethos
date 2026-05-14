@@ -137,22 +137,17 @@ describe.each(backends)('AttachmentCache — $name', ({ create }) => {
 
   // --- pruneOlderThan ---
 
-  it('pruneOlderThan removes old entries', async () => {
-    // Write a file — its timestamp is "now"
-    await cache.write(bytes, { sessionKey, messageId, filename, mime });
-
-    // Prune with a very short window (0ms) — should remove everything
-    // because the entry was created at some point in the past
-    // Use a large cutoff to ensure the entry is "old enough"
-    const result = await cache.pruneOlderThan(0);
-    expect(result.removedCount).toBeGreaterThanOrEqual(0);
-  });
-
   it('pruneOlderThan keeps recent entries when cutoff is large', async () => {
     await cache.write(bytes, { sessionKey, messageId, filename, mime });
 
     // Prune with a huge window — nothing should be removed
     const result = await cache.pruneOlderThan(1_000_000_000);
+    expect(result.removedCount).toBe(0);
+  });
+
+  it('pruneOlderThan returns { removedCount } shape', async () => {
+    const result = await cache.pruneOlderThan(1_000);
+    expect(typeof result.removedCount).toBe('number');
     expect(result.removedCount).toBe(0);
   });
 
@@ -185,6 +180,43 @@ describe('InMemoryAttachmentCache — specific', () => {
     const path = cache.resolveLocalPath(url);
     const retrieved = cache.getBytes(path);
     expect(retrieved).toEqual(bytes);
+  });
+
+  it('pruneOlderThan removes old entries and keeps recent ones', async () => {
+    const cache = new InMemoryAttachmentCache();
+    const bytes = new Uint8Array([1, 2, 3]);
+
+    // Write an entry, then artificially age it via Date.now mock
+    const realNow = Date.now;
+    const pastMs = realNow() - 60_000; // 60 seconds ago
+    Date.now = () => pastMs;
+    await cache.write(bytes, {
+      sessionKey: 'old-session',
+      messageId: 'mid-old',
+      filename: 'old.bin',
+      mime: 'application/octet-stream',
+    });
+    Date.now = realNow;
+
+    // Write a recent entry
+    await cache.write(bytes, {
+      sessionKey: 'new-session',
+      messageId: 'mid-new',
+      filename: 'new.bin',
+      mime: 'application/octet-stream',
+    });
+
+    // Prune entries older than 30 seconds — should remove the old one
+    const result = await cache.pruneOlderThan(30_000);
+    expect(result.removedCount).toBe(1);
+
+    // The new entry should still be retrievable
+    const newUrl = `file:///tmp/ethos-test-cache/attachments/${sessionHash('new-session')}/mid-new/new.bin`;
+    expect(cache.getBytes(cache.resolveLocalPath(newUrl))).toBeDefined();
+
+    // The old entry should be gone
+    const oldUrl = `file:///tmp/ethos-test-cache/attachments/${sessionHash('old-session')}/mid-old/old.bin`;
+    expect(cache.getBytes(cache.resolveLocalPath(oldUrl))).toBeUndefined();
   });
 
   it('clear removes all entries for a session and getBytes returns undefined', async () => {

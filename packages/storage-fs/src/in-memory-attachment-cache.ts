@@ -13,9 +13,9 @@ function hashSession(sessionKey: string): string {
   return createHash('sha256').update(sessionKey).digest('hex').slice(0, 16);
 }
 
-function sanitizeFilename(filename: string): string {
+function sanitize(value: string): string {
   // Replace any char not in the safe set
-  const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const safe = value.replace(/[^a-zA-Z0-9._-]/g, '_');
   // Collapse consecutive dots to prevent ".." traversal
   return safe.replace(/\.{2,}/g, '_');
 }
@@ -32,8 +32,9 @@ export class InMemoryAttachmentCache implements AttachmentCache {
     meta: { sessionKey: string; messageId: string; filename: string; mime: string },
   ): Promise<string> {
     const hash = hashSession(meta.sessionKey);
-    const safeName = sanitizeFilename(meta.filename);
-    const path = `${ROOT}/${hash}/${meta.messageId}/${safeName}`;
+    const safeName = sanitize(meta.filename);
+    const safeMessageId = sanitize(meta.messageId);
+    const path = `${ROOT}/${hash}/${safeMessageId}/${safeName}`;
 
     this.entries.set(path, {
       bytes: new Uint8Array(bytes),
