@@ -414,9 +414,20 @@ async function runTeamStatus(name: string | undefined): Promise<void> {
 // create
 // ---------------------------------------------------------------------------
 
-async function runTeamCreate(name: string | undefined): Promise<void> {
+async function runTeamCreate(name: string | undefined, extraArgs: string[] = []): Promise<void> {
+  const blank = extraArgs.includes('--blank') || extraArgs.includes('--non-interactive');
+
+  if (blank) {
+    await runTeamCreateBlank(name);
+    return;
+  }
+
+  await runTeamCreateAiAssisted(name);
+}
+
+async function runTeamCreateBlank(name: string | undefined): Promise<void> {
   if (!name) {
-    console.error('Usage: ethos team create <name>');
+    console.error('Usage: ethos team create <name> --blank');
     process.exit(1);
   }
 
@@ -428,7 +439,6 @@ async function runTeamCreate(name: string | undefined): Promise<void> {
     process.exit(1);
   }
 
-  // Check local ./team.yaml doesn't already match this name
   try {
     const localSrc = readFileSync(resolvePath('./team.yaml'), 'utf-8');
     const localManifest = parseTeamManifest(localSrc);
@@ -453,6 +463,40 @@ async function runTeamCreate(name: string | undefined): Promise<void> {
   writeFileSync(dest, serializeTeamManifest(draft), 'utf-8');
   console.log(`\n${c.bold}Created team "${name}"${c.reset}  ${c.dim}${dest}${c.reset}`);
   console.log(`${c.dim}Add personalities:  ethos team ${name} add <personality>${c.reset}\n`);
+}
+
+async function runTeamCreateAiAssisted(name: string | undefined): Promise<void> {
+  const { readConfig } = await import('../config');
+  const { getStorage, getSecretsResolver } = await import('../wiring');
+  const { runChat } = await import('./chat');
+  const { createPersonalityRegistry } = await import('@ethosagent/personalities');
+
+  const config = await readConfig(getStorage(), getSecretsResolver());
+  if (!config) {
+    console.error('Run `ethos setup` first.');
+    process.exit(1);
+  }
+
+  const reg = await createPersonalityRegistry();
+  if (!reg.get('team-architect')) {
+    console.error('team-architect personality not found. Is the framework installed correctly?');
+    process.exit(1);
+  }
+
+  const overridden = { ...config, personality: 'team-architect' };
+
+  const prompt = name
+    ? `I want to create a new team called "${name}". Help me design it.`
+    : undefined;
+
+  console.log(`\n${c.bold}Team Architect${c.reset}`);
+  console.log(
+    `${c.dim}I'll help you design a team of specialist personalities. Let's start.${c.reset}\n`,
+  );
+
+  await runChat(overridden, {
+    ...(prompt ? { singleQuery: prompt } : {}),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -597,7 +641,7 @@ export async function runTeamCommand(sub: string, args: string[]): Promise<void>
       await runTeamList();
       break;
     case 'create':
-      await runTeamCreate(args[0]);
+      await runTeamCreate(args[0], args.slice(1));
       break;
     case 'start':
       await runTeamStart(args[0]);

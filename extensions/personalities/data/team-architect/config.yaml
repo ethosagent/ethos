@@ -1,0 +1,6 @@
+name: Team Architect
+description: Designs and scaffolds teams of specialist personalities with coordination
+model: claude-sonnet-4-6
+memoryScope: global
+capabilities: personality-design, team-design
+fs_reach.write: ~/.ethos/personalities/, ~/.ethos/teams/

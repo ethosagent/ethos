@@ -58,6 +58,9 @@ importers:
       '@ethosagent/agent-mesh':
         specifier: workspace:*
         version: link:../../extensions/agent-mesh
+      '@ethosagent/tools-mcp':
+        specifier: workspace:*
+        version: link:../../extensions/tools-mcp
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1016,6 +1019,16 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/tools-personality-design:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+
   extensions/tools-process:
     dependencies:
       '@ethosagent/types':
@@ -1277,6 +1290,9 @@ importers:
       '@ethosagent/tools-memory':
         specifier: workspace:*
         version: link:../../extensions/tools-memory
+      '@ethosagent/tools-personality-design':
+        specifier: workspace:*
+        version: link:../../extensions/tools-personality-design
       '@ethosagent/tools-process':
         specifier: workspace:*
         version: link:../../extensions/tools-process

@@ -16,12 +16,14 @@ import { Memory } from './pages/Memory';
 import { Mesh } from './pages/Mesh';
 import { Onboarding } from './pages/Onboarding';
 import { Personalities } from './pages/Personalities';
+import { PersonalityCreate } from './pages/PersonalityCreate';
 import { Plugins } from './pages/Plugins';
 import { Sessions } from './pages/Sessions';
 import { Settings } from './pages/Settings';
 import { SigningIn } from './pages/SigningIn';
 import { Skills } from './pages/Skills';
 import { TeamControlCenter } from './pages/TeamControlCenter';
+import { TeamCreate } from './pages/TeamCreate';
 import { Teams } from './pages/Teams';
 import { rpc } from './rpc';
 
@@ -109,12 +111,14 @@ export function App() {
           <Route path="/skills" element={<Skills />} />
           <Route path="/mesh" element={<Mesh />} />
           <Route path="/teams" element={<Teams />} />
+          <Route path="/teams/create" element={<TeamCreate />} />
           <Route path="/teams/:name" element={<TeamControlCenter />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/memory" element={<Memory />} />
           <Route path="/plugins" element={<Plugins />} />
           <Route path="/communications" element={<Communications />} />
           <Route path="/personalities" element={<Personalities />} />
+          <Route path="/personality/create" element={<PersonalityCreate />} />
           <Route path="/batch" element={<Batch />} />
           <Route path="/eval" element={<Eval />} />
           <Route path="/onboarding" element={<Onboarding />} />

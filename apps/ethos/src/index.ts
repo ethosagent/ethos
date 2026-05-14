@@ -247,6 +247,9 @@ try {
           console.log(`  ${p.id.padEnd(14)} ${p.description ?? ''}${def}`);
         }
         console.log();
+      } else if (sub === 'create') {
+        const { runPersonalityCreate } = await import('./commands/personality-create');
+        await runPersonalityCreate(args.slice(2));
       } else if (sub === 'set' && args[2]) {
         const { writeConfig, readRawConfig: rc } = await import('./config');
         const cfg = await rc(getStorage());
@@ -266,7 +269,7 @@ try {
         await runPersonalityShow(args.slice(2));
       } else {
         console.log(
-          'Usage: ethos personality [list | show <id> | set <id> | duplicate <src> <dst> | mcp <id> [--attach <name> | --detach <name>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
+          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | set <id> | duplicate <src> <dst> | mcp <id> [--attach <name> | --detach <name>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
         );
       }
       break;
