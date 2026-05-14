@@ -1,5 +1,8 @@
+import { InMemoryAttachmentCache } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
 import { chunkText, reflowChunks, TelegramAdapter } from '../index';
+
+const cache = new InMemoryAttachmentCache();
 
 describe('chunkText', () => {
   it('returns single chunk when text is within limit', () => {
@@ -95,6 +98,7 @@ describe('TelegramAdapter — botKey identity', () => {
     // plumbing.
     const adapter = new TelegramAdapter({
       token: '1234567890:fake-token-for-construction-only',
+      cache,
       botKey: 'researcher-bot',
     });
     expect(adapter.botKey).toBe('researcher-bot');
@@ -102,8 +106,8 @@ describe('TelegramAdapter — botKey identity', () => {
   });
 
   it('two adapters bound to different bots have distinct ids', () => {
-    const a = new TelegramAdapter({ token: '1:a', botKey: 'a' });
-    const b = new TelegramAdapter({ token: '2:b', botKey: 'b' });
+    const a = new TelegramAdapter({ token: '1:a', cache, botKey: 'a' });
+    const b = new TelegramAdapter({ token: '2:b', cache, botKey: 'b' });
     expect(a.id).not.toBe(b.id);
     expect(a.botKey).toBe('a');
     expect(b.botKey).toBe('b');
@@ -114,16 +118,16 @@ describe('TelegramAdapter — botKey identity', () => {
     // botKey. Phase 2 makes botKey optional and derives the same
     // 24-hex sha256(token) prefix the config layer's deriveBotKey
     // produces, so old call sites keep working with a stable identity.
-    const a = new TelegramAdapter({ token: '123:ABC' });
-    const b = new TelegramAdapter({ token: '123:ABC' });
+    const a = new TelegramAdapter({ token: '123:ABC', cache });
+    const b = new TelegramAdapter({ token: '123:ABC', cache });
     expect(a.botKey).toBe(b.botKey);
     expect(a.botKey).toMatch(/^[0-9a-f]{24}$/);
     expect(a.id).toBe(`telegram:${a.botKey}`);
   });
 
   it('explicit botKey wins over the derived default', () => {
-    const a = new TelegramAdapter({ token: '123:ABC' });
-    const b = new TelegramAdapter({ token: '123:ABC', botKey: 'explicit' });
+    const a = new TelegramAdapter({ token: '123:ABC', cache });
+    const b = new TelegramAdapter({ token: '123:ABC', cache, botKey: 'explicit' });
     expect(a.botKey).not.toBe(b.botKey);
     expect(b.botKey).toBe('explicit');
   });

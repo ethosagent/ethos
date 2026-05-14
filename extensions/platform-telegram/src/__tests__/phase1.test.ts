@@ -1,3 +1,4 @@
+import { InMemoryAttachmentCache } from '@ethosagent/storage-fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -47,7 +48,10 @@ vi.mock('grammy', () => {
 
 import { TelegramAdapter } from '../index';
 
+let cache: InMemoryAttachmentCache;
+
 function resetMocks() {
+  cache = new InMemoryAttachmentCache();
   for (const key of Object.keys(mockApi) as (keyof typeof mockApi)[]) {
     mockApi[key].mockClear();
   }
@@ -66,6 +70,7 @@ describe('Bot identity (setMyName / setMyShortDescription / setMyDescription)', 
   it('calls setMyName, setMyShortDescription, setMyDescription at start() when identity is set', async () => {
     const adapter = new TelegramAdapter({
       token: '1:fake',
+      cache,
       identity: {
         name: 'Researcher',
         shortDescription: 'A helpful research assistant',
@@ -86,6 +91,7 @@ describe('Bot identity (setMyName / setMyShortDescription / setMyDescription)', 
     const longName = 'A'.repeat(100);
     const adapter = new TelegramAdapter({
       token: '1:fake',
+      cache,
       identity: {
         name: longName,
         shortDescription: 'short',
@@ -104,6 +110,7 @@ describe('Bot identity (setMyName / setMyShortDescription / setMyDescription)', 
     const longDesc = 'B'.repeat(200);
     const adapter = new TelegramAdapter({
       token: '1:fake',
+      cache,
       identity: {
         name: 'Bot',
         shortDescription: longDesc,
@@ -122,6 +129,7 @@ describe('Bot identity (setMyName / setMyShortDescription / setMyDescription)', 
     const longDesc = 'C'.repeat(600);
     const adapter = new TelegramAdapter({
       token: '1:fake',
+      cache,
       identity: {
         name: 'Bot',
         shortDescription: 'short',
@@ -137,7 +145,7 @@ describe('Bot identity (setMyName / setMyShortDescription / setMyDescription)', 
   });
 
   it('does not call identity APIs when identity is not set', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake' });
+    const adapter = new TelegramAdapter({ token: '1:fake', cache });
 
     await adapter.start();
 
@@ -153,6 +161,7 @@ describe('Bot identity (setMyName / setMyShortDescription / setMyDescription)', 
 
     const adapter = new TelegramAdapter({
       token: '1:fake',
+      cache,
       identity: {
         name: 'Bot',
         shortDescription: 'short',
@@ -173,7 +182,7 @@ describe('Commands menu (setMyCommands)', () => {
   beforeEach(resetMocks);
 
   it('registers 6 slash commands at start()', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake' });
+    const adapter = new TelegramAdapter({ token: '1:fake', cache });
     await adapter.start();
 
     expect(mockApi.setMyCommands).toHaveBeenCalledTimes(1);
@@ -194,7 +203,7 @@ describe('Commands menu (setMyCommands)', () => {
 
   it('swallows setMyCommands failures (best-effort)', async () => {
     mockApi.setMyCommands.mockRejectedValueOnce(new Error('forbidden'));
-    const adapter = new TelegramAdapter({ token: '1:fake' });
+    const adapter = new TelegramAdapter({ token: '1:fake', cache });
     await expect(adapter.start()).resolves.toBeUndefined();
   });
 });
@@ -207,12 +216,12 @@ describe('Reaction on receipt', () => {
   beforeEach(resetMocks);
 
   it('sets canReact = true', () => {
-    const adapter = new TelegramAdapter({ token: '1:fake' });
+    const adapter = new TelegramAdapter({ token: '1:fake', cache });
     expect(adapter.canReact).toBe(true);
   });
 
   it('reacts with eyes emoji on inbound message', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake' });
+    const adapter = new TelegramAdapter({ token: '1:fake', cache });
     await adapter.start();
 
     // Simulate an inbound message
@@ -238,7 +247,7 @@ describe('Reaction on receipt', () => {
   });
 
   it('clears the reaction on send() for the tracked chatId', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake' });
+    const adapter = new TelegramAdapter({ token: '1:fake', cache });
     await adapter.start();
 
     adapter.onMessage(() => {});
@@ -263,6 +272,7 @@ describe('Reaction on receipt', () => {
   it('uses custom receiptReaction when configured', async () => {
     const adapter = new TelegramAdapter({
       token: '1:fake',
+      cache,
       receiptReaction: '✅',
     });
     await adapter.start();
@@ -284,7 +294,7 @@ describe('Reaction on receipt', () => {
 
   it('swallows reaction failures', async () => {
     mockApi.setMessageReaction.mockRejectedValue(new Error('no rights'));
-    const adapter = new TelegramAdapter({ token: '1:fake' });
+    const adapter = new TelegramAdapter({ token: '1:fake', cache });
     await adapter.start();
 
     adapter.onMessage(() => {});

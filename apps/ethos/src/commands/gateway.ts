@@ -864,6 +864,10 @@ export async function buildAdapters(
       });
       await registry.loadFromDirectory(personalitiesDir);
 
+      // Shared attachment cache for all Telegram bots.
+      const { FsAttachmentCache } = await import('@ethosagent/storage-fs');
+      const cache = new FsAttachmentCache(storage, join(ethosDir(), 'cache', 'attachments'));
+
       for (const botCfg of config.telegram?.bots ?? []) {
         let identity: { name: string; shortDescription: string; description: string } | undefined;
         if (botCfg.bind.type === 'personality') {
@@ -881,6 +885,7 @@ export async function buildAdapters(
         adapters.push(
           new mod.TelegramAdapter({
             token: botCfg.token,
+            cache,
             botKey: deriveBotKey(botCfg),
             dropPendingUpdates: true,
             ...(identity ? { identity } : {}),

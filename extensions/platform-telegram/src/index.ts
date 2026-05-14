@@ -3,6 +3,7 @@ import type {
   ApprovalCapableAdapter,
   ApprovalDecisionEvent,
   Attachment,
+  AttachmentCache,
   DeliveryResult,
   InboundMessage,
   OutboundMessage,
@@ -150,8 +151,10 @@ const MEDIA_PLACEHOLDER: Record<Attachment['type'], string> = {
 
 /**
  * Extract media descriptors from a Telegram message object.
- * Checks photo, document, voice, audio, video, animation, sticker in priority order.
- * Returns an empty array when the message has no media.
+ * Only photo (→ image) and document (→ file) produce attachments.
+ * Voice, audio, video, animation, and sticker are intentionally dropped —
+ * the inbound caption still reaches the agent, just no attachment is created.
+ * Returns an empty array when the message has no supported media.
  */
 function extractMedia(msg: Record<string, unknown>): MediaDescriptor[] {
   const results: MediaDescriptor[] = [];
@@ -176,62 +179,6 @@ function extractMedia(msg: Record<string, unknown>): MediaDescriptor[] {
       mimeType: typeof doc.mime_type === 'string' ? doc.mime_type : 'application/octet-stream',
       filename: typeof doc.file_name === 'string' ? doc.file_name : undefined,
       fileSize: typeof doc.file_size === 'number' ? doc.file_size : undefined,
-    });
-  }
-
-  // voice — TODO(task-5): mapped to 'file' until Telegram adapter migration
-  if (msg.voice && typeof msg.voice === 'object') {
-    const v = msg.voice as Record<string, unknown>;
-    results.push({
-      fileId: String(v.file_id),
-      type: 'file',
-      mimeType: typeof v.mime_type === 'string' ? v.mime_type : 'audio/ogg',
-      fileSize: typeof v.file_size === 'number' ? v.file_size : undefined,
-    });
-  }
-
-  // audio — TODO(task-5): mapped to 'file' until Telegram adapter migration
-  if (msg.audio && typeof msg.audio === 'object') {
-    const a = msg.audio as Record<string, unknown>;
-    results.push({
-      fileId: String(a.file_id),
-      type: 'file',
-      mimeType: typeof a.mime_type === 'string' ? a.mime_type : 'audio/mpeg',
-      filename: typeof a.file_name === 'string' ? a.file_name : undefined,
-      fileSize: typeof a.file_size === 'number' ? a.file_size : undefined,
-    });
-  }
-
-  // video — TODO(task-5): mapped to 'file' until Telegram adapter migration
-  if (msg.video && typeof msg.video === 'object') {
-    const v = msg.video as Record<string, unknown>;
-    results.push({
-      fileId: String(v.file_id),
-      type: 'file',
-      mimeType: typeof v.mime_type === 'string' ? v.mime_type : 'video/mp4',
-      fileSize: typeof v.file_size === 'number' ? v.file_size : undefined,
-    });
-  }
-
-  // animation (GIF) — TODO(task-5): mapped to 'file' until Telegram adapter migration
-  if (msg.animation && typeof msg.animation === 'object') {
-    const a = msg.animation as Record<string, unknown>;
-    results.push({
-      fileId: String(a.file_id),
-      type: 'file',
-      mimeType: typeof a.mime_type === 'string' ? a.mime_type : 'video/mp4',
-      fileSize: typeof a.file_size === 'number' ? a.file_size : undefined,
-    });
-  }
-
-  // sticker
-  if (msg.sticker && typeof msg.sticker === 'object') {
-    const s = msg.sticker as Record<string, unknown>;
-    results.push({
-      fileId: String(s.file_id),
-      type: 'image',
-      mimeType: 'image/webp',
-      fileSize: typeof s.file_size === 'number' ? s.file_size : undefined,
     });
   }
 
@@ -272,6 +219,11 @@ async function downloadTelegramFile(
 
 export interface TelegramAdapterConfig {
   token: string;
+  /**
+   * Attachment cache used to persist downloaded media as `file://` URLs.
+   * Required — inbound photo/document attachments are written here.
+   */
+  cache: AttachmentCache;
   /**
    * Stable identifier of the bot this adapter is bound to. Stamped on every
    * inbound `InboundMessage.botKey` so the Gateway can route to the right
@@ -324,6 +276,7 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
 
   readonly botKey: string;
   private readonly bot: Bot;
+  private readonly cache: AttachmentCache;
   private readonly dropPendingUpdates: boolean;
   private readonly identity: TelegramAdapterConfig['identity'];
   private readonly receiptReaction: string;
@@ -344,6 +297,7 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
 
   constructor(config: TelegramAdapterConfig) {
     this.bot = new Bot(config.token);
+    this.cache = config.cache;
     this.dropPendingUpdates = config.dropPendingUpdates ?? true;
     this.botKey = config.botKey ?? deriveDefaultBotKey(config.token);
     this.identity = config.identity;
@@ -617,8 +571,10 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
   ): Promise<InboundMessage> {
     const attachments: Attachment[] = [];
     let textSuffix = '';
+    const sessionKey = `telegram:${msg.chatId}`;
 
-    for (const m of media) {
+    for (let i = 0; i < media.length; i++) {
+      const m = media[i];
       // Early size check from the descriptor (before getFile round-trip)
       if (m.fileSize !== undefined && m.fileSize > MAX_FILE_SIZE) {
         textSuffix += '\n(File too large — 25 MB limit)';
@@ -635,13 +591,19 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
         continue;
       }
 
-      // TODO(task-5): Telegram adapter will write to AttachmentCache and
-      // populate url from the cache path. For now, use a data: URL stub.
-      const ref = `tg:${m.fileId}`;
+      const filename = m.filename ?? `att-${i}.jpg`;
+      const bytes = new Uint8Array(result.data);
+      const url = await this.cache.write(bytes, {
+        sessionKey,
+        messageId: String(msg.messageId),
+        filename,
+        mime: m.mimeType,
+      });
+
       attachments.push({
         type: m.type,
-        ref,
-        url: `data:${m.mimeType};fileId=${m.fileId}`,
+        ref: `att-${i}`,
+        url,
         mimeType: m.mimeType,
         filename: m.filename,
         sizeBytes: result.fileSize,
