@@ -18,7 +18,7 @@ Users send a photo or document to the bot. The agent sees an `<attachments>` blo
 
 ## Prereqs
 
-- A working Telegram bot connected to Ethos -- see [the Telegram quickstart](../../../extensions/platform-telegram/README.md#quickstart--five-minutes-to-your-first-reply).
+- A working Telegram bot connected to Ethos (see the [Telegram platform guide](../../platforms/telegram.md)).
 - At least one personality with `vision_analyze` or `read_file` in its `toolset.yaml`.
 
 ## Steps

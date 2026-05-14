@@ -43,6 +43,8 @@ const sidebars: SidebarsConfig = {
             'using/how-to/migrate-from-openclaw',
             'using/how-to/use-as-mcp-server',
             'using/how-to/run-a-team-with-kanban',
+            'using/how-to/receive-files-via-telegram',
+            'using/how-to/receive-files-via-slack',
           ],
         },
         {
@@ -107,6 +109,7 @@ const sidebars: SidebarsConfig = {
             'building/how-to/build-a-python-client',
             'building/how-to/migrate-cookie-to-api-key',
             'building/how-to/deploy-mission-control-remote',
+            'building/how-to/consume-attachments-in-a-tool',
           ],
         },
         {
@@ -149,6 +152,7 @@ const sidebars: SidebarsConfig = {
             'building/explanation/sdk-memory-model',
             'building/explanation/stability-tiers',
             'building/explanation/transport-seam',
+            'building/explanation/why-attachments-are-a-capability',
           ],
         },
       ],

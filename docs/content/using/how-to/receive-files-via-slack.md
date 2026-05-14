@@ -18,7 +18,7 @@ Users attach a file in a thread or DM, @mention the bot (or post in a channel wh
 
 ## Prereqs
 
-- A working Slack bot connected to Ethos -- see [the Slack quickstart](../../../extensions/platform-slack/README.md#quickstart--ten-minutes-to-your-first-reply).
+- A working Slack bot connected to Ethos (see the [Slack platform guide](../../platforms/slack.md)).
 - At least one personality with `vision_analyze` or `read_file` in its `toolset.yaml`.
 
 ## Steps
