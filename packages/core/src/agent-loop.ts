@@ -169,6 +169,12 @@ export interface AgentLoopConfig {
   // Maps personality ID → model ID. Resolution: modelRouting[id] → personality.model → llm.model
   modelRouting?: Record<string, string>;
   /**
+   * Per-personality memory provider registry. Maps provider names ('markdown',
+   * 'vector', plugin-registered names) to factory functions. When a personality
+   * declares `memory.provider`, AgentLoop resolves from this map.
+   */
+  memoryProviders?: Map<string, (options?: Record<string, unknown>) => MemoryProvider>;
+  /**
    * E4 — Pluggable context-engine registry. When unset, AgentLoop builds
    * a `DefaultContextEngineRegistry` (drop_oldest + semantic_summary
    * placeholder + reference_preserving). Each personality picks an engine
@@ -231,6 +237,11 @@ export interface RunOptions {
    * steering falls back to `queue` at the surface, never reaching AgentLoop.
    */
   steerSink?: SteerSink;
+  /**
+   * Override model tier for this run only (from /tier command).
+   * Consumed once; does not persist across runs.
+   */
+  tierOverride?: import('@ethosagent/types').ModelTierName;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +270,7 @@ export class AgentLoop {
   private readonly maxIdenticalToolCalls: number;
   private readonly streamingTimeoutMs: number;
   private readonly modelRouting: Record<string, string>;
+  private readonly memoryProviders: Map<string, (options?: Record<string, unknown>) => MemoryProvider>;
   private readonly storage?: Storage;
   private readonly dataDir?: string;
   private readonly observability?: AgentLoopObservability;
@@ -295,6 +307,7 @@ export class AgentLoop {
     this.maxIdenticalToolCalls = config.options?.maxIdenticalToolCalls ?? 5;
     this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? 120_000;
     this.modelRouting = config.modelRouting ?? {};
+    this.memoryProviders = config.memoryProviders ?? new Map();
     if (config.storage) this.storage = config.storage;
     if (config.dataDir) this.dataDir = config.dataDir;
     if (config.observability) this.observability = config.observability;
@@ -340,6 +353,30 @@ export class AgentLoop {
   /** Resets the session spend counter — call after /new or /personality switch. */
   resetSessionCost(sessionKey: string): void {
     this.sessionCosts.delete(sessionKey);
+  }
+
+  /**
+   * Resolve the effective model for an LLM call, respecting tier config.
+   * Returns the model string to pass as modelOverride, and the tier name used.
+   */
+  private resolveModelWithTier(
+    personality: PersonalityConfig,
+    tier: import('@ethosagent/types').ModelTierName,
+  ): { model: string; source: 'personality' | 'global' } {
+    const personalityOverride = this.modelRouting[personality.id];
+    if (personalityOverride) return { model: personalityOverride, source: 'personality' };
+
+    // Only use tier config when the personality declares a provider that matches
+    // the active LLM. This prevents Anthropic-specific model IDs from being
+    // injected into OpenRouter/Ollama/Gemini providers. Without a matching
+    // provider declaration, fall through to the global model.
+    const modelConfig = personality.model;
+    if (modelConfig && typeof modelConfig === 'object' && personality.provider === this.llm.name) {
+      const tierModel = modelConfig[tier] ?? modelConfig.default;
+      if (tierModel) return { model: tierModel, source: 'personality' };
+    }
+
+    return { model: this.llm.model, source: 'global' };
   }
 
   async *run(text: string, opts: RunOptions = {}): AsyncGenerator<AgentEvent> {
@@ -400,12 +437,25 @@ export class AgentLoop {
     // previous compaction fired (0 = never).
     const { turnNumber, lastCompactionTurn } = await this.session.recordTurnStart(sessionId);
 
-    // Resolve effective model: explicit per-personality routing > LLM base model.
-    // personality.model is intentionally skipped — those IDs are Anthropic-specific
-    // and break non-Anthropic providers (OpenRouter, Gemini, Ollama, etc.).
-    // Configure overrides via modelRouting in ~/.ethos/config.yaml instead.
-    const personalityOverride = this.modelRouting[personality.id];
-    const effectiveModel = personalityOverride ?? this.llm.model;
+    // Resolve effective model with tier support.
+    // Priority: modelRouting[id] > personality tier config > llm.model.
+    // User tier override (from /tier command via RunOptions) applies for this entire turn.
+    const turnTierOverride = opts.tierOverride;
+    if (turnTierOverride) {
+      this.observability?.recordTierOverride({
+        traceId: traceId ?? '',
+        actor: 'user',
+        tier: turnTierOverride,
+        personalityId: personality.id,
+      });
+    }
+
+    const activeTier = turnTierOverride ?? 'default';
+    let pendingTierEscalation: 'trivial' | 'default' | 'deep' | undefined;
+    const { model: effectiveModel, source: modelSource } = this.resolveModelWithTier(
+      personality,
+      activeTier,
+    );
     const modelOverride = effectiveModel !== this.llm.model ? effectiveModel : undefined;
 
     // Phase 5: emit run_start trace so consumers (TUI, CLI verbose, telemetry)
@@ -414,7 +464,7 @@ export class AgentLoop {
       type: 'run_start',
       provider: this.llm.name,
       model: effectiveModel,
-      source: personalityOverride ? 'personality' : 'global',
+      source: modelSource,
     };
 
     // Allowed tool names for this personality (undefined = no restriction)
@@ -460,10 +510,13 @@ export class AgentLoop {
 
     // Step 5: Prefetch memory.
     //
-    // Task 1 (Phase 0+1): the AgentLoop hands the provider an opaque
-    // `scopeId`. Personalities in `per-personality` memoryScope route into
-    // a per-personality scope; everything else lands in the shared
-    // `global` scope. Task 2 will fold per-team scopes in.
+    // Per-personality memory backend: if the personality declares a `memory.provider`,
+    // resolve it from the registry. Otherwise fall back to the global provider.
+    const activeMemory = personality.memory?.provider
+      ? (this.memoryProviders.get(personality.memory.provider)?.(personality.memory.options) ??
+        this.memory)
+      : this.memory;
+
     const memScopeId =
       personality.memoryScope === 'per-personality' ? `personality:${personality.id}` : 'global';
     const memCtx: MemoryContext = {
@@ -473,7 +526,7 @@ export class AgentLoop {
       platform: this.platform,
       workingDir: this.workingDir,
     };
-    let memSnapshot = await this.memory.prefetch(memCtx);
+    let memSnapshot = await activeMemory.prefetch(memCtx);
 
     // Providers that don't support bulk prefetch (e.g. VectorMemoryProvider)
     // return null. Fall back to a semantic search on the current user text so
@@ -481,7 +534,7 @@ export class AgentLoop {
     // restoring the query-driven retrieval the old two-method contract did
     // internally inside prefetch().
     if (!memSnapshot && text.trim()) {
-      const hits = await this.memory.search(text, memCtx, { limit: 5 });
+      const hits = await activeMemory.search(text, memCtx, { limit: 5 });
       if (hits.length > 0) {
         memSnapshot = { entries: hits.map((h) => ({ key: h.key, content: h.content })) };
       }
@@ -766,10 +819,26 @@ export class AgentLoop {
         watchdogTimer = undefined;
       };
 
+      // Consume one-shot tier escalation from think_deeper tool result (run-local).
+      let iterModelOverride = modelOverride;
+      if (pendingTierEscalation && typeof personality.model === 'object') {
+        const tier = pendingTierEscalation;
+        pendingTierEscalation = undefined;
+        const { model: tierModel } = this.resolveModelWithTier(personality, tier);
+        iterModelOverride = tierModel !== this.llm.model ? tierModel : undefined;
+        this.observability?.recordTierEscalation({
+          traceId: traceId ?? '',
+          from: activeTier,
+          to: tier,
+          reason: 'tool_escalation',
+          personalityId: personality.id,
+        });
+      }
+
       const llmSpanId = this.observability?.startSpan({
         traceId: traceId ?? '',
         kind: 'llm_call',
-        name: this.llm.model ?? 'unknown',
+        name: iterModelOverride ?? this.llm.model ?? 'unknown',
       });
       let llmInputTokens = 0;
       let llmOutputTokens = 0;
@@ -783,7 +852,7 @@ export class AgentLoop {
             system: systemPrompt,
             cacheSystemPrompt: true,
             abortSignal: combinedSignal,
-            ...(modelOverride ? { modelOverride } : {}),
+            ...(iterModelOverride ? { modelOverride: iterModelOverride } : {}),
             ...(cacheBreakpoints ? { cacheBreakpoints } : {}),
           },
         );
@@ -1070,6 +1139,18 @@ export class AgentLoop {
           ? await this.tools.executeParallel(execInputs, toolCtxBase, allowedTools, filterOpts)
           : [];
       const execResultMap = new Map(execResults.map((r) => [r.toolCallId, r]));
+
+      // Detect think_deeper tool success → set run-local tier escalation for next LLM call.
+      // Only fires when: (1) the personality declares a tier object, (2) its provider matches
+      // the active LLM, and (3) the tool named 'think_deeper' returned ok.
+      if (typeof personality.model === 'object' && personality.provider === this.llm.name) {
+        for (const r of execResults) {
+          if (r.name === 'think_deeper' && r.result.ok) {
+            pendingTierEscalation = 'deep';
+            break;
+          }
+        }
+      }
 
       // Drain any progress events tools emitted during execution. Order is
       // call-order (across the parallel batch) — close enough for users; the

@@ -50,6 +50,11 @@ export const builtInCommands: SlashCommand[] = [
     description: 'Show current model (switch requires restart)',
     usage: '/model [name]',
   },
+  {
+    name: 'tier',
+    description: 'Override LLM tier for next turn',
+    usage: '/tier [trivial|default|deep|status]',
+  },
   { name: 'memory', description: 'Show ~/.ethos/MEMORY.md and USER.md', usage: '/memory' },
   { name: 'usage', description: 'Show token and cost stats', usage: '/usage' },
   { name: 'budget', description: 'Show session spend against cap', usage: '/budget [reset]' },

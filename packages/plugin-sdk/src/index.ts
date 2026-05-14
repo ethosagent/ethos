@@ -3,13 +3,17 @@ import type {
   ContextEngineRegistry,
   ContextInjector,
   HookRegistry,
+  MemoryProvider,
   ModifyingHooks,
   PersonalityConfig,
   PersonalityRegistry,
+  PlatformAdapterFactory,
   Tool,
   ToolRegistry,
   VoidHooks,
 } from '@ethosagent/types';
+
+export type MemoryProviderFactory = (options?: Record<string, unknown>) => MemoryProvider;
 
 // ---------------------------------------------------------------------------
 // Plugin module shape — what every plugin file must export
@@ -52,6 +56,14 @@ export interface EthosPluginApi {
   /** E4 — register a custom context-compaction engine. The engine becomes
    *  selectable via `personality.context_engine: <engine.name>`. */
   registerContextEngine(engine: ContextEngine): void;
+
+  /** Register a named memory provider factory. Personalities opt in via
+   *  `memory.provider: <name>` in their config.yaml. */
+  registerMemoryProvider(name: string, factory: MemoryProviderFactory): void;
+
+  /** Register a platform adapter factory. Teams opt in via `channels:` block
+   *  in their manifest. */
+  registerPlatformAdapter(name: string, factory: PlatformAdapterFactory): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -73,6 +85,10 @@ export interface PluginRegistries {
    *  that don't expose a registry leave this undefined; calls to
    *  `registerContextEngine` then no-op with a clear error. */
   contextEngines?: ContextEngineRegistry;
+  /** Per-personality memory provider registry. Maps provider names to factories. */
+  memoryProviders?: Map<string, MemoryProviderFactory>;
+  /** Platform adapter registry. Maps adapter names to factories. */
+  platformAdapters?: Map<string, PlatformAdapterFactory>;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +146,24 @@ export class PluginApiImpl implements EthosPluginApi {
       );
     }
     this.registries.contextEngines.register(engine);
+  }
+
+  registerMemoryProvider(name: string, factory: MemoryProviderFactory): void {
+    if (!this.registries.memoryProviders) {
+      throw new Error(
+        `Plugin "${this.pluginId}" called registerMemoryProvider but the host wiring did not expose a memory provider registry.`,
+      );
+    }
+    this.registries.memoryProviders.set(name, factory);
+  }
+
+  registerPlatformAdapter(name: string, factory: PlatformAdapterFactory): void {
+    if (!this.registries.platformAdapters) {
+      throw new Error(
+        `Plugin "${this.pluginId}" called registerPlatformAdapter but the host wiring did not expose an adapter registry.`,
+      );
+    }
+    this.registries.platformAdapters.set(name, factory);
   }
 
   /** Remove everything this plugin registered. Called by PluginLoader.unload(). */

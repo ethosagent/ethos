@@ -330,6 +330,8 @@ describe('AgentLoop — Ch.3c short-pattern check', () => {
       endSpan: () => {},
       recordSafetyBlock: (e) => events.push({ category: 'audit.block', code: e.code }),
       recordCompaction: (e) => events.push({ category: 'audit.compaction', code: e.code }),
+      recordTierEscalation: () => {},
+      recordTierOverride: () => {},
       flush: () => {},
     };
     const loop = new AgentLoop({

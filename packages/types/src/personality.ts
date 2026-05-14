@@ -85,6 +85,46 @@ export interface PersonalitySafetyConfig {
   };
 }
 
+export type ModelTierName = 'trivial' | 'default' | 'deep';
+
+export interface PersonalityMemoryConfig {
+  provider: string;
+  options?: Record<string, unknown>;
+}
+
+export interface PersonalityMcpExportConfig {
+  enabled: boolean;
+  expose_tools?: 'all' | 'none' | string[];
+  expose_memory?: 'scoped' | 'none' | 'full';
+  expose_sessions?: boolean;
+  auth?: 'localhost' | 'bearer';
+}
+
+export interface OutboundPolicyConfig {
+  approve_before_send: boolean;
+  channels?: string[];
+  approver_personality?: string;
+}
+
+export interface ModelTierConfig {
+  trivial?: string;
+  default?: string;
+  deep?: string;
+}
+
+/**
+ * Resolve model display string from a PersonalityConfig.model value.
+ * Centralizes the typeof check so consumers don't scatter it.
+ */
+export function resolveModelDisplay(
+  model: string | ModelTierConfig | undefined,
+  fallback = '(engine default)',
+): string {
+  if (!model) return fallback;
+  if (typeof model === 'string') return model;
+  return model.default ?? fallback;
+}
+
 // Phase 30.8 — this schema is FROZEN.
 //
 // Adding a top-level field to `PersonalityConfig` requires:
@@ -115,7 +155,7 @@ export interface PersonalityConfig {
   skillsDirs?: string[];
   toolset?: string[];
   capabilities?: string[];
-  model?: string;
+  model?: string | ModelTierConfig;
   provider?: string;
   platform?: string;
   memoryScope?: 'global' | 'per-personality';
@@ -223,6 +263,27 @@ export interface PersonalityConfig {
     discovery_files?: string[];
     cap_total_chars?: number;
   };
+  /**
+   * Per-personality memory backend. When set, the personality uses a specific
+   * memory provider instead of the global default. The `provider` value must
+   * match a registered provider name (built-in: 'markdown', 'vector'; plugins
+   * can register additional ones). `options` is passed to the provider factory.
+   * Counts as ONE field for the schema-freeze gate.
+   */
+  memory?: PersonalityMemoryConfig;
+  /**
+   * Per-personality MCP server export. Declares what slice of the personality
+   * is visible to external MCP clients. When `enabled: true`, the personality
+   * can be served via `ethos mcp-server --personality <id>`.
+   * Counts as ONE field for the schema-freeze gate.
+   */
+  mcp_export?: PersonalityMcpExportConfig;
+  /**
+   * Per-personality outbound approval policy. When `approve_before_send` is
+   * true, the gateway holds outbound messages in a pending queue until approved.
+   * Counts as ONE field for the schema-freeze gate.
+   */
+  outbound_policy?: OutboundPolicyConfig;
 }
 
 export interface PersonalityRegistry {

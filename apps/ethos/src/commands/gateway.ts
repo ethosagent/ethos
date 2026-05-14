@@ -13,11 +13,12 @@ import { readRuntime, removeRuntime } from '@ethosagent/team-supervisor';
 // Their underlying SDKs (grammy, discord.js, @slack/bolt, imapflow…) are
 // optionalDependencies of @ethosagent/cli. A failed install for any one of
 // them must not crash the CLI for users who don't run that platform.
-import type {
-  ClarifyResponse,
-  InboundMessage,
-  MemoryContext,
-  PlatformAdapter,
+import {
+  resolveModelDisplay,
+  type ClarifyResponse,
+  type InboundMessage,
+  type MemoryContext,
+  type PlatformAdapter,
 } from '@ethosagent/types';
 import { createDangerPredicate, createMemoryProvider } from '@ethosagent/wiring';
 import { ApprovalCoordinator, createSlackApprovalHook } from '../approval-coordinator';
@@ -758,7 +759,7 @@ async function createSlackPersonalityCardReader() {
         name: config.name,
         description: config.description ?? '',
         prose: firstParagraph(ethosMd),
-        model: config.model ?? '(engine default)',
+        model: resolveModelDisplay(config.model),
         provider: config.provider ?? '(engine default)',
         toolset: config.toolset ?? [],
         skills: resolved.map((r) => ({ id: r.id, source: r.source })),
@@ -805,7 +806,7 @@ async function createTelegramPersonalityCardReader() {
         name: config.name,
         description: config.description ?? '',
         prose: firstParagraph(ethosMd),
-        model: config.model ?? '(engine default)',
+        model: resolveModelDisplay(config.model),
         provider: config.provider ?? '(engine default)',
         toolset: config.toolset ?? [],
         skills: resolved.map((r) => ({ id: r.id, source: r.source })),
