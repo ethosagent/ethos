@@ -105,6 +105,14 @@ export interface SessionStore {
   recordCompression(event: Omit<CompressionEvent, 'id' | 'createdAt'>): Promise<CompressionEvent>;
   /** List a session's compaction events, oldest first. */
   listCompressions(sessionId: string): Promise<CompressionEvent[]>;
+  /**
+   * Increment the session's turn counter and return the new turn number plus
+   * the turn of the last compaction. Called once per agent turn; drives the
+   * anti-thrashing compaction cooldown.
+   */
+  recordTurnStart(sessionId: string): Promise<{ turnNumber: number; lastCompactionTurn: number }>;
+  /** Record the turn at which a compaction fired (for the cooldown gate). */
+  recordCompactionTurn(sessionId: string, turnNumber: number): Promise<void>;
   pruneOldSessions(olderThan: Date): Promise<number>;
   vacuum(): Promise<void>;
 }

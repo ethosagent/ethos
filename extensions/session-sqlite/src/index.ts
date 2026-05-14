@@ -132,6 +132,18 @@ export class SQLiteSessionStore implements SessionStore {
     if (!cols.some((c) => c.name === 'trace_id')) {
       this.db.exec('ALTER TABLE messages ADD COLUMN trace_id TEXT');
     }
+
+    // Additive migration (context_compression Q2): per-session turn counter
+    // and the turn of the last compaction, used by the anti-thrashing cooldown.
+    const sessCols = this.db.pragma('table_info(sessions)') as Array<{ name: string }>;
+    if (!sessCols.some((c) => c.name === 'turn_count')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN turn_count INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!sessCols.some((c) => c.name === 'last_compaction_turn')) {
+      this.db.exec(
+        'ALTER TABLE sessions ADD COLUMN last_compaction_turn INTEGER NOT NULL DEFAULT 0',
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -430,6 +442,29 @@ export class SQLiteSessionStore implements SessionStore {
       )
       .all(sessionId) as CompressionRow[];
     return rows.map(rowToCompression);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Turn bookkeeping (context_compression Q2 — anti-thrashing cooldown)
+  // ---------------------------------------------------------------------------
+
+  async recordTurnStart(
+    sessionId: string,
+  ): Promise<{ turnNumber: number; lastCompactionTurn: number }> {
+    const row = this.db
+      .prepare(
+        `UPDATE sessions SET turn_count = turn_count + 1
+         WHERE id = ?
+         RETURNING turn_count AS turnNumber, last_compaction_turn AS lastCompactionTurn`,
+      )
+      .get(sessionId) as { turnNumber: number; lastCompactionTurn: number } | undefined;
+    return row ?? { turnNumber: 0, lastCompactionTurn: 0 };
+  }
+
+  async recordCompactionTurn(sessionId: string, turnNumber: number): Promise<void> {
+    this.db
+      .prepare('UPDATE sessions SET last_compaction_turn = ? WHERE id = ?')
+      .run(turnNumber, sessionId);
   }
 
   // ---------------------------------------------------------------------------
