@@ -574,11 +574,15 @@ export class AgentLoop {
     // the personality's pressure threshold (80% of the model's window by
     // default), the resolved context engine compacts before we hand the
     // history to the provider.
-    llmMessages = await this.maybeCompact(llmMessages, systemPrompt ?? '', personality, {
+    const compacted = await this.maybeCompact(llmMessages, systemPrompt ?? '', personality, {
       sessionId,
       sessionKey,
       turnNumber: 0,
     });
+    llmMessages = compacted.messages;
+    // F2 — cache breakpoints from the compaction, forwarded to every provider
+    // call this turn so the prompt cache survives the compacted prefix.
+    const cacheBreakpoints = compacted.cacheBreakpoints;
     let fullText = '';
     let turnCount = 0;
 
@@ -739,6 +743,7 @@ export class AgentLoop {
             cacheSystemPrompt: true,
             abortSignal: combinedSignal,
             ...(modelOverride ? { modelOverride } : {}),
+            ...(cacheBreakpoints ? { cacheBreakpoints } : {}),
           },
         );
 
@@ -1431,17 +1436,18 @@ export class AgentLoop {
     systemPrompt: string,
     personality: PersonalityConfig,
     sessionMetadata: { sessionId: string; sessionKey: string; turnNumber: number },
-  ): Promise<Message[]> {
+  ): Promise<{ messages: Message[]; cacheBreakpoints?: number[] }> {
     const window = this.llm.maxContextTokens || 200_000;
     const target = Math.floor(window * 0.7);
     const pressureGate = Math.floor(window * 0.8);
     const current = estimateTokens(systemPrompt) + estimateMessagesTokens(messages);
-    if (current <= pressureGate) return messages;
+    if (current <= pressureGate) return { messages };
 
     const engineName = personality.context_engine ?? 'drop_oldest';
     const engine = this.contextEngines.get(engineName) ?? this.contextEngines.get('drop_oldest');
-    if (!engine) return messages;
+    if (!engine) return { messages };
     try {
+      const startedAt = Date.now();
       const result = await engine.compact({
         messages,
         currentSystem: systemPrompt,
@@ -1449,11 +1455,49 @@ export class AgentLoop {
         personality,
         sessionMetadata,
       });
+      const durationMs = Date.now() - startedAt;
       this.observability?.recordCompaction({
         code: 'context_compacted',
         cause: `${engine.name}: ${result.notes}`,
       });
-      return result.messages;
+      // F3 — persist the compaction event so the session stays auditable. The
+      // original messages remain in `messages`; this row only records the
+      // LLM-facing replay change. Best-effort: a persistence failure must not
+      // break the turn, so it never propagates to the fail-open catch below.
+      const changed =
+        result.messages.length !== messages.length || result.summaryText !== undefined;
+      if (changed) {
+        try {
+          const summaryTokens = result.summaryText ? estimateTokens(result.summaryText) : 0;
+          await this.session.recordCompression({
+            sessionId: sessionMetadata.sessionId,
+            engineName: engine.name,
+            originalCount: messages.length,
+            keptCount: result.messages.length,
+            ...(result.summaryText !== undefined ? { summaryText: result.summaryText } : {}),
+            summaryTokens,
+            preTotalTokens: current,
+            postTotalTokens: estimateTokens(systemPrompt) + estimateMessagesTokens(result.messages),
+            durationMs,
+          });
+          await this.session.updateUsage(sessionMetadata.sessionId, { compactionCount: 1 });
+        } catch (persistErr) {
+          this.observability?.recordCompaction({
+            severity: 'warn',
+            code: 'compaction_persist_failed',
+            cause: persistErr instanceof Error ? persistErr.message : String(persistErr),
+          });
+        }
+      }
+      // F2 — forward the engine's stable cache breakpoints to the provider so
+      // the prompt cache survives compaction. Only meaningful when the engine
+      // actually compacted; a no-op return carries no breakpoints.
+      return {
+        messages: result.messages,
+        ...(changed && result.cacheBreakpoints
+          ? { cacheBreakpoints: result.cacheBreakpoints }
+          : {}),
+      };
     } catch (err) {
       // Fail open — better to send the un-compacted history and let the
       // provider error than to silently drop messages on engine failure.
@@ -1462,7 +1506,7 @@ export class AgentLoop {
         code: 'context_engine_failed',
         cause: err instanceof Error ? err.message : String(err),
       });
-      return messages;
+      return { messages };
     }
   }
 

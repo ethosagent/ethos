@@ -36,6 +36,20 @@ export interface ContextEngineCompactOutput {
   messages: Message[];
   /** Free-form notes for telemetry / `ethos doctor` (e.g. "summarized 12 → 1"). */
   notes: string;
+  /**
+   * The synthetic summary text, when the engine produced one. Persisted to the
+   * `compressions` table so a session's compaction history stays auditable.
+   * Engines that drop messages rather than summarize leave this unset.
+   */
+  summaryText?: string;
+  /**
+   * context_compression F2 — indices into `messages` that mark stable
+   * `cache_control` boundaries (e.g. end of preserved-front, the summary
+   * message). The AgentLoop forwards these to the provider so the prompt
+   * cache survives compaction. Engines that produce no stable boundary
+   * leave this unset.
+   */
+  cacheBreakpoints?: number[];
 }
 
 export interface ContextEngine {

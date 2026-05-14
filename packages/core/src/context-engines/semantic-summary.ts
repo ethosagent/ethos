@@ -71,9 +71,18 @@ export class SemanticSummaryEngine implements ContextEngine {
       content: [{ type: 'text', text: summaryText } satisfies MessageContent],
     };
 
+    // F2 — cache breakpoints at stable boundaries: the end of the verbatim
+    // preserved-front block (stable across turns) and the summary message
+    // itself (stable until the next compaction).
+    const cacheBreakpoints: number[] = [];
+    if (front.length > 0) cacheBreakpoints.push(front.length - 1);
+    cacheBreakpoints.push(front.length);
+
     return {
       messages: [...front, summaryMessage, ...tail],
       notes: `summarized ${middle.length} message(s) → ${estimateMessageTokens(summaryMessage)} tokens`,
+      summaryText,
+      cacheBreakpoints,
     };
   }
 }

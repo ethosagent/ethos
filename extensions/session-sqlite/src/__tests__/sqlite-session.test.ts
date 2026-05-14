@@ -216,6 +216,95 @@ describe('SQLiteSessionStore', () => {
     expect(await store.getSession(old.id)).toBeNull();
     expect(await store.getSession(fresh.id)).not.toBeNull();
   });
+
+  // -------------------------------------------------------------------------
+  // context_compression F3 — compaction event persistence
+  // -------------------------------------------------------------------------
+
+  it('records and lists compression events oldest-first', async () => {
+    const session = await store.createSession(baseSession);
+
+    const first = await store.recordCompression({
+      sessionId: session.id,
+      engineName: 'semantic_summary',
+      originalCount: 40,
+      keptCount: 8,
+      summaryText: 'summary of turns 2-34',
+      summaryTokens: 120,
+      preTotalTokens: 9000,
+      postTotalTokens: 3000,
+      durationMs: 850,
+    });
+    const second = await store.recordCompression({
+      sessionId: session.id,
+      engineName: 'drop_oldest',
+      originalCount: 20,
+      keptCount: 12,
+      summaryTokens: 0,
+      preTotalTokens: 8000,
+      postTotalTokens: 4000,
+      durationMs: 3,
+    });
+
+    expect(first.id).toBeTruthy();
+    expect(first.createdAt).toBeInstanceOf(Date);
+
+    const events = await store.listCompressions(session.id);
+    expect(events).toHaveLength(2);
+    expect(events[0]?.id).toBe(first.id);
+    expect(events[1]?.id).toBe(second.id);
+    expect(events[0]?.summaryText).toBe('summary of turns 2-34');
+    expect(events[0]?.preTotalTokens).toBe(9000);
+    expect(events[0]?.postTotalTokens).toBe(3000);
+    // drop_oldest produced no summary — summaryText round-trips as undefined
+    expect(events[1]?.summaryText).toBeUndefined();
+  });
+
+  it('keeps original messages queryable after a compression is recorded', async () => {
+    const session = await store.createSession(baseSession);
+    await store.appendMessage({ sessionId: session.id, role: 'user', content: 'original task' });
+    await store.appendMessage({
+      sessionId: session.id,
+      role: 'assistant',
+      content: 'working on it',
+    });
+
+    await store.recordCompression({
+      sessionId: session.id,
+      engineName: 'semantic_summary',
+      originalCount: 2,
+      keptCount: 1,
+      summaryText: 'condensed',
+      summaryTokens: 10,
+      preTotalTokens: 100,
+      postTotalTokens: 30,
+      durationMs: 5,
+    });
+
+    // Compression is replay-only — the raw history is untouched.
+    const msgs = await store.getMessages(session.id);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0]?.content).toBe('original task');
+    const hits = await store.search('original task', { sessionId: session.id });
+    expect(hits.length).toBeGreaterThan(0);
+  });
+
+  it('cascades compression rows when a session is deleted', async () => {
+    const session = await store.createSession(baseSession);
+    await store.recordCompression({
+      sessionId: session.id,
+      engineName: 'drop_oldest',
+      originalCount: 10,
+      keptCount: 5,
+      summaryTokens: 0,
+      preTotalTokens: 500,
+      postTotalTokens: 250,
+      durationMs: 1,
+    });
+
+    await store.deleteSession(session.id);
+    expect(await store.listCompressions(session.id)).toHaveLength(0);
+  });
 });
 
 // -------------------------------------------------------------------------

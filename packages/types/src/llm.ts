@@ -34,6 +34,14 @@ export interface CompletionOptions {
   abortSignal?: AbortSignal;
   stopSequences?: string[];
   modelOverride?: string;
+  /**
+   * context_compression F2 — message-history cache breakpoints. Each number
+   * is an index into `messages`; the provider places a `cache_control` marker
+   * on that message so the prompt cache survives compaction. Anthropic allows
+   * at most 4 breakpoints total (system + messages) — providers cap to the
+   * limit and drop the rest. Providers without prompt caching ignore the field.
+   */
+  cacheBreakpoints?: number[];
 }
 
 export interface LLMProvider {

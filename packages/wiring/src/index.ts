@@ -7,6 +7,7 @@ import {
   EagerPrefetchPolicy,
   LastWriteWinsPolicy,
   LazyOnDemandPolicy,
+  type SummarizerFn,
 } from '@ethosagent/core';
 import { KanbanStore } from '@ethosagent/kanban-store';
 import { AnthropicProvider, AuthRotatingProvider } from '@ethosagent/llm-anthropic';
@@ -50,7 +51,9 @@ import type {
   SessionStore,
 } from '@ethosagent/types';
 import { resolveKanbanDbPath } from './kanban-path';
+import type { EthosObservability } from './observability/ethos-observability';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
+import { capSummary, renderMiddleForSummary, SUMMARIZER_SYSTEM_PROMPT } from './summarizer-prompt';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -108,6 +111,18 @@ export interface WiringConfig {
    * Takes precedence over `provider`/`apiKey`/`model` when present.
    */
   providers?: WiringProviderConfig[];
+  /**
+   * context_compression F1 — auxiliary compression summarizer. When `model`
+   * is set, `semantic_summary` is wired with a real LLM summarizer running on
+   * this (typically cheap) model instead of the placeholder. `provider` /
+   * `apiKey` / `baseUrl` default to the primary provider's values when unset.
+   */
+  auxiliaryCompression?: {
+    model: string;
+    provider?: string;
+    apiKey?: string;
+    baseUrl?: string;
+  };
 }
 
 export type WiringProfile = 'cli' | 'tui' | 'web' | 'acp';
@@ -169,6 +184,82 @@ function createSingleProvider(cfg: {
     apiKey: cfg.apiKey,
     baseUrl: cfg.baseUrl ?? 'https://openrouter.ai/api/v1',
   });
+}
+
+// Hard ceiling on a single summarizer call. The summarizer runs on the turn's
+// critical path before the main provider call, so a hung auxiliary provider
+// would otherwise hang the whole turn. On timeout the call aborts and throws,
+// which `maybeCompact` catches and fails open to the un-compacted history.
+// (Q6 will add a tighter timeout + a fallback model; this is the floor.)
+const SUMMARIZER_TIMEOUT_MS = 30_000;
+
+// context_compression F1 — build the real LLM summarizer for `semantic_summary`.
+// Runs on the auxiliary (typically cheap) model so a compacting turn costs
+// ~one Haiku-tier call rather than a full main-model re-prompt. Fails open: a
+// throw here is caught by the engine's caller (`maybeCompact`), which ships
+// the un-compacted history and records a degradation event.
+function buildCompressionSummarizer(
+  config: WiringConfig,
+  observability: EthosObservability | undefined,
+  log: Logger,
+): SummarizerFn {
+  const aux = config.auxiliaryCompression;
+  const provider = createSingleProvider({
+    provider: aux?.provider ?? config.provider,
+    model: aux?.model ?? config.model,
+    apiKey: aux?.apiKey ?? config.apiKey,
+    ...((aux?.baseUrl ?? config.baseUrl) ? { baseUrl: aux?.baseUrl ?? config.baseUrl } : {}),
+  });
+  return async (middle, targetTokens) => {
+    const startedAt = Date.now();
+    let text = '';
+    let costUsd = 0;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    try {
+      const stream = provider.complete(
+        [{ role: 'user', content: renderMiddleForSummary(middle) }],
+        [],
+        {
+          system: SUMMARIZER_SYSTEM_PROMPT,
+          maxTokens: Math.ceil(targetTokens * 1.5),
+          abortSignal: AbortSignal.timeout(SUMMARIZER_TIMEOUT_MS),
+        },
+      );
+      for await (const chunk of stream) {
+        if (chunk.type === 'text_delta') {
+          text += chunk.text;
+        } else if (chunk.type === 'usage') {
+          costUsd = chunk.usage.estimatedCostUsd;
+          inputTokens = chunk.usage.inputTokens;
+          outputTokens = chunk.usage.outputTokens;
+        }
+      }
+    } catch (err) {
+      log.warn(
+        `compression summarizer failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      throw err;
+    }
+    const trimmed = text.trim();
+    if (!trimmed) {
+      log.warn('compression summarizer returned empty output');
+      throw new Error('compression summarizer returned empty output');
+    }
+    const summary = capSummary(trimmed, targetTokens);
+    observability?.recordCompaction({
+      code: 'compaction_summarized',
+      cause: `${provider.model}: summarized ${middle.length} message(s)`,
+      details: {
+        model: provider.model,
+        inputTokens,
+        outputTokens,
+        costUsd,
+        durationMs: Date.now() - startedAt,
+      },
+    });
+    return summary;
+  };
 }
 
 export async function createLLM(config: WiringConfig): Promise<LLMProvider> {
@@ -394,9 +485,14 @@ export async function createAgentLoop(
 
   // E4 — context-engine registry. Built-ins register at construction; the
   // PluginLoader exposes it so plugins can contribute custom engines via
-  // `EthosPluginApi.registerContextEngine`.
+  // `EthosPluginApi.registerContextEngine`. context_compression F1 — when an
+  // auxiliary compression model is configured, `semantic_summary` gets a real
+  // LLM summarizer instead of the placeholder.
   const { DefaultContextEngineRegistry } = await import('@ethosagent/core');
-  const contextEngines = new DefaultContextEngineRegistry();
+  const summarize = config.auxiliaryCompression?.model
+    ? buildCompressionSummarizer(config, opts.observability, log)
+    : undefined;
+  const contextEngines = new DefaultContextEngineRegistry(summarize ? { summarize } : {});
 
   // Discover and activate installed plugins. Plugins register tools/hooks/
   // injectors into the same registries the AgentLoop uses; the personality
