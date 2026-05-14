@@ -35,8 +35,18 @@ Define success criteria. Loop until verified.
 Always run pnpm check (typecheck + lint + test) before declaring done.
 Always run pnpm lint before pushing. CI fails on lint errors; catching them locally is one command. If lint reports fixable issues, run pnpm lint:fix and re-check before git push. Don't push code that hasn't been linted.
 
-5. Follow the constitution
-[ARCHITECTURE.md](./ARCHITECTURE.md) is the constitutional source of truth for this codebase. It defines the layer model, dependency direction, frozen schemas, safety rules, and the laws the validator enforces. Read it before:
+5. Know what we're building
+[SOUL.md](./SOUL.md) is the product soul of this codebase — what Ethos is, and what it will never become. The one line: **Ethos builds AI agents that have an identity — not a prompt.** Read it before:
+
+- Proposing a new feature, capability, or surface.
+- Touching personality, identity, or what an agent *can* do vs. *cannot* do.
+- Designing new multi-agent or team-coordination behaviour.
+- Adding any field that could shape personality at runtime (voice, mood, templates, per-channel UI affordances — see SOUL.md's categorical refusals).
+
+Apply the SOUL.md decision filter: does this deepen identity, make teams more visible / durable / coordinated, stay auditable from outside, and remain predictable from reading the personality's `ETHOS.md`? If the honest answer to "does this deepen identity?" or "does this make teams more visible?" is no, and the capability is hidden from the outside, the feature does not belong in Ethos. When SOUL.md and the structural constitution (Rule 6) disagree, **SOUL.md wins on intent.**
+
+6. Follow the constitution
+[ARCHITECTURE.md](./ARCHITECTURE.md) is the structural source of truth for this codebase. It defines the layer model, dependency direction, frozen schemas, safety rules, and the laws the validator enforces. Read it before:
 
 - Adding or moving any package, extension, or app.
 - Adding a workspace dependency, especially one that crosses layers.
