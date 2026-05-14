@@ -12,6 +12,7 @@ export class InMemorySessionStore implements SessionStore {
   private sessions = new Map<string, Session>();
   private messages = new Map<string, StoredMessage[]>();
   private compressions = new Map<string, CompressionEvent[]>();
+  private turnState = new Map<string, { turnCount: number; lastCompactionTurn: number }>();
   private idCounter = 0;
 
   async createSession(data: Omit<Session, 'id' | 'createdAt' | 'updatedAt'>): Promise<Session> {
@@ -47,6 +48,7 @@ export class InMemorySessionStore implements SessionStore {
     this.sessions.delete(id);
     this.messages.delete(id);
     this.compressions.delete(id);
+    this.turnState.delete(id);
   }
 
   async listSessions(filter?: SessionFilter): Promise<Session[]> {
@@ -140,6 +142,21 @@ export class InMemorySessionStore implements SessionStore {
 
   async listCompressions(sessionId: string): Promise<CompressionEvent[]> {
     return [...(this.compressions.get(sessionId) ?? [])];
+  }
+
+  async recordTurnStart(
+    sessionId: string,
+  ): Promise<{ turnNumber: number; lastCompactionTurn: number }> {
+    const state = this.turnState.get(sessionId) ?? { turnCount: 0, lastCompactionTurn: 0 };
+    state.turnCount += 1;
+    this.turnState.set(sessionId, state);
+    return { turnNumber: state.turnCount, lastCompactionTurn: state.lastCompactionTurn };
+  }
+
+  async recordCompactionTurn(sessionId: string, turnNumber: number): Promise<void> {
+    const state = this.turnState.get(sessionId) ?? { turnCount: 0, lastCompactionTurn: 0 };
+    state.lastCompactionTurn = turnNumber;
+    this.turnState.set(sessionId, state);
   }
 
   async pruneOldSessions(olderThan: Date): Promise<number> {

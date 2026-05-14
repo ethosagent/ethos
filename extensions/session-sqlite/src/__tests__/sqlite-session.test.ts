@@ -305,6 +305,41 @@ describe('SQLiteSessionStore', () => {
     await store.deleteSession(session.id);
     expect(await store.listCompressions(session.id)).toHaveLength(0);
   });
+
+  // -------------------------------------------------------------------------
+  // context_compression Q2 — turn bookkeeping for the anti-thrashing cooldown
+  // -------------------------------------------------------------------------
+
+  it('recordTurnStart increments the per-session turn counter', async () => {
+    const session = await store.createSession(baseSession);
+
+    const t1 = await store.recordTurnStart(session.id);
+    expect(t1).toEqual({ turnNumber: 1, lastCompactionTurn: 0 });
+    const t2 = await store.recordTurnStart(session.id);
+    expect(t2.turnNumber).toBe(2);
+  });
+
+  it('recordCompactionTurn is reflected in the next recordTurnStart', async () => {
+    const session = await store.createSession(baseSession);
+    await store.recordTurnStart(session.id); // turn 1
+    await store.recordTurnStart(session.id); // turn 2
+
+    await store.recordCompactionTurn(session.id, 2);
+
+    const t3 = await store.recordTurnStart(session.id);
+    expect(t3).toEqual({ turnNumber: 3, lastCompactionTurn: 2 });
+  });
+
+  it('turn counters are isolated per session', async () => {
+    const a = await store.createSession({ ...baseSession, key: 'cli:a' });
+    const b = await store.createSession({ ...baseSession, key: 'cli:b' });
+
+    await store.recordTurnStart(a.id);
+    await store.recordTurnStart(a.id);
+    const bFirst = await store.recordTurnStart(b.id);
+
+    expect(bFirst.turnNumber).toBe(1);
+  });
 });
 
 // -------------------------------------------------------------------------

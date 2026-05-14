@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -375,6 +376,11 @@ export class AgentLoop {
       return;
     }
 
+    // Q2 — advance the per-session turn counter. `turnNumber` drives the
+    // anti-thrashing compaction cooldown; `lastCompactionTurn` is the turn the
+    // previous compaction fired (0 = never).
+    const { turnNumber, lastCompactionTurn } = await this.session.recordTurnStart(sessionId);
+
     // Resolve effective model: explicit per-personality routing > LLM base model.
     // personality.model is intentionally skipped — those IDs are Anthropic-specific
     // and break non-Anthropic providers (OpenRouter, Gemini, Ollama, etc.).
@@ -569,7 +575,9 @@ export class AgentLoop {
     const systemPrompt = systemParts.join('\n\n').trim() || undefined;
 
     // Step 8: Agentic loop — LLM call → tool use → LLM call → ...
-    let llmMessages = this.toLLMMessages(history);
+    // Q1 — collapse exact-duplicate tool results before building the
+    // LLM-facing history, so re-reads of the same file don't burn tokens.
+    let llmMessages = this.toLLMMessages(this.dedupHistory(history));
     // E4 — pre-LLM compaction. If estimated context usage already exceeds
     // the personality's pressure threshold (80% of the model's window by
     // default), the resolved context engine compacts before we hand the
@@ -577,12 +585,26 @@ export class AgentLoop {
     const compacted = await this.maybeCompact(llmMessages, systemPrompt ?? '', personality, {
       sessionId,
       sessionKey,
-      turnNumber: 0,
+      turnNumber,
+      lastCompactionTurn,
     });
     llmMessages = compacted.messages;
     // F2 — cache breakpoints from the compaction, forwarded to every provider
     // call this turn so the prompt cache survives the compacted prefix.
     const cacheBreakpoints = compacted.cacheBreakpoints;
+    // V1 — surface a one-line in-chat compaction notice. Emitted once, before
+    // any response text, via the `tool_progress` + `audience: 'user'` channel
+    // the framework already uses for `_budget` / `_watcher` notices.
+    if (compacted.notice) {
+      const n = compacted.notice;
+      const tok = n.summaryTokens > 0 ? `, ${n.summaryTokens} tok` : '';
+      yield {
+        type: 'tool_progress',
+        toolName: '_compaction',
+        message: `compressed ${n.droppedCount} earlier message(s) (${n.engineName}${tok})`,
+        audience: 'user',
+      };
+    }
     let fullText = '';
     let turnCount = 0;
 
@@ -1300,6 +1322,64 @@ export class AgentLoop {
     }
   }
 
+  // Q1 — tool-result dedup. A coordinator that re-reads the same file across
+  // turns stores one tool_result per read; over a long session that is pure
+  // token waste. Before building the LLM-facing history, collapse exact-
+  // duplicate tool results — same tool, same args, same output — keeping the
+  // FIRST (oldest) copy intact and replacing later ones with a placeholder
+  // that points BACKWARD at it. Pointing backward preserves causality: the
+  // assistant turn that followed a later read can still see the content
+  // earlier in the transcript. The tool_result row stays attached to its
+  // tool_use (Anthropic contract); only the content string changes.
+  private dedupHistory(history: StoredMessage[]): StoredMessage[] {
+    // tool_use id → serialized args, harvested from assistant messages so a
+    // tool_result can be keyed by the arguments that produced it.
+    const argsByToolCallId = new Map<string, string>();
+    for (const msg of history) {
+      if (msg.role === 'assistant' && msg.toolCalls) {
+        for (const tc of msg.toolCalls) {
+          argsByToolCallId.set(tc.id, JSON.stringify(tc.input ?? null));
+        }
+      }
+    }
+
+    // Fingerprint each tool_result and group occurrences by identity.
+    const occurrences = new Map<string, number[]>();
+    history.forEach((msg, idx) => {
+      if (msg.role !== 'tool_result') return;
+      const toolName = msg.toolName ?? '';
+      const argsHash = msg.toolCallId ? (argsByToolCallId.get(msg.toolCallId) ?? '') : '';
+      const fingerprint = createHash('sha256')
+        .update(`${toolName}\u0000${argsHash}\u0000${msg.content.trim()}`)
+        .digest('hex');
+      const list = occurrences.get(fingerprint);
+      if (list) list.push(idx);
+      else occurrences.set(fingerprint, [idx]);
+    });
+
+    // For every fingerprint seen more than once, keep the first occurrence and
+    // replace every later one with a placeholder pointing back at it.
+    const replacement = new Map<number, string>();
+    for (const indices of occurrences.values()) {
+      if (indices.length < 2) continue;
+      const oldest = indices[0];
+      if (oldest === undefined) continue;
+      const oldestId = history[oldest]?.toolCallId ?? String(oldest);
+      for (const idx of indices.slice(1)) {
+        replacement.set(
+          idx,
+          `[deduped — identical to earlier result, see tool_use id ${oldestId}]`,
+        );
+      }
+    }
+
+    if (replacement.size === 0) return history;
+    return history.map((msg, idx) => {
+      const placeholder = replacement.get(idx);
+      return placeholder !== undefined ? { ...msg, content: placeholder } : msg;
+    });
+  }
+
   // Reconstruct LLM-ready messages from stored history.
   // Assistant messages with tool calls produce proper tool_use content blocks.
   // Consecutive tool_result rows are grouped into a single user message.
@@ -1435,13 +1515,37 @@ export class AgentLoop {
     messages: Message[],
     systemPrompt: string,
     personality: PersonalityConfig,
-    sessionMetadata: { sessionId: string; sessionKey: string; turnNumber: number },
-  ): Promise<{ messages: Message[]; cacheBreakpoints?: number[] }> {
+    sessionMetadata: {
+      sessionId: string;
+      sessionKey: string;
+      turnNumber: number;
+      lastCompactionTurn: number;
+    },
+  ): Promise<{
+    messages: Message[];
+    cacheBreakpoints?: number[];
+    notice?: { engineName: string; droppedCount: number; summaryTokens: number };
+  }> {
     const window = this.llm.maxContextTokens || 200_000;
     const target = Math.floor(window * 0.7);
     const pressureGate = Math.floor(window * 0.8);
     const current = estimateTokens(systemPrompt) + estimateMessagesTokens(messages);
     if (current <= pressureGate) return { messages };
+
+    // Q2 — anti-thrashing cooldown. After a compaction, skip the next few
+    // turns of *normal* pressure: re-compacting immediately would summarize the
+    // summary, degrading meaning. `lastCompactionTurn === 0` means "never
+    // compacted" — the first compaction is always allowed through. The cooldown
+    // is bypassed under hard overflow (>95% of the window): its job is to
+    // prevent summary churn, not to disable context-limit protection.
+    const cooldownTurns = 5;
+    const hardOverflowGate = Math.floor(window * 0.95);
+    const inCooldown =
+      sessionMetadata.lastCompactionTurn > 0 &&
+      sessionMetadata.turnNumber - sessionMetadata.lastCompactionTurn < cooldownTurns;
+    if (inCooldown && current <= hardOverflowGate) {
+      return { messages };
+    }
 
     const engineName = personality.context_engine ?? 'drop_oldest';
     const engine = this.contextEngines.get(engineName) ?? this.contextEngines.get('drop_oldest');
@@ -1466,9 +1570,9 @@ export class AgentLoop {
       // break the turn, so it never propagates to the fail-open catch below.
       const changed =
         result.messages.length !== messages.length || result.summaryText !== undefined;
+      const summaryTokens = result.summaryText ? estimateTokens(result.summaryText) : 0;
       if (changed) {
         try {
-          const summaryTokens = result.summaryText ? estimateTokens(result.summaryText) : 0;
           await this.session.recordCompression({
             sessionId: sessionMetadata.sessionId,
             engineName: engine.name,
@@ -1481,6 +1585,11 @@ export class AgentLoop {
             durationMs,
           });
           await this.session.updateUsage(sessionMetadata.sessionId, { compactionCount: 1 });
+          // Q2 — mark this turn so the cooldown suppresses the next few turns.
+          await this.session.recordCompactionTurn(
+            sessionMetadata.sessionId,
+            sessionMetadata.turnNumber,
+          );
         } catch (persistErr) {
           this.observability?.recordCompaction({
             severity: 'warn',
@@ -1492,10 +1601,21 @@ export class AgentLoop {
       // F2 — forward the engine's stable cache breakpoints to the provider so
       // the prompt cache survives compaction. Only meaningful when the engine
       // actually compacted; a no-op return carries no breakpoints.
+      // V1 — `notice` lets the caller surface a one-line in-chat compaction
+      // notice; only set when the engine actually changed the history.
       return {
         messages: result.messages,
         ...(changed && result.cacheBreakpoints
           ? { cacheBreakpoints: result.cacheBreakpoints }
+          : {}),
+        ...(changed
+          ? {
+              notice: {
+                engineName: engine.name,
+                droppedCount: messages.length - result.messages.length,
+                summaryTokens,
+              },
+            }
           : {}),
       };
     } catch (err) {

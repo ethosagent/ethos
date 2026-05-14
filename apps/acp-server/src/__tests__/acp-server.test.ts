@@ -71,6 +71,10 @@ function makeStore(): SessionStore {
     async listCompressions(_sessionId) {
       return [];
     },
+    async recordTurnStart(_sessionId) {
+      return { turnNumber: 0, lastCompactionTurn: 0 };
+    },
+    async recordCompactionTurn(_sessionId, _turnNumber) {},
     async pruneOldSessions(_olderThan) {
       return 0;
     },
