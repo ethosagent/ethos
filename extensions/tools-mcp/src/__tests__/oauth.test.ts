@@ -343,9 +343,14 @@ describe('startCallbackServer', () => {
   it('rejects on error parameter', async () => {
     const { port, codePromise, close } = await startCallbackServer();
 
+    // Attach rejection handler before triggering the error to prevent unhandled rejection warning
+    const rejection = codePromise.catch((err) => err);
+
     await fetch(`http://127.0.0.1:${port}/?error=access_denied`);
 
-    await expect(codePromise).rejects.toThrow('OAuth error: access_denied');
+    const err = await rejection;
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain('OAuth error: access_denied');
     close();
   });
 });

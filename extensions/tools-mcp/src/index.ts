@@ -703,6 +703,7 @@ export class McpSessionView {
     this._sessionClients.length = 0;
     this._sessionTools.length = 0;
   }
+
 }
 // ---------------------------------------------------------------------------
 // Config loader
