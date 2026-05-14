@@ -146,6 +146,70 @@ members:
     expect(kinds).toContain('run_started');
   });
 
+  it('getBoard threads retryCount and maxRetries into the ticket response shape', async () => {
+    writeManifest(
+      'analytics',
+      `
+name: analytics
+description: x
+domain_capabilities: [x]
+members:
+  - personality: engineer
+`,
+    );
+    const store = openBoard('analytics');
+    // A task with a retry budget that has been re-claimed once.
+    const task = store.createTask({ title: 'flaky task', maxRetries: 3, assignee: 'engineer' });
+    store.updateStatus(task.id, 'running', undefined, 'engineer');
+    store.blockRun(task.id, 'stalled', 'engineer');
+    store.updateStatus(task.id, 'running', undefined, 'engineer'); // re-claim -> retryCount 1
+    // A plain task with no budget configured.
+    const plain = store.createTask({ title: 'plain task' });
+    store.close();
+
+    const { board } = await service.getBoard('analytics');
+    const wire = board.tasks.find((t) => t.id === task.id);
+    expect(wire?.retryCount).toBe(1);
+    expect(wire?.maxRetries).toBe(3);
+    const wirePlain = board.tasks.find((t) => t.id === plain.id);
+    expect(wirePlain?.retryCount).toBe(0);
+    expect(wirePlain?.maxRetries).toBeNull();
+  });
+
+  it('getBoard threads per-member stats into the board snapshot', async () => {
+    writeManifest(
+      'analytics',
+      `
+name: analytics
+description: x
+domain_capabilities: [x]
+members:
+  - personality: engineer
+`,
+    );
+    // Open the board WITH a teamId so terminal transitions record member stats.
+    mkdirSync(join(dir, 'analytics'), { recursive: true });
+    const store = new KanbanStore(join(dir, 'analytics', 'board.db'), { teamId: 'analytics' });
+    const done = store.createTask({ title: 'done task', assignee: 'engineer' });
+    store.updateStatus(done.id, 'running', undefined, 'engineer');
+    store.completeRun(done.id, 'ok', 'engineer');
+    const failed = store.createTask({ title: 'failed task', assignee: 'engineer' });
+    store.updateStatus(failed.id, 'running', undefined, 'engineer');
+    store.updateStatus(failed.id, 'needs_revision', 'nope', 'reviewer');
+    store.close();
+
+    const { board } = await service.getBoard('analytics');
+    expect(board.memberStats).toHaveLength(1);
+    const stat = board.memberStats[0];
+    expect(stat).toMatchObject({
+      teamId: 'analytics',
+      memberId: 'engineer',
+      ticketsCompleted: 1,
+      ticketsFailed: 1,
+      ticketsOrphaned: 0,
+    });
+  });
+
   it('getBoard returns an empty snapshot when no board.db exists yet', async () => {
     writeManifest(
       'analytics',
@@ -161,6 +225,7 @@ members:
     expect(board.tasks).toEqual([]);
     expect(board.links).toEqual([]);
     expect(board.recentEvents).toEqual([]);
+    expect(board.memberStats).toEqual([]);
   });
 
   it('getBoard rejects unknown teams', async () => {
@@ -209,5 +274,44 @@ members:
     const statusChange = events.find((e) => e.kind === 'status_changed');
     expect(statusChange?.actor).toBe('human:control-center');
     reread.close();
+  });
+
+  it('updateStatus to a terminal state records member stats (teamId wired through write path)', async () => {
+    writeManifest(
+      'analytics',
+      `
+name: analytics
+description: x
+domain_capabilities: [x]
+members:
+  - personality: engineer
+`,
+    );
+    // Open WITHOUT a teamId here — only the seed data goes in. The stat write
+    // must come from KanbanService.updateStatus opening the board with teamId.
+    const store = openBoard('analytics');
+    const t = store.createTask({ title: 'flaky work', assignee: 'engineer' });
+    store.updateStatus(t.id, 'running', undefined, 'engineer');
+    store.close();
+
+    await service.updateStatus({
+      team: 'analytics',
+      taskId: t.id,
+      status: 'needs_revision',
+      reason: 'rejected via UI',
+      actor: 'human:control-center',
+    });
+
+    // Re-open with the teamId and confirm the human-driven transition was
+    // counted in the per-member stats ledger.
+    const reread = new KanbanStore(join(dir, 'analytics', 'board.db'), { teamId: 'analytics' });
+    const stats = reread.getMemberStats();
+    reread.close();
+    const engineerStat = stats.get('engineer');
+    expect(engineerStat).toMatchObject({
+      teamId: 'analytics',
+      memberId: 'engineer',
+      ticketsFailed: 1,
+    });
   });
 });

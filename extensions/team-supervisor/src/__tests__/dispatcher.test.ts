@@ -84,6 +84,29 @@ describe('Dispatcher.tick()', () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
+  it('fails a task that exhausts its retry budget on re-claim instead of dispatching it', async () => {
+    const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+    // maxRetries=0: the task gets one claim, and any re-claim fails it.
+    const t = board.createTask({ title: 'impossible', assignee: 'engineer', maxRetries: 0 });
+
+    // Simulate a first run that ended badly, leaving the task ready to be re-claimed.
+    board.updateStatus(t.id, 'ready');
+    board.updateStatus(t.id, 'running', 'first attempt');
+    board.blockRun(t.id, 'failed');
+    board.updateStatus(t.id, 'ready');
+
+    const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+    const dispatcher = new Dispatcher({ board, supervisor: sup, dispatch });
+
+    await dispatcher.tick();
+
+    // The dispatcher's claim re-claimed the task past budget — updateStatus
+    // landed it in 'failed', so nothing was dispatched.
+    expect(board.getTask(t.id)?.status).toBe('failed');
+    await new Promise((r) => setImmediate(r));
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   // ---------------------------------------------------------------------------
   // Promotion path — parents-done unlocks children
   // ---------------------------------------------------------------------------
@@ -228,5 +251,315 @@ describe('Dispatcher.tick()', () => {
 
     expect(board.getTask(t.id)?.status).toBe('blocked');
     expect(errors).toEqual([{ msg: 'connection refused', id: t.id }]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Staleness in orphan adoption — stuck `running` tasks get reclaimed
+  // ---------------------------------------------------------------------------
+
+  // Backdate a task's updated_at to simulate the passage of time past the
+  // staleness threshold without actually sleeping.
+  function backdateUpdatedAt(taskId: string, ms: number): void {
+    (
+      board as unknown as {
+        db: { prepare: (s: string) => { run: (a: number, b: string) => void } };
+      }
+    ).db
+      .prepare('UPDATE tasks SET updated_at = ? WHERE id = ?')
+      .run(Date.now() - ms, taskId);
+  }
+
+  it('reclaims a running task whose updated_at is past the staleness threshold with reason orphan_stale', async () => {
+    const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+    const t = board.createTask({ title: 'stuck', assignee: 'engineer' });
+    board.updateStatus(t.id, 'ready');
+    board.updateStatus(t.id, 'running', 'dispatched', 'dispatcher');
+    // Push updated_at well past the 1s threshold this dispatcher uses.
+    backdateUpdatedAt(t.id, 5_000);
+
+    const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+    const dispatcher = new Dispatcher({
+      board,
+      supervisor: sup,
+      dispatch,
+      stalenessThresholdMs: 1_000,
+    });
+
+    await dispatcher.tick();
+
+    const events = board.listEvents(t.id);
+    const reclaim = events.find(
+      (e) => e.kind === 'status_changed' && e.data.reason === 'orphan_stale',
+    );
+    expect(reclaim).toBeDefined();
+    // Reclaimed → ready → re-dispatched within the same tick → running again.
+    expect(board.getTask(t.id)?.status).toBe('running');
+    await new Promise((r) => setImmediate(r));
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT reclaim a running task whose updated_at is recent', async () => {
+    const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+    const t = board.createTask({ title: 'healthy', assignee: 'engineer' });
+    board.updateStatus(t.id, 'ready');
+    board.updateStatus(t.id, 'running', 'dispatched', 'dispatcher');
+    // updated_at is fresh (just set by updateStatus) — not stale.
+
+    const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+    const dispatcher = new Dispatcher({
+      board,
+      supervisor: sup,
+      dispatch,
+      stalenessThresholdMs: 60_000,
+    });
+
+    await dispatcher.tick();
+
+    const events = board.listEvents(t.id);
+    const reclaim = events.find(
+      (e) => e.kind === 'status_changed' && e.data.reason === 'orphan_stale',
+    );
+    expect(reclaim).toBeUndefined();
+    expect(board.getTask(t.id)?.status).toBe('running');
+  });
+
+  it('reclaims a running task whose assignee is no longer active with reason orphan_no_owner', async () => {
+    // Assignee exists but its process has failed — supervisor.statusOf is not 'running'.
+    const sup = makeSupervisor({ engineer: { port: 3001, status: 'failed' } });
+    const t = board.createTask({ title: 'abandoned', assignee: 'engineer' });
+    board.updateStatus(t.id, 'ready');
+    board.updateStatus(t.id, 'running', 'dispatched', 'dispatcher');
+    // updated_at is fresh — this is the no-owner path, not the staleness path.
+
+    const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+    const dispatcher = new Dispatcher({
+      board,
+      supervisor: sup,
+      dispatch,
+      stalenessThresholdMs: 60_000,
+    });
+
+    await dispatcher.tick();
+
+    const events = board.listEvents(t.id);
+    const reclaim = events.find(
+      (e) => e.kind === 'status_changed' && e.data.reason === 'orphan_no_owner',
+    );
+    expect(reclaim).toBeDefined();
+    // Owner is gone, so the same-tick dispatch can't re-claim it — stays ready.
+    expect(board.getTask(t.id)?.status).toBe('ready');
+    await new Promise((r) => setImmediate(r));
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('does not reclaim a running task that is still in-flight from a prior tick', async () => {
+    const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+    const t = board.createTask({ title: 'in-flight', assignee: 'engineer' });
+    board.updateStatus(t.id, 'ready');
+
+    // A slow dispatch keeps the task in `inflight` across ticks.
+    let release: () => void = () => {};
+    const dispatch = vi.fn<DispatchCall>(
+      () =>
+        new Promise<string>((resolve) => {
+          release = () => resolve('ok');
+        }),
+    );
+    const dispatcher = new Dispatcher({
+      board,
+      supervisor: sup,
+      dispatch,
+      stalenessThresholdMs: 1_000,
+    });
+
+    await dispatcher.tick(); // claims + dispatches; task is now inflight + running
+    backdateUpdatedAt(t.id, 5_000); // make it look stale
+    await dispatcher.tick(); // should NOT reclaim — still inflight
+
+    const events = board.listEvents(t.id);
+    const reclaim = events.find(
+      (e) => e.kind === 'status_changed' && e.data.reason === 'orphan_stale',
+    );
+    expect(reclaim).toBeUndefined();
+    expect(board.getTask(t.id)?.status).toBe('running');
+
+    release();
+    await new Promise((r) => setImmediate(r));
+  });
+
+  // ---------------------------------------------------------------------------
+  // dispatch_prefer_reliable — success-ratio tie-breaker
+  // ---------------------------------------------------------------------------
+
+  describe('dispatch_prefer_reliable', () => {
+    let teamBoard: KanbanStore;
+
+    beforeEach(() => {
+      teamBoard = new KanbanStore(':memory:', { teamId: 'team-a' });
+    });
+
+    afterEach(() => {
+      teamBoard.close();
+    });
+
+    // Give `member` a track record by running and completing/failing throwaway
+    // tasks on the board. This drives the real `team_member_stats` counters.
+    function seedRecord(member: string, completed: number, failed: number): void {
+      for (let i = 0; i < completed; i++) {
+        const t = teamBoard.createTask({ title: `done ${member} ${i}`, assignee: member });
+        teamBoard.updateStatus(t.id, 'running', undefined, member);
+        teamBoard.completeRun(t.id, 'ok', member);
+      }
+      for (let i = 0; i < failed; i++) {
+        const t = teamBoard.createTask({ title: `fail ${member} ${i}`, assignee: member });
+        teamBoard.updateStatus(t.id, 'running', undefined, member);
+        teamBoard.updateStatus(t.id, 'needs_revision', 'nope', 'reviewer');
+      }
+    }
+
+    it('dispatches the higher-success assignee first when both are ready at equal priority', async () => {
+      const sup = makeSupervisor({
+        reliable: { port: 3001, status: 'running' },
+        flaky: { port: 3002, status: 'running' },
+      });
+      seedRecord('reliable', 4, 0); // 100% success
+      seedRecord('flaky', 1, 3); // 25% success
+
+      // Two fresh ready tasks at the same (default) priority — `created_at ASC`
+      // would dispatch `flakyTask` first, but the reliability tie-breaker flips it.
+      const flakyTask = teamBoard.createTask({ title: 'flaky work', assignee: 'flaky' });
+      const reliableTask = teamBoard.createTask({ title: 'reliable work', assignee: 'reliable' });
+      teamBoard.updateStatus(flakyTask.id, 'ready');
+      teamBoard.updateStatus(reliableTask.id, 'ready');
+
+      const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+      const dispatcher = new Dispatcher({
+        board: teamBoard,
+        supervisor: sup,
+        dispatch,
+        preferReliable: true,
+      });
+
+      await dispatcher.tick();
+      await new Promise((r) => setImmediate(r));
+
+      expect(dispatch).toHaveBeenCalledTimes(2);
+      const order = dispatch.mock.calls.map(([args]) => args.personalityId);
+      expect(order).toEqual(['reliable', 'flaky']);
+    });
+
+    it('does NOT exclude the lower-success member when it is the only one available', async () => {
+      const sup = makeSupervisor({ flaky: { port: 3002, status: 'running' } });
+      seedRecord('flaky', 0, 4); // 0% success — still must be dispatched
+
+      const t = teamBoard.createTask({ title: 'only option', assignee: 'flaky' });
+      teamBoard.updateStatus(t.id, 'ready');
+
+      const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+      const dispatcher = new Dispatcher({
+        board: teamBoard,
+        supervisor: sup,
+        dispatch,
+        preferReliable: true,
+      });
+
+      await dispatcher.tick();
+      await new Promise((r) => setImmediate(r));
+
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch.mock.calls[0]?.[0].personalityId).toBe('flaky');
+      expect(teamBoard.getTask(t.id)?.status).toBe('running');
+    });
+
+    it('priority still dominates the reliability tie-breaker', async () => {
+      const sup = makeSupervisor({
+        reliable: { port: 3001, status: 'running' },
+        flaky: { port: 3002, status: 'running' },
+      });
+      seedRecord('reliable', 4, 0);
+      seedRecord('flaky', 1, 3);
+
+      // The flaky member's task has higher priority — it must still go first.
+      const flakyTask = teamBoard.createTask({
+        title: 'urgent flaky',
+        assignee: 'flaky',
+        priority: 10,
+      });
+      const reliableTask = teamBoard.createTask({ title: 'normal reliable', assignee: 'reliable' });
+      teamBoard.updateStatus(flakyTask.id, 'ready');
+      teamBoard.updateStatus(reliableTask.id, 'ready');
+
+      const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+      const dispatcher = new Dispatcher({
+        board: teamBoard,
+        supervisor: sup,
+        dispatch,
+        preferReliable: true,
+      });
+
+      await dispatcher.tick();
+      await new Promise((r) => setImmediate(r));
+
+      const order = dispatch.mock.calls.map(([args]) => args.personalityId);
+      expect(order).toEqual(['flaky', 'reliable']);
+    });
+
+    it('cold-start: a member with no record sorts after a proven perfect member but ahead of an imperfect one', async () => {
+      const sup = makeSupervisor({
+        perfect: { port: 3001, status: 'running' },
+        newbie: { port: 3002, status: 'running' },
+        imperfect: { port: 3003, status: 'running' },
+      });
+      seedRecord('perfect', 5, 0); // 100%
+      seedRecord('imperfect', 8, 2); // 80%
+      // `newbie` has no record at all.
+
+      // Created imperfect → newbie → perfect, so created_at order is the reverse
+      // of the reliability order we expect.
+      const imperfectTask = teamBoard.createTask({ title: 'i', assignee: 'imperfect' });
+      const newbieTask = teamBoard.createTask({ title: 'n', assignee: 'newbie' });
+      const perfectTask = teamBoard.createTask({ title: 'p', assignee: 'perfect' });
+      teamBoard.updateStatus(imperfectTask.id, 'ready');
+      teamBoard.updateStatus(newbieTask.id, 'ready');
+      teamBoard.updateStatus(perfectTask.id, 'ready');
+
+      const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+      const dispatcher = new Dispatcher({
+        board: teamBoard,
+        supervisor: sup,
+        dispatch,
+        preferReliable: true,
+      });
+
+      await dispatcher.tick();
+      await new Promise((r) => setImmediate(r));
+
+      const order = dispatch.mock.calls.map(([args]) => args.personalityId);
+      expect(order).toEqual(['perfect', 'newbie', 'imperfect']);
+    });
+
+    it('leaves dispatch order untouched when the flag is off (default)', async () => {
+      const sup = makeSupervisor({
+        reliable: { port: 3001, status: 'running' },
+        flaky: { port: 3002, status: 'running' },
+      });
+      seedRecord('reliable', 4, 0);
+      seedRecord('flaky', 1, 3);
+
+      // flakyTask created first → `created_at ASC` dispatches it first with no flag.
+      const flakyTask = teamBoard.createTask({ title: 'flaky work', assignee: 'flaky' });
+      const reliableTask = teamBoard.createTask({ title: 'reliable work', assignee: 'reliable' });
+      teamBoard.updateStatus(flakyTask.id, 'ready');
+      teamBoard.updateStatus(reliableTask.id, 'ready');
+
+      const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+      const dispatcher = new Dispatcher({ board: teamBoard, supervisor: sup, dispatch });
+
+      await dispatcher.tick();
+      await new Promise((r) => setImmediate(r));
+
+      const order = dispatch.mock.calls.map(([args]) => args.personalityId);
+      expect(order).toEqual(['flaky', 'reliable']);
+    });
   });
 });

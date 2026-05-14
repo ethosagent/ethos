@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { KanbanStore } from '../index';
 
@@ -589,6 +590,88 @@ describe('KanbanStore', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Staleness reclaim — stuck `running` tasks get put back to `ready`
+  // ---------------------------------------------------------------------------
+
+  it('heartbeatRun bumps tasks.updated_at so updated_at means "last activity"', async () => {
+    const task = store.createTask({ title: 'long' });
+    store.updateStatus(task.id, 'running');
+    const before = store.getTask(task.id)?.updatedAt ?? 0;
+
+    await new Promise((r) => setTimeout(r, 5));
+    store.heartbeatRun(task.id);
+
+    const after = store.getTask(task.id)?.updatedAt ?? 0;
+    expect(after).toBeGreaterThan(before);
+  });
+
+  it('findStaleRunningTasks returns running tasks whose updated_at is older than the threshold', () => {
+    const fresh = store.createTask({ title: 'fresh' });
+    store.updateStatus(fresh.id, 'running');
+    const stale = store.createTask({ title: 'stale' });
+    store.updateStatus(stale.id, 'running');
+
+    const now = Date.now();
+    // Backdate the stale task's updated_at via direct UPDATE (test-only shortcut).
+    (
+      store as unknown as {
+        db: { prepare: (s: string) => { run: (a: number, b: string) => void } };
+      }
+    ).db
+      .prepare('UPDATE tasks SET updated_at = ? WHERE id = ?')
+      .run(now - 200, stale.id);
+
+    const out = store.findStaleRunningTasks(100, now);
+    expect(out.map((t) => t.id)).toEqual([stale.id]);
+  });
+
+  it('findStaleRunningTasks ignores non-running tasks even if updated_at is old', () => {
+    const ready = store.createTask({ title: 'old ready' });
+    store.updateStatus(ready.id, 'ready');
+    const now = Date.now();
+    (
+      store as unknown as {
+        db: { prepare: (s: string) => { run: (a: number, b: string) => void } };
+      }
+    ).db
+      .prepare('UPDATE tasks SET updated_at = ? WHERE id = ?')
+      .run(now - 10_000, ready.id);
+
+    expect(store.findStaleRunningTasks(100, now)).toEqual([]);
+  });
+
+  it('reclaimTask ends the open run (cancelled) and sets the task back to ready', () => {
+    const task = store.createTask({ title: 'stuck' });
+    store.updateStatus(task.id, 'running');
+
+    const reclaimed = store.reclaimTask(task.id, 'orphan_stale');
+    expect(reclaimed.status).toBe('ready');
+    expect(reclaimed.currentRunId).toBeNull();
+
+    const run = store.listRuns(task.id)[0];
+    expect(run?.outcome).toBe('cancelled');
+    expect(run?.endedAt).not.toBeNull();
+  });
+
+  it('reclaimTask records the reason in the status_changed audit event', () => {
+    const task = store.createTask({ title: 'stuck' });
+    store.updateStatus(task.id, 'running');
+
+    store.reclaimTask(task.id, 'orphan_no_owner', 'dispatcher');
+    const events = store.listEvents(task.id);
+    const statusChange = events.find((e) => e.kind === 'status_changed' && e.data.to === 'ready');
+    expect(statusChange).toBeDefined();
+    expect(statusChange?.data.reason).toBe('orphan_no_owner');
+    expect(statusChange?.actor).toBe('dispatcher');
+  });
+
+  it('reclaimTask on a task with no open run sets it to ready without throwing', () => {
+    const task = store.createTask({ title: 'no run' });
+    const reclaimed = store.reclaimTask(task.id, 'orphan_stale');
+    expect(reclaimed.status).toBe('ready');
+  });
+
+  // ---------------------------------------------------------------------------
   // Cycle prevention — deterministic stress
   // ---------------------------------------------------------------------------
 
@@ -638,6 +721,1319 @@ describe('KanbanStore', () => {
           stack.push(c.id);
         }
       }
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Retry budgets
+  // ---------------------------------------------------------------------------
+
+  it('createTask defaults retryCount to 0 and maxRetries to null (unlimited)', () => {
+    const task = store.createTask({ title: 'work' });
+    expect(task.retryCount).toBe(0);
+    expect(task.maxRetries).toBeNull();
+  });
+
+  it('createTask persists an explicit maxRetries', () => {
+    const task = store.createTask({ title: 'work', maxRetries: 2 });
+    expect(task.maxRetries).toBe(2);
+    expect(store.getTask(task.id)?.maxRetries).toBe(2);
+  });
+
+  it('createTask rejects a negative or non-integer maxRetries', () => {
+    expect(() => store.createTask({ title: 'work', maxRetries: -1 })).toThrow(/non-negative/);
+    expect(() => store.createTask({ title: 'work', maxRetries: 1.5 })).toThrow(/non-negative/);
+  });
+
+  it('updateStatus increments retryCount on re-claim but not on the first claim', () => {
+    const task = store.createTask({ title: 'work' });
+
+    // First claim — no prior runs, so this is not a re-claim.
+    const firstClaim = store.updateStatus(task.id, 'running', 'dispatched');
+    expect(firstClaim.retryCount).toBe(0);
+    store.blockRun(task.id, 'stalled');
+
+    // Second claim — a prior run exists, so this counts as a re-claim.
+    const reclaim = store.updateStatus(task.id, 'running', 'dispatched');
+    expect(reclaim.retryCount).toBe(1);
+  });
+
+  it('updateStatus keeps re-claiming forever when maxRetries is null (unlimited)', () => {
+    const task = store.createTask({ title: 'work' });
+    for (let i = 0; i < 5; i++) {
+      const claimed = store.updateStatus(task.id, 'running', 'dispatched');
+      expect(claimed.status).toBe('running');
+      store.blockRun(task.id, `stalled ${i}`);
+    }
+    expect(store.getTask(task.id)?.retryCount).toBe(4);
+  });
+
+  it('fails a task with maxRetries=2 on the re-claim that exceeds the budget, with the typed reason', () => {
+    const task = store.createTask({ title: 'impossible', maxRetries: 2 });
+
+    // Claim 1 (retryCount stays 0 — first claim, not a re-claim), fails.
+    expect(store.updateStatus(task.id, 'running', 'dispatched').status).toBe('running');
+    store.blockRun(task.id, 'failed attempt 1');
+
+    // Claim 2 (re-claim -> retryCount 1, within budget), fails.
+    expect(store.updateStatus(task.id, 'running', 'dispatched').status).toBe('running');
+    store.blockRun(task.id, 'failed attempt 2');
+
+    // Claim 3 (re-claim -> retryCount 2, 2 <= 2 still within budget), fails.
+    expect(store.updateStatus(task.id, 'running', 'dispatched').status).toBe('running');
+    store.blockRun(task.id, 'failed attempt 3');
+
+    // Claim 4 (re-claim -> retryCount 3, 3 > 2): budget exhausted. updateStatus
+    // itself lands the task in 'failed' instead of opening another run.
+    const failed = store.updateStatus(task.id, 'running', 'dispatched');
+    expect(failed.status).toBe('failed');
+    expect(failed.currentRunId).toBeNull();
+    expect(failed.retryCount).toBe(3);
+    // No fourth run was opened — the budget guard fired before the run insert.
+    expect(store.listRuns(task.id)).toHaveLength(3);
+
+    // The transition emits status_changed with the typed reason.
+    const events = store.listEvents(task.id);
+    const statusEvents = events.filter((e) => e.kind === 'status_changed');
+    const last = statusEvents[statusEvents.length - 1];
+    expect(last?.data.to).toBe('failed');
+    expect(last?.data.reason).toBe('retry_budget_exhausted');
+  });
+
+  it('a task with maxRetries=0 fails on its first re-claim', () => {
+    const task = store.createTask({ title: 'one-shot', maxRetries: 0 });
+    expect(store.updateStatus(task.id, 'running').status).toBe('running'); // first claim ok
+    store.blockRun(task.id, 'failed once');
+    // First re-claim: retryCount would go to 1 > 0 — fails immediately.
+    expect(store.updateStatus(task.id, 'running').status).toBe('failed');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Schema migration v1 -> v2
+  // ---------------------------------------------------------------------------
+
+  it('migrates a v1 database to v2: data survives, new columns appear, failed becomes insertable', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-mig-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      // Hand-build the FULL v1 database: every table, index, and trigger that
+      // shipped at user_version=1, populated with rows in each FK child table
+      // (task_comments / task_links / task_runs / task_events). The riskiest
+      // part of the migration is the tasks-table rebuild while those FKs point
+      // at it, so the fixture must exercise that surface.
+      const v1 = new Database(dbPath);
+      v1.pragma('journal_mode = WAL');
+      v1.pragma('foreign_keys = ON');
+      v1.exec(`
+        CREATE TABLE tasks (
+          id              TEXT PRIMARY KEY,
+          title           TEXT NOT NULL,
+          body            TEXT NOT NULL DEFAULT '',
+          assignee        TEXT,
+          status          TEXT NOT NULL
+                          CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled')),
+          priority        INTEGER NOT NULL DEFAULT 0,
+          workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
+                          CHECK (workspace_mode IN ('scratch','worktree','dir')),
+          workspace_path  TEXT,
+          scheduled_for   INTEGER,
+          idempotency_key TEXT,
+          current_run_id  TEXT,
+          created_at      INTEGER NOT NULL,
+          updated_at      INTEGER NOT NULL
+        ) STRICT;
+        CREATE UNIQUE INDEX tasks_idem ON tasks(idempotency_key)
+          WHERE idempotency_key IS NOT NULL;
+        CREATE INDEX tasks_status_assignee ON tasks(status, assignee);
+        CREATE INDEX tasks_scheduled ON tasks(scheduled_for)
+          WHERE scheduled_for IS NOT NULL;
+
+        CREATE TABLE task_comments (
+          id         TEXT PRIMARY KEY,
+          task_id    TEXT NOT NULL,
+          author     TEXT NOT NULL,
+          body       TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_comments_task ON task_comments(task_id, created_at);
+
+        CREATE TABLE task_links (
+          parent_id TEXT NOT NULL,
+          child_id  TEXT NOT NULL,
+          PRIMARY KEY (parent_id, child_id),
+          FOREIGN KEY (parent_id) REFERENCES tasks(id) ON DELETE CASCADE,
+          FOREIGN KEY (child_id)  REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_links_child ON task_links(child_id);
+
+        CREATE TABLE task_runs (
+          id                TEXT PRIMARY KEY,
+          task_id           TEXT NOT NULL,
+          started_at        INTEGER NOT NULL,
+          ended_at          INTEGER,
+          outcome           TEXT CHECK (outcome IS NULL OR outcome IN ('completed','blocked','stalled','cancelled')),
+          summary           TEXT,
+          last_heartbeat_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_runs_task ON task_runs(task_id, started_at);
+        CREATE UNIQUE INDEX task_runs_open_one ON task_runs(task_id)
+          WHERE ended_at IS NULL;
+
+        CREATE TABLE task_events (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          task_id    TEXT NOT NULL,
+          kind       TEXT NOT NULL
+                     CHECK (kind IN ('created','status_changed','commented','assigned','linked','unlinked','run_started','run_completed','heartbeat','archived')),
+          actor      TEXT NOT NULL,
+          data_json  TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_events_task ON task_events(task_id, created_at);
+        CREATE INDEX task_events_recent ON task_events(created_at);
+
+        CREATE VIRTUAL TABLE task_fts USING fts5(
+          task_id UNINDEXED, title, body, comments, tokenize = 'porter'
+        );
+        CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+          INSERT INTO task_fts(task_id, title, body, comments)
+          VALUES (new.id, new.title, new.body, '');
+        END;
+        CREATE TRIGGER tasks_fts_au AFTER UPDATE OF title, body ON tasks BEGIN
+          UPDATE task_fts SET title = new.title, body = new.body
+          WHERE task_id = new.id;
+        END;
+        CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+          DELETE FROM task_fts WHERE task_id = old.id;
+        END;
+        CREATE TRIGGER comments_fts_ai AFTER INSERT ON task_comments BEGIN
+          UPDATE task_fts
+          SET comments = (
+            SELECT COALESCE(GROUP_CONCAT(body, ' '), '')
+            FROM task_comments WHERE task_id = new.task_id
+          )
+          WHERE task_id = new.task_id;
+        END;
+
+        INSERT INTO tasks (id, title, body, assignee, status, priority, workspace_mode,
+                           current_run_id, created_at, updated_at)
+          VALUES
+            ('t_parent', 'legacy parent', 'pre-migration body', NULL, 'ready', 0, 'scratch', NULL, 900, 900),
+            ('t_seed', 'legacy task', 'pre-migration body', 'engineer', 'running', 1, 'scratch', 'r_open', 1000, 1000);
+        INSERT INTO task_links (parent_id, child_id) VALUES ('t_parent', 't_seed');
+        INSERT INTO task_comments (id, task_id, author, body, created_at)
+          VALUES ('c_1', 't_seed', 'engineer', 'a legacy comment', 1100);
+        INSERT INTO task_runs (id, task_id, started_at, ended_at, outcome, summary, last_heartbeat_at)
+          VALUES
+            ('r_done', 't_seed', 1000, 1050, 'blocked', 'first attempt', 1050),
+            ('r_open', 't_seed', 1200, NULL, NULL, NULL, 1200);
+        INSERT INTO task_events (task_id, kind, actor, data_json, created_at)
+          VALUES ('t_seed', 'created', 'engineer', '{}', 1000);
+      `);
+      v1.pragma('user_version = 1');
+      v1.close();
+
+      // Opening with the current code runs the v1 -> v2 migration.
+      const store = new KanbanStore(dbPath);
+      try {
+        const seed = store.getTask('t_seed');
+        expect(seed).not.toBeNull();
+        expect(seed?.title).toBe('legacy task');
+        expect(seed?.body).toBe('pre-migration body');
+        expect(seed?.assignee).toBe('engineer');
+        expect(seed?.priority).toBe(1);
+        expect(seed?.status).toBe('running');
+        expect(seed?.currentRunId).toBe('r_open');
+        // New columns are present with their backfill defaults.
+        expect(seed?.maxRetries).toBeNull();
+        expect(seed?.retryCount).toBe(0);
+
+        // FK child rows survive the tasks-table rebuild.
+        expect(store.listComments('t_seed').map((c) => c.id)).toEqual(['c_1']);
+        expect(store.listRuns('t_seed').map((r) => r.id)).toEqual(['r_done', 'r_open']);
+        expect(store.getParents('t_seed').map((p) => p.id)).toEqual(['t_parent']);
+        expect(store.listEvents('t_seed').map((e) => e.kind)).toContain('created');
+
+        // The widened CHECK accepts the new 'failed' status: a re-claim past
+        // budget on the post-migration schema lands the task in 'failed'.
+        const failable = store.createTask({ title: 'will fail', maxRetries: 0 });
+        store.updateStatus(failable.id, 'running');
+        store.blockRun(failable.id, 'attempt 1');
+        expect(store.updateStatus(failable.id, 'running').status).toBe('failed');
+
+        // FTS triggers were rebuilt — search over title still works.
+        expect(
+          store
+            .listTasks({ q: 'legacy' })
+            .map((t) => t.id)
+            .sort(),
+        ).toEqual(['t_parent', 't_seed'].sort());
+      } finally {
+        store.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rolls the v1->v2 migration back atomically when it fails — no half-migrated state', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-mig-fail-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      // A v1 DB with an orphan task_comments row (FK points at a missing task).
+      // The migration's `foreign_key_check` catches it and throws — which must
+      // roll the WHOLE transaction back: no new columns, user_version still 1.
+      const v1 = new Database(dbPath);
+      v1.pragma('journal_mode = WAL');
+      // foreign_keys OFF so the orphan row can be inserted in the first place.
+      v1.pragma('foreign_keys = OFF');
+      v1.exec(`
+        CREATE TABLE tasks (
+          id              TEXT PRIMARY KEY,
+          title           TEXT NOT NULL,
+          body            TEXT NOT NULL DEFAULT '',
+          assignee        TEXT,
+          status          TEXT NOT NULL
+                          CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled')),
+          priority        INTEGER NOT NULL DEFAULT 0,
+          workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
+                          CHECK (workspace_mode IN ('scratch','worktree','dir')),
+          workspace_path  TEXT,
+          scheduled_for   INTEGER,
+          idempotency_key TEXT,
+          current_run_id  TEXT,
+          created_at      INTEGER NOT NULL,
+          updated_at      INTEGER NOT NULL
+        ) STRICT;
+        CREATE TABLE task_comments (
+          id         TEXT PRIMARY KEY,
+          task_id    TEXT NOT NULL,
+          author     TEXT NOT NULL,
+          body       TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE VIRTUAL TABLE task_fts USING fts5(
+          task_id UNINDEXED, title, body, comments, tokenize = 'porter'
+        );
+        INSERT INTO tasks (id, title, status, created_at, updated_at)
+          VALUES ('t_ok', 'fine', 'todo', 1, 1);
+        INSERT INTO task_comments (id, task_id, author, body, created_at)
+          VALUES ('c_orphan', 't_missing', 'someone', 'dangling', 2);
+      `);
+      v1.pragma('user_version = 1');
+      v1.close();
+
+      // The migration must throw — and leave nothing behind.
+      expect(() => new KanbanStore(dbPath)).toThrow(/foreign-key violation/);
+
+      // Inspect the raw DB: still v1, no retry columns, original rows intact.
+      const after = new Database(dbPath);
+      try {
+        const version = (after.pragma('user_version') as Array<{ user_version: number }>)[0]
+          ?.user_version;
+        expect(version).toBe(1);
+        const cols = (after.pragma('table_info(tasks)') as Array<{ name: string }>).map(
+          (c) => c.name,
+        );
+        expect(cols).not.toContain('max_retries');
+        expect(cols).not.toContain('retry_count');
+        const taskCount = (after.prepare('SELECT COUNT(*) AS n FROM tasks').get() as { n: number })
+          .n;
+        expect(taskCount).toBe(1);
+      } finally {
+        after.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to open a database whose user_version is newer than the code', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-ver-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      const future = new Database(dbPath);
+      future.pragma('user_version = 5');
+      future.close();
+      expect(() => new KanbanStore(dbPath)).toThrow(/newer than code/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Schema migration v2 -> v3
+  // ---------------------------------------------------------------------------
+
+  // Hand-builds a full v2 database (the shape that shipped at user_version=2),
+  // populated across every FK child table so the tasks-table rebuild surface is
+  // exercised. Caller picks the path; nothing is set up beyond the raw schema.
+  function buildV2Db(dbPath: string): void {
+    const v2 = new Database(dbPath);
+    v2.pragma('journal_mode = WAL');
+    v2.pragma('foreign_keys = ON');
+    v2.exec(`
+      CREATE TABLE tasks (
+        id              TEXT PRIMARY KEY,
+        title           TEXT NOT NULL,
+        body            TEXT NOT NULL DEFAULT '',
+        assignee        TEXT,
+        status          TEXT NOT NULL
+                        CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled','failed')),
+        priority        INTEGER NOT NULL DEFAULT 0,
+        workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
+                        CHECK (workspace_mode IN ('scratch','worktree','dir')),
+        workspace_path  TEXT,
+        scheduled_for   INTEGER,
+        idempotency_key TEXT,
+        current_run_id  TEXT,
+        max_retries     INTEGER CHECK (max_retries IS NULL OR max_retries >= 0),
+        retry_count     INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL
+      ) STRICT;
+      CREATE UNIQUE INDEX tasks_idem ON tasks(idempotency_key)
+        WHERE idempotency_key IS NOT NULL;
+      CREATE INDEX tasks_status_assignee ON tasks(status, assignee);
+      CREATE INDEX tasks_scheduled ON tasks(scheduled_for)
+        WHERE scheduled_for IS NOT NULL;
+
+      CREATE TABLE task_comments (
+        id         TEXT PRIMARY KEY,
+        task_id    TEXT NOT NULL,
+        author     TEXT NOT NULL,
+        body       TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+      ) STRICT;
+      CREATE INDEX task_comments_task ON task_comments(task_id, created_at);
+
+      CREATE TABLE task_links (
+        parent_id TEXT NOT NULL,
+        child_id  TEXT NOT NULL,
+        PRIMARY KEY (parent_id, child_id),
+        FOREIGN KEY (parent_id) REFERENCES tasks(id) ON DELETE CASCADE,
+        FOREIGN KEY (child_id)  REFERENCES tasks(id) ON DELETE CASCADE
+      ) STRICT;
+      CREATE INDEX task_links_child ON task_links(child_id);
+
+      CREATE TABLE task_runs (
+        id                TEXT PRIMARY KEY,
+        task_id           TEXT NOT NULL,
+        started_at        INTEGER NOT NULL,
+        ended_at          INTEGER,
+        outcome           TEXT CHECK (outcome IS NULL OR outcome IN ('completed','blocked','stalled','cancelled')),
+        summary           TEXT,
+        last_heartbeat_at INTEGER NOT NULL,
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+      ) STRICT;
+      CREATE INDEX task_runs_task ON task_runs(task_id, started_at);
+      CREATE UNIQUE INDEX task_runs_open_one ON task_runs(task_id)
+        WHERE ended_at IS NULL;
+
+      CREATE TABLE task_events (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id    TEXT NOT NULL,
+        kind       TEXT NOT NULL
+                   CHECK (kind IN ('created','status_changed','commented','assigned','linked','unlinked','run_started','run_completed','heartbeat','archived')),
+        actor      TEXT NOT NULL,
+        data_json  TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+      ) STRICT;
+      CREATE INDEX task_events_task ON task_events(task_id, created_at);
+      CREATE INDEX task_events_recent ON task_events(created_at);
+
+      CREATE VIRTUAL TABLE task_fts USING fts5(
+        task_id UNINDEXED, title, body, comments, tokenize = 'porter'
+      );
+      CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+        INSERT INTO task_fts(task_id, title, body, comments)
+        VALUES (new.id, new.title, new.body, '');
+      END;
+      CREATE TRIGGER tasks_fts_au AFTER UPDATE OF title, body ON tasks BEGIN
+        UPDATE task_fts SET title = new.title, body = new.body
+        WHERE task_id = new.id;
+      END;
+      CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+        DELETE FROM task_fts WHERE task_id = old.id;
+      END;
+      CREATE TRIGGER comments_fts_ai AFTER INSERT ON task_comments BEGIN
+        UPDATE task_fts
+        SET comments = (
+          SELECT COALESCE(GROUP_CONCAT(body, ' '), '')
+          FROM task_comments WHERE task_id = new.task_id
+        )
+        WHERE task_id = new.task_id;
+      END;
+
+      INSERT INTO tasks (id, title, body, assignee, status, priority, workspace_mode,
+                         current_run_id, max_retries, retry_count, created_at, updated_at)
+        VALUES
+          ('t_parent', 'legacy parent', 'pre-migration body', NULL, 'ready', 0, 'scratch', NULL, NULL, 0, 900, 900),
+          ('t_seed', 'legacy task', 'pre-migration body', 'engineer', 'running', 1, 'scratch', 'r_open', 5, 2, 1000, 1000);
+      INSERT INTO task_links (parent_id, child_id) VALUES ('t_parent', 't_seed');
+      INSERT INTO task_comments (id, task_id, author, body, created_at)
+        VALUES ('c_1', 't_seed', 'engineer', 'a legacy comment', 1100);
+      INSERT INTO task_runs (id, task_id, started_at, ended_at, outcome, summary, last_heartbeat_at)
+        VALUES
+          ('r_done', 't_seed', 1000, 1050, 'blocked', 'first attempt', 1050),
+          ('r_open', 't_seed', 1200, NULL, NULL, NULL, 1200);
+      INSERT INTO task_events (task_id, kind, actor, data_json, created_at)
+        VALUES ('t_seed', 'created', 'engineer', '{}', 1000);
+    `);
+    v2.pragma('user_version = 2');
+    v2.close();
+  }
+
+  it('migrates a v2 database to v3: data survives, acceptance_criteria appears, needs_revision becomes insertable', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-mig23-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      buildV2Db(dbPath);
+
+      // Opening with the current code runs the v2 -> v3 migration.
+      const store = new KanbanStore(dbPath);
+      try {
+        const seed = store.getTask('t_seed');
+        expect(seed).not.toBeNull();
+        expect(seed?.title).toBe('legacy task');
+        expect(seed?.body).toBe('pre-migration body');
+        expect(seed?.assignee).toBe('engineer');
+        expect(seed?.priority).toBe(1);
+        expect(seed?.status).toBe('running');
+        expect(seed?.currentRunId).toBe('r_open');
+        // v2 columns survive.
+        expect(seed?.maxRetries).toBe(5);
+        expect(seed?.retryCount).toBe(2);
+        // The new v3 column is present, backfilled to null.
+        expect(seed?.acceptanceCriteria).toBeNull();
+
+        // FK child rows survive the tasks-table rebuild.
+        expect(store.listComments('t_seed').map((c) => c.id)).toEqual(['c_1']);
+        expect(store.listRuns('t_seed').map((r) => r.id)).toEqual(['r_done', 'r_open']);
+        expect(store.getParents('t_seed').map((p) => p.id)).toEqual(['t_parent']);
+        expect(store.listEvents('t_seed').map((e) => e.kind)).toContain('created');
+
+        // The widened CHECK accepts the new 'needs_revision' status.
+        const t = store.createTask({ title: 'will need revision' });
+        expect(store.updateStatus(t.id, 'needs_revision', 'missing tests').status).toBe(
+          'needs_revision',
+        );
+
+        // FTS triggers were rebuilt — search over title still works.
+        expect(
+          store
+            .listTasks({ q: 'legacy' })
+            .map((t) => t.id)
+            .sort(),
+        ).toEqual(['t_parent', 't_seed'].sort());
+      } finally {
+        store.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates a v1 database through the stepwise v1->v2->v3 chain (columns + statuses)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-mig13-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      // A minimal v1 database (no retry columns, narrow status CHECK).
+      const v1 = new Database(dbPath);
+      v1.pragma('journal_mode = WAL');
+      v1.pragma('foreign_keys = ON');
+      v1.exec(`
+        CREATE TABLE tasks (
+          id              TEXT PRIMARY KEY,
+          title           TEXT NOT NULL,
+          body            TEXT NOT NULL DEFAULT '',
+          assignee        TEXT,
+          status          TEXT NOT NULL
+                          CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled')),
+          priority        INTEGER NOT NULL DEFAULT 0,
+          workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
+                          CHECK (workspace_mode IN ('scratch','worktree','dir')),
+          workspace_path  TEXT,
+          scheduled_for   INTEGER,
+          idempotency_key TEXT,
+          current_run_id  TEXT,
+          created_at      INTEGER NOT NULL,
+          updated_at      INTEGER NOT NULL
+        ) STRICT;
+        CREATE UNIQUE INDEX tasks_idem ON tasks(idempotency_key)
+          WHERE idempotency_key IS NOT NULL;
+        CREATE INDEX tasks_status_assignee ON tasks(status, assignee);
+        CREATE INDEX tasks_scheduled ON tasks(scheduled_for)
+          WHERE scheduled_for IS NOT NULL;
+        CREATE TABLE task_comments (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, author TEXT NOT NULL,
+          body TEXT NOT NULL, created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_comments_task ON task_comments(task_id, created_at);
+        CREATE TABLE task_links (
+          parent_id TEXT NOT NULL, child_id TEXT NOT NULL,
+          PRIMARY KEY (parent_id, child_id),
+          FOREIGN KEY (parent_id) REFERENCES tasks(id) ON DELETE CASCADE,
+          FOREIGN KEY (child_id)  REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_links_child ON task_links(child_id);
+        CREATE TABLE task_runs (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, started_at INTEGER NOT NULL,
+          ended_at INTEGER,
+          outcome TEXT CHECK (outcome IS NULL OR outcome IN ('completed','blocked','stalled','cancelled')),
+          summary TEXT, last_heartbeat_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_runs_task ON task_runs(task_id, started_at);
+        CREATE UNIQUE INDEX task_runs_open_one ON task_runs(task_id)
+          WHERE ended_at IS NULL;
+        CREATE TABLE task_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+          kind TEXT NOT NULL
+               CHECK (kind IN ('created','status_changed','commented','assigned','linked','unlinked','run_started','run_completed','heartbeat','archived')),
+          actor TEXT NOT NULL, data_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_events_task ON task_events(task_id, created_at);
+        CREATE INDEX task_events_recent ON task_events(created_at);
+        CREATE VIRTUAL TABLE task_fts USING fts5(
+          task_id UNINDEXED, title, body, comments, tokenize = 'porter'
+        );
+        CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+          INSERT INTO task_fts(task_id, title, body, comments)
+          VALUES (new.id, new.title, new.body, '');
+        END;
+        CREATE TRIGGER tasks_fts_au AFTER UPDATE OF title, body ON tasks BEGIN
+          UPDATE task_fts SET title = new.title, body = new.body WHERE task_id = new.id;
+        END;
+        CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+          DELETE FROM task_fts WHERE task_id = old.id;
+        END;
+        CREATE TRIGGER comments_fts_ai AFTER INSERT ON task_comments BEGIN
+          UPDATE task_fts
+          SET comments = (
+            SELECT COALESCE(GROUP_CONCAT(body, ' '), '')
+            FROM task_comments WHERE task_id = new.task_id
+          )
+          WHERE task_id = new.task_id;
+        END;
+        INSERT INTO tasks (id, title, body, status, priority, workspace_mode, created_at, updated_at)
+          VALUES ('t_v1', 'v1 task', 'v1 body', 'ready', 0, 'scratch', 100, 100);
+      `);
+      v1.pragma('user_version = 1');
+      v1.close();
+
+      // Opening runs migrateV1ToV2 then migrateV2ToV3 in sequence.
+      const store = new KanbanStore(dbPath);
+      try {
+        const t = store.getTask('t_v1');
+        expect(t).not.toBeNull();
+        expect(t?.title).toBe('v1 task');
+        expect(t?.body).toBe('v1 body');
+        // v2 columns present.
+        expect(t?.maxRetries).toBeNull();
+        expect(t?.retryCount).toBe(0);
+        // v3 column present.
+        expect(t?.acceptanceCriteria).toBeNull();
+        // Both widened statuses are insertable.
+        expect(store.updateStatus('t_v1', 'needs_revision', 'x').status).toBe('needs_revision');
+      } finally {
+        store.close();
+      }
+
+      // The stepwise chain runs v1->v2->v3 then the additive v3->v4 bump, so the
+      // DB lands at the current code version (4). The dedicated v1->v4 test
+      // asserts the full chain; here we just confirm the chain doesn't stall.
+      const raw = new Database(dbPath);
+      try {
+        const version = (raw.pragma('user_version') as Array<{ user_version: number }>)[0]
+          ?.user_version;
+        expect(version).toBe(4);
+      } finally {
+        raw.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rolls the v2->v3 migration back atomically when it fails — no half-migrated state', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-mig23-fail-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      // Build a v2 DB, then inject an orphan task_comments row (FK points at a
+      // missing task) with foreign_keys OFF. The migration's foreign_key_check
+      // catches it and throws — rolling the WHOLE transaction back.
+      buildV2Db(dbPath);
+      const inject = new Database(dbPath);
+      inject.pragma('foreign_keys = OFF');
+      inject.exec(`
+        INSERT INTO task_comments (id, task_id, author, body, created_at)
+          VALUES ('c_orphan', 't_missing', 'someone', 'dangling', 2);
+      `);
+      inject.close();
+
+      expect(() => new KanbanStore(dbPath)).toThrow(/foreign-key violation/);
+
+      // Inspect the raw DB: still v2, no acceptance_criteria column, rows intact.
+      const after = new Database(dbPath);
+      try {
+        const version = (after.pragma('user_version') as Array<{ user_version: number }>)[0]
+          ?.user_version;
+        expect(version).toBe(2);
+        const cols = (after.pragma('table_info(tasks)') as Array<{ name: string }>).map(
+          (c) => c.name,
+        );
+        expect(cols).not.toContain('acceptance_criteria');
+        const taskCount = (after.prepare('SELECT COUNT(*) AS n FROM tasks').get() as { n: number })
+          .n;
+        expect(taskCount).toBe(2);
+      } finally {
+        after.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('createTask accepts acceptanceCriteria and round-trips it; defaults to null', () => {
+    const withCriteria = store.createTask({
+      title: 'has criteria',
+      acceptanceCriteria: 'must contain DONE',
+    });
+    expect(withCriteria.acceptanceCriteria).toBe('must contain DONE');
+    expect(store.getTask(withCriteria.id)?.acceptanceCriteria).toBe('must contain DONE');
+
+    const without = store.createTask({ title: 'no criteria' });
+    expect(without.acceptanceCriteria).toBeNull();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 5 — team member stats
+  // ---------------------------------------------------------------------------
+
+  describe('team member stats', () => {
+    function teamStore() {
+      return new KanbanStore(':memory:', { teamId: 'team-a' });
+    }
+
+    it('increments tickets_completed when a claimed task reaches done', () => {
+      const s = teamStore();
+      try {
+        const t = s.createTask({ title: 'ship it', assignee: 'engineer' });
+        s.updateStatus(t.id, 'running', undefined, 'engineer');
+        s.completeRun(t.id, 'done', 'engineer');
+        const stats = s.getMemberStats();
+        expect(stats.get('engineer')).toMatchObject({
+          teamId: 'team-a',
+          memberId: 'engineer',
+          ticketsCompleted: 1,
+          ticketsFailed: 0,
+          ticketsOrphaned: 0,
+        });
+        expect(stats.get('engineer')?.lastUpdatedAt).toBeGreaterThan(0);
+      } finally {
+        s.close();
+      }
+    });
+
+    it('increments tickets_failed when a claimed task reaches failed via budget exhaustion', () => {
+      const s = teamStore();
+      try {
+        const t = s.createTask({ title: 'flaky', assignee: 'engineer', maxRetries: 0 });
+        s.updateStatus(t.id, 'running', undefined, 'engineer');
+        s.blockRun(t.id, 'attempt 1', 'engineer');
+        // Re-claim past budget -> failed.
+        expect(s.updateStatus(t.id, 'running', undefined, 'engineer').status).toBe('failed');
+        expect(s.getMemberStats().get('engineer')).toMatchObject({
+          ticketsCompleted: 0,
+          ticketsFailed: 1,
+          ticketsOrphaned: 0,
+        });
+      } finally {
+        s.close();
+      }
+    });
+
+    it('increments tickets_failed when a claimed task reaches needs_revision', () => {
+      const s = teamStore();
+      try {
+        const t = s.createTask({ title: 'needs work', assignee: 'engineer' });
+        s.updateStatus(t.id, 'running', undefined, 'engineer');
+        s.updateStatus(t.id, 'needs_revision', 'missing tests', 'reviewer');
+        expect(s.getMemberStats().get('engineer')).toMatchObject({
+          ticketsCompleted: 0,
+          ticketsFailed: 1,
+          ticketsOrphaned: 0,
+        });
+      } finally {
+        s.close();
+      }
+    });
+
+    it('increments tickets_orphaned when a claimed task is reclaimed', () => {
+      const s = teamStore();
+      try {
+        const t = s.createTask({ title: 'stuck', assignee: 'engineer' });
+        s.updateStatus(t.id, 'running', undefined, 'engineer');
+        s.reclaimTask(t.id, 'orphan_stale', 'dispatcher');
+        expect(s.getMemberStats().get('engineer')).toMatchObject({
+          ticketsCompleted: 0,
+          ticketsFailed: 0,
+          ticketsOrphaned: 1,
+        });
+      } finally {
+        s.close();
+      }
+    });
+
+    it('does NOT increment tickets_orphaned when a non-running task is reclaimed', () => {
+      // `reclaimTask` flips any status to `ready`, but only a task that was
+      // actually `running` is a real orphan. Reclaiming a `ready` task is a
+      // re-queue and must not inflate the member's orphan tally.
+      const s = teamStore();
+      try {
+        const t = s.createTask({ title: 'never ran', assignee: 'engineer' });
+        s.updateStatus(t.id, 'ready', undefined, 'engineer');
+        s.reclaimTask(t.id, 'orphan_stale', 'dispatcher');
+        expect(s.getTask(t.id)?.status).toBe('ready');
+        expect(s.getMemberStats().get('engineer')).toBeUndefined();
+      } finally {
+        s.close();
+      }
+    });
+
+    it('accumulates stats across multiple terminal transitions per member', () => {
+      const s = teamStore();
+      try {
+        for (let i = 0; i < 3; i++) {
+          const t = s.createTask({ title: `done ${i}`, assignee: 'engineer' });
+          s.updateStatus(t.id, 'running', undefined, 'engineer');
+          s.completeRun(t.id, 'ok', 'engineer');
+        }
+        const failed = s.createTask({ title: 'fail', assignee: 'engineer' });
+        s.updateStatus(failed.id, 'running', undefined, 'engineer');
+        s.updateStatus(failed.id, 'needs_revision', 'nope', 'reviewer');
+
+        const orphaned = s.createTask({ title: 'orphan', assignee: 'researcher' });
+        s.updateStatus(orphaned.id, 'running', undefined, 'researcher');
+        s.reclaimTask(orphaned.id, 'orphan_no_owner', 'dispatcher');
+
+        const stats = s.getMemberStats();
+        expect(stats.get('engineer')).toMatchObject({
+          ticketsCompleted: 3,
+          ticketsFailed: 1,
+          ticketsOrphaned: 0,
+        });
+        expect(stats.get('researcher')).toMatchObject({
+          ticketsCompleted: 0,
+          ticketsFailed: 0,
+          ticketsOrphaned: 1,
+        });
+      } finally {
+        s.close();
+      }
+    });
+
+    it('skips the stats update entirely when teamId is unset (solo board)', () => {
+      // Default constructor — no teamId. Terminal transitions must not write rows.
+      const t = store.createTask({ title: 'solo', assignee: 'engineer' });
+      store.updateStatus(t.id, 'running', undefined, 'engineer');
+      store.completeRun(t.id, 'done', 'engineer');
+      expect(store.getMemberStats().size).toBe(0);
+    });
+
+    it('skips the stats update when a transitioning task has a null assignee', () => {
+      const s = teamStore();
+      try {
+        // A goal-style task with no assignee that somehow lands in a terminal state.
+        const t = s.createTask({ title: 'unassigned' });
+        s.updateStatus(t.id, 'needs_revision', 'no owner', 'reviewer');
+        expect(s.getMemberStats().size).toBe(0);
+      } finally {
+        s.close();
+      }
+    });
+
+    it('does not double-count: a non-terminal status change writes no stats', () => {
+      const s = teamStore();
+      try {
+        const t = s.createTask({ title: 'moving', assignee: 'engineer' });
+        s.updateStatus(t.id, 'ready', undefined, 'engineer');
+        s.updateStatus(t.id, 'running', undefined, 'engineer');
+        s.updateStatus(t.id, 'blocked', 'paused', 'engineer');
+        expect(s.getMemberStats().size).toBe(0);
+      } finally {
+        s.close();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Schema migration v3 -> v4 (team_member_stats — additive table)
+  // ---------------------------------------------------------------------------
+
+  it('refuses to open a database whose user_version is newer than v4', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-ver5-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      const future = new Database(dbPath);
+      future.pragma('user_version = 5');
+      future.close();
+      expect(() => new KanbanStore(dbPath)).toThrow(/newer than code/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a fresh database opens at user_version 4 with the team_member_stats table', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-fresh4-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      const store = new KanbanStore(dbPath, { teamId: 'team-a' });
+      store.close();
+      const raw = new Database(dbPath);
+      try {
+        const version = (raw.pragma('user_version') as Array<{ user_version: number }>)[0]
+          ?.user_version;
+        expect(version).toBe(4);
+        const tables = (
+          raw
+            .prepare(
+              "SELECT name FROM sqlite_master WHERE type='table' AND name='team_member_stats'",
+            )
+            .all() as Array<{ name: string }>
+        ).map((t) => t.name);
+        expect(tables).toEqual(['team_member_stats']);
+      } finally {
+        raw.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates a v3 database to v4: data survives, team_member_stats becomes usable', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-mig34-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      // Build a v3 DB: same shape the current code creates, stamped at version 3
+      // and missing the team_member_stats table.
+      const v3 = new Database(dbPath);
+      v3.pragma('journal_mode = WAL');
+      v3.pragma('foreign_keys = ON');
+      v3.exec(`
+        CREATE TABLE tasks (
+          id              TEXT PRIMARY KEY,
+          title           TEXT NOT NULL,
+          body            TEXT NOT NULL DEFAULT '',
+          assignee        TEXT,
+          status          TEXT NOT NULL
+                          CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled','failed','needs_revision')),
+          priority        INTEGER NOT NULL DEFAULT 0,
+          workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
+                          CHECK (workspace_mode IN ('scratch','worktree','dir')),
+          workspace_path  TEXT,
+          scheduled_for   INTEGER,
+          idempotency_key TEXT,
+          current_run_id  TEXT,
+          max_retries     INTEGER CHECK (max_retries IS NULL OR max_retries >= 0),
+          retry_count     INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+          acceptance_criteria TEXT,
+          created_at      INTEGER NOT NULL,
+          updated_at      INTEGER NOT NULL
+        ) STRICT;
+        CREATE UNIQUE INDEX tasks_idem ON tasks(idempotency_key)
+          WHERE idempotency_key IS NOT NULL;
+        CREATE INDEX tasks_status_assignee ON tasks(status, assignee);
+        CREATE INDEX tasks_scheduled ON tasks(scheduled_for)
+          WHERE scheduled_for IS NOT NULL;
+        CREATE TABLE task_comments (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, author TEXT NOT NULL,
+          body TEXT NOT NULL, created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_comments_task ON task_comments(task_id, created_at);
+        CREATE TABLE task_links (
+          parent_id TEXT NOT NULL, child_id TEXT NOT NULL,
+          PRIMARY KEY (parent_id, child_id),
+          FOREIGN KEY (parent_id) REFERENCES tasks(id) ON DELETE CASCADE,
+          FOREIGN KEY (child_id)  REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_links_child ON task_links(child_id);
+        CREATE TABLE task_runs (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, started_at INTEGER NOT NULL,
+          ended_at INTEGER,
+          outcome TEXT CHECK (outcome IS NULL OR outcome IN ('completed','blocked','stalled','cancelled')),
+          summary TEXT, last_heartbeat_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_runs_task ON task_runs(task_id, started_at);
+        CREATE UNIQUE INDEX task_runs_open_one ON task_runs(task_id)
+          WHERE ended_at IS NULL;
+        CREATE TABLE task_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+          kind TEXT NOT NULL
+               CHECK (kind IN ('created','status_changed','commented','assigned','linked','unlinked','run_started','run_completed','heartbeat','archived')),
+          actor TEXT NOT NULL, data_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_events_task ON task_events(task_id, created_at);
+        CREATE INDEX task_events_recent ON task_events(created_at);
+        CREATE VIRTUAL TABLE task_fts USING fts5(
+          task_id UNINDEXED, title, body, comments, tokenize = 'porter'
+        );
+        CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+          INSERT INTO task_fts(task_id, title, body, comments)
+          VALUES (new.id, new.title, new.body, '');
+        END;
+        CREATE TRIGGER tasks_fts_au AFTER UPDATE OF title, body ON tasks BEGIN
+          UPDATE task_fts SET title = new.title, body = new.body WHERE task_id = new.id;
+        END;
+        CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+          DELETE FROM task_fts WHERE task_id = old.id;
+        END;
+        CREATE TRIGGER comments_fts_ai AFTER INSERT ON task_comments BEGIN
+          UPDATE task_fts
+          SET comments = (
+            SELECT COALESCE(GROUP_CONCAT(body, ' '), '')
+            FROM task_comments WHERE task_id = new.task_id
+          )
+          WHERE task_id = new.task_id;
+        END;
+        INSERT INTO tasks (id, title, body, status, priority, workspace_mode, assignee, created_at, updated_at)
+          VALUES ('t_v3', 'v3 task', 'v3 body', 'ready', 0, 'scratch', 'engineer', 100, 100);
+      `);
+      v3.pragma('user_version = 3');
+      v3.close();
+
+      // Opening with the current code stamps v4 and creates team_member_stats.
+      const store = new KanbanStore(dbPath, { teamId: 'team-a' });
+      try {
+        const t = store.getTask('t_v3');
+        expect(t?.title).toBe('v3 task');
+        expect(t?.body).toBe('v3 body');
+        // The new table is usable: a terminal transition records a stat row.
+        store.updateStatus('t_v3', 'running', undefined, 'engineer');
+        store.completeRun('t_v3', 'ok', 'engineer');
+        expect(store.getMemberStats().get('engineer')?.ticketsCompleted).toBe(1);
+      } finally {
+        store.close();
+      }
+
+      const raw = new Database(dbPath);
+      try {
+        const version = (raw.pragma('user_version') as Array<{ user_version: number }>)[0]
+          ?.user_version;
+        expect(version).toBe(4);
+      } finally {
+        raw.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates a v1 database all the way to v4 via the stepwise chain', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-mig14-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      const v1 = new Database(dbPath);
+      v1.pragma('journal_mode = WAL');
+      v1.pragma('foreign_keys = ON');
+      v1.exec(`
+        CREATE TABLE tasks (
+          id              TEXT PRIMARY KEY,
+          title           TEXT NOT NULL,
+          body            TEXT NOT NULL DEFAULT '',
+          assignee        TEXT,
+          status          TEXT NOT NULL
+                          CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled')),
+          priority        INTEGER NOT NULL DEFAULT 0,
+          workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
+                          CHECK (workspace_mode IN ('scratch','worktree','dir')),
+          workspace_path  TEXT,
+          scheduled_for   INTEGER,
+          idempotency_key TEXT,
+          current_run_id  TEXT,
+          created_at      INTEGER NOT NULL,
+          updated_at      INTEGER NOT NULL
+        ) STRICT;
+        CREATE UNIQUE INDEX tasks_idem ON tasks(idempotency_key)
+          WHERE idempotency_key IS NOT NULL;
+        CREATE INDEX tasks_status_assignee ON tasks(status, assignee);
+        CREATE INDEX tasks_scheduled ON tasks(scheduled_for)
+          WHERE scheduled_for IS NOT NULL;
+        CREATE TABLE task_comments (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, author TEXT NOT NULL,
+          body TEXT NOT NULL, created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_comments_task ON task_comments(task_id, created_at);
+        CREATE TABLE task_links (
+          parent_id TEXT NOT NULL, child_id TEXT NOT NULL,
+          PRIMARY KEY (parent_id, child_id),
+          FOREIGN KEY (parent_id) REFERENCES tasks(id) ON DELETE CASCADE,
+          FOREIGN KEY (child_id)  REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_links_child ON task_links(child_id);
+        CREATE TABLE task_runs (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, started_at INTEGER NOT NULL,
+          ended_at INTEGER,
+          outcome TEXT CHECK (outcome IS NULL OR outcome IN ('completed','blocked','stalled','cancelled')),
+          summary TEXT, last_heartbeat_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_runs_task ON task_runs(task_id, started_at);
+        CREATE UNIQUE INDEX task_runs_open_one ON task_runs(task_id)
+          WHERE ended_at IS NULL;
+        CREATE TABLE task_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+          kind TEXT NOT NULL
+               CHECK (kind IN ('created','status_changed','commented','assigned','linked','unlinked','run_started','run_completed','heartbeat','archived')),
+          actor TEXT NOT NULL, data_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_events_task ON task_events(task_id, created_at);
+        CREATE INDEX task_events_recent ON task_events(created_at);
+        CREATE VIRTUAL TABLE task_fts USING fts5(
+          task_id UNINDEXED, title, body, comments, tokenize = 'porter'
+        );
+        CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+          INSERT INTO task_fts(task_id, title, body, comments)
+          VALUES (new.id, new.title, new.body, '');
+        END;
+        CREATE TRIGGER tasks_fts_au AFTER UPDATE OF title, body ON tasks BEGIN
+          UPDATE task_fts SET title = new.title, body = new.body WHERE task_id = new.id;
+        END;
+        CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+          DELETE FROM task_fts WHERE task_id = old.id;
+        END;
+        CREATE TRIGGER comments_fts_ai AFTER INSERT ON task_comments BEGIN
+          UPDATE task_fts
+          SET comments = (
+            SELECT COALESCE(GROUP_CONCAT(body, ' '), '')
+            FROM task_comments WHERE task_id = new.task_id
+          )
+          WHERE task_id = new.task_id;
+        END;
+        INSERT INTO tasks (id, title, body, status, priority, workspace_mode, created_at, updated_at)
+          VALUES ('t_v1', 'v1 task', 'v1 body', 'ready', 0, 'scratch', 100, 100);
+      `);
+      v1.pragma('user_version = 1');
+      v1.close();
+
+      const store = new KanbanStore(dbPath, { teamId: 'team-a' });
+      try {
+        const t = store.getTask('t_v1');
+        expect(t?.title).toBe('v1 task');
+        expect(t?.maxRetries).toBeNull();
+        expect(t?.acceptanceCriteria).toBeNull();
+      } finally {
+        store.close();
+      }
+
+      const raw = new Database(dbPath);
+      try {
+        const version = (raw.pragma('user_version') as Array<{ user_version: number }>)[0]
+          ?.user_version;
+        expect(version).toBe(4);
+      } finally {
+        raw.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a fully-migrated v1->v4 DB is structurally identical to a fresh v4 DB', () => {
+    // Frozen-schema gate: the stepwise migration chain must land on EXACTLY the
+    // shape a fresh `KanbanStore` produces — same tables, columns, types, CHECK
+    // constraints, indexes, FTS triggers, and user_version. A drift here means
+    // a migration step diverged from SCHEMA.
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-converge-'));
+    const migratedPath = join(dir, 'migrated.db');
+    const freshPath = join(dir, 'fresh.db');
+    try {
+      // Build a v1-shaped DB, then open it with the current code to run the
+      // full v1->v2->v3->v4 migration chain.
+      const v1 = new Database(migratedPath);
+      v1.pragma('journal_mode = WAL');
+      v1.pragma('foreign_keys = ON');
+      v1.exec(`
+        CREATE TABLE tasks (
+          id              TEXT PRIMARY KEY,
+          title           TEXT NOT NULL,
+          body            TEXT NOT NULL DEFAULT '',
+          assignee        TEXT,
+          status          TEXT NOT NULL
+                          CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled')),
+          priority        INTEGER NOT NULL DEFAULT 0,
+          workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
+                          CHECK (workspace_mode IN ('scratch','worktree','dir')),
+          workspace_path  TEXT,
+          scheduled_for   INTEGER,
+          idempotency_key TEXT,
+          current_run_id  TEXT,
+          created_at      INTEGER NOT NULL,
+          updated_at      INTEGER NOT NULL
+        ) STRICT;
+        CREATE UNIQUE INDEX tasks_idem ON tasks(idempotency_key)
+          WHERE idempotency_key IS NOT NULL;
+        CREATE INDEX tasks_status_assignee ON tasks(status, assignee);
+        CREATE INDEX tasks_scheduled ON tasks(scheduled_for)
+          WHERE scheduled_for IS NOT NULL;
+        CREATE TABLE task_comments (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, author TEXT NOT NULL,
+          body TEXT NOT NULL, created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_comments_task ON task_comments(task_id, created_at);
+        CREATE TABLE task_links (
+          parent_id TEXT NOT NULL, child_id TEXT NOT NULL,
+          PRIMARY KEY (parent_id, child_id),
+          FOREIGN KEY (parent_id) REFERENCES tasks(id) ON DELETE CASCADE,
+          FOREIGN KEY (child_id)  REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_links_child ON task_links(child_id);
+        CREATE TABLE task_runs (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, started_at INTEGER NOT NULL,
+          ended_at INTEGER,
+          outcome TEXT CHECK (outcome IS NULL OR outcome IN ('completed','blocked','stalled','cancelled')),
+          summary TEXT, last_heartbeat_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_runs_task ON task_runs(task_id, started_at);
+        CREATE UNIQUE INDEX task_runs_open_one ON task_runs(task_id)
+          WHERE ended_at IS NULL;
+        CREATE TABLE task_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+          kind TEXT NOT NULL
+               CHECK (kind IN ('created','status_changed','commented','assigned','linked','unlinked','run_started','run_completed','heartbeat','archived')),
+          actor TEXT NOT NULL, data_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX task_events_task ON task_events(task_id, created_at);
+        CREATE INDEX task_events_recent ON task_events(created_at);
+        CREATE VIRTUAL TABLE task_fts USING fts5(
+          task_id UNINDEXED, title, body, comments, tokenize = 'porter'
+        );
+        CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+          INSERT INTO task_fts(task_id, title, body, comments)
+          VALUES (new.id, new.title, new.body, '');
+        END;
+        CREATE TRIGGER tasks_fts_au AFTER UPDATE OF title, body ON tasks BEGIN
+          UPDATE task_fts SET title = new.title, body = new.body WHERE task_id = new.id;
+        END;
+        CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+          DELETE FROM task_fts WHERE task_id = old.id;
+        END;
+        CREATE TRIGGER comments_fts_ai AFTER INSERT ON task_comments BEGIN
+          UPDATE task_fts
+          SET comments = (
+            SELECT COALESCE(GROUP_CONCAT(body, ' '), '')
+            FROM task_comments WHERE task_id = new.task_id
+          )
+          WHERE task_id = new.task_id;
+        END;
+      `);
+      v1.pragma('user_version = 1');
+      v1.close();
+
+      new KanbanStore(migratedPath, { teamId: 'team-a' }).close();
+      // A fresh DB built straight from SCHEMA at the current version.
+      new KanbanStore(freshPath, { teamId: 'team-a' }).close();
+
+      // Snapshot a DB's structure: every object's normalized SQL text, the
+      // `tasks` column shape, and the schema version.
+      const snapshot = (path: string) => {
+        const db = new Database(path);
+        try {
+          const objects = (
+            db
+              .prepare(
+                `SELECT type, name, sql FROM sqlite_master
+                 WHERE name NOT LIKE 'sqlite_%'
+                 ORDER BY type, name`,
+              )
+              .all() as Array<{ type: string; name: string; sql: string | null }>
+          ).map((r) => ({
+            type: r.type,
+            name: r.name,
+            // Normalize for false drift: collapse whitespace (indentation differs
+            // between SCHEMA and the migration DDL), and strip double-quote
+            // identifier quoting — SQLite emits `CREATE TABLE "tasks"` after a
+            // table rebuild but `CREATE TABLE tasks` for a fresh create. String
+            // literals in the DDL use single quotes, so dropping `"` is safe.
+            sql: (r.sql ?? '').replace(/\s+/g, ' ').replace(/"/g, '').trim(),
+          }));
+          const tasksColumns = (
+            db.pragma('table_info(tasks)') as Array<{
+              name: string;
+              type: string;
+              notnull: number;
+              dflt_value: unknown;
+              pk: number;
+            }>
+          ).map((c) => ({
+            name: c.name,
+            type: c.type,
+            notnull: c.notnull,
+            dflt_value: c.dflt_value,
+            pk: c.pk,
+          }));
+          const userVersion = (db.pragma('user_version') as Array<{ user_version: number }>)[0]
+            ?.user_version;
+          return { objects, tasksColumns, userVersion };
+        } finally {
+          db.close();
+        }
+      };
+
+      const migrated = snapshot(migratedPath);
+      const fresh = snapshot(freshPath);
+
+      expect(migrated.userVersion).toBe(4);
+      expect(migrated.userVersion).toBe(fresh.userVersion);
+      // `tasks` columns + types (covers the v1->v2 max_retries / retry_count and
+      // v2->v3 acceptance_criteria additions converging on the fresh shape).
+      expect(migrated.tasksColumns).toEqual(fresh.tasksColumns);
+      // Every table/index/trigger — including CHECK constraints embedded in the
+      // table SQL and the FTS triggers — must match the fresh DB exactly.
+      expect(migrated.objects).toEqual(fresh.objects);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('stats survive a close/reopen of the same on-disk board', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-stats-persist-'));
+    const dbPath = join(dir, 'board.db');
+    try {
+      const s1 = new KanbanStore(dbPath, { teamId: 'team-a' });
+      const t = s1.createTask({ title: 'persist', assignee: 'engineer' });
+      s1.updateStatus(t.id, 'running', undefined, 'engineer');
+      s1.completeRun(t.id, 'ok', 'engineer');
+      s1.close();
+
+      const s2 = new KanbanStore(dbPath, { teamId: 'team-a' });
+      try {
+        expect(s2.getMemberStats().get('engineer')?.ticketsCompleted).toBe(1);
+      } finally {
+        s2.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

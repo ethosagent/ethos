@@ -14,7 +14,9 @@ export type TaskStatus =
   | 'blocked'
   | 'done'
   | 'archived'
-  | 'scheduled';
+  | 'scheduled'
+  | 'failed'
+  | 'needs_revision';
 
 export type WorkspaceMode = 'scratch' | 'worktree' | 'dir';
 
@@ -44,6 +46,12 @@ export interface Task {
   scheduledFor: number | null;
   idempotencyKey: string | null;
   currentRunId: string | null;
+  /** Retry budget. `null` = unlimited (the default). */
+  maxRetries: number | null;
+  /** Times this task has been re-claimed after a prior run ended. Starts at 0. */
+  retryCount: number;
+  /** Optional acceptance criteria a `before_ticket_complete` verifier checks. `null` = none set. */
+  acceptanceCriteria: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -89,6 +97,10 @@ export interface CreateTaskInput {
   workspaceMode?: WorkspaceMode;
   scheduledFor?: number | null;
   idempotencyKey?: string | null;
+  /** Retry budget. `null` (the default) = unlimited. `retryCount` always starts at 0. */
+  maxRetries?: number | null;
+  /** Optional acceptance criteria. `null`/omitted = none set. */
+  acceptanceCriteria?: string | null;
   actor?: string;
 }
 
@@ -98,6 +110,35 @@ export interface ListTasksFilter {
   parentId?: string;
   q?: string;
   limit?: number;
+}
+
+/**
+ * Per-member work outcome counters for one team board. Maintained by the store
+ * itself: each terminal task transition (`done`, `failed`/`needs_revision`,
+ * orphan-reclaim) bumps the matching counter in the same transaction as the
+ * transition, so the stats are a reconstructable function of board content
+ * rather than a separate ledger the supervisor has to keep in sync.
+ */
+export interface TeamMemberStats {
+  teamId: string;
+  memberId: string;
+  /** Tasks this member completed (`done` via `completeRun`). */
+  ticketsCompleted: number;
+  /** Tasks that ended `failed` or `needs_revision` while claimed by this member. */
+  ticketsFailed: number;
+  /** Tasks whose claim by this member was reclaimed by another agent. */
+  ticketsOrphaned: number;
+  /** Epoch-ms of the most recent counter bump. */
+  lastUpdatedAt: number;
+}
+
+export interface KanbanStoreOptions {
+  /**
+   * The team this board belongs to. When set, terminal task transitions record
+   * per-member outcome counters in `team_member_stats`. Unset on solo
+   * personality boards — stats are skipped entirely.
+   */
+  teamId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,7 +152,7 @@ const SCHEMA = `
     body            TEXT NOT NULL DEFAULT '',
     assignee        TEXT,
     status          TEXT NOT NULL
-                    CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled')),
+                    CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled','failed','needs_revision')),
     priority        INTEGER NOT NULL DEFAULT 0,
     workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
                     CHECK (workspace_mode IN ('scratch','worktree','dir')),
@@ -119,6 +160,9 @@ const SCHEMA = `
     scheduled_for   INTEGER,
     idempotency_key TEXT,
     current_run_id  TEXT,
+    max_retries     INTEGER CHECK (max_retries IS NULL OR max_retries >= 0),
+    retry_count     INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+    acceptance_criteria TEXT,
     created_at      INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL
   ) STRICT;
@@ -215,6 +259,20 @@ const SCHEMA = `
     )
     WHERE task_id = new.task_id;
   END;
+
+  -- team_member_stats: per-member work outcome counters for a team board.
+  -- Purely additive — CREATE TABLE IF NOT EXISTS is safe on every DB version,
+  -- so the v3 to v4 bump needs no table rebuild. The store updates these rows
+  -- atomically inside each terminal-transition transaction.
+  CREATE TABLE IF NOT EXISTS team_member_stats (
+    team_id           TEXT NOT NULL,
+    member_id         TEXT NOT NULL,
+    tickets_completed INTEGER NOT NULL DEFAULT 0 CHECK (tickets_completed >= 0),
+    tickets_failed    INTEGER NOT NULL DEFAULT 0 CHECK (tickets_failed >= 0),
+    tickets_orphaned  INTEGER NOT NULL DEFAULT 0 CHECK (tickets_orphaned >= 0),
+    last_updated_at   INTEGER NOT NULL,
+    PRIMARY KEY (team_id, member_id)
+  ) STRICT;
 `;
 
 // ---------------------------------------------------------------------------
@@ -223,8 +281,14 @@ const SCHEMA = `
 
 export class KanbanStore {
   private readonly db: Database.Database;
+  /**
+   * Team this board belongs to, or `null` for a solo personality board. When
+   * `null`, terminal transitions skip the `team_member_stats` update entirely.
+   */
+  private readonly teamId: string | null;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, opts: KanbanStoreOptions = {}) {
+    this.teamId = opts.teamId ?? null;
     // mkdir -p the parent directory. Same raw-fs exception that session-sqlite uses
     // for path setup (the `Storage` abstraction is for ~/.ethos/ data IO, not for
     // bootstrapping the SQLite file's enclosing directory). `:memory:` has no
@@ -238,14 +302,224 @@ export class KanbanStore {
     // Version check FIRST — refuse to touch a DB whose schema is newer than this code.
     const versionRows = this.db.pragma('user_version') as Array<{ user_version: number }>;
     const currentVersion = versionRows[0]?.user_version ?? 0;
-    if (currentVersion > 1) {
+    if (currentVersion > 4) {
       throw new Error(
-        `kanban-store: database user_version=${currentVersion} is newer than code (1); refusing to open to avoid downgrade`,
+        `kanban-store: database user_version=${currentVersion} is newer than code (4); refusing to open to avoid downgrade`,
       );
     }
+    // SCHEMA describes the current (v4) shape. A fresh DB (user_version=0) gets it
+    // directly via CREATE TABLE IF NOT EXISTS; an existing v1/v2/v3 DB skips the
+    // table creation (IF NOT EXISTS) and is brought forward by the migration chain
+    // below. The v3→v4 step is purely additive — `team_member_stats` is created by
+    // `exec(SCHEMA)` above on every version, so v3 needs only the version bump.
     this.db.exec(SCHEMA);
     if (currentVersion === 0) {
-      this.db.pragma('user_version = 1');
+      this.db.pragma('user_version = 4');
+    } else {
+      // Stepwise migration chain: a v1 DB runs v1->v2->v2->v3 then the v3->v4
+      // bump; a v2 DB runs v2->v3 then the bump; a v3 DB just bumps. The v1ToV2
+      // and v2ToV3 migrators bump user_version inside their own transactions;
+      // the v3->v4 step is just `pragma user_version = 4` since the additive
+      // table is already created by `exec(SCHEMA)`.
+      if (currentVersion === 1) {
+        this.migrateV1ToV2();
+      }
+      if (currentVersion <= 2) {
+        this.migrateV2ToV3();
+      }
+      if (currentVersion <= 3) {
+        this.db.pragma('user_version = 4');
+      }
+    }
+  }
+
+  /**
+   * Bring a v1 board forward to v2: add the `max_retries` / `retry_count` columns
+   * and widen the `tasks.status` CHECK to include `'failed'`.
+   *
+   * `ALTER TABLE ADD COLUMN` handles the new columns even on a STRICT table (the
+   * NOT NULL column carries a DEFAULT). Widening a CHECK constraint, though, is
+   * not something SQLite can ALTER — it needs the standard table-rebuild dance:
+   * build the new table, copy rows, drop the old one, rename, then recreate the
+   * indexes and FTS triggers that referenced `tasks`.
+   *
+   * The ADD COLUMN steps, the table rebuild, and the `user_version` bump all run
+   * inside ONE transaction so the migration is atomic: a failure anywhere rolls
+   * the whole thing back, leaving a clean v1 DB the next open can retry. (Only
+   * `PRAGMA foreign_keys` is set outside — it is a no-op inside a transaction —
+   * and is needed off because task_comments/task_links/task_runs/task_events all
+   * FK onto tasks(id); a `foreign_key_check` runs before commit.)
+   */
+  private migrateV1ToV2(): void {
+    this.db.pragma('foreign_keys = OFF');
+    try {
+      const rebuild = this.db.transaction(() => {
+        this.db.exec(`
+          ALTER TABLE tasks ADD COLUMN max_retries INTEGER;
+          ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
+
+          DROP TRIGGER IF EXISTS tasks_fts_ai;
+          DROP TRIGGER IF EXISTS tasks_fts_au;
+          DROP TRIGGER IF EXISTS tasks_fts_ad;
+          DROP INDEX IF EXISTS tasks_idem;
+          DROP INDEX IF EXISTS tasks_status_assignee;
+          DROP INDEX IF EXISTS tasks_scheduled;
+
+          CREATE TABLE tasks_new (
+            id              TEXT PRIMARY KEY,
+            title           TEXT NOT NULL,
+            body            TEXT NOT NULL DEFAULT '',
+            assignee        TEXT,
+            status          TEXT NOT NULL
+                            CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled','failed')),
+            priority        INTEGER NOT NULL DEFAULT 0,
+            workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
+                            CHECK (workspace_mode IN ('scratch','worktree','dir')),
+            workspace_path  TEXT,
+            scheduled_for   INTEGER,
+            idempotency_key TEXT,
+            current_run_id  TEXT,
+            max_retries     INTEGER CHECK (max_retries IS NULL OR max_retries >= 0),
+            retry_count     INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+            created_at      INTEGER NOT NULL,
+            updated_at      INTEGER NOT NULL
+          ) STRICT;
+
+          INSERT INTO tasks_new
+            SELECT id, title, body, assignee, status, priority, workspace_mode,
+                   workspace_path, scheduled_for, idempotency_key, current_run_id,
+                   max_retries, retry_count, created_at, updated_at
+            FROM tasks;
+
+          DROP TABLE tasks;
+          ALTER TABLE tasks_new RENAME TO tasks;
+
+          CREATE UNIQUE INDEX tasks_idem ON tasks(idempotency_key)
+            WHERE idempotency_key IS NOT NULL;
+          CREATE INDEX tasks_status_assignee ON tasks(status, assignee);
+          CREATE INDEX tasks_scheduled ON tasks(scheduled_for)
+            WHERE scheduled_for IS NOT NULL;
+
+          CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+            INSERT INTO task_fts(task_id, title, body, comments)
+            VALUES (new.id, new.title, new.body, '');
+          END;
+
+          CREATE TRIGGER tasks_fts_au AFTER UPDATE OF title, body ON tasks BEGIN
+            UPDATE task_fts SET title = new.title, body = new.body
+            WHERE task_id = new.id;
+          END;
+
+          CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+            DELETE FROM task_fts WHERE task_id = old.id;
+          END;
+        `);
+        const violations = this.db.pragma('foreign_key_check') as unknown[];
+        if (violations.length > 0) {
+          throw new Error(
+            `kanban-store: v1→v2 migration left ${violations.length} foreign-key violation(s)`,
+          );
+        }
+        // Bump inside the transaction so version and schema move together: a
+        // rollback leaves a clean v1 DB, never a v1-versioned DB with v2 columns.
+        this.db.pragma('user_version = 2');
+      });
+      rebuild();
+    } finally {
+      this.db.pragma('foreign_keys = ON');
+    }
+  }
+
+  /**
+   * Bring a v2 board forward to v3: add the `acceptance_criteria` column and
+   * widen the `tasks.status` CHECK to include `'needs_revision'`.
+   *
+   * Modelled exactly on `migrateV1ToV2`: `ALTER TABLE ADD COLUMN` handles the
+   * new nullable column, but widening a CHECK constraint needs the standard
+   * SQLite table-rebuild dance — build the new table, copy rows, drop the old
+   * one, rename, then recreate the indexes and FTS triggers that referenced
+   * `tasks`. The ADD COLUMN, the rebuild, and the `user_version` bump all run
+   * inside ONE transaction so the migration is atomic. `PRAGMA foreign_keys`
+   * is set OFF outside (it is a no-op inside a transaction); a
+   * `foreign_key_check` runs before commit.
+   */
+  private migrateV2ToV3(): void {
+    this.db.pragma('foreign_keys = OFF');
+    try {
+      const rebuild = this.db.transaction(() => {
+        this.db.exec(`
+          ALTER TABLE tasks ADD COLUMN acceptance_criteria TEXT;
+
+          DROP TRIGGER IF EXISTS tasks_fts_ai;
+          DROP TRIGGER IF EXISTS tasks_fts_au;
+          DROP TRIGGER IF EXISTS tasks_fts_ad;
+          DROP INDEX IF EXISTS tasks_idem;
+          DROP INDEX IF EXISTS tasks_status_assignee;
+          DROP INDEX IF EXISTS tasks_scheduled;
+
+          CREATE TABLE tasks_new (
+            id              TEXT PRIMARY KEY,
+            title           TEXT NOT NULL,
+            body            TEXT NOT NULL DEFAULT '',
+            assignee        TEXT,
+            status          TEXT NOT NULL
+                            CHECK (status IN ('todo','ready','running','blocked','done','archived','scheduled','failed','needs_revision')),
+            priority        INTEGER NOT NULL DEFAULT 0,
+            workspace_mode  TEXT NOT NULL DEFAULT 'scratch'
+                            CHECK (workspace_mode IN ('scratch','worktree','dir')),
+            workspace_path  TEXT,
+            scheduled_for   INTEGER,
+            idempotency_key TEXT,
+            current_run_id  TEXT,
+            max_retries     INTEGER CHECK (max_retries IS NULL OR max_retries >= 0),
+            retry_count     INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+            acceptance_criteria TEXT,
+            created_at      INTEGER NOT NULL,
+            updated_at      INTEGER NOT NULL
+          ) STRICT;
+
+          INSERT INTO tasks_new
+            SELECT id, title, body, assignee, status, priority, workspace_mode,
+                   workspace_path, scheduled_for, idempotency_key, current_run_id,
+                   max_retries, retry_count, acceptance_criteria, created_at, updated_at
+            FROM tasks;
+
+          DROP TABLE tasks;
+          ALTER TABLE tasks_new RENAME TO tasks;
+
+          CREATE UNIQUE INDEX tasks_idem ON tasks(idempotency_key)
+            WHERE idempotency_key IS NOT NULL;
+          CREATE INDEX tasks_status_assignee ON tasks(status, assignee);
+          CREATE INDEX tasks_scheduled ON tasks(scheduled_for)
+            WHERE scheduled_for IS NOT NULL;
+
+          CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+            INSERT INTO task_fts(task_id, title, body, comments)
+            VALUES (new.id, new.title, new.body, '');
+          END;
+
+          CREATE TRIGGER tasks_fts_au AFTER UPDATE OF title, body ON tasks BEGIN
+            UPDATE task_fts SET title = new.title, body = new.body
+            WHERE task_id = new.id;
+          END;
+
+          CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+            DELETE FROM task_fts WHERE task_id = old.id;
+          END;
+        `);
+        const violations = this.db.pragma('foreign_key_check') as unknown[];
+        if (violations.length > 0) {
+          throw new Error(
+            `kanban-store: v2→v3 migration left ${violations.length} foreign-key violation(s)`,
+          );
+        }
+        // Bump inside the transaction so version and schema move together: a
+        // rollback leaves a clean v2 DB, never a v2-versioned DB with v3 columns.
+        this.db.pragma('user_version = 3');
+      });
+      rebuild();
+    } finally {
+      this.db.pragma('foreign_keys = ON');
     }
   }
 
@@ -259,14 +533,20 @@ export class KanbanStore {
     const workspaceMode: WorkspaceMode = input.workspaceMode ?? 'scratch';
     const scheduledFor = input.scheduledFor ?? null;
     const status: TaskStatus = scheduledFor !== null ? 'scheduled' : 'todo';
+    const maxRetries = input.maxRetries ?? null;
+    if (maxRetries !== null && (!Number.isInteger(maxRetries) || maxRetries < 0)) {
+      throw new Error(`createTask: maxRetries must be a non-negative integer or null`);
+    }
+    const acceptanceCriteria = input.acceptanceCriteria ?? null;
     const parents = input.parents ?? [];
     const actor = input.actor ?? 'system';
 
     const insertTask = this.db.prepare(
       `INSERT INTO tasks
        (id, title, body, assignee, status, priority, workspace_mode, workspace_path,
-        scheduled_for, idempotency_key, current_run_id, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        scheduled_for, idempotency_key, current_run_id, max_retries, retry_count,
+        acceptance_criteria, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     );
 
     const tx = this.db.transaction((): string => {
@@ -295,6 +575,9 @@ export class KanbanStore {
           scheduledFor,
           idempotencyKey,
           null,
+          maxRetries,
+          0,
+          acceptanceCriteria,
           now,
           now,
         );
@@ -374,28 +657,68 @@ export class KanbanStore {
 
     const tx = this.db.transaction(() => {
       const row = this.db
-        .prepare('SELECT status, current_run_id FROM tasks WHERE id = ?')
-        .get(taskId) as { status: TaskStatus; current_run_id: string | null } | undefined;
+        .prepare(
+          'SELECT status, assignee, current_run_id, max_retries, retry_count FROM tasks WHERE id = ?',
+        )
+        .get(taskId) as
+        | {
+            status: TaskStatus;
+            assignee: string | null;
+            current_run_id: string | null;
+            max_retries: number | null;
+            retry_count: number;
+          }
+        | undefined;
       if (!row) throw new Error(`updateStatus: task ${taskId} not found`);
       const oldStatus = row.status;
       const oldRunId = row.current_run_id;
+      // The actual status this transition lands on. Normally `status`, but a
+      // re-claim that blows the retry budget is forced to 'failed' below.
+      let effectiveStatus = status;
+      let effectiveReason = reason ?? null;
 
       let runStarted = false;
       let runCancelled = false;
 
       if (status === 'running' && oldRunId === null) {
-        // Open a new run as a side-effect of the status flip
-        const runId = newRunId();
-        this.db
-          .prepare(
-            `INSERT INTO task_runs (id, task_id, started_at, last_heartbeat_at)
-             VALUES (?, ?, ?, ?)`,
-          )
-          .run(runId, taskId, now, now);
-        this.db
-          .prepare('UPDATE tasks SET status = ?, current_run_id = ?, updated_at = ? WHERE id = ?')
-          .run(status, runId, now, taskId);
-        runStarted = true;
+        // Open a new run as a side-effect of the status flip. If the task already
+        // has an ended run, opening another is a "re-claim" (the prior attempt
+        // failed or was reclaimed) — bump retry_count.
+        //
+        // Budget enforcement lives HERE, in the same transaction as the increment,
+        // so the retry budget is a store invariant rather than a discipline every
+        // caller has to remember: a re-claim that would push retry_count past
+        // max_retries fails the task instead of opening another run.
+        const priorRuns = this.db
+          .prepare('SELECT COUNT(*) AS n FROM task_runs WHERE task_id = ?')
+          .get(taskId) as { n: number };
+        const reclaimed = priorRuns.n > 0;
+        const nextRetryCount = row.retry_count + (reclaimed ? 1 : 0);
+        const budgetExhausted = row.max_retries !== null && nextRetryCount > row.max_retries;
+
+        if (budgetExhausted) {
+          // No new run — the task is done retrying. Record the bumped count so
+          // the board shows how far past budget it got, then fail it.
+          this.db
+            .prepare('UPDATE tasks SET status = ?, retry_count = ?, updated_at = ? WHERE id = ?')
+            .run('failed', nextRetryCount, now, taskId);
+          effectiveStatus = 'failed';
+          effectiveReason = 'retry_budget_exhausted';
+        } else {
+          const runId = newRunId();
+          this.db
+            .prepare(
+              `INSERT INTO task_runs (id, task_id, started_at, last_heartbeat_at)
+               VALUES (?, ?, ?, ?)`,
+            )
+            .run(runId, taskId, now, now);
+          this.db
+            .prepare(
+              'UPDATE tasks SET status = ?, current_run_id = ?, retry_count = ?, updated_at = ? WHERE id = ?',
+            )
+            .run('running', runId, nextRetryCount, now, taskId);
+          runStarted = true;
+        }
       } else if (oldStatus === 'running' && status !== 'running' && oldRunId !== null) {
         // Caller is leaving 'running' without going through completeRun/blockRun.
         // Auto-cancel the open run so task status and run state stay consistent.
@@ -417,12 +740,19 @@ export class KanbanStore {
           .run(status, now, taskId);
       }
 
-      if (oldStatus !== status) {
+      if (oldStatus !== effectiveStatus) {
         this.emit(taskId, 'status_changed', actor, {
           from: oldStatus,
-          to: status,
-          reason: reason ?? null,
+          to: effectiveStatus,
+          reason: effectiveReason,
         });
+        // Terminal-failure transitions credit the assignee's failed counter.
+        // Both Phase 1's budget-exhaustion `failed` and Phase 3's hook-rejection
+        // `needs_revision` flow through here. Gated on an actual status change so
+        // a redundant updateStatus(failed) on an already-failed task is a no-op.
+        if (effectiveStatus === 'failed' || effectiveStatus === 'needs_revision') {
+          this.bumpMemberStat(row.assignee, 'tickets_failed');
+        }
       }
       if (runStarted) this.emit(taskId, 'run_started', actor, {});
       if (runCancelled) {
@@ -457,8 +787,10 @@ export class KanbanStore {
     // a concurrent writer can't end the same run between our read and our write.
     const tx = this.db.transaction((): Task => {
       const row = this.db
-        .prepare('SELECT status, current_run_id FROM tasks WHERE id = ?')
-        .get(taskId) as { status: TaskStatus; current_run_id: string | null } | undefined;
+        .prepare('SELECT status, assignee, current_run_id FROM tasks WHERE id = ?')
+        .get(taskId) as
+        | { status: TaskStatus; assignee: string | null; current_run_id: string | null }
+        | undefined;
       if (!row) throw new Error(`endRun: task ${taskId} not found`);
       if (row.current_run_id === null) {
         throw new Error(`no open run: task ${taskId} has no current run to end`);
@@ -475,6 +807,12 @@ export class KanbanStore {
       this.db
         .prepare('UPDATE tasks SET status = ?, current_run_id = NULL, updated_at = ? WHERE id = ?')
         .run(newStatus, now, taskId);
+      // Terminal transition: a `done` landing credits the assignee's completed
+      // counter. `blocked` is not terminal for stats — the task can be reclaimed
+      // and retried — so only `done` bumps here.
+      if (newStatus === 'done') {
+        this.bumpMemberStat(row.assignee, 'tickets_completed');
+      }
       if (opts.comment !== undefined) {
         const commentId = newCommentId();
         this.db
@@ -509,6 +847,11 @@ export class KanbanStore {
       if (result.changes !== 1) {
         throw new Error(`no open run: race ended run ${row.current_run_id} concurrently`);
       }
+      // Bump the task's `updated_at` too so it tracks "last activity" — a
+      // healthy long-running task that heartbeats stays fresh, while a stuck
+      // agent that stopped heartbeating goes stale. The staleness-reclaim path
+      // (findStaleRunningTasks) relies on this.
+      this.db.prepare('UPDATE tasks SET updated_at = ? WHERE id = ?').run(now, taskId);
       this.emit(taskId, 'heartbeat', actor, { note: note ?? null });
     });
     tx();
@@ -699,6 +1042,78 @@ export class KanbanStore {
   }
 
   /**
+   * Find `running` tasks whose `updated_at` is older than `thresholdMs` ago.
+   * `updated_at` tracks last activity (`heartbeatRun` bumps it), so a stale
+   * task is one whose owner stopped making progress. The caller (the
+   * dispatcher) decides what to do — usually `reclaimTask(id, 'orphan_stale')`.
+   */
+  findStaleRunningTasks(thresholdMs: number, nowMs: number = Date.now()): Task[] {
+    const threshold = nowMs - thresholdMs;
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM tasks WHERE status = 'running' AND updated_at < ?
+         ORDER BY updated_at ASC`,
+      )
+      .all(threshold) as TaskRow[];
+    return rows.map(rowToTask);
+  }
+
+  /**
+   * Reclaim a stuck `running` task: cancel its open run (if any) and put the
+   * task back to `ready` so the dispatcher's normal dispatch loop re-claims it.
+   * The re-claim goes through `updateStatus('running')`, which owns the
+   * retry-budget invariant — so the retry_count increment happens there, not
+   * here.
+   *
+   * `reason` distinguishes why the task was reclaimed (`orphan_stale` =
+   * heartbeat went quiet; `orphan_no_owner` = the assignee process is gone).
+   * It lands in the `status_changed` audit event's `data.reason` so the team
+   * can see why work was re-queued. A task with no open run is reclaimed
+   * gracefully — just the status flip + event.
+   */
+  reclaimTask(taskId: string, reason: 'orphan_stale' | 'orphan_no_owner', actor = 'system'): Task {
+    const now = Date.now();
+    const tx = this.db.transaction((): Task => {
+      const row = this.db
+        .prepare('SELECT status, assignee, current_run_id FROM tasks WHERE id = ?')
+        .get(taskId) as
+        | { status: TaskStatus; assignee: string | null; current_run_id: string | null }
+        | undefined;
+      if (!row) throw new Error(`reclaimTask: task ${taskId} not found`);
+      let runCancelled = false;
+      if (row.current_run_id !== null) {
+        const result = this.db
+          .prepare(
+            `UPDATE task_runs SET ended_at = ?, outcome = ?
+             WHERE id = ? AND ended_at IS NULL`,
+          )
+          .run(now, 'cancelled', row.current_run_id);
+        runCancelled = result.changes === 1;
+      }
+      this.db
+        .prepare('UPDATE tasks SET status = ?, current_run_id = NULL, updated_at = ? WHERE id = ?')
+        .run('ready', now, taskId);
+      // The member whose claim was just reclaimed gets an orphaned tally — but
+      // only when the task was actually `running`. A reclaim of a task in any
+      // other status is a re-queue, not a real orphan; counting it would
+      // inflate the member's failure rate. The task keeps its `assignee` across
+      // a reclaim (the dispatcher re-POSTs to the same member), so `row.assignee`
+      // is the member that lost the claim. Gating on `row.status` keeps the
+      // invariant local — it doesn't depend on the caller only passing
+      // `running` tasks.
+      if (row.status === 'running') {
+        this.bumpMemberStat(row.assignee, 'tickets_orphaned');
+      }
+      if (runCancelled) {
+        this.emit(taskId, 'run_completed', actor, { outcome: 'cancelled', summary: null });
+      }
+      this.emit(taskId, 'status_changed', actor, { from: row.status, to: 'ready', reason });
+      return this.getTask(taskId) as Task;
+    });
+    return tx();
+  }
+
+  /**
    * Roll up completed goals: any task with assignee=NULL and at least one child
    * where every non-archived child is `done` flips to `done` itself. This is
    * the goal-as-parent-task pattern's closure step — without it, a coordinator's
@@ -809,6 +1224,66 @@ export class KanbanStore {
       .run(taskId, kind, actor, JSON.stringify(data), Date.now());
   }
 
+  /**
+   * Bump one `team_member_stats` counter for `(this.teamId, memberId)`.
+   *
+   * No-op when this board has no `teamId` (solo personality board) or when the
+   * transitioning task had a `null` assignee — there is no member to credit.
+   * Callers invoke this inside their own transaction so the counter moves
+   * atomically with the terminal transition that triggered it. UPSERT so the
+   * first outcome for a member creates the row.
+   */
+  private bumpMemberStat(
+    memberId: string | null,
+    column: 'tickets_completed' | 'tickets_failed' | 'tickets_orphaned',
+  ): void {
+    if (this.teamId === null || memberId === null) return;
+    this.db
+      .prepare(
+        `INSERT INTO team_member_stats (team_id, member_id, ${column}, last_updated_at)
+         VALUES (?, ?, 1, ?)
+         ON CONFLICT(team_id, member_id)
+         DO UPDATE SET ${column} = ${column} + 1, last_updated_at = excluded.last_updated_at`,
+      )
+      .run(this.teamId, memberId, Date.now());
+  }
+
+  /**
+   * Per-member outcome counters for this board's team, keyed by `member_id`.
+   * Empty when this board has no `teamId` or no terminal transitions have been
+   * recorded yet. Read-only — the rows are maintained by the terminal-transition
+   * methods themselves.
+   */
+  getMemberStats(): Map<string, TeamMemberStats> {
+    const out = new Map<string, TeamMemberStats>();
+    if (this.teamId === null) return out;
+    const rows = this.db
+      .prepare(
+        `SELECT team_id, member_id, tickets_completed, tickets_failed, tickets_orphaned,
+                last_updated_at
+         FROM team_member_stats WHERE team_id = ?`,
+      )
+      .all(this.teamId) as Array<{
+      team_id: string;
+      member_id: string;
+      tickets_completed: number;
+      tickets_failed: number;
+      tickets_orphaned: number;
+      last_updated_at: number;
+    }>;
+    for (const r of rows) {
+      out.set(r.member_id, {
+        teamId: r.team_id,
+        memberId: r.member_id,
+        ticketsCompleted: r.tickets_completed,
+        ticketsFailed: r.tickets_failed,
+        ticketsOrphaned: r.tickets_orphaned,
+        lastUpdatedAt: r.last_updated_at,
+      });
+    }
+    return out;
+  }
+
   searchFts(query: string): Task[] {
     const rows = this.db
       .prepare(
@@ -842,6 +1317,9 @@ interface TaskRow {
   scheduled_for: number | null;
   idempotency_key: string | null;
   current_run_id: string | null;
+  max_retries: number | null;
+  retry_count: number;
+  acceptance_criteria: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -919,6 +1397,9 @@ function rowToTask(r: TaskRow): Task {
     scheduledFor: r.scheduled_for,
     idempotencyKey: r.idempotency_key,
     currentRunId: r.current_run_id,
+    maxRetries: r.max_retries,
+    retryCount: r.retry_count,
+    acceptanceCriteria: r.acceptance_criteria,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

@@ -352,6 +352,11 @@ export async function createAgentLoop(
     if (!sandbox.isAvailable()) log.warn('Docker not available — run_code tool disabled');
   }
 
+  // The hook registry is created early so the kanban tools can be wired with it
+  // (kanban_complete fires `before_ticket_complete`); later wiring registers the
+  // skill injectors, terminal guard, kanban role gate, and plugin hooks onto it.
+  const hooks = new DefaultHookRegistry();
+
   const tools = new DefaultToolRegistry();
   for (const tool of createFileTools()) tools.register(tool);
   for (const tool of createTerminalTools()) tools.register(tool);
@@ -371,7 +376,7 @@ export async function createAgentLoop(
   if (personalityWantsKanban(activePerson)) {
     const kanbanDbPath = resolveKanbanDbPath(config, dataDir, activePerson.id);
     kanbanStore = new KanbanStore(kanbanDbPath);
-    for (const tool of createKanbanTools({ store: kanbanStore })) tools.register(tool);
+    for (const tool of createKanbanTools({ store: kanbanStore, hooks })) tools.register(tool);
   }
   for (const tool of createProcessTools(dataDir)) tools.register(tool);
   for (const tool of createImageTools()) tools.register(tool);
@@ -424,8 +429,6 @@ export async function createAgentLoop(
       );
     }
   }
-
-  const hooks = new DefaultHookRegistry();
 
   const { injectors, tools: skillTools } = createInjectors(personalities, {
     onSkillSkip: (skillId, reason) => log.warn(`skill ${skillId} skipped: ${reason}`),

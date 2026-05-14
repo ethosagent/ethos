@@ -7,7 +7,7 @@ import type {
   TaskStatus,
   WorkspaceMode,
 } from '@ethosagent/kanban-store';
-import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
+import type { HookRegistry, Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
 export {
   createKanbanRoleGateHook,
@@ -31,6 +31,7 @@ const RULES = [
   'STATUSES',
   '- todo → ready → running → done',
   '- blocked (called out explicitly via kanban_block; unblock with kanban_unblock)',
+  '- needs_revision (a before_ticket_complete verifier rejected the completion; re-claim to retry)',
   '- archived (soft-delete; preserves audit trail)',
 ].join('\n');
 
@@ -62,6 +63,8 @@ const STATUS_VALUES: TaskStatus[] = [
   'done',
   'archived',
   'scheduled',
+  'failed',
+  'needs_revision',
 ];
 const WORKSPACE_MODES: WorkspaceMode[] = ['scratch', 'worktree', 'dir'];
 
@@ -81,6 +84,8 @@ function summariseTask(t: Task) {
     assignee: t.assignee,
     priority: t.priority,
     current_run_id: t.currentRunId,
+    retry_count: t.retryCount,
+    max_retries: t.maxRetries,
     updated_at: t.updatedAt,
   };
 }
@@ -97,6 +102,9 @@ function fullTask(t: Task) {
     workspace_path: t.workspacePath,
     scheduled_for: t.scheduledFor,
     current_run_id: t.currentRunId,
+    retry_count: t.retryCount,
+    max_retries: t.maxRetries,
+    acceptance_criteria: t.acceptanceCriteria,
     created_at: t.createdAt,
     updated_at: t.updatedAt,
   };
@@ -154,6 +162,8 @@ interface CreateArgs {
   workspace_mode?: WorkspaceMode;
   scheduled_for?: number | null;
   idempotency_key?: string | null;
+  max_retries?: number | null;
+  acceptance_criteria?: string | null;
 }
 
 function createKanbanCreate(store: KanbanStore): Tool {
@@ -180,6 +190,18 @@ function createKanbanCreate(store: KanbanStore): Tool {
         workspace_mode: { type: 'string', enum: WORKSPACE_MODES },
         scheduled_for: { type: 'integer', description: 'Epoch ms; sets status=scheduled' },
         idempotency_key: { type: 'string' },
+        max_retries: {
+          type: ['integer', 'null'],
+          description:
+            'Retry budget. Omit (or null) for unlimited retries. When set, the task is ' +
+            'moved to status=failed once it has been re-claimed more than this many times.',
+        },
+        acceptance_criteria: {
+          type: 'string',
+          description:
+            'Optional. What "done" means for this task — checked by a before_ticket_complete ' +
+            'verifier hook when one is registered. No behavioural impact when absent.',
+        },
       },
     },
     async execute(rawArgs, ctx) {
@@ -234,6 +256,20 @@ function createKanbanCreate(store: KanbanStore): Tool {
           'input_invalid',
         );
       }
+      if (
+        args.max_retries !== undefined &&
+        args.max_retries !== null &&
+        (!Number.isInteger(args.max_retries) || args.max_retries < 0)
+      ) {
+        return errorResult('max_retries must be a non-negative integer or null', 'input_invalid');
+      }
+      if (args.acceptance_criteria !== undefined && args.acceptance_criteria !== null) {
+        if (typeof args.acceptance_criteria !== 'string') {
+          return errorResult('acceptance_criteria must be a string', 'input_invalid');
+        }
+        const acErr = tooLong('acceptance_criteria', args.acceptance_criteria, MAX_BODY_CHARS);
+        if (acErr) return acErr;
+      }
       try {
         const task = store.createTask({
           title: args.title,
@@ -244,6 +280,10 @@ function createKanbanCreate(store: KanbanStore): Tool {
           ...(args.workspace_mode !== undefined ? { workspaceMode: args.workspace_mode } : {}),
           ...(args.scheduled_for !== undefined ? { scheduledFor: args.scheduled_for } : {}),
           ...(args.idempotency_key !== undefined ? { idempotencyKey: args.idempotency_key } : {}),
+          ...(args.max_retries !== undefined ? { maxRetries: args.max_retries } : {}),
+          ...(args.acceptance_criteria !== undefined
+            ? { acceptanceCriteria: args.acceptance_criteria }
+            : {}),
           actor: actorOf(ctx),
         });
         return jsonResult({ task_id: task.id, status: task.status });
@@ -547,7 +587,7 @@ function createKanbanComment(store: KanbanStore): Tool {
 // kanban_complete / kanban_block / kanban_unblock
 // ---------------------------------------------------------------------------
 
-function createKanbanComplete(store: KanbanStore): Tool {
+function createKanbanComplete(store: KanbanStore, hooks?: HookRegistry): Tool {
   return {
     name: 'kanban_complete',
     description: `End the open run with outcome=completed, set status=done.\n${RULES}`,
@@ -571,8 +611,41 @@ function createKanbanComplete(store: KanbanStore): Tool {
       }
       const summaryErr = tooLong('summary', args.summary, MAX_SUMMARY_CHARS);
       if (summaryErr) return summaryErr;
+      const taskId = args.task_id;
+      const summary = args.summary;
       try {
-        const t = store.completeRun(args.task_id, args.summary, actorOf(ctx));
+        // before_ticket_complete is a claiming hook: the first handler to return
+        // { handled: true } rejects the running -> done transition. The architectural
+        // interpretation is that the kanban_complete tool — where the transition
+        // originates — fires the hook, not the supervisor process. With no hooks
+        // wired (or no handler registered), fireClaiming returns { handled: false }
+        // and completion proceeds: the plan's opt-in "default no-op".
+        if (hooks !== undefined) {
+          const task = store.getTask(taskId);
+          // Guard the hook path to a running task so it acts on exactly the
+          // states store.completeRun would: that path throws `no open run` for
+          // a non-running task, and wiring a verifier must not widen that.
+          if (task?.status !== 'running') {
+            return errorResult(`no open run: ${taskId}`, 'execution_failed');
+          }
+          const verdict = await hooks.fireClaiming('before_ticket_complete', {
+            taskId,
+            summary,
+            ...(task?.acceptanceCriteria != null
+              ? { acceptanceCriteria: task.acceptanceCriteria }
+              : {}),
+          });
+          if (verdict.handled) {
+            const t = store.updateStatus(
+              taskId,
+              'needs_revision',
+              verdict.reason ?? 'completion rejected',
+              actorOf(ctx),
+            );
+            return jsonResult(fullTask(t));
+          }
+        }
+        const t = store.completeRun(taskId, summary, actorOf(ctx));
         return jsonResult(fullTask(t));
       } catch (err) {
         return storeError(err);
@@ -794,8 +867,8 @@ function createKanbanArchive(store: KanbanStore): Tool {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createKanbanTools(opts: { store: KanbanStore }): Tool[] {
-  const { store } = opts;
+export function createKanbanTools(opts: { store: KanbanStore; hooks?: HookRegistry }): Tool[] {
+  const { store, hooks } = opts;
   return [
     createKanbanCreate(store),
     createKanbanCreateGoal(store),
@@ -803,7 +876,7 @@ export function createKanbanTools(opts: { store: KanbanStore }): Tool[] {
     createKanbanShow(store),
     createKanbanUpdateStatus(store),
     createKanbanComment(store),
-    createKanbanComplete(store),
+    createKanbanComplete(store, hooks),
     createKanbanBlock(store),
     createKanbanUnblock(store),
     createKanbanHeartbeat(store),

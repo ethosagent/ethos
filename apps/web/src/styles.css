@@ -2658,6 +2658,20 @@ body,
   font-variant-numeric: tabular-nums;
 }
 
+/* Retry badge — amber soft-warning, shown only when retry_count > 0. */
+.cc-task-retry {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.04em;
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  font-variant-numeric: tabular-nums;
+}
+
 .cc-task-title {
   font-size: 14px;
   font-weight: 500;
@@ -2756,6 +2770,16 @@ body,
   background: rgba(103, 232, 249, 0.1);
   border-color: rgba(103, 232, 249, 0.28);
 }
+.cc-status-failed {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.32);
+}
+.cc-status-needs_revision {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.1);
+  border-color: rgba(251, 191, 36, 0.32);
+}
 
 /* ── Activity feed — one row per event, scannable ─────────────────── */
 
@@ -2829,7 +2853,10 @@ body,
 
 .cc-roster-row {
   display: flex;
-  align-items: center;
+  /* flex-start, not center: the row holds a two-line detail block (name +
+     stats), and centering would float the 8px mark dot against the gap
+     between the lines. The mark aligns to the name line via margin-top. */
+  align-items: flex-start;
   gap: 8px;
   padding: 10px 20px;
   border-bottom: 1px solid var(--ethos-border);
@@ -2843,6 +2870,16 @@ body,
   height: 8px;
   border-radius: 50%;
   flex: 0 0 8px;
+  /* Center the 8px dot within the ~16px name line so it reads as aligned to
+     the member name, not the taller detail block. */
+  margin-top: 4px;
+}
+
+.cc-roster-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .cc-roster-name {
@@ -2855,12 +2892,32 @@ body,
   white-space: nowrap;
 }
 
+/* Read-only success-rate line under the roster name. Informational only. */
+.cc-roster-stats {
+  font-size: 11px;
+  color: var(--ethos-text-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-roster-stats--empty {
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.cc-roster-stats-breakdown {
+  opacity: 0.7;
+}
+
 .cc-roster-status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--ethos-border-strong, var(--ethos-border));
   flex: 0 0 8px;
+  /* Row is `align-items: flex-start`; match the mark's name-line offset so the
+     status dot stays aligned to the member name rather than jumping to the top. */
+  margin-top: 4px;
 }
 .cc-roster-status-running {
   background: #4ade80;

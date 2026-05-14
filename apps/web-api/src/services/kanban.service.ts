@@ -7,6 +7,7 @@ import {
   type TaskComment,
   type TaskEvent,
   type TaskRun,
+  type TeamMemberStats,
 } from '@ethosagent/kanban-store';
 import {
   parseTeamManifest,
@@ -19,6 +20,7 @@ import type {
   KanbanComment,
   KanbanEvent,
   KanbanLink,
+  KanbanMemberStats,
   KanbanRun,
   KanbanTask,
   KanbanTaskStatus,
@@ -88,11 +90,14 @@ export class KanbanService {
           tasks: [],
           links: [],
           recentEvents: [],
+          memberStats: [],
         },
       };
     }
 
-    const store = new KanbanStore(boardPath);
+    // Open with the team name as `teamId` so `getMemberStats()` returns this
+    // board's per-member outcome counters.
+    const store = new KanbanStore(boardPath, { teamId: team });
     try {
       const tasks = store.listTasks({ limit: 1000 }).map(toWireTask);
       // Pull links straight from the underlying DB — store doesn't expose a
@@ -131,12 +136,17 @@ export class KanbanService {
         createdAt: new Date(r.created_at).toISOString(),
       }));
 
+      const memberStats: KanbanMemberStats[] = [...store.getMemberStats().values()].map(
+        toWireMemberStats,
+      );
+
       return {
         board: {
           team: summary,
           tasks,
           links,
           recentEvents,
+          memberStats,
         },
       };
     } finally {
@@ -161,7 +171,11 @@ export class KanbanService {
     if (!existsSync(boardPath)) {
       throw new Error(`team board not found: ${opts.team}`);
     }
-    const store = new KanbanStore(boardPath);
+    // Open with the team name as `teamId` so terminal transitions (failed,
+    // needs_revision) recorded here update the same per-member stats ledger the
+    // dispatcher writes through — keeping the ledger consistent regardless of
+    // whether a human or an agent drove the transition.
+    const store = new KanbanStore(boardPath, { teamId: opts.team });
     try {
       const updated = store.updateStatus(opts.taskId, opts.status, opts.reason, opts.actor);
       return { task: toWireTask(updated) };
@@ -223,8 +237,22 @@ function toWireTask(t: Task): KanbanTask {
     workspacePath: t.workspacePath,
     scheduledFor: t.scheduledFor !== null ? new Date(t.scheduledFor).toISOString() : null,
     currentRunId: t.currentRunId,
+    retryCount: t.retryCount,
+    maxRetries: t.maxRetries,
+    acceptanceCriteria: t.acceptanceCriteria,
     createdAt: new Date(t.createdAt).toISOString(),
     updatedAt: new Date(t.updatedAt).toISOString(),
+  };
+}
+
+function toWireMemberStats(s: TeamMemberStats): KanbanMemberStats {
+  return {
+    teamId: s.teamId,
+    memberId: s.memberId,
+    ticketsCompleted: s.ticketsCompleted,
+    ticketsFailed: s.ticketsFailed,
+    ticketsOrphaned: s.ticketsOrphaned,
+    lastUpdatedAt: new Date(s.lastUpdatedAt).toISOString(),
   };
 }
 

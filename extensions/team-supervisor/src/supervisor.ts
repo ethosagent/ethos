@@ -352,7 +352,9 @@ export async function runSupervisor(
   // HTTP calls and leaves any open runs to be reclaimed via stale heartbeat
   // on the next start.
   const boardPath = join(teamsDir(), name, 'board.db');
-  const board = new KanbanStore(boardPath);
+  // Pass the team name as `teamId` so the board records per-member outcome
+  // counters (`team_member_stats`) on every terminal task transition.
+  const board = new KanbanStore(boardPath, { teamId: name });
 
   const supervisorView: SupervisorState = {
     portOf: (p) => memberMap.get(p)?.port ?? null,
@@ -364,10 +366,18 @@ export async function runSupervisor(
     supervisor: supervisorView,
     ...(manifest.kanban?.stale_ms !== undefined ? { staleMs: manifest.kanban.stale_ms } : {}),
     ...(manifest.kanban?.poll_ms !== undefined ? { pollMs: manifest.kanban.poll_ms } : {}),
+    ...(manifest.kanban?.staleness_threshold_ms !== undefined
+      ? { stalenessThresholdMs: manifest.kanban.staleness_threshold_ms }
+      : {}),
     // Pass the coordinator personality id through so orphan tickets (assignee=null,
     // no children) get reassigned to the coordinator each tick. Unset on teams
     // running in self-routing mode — adoption is a no-op there.
     ...(manifest.coordinator !== undefined ? { coordinator: manifest.coordinator } : {}),
+    // Opt-in reliability tie-breaker: when set, the dispatcher orders
+    // equal-priority ready tasks by their assignee's success ratio.
+    ...(manifest.dispatch_prefer_reliable !== undefined
+      ? { preferReliable: manifest.dispatch_prefer_reliable }
+      : {}),
     onError: (err, taskId) => {
       logSupervisorEvent({
         ts: new Date().toISOString(),

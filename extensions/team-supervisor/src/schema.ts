@@ -25,11 +25,13 @@ const TeamManifestSchema: z.ZodType<TeamManifest> = z
     coordinator_model: z.string().optional(),
     personality_models: z.record(z.string(), z.string()).optional(),
     mesh: z.string().optional(),
+    dispatch_prefer_reliable: z.boolean().optional(),
     members: z.array(TeamMemberSchema),
     kanban: z
       .object({
         stale_ms: z.number().int().positive().optional(),
         poll_ms: z.number().int().positive().optional(),
+        staleness_threshold_ms: z.number().int().positive().optional(),
       })
       .optional(),
   })

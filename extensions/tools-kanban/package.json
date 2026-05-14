@@ -16,5 +16,8 @@
   "dependencies": {
     "@ethosagent/kanban-store": "workspace:*",
     "@ethosagent/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@ethosagent/core": "workspace:*"
   }
 }

@@ -122,6 +122,8 @@ Modifying	fireModifying	Handlers run sequentially. Results are merged — first 
 Claiming	fireClaiming	Handlers run sequentially. Stops at first { handled: true }. Use for routing decisions: which platform handles this message.
 All three return () => void cleanup functions from register*().
 
+before_ticket_complete (claiming) — fired by the kanban_complete tool before the running → done transition, with { taskId, summary, acceptanceCriteria? }. A handler returning { handled: true, reason } rejects the completion: the ticket goes to needs_revision (with reason in the audit trail) instead of done. Opt-in — no handler registered (or no HookRegistry wired) means fireClaiming returns { handled: false } and completion proceeds unchanged. The original assignee can re-claim a needs_revision ticket and retry; the re-claim counts against the task's max_retries budget.
+
 Tool-progress audience boundary (Phase 30.2)
 Tools call ctx.emit({ type: 'progress', toolName, message, audience? }) to surface progress. The audience field is the gate:
 
