@@ -117,6 +117,7 @@ const sidebars: SidebarsConfig = {
           collapsed: true,
           items: [
             'building/explanation/personality-as-architecture',
+            'building/explanation/personality-governance',
             'building/explanation/injection-at-construction',
             'building/explanation/hook-execution-models',
             'building/explanation/tool-result-budget',

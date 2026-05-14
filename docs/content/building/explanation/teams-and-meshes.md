@@ -203,14 +203,6 @@ This is the right default — a sub-agent should not be confused by the parent's
 
 The exception is `route_to_agent` against a long-running team member. The member's session is preserved across calls (the supervisor keeps the process up; the session store is on disk). A coordinator that routes three times to the same engineer member gets a member with three turns of history. The session key is the member's process key, not the parent's.
 
-### Skin and theming respect the active member
-
-A small but visible property: each personality can declare `skin` in its `config.yaml`. When a team member is the active personality for a turn, its skin is the one the surface applies. The CLI's `SkinContext` and the web's `ConfigProvider` consume the same token set.
-
-For a coordinator-mode team, this means the surface theme follows the coordinator's preference (assuming the user has not pinned a global skin). For self-routing teams where the active member changes turn-to-turn, the theme can shift with the routing decision. Most users do not exercise the property; the ones who run multi-personality teams with distinct visual identities appreciate it.
-
-The user pin wins. If `~/.ethos/config.yaml` declares a global skin, switching members does not override it. The override is opt-out, not opt-in.
-
 ### Observability across a mesh
 
 Every member writes to the same observability database (`~/.ethos/observability.db` via `extensions/observability-sqlite/`). The traces are keyed by `sessionId`, with a parent/child relationship for delegated turns. The CLI's observability commands (`ethos obs traces`) walk the tree.

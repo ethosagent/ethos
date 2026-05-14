@@ -179,6 +179,8 @@ config.yaml is simple key: value (no nested YAML). Parsed by parseConfigYaml() i
 
 FilePersonalityRegistry.loadFromDirectory() is mtime-cached — it re-reads a personality only when config.yaml changes on disk. Call it on every turn for hot-reload; it's cheap when nothing changed.
 
+Verify what you built with ethos personality show <id> — it prints the generated character sheet (identity, routing, memory scope, toolset, MCP servers, plugins, fs_reach). renderCharacterSheet() in @ethosagent/personalities is the single generator; the Web Personalities tab renders the same artifact via the personalities.characterSheet RPC.
+
 What does NOT belong on PersonalityConfig (Phase 30.8)
 The schema is frozen. The following categories are NOT personality concerns — they belong in skills or per-channel adapter config:
 
@@ -186,7 +188,7 @@ voice modes / TTS settings
 emotion / mood / sentiment tags
 label or response templates
 per-channel UI affordances
-Adding a top-level field to PersonalityConfig requires the personality-schema-change label, two-maintainer approval, and bumping .personality-field-count in the same commit. The mechanical CI gate (packages/types/src/__tests__/personality-field-count.test.ts) fails if the count drifts. See CONTRIBUTING.md for the full rule.
+Per-personality display overrides (skin, verbosity, busy-input mode) and untyped metadata passthroughs are also out — the personality-alignment phase removed them; display preferences live in display.* in ~/.ethos/config.yaml. Adding a top-level field to PersonalityConfig requires the personality-schema-change label, two-maintainer approval, and bumping .personality-field-count in the same commit. The mechanical CI gate (packages/types/src/__tests__/personality-field-count.test.ts) fails if the count drifts. See CONTRIBUTING.md for the full rule, and docs/content/building/explanation/personality-governance.md for why.
 
 Session key convention
 CLI sessions use cli:<cwd-basename> as the session key. Different working directories get separate conversation histories. /new in chat appends :${Date.now()} to force a fresh session.

@@ -325,6 +325,8 @@ type changes. Every frozen schema has:
 - A named owner.
 - A bump procedure.
 
+The personality schema is the worked example. [Personality governance](docs/content/building/explanation/personality-governance.md) explains how its freeze rule and the generated character sheet operationalise this section for `PersonalityConfig` — the personality-alignment phase removed four non-identity fields (`skin`, `busyInputMode`, `verbosity`, `metadata`) under exactly the procedure below.
+
 ### Roster
 
 | Schema | Owner | Bump trigger | Drift gate kind |

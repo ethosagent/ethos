@@ -183,16 +183,6 @@ Per-session spending cap. When the running cost for the current session crosses 
 budgetCapUsd: 1.00
 ```
 
-## skin {#skin}
-
-Type: string · Default: unset
-
-Personality-suggested [skin](../../getting-started/glossary.md#skin) name. Applied when the user has not pinned a global skin in `~/.ethos/config.yaml`. A user pin always wins.
-
-```yaml
-skin: paper
-```
-
 ## context_engine {#context-engine}
 
 Type: string · Default: `drop_oldest`

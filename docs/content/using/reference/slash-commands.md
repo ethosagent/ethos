@@ -32,7 +32,7 @@ Synopsis: `/new` (alias: `/reset`)
 
 ## /personality {#slash-personality}
 
-Show or switch the active [personality](../../getting-started/glossary.md#personality). `/personality` prints the current id; `/personality list` prints built-ins; `/personality <id>` switches. In the TUI, switching also re-applies the personality's [skin](./personality-yaml.md#skin) and budget cap. The change is session-local — use `ethos personality set <id>` to persist.
+Show or switch the active [personality](../../getting-started/glossary.md#personality). `/personality` prints the current id; `/personality list` prints built-ins; `/personality <id>` switches. In the TUI, switching also re-applies the personality's budget cap. The change is session-local — use `ethos personality set <id>` to persist.
 
 Synopsis: `/personality [list | <id>]`
 
@@ -97,7 +97,7 @@ Synopsis: `/details [hidden | collapsed | expanded] [thinking | tools | subagent
 
 ## /skin {#slash-skin}
 
-List or pick a [skin](../../getting-started/glossary.md#skin). Built-in names: `default`, `mono`, `paper`. `reset` clears the user pin and re-applies the personality-suggested skin. The user pin always wins over the personality's `skin` field; set `skin:` in `~/.ethos/config.yaml` to persist.
+List or pick a [skin](../../getting-started/glossary.md#skin). Built-in names: `default`, `mono`, `paper`. `reset` clears the user pin and falls back to the engine default. Set `skin:` in `~/.ethos/config.yaml` to persist a pin across sessions.
 
 Synopsis: `/skin [list | reset | <name>]`
 

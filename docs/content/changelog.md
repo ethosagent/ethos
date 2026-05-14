@@ -34,7 +34,7 @@ Status · beta
 
 - Docs rewrite under the [`/docs` skill](https://github.com/MiteshSharma/ethos/blob/main/.agents/skills/docs/SKILL.md) (originally shipped as `DOCS.md` at the repo root) — two-persona shell ("Using Ethos" / "Building on Ethos"), Diátaxis four-pillar within each.
 - Kanban [tool](getting-started/glossary.md#tool) for [personalities](getting-started/glossary.md#personality) that need to coordinate multi-step plans without leaning on the prompt.
-- Theming and [skin](getting-started/glossary.md#skin) engine — per-personality and per-user skins, single `@ethosagent/design-tokens` source of truth across TUI and Web.
+- Theming and [skin](getting-started/glossary.md#skin) engine — per-user skins pinned in `~/.ethos/config.yaml`, single `@ethosagent/design-tokens` source of truth across TUI and Web.
 
 Notable changes
 

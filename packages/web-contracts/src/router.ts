@@ -108,6 +108,14 @@ const PersonalityGetOutput = z.object({
   ethosMd: z.string(),
 });
 
+const PersonalityCharacterSheetInput = z.object({ id: z.string() });
+const PersonalityCharacterSheetOutput = z.object({
+  /** Generated Markdown character sheet — the same artifact `ethos personality
+   *  show` prints. Regenerated on each call; see `renderCharacterSheet` in
+   *  @ethosagent/personalities. */
+  markdown: z.string(),
+});
+
 const PersonalityIdRegex = /^[a-z0-9_-]+$/;
 
 const PersonalityCreateInput = z.object({
@@ -134,12 +142,6 @@ const PersonalityUpdateInput = z.object({
   memoryScope: z.enum(['global', 'per-personality']).optional(),
   mcp_servers: z.array(z.string()).optional(),
   plugins: z.array(z.string()).optional(),
-  /**
-   * Named skin override (see @ethosagent/design-tokens BUILTIN_SKINS).
-   * `null` clears the override; a string sets it; omitting the field
-   * leaves the existing value alone.
-   */
-  skin: z.string().nullable().optional(),
 });
 const PersonalityUpdateOutput = z.object({ personality: PersonalitySchema });
 
@@ -194,6 +196,7 @@ const PersonalitySkillsImportOutput = z.object({ imported: z.array(PersonalitySk
 const personalities = {
   list: oc.output(PersonalityListOutput),
   get: oc.input(PersonalityGetInput).output(PersonalityGetOutput),
+  characterSheet: oc.input(PersonalityCharacterSheetInput).output(PersonalityCharacterSheetOutput),
   create: oc.input(PersonalityCreateInput).output(PersonalityCreateOutput),
   update: oc.input(PersonalityUpdateInput).output(PersonalityUpdateOutput),
   delete: oc.input(PersonalityDeleteInput).output(PersonalityOkOutput),

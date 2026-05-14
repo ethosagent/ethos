@@ -9,6 +9,8 @@ import {
   type Storage,
 } from '@ethosagent/types';
 
+export { renderCharacterSheet } from './character-sheet';
+
 // ---------------------------------------------------------------------------
 // YAML parsers — no external dependency, handles the subset we need
 // ---------------------------------------------------------------------------
@@ -166,12 +168,6 @@ export interface UpdatePersonalityPatch {
   memoryScope?: 'global' | 'per-personality';
   mcp_servers?: string[];
   plugins?: string[];
-  /**
-   * Skin field on the personality's config.yaml. `undefined` leaves the
-   * existing value alone; `null` clears the override; a string sets it
-   * to that named skin.
-   */
-  skin?: string | null;
 }
 
 export class FilePersonalityRegistry implements PersonalityRegistry {
@@ -316,14 +312,9 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       patch.model !== undefined ||
       patch.memoryScope !== undefined ||
       patch.mcp_servers !== undefined ||
-      patch.plugins !== undefined ||
-      patch.skin !== undefined
+      patch.plugins !== undefined
     ) {
       const config = existing.config;
-      // `patch.skin === null` is the "clear the override" signal — fall through
-      // to undefined so renderConfigYaml drops the line. A defined string sets
-      // it; undefined leaves the existing value alone.
-      const nextSkin = patch.skin === undefined ? config.skin : (patch.skin ?? undefined);
       const merged = {
         id: config.id,
         name: patch.name ?? config.name,
@@ -334,7 +325,6 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         memoryScope: patch.memoryScope ?? config.memoryScope,
         mcp_servers: patch.mcp_servers ?? config.mcp_servers,
         plugins: patch.plugins ?? config.plugins,
-        skin: nextSkin,
       };
       await this.storage.write(join(dir, 'config.yaml'), renderConfigYaml(merged));
     }
@@ -597,18 +587,6 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         ? { context_engine_options: contextEngineOptions }
         : {}),
       ...(skillEvolution !== undefined ? { skill_evolution: skillEvolution } : {}),
-      ...(cfg.skin ? { skin: cfg.skin } : {}),
-      ...(cfg.busyInputMode === 'interrupt' ||
-      cfg.busyInputMode === 'queue' ||
-      cfg.busyInputMode === 'steer'
-        ? { busyInputMode: cfg.busyInputMode as PersonalityConfig['busyInputMode'] }
-        : {}),
-      ...(cfg.verbosity === 'quiet' ||
-      cfg.verbosity === 'default' ||
-      cfg.verbosity === 'verbose' ||
-      cfg.verbosity === 'debug'
-        ? { verbosity: cfg.verbosity as PersonalityConfig['verbosity'] }
-        : {}),
     };
 
     validateUnsafeCombinations(id, config);
@@ -825,7 +803,6 @@ function renderConfigYaml(
   input: CreatePersonalityInput & {
     mcp_servers?: string[];
     plugins?: string[];
-    skin?: string;
   },
 ): string {
   const lines: string[] = [`name: ${input.name}`];
@@ -834,7 +811,6 @@ function renderConfigYaml(
   if (input.memoryScope) lines.push(`memoryScope: ${input.memoryScope}`);
   if (input.mcp_servers !== undefined) lines.push(`mcp_servers: ${input.mcp_servers.join(' ')}`);
   if (input.plugins !== undefined) lines.push(`plugins: ${input.plugins.join(' ')}`);
-  if (input.skin) lines.push(`skin: ${input.skin}`);
   return `${lines.join('\n')}\n`;
 }
 

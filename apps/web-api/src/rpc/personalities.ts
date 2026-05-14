@@ -9,6 +9,10 @@ export const personalitiesRouter = {
 
   get: os.personalities.get.handler(({ input, context }) => context.personalities.get(input.id)),
 
+  characterSheet: os.personalities.characterSheet.handler(({ input, context }) =>
+    context.personalities.characterSheet(input.id),
+  ),
+
   create: os.personalities.create.handler(({ input, context }) =>
     context.personalities.create({
       id: input.id,

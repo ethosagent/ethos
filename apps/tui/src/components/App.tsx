@@ -91,8 +91,8 @@ interface AppProps {
   initialVerbose?: boolean;
   /**
    * Named skin pinned by the user (config.yaml `skin:` or `--skin` flag).
-   * When set, it overrides any personality-declared skin. When absent,
-   * the personality's own `skin` field wins, falling back to 'default'.
+   * When set (and valid), it is the active skin; otherwise the engine
+   * default ('default') applies. Personalities carry no skin of their own.
    */
   initialSkin?: string;
   rebuildLoop?: (modelId: string) => Promise<AgentLoop>;
@@ -101,14 +101,13 @@ interface AppProps {
 }
 
 /**
- * Phase 3 resolution order — highest wins:
- *   1. User pin (initialSkin / /skin <name>)
- *   2. Personality default (personality.skin from config.yaml)
- *   3. Engine default ('default')
+ * Skin resolution: a valid user pin (`--skin` flag, config.yaml, or
+ * `/skin <name>`) wins; otherwise the engine default. Per-personality skin
+ * overrides were removed in the personality-alignment phase — a personality
+ * is an identity, not a theme.
  */
-function pickEffectiveSkin(userPin: string | null, personalitySkin: string | undefined): string {
+function pickEffectiveSkin(userPin: string | null): string {
   if (userPin && BUILTIN_SKINS[userPin]) return userPin;
-  if (personalitySkin && BUILTIN_SKINS[personalitySkin]) return personalitySkin;
   return 'default';
 }
 
@@ -170,29 +169,24 @@ export function App({
   const [usage, setUsage] = useState({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
   const [statusMsg, setStatusMsg] = useState('');
   const [details, setDetails] = useState<DetailsState>(DEFAULT_DETAILS);
-  // Skin state — Phase 3 resolution order: user pin > personality.skin > default.
+  // Skin state — a valid user pin wins, otherwise the engine default.
   // `userPinnedSkin` is the value the user set via `--skin` flag, config.yaml,
-  // or `/skin <name>`. When null, the personality's declared skin wins.
+  // or `/skin <name>`. Per-personality skin overrides were removed in the
+  // personality-alignment phase.
   const [userPinnedSkin, setUserPinnedSkin] = useState<string | null>(() =>
     initialSkin && BUILTIN_SKINS[initialSkin] ? initialSkin : null,
   );
   const [tokens, setTokens] = useState<Tokens>(() => {
-    const personalitySkin = bridge.getPersonalitySkin(initialPersonality);
     const effective = pickEffectiveSkin(
       initialSkin && BUILTIN_SKINS[initialSkin] ? initialSkin : null,
-      personalitySkin,
     );
     return resolveTokensFor(effective);
   });
-  const applyTokensFor = useCallback(
-    (personalityId: string, userPin: string | null): string => {
-      const personalitySkin = bridge.getPersonalitySkin(personalityId);
-      const effective = pickEffectiveSkin(userPin, personalitySkin);
-      setTokens(resolveTokensFor(effective));
-      return effective;
-    },
-    [bridge],
-  );
+  const applyTokensFor = useCallback((userPin: string | null): string => {
+    const effective = pickEffectiveSkin(userPin);
+    setTokens(resolveTokensFor(effective));
+    return effective;
+  }, []);
   const [modal, setModal] = useState<Modal>(null);
   const [completionIndex, setCompletionIndex] = useState(0);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
@@ -724,10 +718,6 @@ export function App({
           const newPersonality = args[0] ?? personality;
           setPersonality(newPersonality);
           setBudgetCapUsd(bridge.getPersonalityBudgetCap(newPersonality) ?? null);
-          // Phase 3 — re-resolve the active skin against the new personality.
-          // User pin still wins; falls back to the new personality's declared
-          // skin if no pin is set.
-          applyTokensFor(newPersonality, userPinnedSkin);
           setStatusMsg(`[personality: ${newPersonality}]`);
         }
         break;
@@ -816,17 +806,12 @@ export function App({
       case 'skin': {
         const sub = args[0] ?? '';
         if (sub === '' || sub === 'list') {
-          const personalitySkin = bridge.getPersonalitySkin(personality);
-          const effective = pickEffectiveSkin(userPinnedSkin, personalitySkin);
+          const effective = pickEffectiveSkin(userPinnedSkin);
           const lines = BUILTIN_SKIN_NAMES.map((name) => {
             const marker = name === effective ? '*' : ' ';
             return `  ${marker} ${name.padEnd(10)} ${BUILTIN_SKINS[name].description}`;
           });
-          const source = userPinnedSkin
-            ? `pinned by user`
-            : personalitySkin
-              ? `from personality "${personality}"`
-              : `engine default`;
+          const source = userPinnedSkin ? `pinned by user` : `engine default`;
           setMessages((prev) => [
             ...prev,
             {
@@ -839,7 +824,7 @@ export function App({
         }
         if (sub === 'reset') {
           setUserPinnedSkin(null);
-          const effective = applyTokensFor(personality, null);
+          const effective = applyTokensFor(null);
           setStatusMsg(`[skin: ${effective} — user pin cleared]`);
           break;
         }
@@ -848,7 +833,7 @@ export function App({
           break;
         }
         setUserPinnedSkin(sub);
-        applyTokensFor(personality, sub);
+        applyTokensFor(sub);
         setStatusMsg(`[skin: ${sub}]`);
         break;
       }

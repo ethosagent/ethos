@@ -548,8 +548,13 @@ function EditModal({ id, onClose }: { id: string; onClose: () => void }) {
         </div>
       ) : (
         <Tabs
-          defaultActiveKey="identity"
+          defaultActiveKey="characterSheet"
           items={[
+            {
+              key: 'characterSheet',
+              label: 'Character sheet',
+              children: <CharacterSheetPanel id={id} />,
+            },
             {
               key: 'identity',
               label: 'Identity',
@@ -591,6 +596,43 @@ function EditModal({ id, onClose }: { id: string; onClose: () => void }) {
   );
 }
 
+// The generated character sheet — one screen of what the personality is,
+// what it has, and what it can reach. Same Markdown artifact `ethos
+// personality show` prints; rendered read-only here as the primary read.
+function CharacterSheetPanel({ id }: { id: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['personalities', 'characterSheet', id],
+    queryFn: () => rpc.personalities.characterSheet({ id }),
+  });
+
+  if (isLoading || !data) {
+    return (
+      <div style={{ display: 'grid', placeItems: 'center', height: 240 }}>
+        <Spin />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        Auto-generated from config + ETHOS.md — the same artifact{' '}
+        <code>ethos personality show</code> prints.
+      </Typography.Paragraph>
+      <pre
+        style={{
+          fontFamily: 'Geist Mono, monospace',
+          fontSize: 12.5,
+          whiteSpace: 'pre-wrap',
+          margin: 0,
+        }}
+      >
+        {data.markdown}
+      </pre>
+    </>
+  );
+}
+
 function IdentityEditor({ id, initialEthosMd }: { id: string; initialEthosMd: string }) {
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
@@ -600,6 +642,7 @@ function IdentityEditor({ id, initialEthosMd }: { id: string; initialEthosMd: st
     mutationFn: () => rpc.personalities.update({ id, ethosMd: draft }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['personalities', 'get', id] });
+      qc.invalidateQueries({ queryKey: ['personalities', 'characterSheet', id] });
       qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
       notification.success({ message: 'ETHOS.md saved', placement: 'topRight' });
     },
@@ -648,6 +691,7 @@ function ToolsetEditor({ id, initialToolset }: { id: string; initialToolset: str
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['personalities', 'get', id] });
+      qc.invalidateQueries({ queryKey: ['personalities', 'characterSheet', id] });
       qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
       notification.success({ message: 'Toolset saved', placement: 'topRight' });
     },
@@ -689,7 +733,6 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
     description: string;
     model: string;
     memoryScope: 'global' | 'per-personality' | undefined;
-    skin: string | undefined;
   }>();
 
   useEffect(() => {
@@ -698,7 +741,6 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
       description: personality.description ?? '',
       model: personality.model ?? '',
       memoryScope: personality.memoryScope ?? undefined,
-      skin: personality.skin ?? undefined,
     });
   }, [personality, form]);
 
@@ -708,9 +750,6 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
       description: string;
       model: string;
       memoryScope?: 'global' | 'per-personality';
-      // `null` is the explicit "clear the override" signal; `undefined` means
-      // "leave alone." Server side: `string | null | undefined` per contract.
-      skin?: string | null;
     }) =>
       rpc.personalities.update({
         id,
@@ -718,15 +757,11 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
         description: values.description,
         model: values.model,
         ...(values.memoryScope ? { memoryScope: values.memoryScope } : {}),
-        skin: values.skin ?? null,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['personalities', 'get', id] });
+      qc.invalidateQueries({ queryKey: ['personalities', 'characterSheet', id] });
       qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
-      // Invalidate config too — the chat tab's per-personality skin resolution
-      // reads `personality.skin` from the list and the user pin from config,
-      // so this refresh makes the chat surface repaint immediately.
-      qc.invalidateQueries({ queryKey: ['config'] });
       notification.success({ message: 'Config saved', placement: 'topRight' });
     },
     onError: (err) =>
@@ -743,7 +778,6 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
           description: values.description,
           model: values.model,
           ...(values.memoryScope ? { memoryScope: values.memoryScope } : {}),
-          skin: values.skin ?? null,
         })
       }
     >
@@ -762,21 +796,6 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
           options={[
             { label: 'global (default)', value: 'global' },
             { label: 'per-personality', value: 'per-personality' },
-          ]}
-        />
-      </Form.Item>
-      <Form.Item
-        label="Skin"
-        name="skin"
-        extra="Applies on chat tabs for this personality when no global skin is pinned in Settings. Clear to fall back to the global default."
-      >
-        <Select
-          allowClear
-          placeholder="(none — use global default)"
-          options={[
-            { value: 'default', label: 'default — DESIGN.md baseline' },
-            { value: 'mono', label: 'mono — desaturated accents' },
-            { value: 'paper', label: 'paper — light mode' },
           ]}
         />
       </Form.Item>
@@ -1221,6 +1240,7 @@ function McpServersPanel({ id, initialMcpServers }: { id: string; initialMcpServ
     mutationFn: () => rpc.personalities.update({ id, mcp_servers: [...attached] }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['personalities', 'get', id] });
+      qc.invalidateQueries({ queryKey: ['personalities', 'characterSheet', id] });
       qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
       setDirty(false);
       notification.success({ message: 'MCP servers saved', placement: 'topRight' });
@@ -1328,6 +1348,7 @@ function PluginsAttachPanel({ id, initialPlugins }: { id: string; initialPlugins
     onMutate: () => ({ prev: new Set(attached) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['personalities', 'get', id] });
+      qc.invalidateQueries({ queryKey: ['personalities', 'characterSheet', id] });
       qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
     },
     onError: (err, _vars, ctx) => {

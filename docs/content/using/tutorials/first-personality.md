@@ -102,7 +102,7 @@ What each field does:
 - **`memoryScope`** — `global` (default) reads and writes the shared `~/.ethos/MEMORY.md` and `USER.md`. `per-personality` confines reads and writes to `~/.ethos/personalities/strategist/`. We pick `per-personality` so the strategist keeps its own running context separate from your engineering notes.
 - **`capabilities`** — free-form tags consumed by the skill ingestion filter and the personality picker. Tags do not change behaviour by themselves; they are routing hints.
 
-For the full field list, including `provider`, `streamingTimeoutMs`, `fs_reach`, `mcp_servers`, `plugins`, `budgetCapUsd`, `skin`, `context_layering`, `skill_evolution`, and the nested `safety` block, see [Personality config reference](../reference/personality-yaml.md).
+For the full field list, including `provider`, `streamingTimeoutMs`, `fs_reach`, `mcp_servers`, `plugins`, `budgetCapUsd`, `context_layering`, `skill_evolution`, and the nested `safety` block, see [Personality config reference](../reference/personality-yaml.md).
 
 Two fields you will likely add later:
 

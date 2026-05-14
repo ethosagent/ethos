@@ -14,6 +14,8 @@ A personality in Ethos is not a system prompt string. It is a structural compone
 
 This is the foundational claim of the project. We call it **personality is architecture**, and every other decision in Ethos descends from it.
 
+Keeping the claim honest is the work of **personality governance**: the `PersonalityConfig` schema stays small enough that every field describes *who the agent is*, and `ethos personality show` renders the result as a character sheet a user can read in one screen. See [personality governance](docs/content/building/explanation/personality-governance.md) for how the schema-freeze rule and the character sheet operationalise this thesis.
+
 ## Why this matters to the people we build for
 
 The default direction of LLM products is the opposite of ours: one generalist model wearing different prompt-shaped hats. *"You are now an expert researcher"* — but its tools, its memory, its behaviour have not changed. It is one agent pretending to be five. The user cannot audit what it will do, because what it *can* do has not narrowed.

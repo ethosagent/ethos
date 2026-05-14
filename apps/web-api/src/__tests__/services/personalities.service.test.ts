@@ -96,4 +96,34 @@ describe('PersonalitiesService', () => {
     const result = await service.get('researcher');
     expect(result.ethosMd).toBe('');
   });
+
+  it('characterSheet renders the Markdown artifact from config + ETHOS.md', async () => {
+    const storage = new InMemoryStorage();
+    const ethosPath = join(DATA, 'personalities', 'researcher', 'ETHOS.md');
+    await storage.mkdir(join(DATA, 'personalities', 'researcher'));
+    await storage.write(ethosPath, '# Researcher\n\nI am a careful researcher.\n');
+
+    const registry = new FilePersonalityRegistry(storage, DATA);
+    registry.define({
+      id: 'researcher',
+      name: 'Researcher',
+      model: 'claude-opus-4-7',
+      ethosFile: ethosPath,
+    });
+    registry.setDefault('researcher');
+    const library = new SkillsLibrary({ dataDir: DATA, storage });
+    const service = new PersonalitiesService({ personalities: registry, library });
+
+    const { markdown } = await service.characterSheet('researcher');
+    expect(markdown).toMatch(/^# researcher — Researcher$/m);
+    expect(markdown).toContain('I am a careful researcher.');
+    expect(markdown).toContain('claude-opus-4-7');
+  });
+
+  it('characterSheet throws PERSONALITY_NOT_FOUND for unknown ids', async () => {
+    const service = makeService({ personalities: [] });
+    await expect(service.characterSheet('nope')).rejects.toMatchObject({
+      code: 'PERSONALITY_NOT_FOUND',
+    });
+  });
 });

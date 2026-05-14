@@ -40,21 +40,6 @@ export function Chat() {
   const sessionParam = searchParams.get('session') ?? undefined;
   const { id: personalityId, model, isLoading, setOverride } = useActivePersonality();
   const { notification } = AntApp.useApp();
-  // Phase 3 theming inputs: the user's pinned skin (config.skin) and the
-  // active personality's declared skin. Both flow through useQuery on the
-  // same cache keys ['config'] and ['personalities','list'] used elsewhere
-  // so no extra fetches.
-  const configQuery = useQuery({
-    queryKey: ['config'],
-    queryFn: () => rpc.config.get(),
-  });
-  const personalitiesQuery = useQuery({
-    queryKey: ['personalities', 'list'],
-    queryFn: () => rpc.personalities.list(),
-  });
-  const userPin = configQuery.data?.skin ?? null;
-  const personalitySkin =
-    personalitiesQuery.data?.personalities.find((p) => p.id === personalityId)?.skin ?? null;
 
   const queryClient = useQueryClient();
 
@@ -177,7 +162,7 @@ export function Chat() {
   };
 
   return (
-    <ConfigProvider theme={personalityTheme(personalityId, { userPin, personalitySkin })}>
+    <ConfigProvider theme={personalityTheme(personalityId)}>
       <div className="chat-tab">
         <PersonalityBar
           personalityId={personalityId}
