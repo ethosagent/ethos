@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# dep-analyze — flag new imports introduced by uncommitted changes and any
+# cross-layer violations per ARCHITECTURE.md (types ← core ← extensions ← apps).
+#
+# Output (stdout, single JSON object):
+#   { new_imports: [{ file, importer_layer, module, module_layer }],
+#     violations: [{ file, importer_layer, module, module_layer, rule }],
+#     verdict: "clean" | "violations_found" | "unchanged" }
+#
+# Read-only. Reads git diff + filesystem.
+
+set -uo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  echo '{"error": "not inside a git repo"}'
+  exit 0
+}
+cd "$REPO_ROOT"
+
+# Layer ordering — lower number = lower (more depended-upon) layer.
+# Imports may only flow toward lower numbers (or same-layer sibling, which we
+# also flag as informational).
+classify_layer() {
+  case "$1" in
+    packages/types/*)        echo "types" ;;
+    @ethosagent/types)       echo "types" ;;
+    packages/core/*)         echo "core" ;;
+    @ethosagent/core)        echo "core" ;;
+    extensions/*)            echo "extensions" ;;
+    @ethosagent/*)           echo "extensions" ;;  # workspace pkgs not core/types are extensions
+    apps/*)                  echo "apps" ;;
+    node:*|.|./*|../*|/*)    echo "external_or_relative" ;;
+    *)                       echo "external" ;;
+  esac
+}
+
+layer_rank() {
+  case "$1" in
+    types)              echo 0 ;;
+    core)               echo 1 ;;
+    extensions)         echo 2 ;;
+    apps)               echo 3 ;;
+    *)                  echo 99 ;;
+  esac
+}
+
+NEW_IMPORTS_ARR="[]"
+VIOLATIONS_ARR="[]"
+
+# Find added `import ... from '...'` lines in TypeScript files.
+ADDED_LINES=$(git diff --unified=0 HEAD -- '*.ts' '*.tsx' 2>/dev/null \
+  | awk '
+      /^\+\+\+ b\// { sub(/^\+\+\+ b\//, "", $0); current_file=$0; next }
+      /^\+[^+]/ {
+        line=substr($0, 2)
+        if (match(line, /from[[:space:]]+["'\''][^"'\'']+["'\'']/)) {
+          mod=substr(line, RSTART, RLENGTH)
+          gsub(/^from[[:space:]]+["'\'']|["'\'']$/, "", mod)
+          print current_file "\t" mod
+        }
+      }
+    ')
+
+while IFS=$'\t' read -r FILE MODULE; do
+  [ -z "$FILE" ] && continue
+  [ -z "$MODULE" ] && continue
+
+  IMPORTER_LAYER=$(classify_layer "$FILE")
+  MODULE_LAYER=$(classify_layer "$MODULE")
+
+  # Skip noise: external packages, relative imports, node:* builtins.
+  case "$MODULE_LAYER" in
+    external|external_or_relative) continue ;;
+  esac
+
+  IMPORTER_RANK=$(layer_rank "$IMPORTER_LAYER")
+  MODULE_RANK=$(layer_rank "$MODULE_LAYER")
+
+  ENTRY=$(jq -n \
+    --arg file "$FILE" \
+    --arg il "$IMPORTER_LAYER" \
+    --arg mod "$MODULE" \
+    --arg ml "$MODULE_LAYER" \
+    '{file: $file, importer_layer: $il, module: $mod, module_layer: $ml}')
+
+  NEW_IMPORTS_ARR=$(echo "$NEW_IMPORTS_ARR" | jq --argjson e "$ENTRY" '. + [$e]')
+
+  # Violation = importer at a lower layer reaching toward a higher layer.
+  # (types must not depend on core; core must not depend on extensions; etc.)
+  if [ "$IMPORTER_RANK" -lt "$MODULE_RANK" ] && [ "$MODULE_RANK" -lt 99 ]; then
+    RULE="$IMPORTER_LAYER must not import from $MODULE_LAYER"
+    V=$(echo "$ENTRY" | jq --arg rule "$RULE" '. + {rule: $rule}')
+    VIOLATIONS_ARR=$(echo "$VIOLATIONS_ARR" | jq --argjson v "$V" '. + [$v]')
+  fi
+done <<< "$ADDED_LINES"
+
+NEW_COUNT=$(echo "$NEW_IMPORTS_ARR" | jq 'length')
+VIOL_COUNT=$(echo "$VIOLATIONS_ARR" | jq 'length')
+
+if [ "$VIOL_COUNT" -gt 0 ]; then
+  VERDICT="violations_found"
+elif [ "$NEW_COUNT" -eq 0 ]; then
+  VERDICT="unchanged"
+else
+  VERDICT="clean"
+fi
+
+jq -n \
+  --argjson imports "$NEW_IMPORTS_ARR" \
+  --argjson violations "$VIOLATIONS_ARR" \
+  --arg verdict "$VERDICT" \
+  '{ new_imports: $imports, violations: $violations, verdict: $verdict }'

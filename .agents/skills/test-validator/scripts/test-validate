@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# test-validate — run vitest with JSON reporter, parse to an agent-readable shape.
+#
+# Output (stdout, single JSON object):
+#   { passed: int, failed: int, duration_ms: int,
+#     failures: [{ file, test, line, error }] }
+# On error: { error: string, raw_output: string }
+#
+# Read-only. Never modifies the codebase.
+
+set -uo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  echo '{"error": "not inside a git repo"}'
+  exit 0
+}
+cd "$REPO_ROOT"
+
+TARGET="${1:-}"
+TMP_OUT=$(mktemp)
+trap 'rm -f "$TMP_OUT"' EXIT
+
+START=$(date +%s)
+if [ -n "$TARGET" ]; then
+  pnpm test "$TARGET" --reporter=json > "$TMP_OUT" 2>/dev/null || true
+else
+  pnpm test --reporter=json > "$TMP_OUT" 2>/dev/null || true
+fi
+END=$(date +%s)
+DURATION_MS=$(( (END - START) * 1000 ))
+
+# Vitest sometimes prefixes lifecycle output before the JSON; extract the first
+# {...} block that parses cleanly.
+JSON_LINE=$(grep -m1 '^{' "$TMP_OUT" || true)
+if [ -z "$JSON_LINE" ] || ! echo "$JSON_LINE" | jq -e . >/dev/null 2>&1; then
+  RAW=$(head -c 2000 "$TMP_OUT" | jq -Rs .)
+  echo "{\"error\": \"could not parse vitest JSON output\", \"duration_ms\": $DURATION_MS, \"raw_output\": $RAW}"
+  exit 0
+fi
+
+echo "$JSON_LINE" | jq --argjson duration "$DURATION_MS" '
+  {
+    passed: (.numPassedTests // 0),
+    failed: (.numFailedTests // 0),
+    duration_ms: $duration,
+    failures: [
+      .testResults[]? | select(.status == "failed") as $tr
+      | $tr.assertionResults[]? | select(.status == "failed")
+      | {
+          file: ($tr.name // "unknown"),
+          test: (.fullName // .title // "unknown"),
+          line: (.location.line // null),
+          error: ((.failureMessages // [])[0] // "no message")
+        }
+    ]
+  }
+'

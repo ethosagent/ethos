@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# schema-validate — surface frozen-schema drift and gate-test status.
+#
+# Output (stdout, single JSON object):
+#   { touched_schemas: [path], gate_tests: { passed, failed, details: [{ test, error }] },
+#     verdict: "ok" | "gate_failed" | "unchanged" }
+#
+# Read-only. Reads git diff + runs the schema-gate test files under
+# packages/types/src/__tests__/.
+
+set -uo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  echo '{"error": "not inside a git repo"}'
+  exit 0
+}
+cd "$REPO_ROOT"
+
+# 1. Touched schema files = anything under packages/types/src/ that is not a test.
+TOUCHED=$(git diff --name-only HEAD -- 'packages/types/src/*.ts' 2>/dev/null \
+  | grep -v '__tests__' \
+  | sort -u)
+TOUCHED_JSON=$(printf '%s\n' $TOUCHED | jq -R . | jq -s 'map(select(length > 0))')
+
+# 2. Run schema-gate tests if any exist.
+GATE_DIR="packages/types/src/__tests__"
+if [ ! -d "$GATE_DIR" ]; then
+  echo "{\"touched_schemas\": $TOUCHED_JSON, \"gate_tests\": {\"passed\": 0, \"failed\": 0, \"details\": []}, \"verdict\": \"unchanged\", \"note\": \"no gate test dir at $GATE_DIR\"}"
+  exit 0
+fi
+
+TMP_OUT=$(mktemp)
+trap 'rm -f "$TMP_OUT"' EXIT
+
+pnpm test "$GATE_DIR" --reporter=json > "$TMP_OUT" 2>/dev/null || true
+
+JSON_LINE=$(grep -m1 '^{' "$TMP_OUT" || true)
+if [ -z "$JSON_LINE" ] || ! echo "$JSON_LINE" | jq -e . >/dev/null 2>&1; then
+  echo "{\"touched_schemas\": $TOUCHED_JSON, \"gate_tests\": {\"passed\": 0, \"failed\": 0, \"details\": []}, \"verdict\": \"unknown\", \"error\": \"could not parse gate test output\"}"
+  exit 0
+fi
+
+GATE_RESULTS=$(echo "$JSON_LINE" | jq '
+  {
+    passed: (.numPassedTests // 0),
+    failed: (.numFailedTests // 0),
+    details: [
+      .testResults[]? | select(.status == "failed") as $tr
+      | $tr.assertionResults[]? | select(.status == "failed")
+      | {
+          test: (.fullName // .title // "unknown"),
+          error: ((.failureMessages // [])[0] // "no message")
+        }
+    ]
+  }
+')
+
+FAILED=$(echo "$GATE_RESULTS" | jq '.failed')
+TOUCHED_COUNT=$(echo "$TOUCHED_JSON" | jq 'length')
+
+if [ "$FAILED" -gt 0 ]; then
+  VERDICT="gate_failed"
+elif [ "$TOUCHED_COUNT" -eq 0 ]; then
+  VERDICT="unchanged"
+else
+  VERDICT="ok"
+fi
+
+jq -n \
+  --argjson touched "$TOUCHED_JSON" \
+  --argjson gates "$GATE_RESULTS" \
+  --arg verdict "$VERDICT" \
+  '{ touched_schemas: $touched, gate_tests: $gates, verdict: $verdict }'

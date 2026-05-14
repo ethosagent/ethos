@@ -41,6 +41,14 @@ Project rules in this `CLAUDE.md` take precedence over Codex findings. If Codex 
 
 User can opt out for a single command: prefix with `SKIP_CODEX_REVIEW=1` or say "ship it" / "skip review".
 
+## Engineering rules (hard)
+
+These apply to every task, in addition to the worktree and code-review workflows above.
+
+**Surface conflicts, don't average them.** If two existing patterns in the codebase contradict, don't blend them. Pick one (the more recent or more tested), explain why, and flag the other for cleanup. Average code that satisfies both rules is the worst code.
+
+**Ask before adding to code you don't understand.** "Looks orthogonal to me" is the most expensive phrase in this codebase. If you can't articulate why existing code is structured the way it is, ask before adding adjacent code.
+
 ## Project commands
 
 Run these from inside the ethos repo:

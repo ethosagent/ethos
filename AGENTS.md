@@ -35,7 +35,13 @@ Define success criteria. Loop until verified.
 Always run pnpm check (typecheck + lint + test) before declaring done.
 Always run pnpm lint before pushing. CI fails on lint errors; catching them locally is one command. If lint reports fixable issues, run pnpm lint:fix and re-check before git push. Don't push code that hasn't been linted.
 
-5. Follow the constitution
+5. Surface conflicts, don't average them
+If two existing patterns in the codebase contradict, don't blend them. Pick one (the more recent or more tested), explain why, and flag the other for cleanup. Average code that satisfies both rules is the worst code.
+
+6. Ask before adding to code you don't understand
+"Looks orthogonal to me" is the most expensive phrase in this codebase. If you can't articulate why existing code is structured the way it is, ask before adding adjacent code.
+
+7. Follow the constitution
 [ARCHITECTURE.md](./ARCHITECTURE.md) is the structural source of truth for this codebase. It defines the layer model, dependency direction, frozen schemas, safety rules, and the laws the validator enforces. Read it before:
 
 - Adding or moving any package, extension, or app.
