@@ -128,17 +128,19 @@ function mapAttachments(
   raw: unknown[] | undefined,
 ): import('@ethosagent/types').Attachment[] | undefined {
   if (!raw || raw.length === 0) return undefined;
+  let refCounter = 0;
   return raw.flatMap((item) => {
     if (!item || typeof item !== 'object') return [];
     const a = item as Record<string, unknown>;
+    const rawType = typeof a.type === 'string' ? a.type : 'file';
+    const type: 'image' | 'file' = rawType === 'image' ? 'image' : 'file';
+    const url = typeof a.url === 'string' ? a.url : '';
+    const ref = typeof a.ref === 'string' ? a.ref : `oc-${refCounter++}`;
     return [
       {
-        type: (typeof a.type === 'string' ? a.type : 'file') as
-          | 'image'
-          | 'file'
-          | 'audio'
-          | 'video',
-        url: typeof a.url === 'string' ? a.url : undefined,
+        type,
+        ref,
+        url,
         mimeType: typeof a.mimeType === 'string' ? a.mimeType : 'application/octet-stream',
         filename: typeof a.filename === 'string' ? a.filename : undefined,
       },

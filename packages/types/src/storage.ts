@@ -101,6 +101,16 @@ export interface Storage {
  * configured allowlist. Consumers (e.g. tools-file) should translate this
  * into a user-facing tool error rather than letting it propagate.
  */
+export interface AttachmentCache {
+  write(
+    bytes: Uint8Array,
+    meta: { sessionKey: string; messageId: string; filename: string; mime: string },
+  ): Promise<string>;
+  clear(sessionKey: string): Promise<void>;
+  pruneOlderThan(olderThanMs: number): Promise<{ removedCount: number }>;
+  resolveLocalPath(url: string): string;
+}
+
 export class BoundaryError extends Error {
   readonly code = 'storage-boundary' as const;
   readonly kind: 'read' | 'write';

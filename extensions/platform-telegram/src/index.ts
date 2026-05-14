@@ -146,9 +146,8 @@ interface MediaDescriptor {
 const MEDIA_PLACEHOLDER: Record<Attachment['type'], string> = {
   image: '(attached image)',
   file: '(attached file)',
-  audio: '(attached audio)',
-  video: '(attached video)',
 };
+
 
 /**
  * Extract media descriptors from a Telegram message object.
@@ -181,46 +180,46 @@ function extractMedia(msg: Record<string, unknown>): MediaDescriptor[] {
     });
   }
 
-  // voice
+  // voice — TODO(task-5): mapped to 'file' until Telegram adapter migration
   if (msg.voice && typeof msg.voice === 'object') {
     const v = msg.voice as Record<string, unknown>;
     results.push({
       fileId: String(v.file_id),
-      type: 'audio',
+      type: 'file',
       mimeType: typeof v.mime_type === 'string' ? v.mime_type : 'audio/ogg',
       fileSize: typeof v.file_size === 'number' ? v.file_size : undefined,
     });
   }
 
-  // audio
+  // audio — TODO(task-5): mapped to 'file' until Telegram adapter migration
   if (msg.audio && typeof msg.audio === 'object') {
     const a = msg.audio as Record<string, unknown>;
     results.push({
       fileId: String(a.file_id),
-      type: 'audio',
+      type: 'file',
       mimeType: typeof a.mime_type === 'string' ? a.mime_type : 'audio/mpeg',
       filename: typeof a.file_name === 'string' ? a.file_name : undefined,
       fileSize: typeof a.file_size === 'number' ? a.file_size : undefined,
     });
   }
 
-  // video
+  // video — TODO(task-5): mapped to 'file' until Telegram adapter migration
   if (msg.video && typeof msg.video === 'object') {
     const v = msg.video as Record<string, unknown>;
     results.push({
       fileId: String(v.file_id),
-      type: 'video',
+      type: 'file',
       mimeType: typeof v.mime_type === 'string' ? v.mime_type : 'video/mp4',
       fileSize: typeof v.file_size === 'number' ? v.file_size : undefined,
     });
   }
 
-  // animation (GIF)
+  // animation (GIF) — TODO(task-5): mapped to 'file' until Telegram adapter migration
   if (msg.animation && typeof msg.animation === 'object') {
     const a = msg.animation as Record<string, unknown>;
     results.push({
       fileId: String(a.file_id),
-      type: 'video',
+      type: 'file',
       mimeType: typeof a.mime_type === 'string' ? a.mime_type : 'video/mp4',
       fileSize: typeof a.file_size === 'number' ? a.file_size : undefined,
     });
@@ -637,11 +636,16 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
         continue;
       }
 
+      // TODO(task-5): Telegram adapter will write to AttachmentCache and
+      // populate url from the cache path. For now, use a data: URL stub.
+      const ref = `tg:${m.fileId}`;
       attachments.push({
         type: m.type,
+        ref,
+        url: `data:${m.mimeType};fileId=${m.fileId}`,
         mimeType: m.mimeType,
-        data: result.data,
         filename: m.filename,
+        sizeBytes: result.fileSize,
       });
     }
 

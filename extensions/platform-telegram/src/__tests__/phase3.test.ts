@@ -252,7 +252,7 @@ describe('3.1 — Inbound file support', () => {
     expect(att?.filename).toBe('report.pdf');
   });
 
-  it('attaches voice as audio type', async () => {
+  it('attaches voice as file type (audio/video narrowed to file)', async () => {
     const fakeBuffer = Buffer.from('ogg-bytes');
     vi.stubGlobal(
       'fetch',
@@ -294,12 +294,12 @@ describe('3.1 — Inbound file support', () => {
       expect(captured).toHaveLength(1);
     });
 
-    expect(captured[0].text).toBe('(attached audio)');
-    expect(captured[0].attachments?.[0].type).toBe('audio');
+    expect(captured[0].text).toBe('(attached file)');
+    expect(captured[0].attachments?.[0].type).toBe('file');
     expect(captured[0].attachments?.[0].mimeType).toBe('audio/ogg');
   });
 
-  it('attaches video with correct type', async () => {
+  it('attaches video as file type (audio/video narrowed to file)', async () => {
     const fakeBuffer = Buffer.from('mp4-bytes');
     vi.stubGlobal(
       'fetch',
@@ -344,7 +344,7 @@ describe('3.1 — Inbound file support', () => {
     });
 
     expect(captured[0].text).toBe('cool video');
-    expect(captured[0].attachments?.[0].type).toBe('video');
+    expect(captured[0].attachments?.[0].type).toBe('file');
   });
 
   it('attaches sticker as image type', async () => {
@@ -514,11 +514,11 @@ describe('3.1 — Inbound file support', () => {
       expect(captured).toHaveLength(1);
     });
 
-    expect(captured[0].text).toBe('(attached video)');
-    expect(captured[0].attachments?.[0].type).toBe('video');
+    expect(captured[0].text).toBe('(attached file)');
+    expect(captured[0].attachments?.[0].type).toBe('file');
   });
 
-  it('processes audio message', async () => {
+  it('processes audio message as file type (audio/video narrowed to file)', async () => {
     const fakeBuffer = Buffer.from('mp3-bytes');
     vi.stubGlobal(
       'fetch',
@@ -561,8 +561,8 @@ describe('3.1 — Inbound file support', () => {
       expect(captured).toHaveLength(1);
     });
 
-    expect(captured[0].text).toBe('(attached audio)');
-    expect(captured[0].attachments?.[0].type).toBe('audio');
+    expect(captured[0].text).toBe('(attached file)');
+    expect(captured[0].attachments?.[0].type).toBe('file');
     expect(captured[0].attachments?.[0].mimeType).toBe('audio/mpeg');
     expect(captured[0].attachments?.[0].filename).toBe('song.mp3');
   });
