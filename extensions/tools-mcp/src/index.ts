@@ -35,6 +35,16 @@ export interface McpServerConfig {
   // sse
   url?: string;
   headers?: Record<string, string>;
+  /** Seconds between keepalive pings. Default 30, 0 to disable. */
+  keepaliveSeconds?: number;
+  /** Timeout in ms for reconnect attempts. Default 10_000. */
+  connectTimeoutMs?: number;
+}
+
+export interface McpManagerConfig {
+  logger?: Logger;
+  /** How to handle tool-name collisions across servers. Default: 'warn'. */
+  collisionPolicy?: 'warn' | 'error';
 }
 
 // ---------------------------------------------------------------------------
@@ -53,11 +63,18 @@ export class McpClient {
   private _connected = false;
   private _pending = new Map<symbol, (err: Error) => void>();
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private _keepaliveInterval: ReturnType<typeof setInterval> | null = null;
   private _destroyed = false;
+  private _transport: {
+    close?: () => Promise<void> | void;
+    _process?: { kill: (sig: string) => void };
+  } | null = null;
+  private _logger: Logger;
 
-  constructor(config: McpServerConfig) {
+  constructor(config: McpServerConfig, opts?: { logger?: Logger }) {
     this._config = config;
     this._sdk = new Client({ name: 'ethos', version: '1.0.0' }, { capabilities: {} });
+    this._logger = opts?.logger ?? noopLogger;
   }
 
   get name(): string {
@@ -66,9 +83,11 @@ export class McpClient {
 
   async connect(): Promise<void> {
     const transport = await this._createTransport();
+    this._transport = transport as typeof this._transport;
 
     this._sdk.onclose = () => {
       this._connected = false;
+      this._clearKeepalive();
       const err = new Error(`MCP server '${this._config.name}' disconnected`);
       for (const reject of this._pending.values()) reject(err);
       this._pending.clear();
@@ -77,6 +96,38 @@ export class McpClient {
 
     await this._sdk.connect(transport);
     this._connected = true;
+    this._startKeepalive();
+  }
+
+  private _startKeepalive(): void {
+    const seconds = this._config.keepaliveSeconds ?? 30;
+    if (seconds <= 0) return;
+
+    this._keepaliveInterval = setInterval(async () => {
+      try {
+        await Promise.race([
+          this._sdk.ping(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('ping timeout')), 5000),
+          ),
+        ]);
+      } catch {
+        this._logger.warn(
+          `[ethos] MCP server '${this._config.name}' keepalive failed, reconnecting`,
+          { component: 'tools-mcp', server: this._config.name },
+        );
+        this._clearKeepalive();
+        this._connected = false;
+        if (!this._destroyed) this._scheduleReconnect(0);
+      }
+    }, seconds * 1000);
+  }
+
+  private _clearKeepalive(): void {
+    if (this._keepaliveInterval) {
+      clearInterval(this._keepaliveInterval);
+      this._keepaliveInterval = null;
+    }
   }
 
   protected async _createTransport() {
@@ -128,8 +179,14 @@ export class McpClient {
       this._reconnectTimer = null;
       // Re-create the SDK client — old one is done
       this._sdk = new Client({ name: 'ethos', version: '1.0.0' }, { capabilities: {} });
+      const timeoutMs = this._config.connectTimeoutMs ?? 10_000;
       try {
-        await this.connect();
+        await Promise.race([
+          this.connect(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('connect timeout')), timeoutMs),
+          ),
+        ]);
       } catch {
         this._scheduleReconnect(attempt + 1);
       }
@@ -150,6 +207,14 @@ export class McpClient {
   }
 
   async callTool(name: string, args: unknown): Promise<ToolResult> {
+    return this._callToolInner(name, args, true);
+  }
+
+  private async _callToolInner(
+    name: string,
+    args: unknown,
+    allowRetry: boolean,
+  ): Promise<ToolResult> {
     if (!this._connected) {
       return {
         ok: false,
@@ -181,9 +246,20 @@ export class McpClient {
       }
       return { ok: true, value: text || '(no output)' };
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (allowRetry && this._isConnectionError(msg)) {
+        this._logger.warn(
+          `[ethos] MCP server '${this._config.name}' pipe error, retrying once`,
+          { component: 'tools-mcp', server: this._config.name, error: msg },
+        );
+        // Trigger reconnect and wait briefly for it
+        if (!this._destroyed) this._scheduleReconnect(0);
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        return this._callToolInner(name, args, false);
+      }
       return {
         ok: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: msg,
         code: 'execution_failed',
       };
     } finally {
@@ -191,13 +267,57 @@ export class McpClient {
     }
   }
 
+  private _isConnectionError(msg: string): boolean {
+    const patterns = [
+      'EPIPE',
+      'ECONNRESET',
+      'ECONNREFUSED',
+      'connection closed',
+      'write after end',
+      'socket hang up',
+    ];
+    const lower = msg.toLowerCase();
+    return patterns.some((p) => lower.includes(p.toLowerCase()));
+  }
+
   async disconnect(): Promise<void> {
     this._destroyed = true;
+    this._clearKeepalive();
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
     }
     this._connected = false;
+
+    // Close the transport
+    if (this._transport?.close) {
+      try {
+        await this._transport.close();
+      } catch {
+        // Ignore transport close errors
+      }
+    }
+
+    // For stdio transports, ensure child process is terminated
+    const proc = this._transport?._process;
+    if (proc) {
+      try {
+        proc.kill('SIGTERM');
+      } catch {
+        // Process may already be dead
+      }
+      // Schedule SIGKILL after grace period in case SIGTERM is ignored
+      setTimeout(() => {
+        try {
+          proc.kill('SIGKILL');
+        } catch {
+          /* already dead */
+        }
+      }, 2000);
+    }
+
+    this._transport = null;
+
     try {
       await this._sdk.close();
     } catch {
@@ -236,13 +356,18 @@ export class McpManager {
   private _clients: McpClient[];
   private _tools: Tool[] = [];
   private readonly logger: Logger;
+  private readonly _collisionPolicy: 'warn' | 'error';
 
-  constructor(configs: McpServerConfig[], opts: { logger?: Logger } = {}) {
-    this._clients = configs.map((c) => new McpClient(c));
+  constructor(configs: McpServerConfig[], opts: McpManagerConfig = {}) {
     this.logger = opts.logger ?? noopLogger;
+    this._collisionPolicy = opts.collisionPolicy ?? 'warn';
+    this._clients = configs.map((c) => new McpClient(c, { logger: this.logger }));
   }
 
   async connect(): Promise<void> {
+    // Collect tools per server for collision detection
+    const toolsByServer = new Map<string, McpToolDef[]>();
+
     await Promise.allSettled(
       this._clients.map(async (client) => {
         try {
@@ -258,6 +383,7 @@ export class McpManager {
 
         try {
           const mcpTools = await client.listTools();
+          toolsByServer.set(client.name, mcpTools);
           for (const t of mcpTools) {
             this._tools.push(adaptMcpTool(t, client.name, client));
           }
@@ -270,6 +396,38 @@ export class McpManager {
         }
       }),
     );
+
+    // Cross-server tool-name collision detection
+    this._detectCollisions(toolsByServer);
+  }
+
+  private _detectCollisions(toolsByServer: Map<string, McpToolDef[]>): void {
+    const nameToServers = new Map<string, string[]>();
+    for (const [serverName, tools] of toolsByServer) {
+      for (const tool of tools) {
+        const existing = nameToServers.get(tool.name);
+        if (existing) {
+          existing.push(serverName);
+        } else {
+          nameToServers.set(tool.name, [serverName]);
+        }
+      }
+    }
+
+    for (const [toolName, servers] of nameToServers) {
+      if (servers.length < 2) continue;
+
+      const msg =
+        `[ethos] Tool name collision: '${toolName}' exposed by servers: ${servers.join(', ')}`;
+      if (this._collisionPolicy === 'error') {
+        throw new Error(msg);
+      }
+      this.logger.warn(msg, {
+        component: 'tools-mcp',
+        toolName,
+        servers,
+      });
+    }
   }
 
   getTools(): Tool[] {
@@ -278,6 +436,11 @@ export class McpManager {
 
   async disconnect(): Promise<void> {
     await Promise.allSettled(this._clients.map((c) => c.disconnect()));
+  }
+
+  /** Alias for disconnect — intention-revealing name for lifecycle management. */
+  async shutdown(): Promise<void> {
+    return this.disconnect();
   }
 }
 
