@@ -57,9 +57,14 @@ function passesFilter(entry: ToolEntry, filterOpts: ToolFilterOpts | undefined):
 export class DefaultToolRegistry implements ToolRegistry {
   private readonly tools = new Map<string, ToolEntry>();
   private readonly backends?: CapabilityBackends;
+  private turnAttachments?: import('@ethosagent/types').Attachment[];
 
   constructor(backends?: CapabilityBackends) {
     this.backends = backends;
+  }
+
+  setTurnAttachments(attachments: import('@ethosagent/types').Attachment[] | undefined): void {
+    this.turnAttachments = attachments;
   }
 
   register(tool: Tool, opts?: { pluginId?: string }): void {
@@ -269,7 +274,7 @@ export class DefaultToolRegistry implements ToolRegistry {
               entry.tool.name,
               entry.tool.capabilities,
               { sessionId: ctx.sessionId, personalityId: ctx.personalityId },
-              { ...this.backends, inboundAttachments: ctx.inboundAttachments },
+              { ...this.backends, inboundAttachments: this.turnAttachments },
             );
             Object.assign(toolCtx, resolved);
           }

@@ -19,6 +19,9 @@ export class ScopedAttachmentsImpl implements ScopedAttachments {
   }
 
   async open(att: Attachment): Promise<{ path: string }> {
+    if (!this.attachments.some((a) => a.ref === att.ref)) {
+      throw new Error(`Attachment ref "${att.ref}" is not in the scoped list for this tool`);
+    }
     if (att.url.startsWith('file://')) {
       return { path: this.cache.resolveLocalPath(att.url) };
     }

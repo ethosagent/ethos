@@ -232,8 +232,8 @@ export interface RunOptions {
    */
   steerSink?: SteerSink;
   /** Per-turn inbound attachments from the user message. Persisted as an
-   *  `<attachments>` annotation prepended to the user text and threaded to
-   *  tool execution via `ToolContext.inboundAttachments`. */
+   *  `<attachments>` annotation prepended to the user text. Threaded to the
+   *  capability resolver via `ToolRegistry.setTurnAttachments()`. */
   attachments?: import('@ethosagent/types').Attachment[];
 }
 
@@ -944,7 +944,6 @@ export class AgentLoop {
         memoryScope: personality.memoryScope,
         memoryScopeId: memScopeId,
         ...(this.teamId !== undefined && { teamId: this.teamId }),
-        ...(opts.attachments?.length ? { inboundAttachments: opts.attachments } : {}),
         currentTurn: turnCount,
         messageCount: allMessages.length + turnCount,
         abortSignal,
@@ -1076,6 +1075,7 @@ export class AgentLoop {
         .filter((p) => p.rejected === undefined)
         .map((p) => ({ toolCallId: p.toolCallId, name: p.name, args: p.args }));
 
+      this.tools.setTurnAttachments?.(opts.attachments);
       const startedAt = Date.now();
       const execResults =
         execInputs.length > 0

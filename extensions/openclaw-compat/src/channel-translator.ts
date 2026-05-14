@@ -134,7 +134,8 @@ function mapAttachments(
     const a = item as Record<string, unknown>;
     const rawType = typeof a.type === 'string' ? a.type : 'file';
     const type: 'image' | 'file' = rawType === 'image' ? 'image' : 'file';
-    const url = typeof a.url === 'string' ? a.url : '';
+    const url = typeof a.url === 'string' && a.url ? a.url : undefined;
+    if (!url) return [];
     const ref = typeof a.ref === 'string' ? a.ref : `oc-${refCounter++}`;
     return [
       {
