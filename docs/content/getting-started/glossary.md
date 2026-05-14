@@ -115,6 +115,10 @@ A configuration of multiple personalities that can pass work to each other under
 
 The personality at the top of a mesh that decides which other personality handles the next message. Picks routing based on message content, prior turn outcomes, or explicit user direction.
 
+### Team {#team}
+
+A named set of personalities that coordinate through a shared kanban board. A team supervisor process dispatches tickets to members based on each member's toolset and current workload; results land back on the kanban for review. Contrast with [mesh](#mesh): teams coordinate by claiming work from a visible board, meshes coordinate by routing messages through a [supervisor](#supervisor). See [When should you use a mesh?](../building/explanation/teams-and-meshes.md).
+
 ## Channels and platforms {#channels-platforms}
 
 ### Channel adapter {#channel-adapter}
