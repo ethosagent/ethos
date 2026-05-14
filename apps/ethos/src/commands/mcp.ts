@@ -6,9 +6,12 @@
 //   ethos mcp init             Show quick-start snippet for a client
 //   ethos mcp doctor           Verify MCP server is reachable and functional
 //   ethos mcp inspect          List tools, resources, and prompts
+//   ethos mcp add <name>       Add an MCP server to ~/.ethos/mcp.json
+//   ethos mcp presets           List available MCP server presets
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import type { ClientAdapter } from '@ethosagent/mcp-server';
 import {
   claudeDesktop,
@@ -19,6 +22,8 @@ import {
   opencode,
   zed,
 } from '@ethosagent/mcp-server';
+import { getPreset, MCP_PRESETS } from '@ethosagent/tools-mcp';
+import type { McpServerConfig } from '@ethosagent/tools-mcp';
 import { ethosDir, readConfig } from '../config';
 import { createAgentLoop, getSecretsResolver, getStorage } from '../wiring';
 
@@ -27,11 +32,18 @@ const CLIENTS: ClientAdapter[] = [claudeDesktop, cursor, opencode, continueClien
 const USAGE = `Usage: ethos mcp <subcommand> [options]
 
 Subcommands:
-  serve            Start the Ethos MCP server over stdio
+  serve [options]  Start the Ethos MCP server
+    --http           Use Streamable HTTP transport instead of stdio
+    --port <n>       HTTP port (default: 3300, implies --http)
+    --bind-public    Bind to 0.0.0.0 (required for non-loopback)
   install <client> Install Ethos into a supported MCP client's config
   init [client]    Print quick-start config snippet
   doctor           Verify server configuration
   inspect          List available tools, resources, and prompts
+  add <name>       Add an MCP server to ~/.ethos/mcp.json
+    --preset <name>  Use a built-in preset (see 'ethos mcp presets')
+    --env KEY=val    Set environment variable (repeatable)
+  presets          List available MCP server presets
 
 Supported clients: ${CLIENTS.map((c) => c.name).join(', ')}`;
 
@@ -40,7 +52,7 @@ export async function runMcp(argv: string[]): Promise<void> {
 
   switch (sub) {
     case 'serve':
-      return runServe();
+      return runServe(argv.slice(1));
     case 'install':
       return runInstall(argv.slice(1));
     case 'init':
@@ -49,6 +61,10 @@ export async function runMcp(argv: string[]): Promise<void> {
       return runDoctor();
     case 'inspect':
       return runInspect();
+    case 'add':
+      return runAdd(argv.slice(1));
+    case 'presets':
+      return runPresets();
     default: {
       if (sub && sub !== '--help' && sub !== '-h') {
         console.error(`Unknown subcommand: ${sub}\n`);
@@ -58,7 +74,35 @@ export async function runMcp(argv: string[]): Promise<void> {
   }
 }
 
-async function runServe(): Promise<void> {
+async function runServe(argv: string[]): Promise<void> {
+  let useHttp = false;
+  let port = 3300;
+  let bindPublic = false;
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--http') {
+      useHttp = true;
+    } else if (arg === '--port') {
+      useHttp = true;
+      const next = argv[i + 1];
+      if (!next || next.startsWith('--')) {
+        console.error('--port requires a number');
+        process.exitCode = 1;
+        return;
+      }
+      port = Number(next);
+      if (!Number.isFinite(port) || port < 1 || port > 65535) {
+        console.error(`Invalid port: ${next}`);
+        process.exitCode = 1;
+        return;
+      }
+      i++;
+    } else if (arg === '--bind-public') {
+      bindPublic = true;
+    }
+  }
+
   const storage = getStorage();
   const config = await readConfig(storage, getSecretsResolver());
   if (!config) {
@@ -71,8 +115,14 @@ async function runServe(): Promise<void> {
   }
   const loop = await createAgentLoop(config);
   const server = new EthosMcpServer({ loop, dataDir: ethosDir(), logger: mcpLogger });
-  await server.start();
-  // Keep process alive — the stdio transport handles shutdown
+
+  if (useHttp) {
+    await server.serveHttp({ port, bindPublic });
+    // Keep process alive — the HTTP server handles shutdown
+  } else {
+    await server.start();
+    // Keep process alive — the stdio transport handles shutdown
+  }
 }
 
 async function runInstall(argv: string[]): Promise<void> {
@@ -181,6 +231,166 @@ function runInit(clientName?: string): void {
     );
     return;
   }
+}
+
+// ---------------------------------------------------------------------------
+// mcp add — add an MCP server entry to ~/.ethos/mcp.json
+// ---------------------------------------------------------------------------
+
+const ADD_USAGE = `Usage: ethos mcp add <name> [options]
+
+Options:
+  --preset <name>  Use a built-in preset (see 'ethos mcp presets')
+  --env KEY=val    Set environment variable (repeatable)
+
+Without --preset, you must provide --command and optionally --args:
+  --command <cmd>  Server command (e.g. 'npx')
+  --args <a> ...   Command arguments (consumes remaining positional args)
+
+Examples:
+  ethos mcp add fs --preset filesystem --env ALLOWED_PATHS=/data
+  ethos mcp add my-git --preset git --env GIT_REPO_PATH=/repos/myapp
+  ethos mcp add custom --command npx --args -y @myorg/mcp-server`;
+
+function parseAddArgs(argv: string[]): {
+  name?: string;
+  preset?: string;
+  env: Record<string, string>;
+  command?: string;
+  args: string[];
+} {
+  const env: Record<string, string> = {};
+  const extraArgs: string[] = [];
+  let name: string | undefined;
+  let preset: string | undefined;
+  let command: string | undefined;
+  let collectingArgs = false;
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i] ?? '';
+
+    if (collectingArgs) {
+      extraArgs.push(arg);
+      continue;
+    }
+
+    if (arg === '--preset') {
+      preset = argv[i + 1];
+      i++;
+    } else if (arg === '--env') {
+      const val = argv[i + 1];
+      if (val) {
+        const eqIdx = val.indexOf('=');
+        if (eqIdx > 0) {
+          env[val.slice(0, eqIdx)] = val.slice(eqIdx + 1);
+        }
+      }
+      i++;
+    } else if (arg === '--command') {
+      command = argv[i + 1];
+      i++;
+    } else if (arg === '--args') {
+      collectingArgs = true;
+    } else if (!arg.startsWith('-') && !name) {
+      name = arg;
+    }
+  }
+
+  return { name, preset, env, command, args: extraArgs };
+}
+
+function readMcpJson(): McpServerConfig[] {
+  const path = join(homedir(), '.ethos', 'mcp.json');
+  if (!existsSync(path)) return [];
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as McpServerConfig[];
+  } catch {
+    return [];
+  }
+}
+
+function writeMcpJson(configs: McpServerConfig[]): void {
+  const dir = join(homedir(), '.ethos');
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(join(dir, 'mcp.json'), `${JSON.stringify(configs, null, 2)}\n`, 'utf8');
+}
+
+function runAdd(argv: string[]): void {
+  const parsed = parseAddArgs(argv);
+
+  if (!parsed.name) {
+    console.log(ADD_USAGE);
+    return;
+  }
+
+  // Check for duplicate name
+  const existing = readMcpJson();
+  if (existing.some((s) => s.name === parsed.name)) {
+    console.error(`MCP server '${parsed.name}' already exists in ~/.ethos/mcp.json`);
+    console.error('Remove it first or choose a different name.');
+    process.exitCode = 1;
+    return;
+  }
+
+  let entry: McpServerConfig;
+
+  if (parsed.preset) {
+    const preset = getPreset(parsed.preset);
+    if (!preset) {
+      console.error(`Unknown preset: ${parsed.preset}`);
+      console.error(`Available presets: ${Object.keys(MCP_PRESETS).join(', ')}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const envKeys = Object.keys(parsed.env);
+    const envPassthrough = envKeys.length > 0 ? envKeys : undefined;
+
+    entry = {
+      name: parsed.name,
+      transport: 'stdio',
+      command: preset.command,
+      args: preset.args,
+      ...(envKeys.length > 0 ? { env: parsed.env } : {}),
+      ...(envPassthrough ? { mcpEnvPassthrough: envPassthrough } : {}),
+    };
+  } else if (parsed.command) {
+    const envKeys = Object.keys(parsed.env);
+    const envPassthrough = envKeys.length > 0 ? envKeys : undefined;
+
+    entry = {
+      name: parsed.name,
+      transport: 'stdio',
+      command: parsed.command,
+      ...(parsed.args.length > 0 ? { args: parsed.args } : {}),
+      ...(envKeys.length > 0 ? { env: parsed.env } : {}),
+      ...(envPassthrough ? { mcpEnvPassthrough: envPassthrough } : {}),
+    };
+  } else {
+    console.error('Either --preset or --command is required.\n');
+    console.log(ADD_USAGE);
+    process.exitCode = 1;
+    return;
+  }
+
+  existing.push(entry);
+  writeMcpJson(existing);
+  console.log(`Added MCP server '${parsed.name}' to ~/.ethos/mcp.json`);
+}
+
+// ---------------------------------------------------------------------------
+// mcp presets — list available presets
+// ---------------------------------------------------------------------------
+
+function runPresets(): void {
+  console.log('Available MCP server presets:\n');
+  for (const preset of Object.values(MCP_PRESETS)) {
+    const envHint = preset.envVars.length > 0 ? ` (env: ${preset.envVars.join(', ')})` : '';
+    console.log(`  ${preset.name.padEnd(14)} ${preset.description}${envHint}`);
+  }
+  console.log('\nUsage: ethos mcp add <name> --preset <preset> [--env KEY=val ...]');
 }
 
 function runDoctor(): void {

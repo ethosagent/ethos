@@ -6,6 +6,11 @@ import { FsStorage } from '@ethosagent/storage-fs';
 import type { Logger, Storage, Tool, ToolResult } from '@ethosagent/types';
 import { Client } from '@modelcontextprotocol/sdk/client';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import { rewriteDefinitionsToRefs } from './schema-rewrite';
+
+export { MCP_PRESETS, getPreset } from './presets';
+export type { McpPreset } from './presets';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -25,7 +30,7 @@ const PINNED_MCP_KEYS = new Set([
 
 export interface McpServerConfig {
   name: string;
-  transport: 'stdio' | 'sse';
+  transport: 'stdio' | 'streamable-http' | /** @deprecated Use 'streamable-http' for HTTP-based MCP servers. Legacy SSE kept for one release. */ 'sse';
   // stdio
   command?: string;
   args?: string[];
@@ -65,11 +70,14 @@ export class McpClient {
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _keepaliveInterval: ReturnType<typeof setInterval> | null = null;
   private _destroyed = false;
-  private _transport: {
-    close?: () => Promise<void> | void;
-    _process?: { kill: (sig: string) => void };
-  } | null = null;
+  private _transport: { close?: () => Promise<void> | void } | null = null;
+  private _generation = 0;
+  private _reconnectResolve: (() => void) | null = null;
+  private _reconnectPromise: Promise<void> | null = null;
   private _logger: Logger;
+
+  /** Callback invoked when the server sends `notifications/tools/list_changed`. */
+  onToolsChanged?: (tools: McpToolDef[]) => void;
 
   constructor(config: McpServerConfig, opts?: { logger?: Logger }) {
     this._config = config;
@@ -96,6 +104,27 @@ export class McpClient {
 
     await this._sdk.connect(transport);
     this._connected = true;
+
+    // Phase 2.3 — dynamic tool discovery via notifications/tools/list_changed
+    this._sdk.setNotificationHandler(
+      ToolListChangedNotificationSchema,
+      async () => {
+        try {
+          const tools = await this.listTools();
+          this.onToolsChanged?.(tools);
+        } catch (err) {
+          this._logger.warn(
+            `[ethos] MCP server '${this._config.name}' tools/list_changed re-fetch failed`,
+            {
+              component: 'tools-mcp',
+              server: this._config.name,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
+        }
+      },
+    );
+
     this._startKeepalive();
   }
 
@@ -157,9 +186,22 @@ export class McpClient {
       });
     }
 
+    if (this._config.transport === 'streamable-http') {
+      const { url } = this._config;
+      if (!url) throw new Error(`MCP server '${this._config.name}': streamable-http transport requires 'url'`);
+      const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+      return new StreamableHTTPClientTransport(new URL(url), {
+        requestInit: this._config.headers ? { headers: this._config.headers } : undefined,
+      });
+    }
+
     if (this._config.transport === 'sse') {
       const { url } = this._config;
       if (!url) throw new Error(`MCP server '${this._config.name}': sse transport requires 'url'`);
+      this._logger.warn(
+        `[ethos] MCP '${this._config.name}': SSE transport is deprecated, use 'streamable-http'`,
+        { component: 'tools-mcp', server: this._config.name },
+      );
       // Lazy import to avoid pulling in eventsource when not needed
       const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
       return new SSEClientTransport(new URL(url), {
@@ -174,10 +216,16 @@ export class McpClient {
 
   private _scheduleReconnect(attempt: number): void {
     if (this._destroyed || attempt >= 5) return;
+    if (!this._reconnectPromise) {
+      this._reconnectPromise = new Promise((resolve) => {
+        this._reconnectResolve = resolve;
+      });
+    }
     const delay = Math.min(1000 * 2 ** attempt, 30_000);
+    const gen = ++this._generation;
     this._reconnectTimer = setTimeout(async () => {
       this._reconnectTimer = null;
-      // Re-create the SDK client — old one is done
+      if (this._destroyed || gen !== this._generation) return;
       this._sdk = new Client({ name: 'ethos', version: '1.0.0' }, { capabilities: {} });
       const timeoutMs = this._config.connectTimeoutMs ?? 10_000;
       try {
@@ -187,8 +235,15 @@ export class McpClient {
             setTimeout(() => reject(new Error('connect timeout')), timeoutMs),
           ),
         ]);
+        if (gen !== this._generation) {
+          try { await this._sdk.close(); } catch { /* stale */ }
+          return;
+        }
+        this._reconnectResolve?.();
+        this._reconnectPromise = null;
+        this._reconnectResolve = null;
       } catch {
-        this._scheduleReconnect(attempt + 1);
+        if (gen === this._generation) this._scheduleReconnect(attempt + 1);
       }
     }, delay);
   }
@@ -202,7 +257,7 @@ export class McpClient {
     return result.tools.map((t) => ({
       name: t.name,
       description: t.description,
-      inputSchema: t.inputSchema as Record<string, unknown>,
+      inputSchema: rewriteDefinitionsToRefs(t.inputSchema as Record<string, unknown>),
     }));
   }
 
@@ -235,11 +290,45 @@ export class McpClient {
       ]);
 
       const isError = raw.isError === true;
-      const content = raw.content as Array<{ type: string; text?: string }>;
-      const text = content
-        .filter((c) => c.type === 'text')
-        .map((c) => c.text ?? '')
-        .join('\n');
+
+      // Phase 2.4/2.5 — structuredContent handling (newer MCP spec)
+      const structured = (raw as Record<string, unknown>).structuredContent as unknown;
+      const content = raw.content as
+        | Array<{ type: string; text?: string; data?: string; mimeType?: string }>
+        | undefined;
+
+      // Phase 2.5 — merge both when structuredContent (non-sentinel) and content co-exist
+      if (structured && structured !== 'no_mcp' && content?.length) {
+        const textPart = content.filter((c) => c.type === 'text').map((c) => c.text ?? '').join('\n');
+        const json = JSON.stringify(structured, null, 2);
+        const merged = textPart
+          ? `${textPart}\n\n--- Structured Data ---\n${json}`
+          : json;
+        if (isError) {
+          return { ok: false, error: merged || 'Tool returned an error', code: 'execution_failed' };
+        }
+        return { ok: true, value: merged };
+      }
+
+      // Phase 2.4 — structuredContent only (no content or empty content)
+      if (structured && structured !== 'no_mcp') {
+        const text = JSON.stringify(structured, null, 2);
+        if (isError) {
+          return { ok: false, error: text || 'Tool returned an error', code: 'execution_failed' };
+        }
+        return { ok: true, value: text };
+      }
+
+      // Phase 2.6 — fall back to content blocks, handling image blocks
+      const parts: string[] = [];
+      for (const block of content ?? []) {
+        if (block.type === 'text') {
+          parts.push(block.text ?? '');
+        } else if (block.type === 'image') {
+          parts.push(`[Image: ${block.mimeType ?? 'image/unknown'}, ${block.data?.length ?? 0} bytes base64]`);
+        }
+      }
+      const text = parts.join('\n');
 
       if (isError) {
         return { ok: false, error: text || 'Tool returned an error', code: 'execution_failed' };
@@ -252,9 +341,15 @@ export class McpClient {
           `[ethos] MCP server '${this._config.name}' pipe error, retrying once`,
           { component: 'tools-mcp', server: this._config.name, error: msg },
         );
-        // Trigger reconnect and wait briefly for it
+        this._connected = false;
         if (!this._destroyed) this._scheduleReconnect(0);
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (this._reconnectPromise) {
+          const deadline = this._config.connectTimeoutMs ?? 10_000;
+          await Promise.race([
+            this._reconnectPromise,
+            new Promise((r) => setTimeout(r, deadline)),
+          ]);
+        }
         return this._callToolInner(name, args, false);
       }
       return {
@@ -296,24 +391,6 @@ export class McpClient {
       } catch {
         // Ignore transport close errors
       }
-    }
-
-    // For stdio transports, ensure child process is terminated
-    const proc = this._transport?._process;
-    if (proc) {
-      try {
-        proc.kill('SIGTERM');
-      } catch {
-        // Process may already be dead
-      }
-      // Schedule SIGKILL after grace period in case SIGTERM is ignored
-      setTimeout(() => {
-        try {
-          proc.kill('SIGKILL');
-        } catch {
-          /* already dead */
-        }
-      }, 2000);
     }
 
     this._transport = null;
@@ -361,12 +438,23 @@ export class McpManager {
   constructor(configs: McpServerConfig[], opts: McpManagerConfig = {}) {
     this.logger = opts.logger ?? noopLogger;
     this._collisionPolicy = opts.collisionPolicy ?? 'warn';
-    this._clients = configs.map((c) => new McpClient(c, { logger: this.logger }));
+    this._clients = configs.map((c) => {
+      const client = new McpClient(c, { logger: this.logger });
+      // Phase 2.3 — wire dynamic tool discovery callback
+      client.onToolsChanged = (newTools) => {
+        const prefix = `mcp__${client.name}__`;
+        this._tools = this._tools.filter((t) => !t.name.startsWith(prefix));
+        for (const t of newTools) {
+          this._tools.push(adaptMcpTool(t, client.name, client));
+        }
+      };
+      return client;
+    });
   }
 
   async connect(): Promise<void> {
-    // Collect tools per server for collision detection
     const toolsByServer = new Map<string, McpToolDef[]>();
+    const pendingTools: Tool[] = [];
 
     await Promise.allSettled(
       this._clients.map(async (client) => {
@@ -385,7 +473,7 @@ export class McpManager {
           const mcpTools = await client.listTools();
           toolsByServer.set(client.name, mcpTools);
           for (const t of mcpTools) {
-            this._tools.push(adaptMcpTool(t, client.name, client));
+            pendingTools.push(adaptMcpTool(t, client.name, client));
           }
         } catch (err) {
           this.logger.warn(`[ethos] MCP server '${client.name}' listTools failed`, {
@@ -397,8 +485,13 @@ export class McpManager {
       }),
     );
 
-    // Cross-server tool-name collision detection
-    this._detectCollisions(toolsByServer);
+    try {
+      this._detectCollisions(toolsByServer);
+    } catch (err) {
+      await this.disconnect();
+      throw err;
+    }
+    this._tools = pendingTools;
   }
 
   private _detectCollisions(toolsByServer: Map<string, McpToolDef[]>): void {
@@ -460,3 +553,6 @@ export async function loadMcpConfig(
     return [];
   }
 }
+
+// Re-export schema rewrite helper for external use / testing
+export { rewriteDefinitionsToRefs } from './schema-rewrite';
