@@ -1,5 +1,6 @@
 import { createServer as createHttpServer } from 'node:http';
 import type { AgentLoop } from '@ethosagent/core';
+import type { SessionStore } from '@ethosagent/types';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -15,14 +16,19 @@ import type { McpLogger } from './logger';
 import { getPromptMessages, PROMPTS } from './prompts';
 import { listResources, readResource } from './resources';
 import { askPersonality, askPersonalityToolDef } from './tools/ask-personality';
+import { getMessages, getMessagesToolDef } from './tools/get-messages';
+import { getSession, getSessionToolDef } from './tools/get-session';
 import { listPersonalities, listPersonalitiesToolDef } from './tools/list-personalities';
+import { listSessions, listSessionsToolDef } from './tools/list-sessions';
 import { searchMemory, searchMemoryToolDef } from './tools/search-memory';
+import { searchSessions, searchSessionsToolDef } from './tools/search-sessions';
 
 export interface EthosMcpServerConfig {
   loop: AgentLoop;
   dataDir: string;
   logger: McpLogger;
   version?: string;
+  sessionStore?: SessionStore;
 }
 
 export class EthosMcpServer {
@@ -39,10 +45,19 @@ export class EthosMcpServer {
   }
 
   private _registerHandlers(): void {
-    const { loop, dataDir, logger } = this._config;
+    const { loop, dataDir, logger, sessionStore } = this._config;
+
+    const sessionToolDefs = sessionStore
+      ? [listSessionsToolDef, getSessionToolDef, getMessagesToolDef, searchSessionsToolDef]
+      : [];
 
     this._server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [askPersonalityToolDef, listPersonalitiesToolDef, searchMemoryToolDef],
+      tools: [
+        askPersonalityToolDef,
+        listPersonalitiesToolDef,
+        searchMemoryToolDef,
+        ...sessionToolDefs,
+      ],
     }));
 
     this._server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -93,6 +108,79 @@ export class EthosMcpServer {
                 text: JSON.stringify(results, null, 2),
               },
             ],
+          };
+        }
+
+        if (name === 'list_sessions') {
+          if (!sessionStore) {
+            return {
+              content: [
+                { type: 'text' as const, text: 'Session store not configured' },
+              ],
+              isError: true,
+            };
+          }
+          const limit = Number(safeArgs.limit) || 20;
+          const result = await listSessions(sessionStore, limit);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        if (name === 'get_session') {
+          if (!sessionStore) {
+            return {
+              content: [
+                { type: 'text' as const, text: 'Session store not configured' },
+              ],
+              isError: true,
+            };
+          }
+          const id = safeArgs.id ?? '';
+          const messageLimit = Number(safeArgs.messageLimit) || 50;
+          const result = await getSession(sessionStore, id, messageLimit);
+          if ('error' in result) {
+            return {
+              content: [{ type: 'text' as const, text: result.error }],
+              isError: true,
+            };
+          }
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        if (name === 'get_messages') {
+          if (!sessionStore) {
+            return {
+              content: [
+                { type: 'text' as const, text: 'Session store not configured' },
+              ],
+              isError: true,
+            };
+          }
+          const sessionId = safeArgs.sessionId ?? '';
+          const limit = Number(safeArgs.limit) || 50;
+          const result = await getMessages(sessionStore, sessionId, limit);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+          };
+        }
+
+        if (name === 'search_sessions') {
+          if (!sessionStore) {
+            return {
+              content: [
+                { type: 'text' as const, text: 'Session store not configured' },
+              ],
+              isError: true,
+            };
+          }
+          const query = safeArgs.query ?? '';
+          const limit = Number(safeArgs.limit) || 10;
+          const result = await searchSessions(sessionStore, query, limit);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
           };
         }
 

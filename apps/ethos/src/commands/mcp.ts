@@ -22,6 +22,7 @@ import {
   opencode,
   zed,
 } from '@ethosagent/mcp-server';
+import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { getPreset, MCP_PRESETS } from '@ethosagent/tools-mcp';
 import type { McpServerConfig } from '@ethosagent/tools-mcp';
 import { ethosDir, readConfig } from '../config';
@@ -114,7 +115,13 @@ async function runServe(argv: string[]): Promise<void> {
     process.exit(1);
   }
   const loop = await createAgentLoop(config);
-  const server = new EthosMcpServer({ loop, dataDir: ethosDir(), logger: mcpLogger });
+  const sessionStore = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+  const server = new EthosMcpServer({
+    loop,
+    dataDir: ethosDir(),
+    logger: mcpLogger,
+    sessionStore,
+  });
 
   if (useHttp) {
     await server.serveHttp({ port, bindPublic });
@@ -434,6 +441,10 @@ function runInspect(): void {
   console.log('  ask_personality     Run a prompt through a specific personality');
   console.log('  list_personalities  List all available personalities');
   console.log('  search_memory       Search MEMORY.md and USER.md');
+  console.log('  list_sessions       List recent sessions with metadata');
+  console.log('  get_session         Get session metadata and first page of messages');
+  console.log('  get_messages        Get messages from a session');
+  console.log('  search_sessions     Full-text search across session messages');
 
   console.log('\nResources:\n');
   console.log('  ethos://memory/MEMORY.md          Agent memory');
