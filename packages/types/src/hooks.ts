@@ -1,3 +1,4 @@
+import type { Message, TokenUsage, ToolDefinitionLite } from './llm';
 import type { PersonalityConfig } from './personality';
 import type { InboundMessage, OutboundMessage } from './platform';
 import type { StoredMessage } from './session';
@@ -30,12 +31,22 @@ export interface BeforeLLMCallPayload {
   sessionId: string;
   model: string;
   turnNumber: number;
+  system?: string;
+  tools?: ToolDefinitionLite[];
+  messages?: Message[];
+  requestId?: string;
 }
 
 export interface AfterLLMCallPayload {
   sessionId: string;
   text: string;
-  usage: { inputTokens: number; outputTokens: number };
+  usage: TokenUsage | { inputTokens: number; outputTokens: number };
+  requestId?: string;
+  finishReason?: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' | 'error';
+  durationMs?: number;
+  system?: string;
+  tools?: ToolDefinitionLite[];
+  messages?: Message[];
 }
 
 export interface BeforeToolCallPayload {
