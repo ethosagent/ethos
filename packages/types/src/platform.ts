@@ -34,6 +34,27 @@ export interface InboundMessage {
    * single-adapter deployments may omit it.
    */
   botKey?: string;
+  /**
+   * Adapter-owned sub-chat routing segment. When set, the Gateway extends
+   * the lane key with the threadId so concurrent sub-conversations in the
+   * same chat stay isolated.
+   *
+   * Leave undefined for top-level / unsplit conversations — the Gateway
+   * routes those to an unthreaded lane scoped by `(platform, botKey,
+   * chatId)`. Adapters with no sub-chat concept (Telegram, Discord DMs,
+   * Email) always leave it undefined.
+   *
+   * Contract: a stable, opaque identifier scoped within `(platform,
+   * botKey, chatId)`. The Gateway treats it opaquely — no parsing, no
+   * decoding, no sentinel values — and the lane-key encoder escapes any
+   * separator characters internally, so adapters can use whatever
+   * identifier their platform provides without character restrictions.
+   *
+   * If a future platform's sub-chat model doesn't fit this shape (e.g. a
+   * deeply nested structure), it should add a parallel field rather than
+   * overload this one.
+   */
+  threadId?: string;
   raw: unknown;
 }
 
@@ -42,6 +63,16 @@ export interface OutboundMessage {
   attachments?: Attachment[];
   replyToId?: string;
   parseMode?: 'markdown' | 'html' | 'plain';
+  /**
+   * Routes the outbound to a specific sub-conversation (Slack thread).
+   * The Gateway populates this from the originating `InboundMessage.threadId`,
+   * so an agent reply lands in the same thread the user wrote in. Undefined
+   * for top-level conversations. Distinct from `replyToId`: `replyToId`
+   * says "this is a reply to message X" (Telegram / Discord semantic);
+   * `threadId` says "post into this thread" (Slack `chat.postMessage`
+   * `thread_ts`). Adapters without a thread concept ignore the field.
+   */
+  threadId?: string;
 }
 
 export interface DeliveryResult {
