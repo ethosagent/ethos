@@ -624,7 +624,7 @@ and may be edited freely; they are not constitutional.
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — process: PR conventions,
   schema-bump workflows, doc-sync rule.
 - [DESIGN.md](./DESIGN.md) — visual and UX design system.
-- [DOCS.md](./DOCS.md) — documentation information architecture.
+- [.agents/skills/docs/SKILL.md](./.agents/skills/docs/SKILL.md) — documentation information architecture (the `/docs` skill).
 - `.architecture-state.yaml` — the operational sidecar referenced from
   §IX: current layer paths, sibling-pattern instances, active exceptions.
   Updated freely as the codebase evolves; never the authority on what is

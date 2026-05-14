@@ -1,6 +1,6 @@
 # SOUL.md — what Ethos is, and what it will never become
 
-This document is the product soul of Ethos. [ARCHITECTURE.md](./ARCHITECTURE.md) governs how the code is shaped; [DESIGN.md](./DESIGN.md) governs how surfaces look; [DOCS.md](./DOCS.md) governs how we write. SOUL.md governs what we are *building for, and why*. When the three constitutions disagree with a feature idea, this one wins on intent.
+This document is the product soul of Ethos. [ARCHITECTURE.md](./ARCHITECTURE.md) governs how the code is shaped; [DESIGN.md](./DESIGN.md) governs how surfaces look; the `/docs` skill at [.agents/skills/docs/SKILL.md](./.agents/skills/docs/SKILL.md) governs how we write. SOUL.md governs what we are *building for, and why*. When the three constitutions disagree with a feature idea, this one wins on intent.
 
 It is a compass, not a fence. It should fit on one screen. If a contributor cannot summarise it in a breath, it has failed.
 

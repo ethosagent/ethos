@@ -32,7 +32,7 @@ Entries are seeded from the commit log on `main`. For the canonical machine-read
 Date · 2026-05-11
 Status · beta
 
-- Docs rewrite under [DOCS.md](https://github.com/MiteshSharma/ethos/blob/main/DOCS.md) — two-persona shell ("Using Ethos" / "Building on Ethos"), Diátaxis four-pillar within each.
+- Docs rewrite under the [`/docs` skill](https://github.com/MiteshSharma/ethos/blob/main/.agents/skills/docs/SKILL.md) (originally shipped as `DOCS.md` at the repo root) — two-persona shell ("Using Ethos" / "Building on Ethos"), Diátaxis four-pillar within each.
 - Kanban [tool](getting-started/glossary.md#tool) for [personalities](getting-started/glossary.md#personality) that need to coordinate multi-step plans without leaning on the prompt.
 - Theming and [skin](getting-started/glossary.md#skin) engine — per-personality and per-user skins, single `@ethosagent/design-tokens` source of truth across TUI and Web.
 

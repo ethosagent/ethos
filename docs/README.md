@@ -2,7 +2,7 @@
 
 This website is built using [Docusaurus](https://docusaurus.io/), a modern static website generator.
 
-> All pages adhere to [DOCS.md](../DOCS.md) at the repo root — the canonical docs system. Read it before writing or restructuring any page. It defines the persona shell (Using Ethos / Building on Ethos), the four page kinds (tutorial / how-to / reference / explanation), the front-matter contract, voice rules, anti-patterns, and the page-acceptance checklist.
+> All pages adhere to the `/docs` skill at [.agents/skills/docs/SKILL.md](../.agents/skills/docs/SKILL.md) — the canonical docs system. Read it before writing or restructuring any page. It defines the persona shell (Using Ethos / Building on Ethos), the four page kinds (tutorial / how-to / reference / explanation), the front-matter contract, voice rules, anti-patterns, and the page-acceptance checklist.
 
 ## Installation
 

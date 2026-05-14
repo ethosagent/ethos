@@ -1,8 +1,15 @@
+---
+name: docs
+description: |
+  The Ethos docs system. Use whenever writing, editing, or restructuring any Ethos documentation — Docusaurus pages under docs/content/, the repo README, in-package READMEs, the agent-readable llms.txt, and the ETHOS.md shipped with each personality.
+  Enforces page kinds (tutorial / how-to / reference / explanation), front-matter contract, voice rules, anti-patterns, and the page-acceptance checklist. NOT for plan docs in plan/ (those follow their own conventions) or audit reports in plan/audits/ (those follow the security-audit skill). Invoke before any doc PR; flag any deviations during doc review.
+---
+
 # Ethos · Docs System
 
 **The reader is in a hurry.** Every page earns its existence by serving one of four customer-first needs in the first screen. This system specifies the IA, page templates, voice, and acceptance rules that all Ethos documentation adheres to — across the Docusaurus site, the repo README, in-package READMEs, the agent-readable `llms.txt`, and every `ETHOS.md` shipped with a personality.
 
-> Always read this file before writing, editing, or restructuring any documentation. All page types, IA decisions, voice rules, and structural patterns live here. Do not deviate without explicit user approval. This is the docs counterpart to [DESIGN.md](DESIGN.md) — same authority, same enforcement, same shape.
+> Always read this skill before writing, editing, or restructuring any documentation. All page types, IA decisions, voice rules, and structural patterns live here. Do not deviate without explicit user approval. This is the docs counterpart to [DESIGN.md](../../../DESIGN.md) — same authority, same enforcement, same shape.
 
 ## Product context
 
@@ -11,7 +18,7 @@
   - **Using Ethos** — operators running the CLI, deploying personalities, wiring channels, configuring providers. Reads docs to *get something working*.
   - **Building on Ethos** — contributors writing tools, providers, personalities, channel adapters, plugins. Reads docs to *extend the framework*.
 - **A third reader: AI agents.** Other coding agents (Claude Code, Cursor, OpenClaw, Hermes) consume Ethos docs to scaffold integrations. We ship `llms.txt` as a first-class artifact, not an afterthought.
-- **Surface this lives on:** the canonical site is Docusaurus at [docs/](docs/). The repo [README.md](README.md), in-package READMEs, and `llms.txt` are derived surfaces that link back to the canonical pages.
+- **Surface this lives on:** the canonical site is Docusaurus at [docs/](../../../docs/). The repo [README.md](../../../README.md), in-package READMEs, and `llms.txt` are derived surfaces that link back to the canonical pages.
 
 ## The four customer-first questions
 
@@ -83,7 +90,7 @@ Every page declares `kind` in front-matter. The page must follow its kind's temp
 3. **Cross-link instead of duplicate.** Explanation links to reference for "what's the signature?" and to how-to for "how do I use this?"
 
 **Reference guardrails:**
-1. **Every reference page links to its source-of-truth code path.** A `Tool` interface reference page links to [packages/types/src/index.ts](packages/types/src/index.ts).
+1. **Every reference page links to its source-of-truth code path.** A `Tool` interface reference page links to [packages/types/src/index.ts](../../../packages/types/src/index.ts).
 2. **Tables, not prose.** Parameters/fields are tables. Prose between tables is one sentence max.
 3. **No rationale.** "We did it this way because…" lives in explanation. Cross-link.
 
@@ -121,7 +128,7 @@ Inherits DESIGN.md voice rules verbatim. Honest, terminal-adjacent, dense-but-re
 - **No marketing copy.** No "Welcome to Ethos!", no "Unlock the power of agents," no "Get Started" buttons. Buttons are verbs: "Install", "Run", "Configure".
 - **No emoji as decoration.** Status indicators (✓ / ✗ / ⏳) only, and only where they convey state. Never in headings.
 - **Concrete over abstract.** "API key invalid — re-enter to continue." Not "Authentication failed."
-- **Specific identifiers.** Reference real file paths, real function names, real config keys. Avoid "the foo system" when "[tool-registry.ts](packages/core/src/tool-registry.ts)" is what you mean.
+- **Specific identifiers.** Reference real file paths, real function names, real config keys. Avoid "the foo system" when "[tool-registry.ts](../../../packages/core/src/tool-registry.ts)" is what you mean.
 - **No throat-clearing.** Drop "In this guide, we will…", "Note that…", "It's important to remember that…" Start with the goal.
 - **One thought per paragraph.** Paragraphs over six lines get split. The reader is scanning.
 - **Active over passive.** "AgentLoop emits events." Not "Events are emitted by AgentLoop."
@@ -129,8 +136,8 @@ Inherits DESIGN.md voice rules verbatim. Honest, terminal-adjacent, dense-but-re
 
 ## Cross-page rules
 
-1. **Glossary-first-use linking.** The first occurrence of any domain term (`personality`, `skill`, `tool`, `hook`, `mesh`, `session`, `memory scope`, `audience boundary`) on a page links to [glossary.md](docs/content/getting-started/glossary.md).
-2. **Source-of-truth linking.** Every reference page links to the source file it describes — `Tool` reference → [packages/types/src/index.ts](packages/types/src/index.ts). Code drift is detected when these links break.
+1. **Glossary-first-use linking.** The first occurrence of any domain term (`personality`, `skill`, `tool`, `hook`, `mesh`, `session`, `memory scope`, `audience boundary`) on a page links to [glossary.md](../../../docs/content/getting-started/glossary.md).
+2. **Source-of-truth linking.** Every reference page links to the source file it describes — `Tool` reference → [packages/types/src/index.ts](../../../packages/types/src/index.ts). Code drift is detected when these links break.
 3. **"See also" footer is mandatory** on every reference and explanation page. At least one link, no more than five. Curated, not auto-generated.
 4. **"Recommended reading order" footer** on architecture and concept-cluster pages — Hermes-style — names the next 2–3 pages to read in order.
 5. **Internal links use repo-relative paths**, not absolute URLs. `[Tool reference](../reference/tool.md)`, not the deployed `https://docs.ethos.dev/...` URL.
@@ -221,7 +228,7 @@ A docs PR is not merge-ready until every changed page passes this list. Reviewer
 - [ ] Page matches the template for its `kind` (required sections present, prohibited sections absent).
 - [ ] Passes the tutorial-vs-how-to test (or the why-question test for explanation).
 - [ ] Answers at least one of the four customer-first questions and the answer is visible above the fold.
-- [ ] First occurrence of every domain term links to [glossary.md](docs/content/getting-started/glossary.md).
+- [ ] First occurrence of every domain term links to [glossary.md](../../../docs/content/getting-started/glossary.md).
 - [ ] Reference pages link to source-of-truth code path.
 - [ ] "See also" footer present on reference and explanation pages (≥1, ≤5 links).
 - [ ] Code samples are runnable against current `@ethosagent/types`.
@@ -231,15 +238,15 @@ A docs PR is not merge-ready until every changed page passes this list. Reviewer
 
 ## Cross-surface rendering
 
-Same content, different surfaces. Single source of truth is the markdown under [docs/content/](docs/content/).
+Same content, different surfaces. Single source of truth is the markdown under [docs/content/](../../../docs/content/).
 
 | Surface | What it shows | Render rule |
 |---|---|---|
 | **Docusaurus site** (primary) | Full tree, all kinds, full styling | The canonical surface. Other surfaces link back here. |
-| **Repo [README.md](README.md)** | One-sentence pitch · install · quickstart link · two doors | Mirrors landing intent; never duplicates content. Links to the site. |
+| **Repo [README.md](../../../README.md)** | One-sentence pitch · install · quickstart link · two doors | Mirrors landing intent; never duplicates content. Links to the site. |
 | **In-package READMEs** | One-sentence purpose · install · link to package's reference page | One paragraph max. Package metadata, not docs. |
 | **`docs/static/llms.txt`** | Glossary · CLI reference · interface reference · explanation pages | Generated at build time from pages with `agent: true` front-matter flag (or by kind: reference + explanation). Single text file, no nav. |
-| **Personality `ETHOS.md`** | First-person identity for the personality itself | Not user docs — runtime config. Subject to DOCS.md voice rules anyway: imperative, terminal-adjacent, no marketing copy. |
+| **Personality `ETHOS.md`** | First-person identity for the personality itself | Not user docs — runtime config. Subject to this skill's voice rules anyway: imperative, terminal-adjacent, no marketing copy. |
 | **`apps/web` in-app help** | Glossary tooltips, command-palette descriptions | Reads from canonical glossary entries. Sentence-length cap: 140 chars. |
 
 ## SEO and AEO
@@ -291,27 +298,27 @@ Three artifacts ship with every build, all generated from the canonical content.
 
 | File | What | Generated from |
 |---|---|---|
-| [`docs/static/llms.txt`](docs/static/llms.txt) | Link-index. Title + one-line summary + URL for every page where `agent !== false`. Under 50KB. | `description` front-matter |
-| [`docs/static/llms-full.txt`](docs/static/llms-full.txt) | Full content of every page where `agent !== false`. Front-matter stripped, MDX components inlined. Under 5MB. | Page bodies |
+| [`docs/static/llms.txt`](../../../docs/static/llms.txt) | Link-index. Title + one-line summary + URL for every page where `agent !== false`. Under 50KB. | `description` front-matter |
+| [`docs/static/llms-full.txt`](../../../docs/static/llms-full.txt) | Full content of every page where `agent !== false`. Front-matter stripped, MDX components inlined. Under 5MB. | Page bodies |
 | `<page>.md` at every page URL | Raw markdown at the same path as the HTML. `/using/quickstart` and `/using/quickstart.md` both resolve. | Docusaurus plugin |
 
 Agents fetch raw markdown via `.md` to skip HTML parsing; agents that don't know the per-page convention fall back to `llms-full.txt`. Both routes must work. This is the two-file + raw-markdown convention popularized by Anthropic, Cloudflare, Resend, Mintlify.
 
 ### Glossary as definition list
 
-[glossary.md](docs/content/getting-started/glossary.md) is HTML-shaped (`<dl><dt><dd>`), not prose. Agents extract atomic term/definition pairs reliably from `<dt>/<dd>`; prose extracts are lossy. Schema.org `DefinedTermSet` is injected from the same source.
+[glossary.md](../../../docs/content/getting-started/glossary.md) is HTML-shaped (`<dl><dt><dd>`), not prose. Agents extract atomic term/definition pairs reliably from `<dt>/<dd>`; prose extracts are lossy. Schema.org `DefinedTermSet` is injected from the same source.
 
 ### Per-surface meta consistency
 
-The repo [README.md](README.md), docs landing, and `og:description` carry the *same* one-sentence pitch — not near-duplicates. One pitch, three surfaces. The cross-surface table above governs this; the SEO consequence is that Google and AI gateways see the same answer regardless of which surface they crawled.
+The repo [README.md](../../../README.md), docs landing, and `og:description` carry the *same* one-sentence pitch — not near-duplicates. One pitch, three surfaces. The cross-surface table above governs this; the SEO consequence is that Google and AI gateways see the same answer regardless of which surface they crawled.
 
 ## Implementation notes
 
 - **Build gate.** `docs/docusaurus.config.ts` sets `onBrokenLinks: 'throw'` and `onBrokenAnchors: 'throw'`. CI runs `pnpm --filter docs build` on every PR.
-- **Front-matter validator.** A script (`pnpm docs:check`) walks [docs/content/](docs/content/), validates required front-matter fields (including `description` ≤155 chars), and grep-checks for kind-specific required/prohibited sections. Fails CI on violation.
+- **Front-matter validator.** A script (`pnpm docs:check`) walks [docs/content/](../../../docs/content/), validates required front-matter fields (including `description` ≤155 chars), and grep-checks for kind-specific required/prohibited sections. Fails CI on violation.
 - **Anti-pattern scan.** Same `pnpm docs:check` greps for the worst patterns ("Welcome to Ethos", emoji in headings, "click here", stub-length pages, marketing-voice descriptions, missing stable anchors on reference + glossary pages). Easy wins, mechanical.
 - **Sitemap, structured data, social cards.** Docusaurus' built-in sitemap plugin emits `sitemap.xml`. A small plugin injects Schema.org JSON-LD per page based on `kind`. A social-card plugin renders OG/Twitter card images from `title` + `description`.
 - **Crawler files.** `docs/static/robots.txt` allows all crawlers including AI gateways. `docs/static/ai.txt` declares permissive AI usage with attribution preferred.
 - **Agent-readable artifacts.** A build step generates `docs/static/llms.txt` (link-index), `docs/static/llms-full.txt` (full content), and serves `<path>.md` at every page URL. All three from canonical markdown — front-matter stripped, MDX components inlined.
-- **PR template.** [.github/pull_request_template.md](.github/pull_request_template.md) carries the page-acceptance checklist verbatim for any PR touching [docs/](docs/).
-- **No docs without DOCS.md review.** Any change that introduces a new page kind, renames a top-level section, or amends a template requires an explicit DOCS.md update in the same PR. The decisions log below is the audit trail.
+- **PR template.** [.github/pull_request_template.md](../../../.github/pull_request_template.md) carries the page-acceptance checklist verbatim for any PR touching [docs/](../../../docs/).
+- **No docs without this skill's review.** Any change that introduces a new page kind, renames a top-level section, or amends a template requires an explicit update to this skill in the same PR.

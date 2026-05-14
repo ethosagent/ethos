@@ -41,7 +41,7 @@ The CLI binary entry is [`apps/ethos/src/index.ts`](apps/ethos/src/index.ts). Ev
 
 ## Contributing
 
-- **[DOCS.md](./DOCS.md)** — docs system: page kinds, front-matter contract, voice rules, anti-patterns. Read before writing any documentation.
+- **[.agents/skills/docs/SKILL.md](./.agents/skills/docs/SKILL.md)** — docs system: page kinds, front-matter contract, voice rules, anti-patterns. Invoked via the `/docs` skill. Read before writing any documentation.
 - **[DESIGN.md](./DESIGN.md)** — visual system: tokens, typography, motion, per-surface mapping. Read before any UI work.
 - **[CLAUDE.md](./CLAUDE.md)** — codebase guide: architecture, conventions, gotchas, learnings.
 - **[Pull-request template](./.github/PULL_REQUEST_TEMPLATE.md)** — the checklist your PR will be evaluated against.

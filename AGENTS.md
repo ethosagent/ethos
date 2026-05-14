@@ -35,17 +35,7 @@ Define success criteria. Loop until verified.
 Always run pnpm check (typecheck + lint + test) before declaring done.
 Always run pnpm lint before pushing. CI fails on lint errors; catching them locally is one command. If lint reports fixable issues, run pnpm lint:fix and re-check before git push. Don't push code that hasn't been linted.
 
-5. Know what we're building
-[SOUL.md](./SOUL.md) is the product soul of this codebase — what Ethos is, and what it will never become. The one line: **Ethos builds AI agents that have an identity — not a prompt.** Read it before:
-
-- Proposing a new feature, capability, or surface.
-- Touching personality, identity, or what an agent *can* do vs. *cannot* do.
-- Designing new multi-agent or team-coordination behaviour.
-- Adding any field that could shape personality at runtime (voice, mood, templates, per-channel UI affordances — see SOUL.md's categorical refusals).
-
-Apply the SOUL.md decision filter: does this deepen identity, make teams more visible / durable / coordinated, stay auditable from outside, and remain predictable from reading the personality's `ETHOS.md`? If the honest answer to "does this deepen identity?" or "does this make teams more visible?" is no, and the capability is hidden from the outside, the feature does not belong in Ethos. When SOUL.md and the structural constitution (Rule 6) disagree, **SOUL.md wins on intent.**
-
-6. Follow the constitution
+5. Follow the constitution
 [ARCHITECTURE.md](./ARCHITECTURE.md) is the structural source of truth for this codebase. It defines the layer model, dependency direction, frozen schemas, safety rules, and the laws the validator enforces. Read it before:
 
 - Adding or moving any package, extension, or app.
@@ -343,11 +333,7 @@ The web UI (in development) references DESIGN.md tokens via Antd ConfigProvider.
 When reviewing or writing code that touches UI, flag any deviations from DESIGN.md (slop blacklist, font choices, color hex values, motion durations, "cards earn existence" rule).
 
 Docs system
-Always read DOCS.md before writing, editing, or restructuring any documentation. All page types (Diátaxis: tutorial / how-to / reference / explanation), IA decisions, front-matter contract, voice rules, anti-patterns, and the page-acceptance checklist live there. Do not deviate without explicit user approval.
-
-Scope is wider than the Docusaurus site — DOCS.md governs all written documentation: docs/, the repo README, in-package READMEs, the agent-readable llms.txt, and the ETHOS.md shipped with each personality. Two-persona shell ("Using Ethos" / "Building on Ethos") with Diátaxis four-pillar inside each persona, plus shared concerns (platforms, security, troubleshooting, glossary).
-
-When reviewing or writing any doc, flag deviations from DOCS.md (kind/template mismatch, mixed-audience pages, anti-pattern phrases, missing front-matter, stub pages, broken source-of-truth links).
+Documentation work (Docusaurus pages, READMEs, llms.txt, ETHOS.md files) is governed by the `/docs` skill at [.agents/skills/docs/SKILL.md](.agents/skills/docs/SKILL.md). The skill auto-suggests for any doc work and defines page kinds, the front-matter contract, voice rules, anti-patterns, and the page-acceptance checklist. Invoke it before touching any doc.
 
 gstack
 Available skills: /review, /plan-eng-review, /plan-ceo-review, /plan-design-review, /design-consultation, /browse, /investigate, /careful, /ship, /qa, /retro.
