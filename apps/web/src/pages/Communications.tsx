@@ -181,10 +181,7 @@ function TelegramPanel() {
       )}
 
       {adding && (
-        <Card
-          size="small"
-          style={{ marginTop: 12, background: 'var(--ant-color-bg-container-disabled, #fafafa)' }}
-        >
+        <Card size="small" style={{ marginTop: 12, background: 'var(--ethos-bg)' }}>
           <Form
             form={form}
             layout="vertical"
@@ -405,10 +402,7 @@ function SlackPanel() {
       )}
 
       {adding && (
-        <Card
-          size="small"
-          style={{ marginTop: 12, background: 'var(--ant-color-bg-container-disabled, #fafafa)' }}
-        >
+        <Card size="small" style={{ marginTop: 12, background: 'var(--ethos-bg)' }}>
           <Form
             form={form}
             layout="vertical"

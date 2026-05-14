@@ -190,24 +190,36 @@ export function Sessions() {
                     );
                   }
                   const label = row.title ?? `${row.id.slice(0, 8)}…`;
+                  const startEdit = () => {
+                    setEditingId(row.id);
+                    setEditingValue(row.title ?? '');
+                  };
                   return (
-                    <button
-                      type="button"
-                      className="sessions-name"
-                      title={row.title ?? undefined}
-                      onDoubleClick={() => {
-                        setEditingId(row.id);
-                        setEditingValue(row.title ?? '');
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === 'F2') {
-                          setEditingId(row.id);
-                          setEditingValue(row.title ?? '');
-                        }
-                      }}
-                    >
-                      {label}
-                    </button>
+                    <span className="sessions-name-cell">
+                      <button
+                        type="button"
+                        className="sessions-name"
+                        title={row.title ?? undefined}
+                        onDoubleClick={startEdit}
+                        onKeyDown={(e) => {
+                          if (e.key === 'F2') startEdit();
+                        }}
+                      >
+                        {label}
+                      </button>
+                      <button
+                        type="button"
+                        className="sessions-name-edit"
+                        aria-label="Rename session"
+                        title="Rename"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startEdit();
+                        }}
+                      >
+                        <PencilIcon />
+                      </button>
+                    </span>
                   );
                 },
               },
@@ -361,6 +373,19 @@ function DotsIcon() {
       <circle cx="3" cy="7" r="1.3" />
       <circle cx="7" cy="7" r="1.3" />
       <circle cx="11" cy="7" r="1.3" />
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+      <path
+        d="M10 1.5l2.5 2.5L4.5 12H2v-2.5L10 1.5z"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

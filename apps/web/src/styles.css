@@ -1216,6 +1216,68 @@ body,
   width: 100%;
 }
 
+.sessions-name-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.sessions-name {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sessions-name:focus-visible {
+  outline: 2px solid var(--accent, #4a9eff);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+.sessions-name-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 3px;
+  background: transparent;
+  border: none;
+  color: var(--ethos-text-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 80ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 80ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 80ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ant-table-row:hover .sessions-name-edit,
+.sessions-name-edit:focus-visible {
+  opacity: 1;
+}
+
+.sessions-name-edit:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ethos-text);
+}
+
+.sessions-name-edit:focus-visible {
+  outline: 2px solid var(--accent, #4a9eff);
+  outline-offset: 1px;
+}
+
 .sessions-row-actions {
   display: inline-flex;
 }
