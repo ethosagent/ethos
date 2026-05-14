@@ -1075,11 +1075,10 @@ export class AgentLoop {
         .filter((p) => p.rejected === undefined)
         .map((p) => ({ toolCallId: p.toolCallId, name: p.name, args: p.args }));
 
-      this.tools.setTurnAttachments?.(opts.attachments);
       const startedAt = Date.now();
       const execResults =
         execInputs.length > 0
-          ? await this.tools.executeParallel(execInputs, toolCtxBase, allowedTools, filterOpts)
+          ? await this.tools.executeParallel(execInputs, toolCtxBase, allowedTools, filterOpts, opts.attachments)
           : [];
       const execResultMap = new Map(execResults.map((r) => [r.toolCallId, r]));
 

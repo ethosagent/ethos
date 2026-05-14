@@ -157,10 +157,10 @@ export interface ToolRegistry {
     ctx: ToolContext,
     allowedTools?: string[],
     filterOpts?: ToolFilterOpts,
+    turnAttachments?: import('./platform').Attachment[],
   ): Promise<Array<{ toolCallId: string; name: string; result: ToolResult }>>;
   toDefinitions(
     allowedTools?: string[],
     filterOpts?: ToolFilterOpts,
   ): import('./llm').ToolDefinitionLite[];
-  setTurnAttachments?(attachments: import('./platform').Attachment[] | undefined): void;
 }

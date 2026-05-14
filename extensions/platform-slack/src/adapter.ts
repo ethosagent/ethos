@@ -798,7 +798,10 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
           headers: { Authorization: `Bearer ${this.botToken}` },
         });
         if (!res.ok) continue;
+        const contentLength = Number(res.headers.get('content-length') ?? 0);
+        if (contentLength > MAX_FILE_SIZE) continue;
         const bytes = new Uint8Array(await res.arrayBuffer());
+        if (bytes.length > MAX_FILE_SIZE) continue;
         const filename = file.name ?? `att-${i}`;
         const mime = file.mimetype ?? 'application/octet-stream';
         const url = await this.cache.write(bytes, {

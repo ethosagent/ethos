@@ -571,7 +571,7 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
   ): Promise<InboundMessage> {
     const attachments: Attachment[] = [];
     let textSuffix = '';
-    const sessionKey = `telegram:${msg.chatId}`;
+    const sessionKey = `telegram:${this.botKey}:${msg.chatId}`;
 
     for (let i = 0; i < media.length; i++) {
       const m = media[i];
