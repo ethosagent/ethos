@@ -7,7 +7,12 @@ import {
   isSenderAllowed,
   revokeApproval,
 } from '@ethosagent/safety-channel';
-import type { ClarifyResponse, InboundMessage, PlatformAdapter } from '@ethosagent/types';
+import type {
+  AttachmentCache,
+  ClarifyResponse,
+  InboundMessage,
+  PlatformAdapter,
+} from '@ethosagent/types';
 import type Database from 'better-sqlite3';
 import { MessageDedupCache } from './dedup';
 
@@ -251,6 +256,11 @@ export interface GatewayConfig {
   greetingProvider?: {
     greet(personalityId: string): Promise<string>;
   };
+  /**
+   * Optional attachment cache for cleaning up cached files on session reset
+   * (`/new`) and lane eviction. When absent, no cleanup is performed.
+   */
+  attachmentCache?: AttachmentCache;
 }
 
 // ---------------------------------------------------------------------------
@@ -362,6 +372,8 @@ export class Gateway {
     | undefined;
   /** Optional greeting provider for `/start`. */
   private readonly greetingProvider: { greet(personalityId: string): Promise<string> } | undefined;
+  /** Optional attachment cache for cleanup on /new and lane eviction. */
+  private readonly attachmentCache: AttachmentCache | undefined;
 
   constructor(config: GatewayConfig) {
     // The two construction shapes are mutually exclusive. Silent
@@ -428,6 +440,7 @@ export class Gateway {
     this.clarifyCorrelator = config.clarifyMessageCorrelator;
     this.personalityCardReader = config.personalityCardReader;
     this.greetingProvider = config.greetingProvider;
+    this.attachmentCache = config.attachmentCache;
 
     // Clarify sweep — fires on a single timer for all bots' bridges so a
     // multi-bot deployment doesn't pile up N timers. Each bridge owns its own
@@ -602,6 +615,7 @@ export class Gateway {
       lane.abort();
       const previousSession = this.sessionKeys.get(laneKey) ?? laneKey;
       this.outboundDedup.clearSession(previousSession);
+      void this.attachmentCache?.clear(previousSession).catch(() => {});
       const fresh = `${laneKey}:${Date.now()}`;
       this.sessionKeys.set(laneKey, fresh);
       this.usageStore.delete(laneKey);
@@ -704,6 +718,7 @@ export class Gateway {
       // Switch personality — also start a fresh session so the new identity takes effect immediately
       const previousSession = this.sessionKeys.get(laneKey) ?? laneKey;
       this.outboundDedup.clearSession(previousSession);
+      void this.attachmentCache?.clear(previousSession).catch(() => {});
       this.personalityIds.set(laneKey, arg);
       const fresh = `${laneKey}:${Date.now()}`;
       this.sessionKeys.set(laneKey, fresh);
@@ -1105,6 +1120,8 @@ export class Gateway {
         }
       }
       if (evictedKey === null) return; // every chat is busy — leave the cap alone
+      const evictedSession = this.sessionKeys.get(evictedKey) ?? evictedKey;
+      void this.attachmentCache?.clear(evictedSession).catch(() => {});
       this.lanes.delete(evictedKey);
       this.sessionKeys.delete(evictedKey);
       this.personalityIds.delete(evictedKey);
