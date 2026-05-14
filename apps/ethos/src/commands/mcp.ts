@@ -9,7 +9,7 @@
 //   ethos mcp add <name>       Add an MCP server to ~/.ethos/mcp.json
 //   ethos mcp presets           List available MCP server presets
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ClientAdapter } from '@ethosagent/mcp-server';
@@ -299,14 +299,23 @@ function parseAddArgs(argv: string[]): {
   return { name, preset, env, command, args: extraArgs };
 }
 
-function readMcpJson(): McpServerConfig[] {
+function readMcpJson(): McpServerConfig[] | null {
   const path = join(homedir(), '.ethos', 'mcp.json');
   if (!existsSync(path)) return [];
+  const raw = readFileSync(path, 'utf8');
+  let parsed: unknown;
   try {
-    return JSON.parse(readFileSync(path, 'utf8')) as McpServerConfig[];
-  } catch {
-    return [];
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    console.error(`Error: ~/.ethos/mcp.json contains invalid JSON. Fix it manually before adding servers.`);
+    console.error(err instanceof Error ? err.message : String(err));
+    return null;
   }
+  if (!Array.isArray(parsed)) {
+    console.error('Error: ~/.ethos/mcp.json must be a JSON array. Fix it manually before adding servers.');
+    return null;
+  }
+  return parsed as McpServerConfig[];
 }
 
 function writeMcpJson(configs: McpServerConfig[]): void {
@@ -314,7 +323,9 @@ function writeMcpJson(configs: McpServerConfig[]): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(join(dir, 'mcp.json'), `${JSON.stringify(configs, null, 2)}\n`, 'utf8');
+  const tmp = join(dir, `mcp.json.tmp.${process.pid}`);
+  writeFileSync(tmp, `${JSON.stringify(configs, null, 2)}\n`, 'utf8');
+  renameSync(tmp, join(dir, 'mcp.json'));
 }
 
 function runAdd(argv: string[]): void {
@@ -327,6 +338,10 @@ function runAdd(argv: string[]): void {
 
   // Check for duplicate name
   const existing = readMcpJson();
+  if (!existing) {
+    process.exitCode = 1;
+    return;
+  }
   if (existing.some((s) => s.name === parsed.name)) {
     console.error(`MCP server '${parsed.name}' already exists in ~/.ethos/mcp.json`);
     console.error('Remove it first or choose a different name.');

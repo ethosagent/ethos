@@ -278,7 +278,7 @@ describe('MCP reliability bundle', () => {
       expect(mockTransportClose).toHaveBeenCalledTimes(1);
     });
 
-    it('disconnect sends SIGTERM to child process', async () => {
+    it('disconnect closes transport (child cleanup delegated to SDK)', async () => {
       const config: McpServerConfig = {
         name: 'srv',
         transport: 'stdio',
@@ -289,24 +289,8 @@ describe('MCP reliability bundle', () => {
       await client.connect();
       await client.disconnect();
 
-      expect(mockProcessKill).toHaveBeenCalledWith('SIGTERM');
-    });
-
-    it('disconnect schedules SIGKILL after grace period', async () => {
-      const config: McpServerConfig = {
-        name: 'srv',
-        transport: 'stdio',
-        command: 'node',
-        keepaliveSeconds: 0,
-      };
-      const client = new McpClient(config);
-      await client.connect();
-      await client.disconnect();
-
-      expect(mockProcessKill).toHaveBeenCalledWith('SIGTERM');
-      // SIGKILL is scheduled via setTimeout(2000)
-      await vi.advanceTimersByTimeAsync(2000);
-      expect(mockProcessKill).toHaveBeenCalledWith('SIGKILL');
+      expect(mockTransportClose).toHaveBeenCalled();
+      expect(mockClose).toHaveBeenCalled();
     });
 
     it('McpManager.shutdown() is an alias for disconnect()', async () => {

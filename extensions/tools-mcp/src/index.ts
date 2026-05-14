@@ -147,6 +147,9 @@ export class McpClient {
         );
         this._clearKeepalive();
         this._connected = false;
+        try { await this._transport?.close?.(); } catch { /* ignore */ }
+        try { await this._sdk.close(); } catch { /* ignore */ }
+        this._transport = null;
         if (!this._destroyed) this._scheduleReconnect(0);
       }
     }, seconds * 1000);

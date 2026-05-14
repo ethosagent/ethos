@@ -142,20 +142,30 @@ export class EthosMcpServer {
     this._config.logger.info('mcp_server_started', { transport: 'stdio' });
   }
 
-  async serveHttp(opts: { port: number; host?: string; bindPublic?: boolean }): Promise<void> {
-    const host = opts.host ?? (opts.bindPublic ? '0.0.0.0' : '127.0.0.1');
-    if (host === '0.0.0.0' && !opts.bindPublic) {
-      throw new Error('Binding to 0.0.0.0 requires --bind-public flag. Ethos MCP is not hardened for public internet exposure.');
+  async serveHttp(opts: { port: number; host?: string }): Promise<void> {
+    const host = opts.host ?? '127.0.0.1';
+    if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
+      throw new Error(
+        'MCP HTTP server only binds to loopback (127.0.0.1). Non-loopback binds are not supported until an auth story ships.',
+      );
     }
 
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => crypto.randomUUID(),
-    });
-    await this._server.connect(transport);
+    const transports = new Map<string, InstanceType<typeof StreamableHTTPServerTransport>>();
 
     const httpServer = createHttpServer(async (req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
       if (url.pathname === '/mcp') {
+        const sessionId = req.headers['mcp-session-id'] as string | undefined;
+        let transport: InstanceType<typeof StreamableHTTPServerTransport>;
+        if (sessionId && transports.has(sessionId)) {
+          transport = transports.get(sessionId) as typeof transport;
+        } else {
+          const id = crypto.randomUUID();
+          transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => id });
+          transports.set(id, transport);
+          await this._server.connect(transport);
+          transport.onclose = () => transports.delete(id);
+        }
         await transport.handleRequest(req, res);
         return;
       }
