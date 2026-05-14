@@ -6,7 +6,7 @@
 // so the interaction handler can correlate the click back to the pending
 // approval without parsing anything out of the message itself.
 
-import { context, header, type SlackBlock, section } from './shared';
+import { context, escapeMrkdwn, header, type SlackBlock, section } from './shared';
 
 /** `action_id` for the Allow button. The interaction handler matches on this. */
 export const APPROVE_ACTION_ID = 'ethos_approval_allow';
@@ -31,17 +31,10 @@ function renderDecider(decidedBy: string): string {
   return SLACK_USER_ID.test(decidedBy) ? `<@${decidedBy}>` : 'the system';
 }
 
-/**
- * Escape the three characters Slack mrkdwn treats as markup delimiters. Every
- * string on this card except Slack-typed literals is model/config-influenced
- * — `toolName` from the registry, `reason` from the danger predicate — and an
- * unescaped `<@U…>` or `<http…|text>` would inject a live mention or link
- * onto a privileged approval surface. `args` is hardened separately (it needs
- * code-fence handling too); this covers the inline-text fields.
- */
-function escapeMrkdwn(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+// `escapeMrkdwn` (from `./shared`) hardens the inline-text fields on this card —
+// every string here except Slack-typed literals is model/config-influenced
+// (`toolName` from the registry, `reason` from the danger predicate). `args` is
+// hardened separately by `formatArgs` below (it needs code-fence handling too).
 
 export interface ApprovalPendingInput {
   approvalId: string;

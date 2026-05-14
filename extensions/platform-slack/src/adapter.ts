@@ -32,6 +32,7 @@ import type { Binding, ChannelMode } from './config';
 import { DEFAULT_CHANNEL_MODE } from './config';
 import { registerMemberEvents } from './events/members';
 import { registerMessageEvents } from './events/messages';
+import { registerHomeEvents, type SessionReader } from './home/handlers';
 import {
   type ApprovalActionPayload,
   type ApprovalDecisionEvent,
@@ -52,6 +53,32 @@ type App = InstanceType<typeof App>;
  */
 function deriveDefaultBotKey(botToken: string): string {
   return createHash('sha256').update(botToken).digest('hex').slice(0, 24);
+}
+
+/**
+ * Normalize a configured `webUiBaseUrl`. The value is interpolated directly
+ * into Slack mrkdwn link syntax (`<url|text>`) in `blocks/session.ts`, so a
+ * bad value containing `>` or `|` would break the markup. We validate it once
+ * here at the boundary: accept only `http:` / `https:` URLs, and return the
+ * parser-canonicalized `href` — not the raw string — so any character that
+ * would otherwise breach the `<url|text>` delimiters is already percent-
+ * encoded by `URL`. Trailing slashes are stripped so `${base}/sessions/<id>`
+ * concatenation stays clean (path-prefixed deployments are still supported —
+ * `href` preserves the path). Anything absent or invalid is treated as absent:
+ * the home view already degrades gracefully to plain-text session rows when
+ * there's no base URL, and a misconfigured optional cosmetic field must not
+ * crash startup.
+ */
+function normalizeWebUiBaseUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
+  return url.href.replace(/\/+$/, '');
 }
 
 export interface SlackAdapterConfig {
@@ -81,6 +108,12 @@ export interface SlackAdapterConfig {
   memory?: MemoryReader;
   /** Optional kanban reader for `/ethos kanban list` (team bots only). */
   kanban?: KanbanReader;
+  /** Optional session reader for the App Home "Recent sessions" section. */
+  session?: SessionReader;
+  /** Ethos web UI origin (no trailing slash). When set, App Home session rows
+   *  deep-link to `<base>/sessions/<id>`; when absent they render as plain
+   *  text. There is no web-UI base URL elsewhere in the adapter config today. */
+  webUiBaseUrl?: string;
 }
 
 /**
@@ -131,12 +164,17 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   private readonly threadState: ThreadStateStore | undefined;
   private readonly memory: MemoryReader | undefined;
   private readonly kanban: KanbanReader | undefined;
+  private readonly session: SessionReader | undefined;
+  private readonly webUiBaseUrl: string | undefined;
   private readonly storage: Storage | undefined;
   private messageHandler?: (message: InboundMessage) => void;
   /** Approval-card button-click handler, wired by the approval coordinator. */
   private approvalDecisionHandler?: (event: ApprovalDecisionEvent) => void;
   /** Bolt-internal inbound handle. Resolved during `start()` via auth.test. */
   private selfUserId: string | null = null;
+  /** The bot's Slack display name. Resolved during `start()` via auth.test;
+   *  falls back to `displayName` ('Slack') when unavailable. */
+  private selfDisplayName: string | null = null;
 
   /** Chunk-id ledger so editMessage can re-flow multi-chunk responses. */
   private readonly chunkMap = new Map<string, string[]>();
@@ -157,6 +195,8 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     this.storage = config.storage;
     this.memory = config.memory;
     this.kanban = config.kanban;
+    this.session = config.session;
+    this.webUiBaseUrl = normalizeWebUiBaseUrl(config.webUiBaseUrl);
 
     if (config.storage) {
       const slackDir = config.slackDir ?? join(homeEthosDir(), 'slack');
@@ -180,10 +220,12 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     // greeting — the rest of the adapter still works.
     try {
       const auth = await this.client.auth.test();
-      const userId = (auth as { user_id?: string }).user_id;
+      const { user_id: userId, user: userName } = auth as { user_id?: string; user?: string };
       this.selfUserId = userId ?? null;
+      this.selfDisplayName = userName ?? null;
     } catch {
       this.selfUserId = null;
+      this.selfDisplayName = null;
     }
 
     registerMessageEvents(
@@ -291,6 +333,21 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     };
     this.app.action(APPROVE_ACTION_ID, onApprovalButton);
     this.app.action(DENY_ACTION_ID, onApprovalButton);
+
+    // App Home tab. `registerHomeEvents` wires `app_home_opened` (publish the
+    // view) and the `home:refresh` button (re-publish). It gathers data from
+    // the injected readers; sections backed by an unwired reader degrade to a
+    // tasteful empty state. Registered unconditionally — when `binding` is
+    // unset the header still renders with the default identity.
+    registerHomeEvents(this.app, {
+      binding: this.binding ?? { type: 'personality', name: 'unbound' },
+      displayName: this.selfDisplayName ?? this.displayName,
+      channelOverrides: this.channelOverrides,
+      session: this.session,
+      memory: this.memory,
+      kanban: this.kanban,
+      webUiBaseUrl: this.webUiBaseUrl,
+    });
 
     await this.app.start();
   }
