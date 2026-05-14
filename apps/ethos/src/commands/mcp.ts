@@ -36,7 +36,6 @@ Subcommands:
   serve [options]  Start the Ethos MCP server
     --http           Use Streamable HTTP transport instead of stdio
     --port <n>       HTTP port (default: 3300, implies --http)
-    --bind-public    Bind to 0.0.0.0 (required for non-loopback)
   install <client> Install Ethos into a supported MCP client's config
   init [client]    Print quick-start config snippet
   doctor           Verify server configuration
@@ -78,8 +77,6 @@ export async function runMcp(argv: string[]): Promise<void> {
 async function runServe(argv: string[]): Promise<void> {
   let useHttp = false;
   let port = 3300;
-  let bindPublic = false;
-
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--http') {
@@ -99,8 +96,6 @@ async function runServe(argv: string[]): Promise<void> {
         return;
       }
       i++;
-    } else if (arg === '--bind-public') {
-      bindPublic = true;
     }
   }
 
@@ -124,7 +119,7 @@ async function runServe(argv: string[]): Promise<void> {
   });
 
   if (useHttp) {
-    await server.serveHttp({ port, bindPublic });
+    await server.serveHttp({ port });
     // Keep process alive — the HTTP server handles shutdown
   } else {
     await server.start();
