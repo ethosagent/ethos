@@ -437,6 +437,13 @@ export async function buildAdapters(
       'Slack',
     );
     if (mod) {
+      // Slack adapters consume `binding` (member-join greeting, /ethos
+      // personality, /ethos help) and `storage` (per-channel mode
+      // overrides + thread-participation state). The adapter owns its
+      // on-disk layout under <storage_root>/slack — wiring stays out of
+      // that decision so the filesystem path doesn't show up in two
+      // places.
+      const slackStorage = getStorage();
       for (const appCfg of config.slack?.apps ?? []) {
         adapters.push(
           new mod.SlackAdapter({
@@ -444,6 +451,8 @@ export async function buildAdapters(
             appToken: appCfg.appToken,
             signingSecret: appCfg.signingSecret,
             botKey: deriveBotKey(appCfg),
+            binding: { type: appCfg.bind.type, name: appCfg.bind.name },
+            storage: slackStorage,
           }),
         );
       }

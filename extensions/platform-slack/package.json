@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@ethosagent/types": "workspace:*",
-    "@slack/bolt": "^3.21.0"
+    "@slack/bolt": "^3.21.0",
+    "zod": "^4.3.6"
   }
 }

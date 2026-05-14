@@ -37,6 +37,34 @@ export interface GatewayObservability {
 }
 
 // ---------------------------------------------------------------------------
+// Lane / session key encoding
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a lane / session key from its segments. Each segment is
+ * URL-encoded so a segment that happens to contain the `:` separator
+ * (e.g. a future adapter's `threadId` with a colon) cannot alias two
+ * distinct conversations onto the same key.
+ *
+ * Continuity with pre-encoding session keys is only guaranteed for
+ * segments that are themselves URL-safe: platform identifiers
+ * (`telegram` / `slack` / ...), the hex-derived default botKey
+ * (`deriveBotKey` in `apps/ethos/src/config.ts`), numeric Slack
+ * `thread_ts`, and the chat IDs the supported platforms emit. An
+ * operator who configures a custom `id:` value containing reserved
+ * characters will see their existing SQLite session key change shape
+ * once after upgrade and their history orphan — that's the cost of
+ * choosing an unusual botKey, not a regression in the common case.
+ *
+ * Treat the returned string as opaque. The Gateway never decodes it;
+ * collisions only matter at construction time, and the encoder is the
+ * single point of truth for what a lane key looks like.
+ */
+function buildLaneKey(...segments: string[]): string {
+  return segments.map(encodeURIComponent).join(':');
+}
+
+// ---------------------------------------------------------------------------
 // SessionLane — serialises concurrent messages for the same chat
 // ---------------------------------------------------------------------------
 
@@ -127,9 +155,10 @@ export interface GatewayBotConfig {
 export interface GatewayConfig {
   /**
    * Multi-bot routing: one entry per bot. The Gateway keys its lane state
-   * by `${platform}:${botKey}:${chatId}` so concurrent conversations
-   * across bots stay isolated. Exactly one of `bots` / `loop` must be set;
-   * single-adapter deployments may continue to pass `loop` directly.
+   * by `(platform, botKey, chatId[, threadId])` — encoded via `buildLaneKey`
+   * — so concurrent conversations across bots and threads stay isolated.
+   * Exactly one of `bots` / `loop` must be set; single-adapter deployments
+   * may continue to pass `loop` directly.
    */
   bots?: GatewayBotConfig[];
   /** Back-compat shorthand for single-bot deployments. Ignored when
@@ -323,7 +352,7 @@ export class Gateway {
    */
   private isDuplicate(message: InboundMessage, botKey: string): boolean {
     if (this.dedupWindow <= 0 || !message.messageId) return false;
-    const key = `${message.platform}:${botKey}:${message.chatId}:${message.messageId}`;
+    const key = buildLaneKey(message.platform, botKey, message.chatId, message.messageId);
     if (this.seenMessages.has(key)) return true;
     this.seenMessages.add(key);
     // Bound the set — drop the oldest entry once we exceed the window.
@@ -400,7 +429,20 @@ export class Gateway {
       });
       return;
     }
-    const laneKey = `${message.platform}:${bot.botKey}:${message.chatId}`;
+    // Adapters that surface a thread identifier (currently only Slack, via
+    // `thread_ts`) get a per-thread lane so concurrent threads in the same
+    // channel never share session state. Adapters without thread semantics
+    // omit `threadId` and the key degrades to the unthreaded form.
+    //
+    // Empty-string `threadId` is treated as no thread: the contract is
+    // `threadId?: string`, but an empty string carries no routing signal,
+    // and admitting it would mean a misbehaving adapter could quietly
+    // build a thread lane keyed on `''` — distinct from the unthreaded
+    // root but holding only its mistakes.
+    const threadId = message.threadId ? message.threadId : undefined;
+    const laneKey = threadId
+      ? buildLaneKey(message.platform, bot.botKey, message.chatId, threadId)
+      : buildLaneKey(message.platform, bot.botKey, message.chatId);
     const lane = this.getOrCreateLane(laneKey);
     const text = message.text?.trim() ?? '';
 
@@ -748,15 +790,23 @@ export class Gateway {
               ? `${responseText}\n\n⚠ Response interrupted: ${errored.error}`
               : `⚠ Error: ${errored.error}`;
           if (this.outboundDedup.shouldSend(sessionKey, note)) {
-            await adapter.send(message.chatId, { text: note }).catch(() => {});
+            await adapter.send(message.chatId, { text: note, threadId }).catch(() => {});
           }
         } else if (responseText) {
           // Outbound dedup — suppress same (sessionId, content) within TTL.
           // Adapters that previously rolled their own dedup go through this
           // cache instead. See plan/phases/30-robustness.md § 30.4.
           if (this.outboundDedup.shouldSend(sessionKey, responseText)) {
+            // Pass the inbound thread identifier through so adapters with
+            // thread semantics (Slack) reply in the same thread. Top-level
+            // posts have no `threadId` — the value is undefined and the
+            // adapter posts at the channel root.
             await adapter
-              .send(message.chatId, { text: responseText, parseMode: 'markdown' })
+              .send(message.chatId, {
+                text: responseText,
+                parseMode: 'markdown',
+                threadId,
+              })
               .catch(() => {});
           }
         }
