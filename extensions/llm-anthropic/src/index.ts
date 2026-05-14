@@ -244,6 +244,19 @@ export class AnthropicProvider implements LLMProvider {
       input_schema: t.parameters as Anthropic.Tool['input_schema'],
     }));
 
+    // Per-slice token computation (P1 observability) — compute before streaming.
+    const systemText = options.system ?? '';
+    const toolsText = anthropicTools.length > 0 ? JSON.stringify(anthropicTools) : '';
+    const requestTokens = {
+      system: systemText
+        ? await this.countTokens([{ role: 'user', content: systemText }])
+        : 0,
+      tools: toolsText
+        ? await this.countTokens([{ role: 'user', content: toolsText }])
+        : 0,
+      messages: await this.countTokens(messages),
+    };
+
     const effectiveModel = options.modelOverride ?? this.model;
     // biome-ignore lint/suspicious/noExplicitAny: extended thinking params not yet in SDK types
     const params: any = {
@@ -337,6 +350,7 @@ export class AnthropicProvider implements LLMProvider {
                   cacheReadTokens,
                   cacheCreationTokens,
                 ),
+                requestTokens,
               },
             };
             if (event.delta.stop_reason) {

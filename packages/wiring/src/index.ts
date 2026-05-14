@@ -56,6 +56,7 @@ import type {
   MemoryEntryRef,
   MemoryProvider,
   PromptContext,
+  RequestDumpStore,
   SecretsResolver,
   SessionStore,
 } from '@ethosagent/types';
@@ -124,6 +125,16 @@ export interface WiringConfig {
   postmortems?: boolean;
   /** Reputation-aware autonomy tiers for team members. */
   trustPolicy?: TrustPolicy;
+  /**
+   * P3 observability — request dump store configuration. When enabled, every
+   * LLM request/response is logged to JSONL files for offline debugging.
+   */
+  observabilityRequestDump?: {
+    enabled?: boolean;
+    dir?: string;
+    includeContent?: boolean;
+    rotation?: { maxBytes?: number; maxAgeHours?: number };
+  };
   /**
    * Fallback provider chain. When 2+ entries are provided, `createLLM` wraps
    * them in a `ChainedProvider` with cooldown-based automatic failover.
@@ -725,6 +736,19 @@ export async function createAgentLoop(
   const { createLLMClassifier } = await import('@ethosagent/safety-injection');
   const injectionClassifier = createLLMClassifier({ llm });
 
+  // P3 observability — request dump store. Lazily import so the package is
+  // only loaded when the feature is enabled.
+  let requestDumpStore: RequestDumpStore | undefined;
+  if (config.observabilityRequestDump?.enabled) {
+    const { JsonlRequestDumpStore } = await import('@ethosagent/request-dump');
+    const dumpDir = config.observabilityRequestDump.dir ?? join(dataDir, 'request-dumps');
+    requestDumpStore = new JsonlRequestDumpStore({
+      dir: dumpDir,
+      maxBytes: config.observabilityRequestDump.rotation?.maxBytes,
+      maxAgeHours: config.observabilityRequestDump.rotation?.maxAgeHours,
+    });
+  }
+
   const loop = new AgentLoop({
     llm,
     tools,
@@ -744,6 +768,7 @@ export async function createAgentLoop(
     clarifyBridge,
     ...(config.teamName ? { teamId: config.teamName } : {}),
     ...(opts.observability ? { observability: opts.observability } : {}),
+    ...(requestDumpStore ? { requestDumpStore } : {}),
     options: {
       platform: profile,
       workingDir,

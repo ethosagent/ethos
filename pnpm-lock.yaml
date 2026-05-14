@@ -152,6 +152,9 @@ importers:
       '@ethosagent/personalities':
         specifier: workspace:*
         version: link:../../extensions/personalities
+      '@ethosagent/request-dump':
+        specifier: workspace:*
+        version: link:../../extensions/request-dump
       '@ethosagent/session-sqlite':
         specifier: workspace:*
         version: link:../../extensions/session-sqlite
@@ -797,6 +800,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/request-dump:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/sandbox-docker:
     dependencies:
       '@ethosagent/types':
@@ -1214,6 +1223,9 @@ importers:
       '@ethosagent/plugin-loader':
         specifier: workspace:*
         version: link:../../extensions/plugin-loader
+      '@ethosagent/request-dump':
+        specifier: workspace:*
+        version: link:../../extensions/request-dump
       '@ethosagent/safety-injection':
         specifier: workspace:*
         version: link:../safety/injection

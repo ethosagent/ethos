@@ -239,6 +239,19 @@ export class OpenAICompatProvider implements LLMProvider {
       },
     }));
 
+    // Per-slice token computation (P1 observability) — compute before streaming.
+    const systemText = options.system ?? '';
+    const toolsText = oaiTools.length > 0 ? JSON.stringify(oaiTools) : '';
+    const requestTokens = {
+      system: systemText
+        ? await this.countTokens([{ role: 'user', content: systemText }])
+        : 0,
+      tools: toolsText
+        ? await this.countTokens([{ role: 'user', content: toolsText }])
+        : 0,
+      messages: await this.countTokens(messages),
+    };
+
     const effectiveModel = options.modelOverride ?? this.model;
     const params: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
       model: effectiveModel,
@@ -275,6 +288,7 @@ export class OpenAICompatProvider implements LLMProvider {
               chunk.usage.prompt_tokens,
               chunk.usage.completion_tokens,
             ),
+            requestTokens,
           },
         };
         continue;

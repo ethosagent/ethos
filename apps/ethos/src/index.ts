@@ -27,6 +27,7 @@ import { runMeshCommand } from './commands/mesh';
 import { runPerf } from './commands/perf';
 import { runPlugin } from './commands/plugin';
 import { runProcessCommand } from './commands/process';
+import { runRequestDump } from './commands/request-dump';
 import { runRetention } from './commands/retention';
 import { runAll } from './commands/run-all';
 import { runSecrets } from './commands/secrets';
@@ -589,6 +590,11 @@ try {
 
     case 'archive': {
       await runArchive(args[1] ?? 'list', args.slice(2));
+      break;
+    }
+
+    case 'request-dump': {
+      await runRequestDump(args.slice(1));
       break;
     }
 
