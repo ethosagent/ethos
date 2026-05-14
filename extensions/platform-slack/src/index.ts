@@ -16,6 +16,11 @@ export {
 } from './blocks/approval';
 export type { KanbanTicket } from './blocks/kanban';
 export type { SessionSummary } from './blocks/session';
+export type {
+  KanbanUnfurlData,
+  PersonalityUnfurlData,
+  SessionUnfurlData,
+} from './blocks/unfurl';
 export { chunkText, reflowChunks } from './chunking';
 export type { KanbanReader, MemoryReader } from './commands';
 export {
@@ -24,6 +29,11 @@ export {
   ChannelModeSchema,
   DEFAULT_CHANNEL_MODE,
 } from './config';
+export type {
+  KanbanUnfurlReader,
+  PersonalityUnfurlReader,
+  SessionUnfurlReader,
+} from './events/links';
 export type { SessionReader } from './home/handlers';
 export { buildHomeView, type HomeViewInput, type SlackHomeView } from './home/view';
 export type { ApprovalDecisionEvent } from './interactions/actions';
