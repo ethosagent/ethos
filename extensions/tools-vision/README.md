@@ -4,9 +4,13 @@ One-shot vision and PDF question-answering — point `vision_analyze` at an imag
 
 ## Capabilities
 
-| Tool | network | secrets | storage | fs_reach | process |
-|------|---------|---------|---------|----------|---------|
-| `vision_analyze` | — | — | — | `{ read: 'from-personality' }` | — |
+| Tool | network | secrets | storage | fs_reach | process | attachments |
+|------|---------|---------|---------|----------|---------|-------------|
+| `vision_analyze` | — | — | — | `{ read: 'from-personality' }` | — | `{ kinds: ['image'] }` |
+
+### Attachment support
+
+`vision_analyze` declares `capabilities.attachments: { kinds: ['image'] }`. When the user sends an image via a platform adapter (Telegram, Slack), the LLM sees an `<attachments>` block and can pass the opaque `ref` (e.g. `att-0`) as the `ref` argument instead of `file_path`. The tool resolves the ref via `ctx.attachments.openByRef(ref)` to get a local file path, then proceeds with the normal image analysis flow. The `ref` and `file_path` arguments are mutually exclusive -- provide one or the other.
 
 ## Why this exists
 
