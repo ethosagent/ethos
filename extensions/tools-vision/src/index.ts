@@ -45,6 +45,7 @@ import { supportsPdf, supportsVision } from './pricing';
 // ---------------------------------------------------------------------------
 
 export interface VisionAnalyzeArgs {
+  ref?: string;
   file_path?: string;
   file_url?: string;
   file_base64?: string;
@@ -126,6 +127,7 @@ export function makeVisionAnalyze(opts: VisionToolsOptions): Tool {
     maxResultChars: MAX_RESULT_CHARS,
     capabilities: {
       fs_reach: { read: 'from-personality' },
+      attachments: { kinds: ['image'] },
     },
     // Tool output is the LLM's interpretation of an image / document the user
     // supplied — owner-authored prompt + the model's reply. Not adversary
@@ -136,6 +138,11 @@ export function makeVisionAnalyze(opts: VisionToolsOptions): Tool {
     schema: {
       type: 'object',
       properties: {
+        ref: {
+          type: 'string',
+          description:
+            'Opaque attachment reference (e.g. att-0) from the <attachments> block. When set, the referenced image is analyzed.',
+        },
         file_path: {
           type: 'string',
           description:
@@ -221,15 +228,25 @@ async function executeVision(
     }
   }
 
+  // 2a. Resolve attachment ref → file_path if present.
+  let effectiveArgs = args;
+  if (args.ref) {
+    if (!ctx.attachments) {
+      return fail('not_available', 'No attachments available for this turn.');
+    }
+    const { path } = await ctx.attachments.openByRef(args.ref);
+    effectiveArgs = { ...args, file_path: path, ref: undefined };
+  }
+
   // 2. Resolve bytes + media type.
   let mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | 'application/pdf';
   let buffer: Buffer;
   try {
     const resolved = await resolveFile(
       {
-        ...(args.file_path !== undefined ? { file_path: args.file_path } : {}),
-        ...(args.file_url !== undefined ? { file_url: args.file_url } : {}),
-        ...(args.file_base64 !== undefined ? { file_base64: args.file_base64 } : {}),
+        ...(effectiveArgs.file_path !== undefined ? { file_path: effectiveArgs.file_path } : {}),
+        ...(effectiveArgs.file_url !== undefined ? { file_url: effectiveArgs.file_url } : {}),
+        ...(effectiveArgs.file_base64 !== undefined ? { file_base64: effectiveArgs.file_base64 } : {}),
       },
       {
         ...(ctx.scopedFs ? { scopedFs: ctx.scopedFs } : {}),
