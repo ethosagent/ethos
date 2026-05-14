@@ -148,7 +148,6 @@ const MEDIA_PLACEHOLDER: Record<Attachment['type'], string> = {
   file: '(attached file)',
 };
 
-
 /**
  * Extract media descriptors from a Telegram message object.
  * Checks photo, document, voice, audio, video, animation, sticker in priority order.

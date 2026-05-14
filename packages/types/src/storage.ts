@@ -96,11 +96,6 @@ export interface Storage {
   rename(from: string, to: string): Promise<void>;
 }
 
-/**
- * Thrown by ScopedStorage when a read or write targets a path outside the
- * configured allowlist. Consumers (e.g. tools-file) should translate this
- * into a user-facing tool error rather than letting it propagate.
- */
 export interface AttachmentCache {
   write(
     bytes: Uint8Array,
@@ -111,6 +106,11 @@ export interface AttachmentCache {
   resolveLocalPath(url: string): string;
 }
 
+/**
+ * Thrown by ScopedStorage when a read or write targets a path outside the
+ * configured allowlist. Consumers (e.g. tools-file) should translate this
+ * into a user-facing tool error rather than letting it propagate.
+ */
 export class BoundaryError extends Error {
   readonly code = 'storage-boundary' as const;
   readonly kind: 'read' | 'write';
