@@ -133,7 +133,7 @@ export interface WiringConfig {
     enabled?: boolean;
     dir?: string;
     includeContent?: boolean;
-    rotation?: { maxBytes?: number; maxAgeHours?: number };
+    rotation?: { maxBytes?: number };
   };
   /**
    * Fallback provider chain. When 2+ entries are provided, `createLLM` wraps
@@ -745,7 +745,6 @@ export async function createAgentLoop(
     requestDumpStore = new JsonlRequestDumpStore({
       dir: dumpDir,
       maxBytes: config.observabilityRequestDump.rotation?.maxBytes,
-      maxAgeHours: config.observabilityRequestDump.rotation?.maxAgeHours,
     });
   }
 

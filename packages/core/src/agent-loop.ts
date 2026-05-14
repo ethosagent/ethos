@@ -992,7 +992,14 @@ export class AgentLoop {
         {
           sessionId,
           text: chunkText,
-          usage: { inputTokens: llmInputTokens, outputTokens: llmOutputTokens },
+          usage: {
+            inputTokens: llmInputTokens,
+            outputTokens: llmOutputTokens,
+            ...(llmCacheReadTokens ? { cacheReadTokens: llmCacheReadTokens } : {}),
+            ...(llmCacheCreationTokens ? { cacheCreationTokens: llmCacheCreationTokens } : {}),
+            ...(llmEstimatedCostUsd ? { estimatedCostUsd: llmEstimatedCostUsd } : {}),
+            ...(llmRequestTokens ? { requestTokens: llmRequestTokens } : {}),
+          },
           requestId,
           finishReason: llmFinishReason,
           durationMs: llmDurationMs,
@@ -1001,7 +1008,8 @@ export class AgentLoop {
         allowedPlugins,
       );
 
-      // Append to request dump store if wired (awaited for reliability)
+      // Append to request dump store if wired (awaited for reliability).
+      // Content fields only included when personality observability opts in.
       if (this.requestDumpStore) {
         await this.requestDumpStore.append({
           requestId,
@@ -1017,10 +1025,12 @@ export class AgentLoop {
           cacheCreationTokens: llmCacheCreationTokens || undefined,
           estimatedCostUsd: llmEstimatedCostUsd || undefined,
           finishReason: llmFinishReason,
-          system: systemPrompt,
-          tools: toolDefs,
-          messages: llmMessages,
-          responseText: chunkText,
+          ...(includeContent ? {
+            system: systemPrompt,
+            tools: toolDefs,
+            messages: llmMessages,
+            responseText: chunkText,
+          } : {}),
         });
       }
 

@@ -40,7 +40,14 @@ export interface BeforeLLMCallPayload {
 export interface AfterLLMCallPayload {
   sessionId: string;
   text: string;
-  usage: TokenUsage | { inputTokens: number; outputTokens: number };
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
+    estimatedCostUsd?: number;
+    requestTokens?: { system: number; tools: number; messages: number };
+  };
   requestId?: string;
   finishReason?: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' | 'error';
   durationMs?: number;

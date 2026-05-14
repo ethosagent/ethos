@@ -267,7 +267,12 @@ describe('Observability Extensions', () => {
         llm: makeMockLLM(['dump test']),
         requestDumpStore: store,
       });
-      await collect(loop.run('hello'));
+      loop['personalities'].define({
+        id: 'dump-test',
+        name: 'DumpTest',
+        safety: { observability: { storeLlmPayloads: 'full' } },
+      });
+      await collect(loop.run('hello', { personalityId: 'dump-test' }));
 
       const records = store.getAll();
       expect(records).toHaveLength(1);

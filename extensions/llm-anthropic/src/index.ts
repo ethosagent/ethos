@@ -244,18 +244,20 @@ export class AnthropicProvider implements LLMProvider {
       input_schema: t.parameters as Anthropic.Tool['input_schema'],
     }));
 
-    // Per-slice token computation (P1 observability) — compute before streaming.
-    const systemText = options.system ?? '';
-    const toolsText = anthropicTools.length > 0 ? JSON.stringify(anthropicTools) : '';
-    const requestTokens = {
-      system: systemText
-        ? await this.countTokens([{ role: 'user', content: systemText }])
-        : 0,
-      tools: toolsText
-        ? await this.countTokens([{ role: 'user', content: toolsText }])
-        : 0,
-      messages: await this.countTokens(messages),
-    };
+    // Per-slice token computation (P1 observability) — best-effort, never blocks the call.
+    let requestTokens: { system: number; tools: number; messages: number } | undefined;
+    try {
+      const systemText = options.system ?? '';
+      const toolsText = anthropicTools.length > 0 ? JSON.stringify(anthropicTools) : '';
+      const [sysTk, toolsTk, msgTk] = await Promise.all([
+        systemText ? this.countTokens([{ role: 'user', content: systemText }]) : 0,
+        toolsText ? this.countTokens([{ role: 'user', content: toolsText }]) : 0,
+        this.countTokens(messages),
+      ]);
+      requestTokens = { system: sysTk, tools: toolsTk, messages: msgTk };
+    } catch {
+      // Best-effort: if token counting fails, requestTokens stays undefined.
+    }
 
     const effectiveModel = options.modelOverride ?? this.model;
     // biome-ignore lint/suspicious/noExplicitAny: extended thinking params not yet in SDK types
