@@ -1,0 +1,292 @@
+import { randomUUID } from 'node:crypto';
+import type { AgentEvent, AgentLoop } from '@ethosagent/core';
+import type { SessionStore } from '@ethosagent/types';
+import { EthosError } from '@ethosagent/types';
+import type {
+  ChatCompletionChunk,
+  ChatCompletionRequest,
+  ChatCompletionResponse,
+  ChatMessage,
+} from '../routes/openai/schemas';
+import type { ChatDefaults } from './chat.service';
+
+// F3 + F4 — drives `POST /v1/chat/completions`. Thinner than `ChatService`:
+// no AgentBridge, no SSE replay buffer. Each request creates an ephemeral
+// session (or resumes a stateful one via `X-Ethos-Session`), drives
+// `AgentLoop.run`, and translates events into the OpenAI shape.
+//
+// Tool calls and team routing are explicit non-goals here — those land in
+// C1 and W1. The route layer rejects those requests before they reach the
+// service.
+
+export interface CompletionsServiceOptions {
+  loop: AgentLoop;
+  sessions: SessionStore;
+  defaults: ChatDefaults;
+  /** `now()` is injected so tests can pin the `created` timestamp + chat id seed. */
+  now?: () => Date;
+  /** Same — overridable so tests can assert deterministic ids. */
+  newId?: () => string;
+}
+
+export interface CompletionsInput {
+  req: ChatCompletionRequest;
+  /**
+   * Personality id to drive the loop with. `undefined` means "use the
+   * registry default" — the route layer resolves `ethos-default` to that.
+   */
+  personalityId: string | undefined;
+  /**
+   * Opaque session id from `X-Ethos-Session`. When set, the session is
+   * resumed (or created on first call with that id) and only the final
+   * user message of `req.messages` is treated as new input. When unset,
+   * a fresh ephemeral session is created and prior messages are
+   * pre-populated.
+   */
+  sessionKeyOverride?: string;
+  abortSignal?: AbortSignal;
+  /** Warnings already collected by the route layer (e.g. dropped system msgs). */
+  warnings?: string[];
+}
+
+export class CompletionsService {
+  constructor(private readonly opts: CompletionsServiceOptions) {}
+
+  async complete(input: CompletionsInput): Promise<ChatCompletionResponse> {
+    const { sessionKey, lastUserText } = await this.prepareSession(input);
+    let text = '';
+    let promptTokens = 0;
+    let completionTokens = 0;
+    const finishReason: 'stop' | 'length' | 'tool_calls' = 'stop';
+
+    for await (const event of this.driveLoop({
+      sessionKey,
+      lastUserText,
+      personalityId: input.personalityId,
+      ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    })) {
+      if (event.type === 'text_delta') text += event.text;
+      else if (event.type === 'usage') {
+        promptTokens += event.inputTokens;
+        completionTokens += event.outputTokens;
+      } else if (event.type === 'error') {
+        throw new EthosError({
+          code: 'INTERNAL',
+          cause: event.error,
+          action: 'Retry the request. If the error repeats, file an issue.',
+        });
+      }
+    }
+
+    return {
+      id: `chatcmpl-${this.id()}`,
+      object: 'chat.completion',
+      created: this.unixNow(),
+      model: input.req.model,
+      choices: [
+        { index: 0, message: { role: 'assistant', content: text }, finish_reason: finishReason },
+      ],
+      usage: {
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        total_tokens: promptTokens + completionTokens,
+      },
+    };
+  }
+
+  async *stream(input: CompletionsInput): AsyncGenerator<ChatCompletionChunk> {
+    const { sessionKey, lastUserText } = await this.prepareSession(input);
+    const id = `chatcmpl-${this.id()}`;
+    const created = this.unixNow();
+    const model = input.req.model;
+
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let yieldedRole = false;
+
+    for await (const event of this.driveLoop({
+      sessionKey,
+      lastUserText,
+      personalityId: input.personalityId,
+      ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    })) {
+      if (event.type === 'text_delta') {
+        const delta: ChatCompletionChunk['choices'][0]['delta'] = yieldedRole
+          ? { content: event.text }
+          : { role: 'assistant', content: event.text };
+        yieldedRole = true;
+        yield {
+          id,
+          object: 'chat.completion.chunk',
+          created,
+          model,
+          choices: [{ index: 0, delta, finish_reason: null }],
+        };
+      } else if (event.type === 'usage') {
+        promptTokens += event.inputTokens;
+        completionTokens += event.outputTokens;
+      } else if (event.type === 'error') {
+        throw new EthosError({
+          code: 'INTERNAL',
+          cause: event.error,
+          action: 'Retry the request. If the error repeats, file an issue.',
+        });
+      }
+    }
+
+    // Final chunk — empty delta + finish_reason terminator. OpenAI clients
+    // gate on this.
+    yield {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model,
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+    };
+
+    // Optional usage chunk — only when the client opted in. OpenAI's docs
+    // show it as the absolute last data frame, with `choices: []`.
+    if (input.req.stream_options?.include_usage) {
+      yield {
+        id,
+        object: 'chat.completion.chunk',
+        created,
+        model,
+        choices: [],
+        usage: {
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens: promptTokens + completionTokens,
+        },
+      };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Session preparation
+  // ---------------------------------------------------------------------------
+
+  private async prepareSession(
+    input: CompletionsInput,
+  ): Promise<{ sessionKey: string; lastUserText: string }> {
+    const lastUser = finalUserMessage(input.req.messages);
+    if (!lastUser) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: 'messages must end with a `user` message.',
+        action: 'Place the user prompt last in the messages array.',
+      });
+    }
+
+    // Stateful mode — opt-in via `X-Ethos-Session`. Server-side history wins;
+    // we only feed in the latest user text. Prior messages from the request
+    // are ignored. (Per-message verification is a future enhancement.)
+    if (input.sessionKeyOverride) {
+      return {
+        sessionKey: `openai:${input.sessionKeyOverride}`,
+        lastUserText: lastUser.text,
+      };
+    }
+
+    // Stateless mode — fresh ephemeral session, pre-populated with the
+    // prior user/assistant turns so the LLM sees the full conversation.
+    const sessionKey = `openai:ephem:${randomUUID()}`;
+    const prior = priorTextMessages(input.req.messages, lastUser.index);
+    if (prior.length === 0) {
+      // No history to inject — AgentLoop will create the session lazily
+      // on its first `getSessionByKey ?? createSession`.
+      return { sessionKey, lastUserText: lastUser.text };
+    }
+    const created = await this.opts.sessions.createSession({
+      key: sessionKey,
+      platform: 'openai',
+      model: this.opts.defaults.model,
+      provider: this.opts.defaults.provider,
+      usage: zeroUsage(),
+    });
+    for (const msg of prior) {
+      await this.opts.sessions.appendMessage({
+        sessionId: created.id,
+        role: msg.role,
+        content: msg.text,
+      });
+    }
+    return { sessionKey, lastUserText: lastUser.text };
+  }
+
+  private driveLoop(input: {
+    sessionKey: string;
+    lastUserText: string;
+    personalityId: string | undefined;
+    abortSignal?: AbortSignal;
+  }): AsyncGenerator<AgentEvent> {
+    const opts: Parameters<AgentLoop['run']>[1] = {
+      sessionKey: input.sessionKey,
+      ...(input.personalityId ? { personalityId: input.personalityId } : {}),
+      ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    };
+    return this.opts.loop.run(input.lastUserText, opts);
+  }
+
+  private id(): string {
+    return this.opts.newId ? this.opts.newId() : randomUUID();
+  }
+
+  private unixNow(): number {
+    return Math.floor((this.opts.now ? this.opts.now() : new Date()).getTime() / 1000);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * The OpenAI contract is that the final message in `messages[]` is the new
+ * turn the model is being asked to respond to. F3 only handles server-tools
+ * mode, so the trailing message must be `user` with string content; trailing
+ * `assistant` / `tool` lands in C1. Anything else is malformed — silently
+ * rerunning an earlier user prompt would corrupt conversation semantics.
+ */
+function finalUserMessage(messages: ChatMessage[]): { index: number; text: string } | null {
+  const lastIndex = messages.length - 1;
+  const last = messages[lastIndex];
+  if (!last || last.role !== 'user') return null;
+  const text = stringContent(last.content);
+  if (text === null) return null;
+  return { index: lastIndex, text };
+}
+
+function priorTextMessages(
+  messages: ChatMessage[],
+  lastUserIndex: number,
+): Array<{ role: 'user' | 'assistant'; text: string }> {
+  const out: Array<{ role: 'user' | 'assistant'; text: string }> = [];
+  for (let i = 0; i < lastUserIndex; i++) {
+    const msg = messages[i];
+    if (!msg) continue;
+    if (msg.role !== 'user' && msg.role !== 'assistant') continue; // skip system / tool
+    const text = stringContent(msg.content);
+    if (text === null) continue;
+    out.push({ role: msg.role, text });
+  }
+  return out;
+}
+
+function stringContent(content: string | null | undefined): string | null {
+  if (typeof content !== 'string') return null;
+  if (content.length === 0) return null;
+  return content;
+}
+
+function zeroUsage() {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    estimatedCostUsd: 0,
+    apiCallCount: 0,
+    compactionCount: 0,
+  };
+}

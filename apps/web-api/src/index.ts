@@ -9,6 +9,7 @@ import { FsStorage } from '@ethosagent/storage-fs';
 import type { GlobalMemoryStore, SessionStore, Storage } from '@ethosagent/types';
 import type { SseEvent } from '@ethosagent/web-contracts';
 import type { Hono } from 'hono';
+import type { ApiKeyAuthStore } from './middleware/bearer-auth';
 import { AllowlistRepository } from './repositories/allowlist.repository';
 import { ConfigRepository } from './repositories/config.repository';
 import { EvolverRepository } from './repositories/evolver.repository';
@@ -19,6 +20,7 @@ import { createRoutes } from './routes';
 import { createWebApprovalHook, type DangerPredicate } from './services/approval-hook';
 import { ApprovalsService } from './services/approvals.service';
 import { type ChatDefaults, ChatService } from './services/chat.service';
+import { CompletionsService } from './services/completions.service';
 import { ConfigService } from './services/config.service';
 import { CronService } from './services/cron.service';
 import { EvolverService } from './services/evolver.service';
@@ -92,6 +94,20 @@ export interface CreateWebApiOptions {
    * (currently the MCP-config side of plugins.list). Defaults to FsStorage.
    */
   storage?: Storage;
+  /**
+   * Bearer-token store backing the OpenAI-compat `/v1/*` surface (F1+F2).
+   * When omitted, `/v1/*` is not mounted. Boot code typically constructs
+   * `SqliteApiKeyStore` (from `@ethosagent/session-sqlite`) against the
+   * same `sessions.db` file the session store uses, but any
+   * `ApiKeyAuthStore` impl works — the HTTP layer doesn't care which.
+   */
+  apiKeys?: ApiKeyAuthStore;
+  /**
+   * Returns currently registered team names for `GET /v1/models`. Boot
+   * code typically scans `<dataDir>/teams/*.yaml`. When omitted, the
+   * models list reports only personalities + `ethos-default`.
+   */
+  listTeams?: () => Promise<string[]>;
 }
 
 export interface CreateWebApiResult {
@@ -153,6 +169,13 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const pluginsService = new PluginsService({ storage, dataDir: opts.dataDir });
   const platformsService = new PlatformsService({ repo: platformsRepo });
   const labService = new LabService({ dataDir: opts.dataDir, loop: opts.agentLoop });
+  // F3+F4 — drives `POST /v1/chat/completions`. Shares the AgentLoop with
+  // the web chat surface so personality reloads + tool wiring reach both.
+  const completionsService = new CompletionsService({
+    loop: opts.agentLoop,
+    sessions: opts.sessionStore,
+    defaults: opts.chatDefaults,
+  });
 
   // One buffer per process — keyed internally by sessionId. Bridges are
   // owned by ChatService. The reap callback lets the bridge map drain
@@ -218,10 +241,13 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       platforms: platformsService,
       lab: labService,
       kanban: kanbanService,
+      completions: completionsService,
     },
     ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),
     ...(opts.secureCookie !== undefined ? { secureCookie: opts.secureCookie } : {}),
     ...(opts.webDist ? { webDist: opts.webDist } : {}),
+    ...(opts.apiKeys ? { apiKeys: opts.apiKeys } : {}),
+    ...(opts.listTeams ? { listTeams: opts.listTeams } : {}),
   });
 
   return { app, chatService };

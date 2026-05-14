@@ -10,6 +10,14 @@ import type {
 import Database from 'better-sqlite3';
 
 export {
+  AmbiguousPrefixError,
+  type ApiKeyRecord,
+  type CreateApiKeyInput,
+  type CreateApiKeyResult,
+  hashApiKey,
+  SqliteApiKeyStore,
+} from './api-key-store';
+export {
   decideMigration,
   type MigrateSessionKeysOptions,
   migrateSessionKeys,

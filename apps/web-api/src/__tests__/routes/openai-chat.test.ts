@@ -1,0 +1,352 @@
+import type { AgentEvent } from '@ethosagent/core';
+import { SQLiteSessionStore, SqliteApiKeyStore } from '@ethosagent/session-sqlite';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { openAiRoutes } from '../../routes/openai';
+import { CompletionsService } from '../../services/completions.service';
+import type { PersonalitiesService } from '../../services/personalities.service';
+import { makeStubAgentLoop } from '../test-helpers';
+
+const KNOWN_PERSONALITIES = ['engineer', 'researcher'];
+
+function makeStubPersonalitiesService(ids: string[] = KNOWN_PERSONALITIES): PersonalitiesService {
+  return {
+    list() {
+      return {
+        personalities: ids.map((id) => ({ id }) as never),
+        defaultId: ids[0] ?? 'ethos',
+      };
+    },
+  } as unknown as PersonalitiesService;
+}
+
+interface SetupOptions {
+  events?: AgentEvent[];
+  onRun?: (input: string, opts: unknown) => void;
+}
+
+async function setup(opts: SetupOptions = {}) {
+  const apiKeys = new SqliteApiKeyStore(':memory:');
+  const sessions = new SQLiteSessionStore(':memory:');
+  const created = await apiKeys.create({ name: 'cursor', scopes: ['chat'] });
+  const loop = makeStubAgentLoop({
+    events: opts.events ?? [{ type: 'done', text: '', turnCount: 1 }],
+    ...(opts.onRun ? { onRun: opts.onRun } : {}),
+  });
+  const completions = new CompletionsService({
+    loop,
+    sessions,
+    defaults: { model: 'claude-test', provider: 'anthropic' },
+  });
+  const app = openAiRoutes({
+    apiKeys,
+    personalities: makeStubPersonalitiesService(),
+    completions,
+  });
+  return {
+    app,
+    apiKeys,
+    sessions,
+    secret: created.secret,
+    bearer: { Authorization: `Bearer ${created.secret}` },
+  };
+}
+
+describe('POST /v1/chat/completions', () => {
+  let teardown: Array<() => void> = [];
+  afterEach(() => {
+    for (const fn of teardown) fn();
+    teardown = [];
+  });
+  beforeEach(() => {});
+
+  async function withSetup(opts?: SetupOptions) {
+    const ctx = await setup(opts);
+    teardown.push(
+      () => ctx.apiKeys.close(),
+      () => ctx.sessions.close(),
+    );
+    return ctx;
+  }
+
+  describe('rejection paths', () => {
+    it('returns 400 with OpenAI envelope when body is not JSON', async () => {
+      const { app, bearer } = await withSetup();
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { ...bearer, 'content-type': 'application/json' },
+        body: 'not json',
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { code: string; type: string } };
+      expect(body.error.code).toBe('invalid_request_body');
+      expect(body.error.type).toBe('invalid_request_error');
+    });
+
+    it('returns 400 when model is missing', async () => {
+      const { app, bearer } = await withSetup();
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { ...bearer, 'content-type': 'application/json' },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 400 when `tools` is provided (C1 scope)', async () => {
+      const { app, bearer } = await withSetup();
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { ...bearer, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'engineer',
+          messages: [{ role: 'user', content: 'hi' }],
+          tools: [{ type: 'function', function: { name: 'foo' } }],
+        }),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('client_tools_not_implemented');
+    });
+
+    it('returns 400 when messages include role: "tool" (C1 scope)', async () => {
+      const { app, bearer } = await withSetup();
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { ...bearer, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'engineer',
+          messages: [
+            { role: 'user', content: 'q' },
+            { role: 'tool', content: 'r', tool_call_id: 'call_1' },
+          ],
+        }),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('client_tools_not_implemented');
+    });
+
+    it('returns 400 when model starts with `team:` (W1 scope)', async () => {
+      const { app, bearer } = await withSetup();
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { ...bearer, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'team:analytics',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('team_routing_not_implemented');
+    });
+
+    it('returns 404 model_not_found for an unknown personality', async () => {
+      const { app, bearer } = await withSetup();
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { ...bearer, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'never-seen',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('model_not_found');
+    });
+
+    it('returns 401 when no bearer is supplied', async () => {
+      const { app } = await withSetup();
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'engineer',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+      expect(res.status).toBe(401);
+    });
+  });
+
+  describe('non-streaming success', () => {
+    it('returns a full ChatCompletion for a known personality', async () => {
+      const { app, bearer } = await withSetup({
+        events: [
+          { type: 'text_delta', text: 'hello' },
+          { type: 'usage', inputTokens: 3, outputTokens: 1, estimatedCostUsd: 0 },
+          { type: 'done', text: 'hello', turnCount: 1 },
+        ],
+      });
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { ...bearer, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'engineer',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        choices: Array<{ message: { content: string }; finish_reason: string }>;
+        usage: { total_tokens: number };
+      };
+      expect(body.choices[0]?.message.content).toBe('hello');
+      expect(body.choices[0]?.finish_reason).toBe('stop');
+      expect(body.usage.total_tokens).toBe(4);
+    });
+
+    it('accepts `ethos-default` (no personalityId on the loop)', async () => {
+      let capturedOpts: { personalityId?: string } | null = null;
+      const { app, bearer } = await withSetup({
+        events: [{ type: 'done', text: '', turnCount: 1 }],
+        onRun: (_i, o) => {
+          capturedOpts = o as typeof capturedOpts;
+        },
+      });
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { ...bearer, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'ethos-default',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+      expect(res.status).toBe(200);
+      const o = capturedOpts as unknown as { personalityId?: string };
+      expect(o?.personalityId).toBeUndefined();
+    });
+
+    it('sets x-ethos-warning when system messages are dropped', async () => {
+      const { app, bearer } = await withSetup();
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { ...bearer, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'engineer',
+          messages: [
+            { role: 'system', content: 'you are X' },
+            { role: 'user', content: 'hi' },
+          ],
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('x-ethos-warning')).toMatch(/system messages ignored/i);
+    });
+
+    it('threads X-Ethos-Session into the loop session key (with `openai:` prefix)', async () => {
+      let capturedOpts: { sessionKey?: string } | null = null;
+      const { app, bearer } = await withSetup({
+        events: [{ type: 'done', text: '', turnCount: 1 }],
+        onRun: (_i, o) => {
+          capturedOpts = o as typeof capturedOpts;
+        },
+      });
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: {
+          ...bearer,
+          'content-type': 'application/json',
+          'X-Ethos-Session': 'my-app:42',
+        },
+        body: JSON.stringify({
+          model: 'engineer',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+      expect(res.status).toBe(200);
+      const o = capturedOpts as unknown as { sessionKey?: string };
+      expect(o?.sessionKey).toBe('openai:my-app:42');
+    });
+  });
+
+  describe('streaming', () => {
+    async function collectSse(body: ReadableStream<Uint8Array> | null): Promise<string[]> {
+      if (!body) throw new Error('no body');
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      const frames: string[] = [];
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop() ?? '';
+        for (const part of parts) {
+          const line = part.trim();
+          if (line.startsWith('data: ')) frames.push(line.slice('data: '.length));
+        }
+      }
+      if (buf.trim().startsWith('data: ')) frames.push(buf.trim().slice('data: '.length));
+      return frames;
+    }
+
+    it('streams chunks ending in [DONE]', async () => {
+      const { app, bearer } = await withSetup({
+        events: [
+          { type: 'text_delta', text: 'foo' },
+          { type: 'text_delta', text: 'bar' },
+          { type: 'done', text: 'foobar', turnCount: 1 },
+        ],
+      });
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { ...bearer, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'engineer',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toMatch(/text\/event-stream/);
+      const frames = await collectSse(res.body);
+      expect(frames[frames.length - 1]).toBe('[DONE]');
+      const dataChunks = frames.slice(0, -1).map(
+        (f) =>
+          JSON.parse(f) as {
+            choices: Array<{
+              delta: { content?: string; role?: string };
+              finish_reason: string | null;
+            }>;
+          },
+      );
+      // First role-delta + content
+      expect(dataChunks[0]?.choices[0]?.delta).toEqual({ role: 'assistant', content: 'foo' });
+      expect(dataChunks[1]?.choices[0]?.delta).toEqual({ content: 'bar' });
+      // Final finish-reason chunk
+      expect(dataChunks[dataChunks.length - 1]?.choices[0]?.finish_reason).toBe('stop');
+    });
+
+    it('emits a usage chunk when stream_options.include_usage is set', async () => {
+      const { app, bearer } = await withSetup({
+        events: [
+          { type: 'text_delta', text: 'ok' },
+          { type: 'usage', inputTokens: 5, outputTokens: 2, estimatedCostUsd: 0 },
+          { type: 'done', text: 'ok', turnCount: 1 },
+        ],
+      });
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { ...bearer, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'engineer',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+          stream_options: { include_usage: true },
+        }),
+      });
+      const frames = await collectSse(res.body);
+      const usageChunkRaw = frames[frames.length - 2];
+      if (!usageChunkRaw) throw new Error('expected a usage chunk before [DONE]');
+      const usageChunk = JSON.parse(usageChunkRaw) as {
+        choices: unknown[];
+        usage?: { total_tokens: number };
+      };
+      expect(usageChunk.choices).toEqual([]);
+      expect(usageChunk.usage?.total_tokens).toBe(7);
+    });
+  });
+});
