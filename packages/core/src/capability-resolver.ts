@@ -121,6 +121,39 @@ export function resolveCapabilities(
       capabilities.attachments.kinds,
       backends.attachmentCache,
     );
+
+    // Per-turn reach extension: merge attachment cache directories into
+    // ScopedFs read paths so tools using file_path (back-compat) can read
+    // cached attachment files through the normal ScopedFs path.
+    const attachmentDirs = new Set<string>();
+    for (const att of backends.inboundAttachments) {
+      if (att.url.startsWith('file://')) {
+        const localPath = backends.attachmentCache.resolveLocalPath(att.url);
+        const dir = localPath.slice(0, localPath.lastIndexOf('/'));
+        if (dir) attachmentDirs.add(dir);
+      }
+    }
+
+    if (attachmentDirs.size > 0) {
+      if (result.scopedFs && backends.storage) {
+        // Reconstruct with merged read paths
+        const readDecl = capabilities.fs_reach?.read;
+        const readPaths =
+          readDecl === 'from-personality'
+            ? (backends.personalityFsReach?.read ?? [])
+            : (readDecl ?? []);
+        const writeDecl = capabilities.fs_reach?.write;
+        const writePaths =
+          writeDecl === 'from-personality'
+            ? (backends.personalityFsReach?.write ?? [])
+            : (writeDecl ?? []);
+        const mergedRead = new Set([...readPaths, ...attachmentDirs]);
+        result.scopedFs = new ScopedFsImpl(backends.storage, mergedRead, new Set(writePaths));
+      } else if (!result.scopedFs && backends.storage) {
+        // No fs_reach declared but attachments present — create read-only ScopedFs
+        result.scopedFs = new ScopedFsImpl(backends.storage, attachmentDirs, new Set());
+      }
+    }
   }
 
   return result;
