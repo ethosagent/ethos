@@ -6,6 +6,11 @@ function hashSession(sessionKey: string): string {
   return createHash('sha256').update(sessionKey).digest('hex').slice(0, 16);
 }
 
+/** Collision-resistant path segment for IDs that may contain unsafe chars. */
+function hashSegment(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 16);
+}
+
 function sanitize(value: string): string {
   // Replace any char not in the safe set
   const safe = value.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -34,7 +39,7 @@ export class FsAttachmentCache implements AttachmentCache {
   ): Promise<string> {
     const hash = hashSession(meta.sessionKey);
     const safeName = sanitize(meta.filename);
-    const safeMessageId = sanitize(meta.messageId);
+    const safeMessageId = hashSegment(meta.messageId);
     const dir = join(this.root, hash, safeMessageId);
     const filePath = join(dir, safeName);
 
@@ -72,15 +77,16 @@ export class FsAttachmentCache implements AttachmentCache {
     const cutoff = Date.now() - olderThanMs;
     let removedCount = 0;
 
-    const entries = await this.storage.listEntries(this.root);
+    // Traverse <root>/<sessionHash>/ directories.
+    const sessionDirs = await this.storage.listEntries(this.root);
 
-    for (const entry of entries) {
-      if (!entry.isDir) continue;
-      const entryPath = join(this.root, entry.name);
-      const mt = await this.storage.mtime(entryPath);
+    for (const sessionEntry of sessionDirs) {
+      if (!sessionEntry.isDir) continue;
+      const sessionPath = join(this.root, sessionEntry.name);
+      const mt = await this.storage.mtime(sessionPath);
       if (mt !== null && mt < cutoff) {
         try {
-          await this.storage.remove(entryPath, { recursive: true });
+          await this.storage.remove(sessionPath, { recursive: true });
           removedCount++;
         } catch {
           // Entry disappeared concurrently — skip.

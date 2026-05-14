@@ -13,6 +13,10 @@ function hashSession(sessionKey: string): string {
   return createHash('sha256').update(sessionKey).digest('hex').slice(0, 16);
 }
 
+function hashSegment(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 16);
+}
+
 function sanitize(value: string): string {
   // Replace any char not in the safe set
   const safe = value.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -33,8 +37,8 @@ export class InMemoryAttachmentCache implements AttachmentCache {
   ): Promise<string> {
     const hash = hashSession(meta.sessionKey);
     const safeName = sanitize(meta.filename);
-    const safeMessageId = sanitize(meta.messageId);
-    const path = `${ROOT}/${hash}/${safeMessageId}/${safeName}`;
+    const msgHash = hashSegment(meta.messageId);
+    const path = `${ROOT}/${hash}/${msgHash}/${safeName}`;
 
     this.entries.set(path, {
       bytes: new Uint8Array(bytes),

@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 import type { AttachmentCache } from '@ethosagent/types';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FsAttachmentCache } from '../fs-attachment-cache';
 import { InMemoryAttachmentCache } from '../in-memory-attachment-cache';
 import { InMemoryStorage } from '../in-memory-storage';
 
-function sessionHash(key: string): string {
-  return createHash('sha256').update(key).digest('hex').slice(0, 16);
+function hash16(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 16);
 }
 
 interface CacheBackend {
@@ -56,8 +56,8 @@ describe.each(backends)('AttachmentCache — $name', ({ create }) => {
     expect(url).toMatch(/^file:\/\//);
 
     const localPath = cache.resolveLocalPath(url);
-    expect(localPath).toContain(sessionHash(sessionKey));
-    expect(localPath).toContain(messageId);
+    expect(localPath).toContain(hash16(sessionKey));
+    expect(localPath).toContain(hash16(messageId));
     expect(localPath).toContain(filename);
   });
 
@@ -153,13 +153,12 @@ describe.each(backends)('AttachmentCache — $name', ({ create }) => {
 
   // --- path structure ---
 
-  it('stores files under <root>/<sessionHash>/<messageId>/<sanitizedFilename>', async () => {
+  it('stores files under <root>/<sessionHash>/<messageHash>/<sanitizedFilename>', async () => {
     const url = await cache.write(bytes, { sessionKey, messageId, filename, mime });
     const localPath = cache.resolveLocalPath(url);
 
-    const hash = sessionHash(sessionKey);
-    expect(localPath).toContain(`/${hash}/`);
-    expect(localPath).toContain(`/${messageId}/`);
+    expect(localPath).toContain(`/${hash16(sessionKey)}/`);
+    expect(localPath).toContain(`/${hash16(messageId)}/`);
     expect(localPath.endsWith(`/${filename}`)).toBe(true);
   });
 });
@@ -185,37 +184,35 @@ describe('InMemoryAttachmentCache — specific', () => {
   it('pruneOlderThan removes old entries and keeps recent ones', async () => {
     const cache = new InMemoryAttachmentCache();
     const bytes = new Uint8Array([1, 2, 3]);
+    const now = Date.now();
 
-    // Write an entry, then artificially age it via Date.now mock
-    const realNow = Date.now;
-    const pastMs = realNow() - 60_000; // 60 seconds ago
-    Date.now = () => pastMs;
-    await cache.write(bytes, {
+    // Write an old entry (60 seconds ago)
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(now - 60_000);
+    const oldUrl = await cache.write(bytes, {
       sessionKey: 'old-session',
       messageId: 'mid-old',
       filename: 'old.bin',
       mime: 'application/octet-stream',
     });
-    Date.now = realNow;
 
-    // Write a recent entry
-    await cache.write(bytes, {
+    // Write a recent entry (now)
+    spy.mockReturnValue(now);
+    const newUrl = await cache.write(bytes, {
       sessionKey: 'new-session',
       messageId: 'mid-new',
       filename: 'new.bin',
       mime: 'application/octet-stream',
     });
+    spy.mockRestore();
 
     // Prune entries older than 30 seconds — should remove the old one
     const result = await cache.pruneOlderThan(30_000);
     expect(result.removedCount).toBe(1);
 
     // The new entry should still be retrievable
-    const newUrl = `file:///tmp/ethos-test-cache/attachments/${sessionHash('new-session')}/mid-new/new.bin`;
     expect(cache.getBytes(cache.resolveLocalPath(newUrl))).toBeDefined();
 
     // The old entry should be gone
-    const oldUrl = `file:///tmp/ethos-test-cache/attachments/${sessionHash('old-session')}/mid-old/old.bin`;
     expect(cache.getBytes(cache.resolveLocalPath(oldUrl))).toBeUndefined();
   });
 
