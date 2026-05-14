@@ -156,16 +156,20 @@ else
   echo "  ⚠️  Host git identity not found — git commits inside sandbox will fail"
 fi
 
-# Install openai-reviewer skill (review script + Stop hook)
-SKILLS_SRC="$SCRIPT_DIR/skills"
+# Install all skills from the repo's .agents/skills/ directory.
+# Any skill that ships with the repo flows into the sandbox automatically —
+# add a new directory under .agents/skills/<name>/ and it's installed on next setup.
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SKILLS_SRC="$REPO_ROOT/.agents/skills"
 SKILLS_DST="$SANDBOX_DIR/.auth/claude/skills"
 HOOK_PATH="$SKILLS_DST/openai-reviewer/scripts/codex-review-hook"
 if [ -d "$SKILLS_SRC" ]; then
-  echo "  📋 Installing skills..."
+  echo "  📋 Installing skills from .agents/skills/..."
   mkdir -p "$SKILLS_DST"
   cp -R "$SKILLS_SRC/." "$SKILLS_DST/"
   chmod +x "$SKILLS_DST"/*/scripts/* 2>/dev/null || true
-  echo "  ✅ Skills installed."
+  INSTALLED=$(find "$SKILLS_SRC" -mindepth 1 -maxdepth 1 -type d ! -name '.*' | wc -l | tr -d ' ')
+  echo "  ✅ Installed $INSTALLED skill(s)."
 fi
 
 # Install PreToolUse hook (forbid direct edits to canonical ethos checkout)

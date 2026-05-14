@@ -102,7 +102,7 @@ Defined in `Dockerfile.sandbox`:
 
 ## Code-review workflow (`openai-reviewer` skill)
 
-Lives at `skills/openai-reviewer/`. Setup copies it into `$SANDBOX_DIR/.auth/claude/skills/`, where it's auto-discovered by Claude Code.
+Lives at `.agents/skills/openai-reviewer/` (the repo's shared-skills directory). Setup copies every skill under `.agents/skills/` into `$SANDBOX_DIR/.auth/claude/skills/`, where Claude Code auto-discovers them. Add a new directory under `.agents/skills/<name>/` and it ships to sandbox on next setup — no `sandbox-setup.sh` edit needed.
 
 ### Manual invocation
 
@@ -175,9 +175,9 @@ To fully reset auth: `rm -rf $SANDBOX_DIR/.auth/`.
 | `Dockerfile.sandbox` | Sandbox template image recipe |
 | `sandbox-agent-claude.md` | `CLAUDE.md` template rendered into the sandbox shared dir |
 | `sandbox-statusline.sh` | Claude Code statusline (yellow "Sandbox" label, model, branch, dirty count) |
-| `skills/openai-reviewer/SKILL.md` | Skill manifest — routing rules, two-pass flow |
-| `skills/openai-reviewer/scripts/openai-review` | Codex wrapper, returns review JSON |
-| `skills/openai-reviewer/scripts/codex-review-hook` | Stop hook driving the auto-loop |
+| `../.agents/skills/openai-reviewer/SKILL.md` | Skill manifest — routing rules, two-pass flow (lives in the repo's shared-skills dir) |
+| `../.agents/skills/openai-reviewer/scripts/openai-review` | Codex wrapper, returns review JSON |
+| `../.agents/skills/openai-reviewer/scripts/codex-review-hook` | Stop hook driving the auto-loop |
 
 ## Troubleshooting
 
@@ -223,5 +223,5 @@ The setup script tries to install `superpowers@claude-plugins-official`. If you 
 1. Change the defaults in `sandbox-setup.sh` (`SANDBOX_DIR`, `ETHOS_URL`, `ETHOS_BRANCH`)
 2. Update the variable names if you don't want them called `ETHOS_*`
 3. Update `sandbox-agent-claude.md` for your project's commands (replace `pnpm dev/check/lint`)
-4. Keep `skills/openai-reviewer/` as-is — it reads your project's `CLAUDE.md` automatically
+4. Keep `.agents/skills/openai-reviewer/` as-is — it reads your project's `CLAUDE.md` automatically
 5. If your project has `node_modules` worth caching, consider mounting a host npm/pnpm store into the sandbox
