@@ -1,10 +1,11 @@
-import { basename, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { basename, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { BackgroundRunner, InMemorySteerSink } from '@ethosagent/agent-bridge';
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
-import { FsStorage } from '@ethosagent/storage-fs';
+import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
 import type { SplashInventory } from '@ethosagent/tui';
-import type { SteerSink, Storage } from '@ethosagent/types';
+import type { Attachment, SteerSink, Storage } from '@ethosagent/types';
 import type { EthosConfig, QuickCommandConfig } from '../config';
 import { ethosDir } from '../config';
 import { makeCompleter } from '../lib/autocomplete';
@@ -127,6 +128,8 @@ interface ChatState {
   awaitingConsent: boolean;
   /** True while a `clarify` tool prompt owns the readline loop. */
   awaitingClarify: boolean;
+  /** Attachments queued via /attach, drained on the next turn. */
+  pendingAttachments: Attachment[];
 }
 
 interface RunChatOptions {
@@ -173,6 +176,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
 
   // FW-15 — scan global and per-personality skill directories into the registry.
   const storage: Storage = new FsStorage();
+  const attachmentCache = new FsAttachmentCache(storage, join(ethosDir(), 'cache', 'attachments'));
   const skillCache = new Map<string, SkillMeta>();
   const globalSkillsDir = join(ethosDir(), 'skills');
   const personalitySkillsDir = join(ethosDir(), 'personalities', personalityId, 'skills');
@@ -250,6 +254,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     bgRunner,
     awaitingConsent: false,
     awaitingClarify: false,
+    pendingAttachments: [],
   };
 
   // Clarify surface — when the agent calls the `clarify` tool, pause the
@@ -376,6 +381,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       quickConsentGiven = true;
       await grantQuickCommandConsent(ethosDir());
     },
+    attachmentCache,
   };
 
   // Switch from blocking rl.question to event-driven rl.on('line') so mid-turn
@@ -587,12 +593,17 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
   const toolNames = new Map<string, string>();
   let hasText = false;
 
+  // Drain pending attachments — pass to loop.run() and clear the list.
+  const turnAttachments =
+    state.pendingAttachments.length > 0 ? state.pendingAttachments.splice(0) : undefined;
+
   try {
     for await (const event of loop.run(input, {
       sessionKey: state.sessionKey,
       personalityId: state.personalityId,
       abortSignal: state.abort.signal,
       ...(state.busyMode === 'steer' ? { steerSink: state.steerSink } : {}),
+      ...(turnAttachments ? { attachments: turnAttachments } : {}),
     })) {
       // Track iteration count — proxy by counting `run_start`+tool_start sequences.
       // Per AgentLoop, an iteration starts on before_llm_call hook. We don't get
@@ -815,6 +826,7 @@ interface SlashHandlerContext {
   quickCommands: Record<string, QuickCommandConfig>;
   isQuickConsentGiven: () => boolean;
   grantConsent: () => Promise<void>;
+  attachmentCache: import('@ethosagent/types').AttachmentCache;
 }
 
 async function handleSlashCommand(
@@ -852,6 +864,7 @@ async function handleSlashCommand(
           `  /background cancel <id>  abort a running background task\n` +
           `  /verbose status       show current level\n` +
           `  /busy <mode|status>   busy-input mode (interrupt/queue/steer)\n` +
+          `  /attach <path>        attach a file to the next message\n` +
           `  /steer <text>         inject [USER STEER] mid-turn\n` +
           `  /allow <code>         approve a pending channel sender by pairing code\n` +
           `  /deny <platform> <id> revoke an approved channel sender\n` +
@@ -1039,6 +1052,43 @@ async function handleSlashCommand(
       break;
     }
 
+    case 'attach': {
+      if (!arg) {
+        out(`${c.dim}Usage: /attach <path>${c.reset}\n`);
+        break;
+      }
+      try {
+        const absPath = resolve(arg);
+        const bytes = await readFile(absPath);
+        const filename = basename(absPath);
+        const mime = mimeFromExtension(filename);
+        const url = await ctx.attachmentCache.write(new Uint8Array(bytes), {
+          sessionKey: state.sessionKey,
+          messageId: Date.now().toString(),
+          filename,
+          mime,
+        });
+        const isImage = mime.startsWith('image/');
+        const attachment: Attachment = {
+          type: isImage ? 'image' : 'file',
+          ref: `cli-${Date.now()}`,
+          url,
+          mimeType: mime,
+          filename,
+          sizeBytes: bytes.byteLength,
+        };
+        state.pendingAttachments.push(attachment);
+        out(
+          `${c.dim}[attached ${filename} (${(bytes.byteLength / 1024).toFixed(1)} KB) — send a message to include it]${c.reset}\n`,
+        );
+      } catch (err) {
+        out(
+          `${c.red}Failed to attach: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`,
+        );
+      }
+      break;
+    }
+
     case 'exit':
     case 'quit':
       rl.close();
@@ -1129,4 +1179,31 @@ function handleBackgroundCommand(arg: string, state: ChatState, loop: AgentLoop)
     const msg = err instanceof Error ? err.message : String(err);
     out(`${c.dim}[background: ${msg}]${c.reset}\n`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// /attach — MIME type helper
+// ---------------------------------------------------------------------------
+
+const MIME_MAP: Record<string, string> = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.csv': 'text/csv',
+  '.json': 'application/json',
+  '.xml': 'application/xml',
+  '.html': 'text/html',
+  '.md': 'text/markdown',
+};
+
+function mimeFromExtension(filename: string): string {
+  const dot = filename.lastIndexOf('.');
+  if (dot === -1) return 'application/octet-stream';
+  const ext = filename.slice(dot).toLowerCase();
+  return MIME_MAP[ext] ?? 'application/octet-stream';
 }
