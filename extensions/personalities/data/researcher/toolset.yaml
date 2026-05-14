@@ -5,6 +5,9 @@
 - search_files
 - memory_read
 - memory_write
+- team_memory_read
+- team_memory_write
+- team_memory_search
 - session_search
 # Plan B — kanban participation tools (see engineer/toolset.yaml for rationale).
 - kanban_show

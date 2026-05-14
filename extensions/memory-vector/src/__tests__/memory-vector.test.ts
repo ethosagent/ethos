@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { MemoryContext } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { VectorMemoryProvider } from '../index';
 
@@ -28,13 +29,22 @@ function fakeEmbed(text: string): Promise<Float32Array> {
   return Promise.resolve(emb);
 }
 
-const ctx = { sessionId: 'test', sessionKey: 'cli:test', platform: 'cli' };
+const ctx: MemoryContext = {
+  scopeId: 'global',
+  sessionId: 'test',
+  sessionKey: 'cli:test',
+  platform: 'cli',
+  workingDir: '/tmp',
+};
 
 let testDir: string;
 let provider: VectorMemoryProvider;
 
 beforeEach(async () => {
-  testDir = join(tmpdir(), `ethos-vector-test-${Date.now()}`);
+  testDir = join(
+    tmpdir(),
+    `ethos-vector-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   await mkdir(testDir, { recursive: true });
   provider = new VectorMemoryProvider({ dir: testDir, embedFn: fakeEmbed });
 });
@@ -46,140 +56,164 @@ afterEach(async () => {
 
 describe('VectorMemoryProvider', () => {
   describe('prefetch', () => {
-    it('returns null when store is empty', async () => {
+    it('returns null (vector store is search-driven, not bulk-read)', async () => {
+      await provider.sync([{ action: 'add', key: 'fact', content: 'TypeScript project.' }], ctx);
       expect(await provider.prefetch(ctx)).toBeNull();
     });
+  });
 
-    it('returns chunks after adding content', async () => {
-      await provider.sync(ctx, [
-        { store: 'memory', action: 'add', content: 'TypeScript project.' },
-      ]);
-      const result = await provider.prefetch(ctx);
-      expect(result).not.toBeNull();
-      expect(result?.source).toBe('vector');
-      expect(result?.content).toContain('TypeScript project');
+  describe('read', () => {
+    it('returns null when the key is missing', async () => {
+      expect(await provider.read('missing', ctx)).toBeNull();
     });
 
-    it('returns at most topK chunks', async () => {
-      for (let i = 0; i < 10; i++) {
-        await provider.sync(ctx, [
-          { store: 'memory', action: 'add', content: `Fact number ${i}.` },
-        ]);
+    it('returns the stored entry', async () => {
+      await provider.sync([{ action: 'add', key: 'fact', content: 'TypeScript' }], ctx);
+      const entry = await provider.read('fact', ctx);
+      expect(entry?.key).toBe('fact');
+      expect(entry?.content).toBe('TypeScript');
+    });
+
+    it('does not cross scope boundaries', async () => {
+      await provider.sync([{ action: 'add', key: 'fact', content: 'A' }], {
+        ...ctx,
+        scopeId: 'team:alpha',
+      });
+      expect(await provider.read('fact', ctx)).toBeNull();
+    });
+  });
+
+  describe('search', () => {
+    beforeEach(async () => {
+      await provider.sync(
+        [
+          { action: 'add', key: 'lang', content: 'TypeScript uses static typing.' },
+          { action: 'add', key: 'sky', content: 'The sky is blue today.' },
+        ],
+        ctx,
+      );
+    });
+
+    it('returns at most `limit` semantic results', async () => {
+      const results = await provider.search('programming language', ctx, { limit: 1 });
+      expect(results.length).toBe(1);
+    });
+
+    it('keyword mode does literal substring match', async () => {
+      const results = await provider.search('static', ctx, { mode: 'keyword' });
+      expect(results.length).toBe(1);
+      expect(results[0]?.content).toContain('static');
+    });
+
+    it('hybrid mode unions semantic + keyword and dedupes by key', async () => {
+      const results = await provider.search('static', ctx, { mode: 'hybrid', limit: 5 });
+      const keys = results.map((r) => r.key);
+      expect(new Set(keys).size).toBe(keys.length);
+    });
+
+    it('returns [] for empty query', async () => {
+      expect(await provider.search('   ', ctx)).toEqual([]);
+    });
+  });
+
+  describe('list', () => {
+    it('returns entry refs ordered by insertion', async () => {
+      await provider.sync([{ action: 'add', key: 'one', content: 'first' }], ctx);
+      await provider.sync([{ action: 'add', key: 'two', content: 'second' }], ctx);
+      const refs = await provider.list(ctx);
+      expect(refs.map((r) => r.key)).toEqual(['one', 'two']);
+    });
+
+    it('honors limit', async () => {
+      for (let i = 0; i < 5; i++) {
+        await provider.sync([{ action: 'add', key: `k${i}`, content: `c${i}` }], ctx);
       }
-      const result = await provider.prefetch(ctx);
-      // Default topK is 5
-      const chunks = result?.content.split('\n\n') ?? [];
-      expect(chunks.length).toBeLessThanOrEqual(5);
+      const refs = await provider.list(ctx, { limit: 2 });
+      expect(refs.length).toBe(2);
     });
 
-    it('uses query for semantic ranking', async () => {
-      await provider.sync(ctx, [
-        { store: 'memory', action: 'add', content: 'The sky is blue.' },
-        { store: 'memory', action: 'add', content: 'TypeScript uses static typing.' },
-      ]);
-      const result = await provider.prefetch({ ...ctx, query: 'programming language' });
-      expect(result).not.toBeNull();
-      expect(result?.truncated).toBe(false);
-    });
-
-    it('returns recent chunks when no query provided', async () => {
-      await provider.sync(ctx, [{ store: 'memory', action: 'add', content: 'Older memory.' }]);
-      await provider.sync(ctx, [{ store: 'memory', action: 'add', content: 'Newer memory.' }]);
-      const result = await provider.prefetch(ctx);
-      expect(result?.content).toContain('Newer memory');
-    });
-
-    it('caches identical queries (LRU hit)', async () => {
-      await provider.sync(ctx, [{ store: 'memory', action: 'add', content: 'Cached fact.' }]);
-      const first = await provider.prefetch({ ...ctx, query: 'test query' });
-      const second = await provider.prefetch({ ...ctx, query: 'test query' });
-      expect(first).toBe(second); // same object reference = cache hit
+    it('attaches summaries when requested', async () => {
+      await provider.sync(
+        [{ action: 'add', key: 'doc', content: 'Heading paragraph.\n\nDetails.' }],
+        ctx,
+      );
+      const refs = await provider.list(ctx, { withSummaries: true });
+      expect(refs[0]?.summary).toBe('Heading paragraph.');
     });
   });
 
-  describe('sync — add', () => {
-    it('appends chunks without destroying existing ones', async () => {
-      await provider.sync(ctx, [{ store: 'memory', action: 'add', content: 'First fact.' }]);
-      await provider.sync(ctx, [{ store: 'memory', action: 'add', content: 'Second fact.' }]);
-      expect(provider.count()).toBeGreaterThanOrEqual(2);
+  describe('sync — add/replace', () => {
+    it('add inserts a row', async () => {
+      await provider.sync([{ action: 'add', key: 'k1', content: 'first' }], ctx);
+      expect(provider.count()).toBe(1);
     });
 
-    it('writes to user store separately', async () => {
-      await provider.sync(ctx, [
-        { store: 'user', action: 'add', content: 'User prefers TypeScript.' },
-        { store: 'memory', action: 'add', content: 'Project uses Node 24.' },
-      ]);
-      expect(provider.count()).toBeGreaterThanOrEqual(2);
-    });
-  });
-
-  describe('sync — replace', () => {
-    it('clears all store chunks and inserts fresh content', async () => {
-      await provider.sync(ctx, [{ store: 'memory', action: 'add', content: 'Old content.' }]);
-      await provider.sync(ctx, [
-        { store: 'memory', action: 'replace', content: 'Replaced content.' },
-      ]);
-      const result = await provider.prefetch(ctx);
-      expect(result?.content).not.toContain('Old content');
-      expect(result?.content).toContain('Replaced content');
-    });
-
-    it('clears store when replace content is empty', async () => {
-      await provider.sync(ctx, [{ store: 'memory', action: 'add', content: 'To be cleared.' }]);
-      await provider.sync(ctx, [{ store: 'memory', action: 'replace', content: '' }]);
-      expect(await provider.prefetch(ctx)).toBeNull();
+    it('replace upserts the existing row', async () => {
+      await provider.sync([{ action: 'add', key: 'k1', content: 'first' }], ctx);
+      await provider.sync([{ action: 'replace', key: 'k1', content: 'replaced' }], ctx);
+      const entry = await provider.read('k1', ctx);
+      expect(entry?.content).toBe('replaced');
+      expect(provider.count()).toBe(1);
     });
   });
 
   describe('sync — remove', () => {
-    it('deletes chunks matching substringMatch', async () => {
-      await provider.sync(ctx, [
-        { store: 'memory', action: 'add', content: 'Keep this chunk.' },
-        { store: 'memory', action: 'add', content: 'Remove this specific chunk.' },
-      ]);
-      await provider.sync(ctx, [
-        { store: 'memory', action: 'remove', content: '', substringMatch: 'specific' },
-      ]);
-      const result = await provider.prefetch(ctx);
-      expect(result?.content).toContain('Keep this chunk');
-      expect(result?.content).not.toContain('specific');
+    it('removes the row when substringMatch hits the content', async () => {
+      await provider.sync(
+        [{ action: 'add', key: 'k1', content: 'remove this specific chunk' }],
+        ctx,
+      );
+      await provider.sync([{ action: 'remove', key: 'k1', substringMatch: 'specific' }], ctx);
+      expect(await provider.read('k1', ctx)).toBeNull();
+    });
+
+    it('leaves the row alone when substringMatch misses', async () => {
+      await provider.sync([{ action: 'add', key: 'k1', content: 'keep this' }], ctx);
+      await provider.sync([{ action: 'remove', key: 'k1', substringMatch: 'missing' }], ctx);
+      expect(await provider.read('k1', ctx)).not.toBeNull();
+    });
+  });
+
+  describe('sync — delete', () => {
+    it('removes the row with the exact key', async () => {
+      await provider.sync([{ action: 'add', key: 'k1', content: 'bye' }], ctx);
+      await provider.sync([{ action: 'delete', key: 'k1' }], ctx);
+      expect(await provider.read('k1', ctx)).toBeNull();
     });
   });
 
   describe('add()', () => {
-    it('inserts chunks and returns count', async () => {
+    it('inserts an entry under an auto-generated key', async () => {
       const n = await provider.add('Quick add to memory.', 'memory');
-      expect(n).toBeGreaterThanOrEqual(1);
-      expect(provider.count()).toBe(n);
+      expect(n).toBe(1);
+      expect(provider.count()).toBe(1);
     });
   });
 
   describe('showRecent()', () => {
-    it('returns chunks ordered by recency', async () => {
+    it('returns entries ordered by recency', async () => {
       await provider.add('First.', 'memory');
       await provider.add('Second.', 'memory');
       const records = provider.showRecent(10);
       expect(records.length).toBe(2);
-      // showRecent returns DESC (newest first)
-      expect(records[0].content).toBe('Second.');
+      expect(records[0]?.content).toBe('Second.');
     });
   });
 
   describe('clear()', () => {
-    it('removes all chunks', async () => {
+    it('removes all entries', async () => {
       await provider.add('To be cleared.', 'memory');
       provider.clear();
       expect(provider.count()).toBe(0);
-      expect(await provider.prefetch(ctx)).toBeNull();
     });
   });
 
   describe('exportAll()', () => {
-    it('writes a markdown file with all chunks', async () => {
+    it('writes a markdown file with all entries', async () => {
       await provider.add('Export test fact.', 'memory');
       const outPath = join(testDir, 'export.md');
       const n = await provider.exportAll(outPath);
-      expect(n).toBeGreaterThanOrEqual(1);
+      expect(n).toBe(1);
       const { readFile } = await import('node:fs/promises');
       const content = await readFile(outPath, 'utf-8');
       expect(content).toContain('Memory Export');
@@ -195,25 +229,22 @@ describe('VectorMemoryProvider', () => {
 
   describe('migrateFromMarkdown()', () => {
     it('migrates MEMORY.md and USER.md, renames to .bak', async () => {
-      await writeFile(join(testDir, 'MEMORY.md'), 'Existing memory.\n\nMore memory here.\n');
-      await writeFile(join(testDir, 'USER.md'), 'I am a developer.\n');
+      await writeFile(join(testDir, 'MEMORY.md'), 'Existing memory.');
+      await writeFile(join(testDir, 'USER.md'), 'I am a developer.');
 
       const result = await provider.migrateFromMarkdown();
       expect(result.migrated).toBe(true);
-      expect(result.memoryChunks).toBeGreaterThanOrEqual(1);
-      expect(result.userChunks).toBeGreaterThanOrEqual(1);
+      expect(result.memoryChunks).toBe(1);
+      expect(result.userChunks).toBe(1);
 
-      // Original files should be renamed
       const { stat } = await import('node:fs/promises');
       await expect(stat(join(testDir, 'MEMORY.md.bak'))).resolves.toBeTruthy();
       await expect(stat(join(testDir, 'USER.md.bak'))).resolves.toBeTruthy();
-
-      // Originals gone
       await expect(stat(join(testDir, 'MEMORY.md'))).rejects.toThrow();
     });
 
-    it('does not migrate when chunks already exist', async () => {
-      await writeFile(join(testDir, 'MEMORY.md'), 'Should not migrate.\n');
+    it('does not migrate when entries already exist', async () => {
+      await writeFile(join(testDir, 'MEMORY.md'), 'Should not migrate.');
       await provider.add('Already have data.', 'memory');
 
       const result = await provider.migrateFromMarkdown();
@@ -223,25 +254,76 @@ describe('VectorMemoryProvider', () => {
     it('handles missing files gracefully', async () => {
       const result = await provider.migrateFromMarkdown();
       expect(result.migrated).toBe(false);
-      expect(result.memoryChunks).toBe(0);
-      expect(result.userChunks).toBe(0);
     });
   });
 
-  describe('scale — 100 entries', () => {
-    it('handles 100 memory chunks and returns topK=5', async () => {
+  describe('legacy memory_chunks migration', () => {
+    it('migrates rows from the old schema into memory_entries scope=global', async () => {
+      // Close the auto-opened db so we can seed the legacy table cleanly.
+      provider.close();
+      const dbPath = join(testDir, 'memory.db');
+      const { default: Database } = await import('better-sqlite3');
+      const legacyDb = new Database(dbPath);
+      legacyDb.exec(`
+        CREATE TABLE memory_chunks (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          store       TEXT NOT NULL,
+          content     TEXT NOT NULL,
+          embedding   BLOB NOT NULL,
+          created_at  TEXT NOT NULL
+        ) STRICT;
+      `);
+      // Seed two legacy rows with non-empty embedding buffers.
+      const emb = Buffer.from(new Uint8Array(384 * 4));
+      legacyDb
+        .prepare(
+          'INSERT INTO memory_chunks (store, content, embedding, created_at) VALUES (?, ?, ?, ?)',
+        )
+        .run('memory', 'legacy fact one', emb, '2025-01-01T00:00:00Z');
+      legacyDb
+        .prepare(
+          'INSERT INTO memory_chunks (store, content, embedding, created_at) VALUES (?, ?, ?, ?)',
+        )
+        .run('user', 'legacy user fact', emb, '2025-01-02T00:00:00Z');
+      legacyDb.close();
+
+      // Re-open via VectorMemoryProvider — migration fires in the constructor.
+      provider = new VectorMemoryProvider({ dir: testDir, embedFn: fakeEmbed });
+      expect(provider.count()).toBe(2);
+      const refs = await provider.list({ ...ctx, scopeId: 'global' });
+      expect(refs.map((r) => r.key).sort()).toEqual(['legacy-memory-1', 'legacy-user-2']);
+
+      // Legacy table must be gone after a successful migration.
+      const tableCheck = await import('better-sqlite3').then(({ default: Db }) => {
+        const probe = new Db(dbPath, { readonly: true });
+        const row = probe
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memory_chunks'")
+          .get();
+        probe.close();
+        return row;
+      });
+      expect(tableCheck).toBeUndefined();
+    });
+  });
+
+  describe('scale', () => {
+    it('handles 100 entries and returns top-K results', async () => {
       for (let i = 0; i < 100; i++) {
-        await provider.add(
-          `Memory entry number ${i}: some content about topic ${i % 10}.`,
-          'memory',
+        await provider.sync(
+          [
+            {
+              action: 'add',
+              key: `k${i}`,
+              content: `Memory entry number ${i}: some content about topic ${i % 10}.`,
+            },
+          ],
+          ctx,
         );
       }
       expect(provider.count()).toBe(100);
 
-      const result = await provider.prefetch({ ...ctx, query: 'topic 3' });
-      expect(result).not.toBeNull();
-      const chunks = result?.content.split('\n\n') ?? [];
-      expect(chunks.length).toBeLessThanOrEqual(5);
+      const results = await provider.search('topic 3', ctx, { limit: 5 });
+      expect(results.length).toBeLessThanOrEqual(5);
     });
   });
 });

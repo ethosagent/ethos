@@ -865,12 +865,14 @@ async function handleSlashCommand(
       const { ethosDir } = await import('../config');
       const mem = createMemoryProvider({ dataDir: ethosDir() });
       const result = await mem.prefetch({
+        scopeId: 'global',
         sessionId: '',
         sessionKey: state.sessionKey,
         platform: 'cli',
+        workingDir: process.cwd(),
       });
-      if (result) {
-        out(`\n${result.content}${result.truncated ? `\n${c.dim}[truncated]${c.reset}` : ''}\n\n`);
+      if (result && result.entries.length > 0) {
+        out(`\n${result.entries.map((e) => e.content.trim()).join('\n\n')}\n\n`);
       } else {
         out(`${c.dim}[no memory yet — chat to build it]${c.reset}\n`);
       }

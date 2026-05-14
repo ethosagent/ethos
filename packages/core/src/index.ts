@@ -16,6 +16,12 @@ export { InMemorySessionStore } from './defaults/in-memory-session';
 export { NoopMemoryProvider } from './defaults/noop-memory';
 export { DefaultPersonalityRegistry } from './defaults/noop-personality';
 export { DefaultHookRegistry } from './hook-registry';
+export {
+  EagerPrefetchPolicy,
+  LastWriteWinsPolicy,
+  LazyOnDemandPolicy,
+  MemoryConflictError,
+} from './memory-policies';
 export type { AgentLoopObservability } from './observability/agent-loop-observability';
 export type { PluginFactory } from './plugin-registry';
 export { PluginRegistry } from './plugin-registry';

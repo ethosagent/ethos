@@ -193,16 +193,58 @@ CLI sessions use cli:<cwd-basename> as the session key. Different working direct
 
 SQLite getMessages(sessionId, { limit }) returns the most-recent limit messages in chronological order (using rowid DESC in the inner query, then reversing). This is intentional — the LLM sees the latest context, not the oldest.
 
-Memory files
-~/.ethos/MEMORY.md — rolling project context (updated after each session).
-~/.ethos/USER.md — who you are (persistent across sessions and personalities).
+Memory
+Memory is a scope-bound key/value store. Every read and write carries an opaque `scopeId`; the provider routes storage accordingly. Conventional scope prefixes:
 
-MarkdownFileMemoryProvider.sync() applies MemoryUpdate[]:
+| Prefix | Set by | Storage root |
+|---|---|---|
+| `personality:<id>` | Personality wiring | `~/.ethos/` |
+| `team:<id>` | Team wiring | `~/.ethos/teams/<id>/memory/` |
 
-action: 'add' → appends to the end of the file
-action: 'replace' → overwrites the entire file
-action: 'remove' with substringMatch → removes lines containing the substring
-Prefetch returns null if both files are empty or absent — the system prompt is built without a memory section.
+**Personality scope** ships two default keys:
+- `MEMORY.md` — rolling project context, updated each session.
+- `USER.md` — persistent user profile across sessions and personalities.
+
+**Team scope** ships an arbitrary topic set — one markdown file per topic (e.g. `architecture.md`, `decisions.md`, `onboarding.md`).
+
+The canonical contract is `MemoryProvider` in `@ethosagent/types`. See ARCHITECTURE.md §VII for the frozen-schema roster.
+
+`MemoryProvider.sync()` applies `MemoryUpdate[]`:
+
+- `action: 'add'` → appends to the end of the key's content.
+- `action: 'replace'` → overwrites the entire key.
+- `action: 'remove'` with `substringMatch` → removes lines containing the substring.
+- `action: 'delete'` → removes the key entirely (team scope).
+
+`prefetch()` returns `null` if all keys are empty or absent — the system prompt is built without a memory section.
+
+Memory tool reference
+Six tools ship in `@ethosagent/tools-memory`. They are registered at wiring time and gated by personality toolset.
+
+**Personality memory** (toolset: `memory`)
+
+| Tool | Required params | Optional params | Behaviour |
+|---|---|---|---|
+| `memory_read` | — | `store: 'memory' \| 'user' \| 'both'` (default: `'both'`) | Reads `MEMORY.md`, `USER.md`, or both via `prefetch()`. Returns formatted content or an empty notice. |
+| `memory_write` | `store: 'memory' \| 'user'`, `action: 'add' \| 'replace' \| 'remove'`, `content` | `substring_match` | Writes to `MEMORY.md` (`store='memory'`) or `USER.md` (`store='user'`). For `action='remove'`, uses `substring_match` if supplied, otherwise uses `content` as the match string. |
+| `session_search` | `query` | `limit` (default 10, max 50) | Full-text search over session history. Returns timestamped snippets. |
+
+**Team memory** (toolset: `team_memory`, requires `ctx.teamId`)
+
+| Tool | Required params | Optional params | Behaviour |
+|---|---|---|---|
+| `team_memory_read` | `key` | — | Reads one topic file (`key` + `.md` suffix appended automatically). Keys must be alphanumeric, hyphens, underscores. |
+| `team_memory_write` | `action: 'add' \| 'replace' \| 'remove' \| 'delete'`, `key` | `content`, `substring_match` | Writes to a team topic file. `add`/`replace` require `content`; `remove` requires `substring_match`; `delete` removes the file entirely. |
+| `team_memory_search` | `query` | `limit` (default 5, max 20), `mode: 'keyword' \| 'semantic' \| 'hybrid'` | Keyword search over team memory topics. Returns matching topic files. |
+
+Adding a new memory backend
+Mirrors the "Adding a new LLM provider" pattern.
+
+1. Create `extensions/memory-<name>/src/index.ts` — implement `MemoryProvider` from `@ethosagent/types`. The five methods are `prefetch`, `read`, `search`, `sync`, `list` — no more, no fewer.
+2. Create `extensions/memory-<name>/package.json` — depend on `@ethosagent/types: workspace:*`.
+3. Add path alias to root `tsconfig.json`: `"@ethosagent/memory-<name>": ["./extensions/memory-<name>/src"]`.
+4. Wire it in `packages/wiring/src/index.ts` under a new `config.memory` value (current values: `'markdown'`, `'vector'`).
+5. The drift gate test (`packages/types/src/__tests__/memory-method-count.test.ts`) asserts exactly five methods. It fails if you add a sixth without bumping the manifest in the same commit — that's intentional schema discipline.
 
 Tool result budget
 AgentLoop sets resultBudgetChars: 80_000 by default. ToolRegistry.executeParallel() splits this evenly across concurrent tool calls. Each result is post-trimmed with a [truncated — N chars total] marker if it exceeds the per-call budget.

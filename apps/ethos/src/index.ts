@@ -273,7 +273,7 @@ try {
             console.log('No memory yet.');
           } else {
             for (const r of records) {
-              console.log(`[${r.store}] ${r.createdAt.toISOString().slice(0, 16)}`);
+              console.log(`[${r.scopeId}/${r.key}] ${r.createdAt.toISOString().slice(0, 16)}`);
               console.log(r.content);
               console.log();
             }
@@ -318,11 +318,18 @@ try {
         const { createMemoryProvider } = await import('@ethosagent/wiring');
         const { ethosDir: getDir } = await import('./config');
         const mem = createMemoryProvider({ dataDir: getDir() });
+        const cliCtx = {
+          scopeId: 'global',
+          sessionId: '',
+          sessionKey: 'cli',
+          platform: 'cli',
+          workingDir: process.cwd(),
+        };
 
         if (sub === 'show' || sub === '') {
-          const result = await mem.prefetch({ sessionId: '', sessionKey: 'cli', platform: 'cli' });
-          if (result) {
-            console.log(result.content);
+          const result = await mem.prefetch(cliCtx);
+          if (result && result.entries.length > 0) {
+            console.log(result.entries.map((e) => e.content.trim()).join('\n\n'));
           } else {
             console.log('No memory yet.');
           }
@@ -332,14 +339,10 @@ try {
             console.error('Usage: ethos memory add "<text>"');
             process.exit(1);
           }
-          await mem.sync({ sessionId: '', sessionKey: 'cli', platform: 'cli' }, [
-            { store: 'memory', action: 'add', content: text },
-          ]);
+          await mem.sync([{ action: 'add', key: 'MEMORY.md', content: text }], cliCtx);
           console.log('Added to memory.');
         } else if (sub === 'clear') {
-          await mem.sync({ sessionId: '', sessionKey: 'cli', platform: 'cli' }, [
-            { store: 'memory', action: 'replace', content: '' },
-          ]);
+          await mem.sync([{ action: 'replace', key: 'MEMORY.md', content: '' }], cliCtx);
           console.log('Memory cleared.');
         } else {
           console.log('Usage: ethos memory [show | add "<text>" | clear]');

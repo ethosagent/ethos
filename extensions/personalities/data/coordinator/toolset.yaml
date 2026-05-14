@@ -5,6 +5,9 @@
 - web_search
 - memory_read
 - memory_write
+- team_memory_read
+- team_memory_write
+- team_memory_search
 - session_search
 - kanban_create_goal
 - kanban_create

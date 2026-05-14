@@ -334,6 +334,7 @@ type changes. Every frozen schema has:
 | LLM provider contract | LLM platform maintainers | A change to the streaming chunk union or the provider feature surface | Variant enumeration test |
 | Hook execution model | Repository maintainers (unanimous) | Adding, removing, or renaming an execution model | Method-count test |
 | Storage contract | Any two repository maintainers | A change to the error contract, the atomicity guarantees, or the boundary model | Method-shape test |
+| Memory contract | Any two repository maintainers | Adding, removing, or renaming a method on `MemoryProvider` | Method-count test (`memory-method-count`) |
 | Agent event union | Any two repository maintainers | Adding, removing, or renaming a variant | Variant enumeration test |
 | Tool contract | Any two repository maintainers | A change that affects already-shipped tool packages | Shape test |
 
@@ -585,6 +586,12 @@ frozen_schemas:
   tool_contract:
     owner_class: any_two_maintainers
     drift_gate: shape_test
+
+  memory_contract:
+    owner_class: any_two_maintainers
+    drift_gate: method_count_test
+    frozen_method_count: 5
+    frozen_methods: [prefetch, read, search, sync, list]
 
 # ---- Exception policy (§VIII) ----------------------------------------
 # Active exceptions live in the sidecar, not here. This block defines

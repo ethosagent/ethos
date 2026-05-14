@@ -38,6 +38,18 @@ export interface ToolContext {
   personalityId?: string;
   /** Resolved memory scope for the active personality (filled by AgentLoop). */
   memoryScope?: 'global' | 'per-personality';
+  /**
+   * Opaque scope id resolved by AgentLoop. When present, memory tools use it directly instead
+   * of deriving `personality:<id>` from personalityId and memoryScope.
+   */
+  memoryScopeId?: string;
+  /**
+   * Active team id for this turn. Set by AgentLoop when the loop runs inside a team
+   * (WiringConfig.teamName is set). Team memory tools use this to build the
+   * `team:<id>` scope id for the team-scoped MemoryProvider.
+   * Absent when running solo (no team context).
+   */
+  teamId?: string;
   currentTurn: number;
   messageCount: number;
   abortSignal: AbortSignal;
