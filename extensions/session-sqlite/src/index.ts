@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  CompressionEvent,
   SearchResult,
   Session,
   SessionFilter,
@@ -107,6 +108,22 @@ export class SQLiteSessionStore implements SessionStore {
         INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
         INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
       END;
+
+      CREATE TABLE IF NOT EXISTS compressions (
+        id                TEXT PRIMARY KEY,
+        session_id        TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        created_at        TEXT NOT NULL,
+        engine_name       TEXT NOT NULL,
+        original_count    INTEGER NOT NULL,
+        kept_count        INTEGER NOT NULL,
+        summary_text      TEXT,
+        summary_tokens    INTEGER NOT NULL,
+        pre_total_tokens  INTEGER NOT NULL,
+        post_total_tokens INTEGER NOT NULL,
+        duration_ms       INTEGER NOT NULL
+      ) STRICT;
+
+      CREATE INDEX IF NOT EXISTS idx_compressions_session ON compressions(session_id, created_at);
     `);
 
     // Additive migration: soft-reference trace_id column on messages.
@@ -374,6 +391,48 @@ export class SQLiteSessionStore implements SessionStore {
   }
 
   // ---------------------------------------------------------------------------
+  // Compression events (context_compression F3)
+  // ---------------------------------------------------------------------------
+
+  async recordCompression(
+    event: Omit<CompressionEvent, 'id' | 'createdAt'>,
+  ): Promise<CompressionEvent> {
+    const id = randomUUID();
+    const createdAt = new Date();
+    this.db
+      .prepare(
+        `INSERT INTO compressions
+         (id, session_id, created_at, engine_name, original_count, kept_count,
+          summary_text, summary_tokens, pre_total_tokens, post_total_tokens, duration_ms)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        id,
+        event.sessionId,
+        createdAt.toISOString(),
+        event.engineName,
+        event.originalCount,
+        event.keptCount,
+        event.summaryText ?? null,
+        event.summaryTokens,
+        event.preTotalTokens,
+        event.postTotalTokens,
+        event.durationMs,
+      );
+    return { ...event, id, createdAt };
+  }
+
+  async listCompressions(sessionId: string): Promise<CompressionEvent[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM compressions WHERE session_id = ?
+         ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all(sessionId) as CompressionRow[];
+    return rows.map(rowToCompression);
+  }
+
+  // ---------------------------------------------------------------------------
   // Maintenance
   // ---------------------------------------------------------------------------
 
@@ -489,6 +548,20 @@ interface FtsRow {
   score: number;
 }
 
+interface CompressionRow {
+  id: string;
+  session_id: string;
+  created_at: string;
+  engine_name: string;
+  original_count: number;
+  kept_count: number;
+  summary_text: string | null;
+  summary_tokens: number;
+  pre_total_tokens: number;
+  post_total_tokens: number;
+  duration_ms: number;
+}
+
 function rowToSession(r: SessionRow): Session {
   return {
     id: r.id,
@@ -535,6 +608,22 @@ function rowToMessage(r: MessageRow): StoredMessage {
           }
         : undefined,
     timestamp: new Date(r.timestamp),
+  };
+}
+
+function rowToCompression(r: CompressionRow): CompressionEvent {
+  return {
+    id: r.id,
+    sessionId: r.session_id,
+    createdAt: new Date(r.created_at),
+    engineName: r.engine_name,
+    originalCount: r.original_count,
+    keptCount: r.kept_count,
+    summaryText: r.summary_text ?? undefined,
+    summaryTokens: r.summary_tokens,
+    preTotalTokens: r.pre_total_tokens,
+    postTotalTokens: r.post_total_tokens,
+    durationMs: r.duration_ms,
   };
 }
 

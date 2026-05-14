@@ -87,6 +87,20 @@ export interface QuickCommandConfig {
   command: string;
 }
 
+/**
+ * Auxiliary model wiring for non-primary work. Today the only consumer is
+ * context compression: `semantic_summary` runs its summarizer on this
+ * (typically cheap) model so a compacting turn costs ~one Haiku-tier call
+ * instead of a full main-model re-prompt. `provider` / `apiKey` / `baseUrl`
+ * default to the primary provider's values when unset.
+ */
+export interface AuxiliaryCompressionConfig {
+  model: string;
+  provider?: string;
+  apiKey?: string;
+  baseUrl?: string;
+}
+
 export interface EthosConfig {
   provider: string;
   model: string;
@@ -240,6 +254,16 @@ export interface EthosConfig {
    */
   backgroundMaxConcurrent?: number;
   displayBellOnComplete?: boolean;
+  /**
+   * context_compression F1 — auxiliary model wiring. `auxiliary.compression`
+   * configures the cheap summarizer that `semantic_summary` uses to condense
+   * long histories. Config keys:
+   *   auxiliary.compression.model: claude-haiku-4-5-20251001
+   *   auxiliary.compression.provider: anthropic   (optional — defaults to `provider`)
+   *   auxiliary.compression.apiKey: sk-ant-...     (optional — defaults to `apiKey`)
+   *   auxiliary.compression.baseUrl: https://...   (optional — defaults to `baseUrl`)
+   */
+  auxiliary?: { compression?: AuxiliaryCompressionConfig };
 }
 
 export function ethosDir(): string {
@@ -332,6 +356,13 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       lines.push(`quick_commands.${name}.command: ${qc.command}`);
     }
   }
+  if (config.auxiliary?.compression) {
+    const c = config.auxiliary.compression;
+    lines.push(`auxiliary.compression.model: ${c.model}`);
+    if (c.provider) lines.push(`auxiliary.compression.provider: ${c.provider}`);
+    if (c.apiKey) lines.push(`auxiliary.compression.apiKey: ${c.apiKey}`);
+    if (c.baseUrl) lines.push(`auxiliary.compression.baseUrl: ${c.baseUrl}`);
+  }
   await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`);
 }
 
@@ -345,6 +376,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const displayKv: Record<string, string> = {};
   const evolverKv: Record<string, string> = {};
   const backgroundKv: Record<string, string> = {};
+  const auxiliaryCompressionKv: Record<string, string> = {};
   // Indexed list shapes: telegram.bots.<n>.<field> and slack.apps.<n>.<field>,
   // plus their nested `.bind.<field>` sub-keys. Per-team config keyed by name.
   const telegramBotsKv: Record<number, Record<string, string>> = {};
@@ -435,6 +467,12 @@ function parseConfigYaml(src: string): EthosConfig {
       backgroundKv[bg[1]] = bg[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // auxiliary.compression.<field>: <value>
+    const auxc = line.match(/^auxiliary\.compression\.(\w+):\s*(.+)$/);
+    if (auxc) {
+      auxiliaryCompressionKv[auxc[1]] = auxc[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     // modelRouting.<personality>: <model>
     const mr = line.match(/^modelRouting\.(\S+):\s*(.+)$/);
     if (mr) {
@@ -484,6 +522,14 @@ function parseConfigYaml(src: string): EthosConfig {
 
   const retention = buildRetentionConfig(retentionKv);
   const personalitiesConfig = buildPersonalitiesConfig(personalitiesRetKv);
+  const auxiliaryCompression: AuxiliaryCompressionConfig | undefined = auxiliaryCompressionKv.model
+    ? {
+        model: auxiliaryCompressionKv.model,
+        ...(auxiliaryCompressionKv.provider ? { provider: auxiliaryCompressionKv.provider } : {}),
+        ...(auxiliaryCompressionKv.apiKey ? { apiKey: auxiliaryCompressionKv.apiKey } : {}),
+        ...(auxiliaryCompressionKv.baseUrl ? { baseUrl: auxiliaryCompressionKv.baseUrl } : {}),
+      }
+    : undefined;
   const telegramResult = buildTelegramBots(telegramBotsKv);
   const slackResult = buildSlackApps(slackAppsKv);
   const teams = buildTeamsConfig(teamsKv);
@@ -534,6 +580,7 @@ function parseConfigYaml(src: string): EthosConfig {
       : undefined,
     displayBellOnComplete: displayKv.bell_on_complete === 'true' ? true : undefined,
     quick_commands,
+    auxiliary: auxiliaryCompression ? { compression: auxiliaryCompression } : undefined,
   };
   // Stash parse errors so the strict loader can surface them at boot.
   // readConfig (used by CLI commands that don't gateway-boot) ignores them

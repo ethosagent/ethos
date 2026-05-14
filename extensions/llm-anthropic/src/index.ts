@@ -130,6 +130,44 @@ function toAnthropicBlock(block: MessageContent): Anthropic.ContentBlockParam {
   };
 }
 
+// context_compression F2 — place `cache_control` markers on message-history
+// breakpoints. Anthropic allows at most 4 markers total (system + messages);
+// `maxAllowed` is what remains after the system prompt. Indices are clamped to
+// the message list and de-duplicated. When there are more breakpoints than
+// slots, the *shallowest* ones are dropped: caching pays off on the largest
+// stable prefix, so the deepest boundaries are the ones worth keeping. The
+// marker lands on the last content block of the message so the cached prefix
+// ends exactly at that message boundary.
+export function applyMessageCacheBreakpoints(
+  messages: Anthropic.MessageParam[],
+  breakpoints: number[],
+  maxAllowed: number,
+): void {
+  if (maxAllowed <= 0) return;
+  const sorted = [...new Set(breakpoints)]
+    .filter((i) => Number.isInteger(i) && i >= 0 && i < messages.length)
+    .sort((a, b) => a - b);
+  // Keep the deepest `maxAllowed` boundaries, still applied in ascending order.
+  const valid = sorted.slice(Math.max(0, sorted.length - maxAllowed));
+  for (const idx of valid) {
+    const msg = messages[idx];
+    if (!msg) continue;
+    if (typeof msg.content === 'string') {
+      msg.content = [{ type: 'text', text: msg.content, cache_control: { type: 'ephemeral' } }];
+      continue;
+    }
+    const last = msg.content[msg.content.length - 1];
+    // Every block our `toAnthropicBlock` emits (text / tool_use / tool_result)
+    // carries `cache_control`, but the SDK's `ContentBlockParam` union also
+    // includes thinking blocks that do not — narrow via a structural cast.
+    if (last) {
+      (last as { cache_control?: Anthropic.CacheControlEphemeral }).cache_control = {
+        type: 'ephemeral',
+      };
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // AnthropicProvider
 // ---------------------------------------------------------------------------
@@ -169,6 +207,18 @@ export class AnthropicProvider implements LLMProvider {
           },
         ]
       : undefined;
+
+    // F2 — message-history cache breakpoints. The system prompt, when cached,
+    // consumes one of Anthropic's 4 `cache_control` slots; the rest are
+    // available for message-level breakpoints.
+    if (options.cacheBreakpoints && options.cacheBreakpoints.length > 0) {
+      const systemCached = systemBlocks !== undefined && options.cacheSystemPrompt === true;
+      applyMessageCacheBreakpoints(
+        anthropicMessages,
+        options.cacheBreakpoints,
+        4 - (systemCached ? 1 : 0),
+      );
+    }
 
     const anthropicTools: Anthropic.Tool[] = tools.map((t) => ({
       name: t.name,

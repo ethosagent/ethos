@@ -108,6 +108,11 @@ describe('SemanticSummaryEngine', () => {
       const block = second.content[0];
       expect(block).toMatchObject({ type: 'text' });
     }
+    // F3 — the summary text is surfaced for persistence.
+    expect(result.summaryText).toBe('summary of 13 messages');
+    // F2 — cache breakpoints at the end of the preserved front and the
+    // summary message (preserve_first_n_turns: 1 → indices 0 and 1).
+    expect(result.cacheBreakpoints).toEqual([0, 1]);
   });
 
   it('falls back to placeholder summary when no summarizer is wired', async () => {

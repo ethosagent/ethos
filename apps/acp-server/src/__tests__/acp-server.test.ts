@@ -65,6 +65,12 @@ function makeStore(): SessionStore {
     async search(_query, _opts): Promise<SearchResult[]> {
       return [];
     },
+    async recordCompression(event) {
+      return { ...event, id: randomUUID(), createdAt: new Date() };
+    },
+    async listCompressions(_sessionId) {
+      return [];
+    },
     async pruneOldSessions(_olderThan) {
       return 0;
     },

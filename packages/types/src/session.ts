@@ -58,6 +58,35 @@ export interface SearchResult {
   timestamp: Date;
 }
 
+/**
+ * A persisted context-compaction event. Recorded every time a context engine
+ * successfully compacts a session's LLM-facing history. The original messages
+ * are never deleted from `messages` — this row only records what the agent
+ * "remembered" at the moment of compaction, so a session stays auditable and
+ * the LLM's view at turn N is reproducible.
+ */
+export interface CompressionEvent {
+  id: string;
+  sessionId: string;
+  createdAt: Date;
+  /** Context engine that produced the compaction (e.g. `semantic_summary`). */
+  engineName: string;
+  /** Message count before compaction. */
+  originalCount: number;
+  /** Message count after compaction. */
+  keptCount: number;
+  /** The synthetic summary text, when the engine produced one. */
+  summaryText?: string;
+  /** Estimated token count of the summary message (0 when there is no summary). */
+  summaryTokens: number;
+  /** Estimated total context tokens (system + messages) before compaction. */
+  preTotalTokens: number;
+  /** Estimated total context tokens (system + messages) after compaction. */
+  postTotalTokens: number;
+  /** Wall-clock duration of the engine's `compact()` call. */
+  durationMs: number;
+}
+
 export interface SessionStore {
   createSession(session: Omit<Session, 'id' | 'createdAt' | 'updatedAt'>): Promise<Session>;
   getSession(id: string): Promise<Session | null>;
@@ -72,6 +101,10 @@ export interface SessionStore {
   ): Promise<StoredMessage[]>;
   updateUsage(sessionId: string, delta: Partial<SessionUsage>): Promise<void>;
   search(query: string, options?: { limit?: number; sessionId?: string }): Promise<SearchResult[]>;
+  /** Persist a context-compaction event. The original messages are untouched. */
+  recordCompression(event: Omit<CompressionEvent, 'id' | 'createdAt'>): Promise<CompressionEvent>;
+  /** List a session's compaction events, oldest first. */
+  listCompressions(sessionId: string): Promise<CompressionEvent[]>;
   pruneOldSessions(olderThan: Date): Promise<number>;
   vacuum(): Promise<void>;
 }

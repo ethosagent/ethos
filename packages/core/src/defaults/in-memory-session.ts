@@ -1,4 +1,5 @@
 import type {
+  CompressionEvent,
   SearchResult,
   Session,
   SessionFilter,
@@ -10,6 +11,7 @@ import type {
 export class InMemorySessionStore implements SessionStore {
   private sessions = new Map<string, Session>();
   private messages = new Map<string, StoredMessage[]>();
+  private compressions = new Map<string, CompressionEvent[]>();
   private idCounter = 0;
 
   async createSession(data: Omit<Session, 'id' | 'createdAt' | 'updatedAt'>): Promise<Session> {
@@ -44,6 +46,7 @@ export class InMemorySessionStore implements SessionStore {
   async deleteSession(id: string): Promise<void> {
     this.sessions.delete(id);
     this.messages.delete(id);
+    this.compressions.delete(id);
   }
 
   async listSessions(filter?: SessionFilter): Promise<Session[]> {
@@ -119,6 +122,24 @@ export class InMemorySessionStore implements SessionStore {
     }
     results.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
     return results.slice(0, options?.limit ?? 20);
+  }
+
+  async recordCompression(
+    event: Omit<CompressionEvent, 'id' | 'createdAt'>,
+  ): Promise<CompressionEvent> {
+    const full: CompressionEvent = {
+      ...event,
+      id: `compression_${++this.idCounter}`,
+      createdAt: new Date(),
+    };
+    const list = this.compressions.get(event.sessionId) ?? [];
+    list.push(full);
+    this.compressions.set(event.sessionId, list);
+    return full;
+  }
+
+  async listCompressions(sessionId: string): Promise<CompressionEvent[]> {
+    return [...(this.compressions.get(sessionId) ?? [])];
   }
 
   async pruneOldSessions(olderThan: Date): Promise<number> {

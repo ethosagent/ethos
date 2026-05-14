@@ -158,6 +158,9 @@ export async function createAgentLoop(
     ...rotated,
     ...(config.teamName !== undefined ? { teamName: config.teamName } : {}),
     ...(config.role !== undefined ? { role: config.role } : {}),
+    ...(config.auxiliary?.compression
+      ? { auxiliaryCompression: config.auxiliary.compression }
+      : {}),
   };
   return packageCreateAgentLoop(wiringConfig, {
     dataDir: ethosDir(),

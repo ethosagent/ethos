@@ -250,9 +250,49 @@ export async function runSessionsCommand(sub: string, argv: string[]): Promise<v
         break;
       }
 
+      case 'show': {
+        const sessionId = argv[0];
+        if (!sessionId) {
+          console.error('Usage: ethos sessions show <session_id> [--compressions]');
+          process.exit(1);
+        }
+        const session = await store.getSession(sessionId);
+        if (!session) {
+          throw new EthosError({
+            code: 'SESSION_NOT_FOUND',
+            cause: `Session not found: ${sessionId}`,
+            action: 'Check the session ID with `ethos sessions list`.',
+          });
+        }
+        console.log(`\n${session.id}`);
+        if (session.title) console.log(`  title:        ${session.title}`);
+        console.log(`  key:          ${session.key}`);
+        console.log(`  personality:  ${session.personalityId ?? '(none)'}`);
+        console.log(`  last active:  ${timeAgo(session.updatedAt)}`);
+        console.log(`  compactions:  ${session.usage.compactionCount}`);
+
+        if (argv.includes('--compressions')) {
+          const events = await store.listCompressions(sessionId);
+          if (events.length === 0) {
+            console.log('\n  No compaction events recorded for this session.');
+          } else {
+            console.log(`\n  Compaction events (${events.length}):`);
+            for (const ev of events) {
+              console.log(
+                `  - ${ev.createdAt.toISOString()}  ${ev.engineName}  ` +
+                  `${ev.originalCount}→${ev.keptCount} msgs  ` +
+                  `${ev.preTotalTokens}→${ev.postTotalTokens} tok  (${ev.durationMs}ms)`,
+              );
+            }
+          }
+        }
+        console.log();
+        break;
+      }
+
       default:
         console.error(`Unknown sessions subcommand: ${sub}`);
-        console.log('Usage: ethos sessions [list | rename | delete | search]');
+        console.log('Usage: ethos sessions [list | show | rename | delete | search]');
         process.exit(1);
     }
   } finally {
