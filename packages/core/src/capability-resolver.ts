@@ -6,6 +6,7 @@ import type {
   ToolCapabilities,
   ToolContext,
 } from '@ethosagent/types';
+import { ScopedAttachmentsImpl } from './scoped/scoped-attachments';
 import { ScopedFetchImpl } from './scoped/scoped-fetch';
 import { ScopedFsImpl } from './scoped/scoped-fs';
 import { ScopedProcessImpl } from './scoped/scoped-process';
@@ -23,10 +24,15 @@ export interface CapabilityBackends {
    * private-network, scheme, DNS-rebinding) flow through `safeFetch`.
    */
   personalityNetworkPolicy?: NetworkPolicy;
+  attachmentCache?: import('@ethosagent/types').AttachmentCache;
+  inboundAttachments?: import('@ethosagent/types').Attachment[];
 }
 
 type ResolvedFields = Partial<
-  Pick<ToolContext, 'kvStore' | 'secretsResolver' | 'scopedFetch' | 'scopedFs' | 'scopedProcess'>
+  Pick<
+    ToolContext,
+    'kvStore' | 'secretsResolver' | 'scopedFetch' | 'scopedFs' | 'scopedProcess' | 'attachments'
+  >
 >;
 
 export interface CapabilityScopeIds {
@@ -107,6 +113,14 @@ export function resolveCapabilities(
 
   if (capabilities.process) {
     result.scopedProcess = new ScopedProcessImpl(new Set(capabilities.process.allowedBinaries));
+  }
+
+  if (capabilities.attachments && backends.attachmentCache && backends.inboundAttachments) {
+    result.attachments = new ScopedAttachmentsImpl(
+      backends.inboundAttachments,
+      capabilities.attachments.kinds,
+      backends.attachmentCache,
+    );
   }
 
   return result;

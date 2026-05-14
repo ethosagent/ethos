@@ -1,3 +1,5 @@
+import type { Attachment } from './platform';
+
 export type SecretRef = string;
 
 export type StorageScope = 'tool-private' | 'session' | 'personality';
@@ -18,6 +20,9 @@ export interface ToolCapabilities {
   };
   process?: {
     allowedBinaries: string[];
+  };
+  attachments?: {
+    kinds: ('image' | 'file')[] | '*';
   };
 }
 
@@ -78,4 +83,10 @@ export interface ProcessResult {
 
 export interface ScopedProcess {
   spawn(binary: string, args: string[], opts?: SpawnOpts): Promise<ProcessResult>;
+}
+
+export interface ScopedAttachments {
+  list(): Attachment[];
+  open(att: Attachment): Promise<{ path: string }>;
+  openByRef(ref: string): Promise<{ path: string }>;
 }

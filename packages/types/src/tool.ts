@@ -98,6 +98,7 @@ export interface ToolContext {
   scopedFetch?: import('./tool-capabilities').ScopedFetch;
   scopedFs?: import('./tool-capabilities').ScopedFs;
   scopedProcess?: import('./tool-capabilities').ScopedProcess;
+  attachments?: import('./tool-capabilities').ScopedAttachments;
 }
 
 export interface Tool<TArgs = unknown> {
