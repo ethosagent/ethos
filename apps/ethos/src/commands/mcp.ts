@@ -23,8 +23,8 @@ import {
   zed,
 } from '@ethosagent/mcp-server';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import { getPreset, MCP_PRESETS } from '@ethosagent/tools-mcp';
-import type { McpServerConfig } from '@ethosagent/tools-mcp';
+import { getPreset, MCP_PRESETS, revokeToken, runPkceLogin } from '@ethosagent/tools-mcp';
+import type { McpServerConfig, OAuthConfig } from '@ethosagent/tools-mcp';
 import { ethosDir, readConfig } from '../config';
 import { createAgentLoop, getSecretsResolver, getStorage } from '../wiring';
 
@@ -44,6 +44,11 @@ Subcommands:
     --preset <name>  Use a built-in preset (see 'ethos mcp presets')
     --env KEY=val    Set environment variable (repeatable)
   presets          List available MCP server presets
+  login <name>     Authenticate with an OAuth-configured MCP server
+  logout <name>    Revoke and delete tokens for an MCP server
+  registry list    Browse MCP server packages from npm
+    --search <q>     Filter by keyword
+  registry install <package>  Install a package as an MCP server
 
 Supported clients: ${CLIENTS.map((c) => c.name).join(', ')}`;
 
@@ -65,6 +70,12 @@ export async function runMcp(argv: string[]): Promise<void> {
       return runAdd(argv.slice(1));
     case 'presets':
       return runPresets();
+    case 'login':
+      return runLogin(argv.slice(1));
+    case 'logout':
+      return runLogout(argv.slice(1));
+    case 'registry':
+      return runRegistry(argv.slice(1));
     default: {
       if (sub && sub !== '--help' && sub !== '-h') {
         console.error(`Unknown subcommand: ${sub}\n`);
@@ -453,3 +464,172 @@ function runInspect(): void {
   console.log('  reflect_on_decision  Coaching reflection');
   console.log('  debug_failure        Evidence-first failure investigation');
 }
+
+// ---------------------------------------------------------------------------
+// mcp registry — browse and install MCP servers from npm
+// ---------------------------------------------------------------------------
+
+async function runRegistry(argv: string[]): Promise<void> {
+  const sub = argv[0] ?? '';
+  switch (sub) {
+    case 'list':
+      return runRegistryList(argv.slice(1));
+    case 'install':
+      return runRegistryInstall(argv.slice(1));
+    default:
+      console.log(`Usage: ethos mcp registry <list|install> [options]
+
+  list [--search <q>]     Browse MCP server packages from npm
+  install <package>       Install a package as an MCP server`);
+  }
+}
+
+async function runRegistryList(argv: string[]): Promise<void> {
+  let search = '';
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--search' && argv[i + 1]) {
+      search = argv[i + 1] ?? '';
+      i++;
+    }
+  }
+
+  const url = `https://registry.npmjs.org/-/v1/search?text=keywords:mcp-server${search ? `+${search}` : ''}&size=20`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    console.error(`Registry query failed: ${res.status}`);
+    process.exitCode = 1;
+    return;
+  }
+  const data = (await res.json()) as {
+    objects: Array<{ package: { name: string; description?: string; version: string } }>;
+  };
+
+  if (data.objects.length === 0) {
+    console.log('No packages found.');
+    return;
+  }
+
+  console.log('MCP server packages:\n');
+  for (const obj of data.objects) {
+    const pkg = obj.package;
+    console.log(`  ${pkg.name}@${pkg.version}`);
+    if (pkg.description) console.log(`    ${pkg.description}`);
+  }
+  console.log(`\nInstall: ethos mcp registry install <package>`);
+}
+
+async function runRegistryInstall(argv: string[]): Promise<void> {
+  const packageName = argv[0];
+  if (!packageName) {
+    console.error('Usage: ethos mcp registry install <package>');
+    process.exitCode = 1;
+    return;
+  }
+
+  const name = packageName.replace(/^@[^/]+\//, '').replace(/^server-/, '');
+
+  const existing = readMcpJson();
+  if (!existing) {
+    process.exitCode = 1;
+    return;
+  }
+  if (existing.some((s) => s.name === name)) {
+    console.error(`Server '${name}' already exists.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const entry: McpServerConfig = {
+    name,
+    transport: 'stdio',
+    command: 'npx',
+    args: ['-y', packageName],
+  };
+
+  existing.push(entry);
+  writeMcpJson(existing);
+  console.log(`Installed '${name}' (${packageName}) to ~/.ethos/mcp.json`);
+}
+
+// ---------------------------------------------------------------------------
+// mcp login / logout — OAuth 2.1 PKCE flows
+// ---------------------------------------------------------------------------
+
+async function runLogin(argv: string[]): Promise<void> {
+  const serverName = argv[0];
+  if (!serverName) {
+    console.error('Usage: ethos mcp login <serverName>');
+    process.exitCode = 1;
+    return;
+  }
+
+  const configs = readMcpJson();
+  if (!configs) {
+    process.exitCode = 1;
+    return;
+  }
+
+  const config = configs.find((c) => c.name === serverName);
+  if (!config) {
+    console.error(`MCP server '${serverName}' not found in ~/.ethos/mcp.json`);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!config.auth || config.auth.type !== 'oauth2') {
+    console.error(`MCP server '${serverName}' does not have OAuth 2.1 auth configured`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const secrets = getSecretsResolver();
+  const oauthConfig: OAuthConfig = config.auth;
+
+  try {
+    await runPkceLogin(serverName, oauthConfig, secrets);
+    console.log(`Successfully authenticated with '${serverName}'`);
+  } catch (err) {
+    console.error(`Login failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+  }
+}
+
+async function runLogout(argv: string[]): Promise<void> {
+  const serverName = argv[0];
+  if (!serverName) {
+    console.error('Usage: ethos mcp logout <serverName>');
+    process.exitCode = 1;
+    return;
+  }
+
+  const configs = readMcpJson();
+  if (!configs) {
+    process.exitCode = 1;
+    return;
+  }
+
+  const config = configs.find((c) => c.name === serverName);
+  if (!config) {
+    console.error(`MCP server '${serverName}' not found in ~/.ethos/mcp.json`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const secrets = getSecretsResolver();
+  const oauthConfig: OAuthConfig | undefined = config.auth?.type === 'oauth2' ? config.auth : undefined;
+
+  if (!oauthConfig) {
+    console.error(`MCP server '${serverName}' does not have OAuth 2.1 auth configured`);
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    await revokeToken(serverName, oauthConfig, secrets);
+    console.log(`Logged out of '${serverName}' — tokens revoked and deleted`);
+  } catch (err) {
+    console.error(`Logout failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+  }
+}
+

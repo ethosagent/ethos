@@ -3,14 +3,34 @@ import { join } from 'node:path';
 import { noopLogger } from '@ethosagent/logger';
 import { buildMcpEnv } from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
-import type { Logger, Storage, Tool, ToolResult } from '@ethosagent/types';
+import type { Logger, SecretsResolver, Storage, Tool, ToolResult } from '@ethosagent/types';
 import { Client } from '@modelcontextprotocol/sdk/client';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import { ensureValidToken, refreshToken } from './oauth';
+import type { OAuthConfig } from './oauth';
 import { rewriteDefinitionsToRefs } from './schema-rewrite';
 
 export { MCP_PRESETS, getPreset } from './presets';
 export type { McpPreset } from './presets';
+export {
+  buildAuthorizationUrl,
+  deleteTokens,
+  ensureValidToken,
+  exchangeCode,
+  generateCodeChallenge,
+  generateCodeVerifier,
+  isTokenExpired,
+  loadAccessToken,
+  refreshToken,
+  revokeToken,
+  runPkceLogin,
+  startCallbackServer,
+  storeTokens,
+} from './oauth';
+export type { CallbackResult, OAuthConfig, TokenSet } from './oauth';
+export { checkOsvVulnerabilities, clearOsvCache } from './osv-check';
+export type { OsvAdvisory, OsvResult } from './osv-check';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -44,12 +64,23 @@ export interface McpServerConfig {
   keepaliveSeconds?: number;
   /** Timeout in ms for reconnect attempts. Default 10_000. */
   connectTimeoutMs?: number;
+  /** OAuth 2.1 configuration for servers that require authorization. */
+  auth?: {
+    type: 'oauth2';
+    authorization_endpoint: string;
+    token_endpoint: string;
+    client_id: string;
+    scopes?: string[];
+    revocation_endpoint?: string;
+  };
 }
 
 export interface McpManagerConfig {
   logger?: Logger;
   /** How to handle tool-name collisions across servers. Default: 'warn'. */
   collisionPolicy?: 'warn' | 'error';
+  /** Secrets resolver for OAuth token storage. Required for servers with auth config. */
+  secrets?: SecretsResolver;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,14 +106,16 @@ export class McpClient {
   private _reconnectResolve: (() => void) | null = null;
   private _reconnectPromise: Promise<void> | null = null;
   private _logger: Logger;
+  private _secrets?: SecretsResolver;
 
   /** Callback invoked when the server sends `notifications/tools/list_changed`. */
   onToolsChanged?: (tools: McpToolDef[]) => void;
 
-  constructor(config: McpServerConfig, opts?: { logger?: Logger }) {
+  constructor(config: McpServerConfig, opts?: { logger?: Logger; secrets?: SecretsResolver }) {
     this._config = config;
     this._sdk = new Client({ name: 'ethos', version: '1.0.0' }, { capabilities: {} });
     this._logger = opts?.logger ?? noopLogger;
+    this._secrets = opts?.secrets;
   }
 
   get name(): string {
@@ -192,9 +225,14 @@ export class McpClient {
     if (this._config.transport === 'streamable-http') {
       const { url } = this._config;
       if (!url) throw new Error(`MCP server '${this._config.name}': streamable-http transport requires 'url'`);
+      const headers = { ...this._config.headers };
+      if (this._config.auth?.type === 'oauth2' && this._secrets) {
+        const token = await ensureValidToken(this._config.name, this._config.auth, this._secrets);
+        headers['Authorization'] = `Bearer ${token}`;
+      }
       const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
       return new StreamableHTTPClientTransport(new URL(url), {
-        requestInit: this._config.headers ? { headers: this._config.headers } : undefined,
+        requestInit: Object.keys(headers).length > 0 ? { headers } : undefined,
       });
     }
 
@@ -205,10 +243,15 @@ export class McpClient {
         `[ethos] MCP '${this._config.name}': SSE transport is deprecated, use 'streamable-http'`,
         { component: 'tools-mcp', server: this._config.name },
       );
+      const headers = { ...this._config.headers };
+      if (this._config.auth?.type === 'oauth2' && this._secrets) {
+        const token = await ensureValidToken(this._config.name, this._config.auth, this._secrets);
+        headers['Authorization'] = `Bearer ${token}`;
+      }
       // Lazy import to avoid pulling in eventsource when not needed
       const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
       return new SSEClientTransport(new URL(url), {
-        requestInit: this._config.headers ? { headers: this._config.headers } : undefined,
+        requestInit: Object.keys(headers).length > 0 ? { headers } : undefined,
       });
     }
 
@@ -339,6 +382,26 @@ export class McpClient {
       return { ok: true, value: text || '(no output)' };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+
+      // OAuth 401 retry — refresh token and reconnect once
+      if (allowRetry && this._is401Error(msg) && this._config.auth?.type === 'oauth2' && this._secrets) {
+        this._logger.warn(
+          `[ethos] MCP server '${this._config.name}' returned 401, attempting token refresh`,
+          { component: 'tools-mcp', server: this._config.name },
+        );
+        try {
+          await refreshToken(this._config.name, this._config.auth, this._secrets);
+          // Reconnect with fresh token
+          this._connected = false;
+          try { await this._transport?.close?.(); } catch { /* ignore */ }
+          this._sdk = new Client({ name: 'ethos', version: '1.0.0' }, { capabilities: {} });
+          await this.connect();
+          return this._callToolInner(name, args, false);
+        } catch {
+          // Refresh failed — fall through to error
+        }
+      }
+
       if (allowRetry && this._isConnectionError(msg)) {
         this._logger.warn(
           `[ethos] MCP server '${this._config.name}' pipe error, retrying once`,
@@ -363,6 +426,10 @@ export class McpClient {
     } finally {
       this._pending.delete(key);
     }
+  }
+
+  private _is401Error(msg: string): boolean {
+    return msg.includes('401') || msg.toLowerCase().includes('unauthorized');
   }
 
   private _isConnectionError(msg: string): boolean {
@@ -442,7 +509,7 @@ export class McpManager {
     this.logger = opts.logger ?? noopLogger;
     this._collisionPolicy = opts.collisionPolicy ?? 'warn';
     this._clients = configs.map((c) => {
-      const client = new McpClient(c, { logger: this.logger });
+      const client = new McpClient(c, { logger: this.logger, secrets: opts.secrets });
       // Phase 2.3 — wire dynamic tool discovery callback
       client.onToolsChanged = (newTools) => {
         const prefix = `mcp__${client.name}__`;
@@ -540,6 +607,103 @@ export class McpManager {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// Glob matching — simple patterns for personality MCP allowlists
+// ---------------------------------------------------------------------------
+
+export function matchesGlob(name: string, pattern: string): boolean {
+  if (pattern === '*') return true;
+  if (pattern.endsWith('*')) {
+    return name.startsWith(pattern.slice(0, -1));
+  }
+  return name === pattern;
+}
+
+export function isServerAllowed(serverName: string, allowlist: string[] | undefined): boolean {
+  if (!allowlist || allowlist.length === 0) return true; // open mode
+  return allowlist.some((pattern) => matchesGlob(serverName, pattern));
+}
+
+// ---------------------------------------------------------------------------
+// McpSessionView — per-session MCP merging layer (Phase 5)
+// ---------------------------------------------------------------------------
+
+export class McpSessionView {
+  private readonly _global: McpManager;
+  private readonly _sessionClients: McpClient[] = [];
+  private readonly _sessionTools: Tool[] = [];
+
+  constructor(globalManager: McpManager) {
+    this._global = globalManager;
+  }
+
+  /**
+   * Connect session-scoped MCP servers, filtering against the personality allowlist.
+   * Allowed servers are connected and their tools registered; disallowed ones are rejected.
+   */
+  async registerSessionServers(
+    configs: McpServerConfig[],
+    allowlist: string[] | undefined,
+    logger?: Logger,
+  ): Promise<{ registered: string[]; rejected: { name: string; reason: string }[] }> {
+    const registered: string[] = [];
+    const rejected: { name: string; reason: string }[] = [];
+
+    for (const config of configs) {
+      if (!isServerAllowed(config.name, allowlist)) {
+        rejected.push({
+          name: config.name,
+          reason: `Server '${config.name}' not in personality MCP allowlist`,
+        });
+        continue;
+      }
+
+      const client = new McpClient(config, { logger });
+      try {
+        await client.connect();
+        const mcpTools = await client.listTools();
+        for (const t of mcpTools) {
+          const tool = adaptMcpTool(t, config.name, client);
+          this._sessionTools.push({ ...tool, mcpSource: 'client' } as Tool);
+        }
+        this._sessionClients.push(client);
+        registered.push(config.name);
+      } catch (err) {
+        rejected.push({
+          name: config.name,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+        // Ensure cleanup on failed connect
+        try {
+          await client.disconnect();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    return { registered, rejected };
+  }
+
+  getTools(): Tool[] {
+    return [...this._global.getTools(), ...this._sessionTools];
+  }
+
+  getSessionTools(): Tool[] {
+    return this._sessionTools;
+  }
+
+  isSessionTool(toolName: string): boolean {
+    return this._sessionTools.some((t) => t.name === toolName);
+  }
+
+  async teardown(): Promise<void> {
+    await Promise.allSettled(this._sessionClients.map((c) => c.disconnect()));
+    this._sessionClients.length = 0;
+    this._sessionTools.length = 0;
+  }
+}
 // ---------------------------------------------------------------------------
 // Config loader
 // ---------------------------------------------------------------------------
