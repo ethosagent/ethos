@@ -1,10 +1,23 @@
 import type { RequestDumpRecord, RequestDumpStore } from '@ethosagent/types';
 
+/**
+ * Bounded in-memory request dump store for tests. Not suitable for production
+ * — use JsonlRequestDumpStore (or a durable implementation) instead.
+ * Caps at `maxRecords` to prevent unbounded memory growth.
+ */
 export class InMemoryRequestDumpStore implements RequestDumpStore {
   private records: RequestDumpRecord[] = [];
+  private readonly maxRecords: number;
+
+  constructor(opts?: { maxRecords?: number }) {
+    this.maxRecords = opts?.maxRecords ?? 1000;
+  }
 
   async append(record: RequestDumpRecord): Promise<void> {
     this.records.push(record);
+    if (this.records.length > this.maxRecords) {
+      this.records = this.records.slice(-this.maxRecords);
+    }
   }
 
   async recent(opts: {

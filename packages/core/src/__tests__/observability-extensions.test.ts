@@ -87,7 +87,12 @@ describe('Observability Extensions', () => {
       });
 
       const loop = new AgentLoop({ llm: makeMockLLM(['response']), hooks });
-      await collect(loop.run('test prompt'));
+      loop['personalities'].define({
+        id: 'obs-test',
+        name: 'ObsTest',
+        safety: { observability: { storeLlmPayloads: 'full' } },
+      });
+      await collect(loop.run('test prompt', { personalityId: 'obs-test' }));
 
       expect(payloads).toHaveLength(1);
       const p = payloads[0];
@@ -125,7 +130,12 @@ describe('Observability Extensions', () => {
       });
 
       const loop = new AgentLoop({ llm: makeMockLLM(['enriched response']), hooks });
-      await collect(loop.run('test'));
+      loop['personalities'].define({
+        id: 'obs-test',
+        name: 'ObsTest',
+        safety: { observability: { storeLlmPayloads: 'full' } },
+      });
+      await collect(loop.run('test', { personalityId: 'obs-test' }));
 
       expect(payloads).toHaveLength(1);
       const p = payloads[0];

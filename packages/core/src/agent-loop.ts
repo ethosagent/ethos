@@ -24,6 +24,7 @@ import type {
   PersonalityConfig,
   PersonalityRegistry,
   PromptContext,
+  RequestDumpStore,
   SessionStore,
   SteerSink,
   Storage,
@@ -192,7 +193,7 @@ export interface AgentLoopConfig {
    * Optional request dump store. When provided, AgentLoop appends a full
    * record of each LLM request/response for offline analysis and debugging.
    */
-  requestDumpStore?: import('@ethosagent/types').RequestDumpStore;
+  requestDumpStore?: RequestDumpStore;
   options?: {
     maxIterations?: number;
     historyLimit?: number;
@@ -805,18 +806,20 @@ export class AgentLoop {
         break;
       }
 
-      // Fire before_llm_call
+      // Compute tool definitions once for hooks, LLM call, and dump store.
+      const toolDefs = this.tools.toDefinitions(allowedTools, filterOpts);
       const requestId = randomUUID();
+      const includeContent = obsConfig?.storeLlmPayloads === 'full';
+
+      // Fire before_llm_call — content only included when personality opts in
       await this.hooks.fireVoid(
         'before_llm_call',
         {
           sessionId,
           model: this.llm.model,
           turnNumber: turnCount,
-          system: systemPrompt,
-          tools: this.tools.toDefinitions(allowedTools, filterOpts),
-          messages: llmMessages,
           requestId,
+          ...(includeContent ? { system: systemPrompt, tools: toolDefs, messages: llmMessages } : {}),
         },
         allowedPlugins,
       );
@@ -869,6 +872,10 @@ export class AgentLoop {
       });
       let llmInputTokens = 0;
       let llmOutputTokens = 0;
+      let llmCacheReadTokens = 0;
+      let llmCacheCreationTokens = 0;
+      let llmEstimatedCostUsd = 0;
+      let llmRequestTokens: { system: number; tools: number; messages: number } | undefined;
       let llmFinishReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' | undefined;
       const llmStartTs = Date.now();
 
@@ -876,7 +883,7 @@ export class AgentLoop {
         armWatchdog();
         const stream = this.llm.complete(
           llmMessages,
-          this.tools.toDefinitions(allowedTools, filterOpts),
+          toolDefs,
           {
             system: systemPrompt,
             cacheSystemPrompt: true,
@@ -891,6 +898,12 @@ export class AgentLoop {
           if (watchdogController.signal.aborted) break;
           armWatchdog();
           if (chunk.type === 'done') llmFinishReason = chunk.finishReason;
+          if (chunk.type === 'usage') {
+            llmCacheReadTokens += chunk.usage.cacheReadTokens;
+            llmCacheCreationTokens += chunk.usage.cacheCreationTokens;
+            llmEstimatedCostUsd += chunk.usage.estimatedCostUsd;
+            if (chunk.usage.requestTokens) llmRequestTokens = chunk.usage.requestTokens;
+          }
           for (const event of this.handleChunk(chunk, pendingToolCalls, (t) => {
             chunkText += t;
             fullText += t;
@@ -972,7 +985,7 @@ export class AgentLoop {
         }),
       });
 
-      // Fire after_llm_call
+      // Fire after_llm_call — content gated by personality observability config
       const llmDurationMs = Date.now() - llmStartTs;
       await this.hooks.fireVoid(
         'after_llm_call',
@@ -983,16 +996,14 @@ export class AgentLoop {
           requestId,
           finishReason: llmFinishReason,
           durationMs: llmDurationMs,
-          system: systemPrompt,
-          tools: this.tools.toDefinitions(allowedTools, filterOpts),
-          messages: llmMessages,
+          ...(includeContent ? { system: systemPrompt, tools: toolDefs, messages: llmMessages } : {}),
         },
         allowedPlugins,
       );
 
-      // Append to request dump store if wired
+      // Append to request dump store if wired (awaited for reliability)
       if (this.requestDumpStore) {
-        this.requestDumpStore.append({
+        await this.requestDumpStore.append({
           requestId,
           timestamp: new Date().toISOString(),
           sessionId,
@@ -1000,13 +1011,17 @@ export class AgentLoop {
           turnNumber: turnCount,
           model: iterModelOverride ?? this.llm.model,
           durationMs: llmDurationMs,
+          requestTokens: llmRequestTokens,
           responseTokens: llmOutputTokens || undefined,
+          cacheReadTokens: llmCacheReadTokens || undefined,
+          cacheCreationTokens: llmCacheCreationTokens || undefined,
+          estimatedCostUsd: llmEstimatedCostUsd || undefined,
           finishReason: llmFinishReason,
           system: systemPrompt,
-          tools: this.tools.toDefinitions(allowedTools, filterOpts),
+          tools: toolDefs,
           messages: llmMessages,
           responseText: chunkText,
-        }).catch(() => {});
+        });
       }
 
       // Push assistant message with proper content blocks for next iteration
