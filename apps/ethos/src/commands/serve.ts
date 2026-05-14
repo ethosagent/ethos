@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join, resolve as pathResolve } from 'node:path';
 import { AcpServer } from '@ethosagent/acp-server';
 import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
 import { CronScheduler } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
+import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { type ChatService, createWebApi, WebTokenRepository } from '@ethosagent/web-api';
 import {
   createDangerPredicate,
@@ -175,6 +176,10 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     });
     cronScheduler.start();
 
+    // OpenAI-compat surface (F1+F2). Shares sessions.db so `ethos api-key`
+    // and `ethos serve` see the same rows.
+    const apiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
+
     const created = createWebApi({
       dataDir: dir,
       sessionStore: session,
@@ -191,6 +196,8 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
       // the approval modal instead of a hard block.
       dangerPredicate: createDangerPredicate(),
       cronScheduler,
+      apiKeys,
+      listTeams: async () => listRegisteredTeams(dir),
       ...(webDist ? { webDist } : {}),
     });
     chatService = created.chatService;
@@ -252,4 +259,20 @@ function locateWebDist(explicit: string | undefined): string | null {
     if (existsSync(join(candidate, 'index.html'))) return candidate;
   }
   return null;
+}
+
+/**
+ * Enumerate registered team names for `GET /v1/models`. Scoped to the
+ * `dataDir` the server is actually using (not `~/.ethos/teams` blindly),
+ * so isolated/test installations report only their own teams. Manifest
+ * files live at `<dataDir>/teams/<name>.yaml`; `.runtime.yaml` is the
+ * supervisor's runtime state, not a manifest.
+ */
+function listRegisteredTeams(dataDir: string): string[] {
+  const teamsPath = join(dataDir, 'teams');
+  if (!existsSync(teamsPath)) return [];
+  return readdirSync(teamsPath, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith('.yaml') && !e.name.endsWith('.runtime.yaml'))
+    .map((e) => e.name.slice(0, -'.yaml'.length))
+    .sort();
 }

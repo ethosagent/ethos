@@ -1,0 +1,228 @@
+import { EthosError } from '@ethosagent/types';
+import { type Context, Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
+import { openAiErrorBody } from '../../middleware/bearer-auth';
+import type { CompletionsService } from '../../services/completions.service';
+import type { PersonalitiesService } from '../../services/personalities.service';
+import { type ChatCompletionRequest, ChatCompletionRequestSchema } from './schemas';
+
+// `POST /v1/chat/completions` — F3 (non-streaming) + F4 (streaming SSE).
+// Server-tools mode only; client-tools mode and team routing are explicit
+// non-goals here (C1 + W1).
+
+export interface OpenAiChatRouteOptions {
+  completions: CompletionsService;
+  personalities: PersonalitiesService;
+}
+
+export function openAiChatRoutes(opts: OpenAiChatRouteOptions): Hono {
+  const app = new Hono();
+
+  app.post('/completions', async (c) => {
+    // 1. Parse body. Zod failures produce a precise 400 with OpenAI envelope.
+    const raw = await c.req.json().catch(() => null);
+    const parse = ChatCompletionRequestSchema.safeParse(raw);
+    if (!parse.success) {
+      const first = parse.error.issues[0];
+      return c.json(
+        openAiErrorBody({
+          message: first
+            ? `${first.path.join('.') || 'body'}: ${first.message}`
+            : 'invalid request body',
+          type: 'invalid_request_error',
+          code: 'invalid_request_body',
+          param: first?.path[0]?.toString() ?? null,
+        }),
+        400,
+      );
+    }
+    const req = parse.data;
+
+    // 2. Reject features that land in later PRs. Loud rejection beats silent
+    //    drop — clients see immediately that they need the next release.
+    const rejection = rejectUnsupported(req);
+    if (rejection) {
+      return c.json(
+        openAiErrorBody({
+          message: rejection.message,
+          type: 'invalid_request_error',
+          code: rejection.code,
+          param: rejection.param ?? null,
+        }),
+        400,
+      );
+    }
+
+    // 3. Resolve `model` → personalityId per principle #2.
+    const resolved = resolveModel(req.model, opts.personalities);
+    if (resolved.kind === 'team') {
+      return c.json(
+        openAiErrorBody({
+          message: 'Team routing lands in W1. Use a personality id or `ethos-default` for now.',
+          type: 'invalid_request_error',
+          code: 'team_routing_not_implemented',
+          param: 'model',
+        }),
+        400,
+      );
+    }
+    if (resolved.kind === 'unknown') {
+      return c.json(
+        openAiErrorBody({
+          message: `Model "${req.model}" not found. Use \`GET /v1/models\` to list available ids.`,
+          type: 'invalid_request_error',
+          code: 'model_not_found',
+          param: 'model',
+        }),
+        404,
+      );
+    }
+
+    // 4. Collect any best-effort warnings (system messages dropped, etc.).
+    const warnings = collectWarnings(req);
+    if (warnings.length > 0) c.header('x-ethos-warning', warnings.join('; '));
+
+    const sessionKeyOverride = c.req.header('x-ethos-session') ?? c.req.header('X-Ethos-Session');
+
+    const input = {
+      req,
+      personalityId: resolved.personalityId,
+      ...(sessionKeyOverride ? { sessionKeyOverride } : {}),
+    };
+
+    // 5. Branch: streaming vs JSON.
+    if (req.stream === true) {
+      return streamCompletion(c, opts.completions, input);
+    }
+    try {
+      const result = await opts.completions.complete(input);
+      return c.json(result);
+    } catch (err) {
+      return jsonError(c, err);
+    }
+  });
+
+  return app;
+}
+
+function streamCompletion(
+  c: Context,
+  service: CompletionsService,
+  input: Parameters<CompletionsService['stream']>[0],
+): Response {
+  return streamSSE(c, async (stream) => {
+    const controller = new AbortController();
+    stream.onAbort(() => controller.abort());
+    try {
+      for await (const chunk of service.stream({ ...input, abortSignal: controller.signal })) {
+        await stream.writeSSE({ data: JSON.stringify(chunk) });
+        if (controller.signal.aborted) return;
+      }
+      await stream.writeSSE({ data: '[DONE]' });
+    } catch (err) {
+      // Emit OpenAI-shaped error then close. SDK clients surface this as a
+      // stream error rather than a malformed JSON parse.
+      const env = openAiErrorBody({
+        message: err instanceof Error ? err.message : 'Stream failed.',
+        type: 'server_error',
+        code: 'stream_failed',
+      });
+      await stream.writeSSE({ data: JSON.stringify(env) });
+      await stream.writeSSE({ data: '[DONE]' });
+    }
+  });
+}
+
+function jsonError(c: Context, err: unknown): Response {
+  if (err instanceof EthosError && err.code === 'INVALID_INPUT') {
+    return c.json(
+      openAiErrorBody({
+        message: err.cause,
+        type: 'invalid_request_error',
+        code: 'invalid_request_body',
+      }),
+      400,
+    );
+  }
+  const message = err instanceof Error ? err.message : 'Unknown error';
+  return c.json(
+    openAiErrorBody({
+      message,
+      type: 'server_error',
+      code: 'internal_error',
+    }),
+    500,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Model resolution
+// ---------------------------------------------------------------------------
+
+type Resolved =
+  | { kind: 'personality'; personalityId: string | undefined }
+  | { kind: 'team' }
+  | { kind: 'unknown' };
+
+function resolveModel(model: string, personalities: PersonalitiesService): Resolved {
+  if (model.startsWith('team:')) return { kind: 'team' };
+  if (model === 'ethos-default') {
+    return { kind: 'personality', personalityId: undefined };
+  }
+  const found = personalities.list().personalities.find((p) => p.id === model);
+  if (!found) return { kind: 'unknown' };
+  return { kind: 'personality', personalityId: model };
+}
+
+// ---------------------------------------------------------------------------
+// Validation + warnings
+// ---------------------------------------------------------------------------
+
+interface Rejection {
+  message: string;
+  code: string;
+  param?: string;
+}
+
+function rejectUnsupported(req: ChatCompletionRequest): Rejection | null {
+  if (req.tools && req.tools.length > 0) {
+    return {
+      message:
+        'Client-side `tools` lands in C1. Drop the field or wait for the C1 release for client-tools mode.',
+      code: 'client_tools_not_implemented',
+      param: 'tools',
+    };
+  }
+  for (const msg of req.messages) {
+    if (msg.role === 'tool') {
+      return {
+        message: '`role: "tool"` messages require client-tools mode (C1).',
+        code: 'client_tools_not_implemented',
+        param: 'messages',
+      };
+    }
+    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+      return {
+        message: '`assistant.tool_calls` requires client-tools mode (C1).',
+        code: 'client_tools_not_implemented',
+        param: 'messages',
+      };
+    }
+  }
+  return null;
+}
+
+function collectWarnings(req: ChatCompletionRequest): string[] {
+  const out: string[] = [];
+  // HTTP header values are ASCII-only in practice; keep these strings strictly
+  // ASCII so Hono passes them through Node's outgoing-header validator without
+  // escaping.
+  const hasSystem = req.messages.some((m) => m.role === 'system');
+  if (hasSystem) out.push('system messages ignored - personality prompt prevails');
+  // Surface sampling fields the agent loop does not consume yet. The plan
+  // keeps these as opt-in passthrough; clients should know the request is
+  // best-effort, not literal.
+  if (req.temperature !== undefined) out.push('temperature not yet forwarded to the upstream LLM');
+  if (req.max_tokens !== undefined) out.push('max_tokens not yet forwarded to the upstream LLM');
+  return out;
+}

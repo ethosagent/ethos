@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
 import { authMiddleware } from '../middleware/auth';
+import type { ApiKeyAuthStore } from '../middleware/bearer-auth';
 import { csrfMiddleware } from '../middleware/csrf';
 import { errorHandler } from '../middleware/error-envelope';
 import type { WebTokenRepository } from '../repositories/web-token.repository';
 import type { ChatService } from '../services/chat.service';
 import type { SessionsService } from '../services/sessions.service';
 import { authRoutes } from './auth';
+import { openAiRoutes } from './openai';
 import { openapiRoutes } from './openapi';
 import { rpcRoutes } from './rpc';
 import { sseRoutes } from './sse';
@@ -19,6 +21,11 @@ import { staticRoutes } from './static';
 export interface CreateRoutesOptions {
   tokens: WebTokenRepository;
   services: ServiceContainer;
+  /** Bearer-token store for the OpenAI-compat surface. When omitted, `/v1/*`
+   *  is not mounted (deployments without the API need no api_keys table). */
+  apiKeys?: ApiKeyAuthStore;
+  /** Returns currently registered team names for `/v1/models`. */
+  listTeams?: () => Promise<string[]>;
   /** Explicit allow-list of origins for cross-origin CSRF check. Empty / unset
    *  means "localhost only". */
   allowedOrigins?: string[];
@@ -47,6 +54,7 @@ export interface ServiceContainer {
   platforms: import('../services/platforms.service').PlatformsService;
   lab: import('../services/lab.service').LabService;
   kanban: import('../services/kanban.service').KanbanService;
+  completions: import('../services/completions.service').CompletionsService;
 }
 
 export function createRoutes(opts: CreateRoutesOptions): Hono {
@@ -78,6 +86,21 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   app.route('/rpc', rpcRoutes({ services: opts.services }));
   app.route('/sse', sseRoutes({ chat: opts.services.chat }));
   app.route('/openapi', openapiRoutes({ services: opts.services }));
+
+  // OpenAI-compat surface (F1-F4). Self-contained bearer-token auth — does
+  // NOT share the cookie middleware above. Only mounted when an api-key
+  // store is wired so test/ACP-only deployments can opt out cleanly.
+  if (opts.apiKeys) {
+    app.route(
+      '/v1',
+      openAiRoutes({
+        apiKeys: opts.apiKeys,
+        personalities: opts.services.personalities,
+        completions: opts.services.completions,
+        ...(opts.listTeams ? { listTeams: opts.listTeams } : {}),
+      }),
+    );
+  }
 
   // Static SPA mount (must be LAST — it owns `/*` so any unmatched path
   // falls through to index.html). Skipped when `webDist` isn't supplied;

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { formatError, toEthosError } from '@ethosagent/types';
 import { applyCliOverrides, parseCliOverrideFlags } from './cli-overrides';
 import { runAcp } from './commands/acp';
+import { runApiKey } from './commands/api-key';
 import { runArchive } from './commands/archive';
 import { runAudit } from './commands/audit';
 import { runBackup, runImport } from './commands/backup';
@@ -46,7 +47,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [setup | chat | sessions | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
+  'Usage: ethos [setup | chat | sessions | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -437,6 +438,11 @@ try {
 
     case 'keys': {
       await runKeys(args.slice(1));
+      break;
+    }
+
+    case 'api-key': {
+      await runApiKey(args.slice(1));
       break;
     }
 
