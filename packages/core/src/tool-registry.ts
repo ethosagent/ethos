@@ -13,7 +13,14 @@ import type { CapabilityValidationError } from './capability-validator';
 import { validateRegistration } from './capability-validator';
 
 function needsBackends(caps: ToolCapabilities): boolean {
-  return !!(caps.network || caps.secrets || caps.storage || caps.fs_reach || caps.process);
+  return !!(
+    caps.network ||
+    caps.secrets ||
+    caps.storage ||
+    caps.fs_reach ||
+    caps.process ||
+    caps.attachments
+  );
 }
 
 interface ToolEntry {
@@ -262,7 +269,7 @@ export class DefaultToolRegistry implements ToolRegistry {
               entry.tool.name,
               entry.tool.capabilities,
               { sessionId: ctx.sessionId, personalityId: ctx.personalityId },
-              this.backends,
+              { ...this.backends, inboundAttachments: ctx.inboundAttachments },
             );
             Object.assign(toolCtx, resolved);
           }

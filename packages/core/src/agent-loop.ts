@@ -32,10 +32,10 @@ import type {
   ToolRegistry,
   ToolResult,
 } from '@ethosagent/types';
+import { buildAttachmentAnnotation } from './attachment-annotation';
 import type { ClarifyBridge } from './clarify/clarify-bridge';
 import { DefaultContextEngineRegistry } from './context-engines/registry';
 import { estimateMessagesTokens, estimateTokens } from './context-engines/token-estimator';
-
 import { InMemorySessionStore } from './defaults/in-memory-session';
 import { NoopMemoryProvider } from './defaults/noop-memory';
 import { DefaultPersonalityRegistry } from './defaults/noop-personality';
@@ -231,6 +231,10 @@ export interface RunOptions {
    * steering falls back to `queue` at the surface, never reaching AgentLoop.
    */
   steerSink?: SteerSink;
+  /** Per-turn inbound attachments from the user message. Persisted as an
+   *  `<attachments>` annotation prepended to the user text and threaded to
+   *  tool execution via `ToolContext.inboundAttachments`. */
+  attachments?: import('@ethosagent/types').Attachment[];
 }
 
 // ---------------------------------------------------------------------------
@@ -448,10 +452,17 @@ export class AgentLoop {
     // captures every `LLMProvider.complete()` request and asserts the marker
     // never appears in `opts.system` and appears exactly once across all
     // user-role messages.
+    //
+    // Attachment annotation: prepend an <attachments> block so the LLM sees
+    // which files/images the user attached. Persisted with the message so
+    // replay is faithful (plan risk #10).
+    const attachmentAnnotation = buildAttachmentAnnotation(opts.attachments ?? []);
+    const annotatedText = attachmentAnnotation ? `${attachmentAnnotation}\n${text}` : text;
+
     await this.session.appendMessage({
       sessionId,
       role: 'user',
-      content: text,
+      content: annotatedText,
     });
 
     // Step 4: Load history (trimmed to most-recent limit)
@@ -933,6 +944,7 @@ export class AgentLoop {
         memoryScope: personality.memoryScope,
         memoryScopeId: memScopeId,
         ...(this.teamId !== undefined && { teamId: this.teamId }),
+        ...(opts.attachments?.length ? { inboundAttachments: opts.attachments } : {}),
         currentTurn: turnCount,
         messageCount: allMessages.length + turnCount,
         abortSignal,

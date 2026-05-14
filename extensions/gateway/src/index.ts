@@ -944,6 +944,7 @@ export class Gateway {
           sessionKey,
           personalityId,
           abortSignal: signal,
+          attachments: message.attachments,
         })) {
           if (event.type === 'text_delta') responseText += event.text;
           if (event.type === 'usage') {

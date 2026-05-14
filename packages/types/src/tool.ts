@@ -93,6 +93,9 @@ export interface ToolContext {
     deny?: string[];
     allow_private_urls?: boolean;
   };
+  /** Per-turn inbound attachments from the user message. Used by the capability
+   *  resolver to build ctx.attachments for tools that declare the attachments capability. */
+  inboundAttachments?: import('./platform').Attachment[];
   kvStore?: import('./tool-capabilities').KeyValueStore;
   secretsResolver?: import('./tool-capabilities').ScopedSecretsResolver;
   scopedFetch?: import('./tool-capabilities').ScopedFetch;
