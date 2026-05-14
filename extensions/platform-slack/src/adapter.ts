@@ -9,6 +9,8 @@ import { join } from 'node:path';
 import type {
   ApprovalCapableAdapter,
   ApprovalDecisionEvent,
+  Attachment,
+  AttachmentCache,
   DeliveryResult,
   InboundMessage,
   OutboundMessage,
@@ -57,7 +59,7 @@ import {
   handleClarifyAction,
   handleClarifyModalSubmission,
 } from './interactions/clarify';
-import { resolveChannelMode } from './routing/triage';
+import { type RawSlackFile, resolveChannelMode } from './routing/triage';
 import { ChannelOverrideStore } from './store/channel-overrides';
 import { ThreadStateStore } from './store/thread-state';
 
@@ -99,6 +101,24 @@ function normalizeWebUiBaseUrl(raw: string | undefined): string | undefined {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
   return url.href.replace(/\/+$/, '');
 }
+
+/** Maximum file size in bytes that we'll download into memory. */
+const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
+
+const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'bmp', 'svg', 'tiff']);
+const SKIP_EXTS = new Set([
+  'mp3',
+  'mp4',
+  'mov',
+  'webm',
+  'wav',
+  'ogg',
+  'flac',
+  'aac',
+  'm4a',
+  'avi',
+  'mkv',
+]);
 
 export interface SlackAdapterConfig {
   /** Bot token (xoxb-...) */
@@ -144,6 +164,8 @@ export interface SlackAdapterConfig {
   kanbanUnfurl?: KanbanUnfurlReader;
   /** Optional lookup-by-id reader for unfurling `<base>/personalities/<id>` URLs. */
   personalityUnfurl?: PersonalityUnfurlReader;
+  /** Optional attachment cache for downloading and caching inbound file attachments. */
+  cache?: AttachmentCache;
 }
 
 export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
@@ -172,6 +194,8 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   private readonly personalityUnfurl: PersonalityUnfurlReader | undefined;
   private readonly webUiBaseUrl: string | undefined;
   private readonly storage: Storage | undefined;
+  private readonly cache: AttachmentCache | undefined;
+  private readonly botToken: string;
   private messageHandler?: (message: InboundMessage) => void;
   /** Approval-card button-click handler, wired by the approval coordinator. */
   private approvalDecisionHandler?: (event: ApprovalDecisionEvent) => void;
@@ -214,6 +238,8 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     this.kanbanUnfurl = config.kanbanUnfurl;
     this.personalityUnfurl = config.personalityUnfurl;
     this.webUiBaseUrl = normalizeWebUiBaseUrl(config.webUiBaseUrl);
+    this.cache = config.cache;
+    this.botToken = config.botToken;
 
     if (config.storage) {
       const slackDir = config.slackDir ?? join(homeEthosDir(), 'slack');
@@ -254,7 +280,17 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
         threadState: this.threadState,
       },
       {
-        onEnvelope: (msg) => this.messageHandler?.(msg),
+        onEnvelope: (msg) => {
+          const raw = msg.raw as Record<string, unknown> | undefined;
+          const files = raw?.files as RawSlackFile[] | undefined;
+          if (files && files.length > 0 && this.cache) {
+            void this.extractFileAttachments(msg, files).then((enriched) => {
+              this.messageHandler?.(enriched);
+            });
+          } else {
+            this.messageHandler?.(msg);
+          }
+        },
       },
     );
 
@@ -727,6 +763,69 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
    *  is registered with Bolt. */
   setClarifyHomeReader(reader: ClarifyHomeReader): void {
     this.clarifyHomeReader = reader;
+  }
+
+  // ---------------------------------------------------------------------------
+  // File attachment extraction
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Enrich an inbound envelope with file attachments downloaded from Slack.
+   * Best-effort: files that fail to download or exceed the size cap are
+   * silently skipped. Audio/video files are skipped in v1.
+   */
+  private async extractFileAttachments(
+    envelope: InboundMessage,
+    files: RawSlackFile[],
+  ): Promise<InboundMessage> {
+    if (!this.cache || files.length === 0) return envelope;
+
+    const attachments: Attachment[] = [];
+    const sessionKey = `slack:${this.botKey}:${envelope.chatId}`;
+    const messageId = envelope.messageId ?? String(Date.now());
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const ext = (file.filetype ?? '').toLowerCase();
+      if (SKIP_EXTS.has(ext)) continue;
+      if ((file.size ?? 0) > MAX_FILE_SIZE) continue;
+      if (!file.url_private_download) continue;
+
+      const type = IMAGE_EXTS.has(ext) ? ('image' as const) : ('file' as const);
+
+      try {
+        const res = await fetch(file.url_private_download, {
+          headers: { Authorization: `Bearer ${this.botToken}` },
+        });
+        if (!res.ok) continue;
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        const filename = file.name ?? `att-${i}`;
+        const mime = file.mimetype ?? 'application/octet-stream';
+        const url = await this.cache.write(bytes, {
+          sessionKey,
+          messageId,
+          filename,
+          mime,
+        });
+        attachments.push({
+          type,
+          ref: `att-${i}`,
+          url,
+          mimeType: mime,
+          filename: file.name,
+          sizeBytes: file.size,
+        });
+      } catch {
+        // Download failed — skip this file silently
+      }
+    }
+
+    if (attachments.length === 0) return envelope;
+
+    return {
+      ...envelope,
+      attachments,
+    };
   }
 
   async health(): Promise<{ ok: boolean; latencyMs?: number }> {
