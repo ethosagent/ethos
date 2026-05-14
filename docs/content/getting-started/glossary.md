@@ -141,7 +141,7 @@ A packaged set of tools, hooks, and / or providers shipped as an npm module impl
 
 ### Skin {#skin}
 
-A named visual theme resolved against `@ethosagent/design-tokens`. Built-in skins ship with the CLI (`default`, `mono`, `paper`); user skins can be added via plugins. Wired into both the TUI `SkinContext` and the Web `ConfigProvider` so every surface picks up the same palette. Configurable per-personality and per-user; the user pin always wins.
+A named visual theme resolved against `@ethosagent/design-tokens`. Built-in skins ship with the CLI (`default`, `mono`, `paper`); user skins can be added via plugins. Wired into both the TUI `SkinContext` and the Web `ConfigProvider` so every surface picks up the same palette. Set once per user via `skin:` in `~/.ethos/config.yaml` — a personality is an identity, not a theme, so skins are not a personality concern.
 
 ## See also {#see-also}
 

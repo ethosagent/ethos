@@ -56,7 +56,7 @@ The default subcommand. With a TTY on both stdin and stdout it launches the rich
 | `--skin <name>` | Override `config.skin` for this process. Built-ins: `default`, `mono`, `paper`. |
 | `-q "<prompt>"`, `--query "<prompt>"`, `--query=<prompt>` | Run a single query, print the answer, exit. The bare form `ethos -q "..."` is an alias for `ethos chat -q "..."`. |
 
-`--verbose` and `--skin` apply only to the current process and never write to `~/.ethos/config.yaml`. Persist them with `ethos set verbose true` or `ethos personality skin <id> <name>`.
+`--verbose` and `--skin` apply only to the current process and never write to `~/.ethos/config.yaml`. Persist them with `ethos set verbose true` or by setting `skin:` in `~/.ethos/config.yaml`.
 
 ### Single-query mode {#single-query}
 

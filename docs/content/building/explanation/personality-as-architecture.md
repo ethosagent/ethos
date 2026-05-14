@@ -249,6 +249,7 @@ If you came here from the 90-second tour, the next three pages in order:
 
 ## See also
 
+- [Why is a personality a governed contract?](personality-governance.md) — the schema-freeze rule and the character sheet that keep this thesis honest over time
 - [Why is personality the unit, not a system prompt?](../../using/explanation/what-is-a-personality.md) — the user-facing version of this thesis
 - [Why Ethos?](../../getting-started/why-ethos.md) — honest comparison to LangChain, CrewAI, OpenClaw, Hermes
 - [Why does AgentLoop receive everything via config?](injection-at-construction.md) — the wiring shape that makes personality-as-architecture work

@@ -294,7 +294,7 @@ Notes:
 
 Type: string · Default: engine default
 
-Named [skin](../../getting-started/glossary.md#skin) override. Built-in values: `default`, `mono`, `paper`. Applies across the TUI and the web `ConfigProvider`. Personality-level skins (`personality.skin`) lose to this one — when set, the user pin wins everywhere.
+Named [skin](../../getting-started/glossary.md#skin) override. Built-in values: `default`, `mono`, `paper`. Applies across the TUI and the web `ConfigProvider`. This is the only place a skin is set — a personality is an identity, not a theme, so personalities carry no `skin` field.
 
 ```yaml
 skin: mono

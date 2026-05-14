@@ -10,10 +10,11 @@ A personality lives at `~/.ethos/personalities/<id>/` — three files (`ETHOS.md
 ## Try it
 
 ```bash
-npm i -g @ethosagent/cli   # Node 24+
-ethos setup                # provider + API key + personality
-ethos chat                 # talk to the agent
-/personality engineer      # atomic swap of prompt + tools + memory + model
+npm i -g @ethosagent/cli          # Node 24+
+ethos setup                       # provider + API key + personality
+ethos personality show engineer   # character sheet — what it is, has, can reach
+ethos chat                        # talk to the agent
+/personality engineer             # atomic swap of prompt + tools + memory + model
 ```
 
 Full install paths, supported providers, and surface setup: [ethosagent.ai/docs/using/quickstart](https://ethosagent.ai/docs/using/quickstart).

@@ -1,8 +1,9 @@
-import type {
-  CreatePersonalityInput,
-  DescribedPersonality,
-  FilePersonalityRegistry,
-  UpdatePersonalityPatch,
+import {
+  type CreatePersonalityInput,
+  type DescribedPersonality,
+  type FilePersonalityRegistry,
+  renderCharacterSheet,
+  type UpdatePersonalityPatch,
 } from '@ethosagent/personalities';
 import type { PersonalitySkillRecord, SkillsLibrary } from '@ethosagent/skills';
 import { EthosError } from '@ethosagent/types';
@@ -33,6 +34,15 @@ export class PersonalitiesService {
     if (!described) throw notFound(id);
     const ethosMd = await this.opts.personalities.readEthosMd(id);
     return { personality: toWire(described), ethosMd };
+  }
+
+  /** Generated Markdown character sheet — the same artifact `ethos personality
+   *  show` prints, rendered for the Web Personalities tab. */
+  async characterSheet(id: string): Promise<{ markdown: string }> {
+    const described = this.opts.personalities.describe(id);
+    if (!described) throw notFound(id);
+    const ethosMd = await this.opts.personalities.readEthosMd(id);
+    return { markdown: renderCharacterSheet(described.config, ethosMd) };
   }
 
   async create(input: CreatePersonalityInput): Promise<{ personality: Personality }> {
@@ -146,7 +156,6 @@ function toWire(d: DescribedPersonality): Personality {
     streamingTimeoutMs: c.streamingTimeoutMs ?? null,
     mcp_servers: c.mcp_servers ?? null,
     plugins: c.plugins ?? null,
-    skin: c.skin ?? null,
     builtin: d.builtin,
   };
 }

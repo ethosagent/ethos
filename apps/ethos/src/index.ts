@@ -243,12 +243,11 @@ try {
         await runPersonalityPlugins(args.slice(2));
       } else if (sub === 'duplicate') {
         await runPersonalityDuplicate(args.slice(2));
-      } else if (sub === 'skin') {
-        const { runPersonalitySkin } = await import('./commands/personality-skin');
-        await runPersonalitySkin(args.slice(2));
+      } else if (sub === 'show') {
+        await runPersonalityShow(args.slice(2));
       } else {
         console.log(
-          'Usage: ethos personality [list | set <id> | duplicate <src> <dst> | mcp <id> [--attach <name> | --detach <name>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>] | skin [<id> [<name> | --clear]]]',
+          'Usage: ethos personality [list | show <id> | set <id> | duplicate <src> <dst> | mcp <id> [--attach <name> | --detach <name>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
         );
       }
       break;
@@ -712,6 +711,33 @@ async function runPersonalityDuplicate(argv: string[]): Promise<void> {
   const created = await reg.duplicate(src, dst);
   const newId = created.config.id;
   console.log(`✓ Duplicated "${src}" -> "${newId}" at ~/.ethos/personalities/${newId}`);
+}
+
+// `ethos personality show <id>` — print the generated character sheet: one
+// Markdown screen of what the personality is, what it has, and what it can
+// reach. The artifact is regenerated on every call from config + ETHOS.md.
+async function runPersonalityShow(argv: string[]): Promise<void> {
+  const id = argv[0];
+  if (!id) {
+    console.log('Usage: ethos personality show <id>');
+    return;
+  }
+  const { createPersonalityRegistry, renderCharacterSheet } = await import(
+    '@ethosagent/personalities'
+  );
+  const { ethosDir } = await import('./config');
+  const storage = getStorage();
+  const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: ethosDir() });
+  await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
+
+  const described = reg.describe(id);
+  if (!described) {
+    console.error(`Unknown personality: ${id}`);
+    console.error('Run `ethos personality list` to see available ids.');
+    process.exit(1);
+  }
+  const ethosMd = await reg.readEthosMd(id);
+  console.log(`\n${renderCharacterSheet(described.config, ethosMd)}`);
 }
 
 // ---------------------------------------------------------------------------

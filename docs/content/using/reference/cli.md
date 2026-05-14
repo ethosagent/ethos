@@ -75,18 +75,19 @@ ethos -q "summarize the changes since yesterday"
 
 Manage [personalities](../../getting-started/glossary.md#personality). With no subcommand, lists every personality (built-in plus user) and marks the default.
 
-Synopsis: `ethos personality [list | set <id> | duplicate <src> <dst> | mcp <id> [--attach <name> | --detach <name>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>] | skin [<id> [<name> | --clear]]]`
+Synopsis: `ethos personality [list | show <id> | set <id> | duplicate <src> <dst> | mcp <id> [--attach <name> | --detach <name>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]`
 
 | Subcommand | Description |
 |---|---|
 | `list` *(default)* | List built-ins and user personalities, marking the default. |
+| `show <id>` | Print the generated [character sheet](../../building/explanation/personality-governance.md) — identity, routing, memory scope, toolset, MCP servers, plugins, `fs_reach`. |
 | `set <id>` | Persist `<id>` as the default personality in `~/.ethos/config.yaml`. |
 | `duplicate <src> <dst>` | Copy `<src>` into `~/.ethos/personalities/<dst>/` so it becomes user-editable. |
 | `mcp <id> [--attach\|--detach <name>]` | Show, attach, or detach MCP servers from `~/.ethos/mcp.json`. |
 | `plugins <id> [--attach\|--detach <id>]` | Show, attach, or detach installed plugins. |
-| `skin [<id> [<name>\|--clear]]` | Inspect or set the personality's [skin](./personality-yaml.md#skin). |
 
 ```bash
+ethos personality show engineer
 ethos personality duplicate engineer engineer-paired
 ethos personality mcp engineer --attach github
 ```
