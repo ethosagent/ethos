@@ -3,7 +3,7 @@ export type {
   ChannelFilterResult,
   ChannelPlatformConfig,
 } from './channel-filter';
-export { checkMessage } from './channel-filter';
+export { checkMessage, isSenderAllowed } from './channel-filter';
 export type { ConsumeAndAllowResult, ConsumeResult } from './pairing-store';
 export {
   clearOwnerPause,

@@ -13,7 +13,12 @@ import { readRuntime, removeRuntime } from '@ethosagent/team-supervisor';
 // Their underlying SDKs (grammy, discord.js, @slack/bolt, imapflow…) are
 // optionalDependencies of @ethosagent/cli. A failed install for any one of
 // them must not crash the CLI for users who don't run that platform.
-import type { InboundMessage, MemoryContext, PlatformAdapter } from '@ethosagent/types';
+import type {
+  ClarifyResponse,
+  InboundMessage,
+  MemoryContext,
+  PlatformAdapter,
+} from '@ethosagent/types';
 import { createDangerPredicate, createMemoryProvider } from '@ethosagent/wiring';
 import { ApprovalCoordinator, createSlackApprovalHook } from '../approval-coordinator';
 import {
@@ -237,19 +242,80 @@ export async function runGatewayStart(): Promise<void> {
   // their own `job.personality` field, not through the platform bot
   // routing table.
   const systemLoop = await createAgentLoop(config);
+
+  // Build and register all configured adapters early so we can wire the
+  // clarify surfaces *before* constructing the Gateway. The surfaces' combined
+  // `correlateMessage` is passed in as `clarifyMessageCorrelator`. The
+  // surface's `getSessionRouting` closes over a mutable holder filled in
+  // right after Gateway construction — necessary because the surface and the
+  // Gateway each need a reference to the other.
+  const adapters = await buildAdapters(config, loadAdapterModule);
+
+  let gatewayRef: Gateway | null = null;
+  const telegramClarifySurfaces = await buildTelegramClarifySurfaces(
+    bots,
+    adapters,
+    (sessionId) => {
+      const route = gatewayRef?.resolveApprovalRoute(sessionId);
+      if (!route) return undefined;
+      return route.requesterUserId !== undefined
+        ? { chatId: route.chatId, requesterUserId: route.requesterUserId }
+        : { chatId: route.chatId };
+    },
+  );
+  // Slack clarify surfaces are wired identically — only the surface module
+  // and the routing fields differ (Slack carries a `threadId` for thread
+  // routing). The surfaces register their own `block_actions` /
+  // `view_submission` listeners on the adapter; the gateway never calls into
+  // them directly, so they don't contribute to `clarifyMessageCorrelator`.
+  await buildSlackClarifySurfaces(bots, adapters, (sessionId) => {
+    const route = gatewayRef?.resolveApprovalRoute(sessionId);
+    if (!route) return undefined;
+    return {
+      chatId: route.chatId,
+      ...(route.threadId !== undefined ? { threadId: route.threadId } : {}),
+      ...(route.requesterUserId !== undefined ? { requesterUserId: route.requesterUserId } : {}),
+    };
+  });
+  // Discord clarify surfaces — same pattern as Slack but no thread routing.
+  // Discord delivers component clicks via `interactionCreate`, which the
+  // surface registers on directly via `adapter.onClarifyInteraction`.
+  // `systemLoop` is the fallback bridge for the legacy single-Discord
+  // deployment (no telegram/slack bots configured) — Discord doesn't yet
+  // appear in `buildGatewayBots`, so per-bot lookup misses and we use
+  // the system loop's bridge instead.
+  await buildDiscordClarifySurfaces(bots, adapters, systemLoop, (sessionId) => {
+    const route = gatewayRef?.resolveApprovalRoute(sessionId);
+    if (!route) return undefined;
+    return {
+      chatId: route.chatId,
+      ...(route.requesterUserId !== undefined ? { requesterUserId: route.requesterUserId } : {}),
+    };
+  });
+  const clarifyMessageCorrelator =
+    telegramClarifySurfaces.length > 0
+      ? async (msg: InboundMessage): Promise<ClarifyResponse | null> => {
+          for (const surface of telegramClarifySurfaces) {
+            const r = await surface.correlateMessage(msg);
+            if (r) return r;
+          }
+          return null;
+        }
+      : undefined;
+
   const gateway: Gateway =
     bots.length === 0
       ? // Email-only deployment (no telegram/slack bots configured). Keep
         // the legacy single-loop construction for the email path.
         new Gateway({ loop: systemLoop, defaultPersonality: config.personality })
-      : new Gateway({ bots });
+      : new Gateway({
+          bots,
+          ...(clarifyMessageCorrelator ? { clarifyMessageCorrelator } : {}),
+        });
+  gatewayRef = gateway;
 
   // Index bots by botKey so health-check lines can show the binding inline.
   const botByKey = new Map(bots.map((b) => [b.botKey, b]));
-
-  // Build and register all configured adapters. Each loads lazily so a missing
-  // SDK in node_modules only takes down its own platform, not the gateway.
-  const adapters = await buildAdapters(config, loadAdapterModule);
 
   if (adapters.length === 0) {
     console.log(
@@ -803,4 +869,161 @@ export async function buildAdapters(
   }
 
   return adapters;
+}
+
+/**
+ * Build one `TelegramClarifySurface` per (Telegram adapter, Telegram bot)
+ * pair. Loaded lazily — when the platform-telegram surface module isn't
+ * installed (or no Telegram adapter is configured), returns `[]` and the
+ * Gateway runs without a clarify correlator. The surface registers
+ * `bridge.setPresenter`, `bridge.onResolved`, and `adapter.onCallbackQuery`
+ * in its constructor; the gateway later calls `surface.correlateMessage` for
+ * every inbound message.
+ *
+ * `getSessionRouting` resolves a sessionId to the chat + originator user id
+ * of the turn that issued the clarify. Closes over a gateway reference that
+ * is filled in *after* this function returns (the surface and the Gateway
+ * each need a reference to the other), so callers must pass a closure rather
+ * than a direct gateway method.
+ */
+async function buildTelegramClarifySurfaces(
+  bots: GatewayBotConfig[],
+  adapters: PlatformAdapter[],
+  getSessionRouting: (
+    sessionId: string,
+  ) => { chatId: string; requesterUserId?: string } | undefined,
+): Promise<{ correlateMessage: (m: InboundMessage) => Promise<ClarifyResponse | null> }[]> {
+  const telegramAdapters = adapters.filter((a) => a.id.startsWith('telegram:'));
+  if (telegramAdapters.length === 0) return [];
+
+  const mod = await loadAdapterModule<
+    typeof import('@ethosagent/platform-telegram/clarify-surface')
+  >('@ethosagent/platform-telegram/clarify-surface', 'Telegram clarify surface');
+  if (!mod) return [];
+
+  const surfaces: {
+    correlateMessage: (m: InboundMessage) => Promise<ClarifyResponse | null>;
+  }[] = [];
+  for (const adapter of telegramAdapters) {
+    // `adapter.id` is `telegram:<botKey>` — strip the prefix to find the
+    // matching bot's clarifyBridge.
+    const botKey = adapter.id.slice('telegram:'.length);
+    const bot = bots.find((b) => b.botKey === botKey);
+    const bridge = bot?.loop.clarifyBridge;
+    if (!bridge) continue;
+    // The TelegramAdapter satisfies TelegramClarifyAdapter structurally —
+    // the methods were added in the same package.
+    const tgAdapter = adapter as unknown as ConstructorParameters<
+      typeof mod.TelegramClarifySurface
+    >[0]['adapter'];
+    surfaces.push(
+      new mod.TelegramClarifySurface({
+        adapter: tgAdapter,
+        bridge,
+        store: bridge.store,
+        getSessionRouting,
+      }),
+    );
+  }
+  return surfaces;
+}
+
+/**
+ * Build one `SlackClarifySurface` per (Slack adapter, Slack bot) pair.
+ * Loaded lazily — when the platform-slack surface module isn't installed
+ * (or no Slack adapter is configured), returns `[]` and Slack just runs
+ * without clarify support. Each surface registers `bridge.setPresenter`,
+ * `bridge.onResolved`, `adapter.onClarifyAction`, and
+ * `adapter.onClarifyModalSubmit` in its constructor; nothing else needs
+ * wiring (Slack carries its own button-click + modal-submission events
+ * through Bolt, so there's no inbound-correlator step like Telegram has
+ * for force-replies).
+ */
+async function buildSlackClarifySurfaces(
+  bots: GatewayBotConfig[],
+  adapters: PlatformAdapter[],
+  getSessionRouting: (
+    sessionId: string,
+  ) => { chatId: string; threadId?: string; requesterUserId?: string } | undefined,
+): Promise<unknown[]> {
+  const slackAdapters = adapters.filter((a) => a.id.startsWith('slack:'));
+  if (slackAdapters.length === 0) return [];
+
+  const mod = await loadAdapterModule<typeof import('@ethosagent/platform-slack/clarify-surface')>(
+    '@ethosagent/platform-slack/clarify-surface',
+    'Slack clarify surface',
+  );
+  if (!mod) return [];
+
+  const surfaces: unknown[] = [];
+  for (const adapter of slackAdapters) {
+    const botKey = adapter.id.slice('slack:'.length);
+    const bot = bots.find((b) => b.botKey === botKey);
+    const bridge = bot?.loop.clarifyBridge;
+    if (!bridge) continue;
+    const slackAdapter = adapter as unknown as ConstructorParameters<
+      typeof mod.SlackClarifySurface
+    >[0]['adapter'];
+    const surface = new mod.SlackClarifySurface({
+      adapter: slackAdapter,
+      bridge,
+      store: bridge.store,
+      getSessionRouting,
+    });
+    // Wire the App Home "Waiting on you" data source. Setter must run
+    // before adapter.start() so registerHomeEvents picks it up.
+    const withReader = adapter as unknown as {
+      setClarifyHomeReader?: (r: { listPendingForBot: () => Promise<unknown[]> }) => void;
+    };
+    withReader.setClarifyHomeReader?.(surface);
+    surfaces.push(surface);
+  }
+  return surfaces;
+}
+
+/**
+ * Build one `DiscordClarifySurface` per (Discord adapter, Discord bot) pair.
+ * Currently Discord supports a single bot per process (the legacy single
+ * `discordToken` config), so this typically builds 0 or 1 surface. Loaded
+ * lazily — when the surface module isn't installed (or no Discord adapter
+ * is configured), returns `[]`.
+ */
+async function buildDiscordClarifySurfaces(
+  bots: GatewayBotConfig[],
+  adapters: PlatformAdapter[],
+  systemLoop: AgentLoop,
+  getSessionRouting: (
+    sessionId: string,
+  ) => { chatId: string; requesterUserId?: string } | undefined,
+): Promise<unknown[]> {
+  const discordAdapters = adapters.filter((a) => a.id.startsWith('discord:'));
+  if (discordAdapters.length === 0) return [];
+
+  const mod = await loadAdapterModule<
+    typeof import('@ethosagent/platform-discord/clarify-surface')
+  >('@ethosagent/platform-discord/clarify-surface', 'Discord clarify surface');
+  if (!mod) return [];
+
+  const surfaces: unknown[] = [];
+  for (const adapter of discordAdapters) {
+    const botKey = adapter.id.slice('discord:'.length);
+    const bot = bots.find((b) => b.botKey === botKey);
+    // Per-bot loop wins; legacy single-Discord (no entry in `bots[]`) falls
+    // back to the system loop. Either way, the bridge must exist — the
+    // wiring layer always attaches one, so an absent bridge is a bug.
+    const bridge = bot?.loop.clarifyBridge ?? systemLoop.clarifyBridge;
+    if (!bridge) continue;
+    const discordAdapter = adapter as unknown as ConstructorParameters<
+      typeof mod.DiscordClarifySurface
+    >[0]['adapter'];
+    surfaces.push(
+      new mod.DiscordClarifySurface({
+        adapter: discordAdapter,
+        bridge,
+        store: bridge.store,
+        getSessionRouting,
+      }),
+    );
+  }
+  return surfaces;
 }

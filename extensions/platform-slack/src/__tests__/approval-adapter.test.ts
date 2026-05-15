@@ -22,6 +22,7 @@ vi.mock('@slack/bolt', () => {
     command() {}
     event() {}
     message() {}
+    view() {}
     action(id: string, handler: (args: unknown) => Promise<void>) {
       actionHandlers.set(id, handler);
     }

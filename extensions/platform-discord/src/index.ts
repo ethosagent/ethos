@@ -1,10 +1,32 @@
+import { createHash } from 'node:crypto';
 import type {
   DeliveryResult,
   InboundMessage,
   OutboundMessage,
   PlatformAdapter,
 } from '@ethosagent/types';
-import { Client, Events, GatewayIntentBits, type Message, Partials } from 'discord.js';
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  Client,
+  Events,
+  GatewayIntentBits,
+  type Interaction,
+  type Message,
+  ModalBuilder,
+  Partials,
+  TextInputBuilder,
+  TextInputStyle,
+} from 'discord.js';
+import { CLARIFY_MODAL_INPUT_ID, type clarifyModalPayload } from './clarify-blocks';
+import {
+  type ClarifyButtonPayload,
+  type ClarifyInteractionEvent,
+  type ClarifyModalPayload,
+  handleClarifyButton,
+  handleClarifyModal,
+} from './clarify-interactions';
 
 // ---------------------------------------------------------------------------
 // Text chunking — Discord 2000 char limit
@@ -73,21 +95,44 @@ export interface DiscordAdapterConfig {
    * Set to false to respond to every message the bot can see.
    */
   mentionOnly?: boolean;
+  /** Stable per-bot identifier — defaults to sha256(token).slice(0,24). */
+  botKey?: string;
+}
+
+/** First 24 hex chars of sha256(token) — matches `deriveBotKey` in
+ *  `apps/ethos/src/config.ts` so an adapter constructed without an explicit
+ *  `botKey` round-trips the same identity the boot path would have produced. */
+function deriveDefaultBotKey(token: string): string {
+  return createHash('sha256').update(token).digest('hex').slice(0, 24);
+}
+
+/** Raw clarify interaction event delivered to the surface. */
+export interface DiscordClarifyInteraction {
+  event: ClarifyInteractionEvent;
+  interactionId: string;
+  interactionToken: string;
 }
 
 export class DiscordAdapter implements PlatformAdapter {
-  readonly id = 'discord';
+  readonly id: string;
   readonly displayName = 'Discord';
   readonly canSendTyping = true;
   readonly canEditMessage = true;
   readonly canReact = true;
   readonly canSendFiles = false;
   readonly maxMessageLength = 2000;
+  readonly botKey: string;
 
   private readonly client: Client;
   private readonly token: string;
   private readonly mentionOnly: boolean;
   private messageHandler?: (message: InboundMessage) => void;
+  /** Clarify-interaction handler, wired by the Discord clarify surface. */
+  private clarifyInteractionHandler?: (raw: DiscordClarifyInteraction) => void;
+  /** Pending interactions awaiting their first ack — keyed by interactionId.
+   *  discord.js's `Interaction` object carries the methods we need (deferUpdate,
+   *  showModal, reply); we hold the live object until the surface acks it. */
+  private readonly pendingInteractions = new Map<string, Interaction>();
   /**
    * Chunk-id ledger so `editMessage` can re-flow multi-chunk responses.
    * Keyed by the primary (first) chunk id, value = ordered list of all
@@ -100,6 +145,8 @@ export class DiscordAdapter implements PlatformAdapter {
   constructor(config: DiscordAdapterConfig) {
     this.token = config.token;
     this.mentionOnly = config.mentionOnly ?? true;
+    this.botKey = config.botKey ?? deriveDefaultBotKey(config.token);
+    this.id = `discord:${this.botKey}`;
 
     this.client = new Client({
       intents: [
@@ -117,6 +164,58 @@ export class DiscordAdapter implements PlatformAdapter {
   // ---------------------------------------------------------------------------
 
   async start(): Promise<void> {
+    // Component / modal interactions for the clarify card. Routed through
+    // the pure handlers in `clarify-interactions.ts`; the adapter just
+    // shapes the discord.js `Interaction` into the typed payload.
+    this.client.on(Events.InteractionCreate, async (interaction: Interaction) => {
+      const handler = this.clarifyInteractionHandler;
+      if (!handler) return;
+      try {
+        if (interaction.isButton()) {
+          const payload: ClarifyButtonPayload = {
+            customId: interaction.customId,
+            userId: interaction.user.id,
+            channelId: interaction.channelId ?? '',
+            messageId: interaction.message.id,
+          };
+          // Only store the interaction AFTER the pure handler accepts it
+          // (calls onEvent). Non-clarify buttons and malformed payloads
+          // never reach onEvent, so nothing leaks.
+          await handleClarifyButton(payload, {
+            onEvent: async (event) => {
+              this.pendingInteractions.set(interaction.id, interaction);
+              handler({
+                event,
+                interactionId: interaction.id,
+                interactionToken: interaction.token,
+              });
+            },
+          });
+        } else if (interaction.isModalSubmit()) {
+          const answer = interaction.fields.getTextInputValue(CLARIFY_MODAL_INPUT_ID)?.trim() ?? '';
+          const payload: ClarifyModalPayload = {
+            customId: interaction.customId,
+            userId: interaction.user.id,
+            channelId: interaction.channelId ?? '',
+            answer,
+          };
+          await handleClarifyModal(payload, {
+            onEvent: async (event) => {
+              this.pendingInteractions.set(interaction.id, interaction);
+              handler({
+                event,
+                interactionId: interaction.id,
+                interactionToken: interaction.token,
+              });
+            },
+          });
+        }
+      } catch {
+        // Discord is the thing we don't control — a malformed payload or
+        // discord.js API drift must not throw inside the event loop.
+      }
+    });
+
     this.client.on(Events.MessageCreate, (message: Message) => {
       if (!this.messageHandler) return;
       if (message.author.bot) return;
@@ -255,5 +354,168 @@ export class DiscordAdapter implements PlatformAdapter {
       ok: this.client.ws.status === 0,
       latencyMs: this.client.ws.ping,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Clarify cards (interactive question/answer)
+  //
+  // Mirrors `SlackAdapter`'s clarify methods. The Discord clarify surface
+  // drives them: post a card with Button components when the agent calls
+  // `clarify`, edit the card in place (components removed) once resolved.
+  // ---------------------------------------------------------------------------
+
+  /** Post the pending clarify card. Returns the message id so the surface
+   *  can later edit it in place to the resolved state. */
+  async postClarifyCard(input: {
+    chatId: string;
+    content: string;
+    components: unknown[];
+  }): Promise<{ messageId: string } | { error: string }> {
+    try {
+      const channel = await this.client.channels.fetch(input.chatId);
+      if (!channel || !('send' in channel)) return { error: 'Channel not found or not sendable' };
+      // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union excludes PartialGroupDM
+      const sent = await (channel as any).send({
+        content: input.content,
+        components: input.components.map(toActionRowBuilder),
+      });
+      return { messageId: String(sent.id) };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Replace the card with its resolved state — components removed. */
+  async updateClarifyCard(input: {
+    chatId: string;
+    messageId: string;
+    content: string;
+    components: unknown[];
+  }): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      const channel = await this.client.channels.fetch(input.chatId);
+      if (!channel || !('messages' in channel)) return { ok: false, error: 'Channel not found' };
+      // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
+      const msg = await (channel as any).messages.fetch(input.messageId);
+      await msg.edit({
+        content: input.content,
+        components: input.components.map(toActionRowBuilder),
+      });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Open the free-form modal via the pending interaction. The interaction
+   *  must be a button click (we use `interaction.showModal`). The interaction
+   *  is removed from `pendingInteractions` once consumed. */
+  async openClarifyModal(input: {
+    interactionId: string;
+    interactionToken: string;
+    modal: ReturnType<typeof clarifyModalPayload>;
+  }): Promise<{ ok: true } | { ok: false; error: string }> {
+    void input.interactionToken; // discord.js looks up via interactionId
+    const pending = this.pendingInteractions.get(input.interactionId);
+    if (!pending || !pending.isButton()) {
+      return { ok: false, error: 'No pending button interaction for this id' };
+    }
+    this.pendingInteractions.delete(input.interactionId);
+    try {
+      const modal = new ModalBuilder()
+        .setCustomId(input.modal.custom_id)
+        .setTitle(input.modal.title);
+      for (const row of input.modal.components) {
+        const arBuilder = new ActionRowBuilder<TextInputBuilder>();
+        for (const el of row.components) {
+          arBuilder.addComponents(
+            new TextInputBuilder()
+              .setCustomId(el.custom_id)
+              .setLabel(el.label)
+              .setStyle(el.style === 1 ? TextInputStyle.Short : TextInputStyle.Paragraph)
+              .setRequired(el.required),
+          );
+        }
+        modal.addComponents(arBuilder);
+      }
+      await pending.showModal(modal);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Acknowledge a button click with `deferUpdate()` (the no-visible-change
+   *  ack discord.js requires within 3s). Drains the pending entry so the
+   *  Interaction object is released. Callers using the open-modal path
+   *  must call `openClarifyModal` INSTEAD of this — `showModal` is the
+   *  first response for that path, and `deferUpdate` consumes the response
+   *  window. */
+  async ackButtonClick(input: { interactionId: string; interactionToken: string }): Promise<void> {
+    void input.interactionToken;
+    const pending = this.pendingInteractions.get(input.interactionId);
+    if (!pending || !pending.isButton()) return;
+    this.pendingInteractions.delete(input.interactionId);
+    try {
+      await pending.deferUpdate();
+    } catch {
+      // Best-effort — Discord rejects double-ack. Swallow.
+    }
+  }
+
+  /** Acknowledge a modal submission. */
+  async ackModalSubmit(input: { interactionId: string; interactionToken: string }): Promise<void> {
+    void input.interactionToken;
+    const pending = this.pendingInteractions.get(input.interactionId);
+    if (!pending || !pending.isModalSubmit()) return;
+    this.pendingInteractions.delete(input.interactionId);
+    try {
+      await pending.deferUpdate();
+    } catch {
+      // Best-effort
+    }
+  }
+
+  /** Register the clarify-interaction handler. Called by the Discord
+   *  clarify surface in its constructor. */
+  onClarifyInteraction(handler: (raw: DiscordClarifyInteraction) => void): void {
+    this.clarifyInteractionHandler = handler;
+  }
+}
+
+/**
+ * Convert a serialized API action row into a discord.js `ActionRowBuilder`.
+ * Used by `postClarifyCard` / `updateClarifyCard` so the pure builders in
+ * `clarify-blocks.ts` don't need to depend on discord.js's class hierarchy.
+ */
+function toActionRowBuilder(row: unknown): ActionRowBuilder<ButtonBuilder> {
+  const r = row as {
+    type: number;
+    components: Array<{ style: number; label: string; custom_id: string }>;
+  };
+  const ar = new ActionRowBuilder<ButtonBuilder>();
+  for (const c of r.components) {
+    ar.addComponents(
+      new ButtonBuilder()
+        .setCustomId(c.custom_id)
+        .setLabel(c.label)
+        .setStyle(buttonStyleFromInt(c.style)),
+    );
+  }
+  return ar;
+}
+
+function buttonStyleFromInt(n: number): ButtonStyle {
+  switch (n) {
+    case 1:
+      return ButtonStyle.Primary;
+    case 2:
+      return ButtonStyle.Secondary;
+    case 3:
+      return ButtonStyle.Success;
+    case 4:
+      return ButtonStyle.Danger;
+    default:
+      return ButtonStyle.Secondary;
   }
 }

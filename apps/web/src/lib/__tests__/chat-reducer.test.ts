@@ -320,6 +320,41 @@ describe('applyEvent — approval flow', () => {
   });
 });
 
+describe('applyEvent — clarify flow', () => {
+  const req = {
+    type: 'clarify.request' as const,
+    requestId: 'clr1',
+    question: 'Which database?',
+    options: ['postgres', 'sqlite'],
+    default: 'postgres',
+    defaultDeadlineAt: '2026-05-15T00:15:00.000Z',
+  };
+
+  it('clarify.request queues the request', () => {
+    const s = applyEvent(initialChatState, req, NOW);
+    expect(s.pendingClarifies).toHaveLength(1);
+    expect(s.pendingClarifies[0]?.requestId).toBe('clr1');
+  });
+
+  it('repeated clarify.request for the same id does NOT duplicate (SSE reconnect)', () => {
+    let s = applyEvent(initialChatState, req, NOW);
+    s = applyEvent(s, req, NOW);
+    expect(s.pendingClarifies).toHaveLength(1);
+  });
+
+  it('clarify.resolved drops the request from the queue', () => {
+    let s = applyEvent(initialChatState, req, NOW);
+    s = applyEvent(s, { type: 'clarify.resolved', requestId: 'clr1', source: 'user' }, NOW);
+    expect(s.pendingClarifies).toHaveLength(0);
+  });
+
+  it('clarify.resolved for an unknown id is a no-op', () => {
+    let s = applyEvent(initialChatState, req, NOW);
+    s = applyEvent(s, { type: 'clarify.resolved', requestId: 'other', source: 'cancel' }, NOW);
+    expect(s.pendingClarifies).toHaveLength(1);
+  });
+});
+
 describe('applyAction — reset', () => {
   it('reset wipes everything for a session change', () => {
     let s: ChatState = initialChatState;

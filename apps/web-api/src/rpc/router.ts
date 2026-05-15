@@ -1,5 +1,6 @@
 import { batchRouter } from './batch';
 import { chatRouter } from './chat';
+import { clarifyRouter } from './clarify';
 import { configRouter } from './config';
 import { cronRouter } from './cron';
 import { evalRouter } from './eval';
@@ -44,6 +45,7 @@ export const apiRouter = {
   config: configRouter,
   onboarding: onboardingRouter,
   tools: toolsRouter,
+  clarify: clarifyRouter,
   cron: cronRouter,
   skills: skillsRouter,
   evolver: evolverRouter,

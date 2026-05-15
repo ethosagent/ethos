@@ -5,7 +5,35 @@ import type {
   OutboundMessage,
   PlatformAdapter,
 } from '@ethosagent/types';
-import { Bot } from 'grammy';
+import { Bot, InlineKeyboard } from 'grammy';
+
+// ---------------------------------------------------------------------------
+// Clarify interactive shapes — used by the Telegram clarify surface to post
+// inline-keyboard prompts and force-reply prompts. Defined here so the
+// surface module depends on a structural shape on the adapter rather than
+// reaching into grammy itself.
+// ---------------------------------------------------------------------------
+
+/** One button in an inline keyboard row. */
+export interface InlineButton {
+  label: string;
+  /** Telegram `callback_data` — must be 1..64 bytes UTF-8. */
+  data: string;
+}
+
+/** Inbound callback-query event surfaced to the clarify surface. */
+export interface CallbackQueryEvent {
+  /** Telegram callback_query id — used to dismiss the spinner. */
+  queryId: string;
+  data: string;
+  chatId: string;
+  /** Message id of the keyboard the user tapped (the prompt). */
+  messageId: string;
+  userId: string | undefined;
+  username: string | undefined;
+  /** Dismiss the loading spinner on the button. Idempotent best-effort. */
+  answer: (text?: string) => Promise<void>;
+}
 
 // First 24 hex chars of sha256(token). Matches the derivation in
 // `apps/ethos/src/config.ts:deriveBotKey` so an adapter constructed
@@ -115,6 +143,8 @@ export class TelegramAdapter implements PlatformAdapter {
   private readonly bot: Bot;
   private readonly dropPendingUpdates: boolean;
   private messageHandler?: (message: InboundMessage) => void;
+  /** Registered by the clarify surface to receive inline-keyboard taps. */
+  private callbackQueryHandler?: (event: CallbackQueryEvent) => void;
   /** Chunk-id ledger so editMessage can re-flow multi-chunk responses. */
   private readonly chunkMap = new Map<string, string[]>();
   private readonly chunkMapMaxEntries = 1024;
@@ -163,6 +193,29 @@ export class TelegramAdapter implements PlatformAdapter {
       this.messageHandler(msg);
     });
 
+    // Inline-keyboard taps arrive as `callback_query` updates — a separate
+    // channel from `message`. The clarify surface registers via
+    // `onCallbackQuery()`; we surface only the minimal envelope it needs so
+    // it doesn't depend on grammy directly.
+    this.bot.on('callback_query:data', (ctx) => {
+      if (!this.callbackQueryHandler) return;
+      const cq = ctx.callbackQuery;
+      const messageId = cq.message?.message_id;
+      const chatId = cq.message?.chat?.id;
+      if (messageId === undefined || chatId === undefined) return;
+      this.callbackQueryHandler({
+        queryId: cq.id,
+        data: cq.data,
+        chatId: String(chatId),
+        messageId: String(messageId),
+        userId: cq.from ? String(cq.from.id) : undefined,
+        username: cq.from?.username,
+        answer: async (text) => {
+          await ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {});
+        },
+      });
+    });
+
     // Non-blocking: bot.start() runs the polling loop in the background.
     // grammy's start() rejects on init failure (e.g. invalid token → getMe 404)
     // and on terminal polling errors. Without a .catch() the rejection becomes
@@ -181,6 +234,15 @@ export class TelegramAdapter implements PlatformAdapter {
 
   onMessage(handler: (message: InboundMessage) => void): void {
     this.messageHandler = handler;
+  }
+
+  /**
+   * Register a handler for inline-keyboard taps (callback queries). Used by
+   * the Telegram clarify surface to receive button clicks; not part of the
+   * cross-platform `PlatformAdapter` contract.
+   */
+  onCallbackQuery(handler: (event: CallbackQueryEvent) => void): void {
+    this.callbackQueryHandler = handler;
   }
 
   // ---------------------------------------------------------------------------
@@ -271,6 +333,72 @@ export class TelegramAdapter implements PlatformAdapter {
       return { ok: true, latencyMs: Date.now() - start };
     } catch {
       return { ok: false };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Clarify interactive sends — used by the Telegram clarify surface. Not on
+  // the cross-platform `PlatformAdapter` contract; the surface treats the
+  // adapter structurally.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Send a message with an inline keyboard. `rows` is row-major: each inner
+   * array is one row of buttons. Returns the message id so the surface can
+   * later edit it in place to the resolved state.
+   */
+  async sendInlineKeyboard(
+    chatId: string,
+    text: string,
+    rows: InlineButton[][],
+  ): Promise<DeliveryResult> {
+    try {
+      const kb = new InlineKeyboard();
+      for (let r = 0; r < rows.length; r++) {
+        const row = rows[r];
+        if (!row) continue;
+        for (const btn of row) kb.text(btn.label, btn.data);
+        if (r < rows.length - 1) kb.row();
+      }
+      const sent = await this.bot.api.sendMessage(Number(chatId), text, {
+        reply_markup: kb,
+      });
+      return { ok: true, messageId: String(sent.message_id) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * Send a force-reply prompt. Telegram clients auto-open the user's keyboard
+   * with a "Replying to..." indicator; the inbound reply's `replyToId` is the
+   * id returned here, which the surface uses to correlate.
+   */
+  async sendForceReply(chatId: string, text: string): Promise<DeliveryResult> {
+    try {
+      const sent = await this.bot.api.sendMessage(Number(chatId), text, {
+        reply_markup: { force_reply: true, selective: true },
+      });
+      return { ok: true, messageId: String(sent.message_id) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * Edit a previously-sent prompt to a plain-text resolved state, stripping
+   * any inline keyboard. Used when a clarify is answered, times out, or is
+   * cancelled — the buttons go away and the message reads e.g.
+   * "Which database? → postgres".
+   */
+  async editToPlainText(chatId: string, messageId: string, text: string): Promise<DeliveryResult> {
+    try {
+      await this.bot.api.editMessageText(Number(chatId), Number(messageId), text, {
+        reply_markup: { inline_keyboard: [] },
+      });
+      return { ok: true, messageId };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 }

@@ -32,6 +32,7 @@ import type {
   ToolRegistry,
   ToolResult,
 } from '@ethosagent/types';
+import type { ClarifyBridge } from './clarify/clarify-bridge';
 import { DefaultContextEngineRegistry } from './context-engines/registry';
 import { estimateMessagesTokens, estimateTokens } from './context-engines/token-estimator';
 
@@ -175,6 +176,12 @@ export interface AgentLoopConfig {
    * `drop_oldest` with a one-line warning.
    */
   contextEngines?: ContextEngineRegistry;
+  /**
+   * Bridge for the `clarify` tool — the agent asks the user a structured
+   * question mid-turn and waits. Optional: when unset, the `clarify` tool
+   * reports `CLARIFY_NO_SURFACE` and the agent falls back to plain prose.
+   */
+  clarifyBridge?: ClarifyBridge;
   options?: {
     maxIterations?: number;
     historyLimit?: number;
@@ -258,6 +265,8 @@ export class AgentLoop {
   private readonly injectionClassifier?: InjectionClassifier;
   private readonly watcher?: import('@ethosagent/safety-watcher').Watcher;
   private readonly contextEngines: ContextEngineRegistry;
+  /** Bridge for the `clarify` tool; undefined when no interactive surface is wired. */
+  readonly clarifyBridge?: ClarifyBridge;
   /** Phase 3 — team id stamped onto ToolContext when loop runs inside a team. */
   private readonly teamId?: string;
   /** Per-session accumulated spend in USD. Keyed by sessionKey. Reset via resetSessionCost(). */
@@ -292,7 +301,17 @@ export class AgentLoop {
     if (config.teamId) this.teamId = config.teamId;
     if (config.injectionClassifier) this.injectionClassifier = config.injectionClassifier;
     if (config.watcher) this.watcher = config.watcher;
+    if (config.clarifyBridge) this.clarifyBridge = config.clarifyBridge;
     this.contextEngines = config.contextEngines ?? new DefaultContextEngineRegistry();
+  }
+
+  /**
+   * Resolve a pending clarify request — called by an interactive surface when
+   * the user answers or cancels. No-op when no clarify bridge is wired or the
+   * request id is unknown (already resolved / timed out).
+   */
+  async respondToClarify(response: import('@ethosagent/types').ClarifyResponse): Promise<void> {
+    await this.clarifyBridge?.respond(response);
   }
 
   /** Returns all available tools for inventory display (e.g. TUI splash screen). */

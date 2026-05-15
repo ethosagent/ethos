@@ -1,5 +1,15 @@
 export type { AgentEvent, AgentLoopConfig, RunOptions } from './agent-loop';
 export { AgentLoop } from './agent-loop';
+export {
+  ClarifyBridge,
+  ClarifyBusyError,
+  ClarifyNoSurfaceError,
+  type ClarifyPresenter,
+  type ClarifyRequestInput,
+  type ClarifyResolvedListener,
+  ClarifyTimedOutNoDefaultError,
+} from './clarify/clarify-bridge';
+export { FileClarifyStore } from './clarify/file-clarify-store';
 export { DropOldestEngine } from './context-engines/drop-oldest';
 export { ReferencePreservingEngine } from './context-engines/reference-preserving';
 export {

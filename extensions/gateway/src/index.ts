@@ -4,9 +4,10 @@ import {
   checkMessage,
   consumeAndAllow,
   getApprovedSenders,
+  isSenderAllowed,
   revokeApproval,
 } from '@ethosagent/safety-channel';
-import type { InboundMessage, PlatformAdapter } from '@ethosagent/types';
+import type { ClarifyResponse, InboundMessage, PlatformAdapter } from '@ethosagent/types';
 import type Database from 'better-sqlite3';
 import { MessageDedupCache } from './dedup';
 
@@ -217,6 +218,23 @@ export interface GatewayConfig {
     userId: string,
     action: 'add' | 'remove',
   ) => void | Promise<void>;
+  /**
+   * Optional inbound correlator for the clarify protocol. Runs BEFORE the
+   * channel safety filter on every inbound message; when it returns a
+   * `ClarifyResponse`, the gateway resolves the pending clarify on the
+   * routed bot's `loop.clarifyBridge` and stops further processing (the
+   * message was a force-reply / `/cancel`, not a fresh prompt to the agent).
+   * Wired by `gateway.ts` from the per-bot `TelegramClarifySurface`'s
+   * `correlateMessage`. See plan/phases/tool_clarity_plan.md Surface 4.
+   */
+  clarifyMessageCorrelator?: (message: InboundMessage) => Promise<ClarifyResponse | null>;
+  /**
+   * How often (ms) to run the clarify sweep across all bots' bridges. The
+   * sweep clears persisted rows whose deadline has passed and notifies
+   * surfaces so they can edit timed-out prompts in place. Defaults to 30s
+   * per plan. Set to 0 to disable (tests).
+   */
+  clarifySweepIntervalMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +323,12 @@ export class Gateway {
    */
   private readonly sessionIdByKey = new Map<string, string>();
   private readonly maxChats: number;
+  /** Optional clarify correlator — see GatewayConfig.clarifyMessageCorrelator. */
+  private readonly clarifyCorrelator:
+    | ((message: InboundMessage) => Promise<ClarifyResponse | null>)
+    | undefined;
+  /** Live timer running the periodic clarify sweep, cleared on shutdown. */
+  private clarifySweepTimer: ReturnType<typeof setInterval> | undefined;
   /** Chapter 1 safety: per-platform sender allowlist + pairing config. */
   private readonly channelFilter: ChannelFilterConfig | undefined;
   /** SQLite DB for pairing codes. */
@@ -378,6 +402,22 @@ export class Gateway {
     this.pairingDb = config.pairingDb;
     this.observability = config.observability;
     this.onAllowlistChange = config.onAllowlistChange;
+    this.clarifyCorrelator = config.clarifyMessageCorrelator;
+
+    // Clarify sweep — fires on a single timer for all bots' bridges so a
+    // multi-bot deployment doesn't pile up N timers. Each bridge owns its own
+    // expiry logic; we just tick them in parallel.
+    const sweepMs = config.clarifySweepIntervalMs ?? 30_000;
+    const bridges = botEntries
+      .map((b) => b.loop.clarifyBridge)
+      .filter((b): b is NonNullable<typeof b> => b !== undefined);
+    if (sweepMs > 0 && bridges.length > 0) {
+      this.clarifySweepTimer = setInterval(() => {
+        void Promise.all(bridges.map((b) => b.sweep())).catch(() => {});
+      }, sweepMs);
+      // `unref()` lets the process exit when only the sweep timer remains.
+      this.clarifySweepTimer.unref?.();
+    }
 
     // Seed in-memory allowlists from DB-persisted approved senders
     if (config.pairingDb && config.channelFilter) {
@@ -428,6 +468,26 @@ export class Gateway {
     // doesn't accidentally cross-dedupe.
     const dedupBotKey = message.botKey ?? this.defaultBotKey ?? '';
     if (this.isDuplicate(message, dedupBotKey)) return;
+
+    // --- Clarify correlator: short-circuit force-reply + `/cancel` ---
+    // Runs BEFORE the safety filter's mention gate so an approved sender's
+    // force-reply isn't treated as a fresh agent prompt (the agent is
+    // already paused inside `clarify()` waiting on this answer). But we
+    // still gate on the *allowlist* portion of the safety filter — a
+    // non-allowlisted sender in a group chat must NOT be able to resolve
+    // the bot's pending clarify (that would be an authentication bypass,
+    // not just a routing shortcut).
+    if (this.clarifyCorrelator) {
+      const platformCfg = this.channelFilter?.[message.platform];
+      if (isSenderAllowed(message, platformCfg)) {
+        const resp = await this.clarifyCorrelator(message).catch(() => null);
+        if (resp) {
+          const bot = this.bots.get(dedupBotKey);
+          await bot?.loop.clarifyBridge?.respond(resp);
+          return;
+        }
+      }
+    }
 
     // --- Chapter 1: before_inbound channel safety filter ---
     if (this.channelFilter) {
@@ -916,6 +976,10 @@ export class Gateway {
         sends.push(ctx.adapter.send(ctx.chatId, { text: opts.notify }).catch(() => {}));
       }
       await Promise.allSettled(sends);
+    }
+    if (this.clarifySweepTimer) {
+      clearInterval(this.clarifySweepTimer);
+      this.clarifySweepTimer = undefined;
     }
     for (const lane of this.lanes.values()) {
       lane.abort();

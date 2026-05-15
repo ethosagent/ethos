@@ -23,10 +23,19 @@
       "@ethosagent/gateway": ["./extensions/gateway/src"],
       "@ethosagent/platform-discord": ["./extensions/platform-discord/src"],
       "@ethosagent/platform-discord/validate": ["./extensions/platform-discord/src/validate"],
+      "@ethosagent/platform-discord/clarify-surface": [
+        "./extensions/platform-discord/src/clarify-surface"
+      ],
       "@ethosagent/platform-slack": ["./extensions/platform-slack/src"],
       "@ethosagent/platform-slack/validate": ["./extensions/platform-slack/src/validate"],
+      "@ethosagent/platform-slack/clarify-surface": [
+        "./extensions/platform-slack/src/clarify-surface"
+      ],
       "@ethosagent/platform-telegram": ["./extensions/platform-telegram/src"],
       "@ethosagent/platform-telegram/validate": ["./extensions/platform-telegram/src/validate"],
+      "@ethosagent/platform-telegram/clarify-surface": [
+        "./extensions/platform-telegram/src/clarify-surface"
+      ],
       "@ethosagent/openclaw-compat": ["./extensions/openclaw-compat/src"],
       "@ethosagent/skills": ["./extensions/skills/src"],
       "@ethosagent/skills-coding": ["./extensions/skills-coding/src"],
@@ -36,6 +45,7 @@
       "@ethosagent/tools-delegation": ["./extensions/tools-delegation/src"],
       "@ethosagent/tools-memory": ["./extensions/tools-memory/src"],
       "@ethosagent/tools-todo": ["./extensions/tools-todo/src"],
+      "@ethosagent/tools-interactive": ["./extensions/tools-interactive/src"],
       "@ethosagent/plugin-sdk": ["./packages/plugin-sdk/src"],
       "@ethosagent/plugin-sdk/tool-helpers": ["./packages/plugin-sdk/src/tool-helpers"],
       "@ethosagent/plugin-sdk/testing": ["./packages/plugin-sdk/src/testing"],
