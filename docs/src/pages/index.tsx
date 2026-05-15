@@ -5,7 +5,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import PersonalityShowcase from '../components/PersonalityShowcase';
 import styles from './index.module.css';
 
-const HERO_TITLE_WORDS = ['Personality', 'is', 'architecture.'];
+const HERO_TITLE_WORDS = ['Stop', 'asking', 'one', 'agent', 'to', 'do', 'everything.'];
 
 const doors = [
   {
@@ -44,9 +44,9 @@ function Hero() {
           ))}
         </h1>
         <p className={styles.heroSubtitle}>
-          A personality is a directory of three files — <code>ETHOS.md</code>,{' '}
-          <code>config.yaml</code>, <code>toolset.yaml</code>. Switching it atomically changes
-          prompt, tool access, memory scope, and model. Five ship by default.
+          General-purpose AI is fine for small talk, mediocre at real work. Ethos gives you a team
+          of specialists — researcher, engineer, reviewer, coach, operator — each good at its one
+          job. Same conversation across Slack, Telegram, and your terminal.
         </p>
         <div className={styles.heroActions}>
           <Link className={styles.btnPrimary} to="/docs/using/quickstart">
@@ -194,8 +194,8 @@ function Compat() {
 export default function Home(): ReactNode {
   return (
     <Layout
-      title="Personality is architecture"
-      description="Ethos is a TypeScript agent framework where personality is architecture — a directory of files that changes prompt, tools, memory, and model atomically."
+      title="Stop asking one agent to do everything"
+      description="A team of AI specialists — researcher, engineer, reviewer, coach, operator — instead of one general-purpose AI. Across Slack, Telegram, and your terminal."
     >
       <Hero />
       <TwoDoors />
