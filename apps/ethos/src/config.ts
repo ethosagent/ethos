@@ -155,6 +155,21 @@ export interface AuxiliaryVisionConfig {
 }
 
 /**
+ * Remote model catalog configuration. Controls how Ethos fetches and caches
+ * the centralized model metadata catalog (capabilities, context windows, pricing).
+ */
+export interface ModelCatalogConfig {
+  /** Whether remote catalog fetching is enabled. Default true. */
+  enabled?: boolean;
+  /** URL of the catalog JSON endpoint. Default: https://ethos-agent.ai/api/model-catalog.json */
+  url?: string;
+  /** Cache TTL in hours. Default: 24. */
+  ttlHours?: number;
+  /** Per-provider URL overrides for catalog endpoints. */
+  providers?: Record<string, { url: string }>;
+}
+
+/**
  * On-disk schema version for `~/.ethos/config.yaml`. Bump on a breaking
  * field rename, type change, or required-field addition; do NOT bump on
  * additive optional fields. The loader uses this to drive migrations in
@@ -355,6 +370,16 @@ export interface EthosConfig {
     compression?: AuxiliaryCompressionConfig;
     vision?: AuxiliaryVisionConfig;
   };
+  /**
+   * Remote model catalog configuration. Controls how Ethos fetches and caches
+   * the centralized model metadata catalog (capabilities, context windows, pricing).
+   * Config keys:
+   *   modelCatalog.enabled: false
+   *   modelCatalog.url: https://custom.example.com/catalog.json
+   *   modelCatalog.ttlHours: 12
+   *   modelCatalog.providers.<id>.url: https://internal.example.com/anthropic.json
+   */
+  modelCatalog?: ModelCatalogConfig;
 }
 
 export function ethosDir(): string {
@@ -524,6 +549,17 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
     if (v.apiKey) lines.push(`auxiliary.vision.apiKey: ${v.apiKey}`);
     if (v.baseUrl) lines.push(`auxiliary.vision.baseUrl: ${v.baseUrl}`);
   }
+  if (config.modelCatalog) {
+    if (config.modelCatalog.enabled === false) lines.push('modelCatalog.enabled: false');
+    if (config.modelCatalog.url) lines.push(`modelCatalog.url: ${config.modelCatalog.url}`);
+    if (config.modelCatalog.ttlHours !== undefined)
+      lines.push(`modelCatalog.ttlHours: ${config.modelCatalog.ttlHours}`);
+    if (config.modelCatalog.providers) {
+      for (const [id, p] of Object.entries(config.modelCatalog.providers)) {
+        lines.push(`modelCatalog.providers.${id}.url: ${p.url}`);
+      }
+    }
+  }
   await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`);
 }
 
@@ -606,6 +642,8 @@ function parseConfigYaml(src: string): EthosConfig {
   const backgroundKv: Record<string, string> = {};
   const auxiliaryCompressionKv: Record<string, string> = {};
   const auxiliaryVisionKv: Record<string, string> = {};
+  const modelCatalogKv: Record<string, string> = {};
+  const modelCatalogProvidersKv: Record<string, Record<string, string>> = {};
   // Indexed list shapes: telegram.bots.<n>.<field> and slack.apps.<n>.<field>,
   // plus their nested `.bind.<field>` sub-keys. Per-team config keyed by name.
   const telegramBotsKv: Record<number, Record<string, string>> = {};
@@ -710,6 +748,20 @@ function parseConfigYaml(src: string): EthosConfig {
       auxiliaryVisionKv[auxv[1]] = auxv[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // modelCatalog.providers.<id>.url: <value>
+    const mcp = line.match(/^modelCatalog\.providers\.([^.]+)\.(\S+):\s*(.+)$/);
+    if (mcp) {
+      const providerId = mcp[1];
+      modelCatalogProvidersKv[providerId] ??= {};
+      modelCatalogProvidersKv[providerId][mcp[2]] = mcp[3].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // modelCatalog.<field>: <value>
+    const mc = line.match(/^modelCatalog\.(\w+):\s*(.+)$/);
+    if (mc) {
+      modelCatalogKv[mc[1]] = mc[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     // modelRouting.<personality>: <model>
     const mr = line.match(/^modelRouting\.(\S+):\s*(.+)$/);
     if (mr) {
@@ -786,6 +838,25 @@ function parseConfigYaml(src: string): EthosConfig {
         ...(auxiliaryVisionKv.baseUrl ? { baseUrl: auxiliaryVisionKv.baseUrl } : {}),
       }
     : undefined;
+  const modelCatalogProviders: Record<string, { url: string }> | undefined =
+    Object.keys(modelCatalogProvidersKv).length > 0
+      ? Object.fromEntries(
+          Object.entries(modelCatalogProvidersKv)
+            .filter(([, v]) => v.url)
+            .map(([id, v]) => [id, { url: v.url }]),
+        )
+      : undefined;
+  const modelCatalog: ModelCatalogConfig | undefined =
+    Object.keys(modelCatalogKv).length > 0 || modelCatalogProviders
+      ? {
+          ...(modelCatalogKv.enabled !== undefined
+            ? { enabled: modelCatalogKv.enabled === 'true' }
+            : {}),
+          ...(modelCatalogKv.url ? { url: modelCatalogKv.url } : {}),
+          ...(modelCatalogKv.ttlHours ? { ttlHours: Number(modelCatalogKv.ttlHours) } : {}),
+          ...(modelCatalogProviders ? { providers: modelCatalogProviders } : {}),
+        }
+      : undefined;
   const telegramResult = buildTelegramBots(telegramBotsKv);
   const slackResult = buildSlackApps(slackAppsKv);
   const teams = buildTeamsConfig(teamsKv);
@@ -848,6 +919,7 @@ function parseConfigYaml(src: string): EthosConfig {
             ...(auxiliaryVision ? { vision: auxiliaryVision } : {}),
           }
         : undefined,
+    modelCatalog,
   };
   // Stash parse errors so the strict loader can surface them at boot.
   // readRawConfig (used by CLI commands that don't gateway-boot) ignores them

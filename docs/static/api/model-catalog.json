@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "updatedAt": "2026-05-15T06:57:28.778Z",
+  "providers": {
+    "anthropic": {
+      "models": [
+        {
+          "id": "claude-opus-4-7",
+          "label": "most capable",
+          "contextWindow": 200000
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "label": "fast, balanced",
+          "contextWindow": 200000,
+          "default": true
+        },
+        {
+          "id": "claude-haiku-4-5-20251001",
+          "label": "cheapest, fast",
+          "contextWindow": 200000
+        }
+      ]
+    },
+    "openai-compat": {
+      "models": [
+        {
+          "id": "gpt-4o",
+          "label": "most capable",
+          "contextWindow": 128000,
+          "default": true
+        },
+        {
+          "id": "gpt-4o-mini",
+          "label": "fast, cheap",
+          "contextWindow": 128000
+        },
+        {
+          "id": "o1",
+          "label": "reasoning",
+          "contextWindow": 200000
+        },
+        {
+          "id": "anthropic/claude-sonnet-4-6",
+          "label": "Claude Sonnet (OR)",
+          "contextWindow": 200000,
+          "default": true
+        },
+        {
+          "id": "anthropic/claude-opus-4-7",
+          "label": "Claude Opus (OR)",
+          "contextWindow": 200000
+        },
+        {
+          "id": "google/gemini-2.5-pro",
+          "label": "Gemini 2.5 Pro (OR)",
+          "contextWindow": 1000000
+        },
+        {
+          "id": "moonshotai/kimi-k2.6",
+          "label": "Kimi K2 (OR)",
+          "contextWindow": 131072
+        }
+      ]
+    },
+    "azure": {
+      "models": [
+        {
+          "id": "gpt-5.4",
+          "label": "frontier, complex work",
+          "contextWindow": 200000,
+          "default": true
+        },
+        {
+          "id": "gpt-5.4-pro",
+          "label": "most capable frontier",
+          "contextWindow": 200000
+        },
+        {
+          "id": "gpt-5.4-mini",
+          "label": "compact, cost-efficient",
+          "contextWindow": 128000
+        },
+        {
+          "id": "gpt-5.4-nano",
+          "label": "ultra-efficient at scale",
+          "contextWindow": 128000
+        },
+        {
+          "id": "claude-opus-4-6",
+          "label": "Claude Opus on Azure",
+          "contextWindow": 1000000
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "label": "Claude Sonnet on Azure",
+          "contextWindow": 1000000
+        },
+        {
+          "id": "DeepSeek-V4-Pro",
+          "label": "reasoning MoE",
+          "contextWindow": 1000000
+        }
+      ]
+    }
+  }
+}

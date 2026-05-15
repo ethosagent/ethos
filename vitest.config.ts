@@ -25,6 +25,7 @@ export default defineConfig({
   test: {
     include: [
       'packages/*/src/**/*.test.ts',
+      'packages/*/scripts/**/*.test.ts',
       'packages/safety/*/src/**/*.test.ts',
       'extensions/*/src/**/*.test.ts',
       'apps/*/src/**/*.test.ts',
