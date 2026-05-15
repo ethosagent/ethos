@@ -15,7 +15,11 @@ function makeProvider(name: string, available: boolean, supports = true): ImageG
     name,
     isAvailable: vi.fn().mockReturnValue(available),
     supports: vi.fn().mockReturnValue(supports),
-    generate: vi.fn().mockResolvedValue({ buffer: Buffer.from('fake'), cost_usd: 0.04 }),
+    generate: vi.fn().mockResolvedValue({
+      buffer: Buffer.from('fake'),
+      cost_usd: 0.04,
+      prompt_used: 'the prompt that was used',
+    }),
   };
 }
 
@@ -114,7 +118,21 @@ describe('image_generate', () => {
 
   it('has correct toolset and maxResultChars', () => {
     expect(imageGenerateTool.toolset).toBe('image');
-    expect(imageGenerateTool.maxResultChars).toBe(2_000);
+    expect(imageGenerateTool.maxResultChars).toBe(1_000);
+  });
+
+  it('returns INVALID_SIZE_FOR_PROVIDER when provider does not support size/quality', async () => {
+    process.env.OPENAI_API_KEY = 'test-key';
+    // DALL-E 3 doesn't support 512x512 at all
+    const result = await imageGenerateTool.execute(
+      { prompt: 'a cat', size: '512x512', quality: 'standard' },
+      ctx,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('INVALID_SIZE_FOR_PROVIDER');
+      expect(result.code).toBe('input_invalid');
+    }
   });
 });
 

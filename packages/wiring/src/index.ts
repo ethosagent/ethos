@@ -379,7 +379,10 @@ export async function createAgentLoop(
     for (const tool of createKanbanTools({ store: kanbanStore, hooks })) tools.register(tool);
   }
   for (const tool of createProcessTools(dataDir)) tools.register(tool);
-  for (const tool of createImageTools()) tools.register(tool);
+  for (const tool of createImageTools({
+    openaiApiKey: config.provider === 'openai' ? config.apiKey : undefined,
+  }))
+    tools.register(tool);
   if (!opts.disableDocker) {
     for (const tool of createCodeTools(sandbox)) tools.register(tool);
     for (const tool of createBrowserTools({

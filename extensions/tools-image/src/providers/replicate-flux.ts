@@ -1,10 +1,10 @@
-import type { ImageGenProvider } from './types';
+import type { GenerateOpts, GenerateResult, ImageGenProvider } from './types';
 
 const REPLICATE_API_BASE = 'https://api.replicate.com/v1';
 const FLUX_MODEL = 'black-forest-labs/flux-schnell';
 const COST_PER_IMAGE = 0.003;
 const POLL_INTERVAL_MS = 1_000;
-const POLL_TIMEOUT_MS = 120_000;
+const POLL_TIMEOUT_MS = 30_000;
 
 function parseSize(size: string): { width: number; height: number } {
   const [w, h] = size.split('x').map(Number);
@@ -13,9 +13,14 @@ function parseSize(size: string): { width: number; height: number } {
 
 export class ReplicateFluxProvider implements ImageGenProvider {
   readonly name = 'replicate-flux';
+  private readonly apiKey: string | undefined;
+
+  constructor(opts?: { apiKey?: string }) {
+    this.apiKey = opts?.apiKey;
+  }
 
   isAvailable(): boolean {
-    return Boolean(process.env.REPLICATE_API_TOKEN);
+    return Boolean(this.apiKey || process.env.REPLICATE_API_TOKEN);
   }
 
   // Flux doesn't have hd/standard — supports all sizes
@@ -23,12 +28,8 @@ export class ReplicateFluxProvider implements ImageGenProvider {
     return true;
   }
 
-  async generate(opts: {
-    prompt: string;
-    size: string;
-    quality: string;
-  }): Promise<{ buffer: Buffer; cost_usd: number }> {
-    const token = process.env.REPLICATE_API_TOKEN;
+  async generate(opts: GenerateOpts): Promise<GenerateResult> {
+    const token = this.apiKey || process.env.REPLICATE_API_TOKEN;
     if (!token) throw new Error('REPLICATE_API_TOKEN not set');
 
     const { width, height } = parseSize(opts.size);
@@ -58,9 +59,13 @@ export class ReplicateFluxProvider implements ImageGenProvider {
       urls?: { get: string };
     };
 
-    const deadline = Date.now() + POLL_TIMEOUT_MS;
+    const startTime = Date.now();
+    const deadline = startTime + POLL_TIMEOUT_MS;
     while (prediction.status !== 'succeeded' && prediction.status !== 'failed') {
       if (Date.now() > deadline) throw new Error('Replicate prediction timed out');
+
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      opts.onProgress?.(`generating (Flux polling: ${elapsed}s)`);
 
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
 
@@ -90,6 +95,10 @@ export class ReplicateFluxProvider implements ImageGenProvider {
     if (!imgRes.ok) throw new Error(`Failed to download image: ${imgRes.status}`);
 
     const arrayBuffer = await imgRes.arrayBuffer();
-    return { buffer: Buffer.from(arrayBuffer), cost_usd: COST_PER_IMAGE };
+    return {
+      buffer: Buffer.from(arrayBuffer),
+      cost_usd: COST_PER_IMAGE,
+      prompt_used: opts.prompt,
+    };
   }
 }
