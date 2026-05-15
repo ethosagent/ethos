@@ -26,6 +26,7 @@ import {
   dispatch as dispatchSlash,
   type KanbanReader,
   type MemoryReader,
+  type PersonalityCardReader,
   type SlashCommandPayload,
 } from './commands';
 import type { Binding, ChannelMode } from './config';
@@ -114,6 +115,8 @@ export interface SlackAdapterConfig {
   memory?: MemoryReader;
   /** Optional kanban reader for `/ethos kanban list` (team bots only). */
   kanban?: KanbanReader;
+  /** Optional character-sheet reader for `/ethos personality rich`. */
+  personalityCard?: PersonalityCardReader;
   /** Optional session reader for the App Home "Recent sessions" section. */
   session?: SessionReader;
   /** Ethos web UI origin (no trailing slash). When set, App Home session rows
@@ -179,6 +182,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   private readonly threadState: ThreadStateStore | undefined;
   private readonly memory: MemoryReader | undefined;
   private readonly kanban: KanbanReader | undefined;
+  private readonly personalityCard: PersonalityCardReader | undefined;
   private readonly session: SessionReader | undefined;
   private readonly sessionUnfurl: SessionUnfurlReader | undefined;
   private readonly kanbanUnfurl: KanbanUnfurlReader | undefined;
@@ -213,6 +217,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     this.storage = config.storage;
     this.memory = config.memory;
     this.kanban = config.kanban;
+    this.personalityCard = config.personalityCard;
     this.session = config.session;
     this.sessionUnfurl = config.sessionUnfurl;
     this.kanbanUnfurl = config.kanbanUnfurl;
@@ -293,6 +298,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
         channelOverrides: this.channelOverrides,
         memory: this.memory,
         kanban: this.kanban,
+        personalityCard: this.personalityCard,
         storage: this.storage,
         submitAgentTurn: this.makeAskSubmitter(),
       });

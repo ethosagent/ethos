@@ -7,7 +7,11 @@ import {
 import { helpBlocks } from '../blocks/help';
 import { kanbanListBlocks } from '../blocks/kanban';
 import { memoryAddedBlocks, memoryShowBlocks } from '../blocks/memory';
-import { personalityBlocks } from '../blocks/personality';
+import {
+  type PersonalityCard,
+  personalityBlocks,
+  personalityRichBlocks,
+} from '../blocks/personality';
 import { divider, header, plaintextFallback, section } from '../blocks/shared';
 
 describe('blocks/shared', () => {
@@ -61,6 +65,46 @@ describe('blocks/personality', () => {
     const blocks = personalityBlocks({ type: 'team', name: 'eng' });
     expect(plaintextFallback(blocks)).toContain('team coordinator');
     expect(plaintextFallback(blocks)).toContain('eng');
+  });
+
+  const richCard: PersonalityCard = {
+    id: 'engineer',
+    name: 'Engineer',
+    description: 'Writes and ships code.',
+    prose: 'I think in tradeoffs.',
+    model: 'claude-opus-4-7',
+    provider: 'anthropic',
+    toolset: ['read_file', 'bash'],
+    skills: [
+      { id: 'code-review', source: 'personality' },
+      { id: 'git-workflow', source: 'global' },
+    ],
+  };
+
+  it('renders the rich card with identity, tools, and resolved skills', () => {
+    const text = plaintextFallback(personalityRichBlocks(richCard));
+    expect(text).toContain('Engineer');
+    expect(text).toContain('I think in tradeoffs.');
+    expect(text).toContain('2 tools');
+    expect(text).toContain('read_file · bash');
+    expect(text).toContain('2 skills');
+    expect(text).toContain('code-review');
+    expect(text).toContain('(global)');
+  });
+
+  it('renders honest empty states for a tool-less, skill-less personality', () => {
+    const text = plaintextFallback(personalityRichBlocks({ ...richCard, toolset: [], skills: [] }));
+    expect(text).toContain('0 tools');
+    expect(text).toContain('can only converse');
+    expect(text).toContain('0 skills');
+    expect(text).toContain('No skills resolved');
+  });
+
+  it('omits filesystem reach, MCP servers, and plugins (recon-sensitive)', () => {
+    const text = plaintextFallback(personalityRichBlocks(richCard));
+    expect(text).not.toContain('Filesystem');
+    expect(text).not.toContain('MCP');
+    expect(text).not.toContain('Plugins');
   });
 });
 

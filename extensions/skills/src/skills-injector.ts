@@ -7,6 +7,7 @@ import type {
   PersonalityConfig,
   PersonalityRegistry,
   PromptContext,
+  Skill,
   Storage,
 } from '@ethosagent/types';
 import { filterSkill, warnMissingAllowList } from './ingest-filter';
@@ -44,6 +45,17 @@ export interface SkillsInjectorOptions {
   scanner?: import('./universal-scanner').UniversalScanner;
 }
 
+/**
+ * A skill admitted into a personality's effective set, before any prompt
+ * content is built. `personality` skills carry their on-disk `filePath`;
+ * `global` skills carry the parsed `Skill` from the universal scanner.
+ * Produced by `SkillsInjector.resolveSkills` — the single eligibility
+ * decision both `inject()` and read-only surfaces consume.
+ */
+export type ResolvedSkill =
+  | { id: string; source: 'personality'; filePath: string }
+  | { id: string; source: 'global'; skill: Skill };
+
 export class SkillsInjector implements ContextInjector {
   readonly id = 'skills';
   readonly priority = 100;
@@ -69,30 +81,41 @@ export class SkillsInjector implements ContextInjector {
     this.scanner = opts.scanner ?? new UniversalScanner({ storage: this.storage });
   }
 
-  async inject(ctx: PromptContext): Promise<InjectionResult | null> {
-    const personality = ctx.personalityId
-      ? (this.personalities.get(ctx.personalityId) ?? this.personalities.getDefault())
+  /**
+   * Resolve the skill set visible to a personality WITHOUT building prompt
+   * content — the eligibility decision only. Two sources:
+   *   1. Per-personality `skills/` dirs — always included (OpenClaw
+   *      `requires`/`os` rules still apply).
+   *   2. Global pool — filtered through `filterSkill` + OpenClaw rules.
+   *
+   * `inject()` consumes this so "which skills does personality P see" lives
+   * in exactly one place. Read-only surfaces that need the list but not the
+   * prompt content (e.g. the Slack `/ethos personality rich` card) call it
+   * directly.
+   */
+  async resolveSkills(personalityId: string | undefined): Promise<ResolvedSkill[]> {
+    const personality = personalityId
+      ? (this.personalities.get(personalityId) ?? this.personalities.getDefault())
       : this.personalities.getDefault();
 
-    const sections: string[] = [];
-    const fileNames: string[] = [];
-    let totalChars = 0;
-    const budget = this.maxInjectionChars;
-
-    function addSection(content: string, name: string): boolean {
-      if (budget > 0 && totalChars + content.length > budget) return false;
-      sections.push(content);
-      fileNames.push(name);
-      totalChars += content.length;
-      return true;
-    }
+    const resolved: ResolvedSkill[] = [];
 
     // 1. Per-personality skills/ dirs — always loaded unfiltered (hand-curated library)
     const perPersonalityDirs = personality.skillsDirs ?? [];
     for (const dir of perPersonalityDirs) {
-      const loaded = await this.loadSkillsFromDir(dir, ctx);
-      for (const { content, fileName } of loaded) {
-        addSection(content, fileName);
+      for (const filePath of await this.discoverSkillFiles(dir)) {
+        const raw = await this.readCached(filePath);
+        if (!raw) continue;
+        const skillId = this.skillIdFor(filePath, dir);
+        const parsed = parseSkillFrontmatter(raw);
+        if (parsed) {
+          const verdict = shouldInject(parsed.openclaw, {});
+          if (!verdict.inject) {
+            this.onSkip?.(skillId, verdict.reason ?? 'unknown');
+            continue;
+          }
+        }
+        resolved.push({ id: skillId, source: 'personality', filePath });
       }
     }
 
@@ -111,12 +134,6 @@ export class SkillsInjector implements ContextInjector {
       ? this.toolNamesForPersonality(personality)
       : new Set<string>();
 
-    // Determine injection mode for global-pool skills.
-    // 'index' (default) injects a compact table; 'full' injects complete bodies.
-    const injectionMode: 'full' | 'index' = personality.skills?.injection_mode ?? 'index';
-
-    // Collect skills that pass all filters
-    const eligibleGlobal: import('@ethosagent/types').Skill[] = [];
     for (const [, skill] of globalPool) {
       if (perPersonalityDirs.some((d) => skill.filePath.startsWith(d))) continue;
 
@@ -143,8 +160,49 @@ export class SkillsInjector implements ContextInjector {
         }
       }
 
-      eligibleGlobal.push(skill);
+      resolved.push({ id: skill.qualifiedName, source: 'global', skill });
     }
+
+    return resolved;
+  }
+
+  async inject(ctx: PromptContext): Promise<InjectionResult | null> {
+    const personality = ctx.personalityId
+      ? (this.personalities.get(ctx.personalityId) ?? this.personalities.getDefault())
+      : this.personalities.getDefault();
+
+    const resolved = await this.resolveSkills(ctx.personalityId);
+
+    const sections: string[] = [];
+    const fileNames: string[] = [];
+    let totalChars = 0;
+    const budget = this.maxInjectionChars;
+
+    function addSection(content: string, name: string): boolean {
+      if (budget > 0 && totalChars + content.length > budget) return false;
+      sections.push(content);
+      fileNames.push(name);
+      totalChars += content.length;
+      return true;
+    }
+
+    // 1. Per-personality skills — always loaded unfiltered (hand-curated library)
+    for (const r of resolved) {
+      if (r.source !== 'personality') continue;
+      const raw = await this.readCached(r.filePath);
+      if (!raw) continue;
+      const parsed = parseSkillFrontmatter(raw);
+      const body = parsed ? parsed.body : raw;
+      const substituted = applySubstitutions(body, dirname(r.filePath), ctx.sessionId);
+      addSection(sanitize(substituted.trim()), r.id);
+    }
+
+    // 2. Global pool from universal scanner — filtered per personality (resolved above)
+    const eligibleGlobal = resolved.flatMap((r) => (r.source === 'global' ? [r.skill] : []));
+
+    // Determine injection mode for global-pool skills.
+    // 'index' (default) injects a compact table; 'full' injects complete bodies.
+    const injectionMode: 'full' | 'index' = personality.skills?.injection_mode ?? 'index';
 
     if (injectionMode === 'index') {
       // Phase 1: compact index table — the LLM calls get_skill() for full bodies
@@ -192,38 +250,6 @@ export class SkillsInjector implements ContextInjector {
       content: `## Skills\n\n${sections.join('\n\n---\n\n')}`,
       position: 'append',
     };
-  }
-
-  private async loadSkillsFromDir(
-    dir: string,
-    ctx: PromptContext,
-  ): Promise<Array<{ content: string; fileName: string }>> {
-    const skillFiles = await this.discoverSkillFiles(dir);
-    const skills: Array<{ content: string; fileName: string }> = [];
-
-    for (const filePath of skillFiles) {
-      const raw = await this.readCached(filePath);
-      if (!raw) continue;
-
-      const parsed = parseSkillFrontmatter(raw);
-      const skillId = this.skillIdFor(filePath, dir);
-
-      if (parsed) {
-        const verdict = shouldInject(parsed.openclaw, {});
-        if (!verdict.inject) {
-          this.onSkip?.(skillId, verdict.reason ?? 'unknown');
-          continue;
-        }
-      }
-
-      const body = parsed ? parsed.body : raw;
-      const skillDir = dirname(filePath);
-      const substituted = applySubstitutions(body, skillDir, ctx.sessionId);
-
-      skills.push({ content: sanitize(substituted.trim()), fileName: skillId });
-    }
-
-    return skills;
   }
 
   private async discoverSkillFiles(dir: string): Promise<string[]> {

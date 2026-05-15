@@ -9,7 +9,7 @@ import {
   type Storage,
 } from '@ethosagent/types';
 
-export { renderCharacterSheet } from './character-sheet';
+export { firstParagraph, renderCharacterSheet } from './character-sheet';
 
 // ---------------------------------------------------------------------------
 // YAML parsers — no external dependency, handles the subset we need

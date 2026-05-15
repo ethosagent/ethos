@@ -34,6 +34,19 @@ export function context(elements: string[]): SlackBlock {
 }
 
 /**
+ * A `section` rendered as a two-column key/value grid via Slack's `fields`
+ * array. Slack lays the fields out in two columns, top-to-bottom; pass
+ * pre-formatted mrkdwn strings (caller owns escaping). Slack caps `fields`
+ * at 10 entries — callers stay well under that.
+ */
+export function sectionFields(fields: string[]): SlackBlock {
+  return {
+    type: 'section',
+    fields: fields.map((text) => ({ type: 'mrkdwn', text })),
+  };
+}
+
+/**
  * Escape the three characters Slack mrkdwn treats as markup delimiters. Any
  * string interpolated into a block that is model/config/user-influenced — tool
  * names, session labels, channel names, memory entries, ticket titles — must

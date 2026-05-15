@@ -28,7 +28,11 @@ export {
   parseSkillFrontmatter,
   shouldInject,
 } from './skill-compat';
-export { SkillsInjector, type SkillsInjectorOptions } from './skills-injector';
+export {
+  type ResolvedSkill,
+  SkillsInjector,
+  type SkillsInjectorOptions,
+} from './skills-injector';
 export {
   type PendingSkillRecord,
   type PersonalitySkillRecord,
@@ -80,7 +84,11 @@ export interface InjectorConfig {
 export function createInjectors(
   personalities: PersonalityRegistry,
   config: InjectorConfig = {},
-): { injectors: import('@ethosagent/types').ContextInjector[]; tools: Tool[] } {
+): {
+  injectors: import('@ethosagent/types').ContextInjector[];
+  tools: Tool[];
+  skillsInjector: SkillsInjector;
+} {
   const scanner = new UniversalScanner({
     extraSources: config.extraSources,
     trustedFirstPartySources: config.trustedFirstPartySources,
@@ -94,8 +102,12 @@ export function createInjectors(
     personalities,
     ...(config.hooks ? { hooks: config.hooks } : {}),
   });
+  // `skillsInjector` is surfaced concretely (not just inside `injectors`) so
+  // read-only surfaces can call `resolveSkills()` without re-deriving the
+  // scanner + filter wiring.
   return {
     injectors: [skillsInjector, fileContext, new MemoryGuidanceInjector()],
     tools: [new GetSkillTool(scanner) as Tool],
+    skillsInjector,
   };
 }

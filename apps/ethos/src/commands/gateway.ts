@@ -5,14 +5,16 @@ import type { AgentLoop } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
 import { Gateway, type GatewayBotConfig } from '@ethosagent/gateway';
 import { ConsoleLogger } from '@ethosagent/logger';
-import { createPersonalityRegistry } from '@ethosagent/personalities';
+import { createPersonalityRegistry, firstParagraph } from '@ethosagent/personalities';
+import { createInjectors } from '@ethosagent/skills';
+import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
 import { readRuntime, removeRuntime } from '@ethosagent/team-supervisor';
 // Platform adapters are loaded LAZILY in runGatewayStart() — see plan/IMPROVEMENT.md P0-3.
 // Their underlying SDKs (grammy, discord.js, @slack/bolt, imapflow…) are
 // optionalDependencies of @ethosagent/cli. A failed install for any one of
 // them must not crash the CLI for users who don't run that platform.
-import type { InboundMessage, PlatformAdapter } from '@ethosagent/types';
-import { createDangerPredicate } from '@ethosagent/wiring';
+import type { InboundMessage, MemoryContext, PlatformAdapter } from '@ethosagent/types';
+import { createDangerPredicate, createMemoryProvider } from '@ethosagent/wiring';
 import { ApprovalCoordinator, createSlackApprovalHook } from '../approval-coordinator';
 import {
   applyPlatformShim,
@@ -639,6 +641,72 @@ async function validateBindings(config: EthosConfig): Promise<string[]> {
  */
 export type AdapterModuleLoader = <T>(modulePath: string, label: string) => Promise<T | null>;
 
+/**
+ * Adapt the personality-scoped MemoryProvider to the narrow
+ * `{ read, append }` shape the Slack `/ethos memory` command consumes.
+ * Scopes every read/write to `personality:<id>` so each Slack bot sees
+ * the MEMORY.md of the personality it's bound to.
+ */
+function createSlackMemoryReader(personalityId: string) {
+  const provider = createMemoryProvider({ dataDir: ethosDir() });
+  const ctx: MemoryContext = {
+    scopeId: `personality:${personalityId}`,
+    sessionId: '',
+    sessionKey: '',
+    platform: 'slack',
+    workingDir: process.cwd(),
+  };
+  return {
+    async read(): Promise<string | null> {
+      const entry = await provider.read('MEMORY.md', ctx);
+      return entry?.content ?? null;
+    },
+    async append(text: string): Promise<void> {
+      await provider.sync([{ action: 'add', key: 'MEMORY.md', content: text }], ctx);
+    },
+  };
+}
+
+/**
+ * Build the `/ethos personality rich` card reader: the personality registry
+ * supplies config + ETHOS.md, and the shared `SkillsInjector.resolveSkills()`
+ * supplies the resolved skill set. The injector is constructed the way
+ * `createInjectors` builds it for the agent loop, so the card never drifts
+ * from what the personality actually sees. Built once at boot; `read()`
+ * reloads the registry (mtime-cached, cheap) so an edited personality
+ * reflects without a gateway restart.
+ */
+async function createSlackPersonalityCardReader() {
+  const storage = getStorage();
+  const personalitiesDir = join(ethosDir(), 'personalities');
+  const registry = await createPersonalityRegistry({
+    storage,
+    userPersonalitiesDir: personalitiesDir,
+  });
+  const { skillsInjector } = createInjectors(registry, {
+    trustedFirstPartySources: [bundledCodingSkillsSource()],
+  });
+  return {
+    async read(personalityId: string) {
+      await registry.loadFromDirectory(personalitiesDir);
+      const config = registry.get(personalityId);
+      if (!config) return null;
+      const ethosMd = await registry.readEthosMd(personalityId);
+      const resolved = await skillsInjector.resolveSkills(personalityId);
+      return {
+        id: config.id,
+        name: config.name,
+        description: config.description ?? '',
+        prose: firstParagraph(ethosMd),
+        model: config.model ?? '(engine default)',
+        provider: config.provider ?? '(engine default)',
+        toolset: config.toolset ?? [],
+        skills: resolved.map((r) => ({ id: r.id, source: r.source })),
+      };
+    },
+  };
+}
+
 export async function buildAdapters(
   config: EthosConfig,
   loadAdapter: AdapterModuleLoader,
@@ -677,7 +745,18 @@ export async function buildAdapters(
       // that decision so the filesystem path doesn't show up in two
       // places.
       const slackStorage = getStorage();
+      // One card reader serves every Slack bot — `read()` takes the
+      // personality id, so it isn't bot-specific. The handler only consults
+      // it for personality bindings (`/ethos personality rich`).
+      const personalityCard = await createSlackPersonalityCardReader();
       for (const appCfg of config.slack?.apps ?? []) {
+        // `/ethos memory show|add` reads the bound personality's MEMORY.md.
+        // Team bindings have no single MEMORY.md, so they keep degrading to
+        // "Memory is unavailable for this bot."
+        const memory =
+          appCfg.bind.type === 'personality'
+            ? createSlackMemoryReader(appCfg.bind.name)
+            : undefined;
         adapters.push(
           new mod.SlackAdapter({
             botToken: appCfg.botToken,
@@ -686,6 +765,8 @@ export async function buildAdapters(
             botKey: deriveBotKey(appCfg),
             binding: { type: appCfg.bind.type, name: appCfg.bind.name },
             storage: slackStorage,
+            personalityCard,
+            ...(memory ? { memory } : {}),
           }),
         );
       }

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dispatch, parseSubcommand, type SlashContext } from '../commands';
 import type { KanbanReader } from '../commands/kanban';
 import { extractRecentEntries, type MemoryReader } from '../commands/memory';
+import type { PersonalityCardReader } from '../commands/personality';
 import { ChannelOverrideStore } from '../store/channel-overrides';
 
 function memStorage(): Storage {
@@ -111,6 +112,57 @@ describe('dispatch — personality', () => {
     );
     expect(r.text).toContain('team coordinator');
     expect(r.text).toContain('eng');
+  });
+
+  const cardReader = (
+    card: Awaited<ReturnType<PersonalityCardReader['read']>>,
+  ): PersonalityCardReader => ({ read: async () => card });
+
+  const sampleCard = {
+    id: 'researcher',
+    name: 'Researcher',
+    description: 'Digs into hard questions.',
+    prose: 'I chase primary sources.',
+    model: 'claude-opus-4-7',
+    provider: 'anthropic',
+    toolset: ['web_search', 'read_file'],
+    skills: [{ id: 'cite-sources', source: 'personality' as const }],
+  };
+
+  it('renders the rich card for `personality rich` when a reader is wired', async () => {
+    const r = await dispatch(
+      { ...basePayload, text: 'personality rich' },
+      ctxFor({ personalityCard: cardReader(sampleCard) }),
+    );
+    expect(r.responseType).toBe('ephemeral');
+    expect(r.text).toContain('What it can do');
+    expect(r.text).toContain('web_search');
+    expect(r.text).toContain('cite-sources');
+    expect(r.text).toContain('I chase primary sources.');
+  });
+
+  it('falls back to the compact view when no reader is wired', async () => {
+    const r = await dispatch({ ...basePayload, text: 'personality rich' }, ctxFor());
+    expect(r.text).toContain('bound to');
+    expect(r.text).not.toContain('What it can do');
+  });
+
+  it('falls back to the compact view for a team binding', async () => {
+    const r = await dispatch(
+      { ...basePayload, text: 'personality rich' },
+      ctxFor({ binding: { type: 'team', name: 'eng' }, personalityCard: cardReader(sampleCard) }),
+    );
+    expect(r.text).toContain('team coordinator');
+    expect(r.text).not.toContain('What it can do');
+  });
+
+  it('falls back to the compact view when the reader returns null', async () => {
+    const r = await dispatch(
+      { ...basePayload, text: 'personality rich' },
+      ctxFor({ personalityCard: cardReader(null) }),
+    );
+    expect(r.text).toContain('bound to');
+    expect(r.text).not.toContain('What it can do');
   });
 });
 

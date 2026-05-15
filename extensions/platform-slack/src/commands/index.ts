@@ -13,7 +13,7 @@ import { handleChannelMode } from './channel-mode';
 import { handleHelp } from './help';
 import { handleKanban, type KanbanReader } from './kanban';
 import { handleMemory, type MemoryReader } from './memory';
-import { handlePersonality } from './personality';
+import { handlePersonality, type PersonalityCardReader } from './personality';
 
 /** Slack slash-command payload subset we consume. */
 export interface SlashCommandPayload {
@@ -31,6 +31,7 @@ export interface SlashContext {
   channelOverrides?: ChannelOverrideStore;
   memory?: MemoryReader;
   kanban?: KanbanReader;
+  personalityCard?: PersonalityCardReader;
   /** Storage is exposed for sub-commands that persist their own state. */
   storage?: Storage;
   /** Hook for `/ethos ask` — the adapter wires this to gateway.handleMessage. */
@@ -69,7 +70,7 @@ export async function dispatch(
     case 'ask':
       return handleAsk(payload, rest, ctx);
     case 'personality':
-      return handlePersonality(ctx);
+      return handlePersonality(rest, ctx);
     case 'memory':
       return handleMemory(rest, ctx);
     case 'kanban':
@@ -85,4 +86,4 @@ export async function dispatch(
   }
 }
 
-export type { KanbanReader, MemoryReader };
+export type { KanbanReader, MemoryReader, PersonalityCardReader };

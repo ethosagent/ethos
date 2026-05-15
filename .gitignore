@@ -20,3 +20,4 @@ apps/ethos/web
 *.db-wal
 /plan/
 .gstack/
+.deepsec/

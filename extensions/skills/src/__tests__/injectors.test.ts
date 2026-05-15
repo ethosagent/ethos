@@ -252,6 +252,53 @@ describe('SkillsInjector', () => {
 });
 
 // ---------------------------------------------------------------------------
+// SkillsInjector.resolveSkills — the eligibility decision inject() consumes
+// ---------------------------------------------------------------------------
+
+describe('SkillsInjector.resolveSkills', () => {
+  it('returns an empty list when no skills exist', async () => {
+    const injector = new SkillsInjector(makePersonalityRegistry([testDir]), {
+      globalSkillsDir: testDir,
+      scanner: hermeticScanner(),
+    });
+    expect(await injector.resolveSkills('researcher')).toEqual([]);
+  });
+
+  it('returns per-personality skills tagged source: personality', async () => {
+    await writeFile(join(testDir, 'b-skill.md'), '# Skill B');
+    await writeFile(join(testDir, 'a-skill.md'), '# Skill A');
+
+    const injector = new SkillsInjector(makePersonalityRegistry([testDir]), {
+      globalSkillsDir: testDir,
+      scanner: hermeticScanner(),
+    });
+    const resolved = await injector.resolveSkills('researcher');
+
+    expect(resolved.map((r) => ({ id: r.id, source: r.source }))).toEqual([
+      { id: 'a-skill.md', source: 'personality' },
+      { id: 'b-skill.md', source: 'personality' },
+    ]);
+  });
+
+  it('agrees with inject(): every resolved id appears in the injected content', async () => {
+    await writeFile(join(testDir, 'alpha.md'), '# Alpha\n\nAlpha body.');
+    await writeFile(join(testDir, 'beta.md'), '# Beta\n\nBeta body.');
+
+    const injector = new SkillsInjector(makePersonalityRegistry([testDir]), {
+      globalSkillsDir: testDir,
+      scanner: hermeticScanner(),
+    });
+    const ctx: ReturnType<typeof makeCtx> & { meta?: Record<string, unknown> } = makeCtx(testDir);
+    await injector.inject(ctx);
+    const resolved = await injector.resolveSkills('researcher');
+
+    expect(resolved.map((r) => r.id).sort()).toEqual(
+      (ctx.meta?.skillFilesUsed as string[]).slice().sort(),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // FileContextInjector
 // ---------------------------------------------------------------------------
 

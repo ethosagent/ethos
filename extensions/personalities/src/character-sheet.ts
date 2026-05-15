@@ -10,9 +10,12 @@ import type { PersonalityConfig } from '@ethosagent/types';
 /**
  * The prose directly under the ETHOS.md title — the personality's own
  * voice describing who it is. Returns `''` when the document has no body
- * paragraph (heading-only or empty file).
+ * paragraph (heading-only or empty file). Exported so surfaces that build
+ * their own character-sheet rendering (e.g. the Slack `/ethos personality
+ * rich` card) extract the identity line the same way the canonical sheet
+ * does.
  */
-function firstParagraph(ethosMd: string): string {
+export function firstParagraph(ethosMd: string): string {
   const para: string[] = [];
   for (const line of ethosMd.split('\n')) {
     const trimmed = line.trim();

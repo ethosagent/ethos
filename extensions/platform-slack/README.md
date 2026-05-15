@@ -142,8 +142,9 @@ Once `/ethos` is registered in the Slack app manifest, users can invoke it from 
 |---|---|---|
 | `/ethos ask <prompt>` | in-channel | Submits the prompt to the bot's bound agent loop. The agent's reply arrives via the gateway's normal outbound path (so it follows the channel's thread context and dedup rules). The slash command itself posts a public acknowledgement so other channel members see who asked. |
 | `/ethos personality` | ephemeral | Shows the bot's binding (personality or team coordinator). |
-| `/ethos memory show` | ephemeral | Last 5 entries from the bound personality's `MEMORY.md`. *(Memory wiring lands in a follow-up; today the command degrades gracefully with "Memory is unavailable for this bot.")* |
-| `/ethos memory add <text>` | ephemeral | Appends a memory entry. *(Same wiring caveat as above.)* |
+| `/ethos personality rich` | ephemeral | Full character sheet for the bound personality — identity, model, tools, and resolved skills. Personality bindings only; team bindings fall back to the compact view. Omits filesystem reach, MCP servers, and plugins (recon-sensitive on a command anyone in a channel can run). |
+| `/ethos memory show` | ephemeral | Last 5 entries from the bound personality's `MEMORY.md`. Personality bindings only — team bots get "Memory is unavailable for this bot." |
+| `/ethos memory add <text>` | ephemeral | Appends a memory entry to the bound personality's `MEMORY.md`. Personality bindings only. |
 | `/ethos kanban list` | ephemeral | Block Kit list of open kanban tickets. **Team bots only** — personality bots get a clear "this is a team feature" message. *(Kanban wiring lands in a follow-up.)* |
 | `/ethos channel-mode show` | ephemeral | Reports the active mode for the current channel and whether it's an override or the app default. |
 | `/ethos channel-mode <mode>` | ephemeral | Sets the mode. Valid values: `mention_only`, `thread_follow`, `all`. Persisted to `channel-overrides.jsonl`; survives restart. |
