@@ -37,6 +37,8 @@ const PUBLIC_PACKAGES = [
   'packages/core',
   'packages/plugin-contract',
   'packages/plugin-sdk',
+  'packages/web-contracts',
+  'packages/sdk',
 ];
 
 const pkgs = PUBLIC_PACKAGES.map((dir) => ({

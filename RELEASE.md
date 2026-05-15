@@ -18,7 +18,7 @@ ethos/
 
 ## What gets published
 
-Five packages publish in lockstep (all at the same version):
+Seven packages publish in lockstep (all at the same version):
 
 | Package | Source | Audience |
 |---|---|---|
@@ -27,6 +27,16 @@ Five packages publish in lockstep (all at the same version):
 | `@ethosagent/core` | `packages/core/` | plugin authors + advanced embedders |
 | `@ethosagent/plugin-sdk` | `packages/plugin-sdk/` | plugin authors |
 | `@ethosagent/plugin-contract` | `packages/plugin-contract/` | marketplace + plugin authors |
+| `@ethosagent/web-contracts` | `packages/web-contracts/` | Mission Control / SDK consumers — RPC contract types |
+| `@ethosagent/sdk` | `packages/sdk/` | external dashboard authors — typed control-plane client |
+
+**Publish order matters.** `pnpm publish` resolves `workspace:*` deps at publish time to whatever the registry currently exposes, so a consumer must publish *after* its workspace deps. The Makefile's `PUBLISHABLE` list encodes the correct order:
+
+```
+types → core → plugin-contract → plugin-sdk → web-contracts → sdk → cli
+```
+
+`web-contracts` must precede `sdk` (sdk depends on it). All others sit below in the dependency graph and publish first.
 
 Everything else (`extensions/*`, `apps/{tui,vscode-extension,web}`, `packages/agent-bridge`, etc.) is `"private": true` and bundled into the CLI at build time.
 

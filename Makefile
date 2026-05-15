@@ -358,13 +358,19 @@ verify:
 
 # ---------- build ----------
 
-# The five public packages on npm. Publish order: types → core → plugin-contract → plugin-sdk → cli
-PUBLISHABLE := packages/types packages/core packages/plugin-contract packages/plugin-sdk apps/ethos
+# The seven public packages on npm. Publish order matters: lower-level packages
+# must publish before consumers, so `pnpm publish` can resolve `workspace:*` to a
+# real version range that exists on the registry.
+#   types → core → plugin-contract → plugin-sdk → web-contracts → sdk → cli
+# web-contracts must precede sdk (sdk depends on it).
+PUBLISHABLE := packages/types packages/core packages/plugin-contract packages/plugin-sdk packages/web-contracts packages/sdk apps/ethos
 
 PUBLISHABLE_FILTERS := --filter='./packages/types' \
                        --filter='./packages/core' \
                        --filter='./packages/plugin-contract' \
                        --filter='./packages/plugin-sdk' \
+                       --filter='./packages/web-contracts' \
+                       --filter='./packages/sdk' \
                        --filter='./apps/ethos'
 
 # Build only the CLI binary (tsup → apps/ethos/dist/).
@@ -416,7 +422,7 @@ release-dry:
 	@echo ""
 	@echo "Steps that would run (all local — no CI):"
 	@echo "  1. make verify              — pre-flight gates G1-G7"
-	@echo "  2. make build-publishable   — build all 5 packages"
+	@echo "  2. make build-publishable   — build all 7 packages"
 	@echo "  3. make release-npm         — publish to npm (lockstep, idempotent)"
 	@echo "  4. git tag v$(VERSION)"
 	@echo "  5. git push origin main v$(VERSION)"

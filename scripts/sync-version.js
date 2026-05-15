@@ -18,6 +18,8 @@ const PUBLIC_PACKAGES = [
   'packages/core',
   'packages/plugin-contract',
   'packages/plugin-sdk',
+  'packages/web-contracts',
+  'packages/sdk',
 ];
 
 let updated = 0;
