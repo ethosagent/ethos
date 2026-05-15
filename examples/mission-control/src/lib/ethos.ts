@@ -1,6 +1,10 @@
-import { EthosClient } from '@ethosagent/sdk';
+import { createEthosClient } from '@ethosagent/sdk';
 
-export const ethos = new EthosClient({
-  baseUrl: process.env.NEXT_PUBLIC_ETHOS_BASE_URL ?? 'http://localhost:3000',
+// Exported so EventStream subscribers (e.g. ChatPanel) can reuse the same
+// base URL without re-reading process.env at every call site.
+export const baseUrl = process.env.NEXT_PUBLIC_ETHOS_BASE_URL ?? 'http://localhost:3000';
+
+export const ethos = createEthosClient({
+  baseUrl,
   apiKey: process.env.NEXT_PUBLIC_ETHOS_API_KEY ?? '',
 });

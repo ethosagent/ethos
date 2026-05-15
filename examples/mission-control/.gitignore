@@ -1,0 +1,22 @@
+# Next.js build output + cache
+.next/
+out/
+build/
+
+# Dependencies
+node_modules/
+
+# Local env
+.env*.local
+
+# Logs
+*.log
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts.bak

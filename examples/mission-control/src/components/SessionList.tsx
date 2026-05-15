@@ -57,30 +57,32 @@ export function SessionList({ activeSessionId, onSelectSession }: SessionListPro
           <p className="p-3 text-sm text-gray-500">No sessions. Send a message to start one.</p>
         )}
         {sessions.map((session) => (
-          <button
-            type="button"
+          <div
             key={session.id}
-            onClick={() => onSelectSession(session.id)}
-            className={`flex w-full items-start justify-between gap-2 border-b border-gray-100 p-3 text-left text-sm hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900 ${
+            className={`flex items-start justify-between gap-2 border-b border-gray-100 text-sm hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900 ${
               activeSessionId === session.id ? 'bg-blue-50 dark:bg-blue-950' : ''
             }`}
           >
-            <div className="min-w-0 flex-1">
+            <button
+              type="button"
+              onClick={() => onSelectSession(session.id)}
+              className="flex-1 min-w-0 p-3 text-left"
+            >
               <p className="truncate font-mono text-xs text-gray-600 dark:text-gray-400">
                 {session.id.slice(0, 8)}
               </p>
               {session.personalityId && (
                 <p className="truncate text-xs text-gray-500">{session.personalityId}</p>
               )}
-            </div>
+            </button>
             <button
               type="button"
               onClick={(e) => handleDelete(session.id, e)}
-              className="shrink-0 rounded px-1 text-xs text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
+              className="shrink-0 self-center mr-2 rounded px-1 text-xs text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
             >
               Del
             </button>
-          </button>
+          </div>
         ))}
       </div>
     </div>

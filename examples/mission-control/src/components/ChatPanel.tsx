@@ -3,7 +3,7 @@
 import { EventStream } from '@ethosagent/sdk';
 import type { SseEvent } from '@ethosagent/web-contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ethos } from '@/lib/ethos';
+import { baseUrl, ethos } from '@/lib/ethos';
 
 interface ChatPanelProps {
   sessionId: string | null;
@@ -95,7 +95,7 @@ export function ChatPanel({ sessionId, personalityId, onSessionCreated }: ChatPa
     };
 
     const sub = EventStream({
-      baseUrl: ethos.baseUrl,
+      baseUrl,
       apiKey: process.env.NEXT_PUBLIC_ETHOS_API_KEY ?? '',
       sessionId,
       onEvent: handleEvent,

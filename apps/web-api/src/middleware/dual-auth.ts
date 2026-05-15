@@ -110,7 +110,14 @@ export function dualAuth(opts: DualAuthOptions): MiddlewareHandler {
       });
     }
 
-    const rpcPath = c.req.path.replace(/^\/rpc\//, '').replace(/^\/sse\//, '');
+    // oRPC URL paths use `/` (e.g. `/rpc/sessions/list`), but the SCOPE_MAP
+    // and `resolveScope` are keyed on dot notation (`sessions.list`).
+    // Normalize before lookup so the scope + experimental gate fire on the
+    // namespace, not on the whole "sessions/list" string.
+    const rpcPath = c.req.path
+      .replace(/^\/rpc\//, '')
+      .replace(/^\/sse\//, '')
+      .replace(/\//g, '.');
     const requiredScope = opts.scopeForPath(rpcPath);
     if (requiredScope && !record.scopes.includes(requiredScope)) {
       throw new EthosError({

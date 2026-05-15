@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { authMiddleware } from '../middleware/auth';
 import type { ApiKeyAuthStore } from '../middleware/bearer-auth';
 import { csrfMiddleware } from '../middleware/csrf';
@@ -66,6 +67,32 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
 
   // Last-resort error catcher. Routes that throw EthosError land here.
   app.onError(errorHandler);
+
+  // CORS preflight + Access-Control-Allow-Origin headers. The browser needs
+  // these BEFORE any RPC/SSE call from a different origin will succeed —
+  // the Mission Control template on :3001 calling the API on :3000 is the
+  // canonical case. Origin policy matches the CSRF default: explicit
+  // `allowedOrigins` if set, otherwise any localhost host:port for dev.
+  app.use(
+    '*',
+    cors({
+      origin: (origin) => {
+        if (!origin) return null; // same-origin / non-browser request
+        const explicit = opts.allowedOrigins ?? [];
+        if (explicit.includes(origin)) return origin;
+        try {
+          const host = new URL(origin).hostname;
+          if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') return origin;
+        } catch {
+          /* malformed origin header — fall through */
+        }
+        return null;
+      },
+      credentials: true,
+      allowMethods: ['GET', 'POST', 'OPTIONS', 'DELETE', 'PATCH'],
+      allowHeaders: ['Authorization', 'Content-Type'],
+    }),
+  );
 
   // Auth exchange is unauthenticated by definition — it's how cookies get set.
   // Mounted BEFORE the auth middleware below.
