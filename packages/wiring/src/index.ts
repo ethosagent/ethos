@@ -73,7 +73,7 @@ import type {
 } from '@ethosagent/types';
 import { resolveKanbanDbPath } from './kanban-path';
 import { MODEL_CATALOG } from './model-catalog';
-import { loadModelCatalog, manifestToEntries } from './model-catalog-loader';
+import { fetchManifest, loadModelCatalog, manifestToEntries } from './model-catalog-loader';
 import type { EthosObservability } from './observability/ethos-observability';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
 import { capSummary, renderMiddleForSummary, SUMMARIZER_SYSTEM_PROMPT } from './summarizer-prompt';
@@ -856,13 +856,7 @@ export async function createAgentLoop(
           config.modelCatalogConfig.providers,
         )) {
           try {
-            const providerManifest = await loadModelCatalog({
-              url: providerCfg.url,
-              ttlMs,
-              storage: designStorage,
-              cachePath: join(dataDir, 'cache', `model-catalog-${providerId}.json`),
-              logger: log,
-            });
+            const providerManifest = await fetchManifest(providerCfg.url);
             if (providerManifest.providers[providerId]) {
               manifest.providers[providerId] = providerManifest.providers[providerId];
             }

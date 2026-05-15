@@ -8,6 +8,8 @@ import {
   transformOpenRouterEntry,
 } from './sources/openrouter';
 
+const LIVE_FETCH_ENABLED = process.env.CATALOG_LIVE_FETCH === '1';
+
 function catalogToEntries(providerId: string): ModelEntry[] {
   return MODEL_CATALOG.filter((e) => e.providerId === providerId).map((e) => {
     const entry: ModelEntry = {
@@ -24,11 +26,21 @@ async function buildOpenAICompat(): Promise<ModelEntry[]> {
   const directOpenAI = catalogToEntries('openai');
 
   let openRouterEntries: ModelEntry[];
-  try {
-    const raw = await fetchOpenRouterModels();
-    const filtered = filterByAllowlist(raw);
-    openRouterEntries = filtered.map(transformOpenRouterEntry);
-  } catch {
+  if (LIVE_FETCH_ENABLED) {
+    try {
+      const raw = await fetchOpenRouterModels();
+      const filtered = filterByAllowlist(raw);
+      openRouterEntries = filtered.map(transformOpenRouterEntry);
+    } catch (err) {
+      console.warn(`[build-model-catalog] OpenRouter fetch failed: ${err}`);
+      openRouterEntries = MODEL_CATALOG.filter((e) => e.providerId === 'openrouter').map((e) => ({
+        id: e.modelId,
+        label: `${e.label} (OR)`,
+        contextWindow: e.contextWindow,
+        ...(e.default ? { default: true } : {}),
+      }));
+    }
+  } else {
     openRouterEntries = MODEL_CATALOG.filter((e) => e.providerId === 'openrouter').map((e) => ({
       id: e.modelId,
       label: `${e.label} (OR)`,
