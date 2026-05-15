@@ -1,6 +1,8 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
 import {
+  ApiKeyMetadataSchema,
+  ApiKeyScopeSchema,
   ApprovalScopeSchema,
   BatchRunInfoSchema,
   BotBindingSchema,
@@ -59,7 +61,7 @@ const SessionListInput = z.object({
   personalityId: z.string().optional(),
 });
 const SessionListOutput = z.object({
-  sessions: z.array(SessionSchema),
+  items: z.array(SessionSchema),
   nextCursor: z.string().nullable(),
 });
 
@@ -72,19 +74,28 @@ const SessionGetOutput = z.object({
 const SessionForkInput = z.object({
   id: z.string(),
   personalityId: z.string().optional(),
+  /** Optimistic-concurrency guard. v1 ignores this. */
+  expectedVersion: z.number().int().optional(),
 });
 const SessionForkOutput = z.object({ session: SessionSchema });
 
-const SessionDeleteInput = z.object({ id: z.string() });
+const SessionDeleteInput = z.object({
+  id: z.string(),
+  /** Optimistic-concurrency guard. v1 ignores this. */
+  expectedVersion: z.number().int().optional(),
+});
 const SessionDeleteOutput = z.object({ ok: z.literal(true) });
 
 const SessionUpdateInput = z.object({
   id: z.string(),
   /** New human-readable title. Pass null to clear the title. */
   title: z.string().max(200).nullable(),
+  /** Optimistic-concurrency guard. v1 ignores this. */
+  expectedVersion: z.number().int().optional(),
 });
 const SessionUpdateOutput = z.object({ session: SessionSchema });
 
+/** @stable v1 */
 const sessions = {
   list: oc.input(SessionListInput).output(SessionListOutput),
   get: oc.input(SessionGetInput).output(SessionGetOutput),
@@ -97,8 +108,15 @@ const sessions = {
 // Personalities (v0 read-only — create/edit lands in v1)
 // ---------------------------------------------------------------------------
 
+const PersonalityListInput = z.object({
+  /** Page size. */
+  limit: z.number().int().positive().optional(),
+  /** Opaque cursor from the previous response's `nextCursor`. */
+  cursor: z.string().optional(),
+});
 const PersonalityListOutput = z.object({
-  personalities: z.array(PersonalitySchema),
+  items: z.array(PersonalitySchema),
+  nextCursor: z.string().nullable(),
   defaultId: z.string(),
 });
 const PersonalityGetInput = z.object({ id: z.string() });
@@ -193,8 +211,9 @@ const PersonalitySkillsImportInput = z.object({
 });
 const PersonalitySkillsImportOutput = z.object({ imported: z.array(PersonalitySkillSchema) });
 
+/** @stable v1 — read-only at v1 */
 const personalities = {
-  list: oc.output(PersonalityListOutput),
+  list: oc.input(PersonalityListInput).output(PersonalityListOutput),
   get: oc.input(PersonalityGetInput).output(PersonalityGetOutput),
   characterSheet: oc.input(PersonalityCharacterSheetInput).output(PersonalityCharacterSheetOutput),
   create: oc.input(PersonalityCreateInput).output(PersonalityCreateOutput),
@@ -234,6 +253,7 @@ const ChatSendOutput = z.object({
 const ChatAbortInput = z.object({ sessionId: z.string() });
 const ChatAbortOutput = z.object({ ok: z.literal(true) });
 
+/** @stable v1 */
 const chat = {
   send: oc.input(ChatSendInput).output(ChatSendOutput),
   abort: oc.input(ChatAbortInput).output(ChatAbortOutput),
@@ -260,6 +280,7 @@ const ToolDenyInput = z.object({
 });
 const ToolDenyOutput = z.object({ ok: z.literal(true) });
 
+/** @experimental */
 const tools = {
   approve: oc.input(ToolApproveInput).output(ToolApproveOutput),
   deny: oc.input(ToolDenyInput).output(ToolDenyOutput),
@@ -280,6 +301,7 @@ const ClarifyRespondInput = z.object({
 });
 const ClarifyRespondOutput = z.object({ ok: z.literal(true) });
 
+/** @experimental */
 const clarify = {
   respond: oc.input(ClarifyRespondInput).output(ClarifyRespondOutput),
 };
@@ -317,6 +339,7 @@ const OnboardingCompleteInput = z.object({
 });
 const OnboardingCompleteOutput = z.object({ ok: z.literal(true) });
 
+/** @experimental */
 const onboarding = {
   state: oc.output(OnboardingStateOutput),
   validateProvider: oc
@@ -358,6 +381,7 @@ const ConfigUpdateInput = z.object({
 });
 const ConfigUpdateOutput = z.object({ ok: z.literal(true) });
 
+/** @experimental */
 const config = {
   get: oc.output(ConfigGetOutput),
   update: oc.input(ConfigUpdateInput).output(ConfigUpdateOutput),
@@ -404,6 +428,7 @@ const CronHistoryInput = z.object({
 });
 const CronHistoryOutput = z.object({ runs: z.array(CronRunSchema) });
 
+/** @experimental */
 const cron = {
   list: oc.output(CronListOutput),
   get: oc.input(CronGetInput).output(CronGetOutput),
@@ -453,6 +478,7 @@ const SkillUpdateOutput = z.object({ skill: SkillSchema });
 const SkillDeleteInput = z.object({ id: z.string().min(1) });
 const SkillOkOutput = z.object({ ok: z.literal(true) });
 
+/** @experimental */
 const skills = {
   list: oc.output(SkillListOutput),
   get: oc.input(SkillGetInput).output(SkillGetOutput),
@@ -479,6 +505,7 @@ const EvolverPendingActionInput = z.object({ id: z.string().min(1) });
 const EvolverHistoryInput = z.object({ limit: z.number().int().min(1).max(100).optional() });
 const EvolverHistoryOutput = z.object({ runs: z.array(EvolverRunSchema) });
 
+/** @experimental */
 const evolver = {
   configGet: oc.output(EvolverConfigGetOutput),
   configUpdate: oc.input(EvolverConfigUpdateInput).output(EvolverConfigUpdateOutput),
@@ -512,6 +539,7 @@ const PlatformsSetOutput = z.object({ platform: PlatformStatusSchema });
 const PlatformsClearInput = z.object({ id: PlatformIdSchema });
 const PlatformsClearOutput = z.object({ platform: PlatformStatusSchema });
 
+/** @experimental */
 const platforms = {
   list: oc.output(PlatformsListOutput),
   set: oc.input(PlatformsSetInput).output(PlatformsSetOutput),
@@ -558,6 +586,7 @@ const PluginsListOutput = z.object({
   mcpServers: z.array(McpServerInfoSchema),
 });
 
+/** @experimental */
 const plugins = {
   list: oc.output(PluginsListOutput),
 };
@@ -571,7 +600,16 @@ const plugins = {
 // both. Vector-mode chunk CRUD lands later.
 // ---------------------------------------------------------------------------
 
-const MemoryListOutput = z.object({ files: z.array(MemoryFileSchema) });
+const MemoryListInput = z.object({
+  /** Page size. */
+  limit: z.number().int().positive().optional(),
+  /** Opaque cursor from the previous response's `nextCursor`. */
+  cursor: z.string().optional(),
+});
+const MemoryListOutput = z.object({
+  items: z.array(MemoryFileSchema),
+  nextCursor: z.string().nullable(),
+});
 
 const MemoryGetInput = z.object({ store: MemoryStoreSchema });
 const MemoryGetOutput = z.object({ file: MemoryFileSchema });
@@ -582,8 +620,9 @@ const MemoryWriteInput = z.object({
 });
 const MemoryWriteOutput = z.object({ file: MemoryFileSchema });
 
+/** @stable v1 */
 const memory = {
-  list: oc.output(MemoryListOutput),
+  list: oc.input(MemoryListInput).output(MemoryListOutput),
   get: oc.input(MemoryGetInput).output(MemoryGetOutput),
   write: oc.input(MemoryWriteInput).output(MemoryWriteOutput),
 };
@@ -605,6 +644,7 @@ const MeshRouteTestInput = z.object({
 });
 const MeshRouteTestOutput = MeshRouteResultSchema;
 
+/** @experimental */
 const mesh = {
   list: oc.output(MeshListOutput),
   routeTest: oc.input(MeshRouteTestInput).output(MeshRouteTestOutput),
@@ -638,6 +678,7 @@ const BatchGetOutput = z.object({ run: BatchRunInfoSchema });
 const BatchOutputInput = z.object({ id: z.string() });
 const BatchOutputOutput = z.object({ content: z.string() });
 
+/** @experimental */
 const batch = {
   list: oc.output(BatchListOutput),
   start: oc.input(BatchStartInput).output(BatchStartOutput),
@@ -671,6 +712,7 @@ const EvalGetOutput = z.object({ run: EvalRunInfoSchema });
 const EvalOutputInput = z.object({ id: z.string() });
 const EvalOutputOutput = z.object({ content: z.string() });
 
+/** @experimental */
 const evalNs = {
   list: oc.output(EvalListOutput),
   start: oc.input(EvalStartInput).output(EvalStartOutput),
@@ -702,10 +744,88 @@ const KanbanUpdateStatusInput = z.object({
 });
 const KanbanUpdateStatusOutput = z.object({ task: KanbanTaskSchema });
 
+/** @experimental */
 const kanban = {
   list: oc.output(KanbanListOutput),
   getBoard: oc.input(KanbanGetBoardInput).output(KanbanGetBoardOutput),
   updateStatus: oc.input(KanbanUpdateStatusInput).output(KanbanUpdateStatusOutput),
+};
+
+// ---------------------------------------------------------------------------
+// API Keys — admin CRUD (cookie-auth-gated only)
+//
+// Minting, listing, and revoking API keys for external Mission Controls.
+// The plaintext secret is returned only from `create` — subsequent reads
+// never expose the raw key. This namespace rejects bearer-token auth to
+// prevent privilege escalation (a stolen key must not mint more keys).
+// ---------------------------------------------------------------------------
+
+const OriginSchema = z
+  .string()
+  .transform((s) => {
+    try {
+      const u = new URL(s);
+      return u.origin;
+    } catch {
+      return s;
+    }
+  })
+  .refine((s) => {
+    try {
+      const u = new URL(s);
+      return u.origin === s;
+    } catch {
+      return false;
+    }
+  }, 'Must be a valid origin (scheme + host + optional port, no path/query/fragment)');
+
+const ApiKeyCreateInput = z.object({
+  name: z.string().min(1).max(100),
+  scopes: z.array(ApiKeyScopeSchema).min(1),
+  allowedOrigins: z.array(OriginSchema).min(1),
+});
+const ApiKeyCreateOutput = z.object({
+  /** Plaintext secret — shown once, then never again. */
+  secret: z.string(),
+  key: ApiKeyMetadataSchema,
+});
+
+const ApiKeyListInput = z.object({
+  /** Page size. */
+  limit: z.number().int().positive().optional(),
+  /** Opaque cursor from the previous response's `nextCursor`. */
+  cursor: z.string().optional(),
+});
+const ApiKeyListOutput = z.object({
+  items: z.array(ApiKeyMetadataSchema),
+  nextCursor: z.string().nullable(),
+});
+
+const ApiKeyRevokeInput = z.object({ id: z.string() });
+const ApiKeyRevokeOutput = z.object({ ok: z.literal(true) });
+
+/** @experimental */
+const apiKeys = {
+  create: oc.input(ApiKeyCreateInput).output(ApiKeyCreateOutput),
+  list: oc.input(ApiKeyListInput).output(ApiKeyListOutput),
+  revoke: oc.input(ApiKeyRevokeInput).output(ApiKeyRevokeOutput),
+};
+
+// ---------------------------------------------------------------------------
+// Meta — server capabilities (stable from v1)
+//
+// Open-shape `Record<string, boolean>` describing what this server
+// supports. Today: `{ byok: true }`. Absence means unsupported. Keys
+// are added additively — the shape never changes, only its contents grow.
+// ---------------------------------------------------------------------------
+
+const MetaCapabilitiesOutput = z.object({
+  capabilities: z.record(z.string(), z.boolean()),
+});
+
+/** @stable v1 */
+const meta = {
+  capabilities: oc.output(MetaCapabilitiesOutput),
 };
 
 // ---------------------------------------------------------------------------
@@ -730,6 +850,8 @@ export const contract = {
   batch,
   eval: evalNs,
   kanban,
+  apiKeys,
+  meta,
 };
 
 export type Contract = typeof contract;

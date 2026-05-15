@@ -25,7 +25,7 @@ export interface ToolProgressEvent {
    * `bash` commands). Per-event opt-in; the framework never opts in for
    * the tool.
    */
-  audience?: 'internal' | 'user';
+  audience?: 'internal' | 'user' | 'dashboard';
 }
 
 export interface ToolContext {

@@ -34,8 +34,8 @@ describe('PersonalitiesService', () => {
     });
     const result = service.list();
     expect(result.defaultId).toBe('researcher');
-    expect(result.personalities).toHaveLength(1);
-    const p = result.personalities[0];
+    expect(result.items).toHaveLength(1);
+    const p = result.items[0];
     if (!p) throw new Error('expected one personality');
     expect(p.id).toBe('researcher');
     expect(p.builtin).toBe(true);
@@ -54,7 +54,7 @@ describe('PersonalitiesService', () => {
       ],
     });
     const result = service.list();
-    const byId = Object.fromEntries(result.personalities.map((p) => [p.id, p]));
+    const byId = Object.fromEntries(result.items.map((p) => [p.id, p]));
     expect(byId.custom?.builtin).toBe(false);
     expect(byId.builtin?.builtin).toBe(true);
   });

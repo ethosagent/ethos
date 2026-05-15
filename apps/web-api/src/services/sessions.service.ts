@@ -24,7 +24,7 @@ export interface ListInput {
 export class SessionsService {
   constructor(private readonly opts: SessionsServiceOptions) {}
 
-  async list(input: ListInput): Promise<{ sessions: WireSession[]; nextCursor: string | null }> {
+  async list(input: ListInput): Promise<{ items: WireSession[]; nextCursor: string | null }> {
     const limit = input.limit ?? 50;
     const page = await this.opts.sessions.list({
       ...(input.q !== undefined ? { q: input.q } : {}),
@@ -33,7 +33,7 @@ export class SessionsService {
       ...(input.personalityId ? { personalityId: input.personalityId } : {}),
     });
     return {
-      sessions: page.sessions.map(toWireSession),
+      items: page.sessions.map(toWireSession),
       nextCursor: page.nextCursor,
     };
   }
@@ -107,6 +107,7 @@ function toWireSession(s: import('@ethosagent/types').Session): WireSession {
     usage: s.usage,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
+    version: 1,
   };
 }
 

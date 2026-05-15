@@ -9,7 +9,7 @@ import { FsStorage } from '@ethosagent/storage-fs';
 import type { GlobalMemoryStore, SessionStore, Storage } from '@ethosagent/types';
 import type { SseEvent } from '@ethosagent/web-contracts';
 import type { Hono } from 'hono';
-import type { ApiKeyAuthStore } from './middleware/bearer-auth';
+import type { ApiKeyAdminStore } from './middleware/bearer-auth';
 import { AllowlistRepository } from './repositories/allowlist.repository';
 import { ConfigRepository } from './repositories/config.repository';
 import { EvolverRepository } from './repositories/evolver.repository';
@@ -17,6 +17,7 @@ import { PlatformsRepository } from './repositories/platforms.repository';
 import { SessionsRepository } from './repositories/sessions.repository';
 import { WebTokenRepository } from './repositories/web-token.repository';
 import { createRoutes } from './routes';
+import { ApiKeysService } from './services/api-keys.service';
 import { createWebApprovalHook, type DangerPredicate } from './services/approval-hook';
 import { ApprovalsService } from './services/approvals.service';
 import { type ChatDefaults, ChatService } from './services/chat.service';
@@ -95,13 +96,13 @@ export interface CreateWebApiOptions {
    */
   storage?: Storage;
   /**
-   * Bearer-token store backing the OpenAI-compat `/v1/*` surface (F1+F2).
-   * When omitted, `/v1/*` is not mounted. Boot code typically constructs
-   * `SqliteApiKeyStore` (from `@ethosagent/session-sqlite`) against the
-   * same `sessions.db` file the session store uses, but any
-   * `ApiKeyAuthStore` impl works — the HTTP layer doesn't care which.
+   * Bearer-token store backing the OpenAI-compat `/v1/*` surface and the
+   * `/rpc/*` dual-auth path (cookie OR bearer). When omitted, `/v1/*` is
+   * not mounted and `/rpc/*` uses cookie-only auth. Boot code typically
+   * constructs `SqliteApiKeyStore` (from `@ethosagent/session-sqlite`)
+   * against the same `sessions.db` file the session store uses.
    */
-  apiKeys?: ApiKeyAuthStore;
+  apiKeys?: ApiKeyAdminStore;
   /**
    * Returns currently registered team names for `GET /v1/models`. Boot
    * code typically scans `<dataDir>/teams/*.yaml`. When omitted, the
@@ -163,6 +164,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const meshService = new MeshService({ mesh });
   const memoryService = new MemoryService({ memory: memoryProvider });
   const kanbanService = new KanbanService();
+  const apiKeysService = new ApiKeysService(opts.apiKeys ?? null);
   // Project-level plugins (`<cwd>/.ethos/plugins/`) are out of scope
   // for v1; user-level only is the standard install path. Threading
   // `workingDir` from boot would be the next step when we add it.
@@ -270,6 +272,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       lab: labService,
       kanban: kanbanService,
       completions: completionsService,
+      apiKeys: apiKeysService,
     },
     ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),
     ...(opts.secureCookie !== undefined ? { secureCookie: opts.secureCookie } : {}),

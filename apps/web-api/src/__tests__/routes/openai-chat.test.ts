@@ -12,7 +12,8 @@ function makeStubPersonalitiesService(ids: string[] = KNOWN_PERSONALITIES): Pers
   return {
     list() {
       return {
-        personalities: ids.map((id) => ({ id }) as never),
+        items: ids.map((id) => ({ id }) as never),
+        nextCursor: null,
         defaultId: ids[0] ?? 'ethos',
       };
     },

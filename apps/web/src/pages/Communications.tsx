@@ -49,7 +49,7 @@ function TelegramPanel() {
 
   const personalitiesQuery = useQuery({
     queryKey: ['personalities', 'list'],
-    queryFn: () => rpc.personalities.list(),
+    queryFn: () => rpc.personalities.list({}),
     enabled: adding,
   });
 
@@ -140,7 +140,7 @@ function TelegramPanel() {
 
   const bindOptions =
     bindType === 'personality'
-      ? (personalitiesQuery.data?.personalities ?? []).map((p) => ({
+      ? (personalitiesQuery.data?.items ?? []).map((p) => ({
           label: p.name,
           value: p.id,
         }))
@@ -267,7 +267,7 @@ function SlackPanel() {
 
   const personalitiesQuery = useQuery({
     queryKey: ['personalities', 'list'],
-    queryFn: () => rpc.personalities.list(),
+    queryFn: () => rpc.personalities.list({}),
     enabled: adding,
   });
 
@@ -361,7 +361,7 @@ function SlackPanel() {
 
   const bindOptions =
     bindType === 'personality'
-      ? (personalitiesQuery.data?.personalities ?? []).map((p) => ({
+      ? (personalitiesQuery.data?.items ?? []).map((p) => ({
           label: p.name,
           value: p.id,
         }))

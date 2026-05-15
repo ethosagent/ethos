@@ -1,4 +1,7 @@
 import { type ApiKeyRecord, hashApiKey } from '@ethosagent/session-sqlite';
+
+export type { ApiKeyRecord } from '@ethosagent/session-sqlite';
+
 import type { Context, MiddlewareHandler } from 'hono';
 
 // Bearer-token middleware for the OpenAI-compat surface (`/v1/*`). Reads
@@ -21,6 +24,22 @@ import type { Context, MiddlewareHandler } from 'hono';
 export interface ApiKeyAuthStore {
   findByHash(hash: string): Promise<ApiKeyRecord | null>;
   touchLastUsed(id: string): Promise<void>;
+}
+
+/**
+ * Extended contract for the admin CRUD surface (create/list/revoke). The
+ * `/rpc/apiKeys.*` namespace needs this; the auth middleware does not. Boot
+ * code passes the same store instance for both — `SqliteApiKeyStore`
+ * satisfies both interfaces structurally.
+ */
+export interface ApiKeyAdminStore extends ApiKeyAuthStore {
+  create(input: {
+    name: string;
+    scopes: string[];
+    allowedOrigins?: string[];
+  }): Promise<{ secret: string; record: ApiKeyRecord }>;
+  list(): Promise<ApiKeyRecord[]>;
+  revoke(prefix: string): Promise<ApiKeyRecord | null>;
 }
 
 export interface BearerAuthOptions {

@@ -62,6 +62,9 @@ export type EthosErrorCode =
   | 'MEMORY_CONFLICT'
   // Web API (Phase 26)
   | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'NOT_FOUND'
+  | 'NOT_CONFIGURED'
   | 'SESSION_NOT_FOUND'
   | 'PERSONALITY_EXISTS'
   | 'PERSONALITY_READ_ONLY'

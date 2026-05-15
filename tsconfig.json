@@ -72,6 +72,7 @@
       "@ethosagent/wiring/model-catalog": ["./packages/wiring/src/model-catalog"],
       "@ethosagent/tui/setup": ["./apps/tui/src/setup/index"],
       "@ethosagent/web-contracts": ["./packages/web-contracts/src"],
+      "@ethosagent/sdk": ["./packages/sdk/src"],
       "@ethosagent/design-tokens": ["./packages/design-tokens/src"],
       "@ethosagent/design-tokens/antd": ["./packages/design-tokens/src/antd"],
       "@ethosagent/design-tokens/chalk": ["./packages/design-tokens/src/chalk"],
@@ -87,7 +88,8 @@
       "@ethosagent/safety-injection": ["./packages/safety/injection/src"],
       "@ethosagent/safety-network": ["./packages/safety/network/src"],
       "@ethosagent/safety-scanner": ["./packages/safety/scanner/src"],
-      "@ethosagent/safety-watcher": ["./packages/safety/watcher/src"]
+      "@ethosagent/safety-watcher": ["./packages/safety/watcher/src"],
+      "@ethosagent/example-mission-control": ["./examples/mission-control/src"]
     }
   },
   "include": [

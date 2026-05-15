@@ -35,6 +35,7 @@ describe('entity schemas', () => {
       },
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      version: 1,
     };
     expect(SessionSchema.parse(s)).toEqual(s);
   });
@@ -80,6 +81,7 @@ describe('entity schemas', () => {
       mcp_servers: null,
       plugins: null,
       builtin: true,
+      version: 1,
     };
     const parsed = PersonalitySchema.parse(p);
     expect(parsed).toEqual(p);
@@ -160,6 +162,21 @@ describe('SSE event union', () => {
       }),
     ).toThrow();
   });
+
+  it('accepts tool_progress with audience: dashboard', () => {
+    const event = SseEventSchema.parse({
+      type: 'tool_progress',
+      toolName: 'bash',
+      message: 'rendering…',
+      audience: 'dashboard',
+    });
+    expect(event).toEqual({
+      type: 'tool_progress',
+      toolName: 'bash',
+      message: 'rendering…',
+      audience: 'dashboard',
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -170,6 +187,7 @@ describe('SSE event union', () => {
 describe('contract router', () => {
   it('exposes the v0 + v0.5 + v1 namespaces', () => {
     expect(Object.keys(contract).sort()).toEqual([
+      'apiKeys',
       'batch',
       'chat',
       'clarify',
@@ -180,6 +198,7 @@ describe('contract router', () => {
       'kanban',
       'memory',
       'mesh',
+      'meta',
       'onboarding',
       'personalities',
       'platforms',

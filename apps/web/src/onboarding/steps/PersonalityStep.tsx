@@ -45,7 +45,7 @@ export function PersonalityStep({
 }) {
   const { data, isLoading } = useQuery({
     queryKey: ['personalities'],
-    queryFn: () => rpc.personalities.list(),
+    queryFn: () => rpc.personalities.list({}),
   });
 
   const [selectedId, setSelectedId] = useState<string | null>(answers.personalityId ?? null);
@@ -80,7 +80,7 @@ export function PersonalityStep({
       </p>
 
       <div className="onboarding-personalities">
-        {data.personalities.map((p) => (
+        {data.items.map((p) => (
           <PersonalityRow
             key={p.id}
             personality={p}

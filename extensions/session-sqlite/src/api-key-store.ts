@@ -19,6 +19,7 @@ const SECRET_BYTES = 28; // 56 hex chars of random — 224 bits of entropy
 export interface CreateApiKeyInput {
   name: string;
   scopes: string[];
+  allowedOrigins?: string[];
 }
 
 export interface CreateApiKeyResult {
@@ -33,6 +34,7 @@ export interface ApiKeyRecord {
   prefix: string;
   name: string;
   scopes: string[];
+  allowedOrigins: string[];
   createdAt: Date;
   lastUsed: Date | null;
   revokedAt: Date | null;
@@ -57,19 +59,25 @@ export class SqliteApiKeyStore {
   private migrate(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS api_keys (
-        id          TEXT PRIMARY KEY,
-        prefix      TEXT NOT NULL,
-        hash        TEXT NOT NULL,
-        name        TEXT NOT NULL,
-        scopes      TEXT NOT NULL,
-        created_at  TEXT NOT NULL,
-        last_used   TEXT,
-        revoked_at  TEXT
+        id              TEXT PRIMARY KEY,
+        prefix          TEXT NOT NULL,
+        hash            TEXT NOT NULL,
+        name            TEXT NOT NULL,
+        scopes          TEXT NOT NULL,
+        allowed_origins TEXT NOT NULL DEFAULT '[]',
+        created_at      TEXT NOT NULL,
+        last_used       TEXT,
+        revoked_at      TEXT
       ) STRICT;
 
       CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(hash);
       CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(prefix);
     `);
+    // Additive migration: add allowed_origins column if table predates it.
+    const cols = this.db.pragma('table_info(api_keys)') as { name: string }[];
+    if (!cols.some((c) => c.name === 'allowed_origins')) {
+      this.db.exec(`ALTER TABLE api_keys ADD COLUMN allowed_origins TEXT NOT NULL DEFAULT '[]'`);
+    }
   }
 
   async create(input: CreateApiKeyInput): Promise<CreateApiKeyResult> {
@@ -78,13 +86,14 @@ export class SqliteApiKeyStore {
     const now = new Date().toISOString();
     const hash = hashApiKey(secret);
     const scopes = input.scopes.join(',');
+    const origins = JSON.stringify(input.allowedOrigins ?? []);
 
     this.db
       .prepare(
-        `INSERT INTO api_keys (id, prefix, hash, name, scopes, created_at, last_used, revoked_at)
-         VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)`,
+        `INSERT INTO api_keys (id, prefix, hash, name, scopes, allowed_origins, created_at, last_used, revoked_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
       )
-      .run(id, prefix, hash, input.name, scopes, now);
+      .run(id, prefix, hash, input.name, scopes, origins, now);
 
     return {
       secret,
@@ -93,6 +102,7 @@ export class SqliteApiKeyStore {
         prefix,
         name: input.name,
         scopes: [...input.scopes],
+        allowedOrigins: [...(input.allowedOrigins ?? [])],
         createdAt: new Date(now),
         lastUsed: null,
         revokedAt: null,
@@ -149,9 +159,32 @@ interface ApiKeyRow {
   hash: string;
   name: string;
   scopes: string;
+  allowed_origins: string;
   created_at: string;
   last_used: string | null;
   revoked_at: string | null;
+}
+
+function splitCsv(raw: string): string[] {
+  return raw
+    ? raw
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+}
+
+function parseOrigins(raw: string): string[] {
+  if (!raw) return [];
+  if (raw.startsWith('[')) {
+    try {
+      return JSON.parse(raw) as string[];
+    } catch {
+      return [];
+    }
+  }
+  // Legacy CSV fallback for rows written before JSON migration.
+  return splitCsv(raw);
 }
 
 function rowToRecord(r: ApiKeyRow): ApiKeyRecord {
@@ -159,12 +192,8 @@ function rowToRecord(r: ApiKeyRow): ApiKeyRecord {
     id: r.id,
     prefix: r.prefix,
     name: r.name,
-    scopes: r.scopes
-      ? r.scopes
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : [],
+    scopes: splitCsv(r.scopes),
+    allowedOrigins: parseOrigins(r.allowed_origins),
     createdAt: new Date(r.created_at),
     lastUsed: r.last_used ? new Date(r.last_used) : null,
     revokedAt: r.revoked_at ? new Date(r.revoked_at) : null,

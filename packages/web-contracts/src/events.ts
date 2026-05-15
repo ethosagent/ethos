@@ -40,7 +40,7 @@ export const ToolProgressEventSchema = z.object({
   toolName: z.string(),
   message: z.string(),
   percent: z.number().min(0).max(100).optional(),
-  audience: z.enum(['internal', 'user']),
+  audience: z.enum(['internal', 'user', 'dashboard']),
 });
 
 export const ToolEndEventSchema = z.object({
@@ -49,7 +49,7 @@ export const ToolEndEventSchema = z.object({
   toolName: z.string(),
   ok: z.boolean(),
   durationMs: z.number().nonnegative(),
-  audience: z.enum(['internal', 'user']).optional(),
+  audience: z.enum(['internal', 'user', 'dashboard']).optional(),
   /** Tool output body — success value or error message. The web chip
    *  surfaces it on click-to-expand without a follow-up history fetch. */
   result: z.string().optional(),
