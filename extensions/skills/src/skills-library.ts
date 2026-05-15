@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
-import { EthosError, type Storage } from '@ethosagent/types';
+import { assertSafeId, EthosError, type Storage } from '@ethosagent/types';
 import { parseSkillFrontmatter } from './skill-compat';
 
 // CRUD over the markdown-skill files under ~/.ethos/skills/ (global) and
@@ -83,10 +83,12 @@ export class SkillsLibrary {
   }
 
   async getSkill(id: string): Promise<SkillRecord | null> {
+    assertSafeId(id, 'skillId');
     return this.readGlobal(`${id}.md`);
   }
 
   async createSkill(id: string, body: string): Promise<SkillRecord> {
+    assertSafeId(id, 'skillId');
     await this.storage.mkdir(this.skillsDir);
     const path = join(this.skillsDir, `${id}.md`);
     if (await this.storage.exists(path)) {
@@ -103,6 +105,7 @@ export class SkillsLibrary {
   }
 
   async updateSkill(id: string, body: string): Promise<SkillRecord> {
+    assertSafeId(id, 'skillId');
     const path = join(this.skillsDir, `${id}.md`);
     if (!(await this.storage.exists(path))) throw notFoundGlobal(id);
     await this.storage.write(path, ensureTrailingNewline(body));
@@ -112,6 +115,7 @@ export class SkillsLibrary {
   }
 
   async deleteSkill(id: string): Promise<void> {
+    assertSafeId(id, 'skillId');
     const path = join(this.skillsDir, `${id}.md`);
     if (!(await this.storage.exists(path))) throw notFoundGlobal(id);
     await this.storage.remove(path);
@@ -147,11 +151,13 @@ export class SkillsLibrary {
   }
 
   async pendingExists(id: string): Promise<boolean> {
+    assertSafeId(id, 'skillId');
     return this.storage.exists(join(this.pendingDir, `${id}.md`));
   }
 
   /** Move `<id>.md` from pending → live, replacing any existing live skill. */
   async approvePending(id: string): Promise<void> {
+    assertSafeId(id, 'skillId');
     const src = join(this.pendingDir, `${id}.md`);
     const body = await this.storage.read(src);
     if (body === null) throw notFoundGlobal(id);
@@ -161,6 +167,7 @@ export class SkillsLibrary {
   }
 
   async rejectPending(id: string): Promise<void> {
+    assertSafeId(id, 'skillId');
     const path = join(this.pendingDir, `${id}.md`);
     if (!(await this.storage.exists(path))) throw notFoundGlobal(id);
     await this.storage.remove(path);
@@ -171,6 +178,7 @@ export class SkillsLibrary {
   // ---------------------------------------------------------------------------
 
   async listPersonalitySkills(personalityId: string): Promise<PersonalitySkillRecord[]> {
+    assertSafeId(personalityId, 'personalityId');
     const dir = this.personalitySkillsDir(personalityId);
     const names = await this.storage.list(dir);
     const out: PersonalitySkillRecord[] = [];
@@ -187,6 +195,8 @@ export class SkillsLibrary {
     personalityId: string,
     skillId: string,
   ): Promise<PersonalitySkillRecord | null> {
+    assertSafeId(personalityId, 'personalityId');
+    assertSafeId(skillId, 'skillId');
     return this.readPersonalitySkill(this.personalitySkillsDir(personalityId), `${skillId}.md`);
   }
 
@@ -195,6 +205,8 @@ export class SkillsLibrary {
     skillId: string,
     body: string,
   ): Promise<PersonalitySkillRecord> {
+    assertSafeId(personalityId, 'personalityId');
+    assertSafeId(skillId, 'skillId');
     const dir = this.personalitySkillsDir(personalityId);
     await this.storage.mkdir(dir);
     const path = join(dir, `${skillId}.md`);
@@ -216,6 +228,8 @@ export class SkillsLibrary {
     skillId: string,
     body: string,
   ): Promise<PersonalitySkillRecord> {
+    assertSafeId(personalityId, 'personalityId');
+    assertSafeId(skillId, 'skillId');
     const dir = this.personalitySkillsDir(personalityId);
     const path = join(dir, `${skillId}.md`);
     if (!(await this.storage.exists(path))) throw notFoundPersonality(skillId);
@@ -226,6 +240,8 @@ export class SkillsLibrary {
   }
 
   async deletePersonalitySkill(personalityId: string, skillId: string): Promise<void> {
+    assertSafeId(personalityId, 'personalityId');
+    assertSafeId(skillId, 'skillId');
     const path = join(this.personalitySkillsDir(personalityId), `${skillId}.md`);
     if (!(await this.storage.exists(path))) throw notFoundPersonality(skillId);
     await this.storage.remove(path);
@@ -241,6 +257,8 @@ export class SkillsLibrary {
     personalityId: string,
     skillIds: string[],
   ): Promise<PersonalitySkillRecord[]> {
+    assertSafeId(personalityId, 'personalityId');
+    for (const sid of skillIds) assertSafeId(sid, 'skillId');
     const dir = this.personalitySkillsDir(personalityId);
     await this.storage.mkdir(dir);
     const imported: PersonalitySkillRecord[] = [];

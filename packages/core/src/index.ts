@@ -52,6 +52,8 @@ export { ChainedProvider } from './providers/chained-provider';
 export { DefaultLLMProviderRegistry } from './providers/llm-registry';
 export { DefaultMemoryProviderRegistry } from './providers/memory-registry';
 export { InMemoryRequestDumpStore } from './request-dump-store';
+export { stripAnsiEscapes } from './sanitize-output';
 export type { SecretsBackend } from './scoped';
 export { ScopedFetchImpl, ScopedFsImpl, ScopedProcessImpl, ScopedSecretsImpl } from './scoped';
 export { DefaultToolRegistry } from './tool-registry';
+export { SsrfError, type ValidateUrlOptions, validateUrl } from './url-validator';

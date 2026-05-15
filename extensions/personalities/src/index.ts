@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
 import {
+  assertSafeId,
   EthosError,
   type ModelTierConfig,
   type PersonalityConfig,
@@ -256,6 +257,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         'FilePersonalityRegistry: userPathFor() requires a userPersonalitiesDir at construction time.',
       );
     }
+    assertSafeId(id, 'personalityId');
     return join(this.userDir, id);
   }
 
@@ -280,6 +282,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
   }
 
   async create(input: CreatePersonalityInput): Promise<DescribedPersonality> {
+    assertSafeId(input.id, 'personalityId');
     if (this.personalities.get(input.id)) {
       throw new EthosError({
         code: 'PERSONALITY_EXISTS',
@@ -365,6 +368,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
    * ready to be edited.
    */
   async duplicate(id: string, newId: string): Promise<DescribedPersonality> {
+    assertSafeId(newId, 'personalityId');
     if (this.personalities.get(newId)) {
       throw new EthosError({
         code: 'PERSONALITY_EXISTS',

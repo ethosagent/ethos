@@ -71,7 +71,9 @@ export async function safeFetch(
   const resolver = opts.resolveHost ?? defaultResolveHost;
   const maxHops = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
 
+  const originalOrigin = new URL(initialUrl).origin;
   let url = initialUrl;
+  let init = opts.init;
   for (let hop = 0; hop < maxHops; hop++) {
     const policyCheck = await validateUrl(url, opts.policy, resolver);
     if (!policyCheck.ok) {
@@ -80,7 +82,7 @@ export async function safeFetch(
 
     let response: Response;
     try {
-      response = await fetchImpl(url, { ...opts.init, redirect: 'manual' });
+      response = await fetchImpl(url, { ...init, redirect: 'manual' });
     } catch (err) {
       return {
         ok: false,
@@ -95,7 +97,12 @@ export async function safeFetch(
       if (!location) {
         return { ok: true, response, finalUrl: url, hops: hop };
       }
-      url = new URL(location, url).toString();
+      const nextUrl = new URL(location, url).toString();
+      // Strip auth headers on cross-origin redirects to prevent credential leakage
+      if (new URL(nextUrl).origin !== originalOrigin && init?.headers) {
+        init = { ...init, headers: stripAuthHeaders(init.headers) };
+      }
+      url = nextUrl;
       continue;
     }
 
@@ -274,4 +281,34 @@ async function checkResolvesToCloudMetadata(
 
 function isLikelyIp(s: string): boolean {
   return isValidIpv4(s) || s.includes(':');
+}
+
+// ---------------------------------------------------------------------------
+// Auth header stripping on cross-origin redirects
+// ---------------------------------------------------------------------------
+
+const AUTH_HEADERS = new Set(['authorization', 'proxy-authorization', 'cookie']);
+
+/**
+ * Remove credential-bearing headers from a HeadersInit value.
+ * Called when a redirect crosses origins to prevent leaking API keys
+ * or session tokens to third-party hosts.
+ */
+function stripAuthHeaders(headers: HeadersInit): HeadersInit {
+  if (headers instanceof Headers) {
+    const safe = new Headers(headers);
+    for (const name of AUTH_HEADERS) safe.delete(name);
+    return safe;
+  }
+  if (Array.isArray(headers)) {
+    return headers.filter(([name]) => !AUTH_HEADERS.has(name.toLowerCase()));
+  }
+  // Record<string, string>
+  const safe: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (!AUTH_HEADERS.has(key.toLowerCase())) {
+      safe[key] = value;
+    }
+  }
+  return safe;
 }

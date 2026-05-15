@@ -13,6 +13,7 @@ import {
   LastWriteWinsPolicy,
   LazyOnDemandPolicy,
   type SummarizerFn,
+  validateUrl,
 } from '@ethosagent/core';
 import { autonomyTier, KanbanStore, type TrustPolicy } from '@ethosagent/kanban-store';
 import { AnthropicProvider, AuthRotatingProvider } from '@ethosagent/llm-anthropic';
@@ -239,6 +240,13 @@ function createSingleProvider(cfg: {
   baseUrl?: string;
   apiVersion?: string;
 }): LLMProvider {
+  // SSRF gate: validate user-supplied base URLs before handing them to SDK
+  // clients. `allowLocalhost` is true because local providers (Ollama, LM
+  // Studio) are a legitimate use case for OpenAI-compat providers.
+  if (cfg.baseUrl) {
+    validateUrl(cfg.baseUrl, { allowLocalhost: true });
+  }
+
   if (cfg.provider === 'anthropic') {
     return new AnthropicProvider({ apiKey: cfg.apiKey, model: cfg.model });
   }
