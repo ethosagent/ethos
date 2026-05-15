@@ -52,7 +52,7 @@ In the EC2 console → **Launch instance** → fill in:
 
 Launch it. The bootstrap takes ~3 minutes; watch progress with **EC2 → Instance → Actions → Monitor and troubleshoot → Get system log**.
 
-### 2. The bootstrap script
+### 2. The bootstrap script {#the-bootstrap-script}
 
 The canonical script lives at [scripts/ec2-bootstrap.sh](https://github.com/MiteshSharma/ethos/blob/main/scripts/ec2-bootstrap.sh) in the repo. Paste its contents into the **User data** field at launch — or fetch it locally first if you want to review or modify:
 
