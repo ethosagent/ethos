@@ -6,6 +6,7 @@ import { CronScheduler } from '@ethosagent/cron';
 import { Gateway, type GatewayBotConfig } from '@ethosagent/gateway';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry, firstParagraph } from '@ethosagent/personalities';
+import { initPairingDb } from '@ethosagent/safety-channel';
 import { createInjectors } from '@ethosagent/skills';
 import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
 import { readRuntime, removeRuntime } from '@ethosagent/team-supervisor';
@@ -21,6 +22,7 @@ import {
   resolveModelDisplay,
 } from '@ethosagent/types';
 import { createDangerPredicate, createMemoryProvider } from '@ethosagent/wiring';
+import Database from 'better-sqlite3';
 import { ApprovalCoordinator, createSlackApprovalHook } from '../approval-coordinator';
 import {
   applyPlatformShim,
@@ -325,17 +327,60 @@ export async function runGatewayStart(): Promise<void> {
   const telegramCardReader = hasTelegram ? await createTelegramPersonalityCardReader() : undefined;
   const telegramGreetingProvider = hasTelegram ? await createTelegramGreetingProvider() : undefined;
 
+  // ---------------------------------------------------------------------------
+  // Chapter 1 safety: channel filter fail-closed assertion + pairing DB init
+  // ---------------------------------------------------------------------------
+  // If any channel adapter is configured but channel_filter is missing, refuse
+  // to boot. This prevents an unchecked gateway from accepting messages from
+  // anyone reachable by the bot.
+  if (adapters.length > 0 && !config.channelFilter) {
+    console.error(
+      `${c.red}FATAL: Channel adapters configured without channel_filter safety config.${c.reset}\n` +
+        'Add channel_filter.<platform>.ownerUserId to config.yaml for each platform.\n' +
+        'See: https://docs.ethos.dev/security/channel-filter',
+    );
+    process.exit(1);
+  }
+  // Per-platform assertion: every active adapter must have a matching entry.
+  for (const adapter of adapters) {
+    const platform = adapter.id.includes(':') ? adapter.id.split(':')[0] : adapter.id;
+    if (config.channelFilter && !config.channelFilter[platform]) {
+      console.error(
+        `${c.red}FATAL: Adapter "${adapter.id}" has no channel_filter.${platform} config.${c.reset}\n` +
+          `Add channel_filter.${platform}.ownerUserId to config.yaml.`,
+      );
+      process.exit(1);
+    }
+  }
+
+  // Initialize the pairing DB when channel filter is configured. The SQLite
+  // file lives alongside the main ethos state at ~/.ethos/pairing.db.
+  let pairingDb: InstanceType<typeof Database> | undefined;
+  if (config.channelFilter) {
+    const dbPath = join(ethosDir(), 'pairing.db');
+    pairingDb = new Database(dbPath);
+    pairingDb.pragma('journal_mode = WAL');
+    initPairingDb(pairingDb);
+  }
+
   const gateway: Gateway =
     bots.length === 0
       ? // Email-only deployment (no telegram/slack bots configured). Keep
         // the legacy single-loop construction for the email path.
-        new Gateway({ loop: systemLoop, defaultPersonality: config.personality })
+        new Gateway({
+          loop: systemLoop,
+          defaultPersonality: config.personality,
+          ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
+          ...(pairingDb ? { pairingDb } : {}),
+        })
       : new Gateway({
           bots,
           attachmentCache,
           ...(clarifyMessageCorrelator ? { clarifyMessageCorrelator } : {}),
           ...(telegramCardReader ? { personalityCardReader: telegramCardReader } : {}),
           ...(telegramGreetingProvider ? { greetingProvider: telegramGreetingProvider } : {}),
+          ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
+          ...(pairingDb ? { pairingDb } : {}),
         });
   gatewayRef = gateway;
 

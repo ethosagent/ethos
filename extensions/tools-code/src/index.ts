@@ -105,7 +105,7 @@ const runTestsTool: Tool = {
   maxResultChars: 20_000,
   outputIsUntrusted: true,
   capabilities: {
-    process: { allowedBinaries: ['docker'] },
+    process: { allowedBinaries: ['bash'] },
   },
   schema: {
     type: 'object',
@@ -171,7 +171,7 @@ const lintTool: Tool = {
   maxResultChars: 10_000,
   outputIsUntrusted: true,
   capabilities: {
-    process: { allowedBinaries: ['docker'] },
+    process: { allowedBinaries: ['bash'] },
   },
   schema: {
     type: 'object',

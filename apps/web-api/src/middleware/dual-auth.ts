@@ -118,6 +118,16 @@ export function dualAuth(opts: DualAuthOptions): MiddlewareHandler {
       .replace(/^\/rpc\//, '')
       .replace(/^\/sse\//, '')
       .replace(/\//g, '.');
+
+    // Defense-in-depth: apiKeys namespace is always cookie-only
+    if (rpcPath.startsWith('apiKeys')) {
+      throw new EthosError({
+        code: 'FORBIDDEN',
+        cause: 'The apiKeys namespace requires cookie authentication.',
+        action: 'Use the Ethos web UI to manage API keys.',
+      });
+    }
+
     const requiredScope = opts.scopeForPath(rpcPath);
     if (requiredScope && !record.scopes.includes(requiredScope)) {
       throw new EthosError({

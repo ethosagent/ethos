@@ -231,7 +231,12 @@ export class VectorMemoryProvider implements MemoryProvider {
     for (const update of updates) {
       switch (update.action) {
         case 'add': {
-          await this.upsert(ctx.scopeId, update.key, update.content);
+          // Read existing content, append new, then upsert
+          const existing = this.db
+            .prepare('SELECT content FROM memory_entries WHERE scope_id = ? AND key = ?')
+            .get(ctx.scopeId, update.key) as { content: string } | undefined;
+          const combined = existing ? `${existing.content}\n${update.content}` : update.content;
+          await this.upsert(ctx.scopeId, update.key, combined);
           break;
         }
         case 'replace': {
@@ -247,11 +252,21 @@ export class VectorMemoryProvider implements MemoryProvider {
         case 'remove': {
           const match = update.substringMatch;
           if (!match) break;
-          this.db
-            .prepare(
-              "DELETE FROM memory_entries WHERE scope_id = ? AND key = ? AND content LIKE '%' || ? || '%'",
-            )
-            .run(ctx.scopeId, update.key, match);
+          const existing = this.db
+            .prepare('SELECT content FROM memory_entries WHERE scope_id = ? AND key = ?')
+            .get(ctx.scopeId, update.key) as { content: string } | undefined;
+          if (!existing) break;
+          const filtered = existing.content
+            .split('\n')
+            .filter((line) => !line.includes(match))
+            .join('\n');
+          if (!filtered.trim()) {
+            this.db
+              .prepare('DELETE FROM memory_entries WHERE scope_id = ? AND key = ?')
+              .run(ctx.scopeId, update.key);
+          } else {
+            await this.upsert(ctx.scopeId, update.key, filtered);
+          }
           break;
         }
         case 'delete': {

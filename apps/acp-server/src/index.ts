@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import {
   createServer as createHttpServer,
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http';
+import type { Socket } from 'node:net';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import type { AgentMesh, MeshEntry } from '@ethosagent/agent-mesh';
@@ -86,6 +87,9 @@ export class AcpServer {
   private readonly _createSessionView: SessionViewFactory | undefined;
   private readonly _sessionViews = new Map<string, McpSessionView>();
 
+  /** Bearer token required for all authenticated endpoints. */
+  private readonly _authToken: string;
+
   constructor(config: {
     runner: AgentRunner;
     session: SessionStore;
@@ -96,6 +100,8 @@ export class AcpServer {
     resolveAllowlist?: PersonalityAllowlistResolver;
     /** Phase 5: factory to create McpSessionView instances. */
     createSessionView?: SessionViewFactory;
+    /** Optional bearer token. If omitted, a 32-byte random hex token is generated. */
+    authToken?: string;
   }) {
     this.runner = config.runner;
     this.session = config.session;
@@ -104,6 +110,12 @@ export class AcpServer {
     this.mesh = config.mesh;
     this._resolveAllowlist = config.resolveAllowlist;
     this._createSessionView = config.createSessionView;
+    this._authToken = config.authToken ?? randomBytes(32).toString('hex');
+  }
+
+  /** Returns the bearer token clients must present to access authenticated endpoints. */
+  get token(): string {
+    return this._authToken;
   }
 
   get activeSessionCount(): number {
@@ -137,6 +149,8 @@ export class AcpServer {
   // ---------------------------------------------------------------------------
 
   startHttp(port: number): ReturnType<typeof createHttpServer> {
+    const host = process.env.ETHOS_ACP_BIND_ALL === '1' ? '0.0.0.0' : '127.0.0.1';
+
     const httpServer = createHttpServer((req, res) => {
       void this.handleHttpRequest(req, res).catch((err) => {
         if (!res.headersSent) {
@@ -146,14 +160,48 @@ export class AcpServer {
       });
     });
 
-    const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+    const wss = new WebSocketServer({ noServer: true });
+
+    httpServer.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer) => {
+      // Only handle /ws path
+      if (req.url !== '/ws') {
+        socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+
+      // Origin validation — block DNS rebinding
+      const origin = req.headers.origin;
+      if (origin) {
+        const url = new URL(origin);
+        if (url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
+          socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+      }
+
+      // Bearer token authentication
+      const authHeader = req.headers.authorization;
+      if (!authHeader || authHeader !== `Bearer ${this._authToken}`) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit('connection', ws, req);
+      });
+    });
+
     wss.on('connection', (ws) => this.handleWsConnection(ws));
 
-    httpServer.listen(port);
+    httpServer.listen(port, host);
     return httpServer;
   }
 
   private async handleHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // Health check is unauthenticated
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
@@ -164,6 +212,14 @@ export class AcpServer {
           last_turn_at: this.lastTurnAt ? new Date(this.lastTurnAt).toISOString() : null,
         }),
       );
+      return;
+    }
+
+    // Require bearer token for all other requests
+    const authHeader = req.headers.authorization;
+    if (!authHeader || authHeader !== `Bearer ${this._authToken}`) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
       return;
     }
 

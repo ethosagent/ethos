@@ -45,11 +45,16 @@ export class DockerSandbox {
 
     const { stdin, timeoutMs = 30_000, env = [], networkMode = 'none', memoryMb = 256 } = opts;
 
+    const containerName = `ethos-sandbox-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
     const args = ['docker', 'run', '--rm'];
+    args.push('--name', containerName);
     if (stdin !== undefined) args.push('-i');
     args.push('--network', networkMode);
     args.push(`--memory=${memoryMb}m`);
     args.push('--memory-swap', `${memoryMb}m`); // disable swap
+    args.push('--cpus', '2');
+    args.push('--pids-limit', '256');
     args.push('--cap-drop', 'ALL'); // drop all Linux capabilities
     args.push('--security-opt', 'no-new-privileges');
     for (const e of env) {
@@ -57,7 +62,7 @@ export class DockerSandbox {
     }
     args.push(image, ...cmd);
 
-    return this.spawnRaw(args, stdin, timeoutMs);
+    return this.spawnRaw(args, stdin, timeoutMs, containerName);
   }
 
   async cleanup(): Promise<void> {
@@ -70,6 +75,7 @@ export class DockerSandbox {
     args: string[],
     stdin: string | undefined,
     timeoutMs: number,
+    containerName?: string,
   ): Promise<ExecResult> {
     const [prog, ...rest] = args;
     return new Promise((resolve, reject) => {
@@ -88,6 +94,13 @@ export class DockerSandbox {
 
       const timer = setTimeout(() => {
         child.kill('SIGKILL');
+        // Best-effort kill the Docker container which continues running after
+        // the local process is killed
+        if (containerName) {
+          spawn('docker', ['kill', containerName], { stdio: 'ignore' }).on('close', () => {
+            spawn('docker', ['rm', '-f', containerName], { stdio: 'ignore' });
+          });
+        }
         reject(new Error(`Docker command timed out after ${timeoutMs}ms`));
       }, timeoutMs);
 

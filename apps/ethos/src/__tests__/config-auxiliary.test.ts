@@ -141,3 +141,57 @@ describe('auxiliary.vision config parsing', () => {
     expect(cfg?.auxiliary?.vision).toEqual({ model: 'claude-sonnet-4-6' });
   });
 });
+
+describe('writeConfig round-trip — previously dropped fields', () => {
+  it('round-trips email, display, evolver, background, and providers fields', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    const original = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      apiKey: 'sk-test',
+      personality: 'researcher',
+      emailImapHost: 'imap.example.com',
+      emailImapPort: 993,
+      emailUser: 'user@example.com',
+      emailPassword: 'secret',
+      emailSmtpHost: 'smtp.example.com',
+      emailSmtpPort: 587,
+      displayResumeHint: false,
+      displayResumeRecapTurns: 5,
+      displayBellOnComplete: true,
+      evolverCronEnabled: true,
+      evolverSchedule: '0 3 * * *',
+      backgroundMaxConcurrent: 8,
+      providers: [
+        { provider: 'anthropic', apiKey: 'sk-ant-1', model: 'claude-opus-4-7' },
+        { provider: 'openrouter', apiKey: 'sk-or-2', baseUrl: 'https://openrouter.ai/api/v1' },
+      ],
+    };
+    await writeConfig(storage, original);
+    const roundTripped = await readRawConfig(storage);
+    expect(roundTripped?.emailImapHost).toBe('imap.example.com');
+    expect(roundTripped?.emailImapPort).toBe(993);
+    expect(roundTripped?.emailUser).toBe('user@example.com');
+    expect(roundTripped?.emailPassword).toBe('secret');
+    expect(roundTripped?.emailSmtpHost).toBe('smtp.example.com');
+    expect(roundTripped?.emailSmtpPort).toBe(587);
+    expect(roundTripped?.displayResumeHint).toBe(false);
+    expect(roundTripped?.displayResumeRecapTurns).toBe(5);
+    expect(roundTripped?.displayBellOnComplete).toBe(true);
+    expect(roundTripped?.evolverCronEnabled).toBe(true);
+    expect(roundTripped?.evolverSchedule).toBe('0 3 * * *');
+    expect(roundTripped?.backgroundMaxConcurrent).toBe(8);
+    expect(roundTripped?.providers).toHaveLength(2);
+    expect(roundTripped?.providers?.[0]).toEqual({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-1',
+      model: 'claude-opus-4-7',
+    });
+    expect(roundTripped?.providers?.[1]).toEqual({
+      provider: 'openrouter',
+      apiKey: 'sk-or-2',
+      baseUrl: 'https://openrouter.ai/api/v1',
+    });
+  });
+});

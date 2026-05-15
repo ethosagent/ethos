@@ -126,7 +126,7 @@ export const webExtractTool: Tool = {
   toolset: 'web',
   maxResultChars: 20_000,
   capabilities: {
-    network: { allowedHosts: ['api.exa.ai'] },
+    network: { allowedHosts: ['*'] },
     secrets: ['providers/exa/apiKey'],
   },
   outputIsUntrusted: true,

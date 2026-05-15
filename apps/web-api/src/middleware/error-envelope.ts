@@ -19,6 +19,7 @@ export interface ErrorEnvelope {
 
 const STATUS_BY_CODE: Partial<Record<EthosErrorCode, number>> = {
   UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
   SESSION_NOT_FOUND: 404,
   CONFIG_MISSING: 400,
   CONFIG_INVALID: 400,
