@@ -21,6 +21,9 @@ import Database from 'better-sqlite3';
 const TOP_K = 5;
 const EMBED_DIM = 384;
 
+/** Maximum size in bytes for any single memory key's content. */
+const MAX_MEMORY_BYTES = 512 * 1024; // 512KB per key
+
 // ---------------------------------------------------------------------------
 // Lazy singleton embedding pipeline
 // ---------------------------------------------------------------------------
@@ -259,7 +262,12 @@ export class VectorMemoryProvider implements MemoryProvider {
             const existing = this.db
               .prepare('SELECT content FROM memory_entries WHERE scope_id = ? AND key = ?')
               .get(ctx.scopeId, update.key) as { content: string } | undefined;
-            const combined = existing ? `${existing.content}\n${update.content}` : update.content;
+            let combined = existing ? `${existing.content}\n${update.content}` : update.content;
+            if (combined.length > MAX_MEMORY_BYTES) {
+              const trimmed = combined.slice(combined.length - MAX_MEMORY_BYTES);
+              const firstNewline = trimmed.indexOf('\n');
+              combined = firstNewline > 0 ? trimmed.slice(firstNewline + 1) : trimmed;
+            }
             await this.upsert(ctx.scopeId, update.key, combined);
             break;
           }

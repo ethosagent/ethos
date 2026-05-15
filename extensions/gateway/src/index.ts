@@ -1,4 +1,5 @@
 import type { AgentLoop } from '@ethosagent/core';
+import { stripAnsiEscapes } from '@ethosagent/core';
 import type { ChannelFilterConfig } from '@ethosagent/safety-channel';
 import {
   checkMessage,
@@ -989,21 +990,23 @@ export class Gateway {
             responseText.trim().length > 0
               ? `${responseText}\n\n⚠ Response interrupted: ${errored.error}`
               : `⚠ Error: ${errored.error}`;
-          if (this.outboundDedup.shouldSend(sessionKey, note)) {
-            await adapter.send(message.chatId, { text: note, threadId }).catch(() => {});
+          const sanitizedNote = stripAnsiEscapes(note);
+          if (this.outboundDedup.shouldSend(sessionKey, sanitizedNote)) {
+            await adapter.send(message.chatId, { text: sanitizedNote, threadId }).catch(() => {});
           }
         } else if (responseText) {
           // Outbound dedup — suppress same (sessionId, content) within TTL.
           // Adapters that previously rolled their own dedup go through this
           // cache instead. See plan/phases/30-robustness.md § 30.4.
-          if (this.outboundDedup.shouldSend(sessionKey, responseText)) {
+          const sanitized = stripAnsiEscapes(responseText);
+          if (this.outboundDedup.shouldSend(sessionKey, sanitized)) {
             // Pass the inbound thread identifier through so adapters with
             // thread semantics (Slack) reply in the same thread. Top-level
             // posts have no `threadId` — the value is undefined and the
             // adapter posts at the channel root.
             await adapter
               .send(message.chatId, {
-                text: responseText,
+                text: sanitized,
                 parseMode: 'markdown',
                 threadId,
               })

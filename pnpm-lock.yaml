@@ -594,6 +594,9 @@ importers:
 
   extensions/gateway:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/safety-channel':
         specifier: workspace:*
         version: link:../../packages/safety/channel
@@ -912,6 +915,9 @@ importers:
 
   extensions/tools-code:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/sandbox-docker':
         specifier: workspace:*
         version: link:../sandbox-docker

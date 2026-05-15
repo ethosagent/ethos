@@ -12,6 +12,9 @@ import type { McpServerConfig, McpSessionView } from '@ethosagent/tools-mcp';
 import type { SessionStore } from '@ethosagent/types';
 import { type WebSocket, WebSocketServer } from 'ws';
 
+/** Maximum number of concurrent MCP session views. */
+const MAX_ACP_SESSIONS = 100;
+
 // ---------------------------------------------------------------------------
 // Local types — avoids depending on @ethosagent/core
 // ---------------------------------------------------------------------------
@@ -527,6 +530,15 @@ export class AcpServer {
 
     let view = this._sessionViews.get(sessionKey);
     if (!view) {
+      if (this._sessionViews.size >= MAX_ACP_SESSIONS) {
+        return {
+          registered: [],
+          rejected: params.servers.map((s) => ({
+            name: s.name,
+            reason: `Session limit reached (max ${MAX_ACP_SESSIONS})`,
+          })),
+        };
+      }
       view = this._createSessionView();
       this._sessionViews.set(sessionKey, view);
     }

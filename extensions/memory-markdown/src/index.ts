@@ -19,6 +19,9 @@ import type {
 // tools-memory write arbitrary `.md` keys via sync().
 const PERSONALITY_PREFETCH_KEYS = ['MEMORY.md', 'USER.md'] as const;
 
+/** Maximum size in bytes for any single memory key's content. */
+const MAX_MEMORY_BYTES = 512 * 1024; // 512KB per key
+
 export interface MarkdownMemoryConfig {
   /** Directory containing MEMORY.md and USER.md. Defaults to ~/.ethos */
   dir?: string;
@@ -264,6 +267,14 @@ export class MarkdownFileMemoryProvider implements MemoryProvider {
           content = '';
           break;
       }
+    }
+
+    if (content.length > MAX_MEMORY_BYTES) {
+      // Trim from the beginning, preserving the most recent content
+      const trimmed = content.slice(content.length - MAX_MEMORY_BYTES);
+      // Find the first complete line break to avoid cutting mid-line
+      const firstNewline = trimmed.indexOf('\n');
+      content = firstNewline > 0 ? trimmed.slice(firstNewline + 1) : trimmed;
     }
 
     if (deleted) {
