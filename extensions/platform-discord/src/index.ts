@@ -417,7 +417,7 @@ export class DiscordAdapter implements PlatformAdapter {
   }): Promise<{ ok: true } | { ok: false; error: string }> {
     void input.interactionToken; // discord.js looks up via interactionId
     const pending = this.pendingInteractions.get(input.interactionId);
-    if (!pending || !pending.isButton()) {
+    if (!pending?.isButton()) {
       return { ok: false, error: 'No pending button interaction for this id' };
     }
     this.pendingInteractions.delete(input.interactionId);
@@ -454,7 +454,7 @@ export class DiscordAdapter implements PlatformAdapter {
   async ackButtonClick(input: { interactionId: string; interactionToken: string }): Promise<void> {
     void input.interactionToken;
     const pending = this.pendingInteractions.get(input.interactionId);
-    if (!pending || !pending.isButton()) return;
+    if (!pending?.isButton()) return;
     this.pendingInteractions.delete(input.interactionId);
     try {
       await pending.deferUpdate();
@@ -467,7 +467,7 @@ export class DiscordAdapter implements PlatformAdapter {
   async ackModalSubmit(input: { interactionId: string; interactionToken: string }): Promise<void> {
     void input.interactionToken;
     const pending = this.pendingInteractions.get(input.interactionId);
-    if (!pending || !pending.isModalSubmit()) return;
+    if (!pending?.isModalSubmit()) return;
     this.pendingInteractions.delete(input.interactionId);
     try {
       await pending.deferUpdate();

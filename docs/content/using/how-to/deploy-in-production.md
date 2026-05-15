@@ -1,6 +1,6 @@
 ---
 title: "Deploy Ethos in production"
-description: "Run the gateway (Telegram + Slack + Discord + Email bots) and the web dashboard together on a mini PC, VPS, or home server. One command to start everything; PM2 keeps it alive across reboots."
+description: "Run the gateway (bots) and web dashboard together on a mini PC, VPS, or home server. One supervised command; PM2 keeps it alive across reboots."
 kind: how-to
 audience: user
 slug: deploy-in-production

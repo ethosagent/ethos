@@ -137,6 +137,19 @@ In the AWS Backup console:
 
 That's it. AWS Backup takes encrypted snapshots inheriting the volume's encryption.
 
+## Verify
+
+Confirm the deployment is healthy after the steps above:
+
+- **Bot replies.** DM your Telegram bot (or `@mention` in Slack). Reply lands within a few seconds.
+- **Service active + enabled.** `sudo systemctl status ethos` shows `active (running)` and `enabled` (will start on boot).
+- **Logs stream.** `journalctl -u ethos -f` shows the gateway's startup banner and per-turn output.
+- **State volume mounted.** `df -h /var/lib/ethos` shows the EBS device (not the root volume). `ls -la /home/ethos/.ethos` shows the symlink target.
+- **Reboot survival.** `sudo reboot`, reconnect (SSM or SSH), `systemctl status ethos` shows `active (running)` again with no manual intervention.
+- **Backup ran.** AWS Backup console → Jobs tab → daily snapshot of the state volume appears within 24h of plan creation.
+
+If any of these fail, jump to [Troubleshoot](#troubleshoot) below.
+
 ## Run the web dashboard too (optional)
 
 The default deployment is **gateway-only** — no inbound port, no dashboard, the simplest case. To also run the web dashboard + ACP server, swap the systemd unit's `ExecStart`:
