@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model, channel t
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-05-13
+updated: 2026-05-15
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. The parser ignores quotes around values.
@@ -335,6 +335,24 @@ personalities.engineer-paired.retention.traces: 180d
 Notes:
 
 - Only the `retention` sub-block is parsed under `personalities.<id>.*`. Other top-level keys cannot be overridden per personality from this file — set them in the personality's own `config.yaml`.
+
+## logs.rotation {#logs-rotation}
+
+Type: object · Default: `{ maxBytes: 10485760, maxFiles: 5, enabled: true }`
+
+Controls rotation of `~/.ethos/logs/errors.jsonl`. When the file exceeds `maxBytes`, it is renamed to `errors.jsonl.1` and older backups shift up to `maxFiles`.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `logs.rotation.maxBytes` | integer | `10485760` (10 MiB) | Maximum file size before rotation. Must be a positive integer. |
+| `logs.rotation.maxFiles` | integer | `5` | Maximum number of rotated backup files. Must be a positive integer. |
+| `logs.rotation.enabled` | boolean | `true` | Set to `false` to disable rotation entirely. |
+
+```yaml
+logs.rotation.maxBytes: 20971520
+logs.rotation.maxFiles: 10
+logs.rotation.enabled: true
+```
 
 ## activeContext {#active-context}
 

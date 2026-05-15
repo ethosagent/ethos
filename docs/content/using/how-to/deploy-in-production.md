@@ -210,7 +210,7 @@ If you want the dashboard reachable from the open internet, put a reverse proxy 
 
 PM2 is the easiest cross-platform path; here's the rest of the table:
 
-- **Linux server** — systemd user unit running `ethos run-all`. See [Run as a daemon](run-as-daemon.md) for the unit file template.
+- **Linux server** — systemd user unit running `ethos run-all`. Generate the unit file with `ethos systemd-unit ethos-runall > ~/.config/systemd/user/ethos-runall.service`, then `systemctl --user enable --now ethos-runall`. See [Run as a daemon](run-as-daemon.md) for the full walkthrough and [CLI reference](../reference/cli.md#ethos-systemd-unit) for all available units.
 - **macOS** — launchd plist running `ethos run-all`. Also in [Run as a daemon](run-as-daemon.md).
 - **Docker** — official image is planned; not yet shipped. Build your own from `node:24-alpine` + `npm i -g @ethosagent/cli`; mount `~/.ethos/` as a volume.
 - **Manual `tmux` / `screen`** — for development or "I'll just leave it running while I'm logged in." Not for production; survives logout only with `screen -d -m` discipline.
