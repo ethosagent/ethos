@@ -43,14 +43,17 @@ import {
 } from '@ethosagent/tools-kanban';
 import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
 import { createMemoryTools, createTeamMemoryTools, isSafeTopicKey } from '@ethosagent/tools-memory';
+import { createMessagingTools, type MessagingSendFn } from '@ethosagent/tools-messaging';
 import {
   createPersonalityDesignTools,
   createTeamDesignTools,
 } from '@ethosagent/tools-personality-design';
 import { createProcessTools } from '@ethosagent/tools-process';
+import { createSkillsTools } from '@ethosagent/tools-skills';
 import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-terminal';
 import { createThinkDeeperTool } from '@ethosagent/tools-tier';
 import { createTodoTools, InMemoryTodoStore } from '@ethosagent/tools-todo';
+import { createTtsTools } from '@ethosagent/tools-tts';
 import { createVisionTools } from '@ethosagent/tools-vision';
 import { createWebTools } from '@ethosagent/tools-web';
 import type {
@@ -73,6 +76,23 @@ import { MODEL_CATALOG } from './model-catalog';
 import type { EthosObservability } from './observability/ethos-observability';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
 import { capSummary, renderMiddleForSummary, SUMMARIZER_SYSTEM_PROMPT } from './summarizer-prompt';
+
+// ---------------------------------------------------------------------------
+// Messaging gateway — mutable send function, replaced when Gateway starts
+// ---------------------------------------------------------------------------
+
+let gatewaySendFn: MessagingSendFn = async () => ({
+  ok: false,
+  error: 'Gateway not active — send_message requires gateway mode',
+});
+
+/**
+ * Replace the messaging tool's send implementation with the real gateway.
+ * Called from `apps/ethos/src/commands/gateway.ts` after Gateway construction.
+ */
+export function setGatewaySend(fn: MessagingSendFn): void {
+  gatewaySendFn = fn;
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -719,6 +739,20 @@ export async function createAgentLoop(
       tools.register(tool);
   }
 
+  // Messaging tools — send_message for cross-platform outbound.
+  // The actual `send` function is injected later when the Gateway is constructed
+  // (see apps/ethos/src/commands/gateway.ts). When no gateway is active (CLI mode),
+  // the tool returns "not_available" via the default gatewaySendFn.
+  for (const tool of createMessagingTools({
+    send: async (platform, target, body, botKey) => gatewaySendFn(platform, target, body, botKey),
+    getAllowedTargets: () => null,
+  }))
+    tools.register(tool);
+
+  // TTS tool — text_to_speech. Provider is wired from config.auxiliary?.tts.
+  // Registers as unavailable when provider is null (no TTS configured).
+  for (const tool of createTtsTools({ provider: null })) tools.register(tool);
+
   // Collect mcp_env_passthrough from skills that are actually admitted for the
   // active personality. Skills rejected by allowed_skill_permissions or the
   // ingest filter cannot contribute passthrough. Passthrough is then applied
@@ -733,6 +767,25 @@ export async function createAgentLoop(
   const bootToolNames = new Set(activePerson.toolset ?? []);
   const attachedServers = new Set(activePerson.mcp_servers ?? []);
   const skillPassthrough = deriveSkillPassthrough(skillPool, activePerson, bootToolNames);
+
+  // Skill introspection tools — skills_list + skill_view.
+  for (const tool of createSkillsTools({
+    listSkills: () => {
+      return [...skillPool.values()].map((s) => ({
+        name: s.name,
+        description:
+          (s.rawFrontmatter.description as string) ?? s.body.split('\n')[0]?.slice(0, 120) ?? '',
+        kind: s.dialect,
+      }));
+    },
+    getSkillContent: (name) => {
+      for (const skill of skillPool.values()) {
+        if (skill.name === name || skill.qualifiedName === name) return skill.body;
+      }
+      return null;
+    },
+  }))
+    tools.register(tool);
 
   const rawMcpConfig = await loadMcpConfig();
   const mcpConfig = applySkillPassthrough(

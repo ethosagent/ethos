@@ -21,7 +21,7 @@ import {
   type PlatformAdapter,
   resolveModelDisplay,
 } from '@ethosagent/types';
-import { createDangerPredicate, createMemoryProvider } from '@ethosagent/wiring';
+import { createDangerPredicate, createMemoryProvider, setGatewaySend } from '@ethosagent/wiring';
 import Database from 'better-sqlite3';
 import { ApprovalCoordinator, createSlackApprovalHook } from '../approval-coordinator';
 import {
@@ -363,6 +363,17 @@ export async function runGatewayStart(): Promise<void> {
     initPairingDb(pairingDb);
   }
 
+  // Build adapter registry for send_message cross-platform routing.
+  // Key by displayName.toLowerCase() — matches the platform enum in send_message tool.
+  const adapterMap = new Map<string, PlatformAdapter>();
+  for (const adapter of adapters) {
+    const platformKey = adapter.displayName.toLowerCase();
+    // First adapter per platform wins (multi-bot: all share the same send path)
+    if (!adapterMap.has(platformKey)) {
+      adapterMap.set(platformKey, adapter);
+    }
+  }
+
   const gateway: Gateway =
     bots.length === 0
       ? // Email-only deployment (no telegram/slack bots configured). Keep
@@ -370,12 +381,14 @@ export async function runGatewayStart(): Promise<void> {
         new Gateway({
           loop: systemLoop,
           defaultPersonality: config.personality,
+          adapters: adapterMap,
           ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
           ...(pairingDb ? { pairingDb } : {}),
         })
       : new Gateway({
           bots,
           attachmentCache,
+          adapters: adapterMap,
           ...(clarifyMessageCorrelator ? { clarifyMessageCorrelator } : {}),
           ...(telegramCardReader ? { personalityCardReader: telegramCardReader } : {}),
           ...(telegramGreetingProvider ? { greetingProvider: telegramGreetingProvider } : {}),
@@ -383,6 +396,9 @@ export async function runGatewayStart(): Promise<void> {
           ...(pairingDb ? { pairingDb } : {}),
         });
   gatewayRef = gateway;
+
+  // Wire send_message tool to the real Gateway send path.
+  setGatewaySend(async (platform, target, body) => gateway.sendTo(platform, target, body));
 
   // Index bots by botKey so health-check lines can show the binding inline.
   const botByKey = new Map(bots.map((b) => [b.botKey, b]));

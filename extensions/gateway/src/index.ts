@@ -262,6 +262,8 @@ export interface GatewayConfig {
    * (`/new`) and lane eviction. When absent, no cleanup is performed.
    */
   attachmentCache?: AttachmentCache;
+  /** Adapter lookup for agent-initiated outbound sends (send_message tool). */
+  adapters?: Map<string, PlatformAdapter>;
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +377,8 @@ export class Gateway {
   private readonly greetingProvider: { greet(personalityId: string): Promise<string> } | undefined;
   /** Optional attachment cache for cleanup on /new and lane eviction. */
   private readonly attachmentCache: AttachmentCache | undefined;
+  /** Adapter lookup for agent-initiated outbound sends (send_message tool). */
+  private readonly adapterRegistry: Map<string, PlatformAdapter>;
 
   constructor(config: GatewayConfig) {
     // The two construction shapes are mutually exclusive. Silent
@@ -442,6 +446,7 @@ export class Gateway {
     this.personalityCardReader = config.personalityCardReader;
     this.greetingProvider = config.greetingProvider;
     this.attachmentCache = config.attachmentCache;
+    this.adapterRegistry = config.adapters ?? new Map();
 
     // Clarify sweep — fires on a single timer for all bots' bridges so a
     // multi-bot deployment doesn't pile up N timers. Each bridge owns its own
@@ -1091,6 +1096,30 @@ export class Gateway {
       if (override) return override;
     }
     return bot.binding.name;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public API — agent-initiated outbound sends (send_message tool)
+  // ---------------------------------------------------------------------------
+
+  async sendTo(
+    platform: string,
+    target: string,
+    body: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const adapter = this.adapterRegistry.get(platform);
+    if (!adapter) {
+      return { ok: false, error: `No adapter registered for platform "${platform}"` };
+    }
+    try {
+      const result = await adapter.send(target, { text: body });
+      if (!result.ok) {
+        return { ok: false, error: result.error ?? 'Adapter send failed' };
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   private getOrCreateLane(key: string): SessionLane {

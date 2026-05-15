@@ -1317,12 +1317,18 @@ importers:
       '@ethosagent/tools-memory':
         specifier: workspace:*
         version: link:../../extensions/tools-memory
+      '@ethosagent/tools-messaging':
+        specifier: workspace:*
+        version: link:../../extensions/tools-messaging
       '@ethosagent/tools-personality-design':
         specifier: workspace:*
         version: link:../../extensions/tools-personality-design
       '@ethosagent/tools-process':
         specifier: workspace:*
         version: link:../../extensions/tools-process
+      '@ethosagent/tools-skills':
+        specifier: workspace:*
+        version: link:../../extensions/tools-skills
       '@ethosagent/tools-terminal':
         specifier: workspace:*
         version: link:../../extensions/tools-terminal
@@ -1332,6 +1338,9 @@ importers:
       '@ethosagent/tools-todo':
         specifier: workspace:*
         version: link:../../extensions/tools-todo
+      '@ethosagent/tools-tts':
+        specifier: workspace:*
+        version: link:../../extensions/tools-tts
       '@ethosagent/tools-vision':
         specifier: workspace:*
         version: link:../../extensions/tools-vision
