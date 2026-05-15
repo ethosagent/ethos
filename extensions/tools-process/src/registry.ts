@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 
 export type ProcessStatus = 'running' | 'exited' | 'killed' | 'orphan';
@@ -13,12 +21,78 @@ export interface ProcessEntry {
   startedAt: string;
   exitCode?: number;
   lastTouchedAt: string;
+  /**
+   * Personality id that started the process. Optional because registry.json
+   * files written before this field existed won't have it — consumers must
+   * default (`started_by ?? 'unknown'`).
+   */
+  started_by?: string;
 }
 
 export type Registry = Record<string, ProcessEntry>;
 
 function registryPath(dataDir: string): string {
   return join(dataDir, 'processes', 'registry.json');
+}
+
+function lockPath(dataDir: string): string {
+  return join(dataDir, 'processes', 'registry.lock');
+}
+
+// Advisory lock mirrored from extensions/agent-mesh/src/index.ts: acquire by
+// creating the lock file with the 'wx' (exclusive) flag, release by unlinking.
+// Stale locks (holder crashed) are reclaimed once older than LOCK_TTL_MS.
+const LOCK_TTL_MS = 5_000;
+const LOCK_RETRY_MS = 10;
+
+async function acquireRegistryLock(dataDir: string): Promise<() => void> {
+  const path = lockPath(dataDir);
+  mkdirSync(dirname(path), { recursive: true });
+  const deadline = Date.now() + LOCK_TTL_MS;
+  while (Date.now() < deadline) {
+    try {
+      writeFileSync(path, '', { flag: 'wx' });
+      return () => {
+        try {
+          unlinkSync(path);
+        } catch {
+          /* already gone */
+        }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      try {
+        const stat = statSync(path);
+        if (Date.now() - stat.mtimeMs > LOCK_TTL_MS) {
+          try {
+            unlinkSync(path);
+          } catch {
+            /* race: another holder already cleaned it up */
+          }
+          continue;
+        }
+      } catch {
+        /* lock file disappeared between check and stat — retry immediately */
+        continue;
+      }
+      await new Promise<void>((r) => setTimeout(r, LOCK_RETRY_MS));
+    }
+  }
+  throw new Error(`Failed to acquire registry lock at ${path} within ${LOCK_TTL_MS}ms`);
+}
+
+/**
+ * Run `fn` while holding the registry advisory lock. Wrap every
+ * read-modify-write of the registry in this so concurrent mutations
+ * (e.g. parallel process_start calls) don't lose entries.
+ */
+export async function withRegistryLock<T>(dataDir: string, fn: () => T | Promise<T>): Promise<T> {
+  const release = await acquireRegistryLock(dataDir);
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
 }
 
 export function loadRegistry(dataDir: string): Registry {
@@ -40,12 +114,34 @@ export function saveRegistry(dataDir: string, registry: Registry): void {
   renameSync(tmp, path);
 }
 
-export function updateEntry(dataDir: string, id: string, patch: Partial<ProcessEntry>): void {
-  const registry = loadRegistry(dataDir);
-  const entry = registry[id];
-  if (!entry) return;
-  registry[id] = { ...entry, ...patch, lastTouchedAt: new Date().toISOString() };
-  saveRegistry(dataDir, registry);
+export async function updateEntry(
+  dataDir: string,
+  id: string,
+  patch: Partial<ProcessEntry>,
+): Promise<void> {
+  await updateEntryIf(dataDir, id, () => true, patch);
+}
+
+/**
+ * Conditionally patch an entry: load + predicate-check + write all happen
+ * under ONE lock acquisition, so the check-then-act is atomic. Use this when
+ * a writer must only mutate an entry that is still in a particular state
+ * (e.g. the spawn exit handler must not clobber a status set by process_stop
+ * while the handler was waiting for the lock).
+ */
+export async function updateEntryIf(
+  dataDir: string,
+  id: string,
+  predicate: (entry: ProcessEntry) => boolean,
+  patch: Partial<ProcessEntry>,
+): Promise<void> {
+  await withRegistryLock(dataDir, () => {
+    const registry = loadRegistry(dataDir);
+    const entry = registry[id];
+    if (!entry || !predicate(entry)) return;
+    registry[id] = { ...entry, ...patch, lastTouchedAt: new Date().toISOString() };
+    saveRegistry(dataDir, registry);
+  });
 }
 
 /**

@@ -1,10 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { type ChildProcess, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Tool } from '@ethosagent/types';
+import { BoundaryError, type Storage, type Tool } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createProcessTools } from '../index';
 import { loadRegistry, saveRegistry } from '../registry';
+import { LOG_MAX_BYTES } from '../spawn';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -30,6 +32,63 @@ function getTool(tools: Tool[], name: string): Tool {
   return t;
 }
 
+/**
+ * Minimal Storage that mimics ScopedStorage's boundary behaviour: any path
+ * outside `allowed` throws BoundaryError on a read probe. Lets the cwd
+ * validation tests exercise the allowlist gate without depending on
+ * @ethosagent/storage-fs.
+ */
+function boundaryStorage(allowed: string[]): Storage {
+  const isAllowed = (p: string) => allowed.some((a) => p === a || p.startsWith(`${a}/`));
+  const denyRead = (p: string) => {
+    if (!isAllowed(p)) throw new BoundaryError('read', p, allowed);
+  };
+  const denyWrite = (p: string) => {
+    if (!isAllowed(p)) throw new BoundaryError('write', p, allowed);
+  };
+  return {
+    async read(p) {
+      denyRead(p);
+      return null;
+    },
+    async exists(p) {
+      denyRead(p);
+      return false;
+    },
+    async mtime(p) {
+      denyRead(p);
+      return null;
+    },
+    async list(p) {
+      denyRead(p);
+      return [];
+    },
+    async listEntries(p) {
+      denyRead(p);
+      return [];
+    },
+    async write(p) {
+      denyWrite(p);
+    },
+    async append(p) {
+      denyWrite(p);
+    },
+    async writeAtomic(p) {
+      denyWrite(p);
+    },
+    async mkdir(p) {
+      denyWrite(p);
+    },
+    async remove(p) {
+      denyWrite(p);
+    },
+    async rename(from, to) {
+      denyWrite(from);
+      denyWrite(to);
+    },
+  };
+}
+
 async function waitFor(fn: () => boolean, timeoutMs = 5000, intervalMs = 100): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -37,6 +96,20 @@ async function waitFor(fn: () => boolean, timeoutMs = 5000, intervalMs = 100): P
     await new Promise((r) => setTimeout(r, intervalMs));
   }
   throw new Error('waitFor timed out');
+}
+
+// Spawn a real, harmless long-lived child and return its (live) pid. Cap tests
+// that inject fake `running` registry entries need a pid that the liveness
+// sweep in process_start treats as alive — a dead/bogus pid would be swept to
+// `orphan` and free the cap slot. Every spawned dummy is tracked and SIGKILLed
+// in afterEach, so the registry's own cleanup loop never targets the test
+// runner's pid.
+const liveDummies: ChildProcess[] = [];
+function spawnLivePid(): number {
+  const child = spawn('sleep', ['999'], { stdio: 'ignore', detached: false });
+  liveDummies.push(child);
+  if (child.pid === undefined) throw new Error('failed to spawn live dummy process');
+  return child.pid;
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +137,14 @@ afterEach(() => {
       } catch {
         // already gone
       }
+    }
+  }
+  // Reap any live-dummy children spawned to back fake `running` entries.
+  for (const child of liveDummies.splice(0)) {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // already gone
     }
   }
   rmSync(dataDir, { recursive: true, force: true });
@@ -122,6 +203,27 @@ describe('process_start', () => {
     process.kill(data.pid, 'SIGKILL');
   });
 
+  it('records started_by from ctx.personalityId', async () => {
+    const start = getTool(tools, 'process_start');
+    const ctx = { ...makeCtx(workDir), personalityId: 'archivist' };
+    const result = await start.execute({ command: 'sleep 30' }, ctx);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { id, pid } = JSON.parse(result.value) as { id: string; pid: number };
+    expect(loadRegistry(dataDir)[id]?.started_by).toBe('archivist');
+    process.kill(pid, 'SIGKILL');
+  });
+
+  it("records started_by as 'unknown' when ctx has no personalityId", async () => {
+    const start = getTool(tools, 'process_start');
+    const result = await start.execute({ command: 'sleep 30' }, makeCtx(workDir));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { id, pid } = JSON.parse(result.value) as { id: string; pid: number };
+    expect(loadRegistry(dataDir)[id]?.started_by).toBe('unknown');
+    process.kill(pid, 'SIGKILL');
+  });
+
   it('returns input_invalid when command is missing', async () => {
     const start = getTool(tools, 'process_start');
     const result = await start.execute({}, makeCtx(workDir));
@@ -129,30 +231,231 @@ describe('process_start', () => {
     if (!result.ok) expect(result.code).toBe('input_invalid');
   });
 
-  it('enforces cap of 8 concurrent processes', async () => {
-    // Inject 8 running entries directly into the registry without actually spawning
+  it('enforces cap of 8 concurrent processes for the calling personality', async () => {
+    // Inject 8 running entries for personality 'capped' without going through
+    // process_start. They share one live pid so the liveness sweep in
+    // process_start keeps them `running` — a dead pid would be swept to
+    // `orphan` and free the cap slots.
+    const livePid = spawnLivePid();
     const registry = loadRegistry(dataDir);
     for (let i = 0; i < 8; i++) {
       const id = `fake-${i}`;
       registry[id] = {
         id,
         name: `fake-${i}`,
-        pid: 99999 + i,
+        pid: livePid,
         command: 'sleep 999',
         cwd: workDir,
         status: 'running',
         startedAt: new Date().toISOString(),
         lastTouchedAt: new Date().toISOString(),
+        started_by: 'capped',
       };
     }
     saveRegistry(dataDir, registry);
 
     const start = getTool(tools, 'process_start');
-    const result = await start.execute({ command: 'echo hi' }, makeCtx(workDir));
+    const ctx = { ...makeCtx(workDir), personalityId: 'capped' };
+    const result = await start.execute({ command: 'echo hi' }, ctx);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('execution_failed');
       expect(result.error).toContain('PROCESS_CAP_EXCEEDED');
+    }
+  });
+
+  it('dead `running` entries do not consume the cap: a 9th start succeeds after the sweep', async () => {
+    // 8 entries marked `running` for personality 'stale' whose pids are all
+    // dead. Without a liveness sweep before the cap-check, a 9th start would
+    // hit a false PROCESS_CAP_EXCEEDED. The sweep flips them to `orphan`,
+    // freeing the slots.
+    const registry = loadRegistry(dataDir);
+    for (let i = 0; i < 8; i++) {
+      const id = `dead-${i}`;
+      registry[id] = {
+        id,
+        name: `dead-${i}`,
+        // A pid far above the OS pid_max: process.kill(pid, 0) throws, so
+        // isAlive() reports it dead — a deterministic stand-in for an
+        // externally-died process.
+        pid: 2_000_000_000 + i,
+        command: 'sleep 999',
+        cwd: workDir,
+        status: 'running',
+        startedAt: new Date().toISOString(),
+        lastTouchedAt: new Date().toISOString(),
+        started_by: 'stale',
+      };
+    }
+    saveRegistry(dataDir, registry);
+
+    const start = getTool(tools, 'process_start');
+    const ctx = { ...makeCtx(workDir), personalityId: 'stale' };
+    const result = await start.execute({ command: 'sleep 30' }, ctx);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { id, pid } = JSON.parse(result.value) as { id: string; pid: number };
+
+    // The 8 dead entries should now be `orphan`, and the 9th is `running`.
+    const after = loadRegistry(dataDir);
+    for (let i = 0; i < 8; i++) {
+      expect(after[`dead-${i}`]?.status).toBe('orphan');
+    }
+    expect(after[id]?.status).toBe('running');
+
+    process.kill(pid, 'SIGKILL');
+  });
+
+  it('cap is per-personality: personality A at the cap does not block personality B', async () => {
+    // 8 running entries owned by personality A, backed by a live pid so the
+    // liveness sweep keeps them `running` and the cap genuinely applies.
+    const livePid = spawnLivePid();
+    const registry = loadRegistry(dataDir);
+    for (let i = 0; i < 8; i++) {
+      const id = `a-${i}`;
+      registry[id] = {
+        id,
+        name: `a-${i}`,
+        pid: livePid,
+        command: 'sleep 999',
+        cwd: workDir,
+        status: 'running',
+        startedAt: new Date().toISOString(),
+        lastTouchedAt: new Date().toISOString(),
+        started_by: 'personality-a',
+      };
+    }
+    saveRegistry(dataDir, registry);
+
+    const start = getTool(tools, 'process_start');
+
+    // Personality A is at the cap — blocked.
+    const ctxA = { ...makeCtx(workDir), personalityId: 'personality-a' };
+    const resultA = await start.execute({ command: 'echo hi' }, ctxA);
+    expect(resultA.ok).toBe(false);
+
+    // Personality B has zero running processes — allowed despite A's cap.
+    const ctxB = { ...makeCtx(workDir), personalityId: 'personality-b' };
+    const resultB = await start.execute({ command: 'sleep 30' }, ctxB);
+    expect(resultB.ok).toBe(true);
+    if (!resultB.ok) return;
+    const { pid } = JSON.parse(resultB.value) as { pid: number };
+    process.kill(pid, 'SIGKILL');
+  });
+
+  it('honors a custom capMax via createProcessTools opts', async () => {
+    const cappedTools = createProcessTools(dataDir, { capMax: 1 });
+    const start = getTool(cappedTools, 'process_start');
+    const ctx = { ...makeCtx(workDir), personalityId: 'cap1' };
+
+    const first = await start.execute({ command: 'sleep 30' }, ctx);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const { pid } = JSON.parse(first.value) as { pid: number };
+
+    const second = await start.execute({ command: 'echo hi' }, ctx);
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.error).toContain('PROCESS_CAP_EXCEEDED');
+
+    process.kill(pid, 'SIGKILL');
+  });
+
+  it('falls back to the default cap when capMax is not a positive integer', async () => {
+    // capMax: 0 / NaN / negative must NOT disable or wedge the cap — the
+    // factory falls back to the default (8). Inject 8 running entries and
+    // confirm a 9th start is still rejected.
+    for (const bad of [0, -1, Number.NaN]) {
+      const dir = join(
+        tmpdir(),
+        `ethos-proc-cap-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
+      mkdirSync(dir, { recursive: true });
+      try {
+        const livePid = spawnLivePid();
+        const registry: Record<string, ReturnType<typeof loadRegistry>[string]> = {};
+        for (let i = 0; i < 8; i++) {
+          registry[`f-${i}`] = {
+            id: `f-${i}`,
+            name: `f-${i}`,
+            // Live pid so the liveness sweep keeps the entry `running`.
+            pid: livePid,
+            command: 'sleep 999',
+            cwd: dir,
+            status: 'running',
+            startedAt: new Date().toISOString(),
+            lastTouchedAt: new Date().toISOString(),
+            started_by: 'p',
+          };
+        }
+        saveRegistry(dir, registry);
+        const t = createProcessTools(dir, { capMax: bad });
+        const ctx = { ...makeCtx(dir), personalityId: 'p' };
+        const result = await getTool(t, 'process_start').execute({ command: 'echo hi' }, ctx);
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.error).toContain('PROCESS_CAP_EXCEEDED');
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('returns INVALID_CWD when cwd is outside the personality allowlist', async () => {
+    const start = getTool(tools, 'process_start');
+    const ctx = {
+      ...makeCtx(workDir),
+      personalityId: 'scoped',
+      storage: boundaryStorage([workDir]),
+    };
+    const result = await start.execute({ command: 'echo hi', cwd: '/etc/forbidden' }, ctx);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('input_invalid');
+      expect(result.error).toContain('INVALID_CWD');
+    }
+  });
+
+  it('allows an explicit cwd that is inside the personality allowlist', async () => {
+    const start = getTool(tools, 'process_start');
+    const ctx = {
+      ...makeCtx(workDir),
+      personalityId: 'scoped',
+      storage: boundaryStorage([workDir]),
+    };
+    const result = await start.execute({ command: 'sleep 30', cwd: workDir }, ctx);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { pid } = JSON.parse(result.value) as { pid: number };
+    process.kill(pid, 'SIGKILL');
+  });
+
+  it('skips cwd validation when ctx.storage is absent', async () => {
+    const start = getTool(tools, 'process_start');
+    // No storage wired — explicit cwd should not be boundary-checked.
+    const result = await start.execute({ command: 'sleep 30', cwd: workDir }, makeCtx(workDir));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { pid } = JSON.parse(result.value) as { pid: number };
+    process.kill(pid, 'SIGKILL');
+  });
+
+  it('does not return INVALID_CWD for a cwd that simply does not exist yet', async () => {
+    const start = getTool(tools, 'process_start');
+    const futureDir = join(workDir, 'not-created-yet');
+    const ctx = {
+      ...makeCtx(workDir),
+      personalityId: 'scoped',
+      // futureDir is inside the allowlist, just absent on disk.
+      storage: boundaryStorage([workDir]),
+    };
+    const result = await start.execute({ command: 'echo hi', cwd: futureDir }, ctx);
+    // Either it spawns (cwd created lazily is not our concern) or it fails
+    // SPAWN_FAILED — but it must NOT be INVALID_CWD.
+    if (!result.ok) {
+      expect(result.error).not.toContain('INVALID_CWD');
+      expect(result.error).toContain('SPAWN_FAILED');
+    } else {
+      const { pid } = JSON.parse(result.value) as { pid: number };
+      process.kill(pid, 'SIGKILL');
     }
   });
 });
@@ -221,6 +524,54 @@ describe('process_list', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(JSON.parse(result.value)).toEqual([]);
+  });
+
+  it('does NOT rotate the log of a running process (live fd must not be renamed)', async () => {
+    // A running detached child holds an open fd to its log inode. process_list
+    // must leave that log alone even when it is oversized.
+    const start = getTool(tools, 'process_start');
+    const startResult = await start.execute({ command: 'sleep 30' }, makeCtx(workDir));
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+    const { id, pid } = JSON.parse(startResult.value) as { id: string; pid: number };
+
+    // Inflate its stdout log past the threshold while it is still running.
+    const stdoutLog = join(dataDir, 'processes', id, 'stdout.log');
+    writeFileSync(stdoutLog, 'x'.repeat(LOG_MAX_BYTES + 1), 'utf8');
+
+    await getTool(tools, 'process_list').execute({}, makeCtx(workDir));
+
+    expect(existsSync(`${stdoutLog}.1`)).toBe(false);
+    expect(statSync(stdoutLog).size).toBe(LOG_MAX_BYTES + 1);
+
+    process.kill(pid, 'SIGKILL');
+  });
+
+  it('rotates the oversized log of a terminal process', async () => {
+    const id = 'exited-big-log';
+    const procDir = join(dataDir, 'processes', id);
+    mkdirSync(procDir, { recursive: true });
+    const stdoutLog = join(procDir, 'stdout.log');
+    writeFileSync(stdoutLog, 'x'.repeat(LOG_MAX_BYTES + 1), 'utf8');
+    saveRegistry(dataDir, {
+      [id]: {
+        id,
+        name: id,
+        pid: 999999,
+        command: 'echo done',
+        cwd: workDir,
+        status: 'exited',
+        exitCode: 0,
+        startedAt: new Date().toISOString(),
+        lastTouchedAt: new Date().toISOString(),
+        started_by: 'test',
+      },
+    });
+
+    await getTool(tools, 'process_list').execute({}, makeCtx(workDir));
+
+    expect(existsSync(`${stdoutLog}.1`)).toBe(true);
+    expect(statSync(stdoutLog).size).toBe(0);
   });
 });
 
@@ -366,6 +717,7 @@ describe('process_stop', () => {
       exitCode: 0,
       startedAt: new Date().toISOString(),
       lastTouchedAt: new Date().toISOString(),
+      started_by: 'test',
     };
     saveRegistry(dataDir, registry);
 
@@ -448,6 +800,7 @@ describe('process_wait', () => {
       exitCode: 0,
       startedAt: new Date().toISOString(),
       lastTouchedAt: new Date().toISOString(),
+      started_by: 'test',
     };
     saveRegistry(dataDir, registry);
 
@@ -477,6 +830,122 @@ describe('process_wait', () => {
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
+
+describe('error-code prefixes', () => {
+  it('process_logs prefixes unknown id with PROCESS_NOT_FOUND', async () => {
+    const logs = getTool(tools, 'process_logs');
+    const result = await logs.execute({ id: 'nope' }, makeCtx(workDir));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('PROCESS_NOT_FOUND');
+      expect(result.code).toBe('execution_failed');
+    }
+  });
+
+  it('process_stop prefixes unknown id with PROCESS_NOT_FOUND', async () => {
+    const stop = getTool(tools, 'process_stop');
+    const result = await stop.execute({ id: 'nope' }, makeCtx(workDir));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('PROCESS_NOT_FOUND');
+      expect(result.code).toBe('execution_failed');
+    }
+  });
+
+  it('process_wait prefixes unknown id with PROCESS_NOT_FOUND', async () => {
+    const wait = getTool(tools, 'process_wait');
+    const result = await wait.execute({ id: 'nope' }, makeCtx(workDir));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('PROCESS_NOT_FOUND');
+      expect(result.code).toBe('execution_failed');
+    }
+  });
+
+  it('process_start prefixes a spawn failure with SPAWN_FAILED', async () => {
+    const start = getTool(tools, 'process_start');
+    // A cwd that does not exist makes the detached spawn fail.
+    const result = await start.execute(
+      { command: 'echo hi', cwd: join(workDir, 'missing-dir-xyz') },
+      makeCtx(workDir),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('SPAWN_FAILED');
+      expect(result.code).toBe('execution_failed');
+    }
+  });
+
+  it('process_stop rejects an unsupported signal with SIGNAL_NOT_SUPPORTED', async () => {
+    const start = getTool(tools, 'process_start');
+    const startResult = await start.execute({ command: 'sleep 30' }, makeCtx(workDir));
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+    const { id, pid } = JSON.parse(startResult.value) as { id: string; pid: number };
+
+    const stop = getTool(tools, 'process_stop');
+    const result = await stop.execute(
+      { id, signal: 'SIGHUP' as unknown as 'SIGTERM' },
+      makeCtx(workDir),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('SIGNAL_NOT_SUPPORTED');
+      expect(result.code).toBe('input_invalid');
+    }
+
+    process.kill(pid, 'SIGKILL');
+  });
+});
+
+describe('maxResultChars', () => {
+  it('process_start/stop/wait cap at 1024 and process_logs at 64_000', () => {
+    expect(getTool(tools, 'process_start').maxResultChars).toBe(1024);
+    expect(getTool(tools, 'process_stop').maxResultChars).toBe(1024);
+    expect(getTool(tools, 'process_wait').maxResultChars).toBe(1024);
+    expect(getTool(tools, 'process_logs').maxResultChars).toBe(64_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stress: sequential start/stop cycles (plan success criterion)
+// ---------------------------------------------------------------------------
+
+describe('sequential start/stop cycles', () => {
+  it('100 process_start/process_stop cycles complete without registry corruption or pid leaks', async () => {
+    const start = getTool(tools, 'process_start');
+    const stop = getTool(tools, 'process_stop');
+    const CYCLES = 100;
+
+    const ids: string[] = [];
+    for (let i = 0; i < CYCLES; i++) {
+      const startResult = await start.execute({ command: 'sleep 30' }, makeCtx(workDir));
+      expect(startResult.ok).toBe(true);
+      if (!startResult.ok) return;
+      const { id } = JSON.parse(startResult.value) as { id: string };
+      ids.push(id);
+
+      const stopResult = await stop.execute({ id, signal: 'SIGKILL' }, makeCtx(workDir));
+      expect(stopResult.ok).toBe(true);
+
+      // Registry stays valid JSON / loads cleanly throughout.
+      const reg = loadRegistry(dataDir);
+      expect(reg[id]).toBeDefined();
+    }
+
+    // No entry lost or duplicated: exactly CYCLES distinct ids tracked.
+    expect(new Set(ids).size).toBe(CYCLES);
+    const final = loadRegistry(dataDir);
+    expect(Object.keys(final)).toHaveLength(CYCLES);
+
+    // No `running` entries leak — every cycle was stopped.
+    for (const id of ids) {
+      const entry = final[id];
+      expect(entry).toBeDefined();
+      expect(['killed', 'exited', 'orphan']).toContain(entry?.status);
+    }
+  });
+});
 
 describe('createProcessTools', () => {
   it('returns 5 tools', () => {

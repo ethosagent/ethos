@@ -1,38 +1,43 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import type { Tool, ToolResult } from '@ethosagent/types';
+import { resolve } from 'node:path';
+import { BoundaryError, type Tool, type ToolResult } from '@ethosagent/types';
+import {
+  DEFAULT_LOG_LINES,
+  listProcesses,
+  markDeadRunningAsOrphan,
+  readProcessLogs,
+  STOP_SUPPORTED_SIGNALS,
+  type StopSignal,
+  stopProcess,
+} from './operations';
 import {
   isAlive,
   loadRegistry,
   type ProcessEntry,
-  reapStale,
   saveRegistry,
   updateEntry,
+  withRegistryLock,
 } from './registry';
 import { spawnDetached } from './spawn';
 
-const MAX_CONCURRENT = 8;
-const DEFAULT_LOG_LINES = 200;
+// Default per-personality concurrency cap. The plan calls the cap
+// "configurable" and floats a per-personality config field — but
+// PersonalityConfig is a frozen schema, so we do NOT add a field there.
+// `createProcessTools` accepts an optional `capMax` override for light
+// configurability; per-personality cap *values* are deliberately deferred.
+const DEFAULT_MAX_CONCURRENT = 8;
 const DEFAULT_WAIT_TIMEOUT_S = 30;
 const WAIT_POLL_MS = 200;
-const SIGTERM_GRACE_MS = 5_000;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function readLastLines(path: string, n: number, prefix: string): string[] {
-  if (!existsSync(path)) return [];
-  const content = readFileSync(path, 'utf8');
-  const lines = content.split('\n');
-  // remove trailing empty line that split creates
-  if (lines[lines.length - 1] === '') lines.pop();
-  return lines.slice(-n).map((l) => `[${prefix}] ${l}`);
-}
-
-function runningCount(entries: ProcessEntry[]): number {
-  return entries.filter((e) => e.status === 'running').length;
+/**
+ * Count running entries owned by `personalityId`. The cap applies per
+ * personality, not globally — so one personality at the cap cannot starve
+ * another.
+ */
+function runningCountFor(entries: ProcessEntry[], personalityId: string): number {
+  return entries.filter(
+    (e) => e.status === 'running' && (e.started_by ?? 'unknown') === personalityId,
+  ).length;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -43,11 +48,12 @@ function sleep(ms: number): Promise<void> {
 // process_start
 // ---------------------------------------------------------------------------
 
-function makeProcessStart(dataDir: string): Tool {
+function makeProcessStart(dataDir: string, capMax: number): Tool {
   return {
     name: 'process_start',
     description: 'Start a long-running process in the background. Returns an id for tracking.',
     toolset: 'process',
+    maxResultChars: 1024,
     schema: {
       type: 'object',
       properties: {
@@ -72,50 +78,89 @@ function makeProcessStart(dataDir: string): Tool {
 
       if (!command) return { ok: false, error: 'command is required', code: 'input_invalid' };
 
-      const registry = loadRegistry(dataDir);
-      const entries = Object.values(registry);
-
-      if (runningCount(entries) >= MAX_CONCURRENT) {
-        return {
-          ok: false,
-          error: 'PROCESS_CAP_EXCEEDED: max 8 concurrent processes',
-          code: 'execution_failed',
-        };
-      }
-
       const id = randomUUID();
-      const effectiveCwd = cwd ?? ctx.workingDir;
+      // Resolve cwd to an absolute path ONCE. The same value is validated,
+      // stored in the registry, and handed to spawnDetached — validating one
+      // path and executing another (Node resolves a relative spawn cwd against
+      // the parent process cwd, not ctx.workingDir) would be a boundary leak.
+      // ctx.workingDir is absolute, so it is a sound base for a relative cwd.
+      const effectiveCwd = cwd === undefined ? ctx.workingDir : resolve(ctx.workingDir, cwd);
       const effectiveName = name ?? command.slice(0, 40);
       const startedAt = new Date().toISOString();
+      const startedBy = ctx.personalityId ?? 'unknown';
 
-      let pid: number;
-      try {
-        const result = spawnDetached(id, command, effectiveCwd, env, dataDir);
-        pid = result.pid;
-      } catch (err) {
-        return {
-          ok: false,
-          error: `Failed to spawn: ${err instanceof Error ? err.message : String(err)}`,
-          code: 'execution_failed',
-        };
+      // When an explicit cwd is given and a ScopedStorage is wired, probe it
+      // through the personality's filesystem allowlist. A BoundaryError means
+      // the cwd is outside the allowlist -> INVALID_CWD. `exists` is a read
+      // probe: it returns false (not throws) for an in-allowlist path that is
+      // simply absent, so a not-yet-created cwd is NOT treated as INVALID_CWD —
+      // that case falls through to spawnDetached, which surfaces SPAWN_FAILED.
+      if (cwd !== undefined && ctx.storage) {
+        try {
+          await ctx.storage.exists(effectiveCwd);
+        } catch (err) {
+          if (err instanceof BoundaryError) {
+            return {
+              ok: false,
+              error: `INVALID_CWD: ${effectiveCwd} is outside the personality filesystem allowlist`,
+              code: 'input_invalid',
+            };
+          }
+          throw err;
+        }
       }
 
-      registry[id] = {
-        id,
-        name: effectiveName,
-        pid,
-        command,
-        cwd: effectiveCwd,
-        status: 'running',
-        startedAt,
-        lastTouchedAt: startedAt,
-      };
-      saveRegistry(dataDir, registry);
+      // Cap-check + spawn + add run under ONE lock acquisition so two parallel
+      // process_start calls can't both pass the cap-check and over-commit.
+      return withRegistryLock(dataDir, (): ToolResult => {
+        const registry = loadRegistry(dataDir);
 
-      return {
-        ok: true,
-        value: JSON.stringify({ id, pid, name: effectiveName, started_at: startedAt }),
-      };
+        // Liveness sweep before the cap-check: entries still marked `running`
+        // whose pid is dead would otherwise falsely consume cap slots (plan
+        // principle #5 — liveness is observed, not trusted). Reuse the shared
+        // dead->orphan rule; the swept registry is the one we keep mutating,
+        // so the single saveRegistry below persists the orphan flips too.
+        markDeadRunningAsOrphan(registry);
+        const entries = Object.values(registry);
+
+        if (runningCountFor(entries, startedBy) >= capMax) {
+          return {
+            ok: false,
+            error: `PROCESS_CAP_EXCEEDED: max ${capMax} concurrent processes per personality`,
+            code: 'execution_failed',
+          };
+        }
+
+        let pid: number;
+        try {
+          const result = spawnDetached(id, command, effectiveCwd, env, dataDir);
+          pid = result.pid;
+        } catch (err) {
+          return {
+            ok: false,
+            error: `SPAWN_FAILED: ${err instanceof Error ? err.message : String(err)}`,
+            code: 'execution_failed',
+          };
+        }
+
+        registry[id] = {
+          id,
+          name: effectiveName,
+          pid,
+          command,
+          cwd: effectiveCwd,
+          status: 'running',
+          startedAt,
+          lastTouchedAt: startedAt,
+          started_by: startedBy,
+        };
+        saveRegistry(dataDir, registry);
+
+        return {
+          ok: true,
+          value: JSON.stringify({ id, pid, name: effectiveName, started_at: startedAt }),
+        };
+      });
     },
   };
 }
@@ -131,40 +176,7 @@ function makeProcessList(dataDir: string): Tool {
     toolset: 'process',
     schema: { type: 'object', properties: {} },
     async execute(): Promise<ToolResult> {
-      let registry = loadRegistry(dataDir);
-
-      // liveness check and reap
-      let dirty = false;
-      for (const entry of Object.values(registry)) {
-        if (entry.status !== 'running') continue;
-        if (!isAlive(entry.pid)) {
-          registry[entry.id] = {
-            ...entry,
-            status: 'orphan',
-            lastTouchedAt: new Date().toISOString(),
-          };
-          dirty = true;
-        }
-      }
-
-      registry = reapStale(registry);
-
-      if (dirty) saveRegistry(dataDir, registry);
-
-      const now = Date.now();
-      const items = Object.values(registry).map((e) => {
-        const durationMs = now - new Date(e.startedAt).getTime();
-        return {
-          id: e.id,
-          name: e.name,
-          pid: e.pid,
-          status: e.status,
-          started_at: e.startedAt,
-          ...(e.exitCode !== undefined ? { exit_code: e.exitCode } : {}),
-          duration_ms: durationMs,
-        };
-      });
-
+      const items = await listProcesses(dataDir);
       return { ok: true, value: JSON.stringify(items, null, 2) };
     },
   };
@@ -179,7 +191,7 @@ function makeProcessLogs(dataDir: string): Tool {
     name: 'process_logs',
     description: 'Return the last N lines from a process log. Interleaves stdout and stderr.',
     toolset: 'process',
-    maxResultChars: 40_000,
+    maxResultChars: 64_000,
     outputIsUntrusted: true,
     schema: {
       type: 'object',
@@ -206,33 +218,16 @@ function makeProcessLogs(dataDir: string): Tool {
 
       if (!id) return { ok: false, error: 'id is required', code: 'input_invalid' };
 
-      const registry = loadRegistry(dataDir);
-      const entry = registry[id];
-      if (!entry) {
-        return { ok: false, error: `Process ${id} not found`, code: 'execution_failed' };
+      const result = await readProcessLogs(dataDir, id, { lines, stream });
+      if (!result.ok) {
+        return { ok: false, error: result.error, code: 'execution_failed' };
       }
 
-      const n = lines ?? DEFAULT_LOG_LINES;
-      const which = stream ?? 'both';
-      const dir = join(dataDir, 'processes', id);
-
-      let combined: string[];
-      if (which === 'stdout') {
-        combined = readLastLines(join(dir, 'stdout.log'), n, 'stdout');
-      } else if (which === 'stderr') {
-        combined = readLastLines(join(dir, 'stderr.log'), n, 'stderr');
-      } else {
-        // interleave: read both full files, combine, take last n
-        const out = readLastLines(join(dir, 'stdout.log'), n, 'stdout');
-        const err = readLastLines(join(dir, 'stderr.log'), n, 'stderr');
-        combined = [...out, ...err].slice(-n);
-      }
-
-      if (combined.length === 0) {
+      if (result.lines.length === 0) {
         return { ok: true, value: '(no output)' };
       }
 
-      return { ok: true, value: combined.join('\n') };
+      return { ok: true, value: result.lines.join('\n') };
     },
   };
 }
@@ -246,6 +241,7 @@ function makeProcessStop(dataDir: string): Tool {
     name: 'process_stop',
     description: 'Send a signal to stop a running process.',
     toolset: 'process',
+    maxResultChars: 1024,
     schema: {
       type: 'object',
       properties: {
@@ -259,65 +255,33 @@ function makeProcessStop(dataDir: string): Tool {
       required: ['id'],
     },
     async execute(args): Promise<ToolResult> {
-      const { id, signal } = args as { id: string; signal?: 'SIGTERM' | 'SIGKILL' };
+      const { id, signal } = args as { id: string; signal?: StopSignal };
 
       if (!id) return { ok: false, error: 'id is required', code: 'input_invalid' };
 
-      const registry = loadRegistry(dataDir);
-      const entry = registry[id];
-      if (!entry) {
-        return { ok: false, error: `Process ${id} not found`, code: 'execution_failed' };
-      }
-
       const sig = signal ?? 'SIGTERM';
-
-      if (entry.status !== 'running') {
-        return {
-          ok: true,
-          value: JSON.stringify({ stopped: false, exit_code: entry.exitCode }),
-        };
-      }
-
-      try {
-        process.kill(entry.pid, sig);
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code === 'ESRCH') {
-          updateEntry(dataDir, id, { status: 'orphan' });
-          return { ok: true, value: JSON.stringify({ stopped: false }) };
-        }
+      // The JSON schema constrains `signal` to an enum, but be defensive: a
+      // caller bypassing schema validation must not reach process.kill with
+      // an arbitrary signal name. stopProcess re-checks, but classifying the
+      // error code as input_invalid (vs execution_failed) stays the tool's job.
+      if (!STOP_SUPPORTED_SIGNALS.includes(sig)) {
         return {
           ok: false,
-          error: `Failed to send ${sig}: ${err instanceof Error ? err.message : String(err)}`,
-          code: 'execution_failed',
+          error: `SIGNAL_NOT_SUPPORTED: signal ${sig} is not supported (use SIGTERM or SIGKILL)`,
+          code: 'input_invalid',
         };
       }
 
-      // For SIGTERM, wait up to 5s for graceful exit then escalate to SIGKILL.
-      if (sig === 'SIGTERM') {
-        const deadline = Date.now() + SIGTERM_GRACE_MS;
-        while (Date.now() < deadline) {
-          await sleep(WAIT_POLL_MS);
-          if (!isAlive(entry.pid)) break;
-        }
-        if (isAlive(entry.pid)) {
-          try {
-            process.kill(entry.pid, 'SIGKILL');
-          } catch {
-            // ESRCH means it exited just before SIGKILL — fine
-          }
-        }
+      const result = await stopProcess(dataDir, id, sig);
+      if (!result.ok) {
+        return { ok: false, error: result.error, code: 'execution_failed' };
       }
 
-      // Read exit_code if the spawn exit handler already recorded it
-      const finalEntry = loadRegistry(dataDir)[id];
-      const exitCode = finalEntry?.exitCode;
-      updateEntry(dataDir, id, { status: 'killed' });
       return {
         ok: true,
         value: JSON.stringify({
-          stopped: true,
-          ...(exitCode !== undefined && { exit_code: exitCode }),
+          stopped: result.stopped,
+          ...(result.exit_code !== undefined && { exit_code: result.exit_code }),
         }),
       };
     },
@@ -333,6 +297,7 @@ function makeProcessWait(dataDir: string): Tool {
     name: 'process_wait',
     description: 'Wait for a process to exit, up to timeout_s seconds.',
     toolset: 'process',
+    maxResultChars: 1024,
     schema: {
       type: 'object',
       properties: {
@@ -352,7 +317,11 @@ function makeProcessWait(dataDir: string): Tool {
       const registry = loadRegistry(dataDir);
       const entry = registry[id];
       if (!entry) {
-        return { ok: false, error: `Process ${id} not found`, code: 'execution_failed' };
+        return {
+          ok: false,
+          error: `PROCESS_NOT_FOUND: process ${id} not found`,
+          code: 'execution_failed',
+        };
       }
 
       if (entry.status !== 'running') {
@@ -376,7 +345,7 @@ function makeProcessWait(dataDir: string): Tool {
           };
         }
         if (!isAlive(current.pid)) {
-          updateEntry(dataDir, id, { status: 'orphan' });
+          await updateEntry(dataDir, id, { status: 'orphan' });
           return { ok: true, value: JSON.stringify({ exited: true }) };
         }
       }
@@ -390,12 +359,34 @@ function makeProcessWait(dataDir: string): Tool {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createProcessTools(dataDir: string): Tool[] {
+export function createProcessTools(dataDir: string, opts?: { capMax?: number }): Tool[] {
+  // Guard the public option: a non-positive / non-integer capMax would either
+  // disable the cap (NaN, Infinity) or wedge the tool (0, negative). Fall back
+  // to the default rather than honoring a nonsensical value.
+  const requested = opts?.capMax;
+  const capMax =
+    typeof requested === 'number' && Number.isInteger(requested) && requested > 0
+      ? requested
+      : DEFAULT_MAX_CONCURRENT;
   return [
-    makeProcessStart(dataDir),
+    makeProcessStart(dataDir, capMax),
     makeProcessList(dataDir),
     makeProcessLogs(dataDir),
     makeProcessStop(dataDir),
     makeProcessWait(dataDir),
   ];
 }
+
+// Re-export the shared list/logs/stop operations so the `ethos process` CLI
+// can drive the same code path the tools use without constructing a fake
+// ToolContext. Only the surface a real caller consumes is re-exported.
+export {
+  listProcesses,
+  type ProcessListItem,
+  readProcessLogs,
+  reconcileRegistry,
+  STOP_SUPPORTED_SIGNALS,
+  type StopSignal,
+  stopProcess,
+} from './operations';
+export { type ProcessEntry, saveRegistry } from './registry';

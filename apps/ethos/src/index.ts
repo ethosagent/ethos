@@ -2,6 +2,7 @@
 // Don't put it here - tsx in dev mode doesn't need it and source-level shebangs
 // in TypeScript trip on tsup's bundler.
 import { join } from 'node:path';
+import { reconcileRegistry } from '@ethosagent/tools-process';
 import { formatError, toEthosError } from '@ethosagent/types';
 import { applyCliOverrides, parseCliOverrideFlags } from './cli-overrides';
 import { runAcp } from './commands/acp';
@@ -25,6 +26,7 @@ import { runMcp } from './commands/mcp';
 import { runMeshCommand } from './commands/mesh';
 import { runPerf } from './commands/perf';
 import { runPlugin } from './commands/plugin';
+import { runProcessCommand } from './commands/process';
 import { runRetention } from './commands/retention';
 import { runSecurityAudit } from './commands/security-audit';
 import { runServe } from './commands/serve';
@@ -37,7 +39,7 @@ import { runTail } from './commands/tail';
 import { runTeamCommand } from './commands/team';
 import { runTrace } from './commands/trace';
 import { runUpgrade } from './commands/upgrade';
-import { readConfig } from './config';
+import { ethosDir, readConfig } from './config';
 import { appendErrorLog } from './error-log';
 import { getStorage } from './wiring';
 
@@ -47,7 +49,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [setup | chat | sessions | serve | set | team | mesh | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
+  'Usage: ethos [setup | chat | sessions | serve | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -87,7 +89,21 @@ function extractSingleQuery(argv: string[]): {
   return { query, rest, queryFlagUsed };
 }
 
+// Pure-metadata commands (`--version`/`--help`) do no registry work, so skip
+// the startup crash-recovery scan for them — no point acquiring the registry
+// lock + scanning files to print a version string.
+const isMetadataCommand =
+  effectiveCommand === '--version' ||
+  effectiveCommand === '-v' ||
+  effectiveCommand === '--help' ||
+  effectiveCommand === '-h';
+
 try {
+  // Startup crash-recovery scan: flips any `running` registry entry with a dead
+  // pid to `orphan`. Best-effort and never throws (a missing/corrupt registry
+  // must not block startup); idempotent, so re-running it is harmless.
+  if (!isMetadataCommand) await reconcileRegistry(ethosDir());
+
   switch (effectiveCommand) {
     case '--version':
     case '-v': {
@@ -472,6 +488,11 @@ try {
 
     case 'mesh': {
       await runMeshCommand(args[1] ?? 'list', args.slice(2));
+      break;
+    }
+
+    case 'process': {
+      await runProcessCommand(args[1] ?? 'list', args.slice(2));
       break;
     }
 
