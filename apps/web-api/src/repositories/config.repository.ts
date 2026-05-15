@@ -123,17 +123,20 @@ export class ConfigRepository {
    */
   async update(patch: Partial<RawConfig>): Promise<RawConfig> {
     let next!: RawConfig;
-    this.writeChain = this.writeChain.then(async () => {
-      const current: RawConfig = (await this.read()) ?? { modelRouting: {}, passthrough: {} };
-      next = {
-        ...current,
-        ...patch,
-        modelRouting: { ...current.modelRouting, ...(patch.modelRouting ?? {}) },
-        passthrough: { ...current.passthrough, ...(patch.passthrough ?? {}) },
-      };
-      await this.write(next);
-    });
-    await this.writeChain;
+    const op = this.writeChain
+      .catch(() => {})
+      .then(async () => {
+        const current: RawConfig = (await this.read()) ?? { modelRouting: {}, passthrough: {} };
+        next = {
+          ...current,
+          ...patch,
+          modelRouting: { ...current.modelRouting, ...(patch.modelRouting ?? {}) },
+          passthrough: { ...current.passthrough, ...(patch.passthrough ?? {}) },
+        };
+        await this.write(next);
+      });
+    this.writeChain = op.catch(() => {});
+    await op;
     return next;
   }
 
@@ -145,12 +148,15 @@ export class ConfigRepository {
    */
   async deletePassthroughKeys(keys: string[]): Promise<RawConfig> {
     let current!: RawConfig;
-    this.writeChain = this.writeChain.then(async () => {
-      current = (await this.read()) ?? { modelRouting: {}, passthrough: {} };
-      for (const key of keys) delete current.passthrough[key];
-      await this.write(current);
-    });
-    await this.writeChain;
+    const op = this.writeChain
+      .catch(() => {})
+      .then(async () => {
+        current = (await this.read()) ?? { modelRouting: {}, passthrough: {} };
+        for (const key of keys) delete current.passthrough[key];
+        await this.write(current);
+      });
+    this.writeChain = op.catch(() => {});
+    await op;
     return current;
   }
 

@@ -251,6 +251,24 @@ describe('AcpServer HTTP auth', () => {
     expect(error.code).toBe(403);
   });
 
+  it('WebSocket upgrade with malformed origin is rejected (not crash)', async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Origin: 'not-a-valid-url',
+      },
+    });
+    const error = await new Promise<{ code: number }>((resolve) => {
+      ws.on('unexpected-response', (_req, res) => {
+        resolve({ code: res.statusCode ?? 0 });
+      });
+      ws.on('error', () => {
+        resolve({ code: 403 });
+      });
+    });
+    expect(error.code).toBe(403);
+  });
+
   it('WebSocket upgrade with localhost origin succeeds', async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
       headers: {

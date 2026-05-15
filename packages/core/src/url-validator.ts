@@ -63,6 +63,15 @@ function isPrivateIp(ip: string): boolean {
   return isPrivateIpv4(ip) || (ip.includes(':') && isPrivateIpv6(ip));
 }
 
+function isLoopbackIp(ip: string): boolean {
+  if (ip.startsWith('127.')) return true;
+  if (ip === '::1') return true;
+  // IPv4-mapped ::ffff:127.x.x.x
+  const mapped = ip.toLowerCase().match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped?.[1].startsWith('127.')) return true;
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Cloud metadata hostnames (always denied, non-overridable)
 // ---------------------------------------------------------------------------
@@ -141,10 +150,7 @@ export function validateUrl(urlStr: string, opts?: ValidateUrlOptions): URL {
 
   // Check if hostname is a raw IP
   if (isIP(hostname)) {
-    if (opts?.allowLocalhost) {
-      // Even with allowLocalhost, still block cloud metadata IPs
-      // (already caught above) and non-loopback private ranges
-      // only if they're not in the loopback range.
+    if (opts?.allowLocalhost && isLoopbackIp(hostname)) {
       return url;
     }
     if (isPrivateIp(hostname)) {

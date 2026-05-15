@@ -55,7 +55,15 @@ describe('validateUrl', () => {
   it('allows localhost when opted in', () => {
     expect(() => validateUrl('http://localhost:8080/', { allowLocalhost: true })).not.toThrow();
     expect(() => validateUrl('http://127.0.0.1:11434/', { allowLocalhost: true })).not.toThrow();
-    expect(() => validateUrl('http://192.168.1.1:8080/', { allowLocalhost: true })).not.toThrow();
+    expect(() => validateUrl('http://[::1]:11434/', { allowLocalhost: true })).not.toThrow();
+  });
+
+  it('still blocks non-loopback private IPs even with allowLocalhost', () => {
+    expect(() => validateUrl('http://192.168.1.1:8080/', { allowLocalhost: true })).toThrow(
+      SsrfError,
+    );
+    expect(() => validateUrl('http://10.0.0.1/', { allowLocalhost: true })).toThrow(SsrfError);
+    expect(() => validateUrl('http://172.16.0.1/', { allowLocalhost: true })).toThrow(SsrfError);
   });
 
   it('still blocks cloud metadata even with allowLocalhost', () => {

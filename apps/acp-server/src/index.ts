@@ -173,7 +173,14 @@ export class AcpServer {
       // Origin validation — block DNS rebinding
       const origin = req.headers.origin;
       if (origin) {
-        const url = new URL(origin);
+        let url: URL;
+        try {
+          url = new URL(origin);
+        } catch {
+          socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+          socket.destroy();
+          return;
+        }
         if (url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
           socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
           socket.destroy();

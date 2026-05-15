@@ -11,7 +11,6 @@ export * from './llm';
 export * from './logger';
 export * from './memory';
 export * from './observability';
-export * from './path-boundary';
 export * from './personality';
 export * from './platform';
 export * from './plugin';

@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assertSafeId, assertWithinBase } from '@ethosagent/types';
+import { assertWithinBase } from '@ethosagent/core';
+import { assertSafeId } from '@ethosagent/types';
 
 export interface McpResource {
   uri: string;
