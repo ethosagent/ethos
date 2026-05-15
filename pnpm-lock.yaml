@@ -960,6 +960,22 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/tools-vision:
+    dependencies:
+      '@ethosagent/safety-network':
+        specifier: workspace:*
+        version: link:../../packages/safety/network
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+
   extensions/tools-web:
     dependencies:
       '@ethosagent/safety-network':
@@ -1166,6 +1182,9 @@ importers:
       '@ethosagent/tools-todo':
         specifier: workspace:*
         version: link:../../extensions/tools-todo
+      '@ethosagent/tools-vision':
+        specifier: workspace:*
+        version: link:../../extensions/tools-vision
       '@ethosagent/tools-web':
         specifier: workspace:*
         version: link:../../extensions/tools-web

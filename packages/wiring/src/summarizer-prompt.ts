@@ -63,9 +63,13 @@ function renderBlock(block: MessageContent): string {
   if (block.type === 'tool_use') {
     return `[tool_use ${block.name}] ${JSON.stringify(block.input)}`;
   }
-  // tool_result
-  const status = block.is_error ? 'error' : 'ok';
-  return `[tool_result ${status}] ${block.content}`;
+  if (block.type === 'tool_result') {
+    const status = block.is_error ? 'error' : 'ok';
+    return `[tool_result ${status}] ${block.content}`;
+  }
+  // image / document — opaque to the summariser; render as a typed placeholder
+  // so the textual summary doesn't lose track of the attachment.
+  return `[${block.type} ${block.mediaType}]`;
 }
 
 /**

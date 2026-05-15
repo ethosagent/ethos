@@ -37,6 +37,7 @@ import { createMemoryTools, createTeamMemoryTools, isSafeTopicKey } from '@ethos
 import { createProcessTools } from '@ethosagent/tools-process';
 import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-terminal';
 import { createTodoTools, InMemoryTodoStore } from '@ethosagent/tools-todo';
+import { createVisionTools } from '@ethosagent/tools-vision';
 import { createWebTools } from '@ethosagent/tools-web';
 import type {
   ContextInjector,
@@ -118,6 +119,19 @@ export interface WiringConfig {
    * `apiKey` / `baseUrl` default to the primary provider's values when unset.
    */
   auxiliaryCompression?: {
+    model: string;
+    provider?: string;
+    apiKey?: string;
+    baseUrl?: string;
+  };
+  /**
+   * tools-vision P3 — auxiliary vision model wiring. When `model` is set,
+   * `vision_analyze` routes to this (typically vision-capable) provider when
+   * the active personality's primary model can't handle images / PDFs.
+   * `provider` / `apiKey` / `baseUrl` default to the primary provider's
+   * values when unset, mirroring `auxiliaryCompression`.
+   */
+  auxiliaryVision?: {
     model: string;
     provider?: string;
     apiKey?: string;
@@ -383,6 +397,71 @@ export async function createAgentLoop(
     openaiApiKey: config.provider === 'openai' ? config.apiKey : undefined,
   }))
     tools.register(tool);
+
+  // tools-vision P3 — register `vision_analyze`. The capability table
+  // (`@ethosagent/tools-vision`'s pricing.ts) gates per-model support; the
+  // `resolveProvider` callback maps the resolved model id back to a concrete
+  // LLMProvider. v1 routes two models: the personality's main model
+  // (`config.model`) goes to the primary `llm`, and `auxiliary.vision.model`
+  // (when set) goes to a freshly built aux provider that mirrors the
+  // compression pattern — `provider`/`apiKey`/`baseUrl` default to the
+  // primary's values. Other models resolve to null, which the tool maps to
+  // VISION_NOT_SUPPORTED. The toolset gate filters out `vision_analyze`
+  // entirely for personalities that don't list it.
+  const auxVisionConfig = config.auxiliaryVision;
+  // Honesty gate: the resolver routes by model id. If auxiliary.vision.model
+  // matches the primary model but the user also set provider / apiKey /
+  // baseUrl overrides, the primary-branch always wins and those overrides
+  // silently never fire. Warn at boot so the misconfiguration surfaces
+  // instead of wasting the user's debug session — and skip building the
+  // dead auxiliary provider entirely, so its credentials are never even
+  // exercised (no cost, no surprise auth side-effects).
+  const auxVisionCollidesWithPrimary =
+    auxVisionConfig !== undefined && auxVisionConfig.model === config.model;
+  if (
+    auxVisionConfig &&
+    auxVisionCollidesWithPrimary &&
+    (auxVisionConfig.provider !== undefined ||
+      auxVisionConfig.apiKey !== undefined ||
+      auxVisionConfig.baseUrl !== undefined)
+  ) {
+    log.warn(
+      `auxiliary.vision.model ("${auxVisionConfig.model}") matches the primary model; ` +
+        'auxiliary.vision.provider/apiKey/baseUrl overrides will be ignored. ' +
+        'Either change the model id or drop the overrides.',
+    );
+  }
+  const auxVisionProvider: LLMProvider | null =
+    auxVisionConfig && !auxVisionCollidesWithPrimary
+      ? createSingleProvider({
+          provider: auxVisionConfig.provider ?? config.provider,
+          model: auxVisionConfig.model,
+          apiKey: auxVisionConfig.apiKey ?? config.apiKey,
+          ...((auxVisionConfig.baseUrl ?? config.baseUrl)
+            ? { baseUrl: auxVisionConfig.baseUrl ?? config.baseUrl }
+            : {}),
+        })
+      : null;
+  for (const tool of createVisionTools({
+    resolveProvider: (model) => {
+      if (model === config.model) return llm;
+      if (auxVisionProvider && auxVisionConfig && model === auxVisionConfig.model) {
+        return auxVisionProvider;
+      }
+      return null;
+    },
+    defaultModel: config.model,
+    // Skip threading the aux model when it collides with the primary: the
+    // fallback chain already collapses (both right operands resolve to
+    // `defaultModel`), so the spread would be dead. Keep the call honest about
+    // whether an auxiliary model is actually in effect.
+    ...(auxVisionConfig && !auxVisionCollidesWithPrimary
+      ? { auxiliaryVisionModel: auxVisionConfig.model }
+      : {}),
+  })) {
+    tools.register(tool);
+  }
+
   if (!opts.disableDocker) {
     for (const tool of createCodeTools(sandbox)) tools.register(tool);
     for (const tool of createBrowserTools({

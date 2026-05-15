@@ -23,7 +23,17 @@ export interface Message {
 export type MessageContent =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
-  | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean };
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
+  // Vision / document blocks. Carried as base64 strings rather than Buffer
+  // because @ethosagent/types is zero-dep and the underlying SDKs (Anthropic,
+  // OpenAI) ultimately want base64 strings on the wire. The tool that
+  // produces these (vision_analyze) encodes once at construction time.
+  | {
+      type: 'image';
+      mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+      data: string;
+    }
+  | { type: 'document'; mediaType: 'application/pdf'; data: string };
 
 export interface CompletionOptions {
   system?: string;
