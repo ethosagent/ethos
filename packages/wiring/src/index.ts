@@ -197,6 +197,7 @@ export interface WiringConfig {
     enabled?: boolean;
     url?: string;
     ttlHours?: number;
+    providers?: Record<string, { url: string }>;
   };
 }
 
@@ -850,6 +851,28 @@ export async function createAgentLoop(
         cachePath,
         logger: log,
       });
+      if (config.modelCatalogConfig.providers) {
+        for (const [providerId, providerCfg] of Object.entries(
+          config.modelCatalogConfig.providers,
+        )) {
+          try {
+            const providerManifest = await loadModelCatalog({
+              url: providerCfg.url,
+              ttlMs,
+              storage: designStorage,
+              cachePath: join(dataDir, 'cache', `model-catalog-${providerId}.json`),
+              logger: log,
+            });
+            if (providerManifest.providers[providerId]) {
+              manifest.providers[providerId] = providerManifest.providers[providerId];
+            }
+          } catch {
+            log.warn(
+              `model catalog: per-provider override for '${providerId}' failed; using main catalog`,
+            );
+          }
+        }
+      }
       resolvedModelCatalog = manifestToEntries(manifest);
     } catch {
       log.warn('model catalog: remote load failed during wiring; using bundled snapshot');
