@@ -846,12 +846,16 @@ function parseConfigYaml(src: string): EthosConfig {
             .map(([id, v]) => [id, { url: v.url }]),
         )
       : undefined;
+  const modelCatalogEnabled: boolean | undefined =
+    modelCatalogKv.enabled === 'true'
+      ? true
+      : modelCatalogKv.enabled === 'false'
+        ? false
+        : undefined;
   const modelCatalog: ModelCatalogConfig | undefined =
     Object.keys(modelCatalogKv).length > 0 || modelCatalogProviders
       ? {
-          ...(modelCatalogKv.enabled !== undefined
-            ? { enabled: modelCatalogKv.enabled === 'true' }
-            : {}),
+          ...(modelCatalogEnabled !== undefined ? { enabled: modelCatalogEnabled } : {}),
           ...(modelCatalogKv.url ? { url: modelCatalogKv.url } : {}),
           ...(modelCatalogKv.ttlHours ? { ttlHours: Number(modelCatalogKv.ttlHours) } : {}),
           ...(modelCatalogProviders ? { providers: modelCatalogProviders } : {}),

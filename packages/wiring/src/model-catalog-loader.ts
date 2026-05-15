@@ -1,5 +1,5 @@
 import type { ModelCatalogManifest, Storage } from '@ethosagent/types';
-import { MODEL_CATALOG } from './model-catalog';
+import { MODEL_CATALOG, type ModelCatalogEntry } from './model-catalog';
 
 export interface LoadModelCatalogOptions {
   url: string;
@@ -33,6 +33,24 @@ function isValidManifest(obj: unknown): boolean {
   if (typeof m.version !== 'number') return false;
   if (typeof m.updatedAt !== 'string') return false;
   if (typeof m.providers !== 'object' || m.providers === null) return false;
+  for (const [, provider] of Object.entries(m.providers as Record<string, unknown>)) {
+    if (typeof provider !== 'object' || provider === null) return false;
+    const p = provider as Record<string, unknown>;
+    if (!Array.isArray(p.models)) return false;
+    for (const model of p.models) {
+      if (typeof model !== 'object' || model === null) return false;
+      const entry = model as Record<string, unknown>;
+      if (typeof entry.id !== 'string') return false;
+      if (typeof entry.label !== 'string') return false;
+      if (
+        typeof entry.contextWindow !== 'number' ||
+        !Number.isFinite(entry.contextWindow) ||
+        entry.contextWindow <= 0
+      )
+        return false;
+      if (entry.default !== undefined && typeof entry.default !== 'boolean') return false;
+    }
+  }
   return true;
 }
 
@@ -146,4 +164,31 @@ export async function loadModelCatalog(
     logger?.warn('model catalog fetch failed; using bundled snapshot');
     return bundled;
   }
+}
+
+/**
+ * Convert a ModelCatalogManifest back to the flat ModelCatalogEntry[] format
+ * expected by createPersonalityDesignTools and other consumers.
+ */
+export function manifestToEntries(manifest: ModelCatalogManifest): ModelCatalogEntry[] {
+  const entries: ModelCatalogEntry[] = [];
+  const providerMapping: Record<string, string> = {
+    anthropic: 'anthropic',
+    azure: 'azure',
+    'openai-compat': 'openai',
+  };
+  for (const [providerId, catalog] of Object.entries(manifest.providers)) {
+    const mappedId = providerMapping[providerId] ?? providerId;
+    for (const model of catalog.models) {
+      const entry: ModelCatalogEntry = {
+        providerId: mappedId,
+        modelId: model.id,
+        label: model.label,
+        contextWindow: model.contextWindow,
+      };
+      if (model.default) entry.default = true;
+      entries.push(entry);
+    }
+  }
+  return entries;
 }

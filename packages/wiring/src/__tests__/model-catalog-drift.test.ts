@@ -4,21 +4,24 @@ import type { ModelCatalogManifest } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { MODEL_CATALOG } from '../model-catalog';
 
+function readRemoteCatalog(): ModelCatalogManifest {
+  const catalogPath = join(
+    import.meta.dirname,
+    '..',
+    '..',
+    '..',
+    '..',
+    'docs',
+    'static',
+    'api',
+    'model-catalog.json',
+  );
+  return JSON.parse(readFileSync(catalogPath, 'utf-8')) as ModelCatalogManifest;
+}
+
 describe('model catalog drift guard', () => {
   it('bundled MODEL_CATALOG covers all remote catalog entries', () => {
-    const catalogPath = join(
-      import.meta.dirname,
-      '..',
-      '..',
-      '..',
-      '..',
-      'docs',
-      'static',
-      'api',
-      'model-catalog.json',
-    );
-    const raw = readFileSync(catalogPath, 'utf-8');
-    const manifest = JSON.parse(raw) as ModelCatalogManifest;
+    const manifest = readRemoteCatalog();
 
     // Map bundled entries by modelId for fast lookup
     const bundledIds = new Set(MODEL_CATALOG.map((e) => e.modelId));
@@ -38,37 +41,13 @@ describe('model catalog drift guard', () => {
   });
 
   it('remote catalog has exactly 3 providers', () => {
-    const catalogPath = join(
-      import.meta.dirname,
-      '..',
-      '..',
-      '..',
-      '..',
-      'docs',
-      'static',
-      'api',
-      'model-catalog.json',
-    );
-    const raw = readFileSync(catalogPath, 'utf-8');
-    const manifest = JSON.parse(raw) as ModelCatalogManifest;
+    const manifest = readRemoteCatalog();
 
     expect(Object.keys(manifest.providers).sort()).toEqual(['anthropic', 'azure', 'openai-compat']);
   });
 
   it('remote catalog version is 1', () => {
-    const catalogPath = join(
-      import.meta.dirname,
-      '..',
-      '..',
-      '..',
-      '..',
-      'docs',
-      'static',
-      'api',
-      'model-catalog.json',
-    );
-    const raw = readFileSync(catalogPath, 'utf-8');
-    const manifest = JSON.parse(raw) as ModelCatalogManifest;
+    const manifest = readRemoteCatalog();
 
     expect(manifest.version).toBe(1);
   });
