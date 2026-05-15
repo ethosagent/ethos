@@ -1,0 +1,74 @@
+name: release
+
+# Manual release. The full sequence is documented in RELEASING.md:
+#
+#   1. Developer bumps locally:   make version-bump-{patch,minor,major}
+#   2. Developer pushes to main:  git commit -m "chore: release vX.Y.Z" && git push origin main
+#   3. Developer clicks here:     GitHub → Actions → release → Run workflow
+#
+# Whatever is on main's VERSION file at the moment this workflow runs is what
+# gets published. No bumping happens in CI — that's intentional, the bump is a
+# reviewable artifact in git, not a side effect of clicking a button.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write    # push the tag + create the GitHub Release
+  id-token: write    # reserved for future OIDC trusted-publishing migration
+
+concurrency:
+  group: release
+  cancel-in-progress: false   # never overlap releases — let the running one finish
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history so verify-version.js's git checks (G4, G5) see everything.
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup
+
+      - name: Read the version to release
+        run: |
+          NEW_VERSION="$(cat VERSION)"
+          echo "NEW_VERSION=${NEW_VERSION}" >> $GITHUB_ENV
+          echo "Releasing v${NEW_VERSION}"
+
+      - name: Typecheck + lint + tests
+        # G7 from the gate model — full check gate before any irreversible step.
+        run: pnpm check
+
+      - name: Pre-release gates (G1, G2, G3, G4, G5, G8)
+        env:
+          CI: true
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: node scripts/verify-version.js
+
+      - name: Build publishable packages
+        run: make build-publishable
+
+      - name: Configure npm auth
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+
+      - name: Publish (idempotent lockstep — packages already on npm are skipped)
+        run: make release-npm
+
+      - name: Tag and push
+        run: |
+          git tag "v${NEW_VERSION}"
+          git push origin "v${NEW_VERSION}"
+
+      - name: Create GitHub Release with auto-generated notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${NEW_VERSION}" \
+            --title "v${NEW_VERSION}" \
+            --generate-notes

@@ -32,6 +32,15 @@ Everything else (`extensions/*`, `apps/{tui,vscode-extension,web}`, `packages/ag
 
 ## Prerequisites — first time only
 
+A release can happen two ways: through CI (the **primary** path — a button-click in GitHub Actions) or from a laptop (`make release` — the escape hatch). Each path has its own one-time setup.
+
+### For CI releases (primary)
+
+1. **Create an npm Automation token.** Log in to [npmjs.com](https://www.npmjs.com/) as a member of the `@ethosagent` org → Account → Access Tokens → **Generate New Token → Automation** → copy.
+2. **Add it as a repo secret.** GitHub → repo Settings → Secrets and variables → Actions → **New repository secret** → name `NPM_TOKEN`, value = the token from step 1.
+
+### For local releases (escape hatch)
+
 ```bash
 # 1. Confirm Node 24
 node --version    # must be v24.x
@@ -47,7 +56,7 @@ If `npm whoami` doesn't show an `@ethosagent` member, ask an existing maintainer
 
 ## End-to-end release flow
 
-### 1. Pre-release decision — patch, minor, or major?
+### Pre-release decision — patch, minor, or major?
 
 | Change type | Bump |
 |---|---|
@@ -57,7 +66,17 @@ If `npm whoami` doesn't show an `@ethosagent` member, ask an existing maintainer
 
 If anything in `packages/plugin-contract/` changed, see the [Plugin contract bump checklist](#plugin-contract-bump-checklist) before proceeding.
 
-### 2. Bump the version
+### Step 1 — Bump the version locally and push to `main`
+
+Start on a clean `main`:
+
+```bash
+git checkout main
+git pull origin main
+git status            # should report nothing to commit, working tree clean
+```
+
+Bump the version:
 
 ```bash
 make version-bump-patch    # 0.2.5 → 0.2.6
@@ -67,94 +86,88 @@ make version-bump-minor    # 0.2.5 → 0.3.0
 make version-bump-major    # 0.2.5 → 1.0.0
 ```
 
-This writes the new version to `VERSION` and syncs every `package.json` in `apps/`, `packages/`, and `extensions/` automatically. All 40+ packages move to the same version — when a customer pastes `node_modules/@ethosagent/core/package.json` in a bug report, that version will match `ethos --version`.
+`make version-bump-*` writes the new version to `VERSION` and syncs every `package.json` in `apps/`, `packages/`, and `extensions/` to the same number. All packages move to the same version — when a customer pastes `node_modules/@ethosagent/core/package.json` in a bug report, that version will match `ethos --version`.
 
-Verify the diff:
+Eyeball the diff:
 
 ```bash
 git diff --stat
 # should show VERSION + every package.json
 ```
 
-### 3. Update CHANGELOG.md
-
-Move the `[Unreleased]` section heading to `[<new-version>] — YYYY-MM-DD` and ensure all user-visible changes are listed. Commit together with the version bump:
+Commit and push:
 
 ```bash
 git add .
-git commit -m "release: v$(make version)"
+git commit -m "chore: release v$(make version)"
+git push origin main
 ```
 
-### 4. Run the release
+Wait for the regular CI on `main` to pass (tests, typecheck, etc.). If anything fails, fix it on `main` before continuing — don't release red.
+
+### Step 2 — Trigger the release
+
+#### Primary path: CI workflow (button click)
+
+1. GitHub → repo → **Actions** tab.
+2. In the left sidebar, click **release**.
+3. Top right: **Run workflow** → branch `main` → **Run workflow**.
+
+The workflow takes ~3–5 minutes. See [What the CI workflow does](#what-the-ci-workflow-does) below.
+
+#### Escape hatch: `make release` from a laptop
+
+If CI is down or you need to publish from your machine, run the full pipeline locally:
 
 ```bash
 make release
 ```
 
-`make release` does, in order:
+`make release` does the same things the CI workflow does (verify → build → publish → tag → push → smoke). It's idempotent — re-running after a partial failure skips packages already on npm. The one thing it doesn't do that CI does is create the GitHub Release page — that's a manual `gh release create v$(make version) --generate-notes` afterwards.
 
-1. **`make verify`** — runs all pre-flight gates G1–G7 (see [Verification gates](#verification-gates) below). Exits immediately if any gate fails. Nothing ships on a failure.
-2. **`git tag v$(VERSION)`** — creates the tag.
-3. **`git push origin main v$(VERSION)`** — pushes the commit and tag. This triggers the CI `release.yml` workflow.
+### Step 3 — Verify
 
-### 5. What CI does
+- `npm view @ethosagent/cli version` should print the new version.
+- The **Releases** page on GitHub should have the new entry (CI path) or be missing (local path — create it manually with `gh release create`).
+- `git fetch --tags && git tag | tail` should show the new tag.
 
-`.github/workflows/release.yml` fires on the tag push and runs three stages in sequence:
-
-| Stage | What runs | Fails if |
-|---|---|---|
-| **Pre-flight** | `node scripts/verify-version.js` (G1–G5, G8) + `pnpm check` (G7) | Any gate fails |
-| **Publish** | `make build-publishable` + `make release-npm` | Build fails or npm rejects |
-| **Smoke** | `make smoke-npm` — installs published package, checks `--version`, real LLM round-trip | Wrong version or LLM failure |
-
-If any stage fails, subsequent stages do not run. The tag exists but the package may not have published — see [Recovery runbook](#recovery-runbook).
-
-### 6. Post-publish verification
-
-npm propagation takes ~15–30 seconds. Then verify:
+You can also run the smoke test, which installs the published package in a fresh temp directory, checks `ethos --version` against `VERSION`, and (if `ANTHROPIC_API_KEY` is set) does a real LLM round-trip:
 
 ```bash
 make smoke
 ```
 
-`make smoke-npm` does:
-1. Installs `@ethosagent/cli@<VERSION>` in a fresh temp directory.
-2. Runs `ethos --version` — asserts the reported version matches `VERSION`.
-3. If `ANTHROPIC_API_KEY` is set, runs a real LLM round-trip (`ethos chat -q "reply with exactly: ok"`) and asserts the response contains "ok".
+## What the CI workflow does
 
-Or verify manually:
+[`.github/workflows/release.yml`](.github/workflows/release.yml) is **manual-trigger only** (`workflow_dispatch`). It runs in order, against whatever `VERSION` is at the head of `main` when the button is clicked:
 
-```bash
-# Version on npm
-npm view @ethosagent/cli version
+| Step | Command | Fails if |
+|---|---|---|
+| **Pre-flight** | `pnpm check` + `node scripts/verify-version.js` (G1–G5, G8) | Any gate fails |
+| **Build** | `make build-publishable` | Build error |
+| **Publish** | `make release-npm` (idempotent lockstep) | npm rejects (auth, version conflict, etc.) |
+| **Tag** | `git tag vX.Y.Z && git push origin vX.Y.Z` | Tag-push failure (rare) |
+| **Release page** | `gh release create vX.Y.Z --generate-notes` | GitHub API failure (rare) |
 
-# All five packages
-for pkg in cli types core plugin-sdk plugin-contract; do
-  npm view "@ethosagent/$pkg" version
-done
-```
+If any step fails, subsequent steps do not run. Already-published packages stay published (no rollback), but the tag and GH release may be missing — see [Recovery runbook](#recovery-runbook).
 
-### 7. Failure paths
-
-See the [Recovery runbook](#recovery-runbook) for step-by-step recovery. The most common: if `make release-npm` fails mid-run, simply re-run it — it's idempotent and skips packages already published at the correct version.
+Release notes on the GitHub Release page are auto-generated from Conventional Commit PR titles (`feat:`, `fix:`, etc.) since the previous tag — that's the de-facto changelog. There is no `CHANGELOG.md` in the repo.
 
 ---
 
 ## Verification gates
 
-`make verify` runs these gates before tagging. CI runs them again on the tag push — defense in depth.
+`scripts/verify-version.js` runs these gates. The CI workflow runs them on every release; `make verify` runs them locally. CI also runs G1+G2 on every pull request (via `ci.yml`'s `version-sync` job) to block merging a PR that drifted versions.
 
 | Gate | What it checks | What it catches |
 |---|---|---|
 | **G1** version sync | Every `package.json` version == `cat VERSION` | A package.json wasn't synced; direct edits |
-| **G2** no 0.0.0 | No package version is `0.0.0` | New package added without wiring sync |
+| **G2** no 0.0.0 | No publishable package is at `0.0.0` | New package added without wiring sync |
 | **G3** clean tree | `git status --porcelain` is empty | Releasing with uncommitted local edits |
 | **G4** on main | HEAD == origin/main | Tagging from a feature branch by accident |
 | **G5** no tag yet | `v$(VERSION)` doesn't exist locally or on remote | Re-releasing a version that already shipped |
 | **G7** tests green | `pnpm check` (typecheck + lint + test) | The obvious one |
-| **G8** NPM_TOKEN | `NPM_TOKEN` env var is set (CI only; skipped locally) | Missing/expired secret discovered mid-publish |
-
-Gates G1 and G2 also run on every pull request in CI (`ci.yml`), blocking merge on version drift.
+| **G8** NPM_TOKEN | `NPM_TOKEN` env var is set (CI only; skipped locally where `npm login` provides auth) | Missing/expired secret discovered mid-publish |
 
 ---
 
@@ -162,10 +175,11 @@ Gates G1 and G2 also run on every pull request in CI (`ci.yml`), blocking merge 
 
 | Failure | Symptoms | Recovery |
 |---|---|---|
-| Pre-flight gate failed locally | `make verify` exits 1 with a message naming the gate | Fix the issue; re-run. Nothing was published. |
-| Pre-flight failed in CI after tag pushed | Workflow red; tag exists but nothing published | Delete tag: `git tag -d v<VERSION> && git push origin :refs/tags/v<VERSION>`. Fix, re-tag. |
-| npm publish failed midway | `npm view @ethosagent/cli@<VERSION>` returns 404 | Re-run `make release-npm` — idempotent, skips already-published packages. |
-| Published version is broken | Customers report a broken install | (a) `make version-bump-patch` → `make release` for a fix release. (b) Within 72h: `npm deprecate @ethosagent/cli@<VERSION> "broken; use <next>"`. |
+| Pre-flight gate failed | Workflow red on the verify step; or `make verify` exits 1 with a gate name | Fix the issue (sync VERSION, push the missing bump, etc.); re-trigger or re-run. Nothing was published. |
+| npm publish failed midway | Some `npm view @ethosagent/*@<VERSION>` return 404, others return the version | Re-trigger the workflow (or re-run `make release-npm`) — idempotent, skips already-published packages |
+| Workflow succeeded but tag wasn't created | Releases page is missing the entry; `git tag` doesn't list it | Manual: `git tag vX.Y.Z && git push origin vX.Y.Z && gh release create vX.Y.Z --generate-notes` |
+| Tag exists but nothing published (rare) | `git tag` shows it; `npm view` returns 404 | Delete tag: `git tag -d vX.Y.Z && git push origin :refs/tags/vX.Y.Z`. Fix, re-trigger. |
+| Published version is broken | Customers report a broken install | (a) `make version-bump-patch` → release a fix. (b) Within 72h: `npm deprecate @ethosagent/cli@<VERSION> "broken; use <next>"`. |
 
 ---
 
@@ -174,22 +188,23 @@ Gates G1 and G2 also run on every pull request in CI (`ci.yml`), blocking merge 
 When you want to inspect each step before proceeding:
 
 ```bash
-# 1. Bump version (VERSION + all 40+ package.json files)
+# 1. Bump version (VERSION + all package.json files)
 make version-bump-patch
 
 # 2. Review and commit
 git diff --stat
 git add .
-git commit -m "release: v$(make version)"
+git commit -m "chore: release v$(make version)"
+git push origin main
 
-# 3. Verify pre-flight gates
+# 3. Verify pre-flight gates locally
 make verify
 
-# 4. Tag and push (triggers CI publish + smoke)
-git tag "v$(make version)"
-git push origin main "v$(make version)"
+# 4. Trigger the release — either path
+#    CI:    GitHub → Actions → release → Run workflow
+#    Local: make release
 
-# 5. Watch CI — then smoke test locally
+# 5. Smoke test
 make smoke
 ```
 
@@ -210,9 +225,15 @@ make release-npm
 ## Quick reference
 
 ```bash
-# routine patch (most common)
+# routine patch (most common — via CI)
 make version-bump-patch
-git commit -am "release: v$(make version)"
+git commit -am "chore: release v$(make version)"
+git push origin main
+# then: Actions → release → Run workflow
+
+# routine patch from a laptop (escape hatch)
+make version-bump-patch
+git commit -am "chore: release v$(make version)"
 make release
 
 # minor or major
@@ -236,14 +257,13 @@ make release-npm
 
 ## Plugin contract bump checklist
 
-Before `make release`, if **anything in `packages/plugin-contract/` changed**, walk this list:
+Before releasing, if **anything in `packages/plugin-contract/` changed**, walk this list:
 
 1. Did the change rename, remove, or add a required field?
    - **No** (additive only) → no major bump needed. Skip the rest.
    - **Yes** → continue.
 2. Bump `PLUGIN_CONTRACT_MAJOR` in `packages/plugin-contract/src/version.ts`.
 3. Add an entry to `packages/plugin-contract/MIGRATIONS.md` describing what changed and the patch shape plugin authors need.
-4. Add a migration note to `CHANGELOG.md` under `[Unreleased] / Changed`, linking to `MIGRATIONS.md`.
-5. Confirm the plugin-loader test for the rejection path still fails on a plugin declaring the previous major.
+4. Confirm the plugin-loader test for the rejection path still fails on a plugin declaring the previous major.
 
 If unsure whether a change is breaking, default to a major bump.
