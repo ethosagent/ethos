@@ -9,8 +9,19 @@
     "url": "https://github.com/ethosagent/ethos",
     "directory": "packages/sdk"
   },
-  "keywords": ["ethos", "agent", "sdk", "mission-control", "dashboard"],
-  "files": ["dist", "src", "package.json", "README.md"],
+  "keywords": [
+    "ethos",
+    "agent",
+    "sdk",
+    "mission-control",
+    "dashboard"
+  ],
+  "files": [
+    "dist",
+    "src",
+    "package.json",
+    "README.md"
+  ],
   "publishConfig": {
     "access": "public"
   },
@@ -25,7 +36,7 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
-    "@ethosagent/web-contracts": "^0.1.0",
+    "@ethosagent/web-contracts": "workspace:*",
     "@orpc/client": "^1.14.0",
     "@orpc/contract": "^1.14.0"
   }
