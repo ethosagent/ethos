@@ -668,6 +668,9 @@ importers:
 
   extensions/platform-discord:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -696,6 +699,9 @@ importers:
 
   extensions/platform-slack:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -708,6 +714,9 @@ importers:
 
   extensions/platform-telegram:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -891,6 +900,15 @@ importers:
       openai:
         specifier: '*'
         version: 4.104.0(ws@8.20.0)(zod@4.3.6)
+
+  extensions/tools-interactive:
+    dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
 
   extensions/tools-kanban:
     dependencies:
@@ -1141,6 +1159,9 @@ importers:
       '@ethosagent/tools-image':
         specifier: workspace:*
         version: link:../../extensions/tools-image
+      '@ethosagent/tools-interactive':
+        specifier: workspace:*
+        version: link:../../extensions/tools-interactive
       '@ethosagent/tools-kanban':
         specifier: workspace:*
         version: link:../../extensions/tools-kanban

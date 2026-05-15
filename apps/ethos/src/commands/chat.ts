@@ -8,6 +8,7 @@ import type { SteerSink, Storage } from '@ethosagent/types';
 import type { EthosConfig, QuickCommandConfig } from '../config';
 import { ethosDir } from '../config';
 import { makeCompleter } from '../lib/autocomplete';
+import { formatClarifyPrompt, parseClarifyAnswer } from '../lib/clarify-prompt';
 import { grantQuickCommandConsent, hasQuickCommandConsent } from '../lib/onboarding';
 import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
 import { formatRecap } from '../lib/recap';
@@ -124,6 +125,8 @@ interface ChatState {
   pendingTurn?: string;
   /** FW-16 — true while awaiting yes/no consent for quick commands. */
   awaitingConsent: boolean;
+  /** True while a `clarify` tool prompt owns the readline loop. */
+  awaitingClarify: boolean;
 }
 
 interface RunChatOptions {
@@ -246,7 +249,40 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     draining: false,
     bgRunner,
     awaitingConsent: false,
+    awaitingClarify: false,
   };
+
+  // Clarify surface — when the agent calls the `clarify` tool, pause the
+  // readline loop, present the question, read one line, and route the answer
+  // back. Ctrl-C aborts the turn, which the bridge resolves as a cancel.
+  loop.clarifyBridge?.setPresenter((req) => {
+    state.awaitingClarify = true;
+    out(`\n${c.dim}${formatClarifyPrompt(req)}${c.reset}`);
+    rl.setPrompt(`${c.cyan}?${c.reset}> `);
+    rl.prompt();
+
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      rl.off('line', onLine);
+      unsubscribe();
+      state.awaitingClarify = false;
+      rl.setPrompt(`${c.cyan}You${c.reset} > `);
+      if (!state.abort) rl.prompt();
+    };
+    const onLine = (raw: string) => {
+      const answer = parseClarifyAnswer(raw, req.options);
+      finish();
+      void loop.respondToClarify({ requestId: req.requestId, answer, source: 'user' });
+    };
+    // Teardown if the request resolves another way first (timeout / abort-cancel).
+    const unsubscribe =
+      loop.clarifyBridge?.onResolved((row) => {
+        if (row.requestId === req.requestId) finish();
+      }) ?? (() => {});
+    rl.once('line', onLine);
+  });
 
   bgRunner.onComplete((task) => {
     const header = `bg:${task.id}`;
@@ -350,6 +386,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   rl.on('line', (raw) => {
     // FW-16 — block all input while the consent prompt is active.
     if (state.awaitingConsent) return;
+    // A clarify prompt owns the loop via its own one-shot `line` listener.
+    if (state.awaitingClarify) return;
 
     const input = raw.trim();
     if (!input) {

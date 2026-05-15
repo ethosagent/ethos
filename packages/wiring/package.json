@@ -49,6 +49,7 @@
     "@ethosagent/tools-terminal": "workspace:*",
     "@ethosagent/kanban-store": "workspace:*",
     "@ethosagent/logger": "workspace:*",
+    "@ethosagent/tools-interactive": "workspace:*",
     "@ethosagent/tools-kanban": "workspace:*",
     "@ethosagent/tools-todo": "workspace:*",
     "@ethosagent/tools-web": "workspace:*",

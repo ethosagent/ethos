@@ -266,6 +266,25 @@ const tools = {
 };
 
 // ---------------------------------------------------------------------------
+// Clarify — resolve a pending `clarify` request (the agent asked the user a
+// question mid-turn). The request side flows out over SSE; this is the answer
+// path back, mirroring the tool-approval transport.
+// ---------------------------------------------------------------------------
+
+const ClarifyRespondInput = z.object({
+  requestId: z.string(),
+  /** The user's answer — free-form text, or one of the offered options. */
+  answer: z.string(),
+  /** `user` for a real answer, `cancel` when the user dismissed the card. */
+  source: z.enum(['user', 'cancel']),
+});
+const ClarifyRespondOutput = z.object({ ok: z.literal(true) });
+
+const clarify = {
+  respond: oc.input(ClarifyRespondInput).output(ClarifyRespondOutput),
+};
+
+// ---------------------------------------------------------------------------
 // Onboarding
 // ---------------------------------------------------------------------------
 
@@ -698,6 +717,7 @@ export const contract = {
   personalities,
   chat,
   tools,
+  clarify,
   onboarding,
   config,
   cron,

@@ -9,6 +9,8 @@
 //   - Recent memory updates — last N MEMORY.md entries (bound personality).
 //   - This bot is in — channels the bot is in + their channel mode, + Refresh.
 
+import type { PendingClarify } from '@ethosagent/types';
+import { clarifyHomeEntryBlocks } from '../blocks/clarify';
 import { type KanbanTicket, kanbanListBlocks } from '../blocks/kanban';
 import { type SessionSummary, sessionListBlocks } from '../blocks/session';
 import {
@@ -34,6 +36,10 @@ const SESSION_CAP = 5;
 const MEMORY_CAP = 5;
 const KANBAN_CAP = 10;
 const CHANNEL_CAP = 20;
+/** Pending clarifies cap. Each row contributes a question section + an
+ *  actions block (≤25 elements). Five rows × 2 blocks = 10, well under
+ *  Slack's 100-block view limit. */
+const CLARIFY_CAP = 5;
 
 // Per-field text caps. The count caps above bound the *number* of items; these
 // bound the *length* of each model/config/user-influenced string before it's
@@ -79,6 +85,10 @@ export interface HomeViewInput {
   memorySnippets: string[];
   /** Channels the bot is in, with their current mode. */
   channelModes: Array<[string, ChannelMode]>;
+  /** Pending clarifies for this user — rendered above sessions as
+   *  "Waiting on you" so the user can answer without hunting the channel.
+   *  Optional for back-compat: when omitted the section is hidden. */
+  pendingClarifies?: PendingClarify[];
   /** Ethos web UI origin (no trailing slash) for session deep links. */
   webUiBaseUrl?: string;
 }
@@ -95,6 +105,23 @@ export function buildHomeView(input: HomeViewInput): SlackHomeView {
     ),
   );
   blocks.push(divider());
+
+  // Waiting on you — pending clarifies. Hidden entirely when there are none
+  // so the section "earns" its existence rather than showing a tasteful
+  // empty state on every load.
+  const pending = input.pendingClarifies ?? [];
+  if (pending.length > 0) {
+    blocks.push(header('Waiting on you'));
+    const clarifies = capSection(pending, CLARIFY_CAP);
+    for (const row of clarifies.kept) {
+      // Each row contributes its own question section + action buttons. The
+      // App Home shares the same action_ids as the in-channel card, so a
+      // click here resolves the same pending row.
+      blocks.push(...clarifyHomeEntryBlocks(row));
+    }
+    if (clarifies.overflow > 0) blocks.push(context([`+ ${clarifies.overflow} more`]));
+    blocks.push(divider());
+  }
 
   // Recent sessions.
   const sessions = capSection(input.sessions, SESSION_CAP);

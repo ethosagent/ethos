@@ -11,12 +11,17 @@
     "./validate": {
       "import": "./src/validate.ts",
       "types": "./src/validate.ts"
+    },
+    "./clarify-surface": {
+      "import": "./src/clarify-surface.ts",
+      "types": "./src/clarify-surface.ts"
     }
   },
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/core": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "discord.js": "^14.16.0"
   }

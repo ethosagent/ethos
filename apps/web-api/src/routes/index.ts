@@ -45,6 +45,8 @@ export interface ServiceContainer {
   config: import('../services/config.service').ConfigService;
   onboarding: import('../services/onboarding.service').OnboardingService;
   approvals: import('../services/approvals.service').ApprovalsService;
+  /** Bridge backing the `clarify` tool — undefined when the loop has none. */
+  clarifyBridge?: import('@ethosagent/core').ClarifyBridge;
   cron: import('../services/cron.service').CronService;
   skills: import('../services/skills.service').SkillsService;
   evolver: import('../services/evolver.service').EvolverService;

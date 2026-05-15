@@ -2,9 +2,11 @@ import { join } from 'node:path';
 import {
   AgentLoop,
   ChainedProvider,
+  ClarifyBridge,
   DefaultHookRegistry,
   DefaultToolRegistry,
   EagerPrefetchPolicy,
+  FileClarifyStore,
   LastWriteWinsPolicy,
   LazyOnDemandPolicy,
   type SummarizerFn,
@@ -27,6 +29,7 @@ import { createCodeTools } from '@ethosagent/tools-code';
 import { createDelegationTools } from '@ethosagent/tools-delegation';
 import { createFileTools } from '@ethosagent/tools-file';
 import { createImageTools } from '@ethosagent/tools-image';
+import { createInteractiveTools } from '@ethosagent/tools-interactive';
 import {
   createKanbanRoleGateHook,
   createKanbanTools,
@@ -367,6 +370,15 @@ export async function createAgentLoop(
   const todoStore = new InMemoryTodoStore();
   for (const tool of createTodoTools(todoStore)) tools.register(tool);
 
+  // Clarify bridge — backs the `clarify` tool (ask the user mid-turn, wait).
+  // The store persists pending requests so surfaces survive a restart. A
+  // surface (TUI / CLI / web-api) registers a presenter on this bridge; until
+  // one does, `clarify` reports CLARIFY_NO_SURFACE and the agent uses prose.
+  const clarifyBridge = new ClarifyBridge(
+    new FileClarifyStore(new FsStorage(), join(dataDir, 'clarify')),
+  );
+  for (const tool of createInteractiveTools(clarifyBridge)) tools.register(tool);
+
   // Kanban tools are wired only when the active personality actually uses them.
   // The DB is per-personality in Plan A (one solo board); Plan B's team-supervisor
   // overrides kanbanDbPath to point at a shared team board.
@@ -548,6 +560,7 @@ export async function createAgentLoop(
     watcher,
     injectionClassifier,
     contextEngines,
+    clarifyBridge,
     ...(config.teamName ? { teamId: config.teamName } : {}),
     ...(opts.observability ? { observability: opts.observability } : {}),
     options: {

@@ -108,6 +108,24 @@ export const CronFiredEventSchema = z.object({
   outputPath: z.string().nullable(),
 });
 
+// The `clarify` tool asked the user a question mid-turn. Pushed (not a turn
+// event) so a browser refresh / SSE reconnect re-presents any pending clarify.
+export const ClarifyRequestEventSchema = z.object({
+  type: z.literal('clarify.request'),
+  requestId: z.string(),
+  question: z.string(),
+  options: z.array(z.string()).optional(),
+  default: z.string().optional(),
+  /** ISO-8601 — when the timeout fires and the default is used. */
+  defaultDeadlineAt: z.string(),
+});
+
+export const ClarifyResolvedEventSchema = z.object({
+  type: z.literal('clarify.resolved'),
+  requestId: z.string(),
+  source: z.enum(['user', 'timeout-default', 'timeout-no-default', 'cancel']),
+});
+
 export const MeshChangedEventSchema = z.object({
   type: z.literal('mesh.changed'),
   agents: z.array(
@@ -149,6 +167,8 @@ export const SseEventSchema = z.discriminatedUnion('type', [
   MessagePersistedEventSchema,
   ToolApprovalRequiredEventSchema,
   ApprovalResolvedEventSchema,
+  ClarifyRequestEventSchema,
+  ClarifyResolvedEventSchema,
   CronFiredEventSchema,
   MeshChangedEventSchema,
   EvolveSkillPendingEventSchema,
@@ -158,3 +178,6 @@ export type SseEvent = z.infer<typeof SseEventSchema>;
 
 /** Discriminator literal for narrowing in client code. */
 export type SseEventType = SseEvent['type'];
+
+/** The `clarify.request` push event — surfaced as a card in the web UI. */
+export type ClarifyRequestEvent = z.infer<typeof ClarifyRequestEventSchema>;

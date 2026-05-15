@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import type { AgentBridge } from '@ethosagent/agent-bridge';
 import type { AgentLoop } from '@ethosagent/core';
 import { DEFAULT_TOKENS } from '@ethosagent/design-tokens';
-import type { Session } from '@ethosagent/types';
+import type { PendingClarify, Session } from '@ethosagent/types';
 import { createMemoryProvider } from '@ethosagent/wiring';
 import { Box, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -18,6 +18,7 @@ import {
 import { getUpdateStatus, type UpdateStatus } from '../update-check';
 import { AccordionSection, type DetailsMode } from './AccordionSection';
 import { type ChatMessage, ChatPane } from './ChatPane';
+import { ClarifyModal } from './ClarifyModal';
 import { CompletionPanel, getMatches } from './CompletionPanel';
 import { ConsoleHeader } from './ConsoleHeader';
 import { ContextPanel } from './ContextPanel';
@@ -188,6 +189,7 @@ export function App({
     return effective;
   }, []);
   const [modal, setModal] = useState<Modal>(null);
+  const [clarifyRequest, setClarifyRequest] = useState<PendingClarify | null>(null);
   const [completionIndex, setCompletionIndex] = useState(0);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [history, setHistory] = useState<string[]>([]);
@@ -419,7 +421,7 @@ export function App({
         setShowKeymap(true);
       }
     },
-    { isActive: modal === null },
+    { isActive: modal === null && clarifyRequest === null },
   );
 
   useEffect(() => {
@@ -613,6 +615,14 @@ export function App({
       bridge.off('idle', onIdle);
       bridge.off('run_start', onRunStart);
     };
+  }, [bridge]);
+
+  // Clarify surface — open the modal when the agent calls the `clarify` tool,
+  // and close it when the request resolves (answer / timeout / cancel).
+  // Registered through the bridge so it survives `replaceLoop` (model switch).
+  useEffect(() => {
+    bridge.setClarifyPresenter((req) => setClarifyRequest(req));
+    return bridge.onClarifyResolved(() => setClarifyRequest(null));
   }, [bridge]);
 
   const applyCompletion = () => {
@@ -912,6 +922,33 @@ export function App({
     setStatusMsg('Usage: /details [<section>] [<mode>]');
   };
 
+  if (clarifyRequest) {
+    const req = clarifyRequest;
+    return (
+      <SkinContext.Provider value={tokens}>
+        <ClarifyModal
+          request={req}
+          onAnswer={(answer) => {
+            setClarifyRequest(null);
+            void bridge.clarifyBridge?.respond({
+              requestId: req.requestId,
+              answer,
+              source: 'user',
+            });
+          }}
+          onCancel={() => {
+            setClarifyRequest(null);
+            void bridge.clarifyBridge?.respond({
+              requestId: req.requestId,
+              answer: '',
+              source: 'cancel',
+            });
+          }}
+        />
+      </SkinContext.Provider>
+    );
+  }
+
   if (modal === 'sessions') {
     return (
       <SkinContext.Provider value={tokens}>
@@ -1077,7 +1114,9 @@ export function App({
         <InputBox
           value={input}
           disabled={running}
-          isActive={modal === null && !showKeymap && focusPane === 'input'}
+          isActive={
+            modal === null && clarifyRequest === null && !showKeymap && focusPane === 'input'
+          }
           onChange={setInput}
           onSubmit={handleSubmit}
           onTabComplete={applyCompletion}

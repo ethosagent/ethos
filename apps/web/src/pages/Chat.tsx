@@ -3,6 +3,7 @@ import { App as AntApp, ConfigProvider } from 'antd';
 import { useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ApprovalModal } from '../components/chat/ApprovalModal';
+import { ClarifyCard } from '../components/chat/ClarifyCard';
 import { Composer } from '../components/chat/Composer';
 import { MessageList } from '../components/chat/MessageList';
 import { PersonalityBar } from '../components/chat/PersonalityBar';
@@ -115,6 +116,7 @@ export function Chat() {
   // the queue model means we don't have to special-case "second approval
   // arrived while the first modal was open."
   const pendingApproval = state.pendingApprovals[0];
+  const pendingClarify = state.pendingClarifies[0];
 
   const handleSwitchPersonality = async (newId: string) => {
     // No-op: same personality clicked.
@@ -174,6 +176,9 @@ export function Chat() {
         />
         {pendingApproval ? (
           <ApprovalModal key={pendingApproval.approvalId} request={pendingApproval} />
+        ) : null}
+        {pendingClarify ? (
+          <ClarifyCard key={pendingClarify.requestId} request={pendingClarify} />
         ) : null}
         <MessageList
           messages={state.messages}

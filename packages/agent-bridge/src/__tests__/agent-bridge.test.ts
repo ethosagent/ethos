@@ -102,6 +102,46 @@ describe('AgentBridge', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Clarify registration survives replaceLoop
+  // ---------------------------------------------------------------------------
+
+  it('re-binds the clarify presenter onto the new loop after replaceLoop', () => {
+    const makeFakeClarify = () => {
+      const calls = { presenters: [] as unknown[], resolvedListeners: 0 };
+      return {
+        calls,
+        bridge: {
+          setPresenter: (p: unknown) => calls.presenters.push(p),
+          onResolved: () => {
+            calls.resolvedListeners += 1;
+            return () => {};
+          },
+        },
+      };
+    };
+
+    const c1 = makeFakeClarify();
+    const loop1 = { clarifyBridge: c1.bridge } as unknown as AgentLoop;
+    const bridge = new AgentBridge(loop1);
+
+    const presenter = vi.fn();
+    bridge.setClarifyPresenter(presenter);
+    bridge.onClarifyResolved(() => {});
+    expect(c1.calls.presenters).toEqual([presenter]);
+    expect(c1.calls.resolvedListeners).toBe(1);
+
+    // A model switch rebuilds the loop with a fresh ClarifyBridge.
+    const c2 = makeFakeClarify();
+    const loop2 = { clarifyBridge: c2.bridge } as unknown as AgentLoop;
+    bridge.replaceLoop(loop2);
+
+    // The new loop's ClarifyBridge gets the same presenter + listener, so
+    // clarify keeps working instead of degrading to CLARIFY_NO_SURFACE.
+    expect(c2.calls.presenters).toEqual([presenter]);
+    expect(c2.calls.resolvedListeners).toBe(1);
+  });
+
+  // ---------------------------------------------------------------------------
   // Concurrent-send queue (eng-review finding 1.3)
   // ---------------------------------------------------------------------------
 

@@ -1,4 +1,9 @@
-import type { ApprovalRequest, SseEvent, StoredMessage } from '@ethosagent/web-contracts';
+import type {
+  ApprovalRequest,
+  ClarifyRequestEvent,
+  SseEvent,
+  StoredMessage,
+} from '@ethosagent/web-contracts';
 
 // Pure reducer that maps SSE events → ChatState. Extracted from the
 // `useChat` hook so we can test the state machine in isolation, without
@@ -67,6 +72,12 @@ export interface ChatState {
    * head of this list; multi-tab flows clear via approval.resolved.
    */
   pendingApprovals: ApprovalRequest[];
+  /**
+   * Open `clarify` requests — the agent asked the user a question mid-turn.
+   * The card renders the head of this list; resolution clears via the
+   * `clarify.resolved` SSE event (so every tab collapses the card together).
+   */
+  pendingClarifies: ClarifyRequestEvent[];
   isStreaming: boolean;
   error: string | null;
 }
@@ -75,6 +86,7 @@ export const initialChatState: ChatState = {
   messages: [],
   currentTurn: null,
   pendingApprovals: [],
+  pendingClarifies: [],
   isStreaming: false,
   error: null,
 };
@@ -253,6 +265,22 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
       return {
         ...state,
         pendingApprovals: state.pendingApprovals.filter((p) => p.approvalId !== event.approvalId),
+      };
+    }
+
+    case 'clarify.request': {
+      // The agent called `clarify` — surface the question as a card. Dedupe
+      // by requestId so an SSE reconnect re-delivering the event is a no-op.
+      if (state.pendingClarifies.some((c) => c.requestId === event.requestId)) return state;
+      return { ...state, pendingClarifies: [...state.pendingClarifies, event] };
+    }
+
+    case 'clarify.resolved': {
+      // The clarify was answered / timed out / cancelled on some tab — drop
+      // the card here too so every tab collapses it together.
+      return {
+        ...state,
+        pendingClarifies: state.pendingClarifies.filter((c) => c.requestId !== event.requestId),
       };
     }
 

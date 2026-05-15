@@ -55,6 +55,25 @@ function isInAllowlist(allowlist: string[], senderId: string): boolean {
   return allowlist.some((entry) => matchesGlob(entry, senderId));
 }
 
+/**
+ * Allowlist-only check: is this sender approved to talk to the bot at all?
+ * Mirrors the `senderAllowed` decision inside `checkMessage` (steps 2–3) but
+ * exposes it on its own so callers can authorize side-channels (e.g. the
+ * clarify correlator) without re-running mention gating or pairing flow.
+ */
+export function isSenderAllowed(
+  message: InboundMessage,
+  config: ChannelPlatformConfig | undefined,
+): boolean {
+  if (!config) return true; // backward-compat: no platform config means no filter
+  const senderId = message.userId ?? '';
+  const allowlist: string[] = [];
+  if (config.ownerUserId) allowlist.push(config.ownerUserId);
+  if (config.recipientAllowlist) allowlist.push(...config.recipientAllowlist);
+  if (allowlist.length === 0) return false;
+  return isInAllowlist(allowlist, senderId);
+}
+
 // ---------------------------------------------------------------------------
 // Core filter
 // ---------------------------------------------------------------------------

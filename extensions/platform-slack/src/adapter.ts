@@ -20,6 +20,12 @@ import {
   approvalResolvedBlocks,
   DENY_ACTION_ID,
 } from './blocks/approval';
+import {
+  CLARIFY_ANSWER_ACTION_ID,
+  CLARIFY_CANCEL_ACTION_ID,
+  CLARIFY_CHOICE_ACTION_ID,
+  CLARIFY_MODAL_CALLBACK_ID,
+} from './blocks/clarify';
 import { plaintextFallback } from './blocks/shared';
 import { chunkText, reflowChunks } from './chunking';
 import {
@@ -38,12 +44,20 @@ import {
 } from './events/links';
 import { registerMemberEvents } from './events/members';
 import { registerMessageEvents } from './events/messages';
-import { registerHomeEvents, type SessionReader } from './home/handlers';
+import { type ClarifyHomeReader, registerHomeEvents, type SessionReader } from './home/handlers';
 import {
   type ApprovalActionPayload,
   type ApprovalDecisionEvent,
   handleApprovalAction,
 } from './interactions/actions';
+import {
+  type ClarifyActionEvent,
+  type ClarifyActionPayload,
+  type ClarifyModalSubmissionEvent,
+  type ClarifyModalSubmissionPayload,
+  handleClarifyAction,
+  handleClarifyModalSubmission,
+} from './interactions/clarify';
 import { resolveChannelMode } from './routing/triage';
 import { ChannelOverrideStore } from './store/channel-overrides';
 import { ThreadStateStore } from './store/thread-state';
@@ -188,6 +202,14 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   private messageHandler?: (message: InboundMessage) => void;
   /** Approval-card button-click handler, wired by the approval coordinator. */
   private approvalDecisionHandler?: (event: ApprovalDecisionEvent) => void;
+  /** Clarify-card button-click handler, wired by the Slack clarify surface. */
+  private clarifyActionHandler?: (event: ClarifyActionEvent) => void;
+  /** Clarify-modal submission handler, wired by the Slack clarify surface. */
+  private clarifyModalSubmitHandler?: (event: ClarifyModalSubmissionEvent) => void;
+  /** Source of pending clarifies for the App Home "Waiting on you" section.
+   *  Wired by the Slack clarify surface after construction; read inside
+   *  `start()` when the home events are registered. */
+  private clarifyHomeReader?: ClarifyHomeReader;
   /** Bolt-internal inbound handle. Resolved during `start()` via auth.test. */
   private selfUserId: string | null = null;
   /** The bot's Slack display name. Resolved during `start()` via auth.test;
@@ -355,6 +377,98 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     this.app.action(APPROVE_ACTION_ID, onApprovalButton);
     this.app.action(DENY_ACTION_ID, onApprovalButton);
 
+    // Clarify-card button clicks. Bolt delivers `block_actions` events here
+    // for the choice/cancel/answer buttons; we narrow the raw payload to
+    // `ClarifyActionPayload` and let the pure handler route it. Same shape as
+    // the approval handler — defensively probe the payload before dereferencing
+    // and ack as the very first thing.
+    const onClarifyButton = async (raw: unknown): Promise<void> => {
+      const evt = (raw ?? {}) as {
+        ack?: unknown;
+        body?: {
+          user?: { id?: string };
+          channel?: { id?: string };
+          message?: { ts?: string };
+          trigger_id?: string;
+          /** Present for App Home / modal-triggered block_actions; absent for
+           *  channel-message clicks. We use it to detect the Home tab path. */
+          view?: { type?: string };
+        };
+        action?: { action_id?: string; value?: string };
+      };
+      if (typeof evt.ack === 'function') {
+        try {
+          await (evt.ack as () => Promise<void>)();
+        } catch {
+          // best-effort ack — proceed regardless
+        }
+      }
+      const handler = this.clarifyActionHandler;
+      if (!handler) return;
+      const body = evt.body;
+      const action = evt.action;
+      if (
+        typeof body !== 'object' ||
+        body === null ||
+        typeof action !== 'object' ||
+        action === null
+      )
+        return;
+      // App Home payloads omit `body.channel` and `body.message` entirely
+      // (the click happened on a view, not a channel message). Detect this
+      // so the surface can relax its channel/messageTs cross-tenant gate
+      // for Home — a Home view is per-user, so cross-message replay isn't
+      // a risk; the gate's purpose doesn't apply.
+      const fromHome = body.view?.type === 'home' || !body.channel;
+      const payload: ClarifyActionPayload = {
+        actionId: action.action_id ?? '',
+        value: action.value ?? '',
+        userId: body.user?.id ?? '',
+        channelId: body.channel?.id ?? '',
+        messageTs: body.message?.ts ?? '',
+        triggerId: body.trigger_id ?? '',
+        fromHome,
+      };
+      await handleClarifyAction(payload, { onAction: async (e) => handler(e) });
+    };
+    this.app.action(CLARIFY_CHOICE_ACTION_ID, onClarifyButton);
+    this.app.action(CLARIFY_CANCEL_ACTION_ID, onClarifyButton);
+    this.app.action(CLARIFY_ANSWER_ACTION_ID, onClarifyButton);
+
+    // Free-form modal submission. Bolt delivers `view_submission` events
+    // when the user clicks Submit on the clarify modal. Same defensive shape.
+    this.app.view(CLARIFY_MODAL_CALLBACK_ID, async (raw) => {
+      const evt = raw as {
+        ack?: unknown;
+        body?: {
+          user?: { id?: string };
+          view?: {
+            callback_id?: string;
+            private_metadata?: string;
+            state?: { values?: Record<string, Record<string, { value?: string }>> };
+          };
+        };
+      };
+      if (typeof evt.ack === 'function') {
+        try {
+          await (evt.ack as () => Promise<void>)();
+        } catch {
+          // best-effort ack
+        }
+      }
+      const handler = this.clarifyModalSubmitHandler;
+      if (!handler) return;
+      const view = evt.body?.view;
+      if (!view) return;
+      const payload: ClarifyModalSubmissionPayload = {
+        callbackId: view.callback_id ?? '',
+        privateMetadata: view.private_metadata ?? '',
+        userId: evt.body?.user?.id ?? '',
+        values: view.state?.values ?? {},
+      };
+      await handleClarifyModalSubmission(payload, { onSubmit: async (e) => handler(e) });
+    });
+
     // App Home tab. `registerHomeEvents` wires `app_home_opened` (publish the
     // view) and the `home:refresh` button (re-publish). It gathers data from
     // the injected readers; sections backed by an unwired reader degrade to a
@@ -367,6 +481,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       session: this.session,
       memory: this.memory,
       kanban: this.kanban,
+      clarify: this.clarifyHomeReader,
       webUiBaseUrl: this.webUiBaseUrl,
     });
 
@@ -550,6 +665,93 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
    *  this to its `approve()` / `deny()` calls. */
   onApprovalDecision(handler: (event: ApprovalDecisionEvent) => void): void {
     this.approvalDecisionHandler = handler;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Clarify cards (interactive question/answer)
+  //
+  // Mirrors the approval-card lifecycle. The Slack clarify surface drives
+  // them: post a card when the agent calls `clarify`, update it in place
+  // once resolved (answered, timed out, or cancelled). The adapter takes
+  // the rendered Block Kit blocks from the surface — block builders live in
+  // `blocks/clarify.ts` and stay pure.
+  // ---------------------------------------------------------------------------
+
+  /** Post the pending clarify card. Returns the message `ts` so the surface
+   *  can `chat.update` it in place once the row resolves. */
+  async postClarifyCard(input: {
+    chatId: string;
+    threadId?: string;
+    blocks: unknown[];
+  }): Promise<{ messageTs: string } | { error: string }> {
+    try {
+      const result = await this.client.chat.postMessage({
+        channel: input.chatId,
+        text: plaintextFallback(input.blocks as never),
+        blocks: input.blocks as never,
+        ...(input.threadId ? { thread_ts: input.threadId } : {}),
+      });
+      const ts = result.ts as string | undefined;
+      if (!ts) return { error: 'Slack accepted the clarify card but returned no message ts' };
+      return { messageTs: ts };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Replace a posted clarify card with its resolved state — removes the
+   *  buttons so the card can't be clicked twice. */
+  async updateClarifyCard(input: {
+    chatId: string;
+    messageTs: string;
+    blocks: unknown[];
+  }): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      await this.client.chat.update({
+        channel: input.chatId,
+        ts: input.messageTs,
+        text: plaintextFallback(input.blocks as never),
+        blocks: input.blocks as never,
+      });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Open a Block Kit modal — used for free-form clarify answers. */
+  async openClarifyModal(input: {
+    triggerId: string;
+    view: Record<string, unknown>;
+  }): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      await this.client.views.open({
+        trigger_id: input.triggerId,
+        view: input.view as never,
+      });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Register the clarify-card button-click handler. The Slack clarify
+   *  surface wires this to its `bridge.respond()` calls. */
+  onClarifyAction(handler: (event: ClarifyActionEvent) => void): void {
+    this.clarifyActionHandler = handler;
+  }
+
+  /** Register the clarify-modal submission handler. */
+  onClarifyModalSubmit(handler: (event: ClarifyModalSubmissionEvent) => void): void {
+    this.clarifyModalSubmitHandler = handler;
+  }
+
+  /** Register the App Home "Waiting on you" data source. Set by the clarify
+   *  surface after construction; consumed inside `start()`. Idempotent —
+   *  the most recent set wins, but only the value present at `start()` time
+   *  is registered with Bolt. */
+  setClarifyHomeReader(reader: ClarifyHomeReader): void {
+    this.clarifyHomeReader = reader;
   }
 
   async health(): Promise<{ ok: boolean; latencyMs?: number }> {

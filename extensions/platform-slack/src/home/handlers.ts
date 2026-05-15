@@ -7,6 +7,7 @@
 // Reader failures and `views.publish` failures are swallowed — Slack is the
 // thing we don't control, and a bad event must never crash Bolt's event loop.
 
+import type { PendingClarify } from '@ethosagent/types';
 import type { App } from '@slack/bolt';
 import type { KanbanTicket } from '../blocks/kanban';
 import type { SessionSummary } from '../blocks/session';
@@ -15,6 +16,14 @@ import type { MemoryReader } from '../commands/memory';
 import { extractRecentEntries } from '../commands/memory';
 import type { Binding, ChannelMode } from '../config';
 import { buildHomeView, HOME_REFRESH_ACTION_ID, type SlackHomeView } from './view';
+
+/** Surface for pending clarifies — implemented by `SlackClarifySurface`.
+ *  Optional on `HomeEventDeps`: when absent, the "Waiting on you" section
+ *  is skipped entirely. The handler filters per user (anyone-clarify or
+ *  this user is the originator). */
+export interface ClarifyHomeReader {
+  listPendingForBot(): Promise<PendingClarify[]>;
+}
 
 /** Minimal recent-session shape the home view consumes. The wiring layer
  *  adapts `SessionStore.listSessions` (filtered to this bot) to this surface
@@ -40,6 +49,9 @@ export interface HomeEventDeps {
   session: SessionReader | undefined;
   memory: MemoryReader | undefined;
   kanban: KanbanReader | undefined;
+  /** Source of pending clarifies for the "Waiting on you" section. Absent
+   *  when the surface isn't wired, in which case the section is hidden. */
+  clarify?: ClarifyHomeReader;
   /** Ethos web UI origin for session deep links. Links render only when set. */
   webUiBaseUrl?: string;
 }
@@ -57,10 +69,11 @@ type HomeClient = {
 
 export function registerHomeEvents(app: App, deps: HomeEventDeps): void {
   const publishHome = async (client: HomeClient, userId: string): Promise<void> => {
-    const [sessions, kanbanTickets, memorySnippets] = await Promise.all([
+    const [sessions, kanbanTickets, memorySnippets, pendingClarifies] = await Promise.all([
       gatherSessions(deps),
       gatherKanban(deps),
       gatherMemory(deps),
+      gatherPendingClarifies(deps, userId),
     ]);
     // `buildHomeView` is pure first-party code — a bug here should surface via
     // Bolt's error handling, not be swallowed below into a blank Home tab.
@@ -70,6 +83,7 @@ export function registerHomeEvents(app: App, deps: HomeEventDeps): void {
       kanbanTickets,
       memorySnippets,
       channelModes: deps.channelOverrides?.entries() ?? [],
+      pendingClarifies,
       webUiBaseUrl: deps.webUiBaseUrl,
     });
     try {
@@ -125,6 +139,23 @@ async function gatherMemory(deps: HomeEventDeps): Promise<string[]> {
   try {
     const body = await deps.memory.read();
     return extractRecentEntries(body, MEMORY_SNIPPET_COUNT);
+  } catch {
+    return [];
+  }
+}
+
+/** Gather pending clarifies the given user can answer — anyone-clarify or
+ *  this user is the originator. Tolerant of reader failure (returns []). */
+async function gatherPendingClarifies(
+  deps: HomeEventDeps,
+  userId: string,
+): Promise<PendingClarify[]> {
+  if (!deps.clarify) return [];
+  try {
+    const all = await deps.clarify.listPendingForBot();
+    return all.filter(
+      (r) => r.answerableBy === 'anyone' || r.surfaceContext.originatorUserId === userId,
+    );
   } catch {
     return [];
   }

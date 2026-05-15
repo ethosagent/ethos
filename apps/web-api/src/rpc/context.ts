@@ -1,3 +1,4 @@
+import type { ClarifyBridge } from '@ethosagent/core';
 import { contract } from '@ethosagent/web-contracts';
 import { implement } from '@orpc/server';
 import type { ApprovalsService } from '../services/approvals.service';
@@ -31,6 +32,8 @@ export interface RpcContext {
   config: ConfigService;
   onboarding: OnboardingService;
   approvals: ApprovalsService;
+  /** Bridge backing the `clarify` tool — undefined when the loop has none. */
+  clarifyBridge?: ClarifyBridge;
   cron: CronService;
   skills: SkillsService;
   evolver: EvolverService;

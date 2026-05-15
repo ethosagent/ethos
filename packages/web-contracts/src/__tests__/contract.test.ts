@@ -172,6 +172,7 @@ describe('contract router', () => {
     expect(Object.keys(contract).sort()).toEqual([
       'batch',
       'chat',
+      'clarify',
       'config',
       'cron',
       'eval',

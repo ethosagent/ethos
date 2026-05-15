@@ -6,7 +6,12 @@
 //     dropped. Emits `queued` when held; `error: BUSY` when cap hit.
 
 import { EventEmitter } from 'node:events';
-import type { AgentLoop, RunOptions } from '@ethosagent/core';
+import type {
+  AgentLoop,
+  ClarifyPresenter,
+  ClarifyResolvedListener,
+  RunOptions,
+} from '@ethosagent/core';
 
 export type BridgeOpts = Omit<RunOptions, 'abortSignal'>;
 
@@ -55,6 +60,11 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
   private queue: QueuedSend[] = [];
   private readonly queueCap: number;
   private readonly flushIntervalMs: number;
+  // Clarify registrations are held on the bridge, not on the loop's
+  // ClarifyBridge directly, so they survive `replaceLoop`: each rebuilt loop
+  // gets a fresh ClarifyBridge that must be re-bound to the surface.
+  private clarifyPresenter: ClarifyPresenter | undefined;
+  private readonly clarifyResolvedListeners = new Set<ClarifyResolvedListener>();
 
   constructor(loop: AgentLoop, options: BridgeOptions = {}) {
     super();
@@ -65,6 +75,40 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
 
   get isRunning(): boolean {
     return this.controller !== null;
+  }
+
+  /**
+   * The active loop's clarify bridge — reads through to the current loop so
+   * `respond()` / `listPending()` follow `replaceLoop`. To register a
+   * presenter or resolved-listener, use `setClarifyPresenter` /
+   * `onClarifyResolved` instead so the registration survives `replaceLoop`.
+   */
+  get clarifyBridge(): AgentLoop['clarifyBridge'] {
+    return this.loop.clarifyBridge;
+  }
+
+  /**
+   * Register how this surface presents a pending clarify. The registration is
+   * remembered and re-applied to the new loop's ClarifyBridge on
+   * `replaceLoop`, so clarify keeps working after a model switch.
+   */
+  setClarifyPresenter(presenter: ClarifyPresenter): void {
+    this.clarifyPresenter = presenter;
+    this.loop.clarifyBridge?.setPresenter(presenter);
+  }
+
+  /**
+   * Subscribe to clarify resolutions (answer / timeout / cancel) so the
+   * surface can tear down its prompt. Re-applied across `replaceLoop`.
+   * Returns an unsubscribe function.
+   */
+  onClarifyResolved(listener: ClarifyResolvedListener): () => void {
+    this.clarifyResolvedListeners.add(listener);
+    const unsub = this.loop.clarifyBridge?.onResolved(listener);
+    return () => {
+      this.clarifyResolvedListeners.delete(listener);
+      unsub?.();
+    };
   }
 
   get queueDepth(): number {
@@ -127,6 +171,12 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
   replaceLoop(newLoop: AgentLoop): void {
     this.loop = newLoop;
     this.clearQueue();
+    // The new loop has a fresh ClarifyBridge with no presenter — re-bind the
+    // surface's clarify registrations so they keep working after the swap.
+    const cb = this.loop.clarifyBridge;
+    if (!cb) return;
+    if (this.clarifyPresenter) cb.setPresenter(this.clarifyPresenter);
+    for (const listener of this.clarifyResolvedListeners) cb.onResolved(listener);
   }
 
   // -------------------------------------------------------------------------

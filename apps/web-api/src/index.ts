@@ -208,6 +208,33 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     });
   });
 
+  // Bridge clarify → SSE. The `clarify` tool registers a pending request on
+  // the loop's ClarifyBridge; present it to the browser over the same SSE
+  // channel approvals use, and broadcast the resolution so the card collapses
+  // on every tab. A boot sweep clears rows that expired while the process
+  // was down.
+  const clarifyBridge = opts.agentLoop.clarifyBridge;
+  if (clarifyBridge) {
+    clarifyBridge.setPresenter((req) => {
+      chatService.broadcast(req.sessionId, {
+        type: 'clarify.request',
+        requestId: req.requestId,
+        question: req.question,
+        ...(req.options ? { options: req.options } : {}),
+        ...(req.default !== undefined ? { default: req.default } : {}),
+        defaultDeadlineAt: req.defaultDeadlineAt,
+      });
+    });
+    clarifyBridge.onResolved((row, response) => {
+      chatService.broadcast(row.sessionId, {
+        type: 'clarify.resolved',
+        requestId: row.requestId,
+        source: response?.source ?? 'timeout-no-default',
+      });
+    });
+    void clarifyBridge.sweep();
+  }
+
   // Register the web `before_tool_call` hook on the loop. CLI/TUI/ACP
   // profiles get the synchronous terminal guard from `@ethosagent/wiring`;
   // the web profile skips that registration so this hook is the sole
@@ -232,6 +259,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       config: configService,
       onboarding: onboardingService,
       approvals: approvalsService,
+      ...(clarifyBridge ? { clarifyBridge } : {}),
       cron: cronService,
       skills: skillsService,
       evolver: evolverService,
