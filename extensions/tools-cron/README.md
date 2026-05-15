@@ -2,6 +2,10 @@
 
 Six LLM-callable tools that let an agent create, list, pause, resume, delete, and immediately run scheduled jobs managed by `@ethosagent/cron`.
 
+## Capabilities
+
+All tools in this package declare empty capabilities (`{}`). They use framework-provided domain stores and require no direct side-effect access.
+
 ## Why this exists
 
 The `@ethosagent/cron` package is the scheduler service — it owns `jobs.json` and the 60-second tick. This package is the thin tool surface the LLM sees. Splitting them keeps the scheduler usable from non-LLM contexts (CLI, daemons, tests) while still giving personalities a way to schedule work via natural language.

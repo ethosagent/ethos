@@ -71,6 +71,7 @@ function makeUntrustedTool(name: string, value: string): Tool {
     name,
     description: `${name} returns external content`,
     schema: { type: 'object' },
+    capabilities: {},
     outputIsUntrusted: true,
     async execute(): Promise<ToolResult> {
       return { ok: true, value };
@@ -83,6 +84,7 @@ function makeTrustedTool(name: string, value: string): Tool {
     name,
     description: `${name} returns owner-authored content`,
     schema: { type: 'object' },
+    capabilities: {},
     async execute(): Promise<ToolResult> {
       return { ok: true, value };
     },
@@ -351,6 +353,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
       name: 'terminal',
       description: 'shell',
       schema: { type: 'object' },
+      capabilities: {},
       async execute(): Promise<ToolResult> {
         return { ok: true, value: 'should not run' };
       },
@@ -384,6 +387,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
       name: 'terminal',
       description: 'shell',
       schema: { type: 'object' },
+      capabilities: {},
       async execute(): Promise<ToolResult> {
         return { ok: true, value: 'ran ok' };
       },
@@ -413,6 +417,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
       name: 'terminal',
       description: 'shell',
       schema: { type: 'object' },
+      capabilities: {},
       async execute(): Promise<ToolResult> {
         return { ok: true, value: 'ran ok' };
       },
@@ -458,6 +463,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
       name: 'read_file',
       description: 'r',
       schema: { type: 'object' },
+      capabilities: {},
       outputIsUntrusted: true,
       async execute(): Promise<ToolResult> {
         return { ok: true, value: 'innocent file content' };
@@ -467,6 +473,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
       name: 'web_post',
       description: 'p',
       schema: { type: 'object' },
+      capabilities: {},
       async execute(): Promise<ToolResult> {
         return { ok: true, value: 'posted' };
       },
@@ -517,6 +524,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
       name: 'read_file',
       description: 'r',
       schema: { type: 'object' },
+      capabilities: {},
       outputIsUntrusted: true,
       async execute(): Promise<ToolResult> {
         return { ok: true, value: 'innocent file content' };
@@ -526,6 +534,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
       name: 'web_post',
       description: 'p',
       schema: { type: 'object' },
+      capabilities: {},
       async execute(): Promise<ToolResult> {
         webPostCalls++;
         return { ok: true, value: 'posted' };
@@ -564,6 +573,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
       name: 'terminal',
       description: 'shell',
       schema: { type: 'object' },
+      capabilities: {},
       async execute(): Promise<ToolResult> {
         return { ok: true, value: 'ran ok' };
       },

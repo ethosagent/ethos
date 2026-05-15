@@ -2,11 +2,10 @@
 // input and the bytes we hand to a vision-capable LLM.
 //
 // Three input shapes, mutually exclusive:
-//   - file_path:  routed through ctx.storage (ScopedStorage) for the boundary
-//                 check, then read as bytes via node:fs. Storage's text-only
-//                 read() can't carry binary, so we rely on its boundary
-//                 enforcement (exists()) and then take the raw read path —
-//                 the same pattern session-sqlite uses for sqlite files.
+//   - file_path:  routed through ctx.scopedFs (ScopedFs) which enforces the
+//                 personality path allowlist and reads the file in one call.
+//                 No direct node:fs import — all filesystem access goes
+//                 through the ScopedFs abstraction.
 //   - file_url:   routed through @ethosagent/safety-network's safeFetch for
 //                 the full SSRF pipeline (scheme + cloud-metadata + private-
 //                 network + redirect revalidation). Streamed; aborts at 32MB.
@@ -16,47 +15,28 @@
 // forged. Accepted: PNG / JPEG / GIF / WEBP / PDF. Anything else is
 // UNSUPPORTED_FILE_TYPE. Per-media size caps: 5 MB for images, 32 MB for PDFs.
 
-import { promises as fs } from 'node:fs';
 import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { type NetworkPolicy, safeFetch } from '@ethosagent/safety-network';
-import { BoundaryError, type Storage } from '@ethosagent/types';
+import type { ScopedFs } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Path normalization — security-critical
 // ---------------------------------------------------------------------------
 //
-// Both branches MUST run `resolvePath()` to collapse `..` / `.` segments.
+// `resolvePath()` collapses `..` / `.` segments before ScopedFs sees the path.
 // Without this, an absolute path like `/safe/../etc/passwd` would lexically
-// start with an allowed `/safe/` prefix at the ScopedStorage gate (which uses
-// `startsWith` — see packages/storage-fs/src/scoped-storage.ts:133-145) and
-// then escape via `fs.readFile`, which DOES normalize. This is the exact bug
-// the comment on `tools-file/src/index.ts:expandPath` warns about.
+// start with an allowed `/safe/` prefix at the ScopedFs gate (which uses
+// `normalize(resolve(path))` + `startsWith`) and sneak through.
 //
-// `canonicalizeForRead` then runs `realpath()` to defeat symlinks: a link at
-// `/safe/innocent.png → /etc/passwd` passes the lexical allowlist but reads
-// outside it. Falls back to the lexical path when the file doesn't exist
-// (realpath throws ENOENT); the caller then surfaces FILE_NOT_FOUND, which
-// is also the right outcome for boundary-blocked-then-missing.
-//
-// Same v1-floor disclaimer as `tools-file/src/index.ts:canonicalizeForRead`:
-// `realpath` shrinks but does not close the TOCTOU window between the
-// boundary check (`exists`) and the byte read (`fs.readFile`). A symlink
-// swapped between those two syscalls can still race. The project's accepted
-// floor is the same realpath-then-check pattern; full O_NOFOLLOW / dirfd
-// defense is deferred to a shared native helper (see the comment in
-// tools-file). When that helper lands, this resolver should adopt it too.
+// Symlink canonicalization (`realpath`) is no longer needed here:
+// ScopedFsImpl.checkReach() normalizes internally via `normalize(resolve())`,
+// and the read itself goes through Storage (which reads by path, not by fd).
+// The TOCTOU window is the same as before — a shared native O_NOFOLLOW /
+// dirfd helper is still deferred (see tools-file).
 function normalizeAbsolute(filePath: string, workingDir: string | undefined): string {
   return isAbsolute(filePath)
     ? resolvePath(filePath)
     : resolvePath(workingDir ?? process.cwd(), filePath);
-}
-
-async function canonicalizeForRead(path: string): Promise<string> {
-  try {
-    return await fs.realpath(path);
-  } catch {
-    return path;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -99,8 +79,8 @@ export class VisionInputError extends Error {
 }
 
 export interface ResolveContext {
-  /** Required for file_path mode — ScopedStorage enforces the allowlist. */
-  storage?: Storage;
+  /** Required for file_path mode — ScopedFs enforces the path allowlist and reads in one call. */
+  scopedFs?: ScopedFs;
   /** Working directory used to resolve relative file_path inputs. */
   workingDir?: string;
   /** Network policy threaded into safeFetch for file_url mode. */
@@ -169,45 +149,37 @@ export async function resolveFile(input: ResolveInput, ctx: ResolveContext): Pro
 // ---------------------------------------------------------------------------
 
 async function readFromPath(filePath: string, ctx: ResolveContext): Promise<Buffer> {
-  if (!ctx.storage) {
+  if (!ctx.scopedFs) {
     throw new VisionInputError(
       'INVALID_INPUT',
-      'file_path requires a scoped storage on ToolContext; none was provided',
+      'file_path requires scopedFs on ToolContext; none was provided',
     );
   }
 
-  // Normalize first so `..`/`.` segments collapse before ScopedStorage sees
-  // them — otherwise `/safe/../etc/passwd` lexically starts with `/safe/` and
-  // sneaks past the prefix check. Then `realpath` to defeat symlinks.
-  const lexical = normalizeAbsolute(filePath, ctx.workingDir);
-  const absolutePath = await canonicalizeForRead(lexical);
+  // Normalize first so `..`/`.` segments collapse before ScopedFs sees
+  // them — otherwise `/safe/../etc/passwd` lexically starts with `/safe/`
+  // and sneaks past the prefix check. ScopedFsImpl normalizes internally
+  // too, but we resolve relative paths against workingDir here.
+  const absolutePath = normalizeAbsolute(filePath, ctx.workingDir);
 
-  // Trigger the ScopedStorage boundary check. Storage.read() returns utf-8
-  // text only, so we use exists() purely for the gate and then read bytes via
-  // node:fs.promises.readFile. This is the same shape session-sqlite uses
-  // for files Storage can't carry (sqlite databases) — Storage is the
-  // boundary, not the byte transport.
-  let allowed: boolean;
+  // ScopedFs.read() does boundary checking AND reading in one call:
+  // - throws PATH_NOT_REACHABLE if outside the personality allowlist
+  // - throws "File not found" if the file doesn't exist on disk
+  //
+  // The returned string is decoded back to binary via latin1 — ScopedFs
+  // returns a string, but for binary payloads (images, PDFs) the underlying
+  // implementation must use latin1 encoding so the 1:1 byte mapping round-
+  // trips without loss. UTF-8 would replace non-UTF-8 sequences with U+FFFD.
   try {
-    allowed = await ctx.storage.exists(absolutePath);
+    const content = await ctx.scopedFs.read(absolutePath);
+    return Buffer.from(content, 'latin1');
   } catch (err) {
-    if (err instanceof BoundaryError) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('PATH_NOT_REACHABLE') || msg.includes('File not found')) {
       throw new VisionInputError(
         'FILE_NOT_FOUND',
         `file not found or outside the personality allowlist: ${absolutePath}`,
       );
-    }
-    throw err;
-  }
-  if (!allowed) {
-    throw new VisionInputError('FILE_NOT_FOUND', `file not found: ${absolutePath}`);
-  }
-
-  try {
-    return await fs.readFile(absolutePath);
-  } catch (err) {
-    if (isFsNotFound(err)) {
-      throw new VisionInputError('FILE_NOT_FOUND', `file not found: ${absolutePath}`);
     }
     throw err;
   }
@@ -367,17 +339,4 @@ function enforceSizeCap(buf: Buffer, mediaType: ResolvedMediaType): void {
       `${mediaType} file is ${buf.length} bytes; max is ${max}`,
     );
   }
-}
-
-// ---------------------------------------------------------------------------
-// Misc
-// ---------------------------------------------------------------------------
-
-function isFsNotFound(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code?: string }).code === 'ENOENT'
-  );
 }

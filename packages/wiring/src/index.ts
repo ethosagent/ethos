@@ -21,7 +21,7 @@ import { VectorMemoryProvider } from '@ethosagent/memory-vector';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { PluginLoader } from '@ethosagent/plugin-loader';
 import { DockerSandbox } from '@ethosagent/sandbox-docker';
-import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
+import { createKvStoreFactory, SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { createInjectors, UniversalScanner } from '@ethosagent/skills';
 import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
 import { FsStorage } from '@ethosagent/storage-fs';
@@ -375,8 +375,20 @@ export async function createAgentLoop(
   // skill injectors, terminal guard, kanban role gate, and plugin hooks onto it.
   const hooks = new DefaultHookRegistry();
 
+  const secretsEnvMap: Record<string, string> = {
+    'providers/exa/apiKey': 'ETHOS_EXA_API_KEY',
+    'providers/openai/apiKey': 'OPENAI_API_KEY',
+    'providers/replicate/apiToken': 'REPLICATE_API_TOKEN',
+  };
   const capabilityBackends: CapabilityBackends = {
-    kvStoreFactory: session.kvStoreFactory(),
+    kvStoreFactory: createKvStoreFactory(join(dataDir, 'sessions.db')),
+    secretsBackend: async (ref) => {
+      const envVar = secretsEnvMap[ref];
+      if (!envVar) throw new Error(`Unknown secret ref: ${ref}`);
+      const value = process.env[envVar];
+      if (!value) throw new Error(`Secret ${ref} not set (env ${envVar})`);
+      return value;
+    },
     storage: new FsStorage(),
     personalityFsReach: {
       read: activePerson.fs_reach?.read ?? [],

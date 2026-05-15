@@ -33,6 +33,15 @@ export { SqliteKeyValueStore };
 // WAL mode + FTS5 full-text search via external-content virtual table.
 // ---------------------------------------------------------------------------
 
+export function createKvStoreFactory(
+  dbPath: string,
+): (tool: string, scopeId: string) => KeyValueStore {
+  const db = new Database(dbPath);
+  db.pragma('journal_mode = WAL');
+  SqliteKeyValueStore.migrate(db);
+  return (tool, scopeId) => new SqliteKeyValueStore(db, tool, scopeId);
+}
+
 export class SQLiteSessionStore implements SessionStore {
   private readonly db: Database.Database;
 
@@ -41,11 +50,6 @@ export class SQLiteSessionStore implements SessionStore {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.migrate();
-    SqliteKeyValueStore.migrate(this.db);
-  }
-
-  kvStoreFactory(): (tool: string, scopeId: string) => KeyValueStore {
-    return (tool, scopeId) => new SqliteKeyValueStore(this.db, tool, scopeId);
   }
 
   // ---------------------------------------------------------------------------

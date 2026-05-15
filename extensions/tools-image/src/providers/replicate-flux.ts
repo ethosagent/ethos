@@ -29,12 +29,13 @@ export class ReplicateFluxProvider implements ImageGenProvider {
   }
 
   async generate(opts: GenerateOpts): Promise<GenerateResult> {
-    const token = this.apiKey || process.env.REPLICATE_API_TOKEN;
+    const token = opts.apiKey ?? this.apiKey;
     if (!token) throw new Error('REPLICATE_API_TOKEN not set');
 
+    const doFetch = opts.fetchImpl ?? fetch;
     const { width, height } = parseSize(opts.size);
 
-    const createRes = await fetch(`${REPLICATE_API_BASE}/models/${FLUX_MODEL}/predictions`, {
+    const createRes = await doFetch(`${REPLICATE_API_BASE}/models/${FLUX_MODEL}/predictions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -69,7 +70,7 @@ export class ReplicateFluxProvider implements ImageGenProvider {
 
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
 
-      const pollRes = await fetch(
+      const pollRes = await doFetch(
         prediction.urls?.get ?? `${REPLICATE_API_BASE}/predictions/${prediction.id}`,
         {
           headers: { Authorization: `Bearer ${token}` },
@@ -91,7 +92,7 @@ export class ReplicateFluxProvider implements ImageGenProvider {
     const outputUrl = prediction.output?.[0];
     if (!outputUrl) throw new Error('Replicate returned no output URL');
 
-    const imgRes = await fetch(outputUrl);
+    const imgRes = await doFetch(outputUrl);
     if (!imgRes.ok) throw new Error(`Failed to download image: ${imgRes.status}`);
 
     const arrayBuffer = await imgRes.arrayBuffer();

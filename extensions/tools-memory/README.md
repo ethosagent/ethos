@@ -2,6 +2,10 @@
 
 Three tools for reading and writing the agent's persistent memory (`MEMORY.md`, `USER.md`) and full-text searching session history.
 
+## Capabilities
+
+All tools in this package declare empty capabilities (`{}`). They use framework-provided domain stores and require no direct side-effect access.
+
 ## Why this exists
 
 Memory and session history are part of the system prompt by default, but the LLM also needs to act on them mid-turn — to recall a user preference before answering, to record a new fact, or to find a past conversation about a specific topic. These tools surface the existing `MemoryProvider` and `SessionStore` capabilities to the model directly.

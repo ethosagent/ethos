@@ -106,7 +106,7 @@ export interface Tool<TArgs = unknown> {
   schema: Record<string, unknown>;
   toolset?: string;
   maxResultChars?: number;
-  capabilities?: import('./tool-capabilities').ToolCapabilities;
+  capabilities: import('./tool-capabilities').ToolCapabilities;
   execute: (args: TArgs, ctx: ToolContext) => Promise<ToolResult>;
   isAvailable?: () => boolean;
   /**

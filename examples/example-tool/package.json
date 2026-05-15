@@ -1,0 +1,19 @@
+{
+  "name": "ethos-example-tool-capabilities",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Example tool demonstrating all five capability categories: network, secrets, storage, fs_reach, and process",
+  "type": "module",
+  "main": "./src/index.ts",
+  "ethos": {
+    "type": "plugin",
+    "pluginApi": "1.0.0"
+  },
+  "dependencies": {
+    "@ethosagent/plugin-sdk": "workspace:*",
+    "@ethosagent/types": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.5"
+  }
+}

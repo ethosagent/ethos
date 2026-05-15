@@ -1,11 +1,4 @@
-import { lookup } from 'node:dns/promises';
-import { type NetworkPolicy, safeFetch } from '@ethosagent/safety-network';
 import type { Tool, ToolResult } from '@ethosagent/types';
-
-async function resolveHost(host: string): Promise<string[]> {
-  const records = await lookup(host, { all: true });
-  return records.map((r) => r.address);
-}
 
 // ---------------------------------------------------------------------------
 // HTML → plain text (no external dep)
@@ -39,6 +32,7 @@ export const webSearchTool: Tool = {
   maxResultChars: 15_000,
   capabilities: {
     network: { allowedHosts: ['api.exa.ai'] },
+    secrets: ['providers/exa/apiKey'],
   },
   outputIsUntrusted: true,
   isAvailable() {
@@ -60,15 +54,21 @@ export const webSearchTool: Tool = {
 
     if (!query) return { ok: false, error: 'query is required', code: 'input_invalid' };
 
-    const apiKey = process.env.ETHOS_EXA_API_KEY;
-    if (!apiKey) {
-      return { ok: false, error: 'ETHOS_EXA_API_KEY not set', code: 'not_available' };
+    const secrets = ctx.secretsResolver;
+    const net = ctx.scopedFetch;
+    if (!secrets || !net) {
+      return {
+        ok: false,
+        error: 'Capability backends not configured',
+        code: 'not_available' as const,
+      };
     }
 
+    const apiKey = await secrets.get('providers/exa/apiKey');
     const numResults = Math.min(num_results ?? 5, 10);
 
     try {
-      const response = await fetch('https://api.exa.ai/search', {
+      const response = await net.fetch('https://api.exa.ai/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
         body: JSON.stringify({
@@ -127,6 +127,7 @@ export const webExtractTool: Tool = {
   maxResultChars: 20_000,
   capabilities: {
     network: { allowedHosts: ['api.exa.ai'] },
+    secrets: ['providers/exa/apiKey'],
   },
   outputIsUntrusted: true,
   schema: {
@@ -141,41 +142,45 @@ export const webExtractTool: Tool = {
 
     if (!url) return { ok: false, error: 'url is required', code: 'input_invalid' };
 
-    const policy: NetworkPolicy = ctx.networkPolicy ?? {};
-    const result = await safeFetch(url, {
-      policy,
-      resolveHost,
-      init: {
+    const secrets = ctx.secretsResolver;
+    const net = ctx.scopedFetch;
+    if (!secrets || !net) {
+      return {
+        ok: false,
+        error: 'Capability backends not configured',
+        code: 'not_available' as const,
+      };
+    }
+
+    try {
+      const response = await net.fetch(url, {
         signal: ctx.abortSignal,
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; Ethos/1.0; +https://github.com/ethos)',
           Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9',
         },
-      },
-    });
+      });
 
-    if (!result.ok) {
+      if (!response.ok) {
+        return {
+          ok: false,
+          error: `HTTP ${response.status} ${response.statusText}`,
+          code: 'execution_failed',
+        };
+      }
+
+      const contentType = response.headers.get('content-type') ?? '';
+      const body = await response.text();
+      const text = contentType.includes('html') ? htmlToText(body) : body;
+      const header = `[${url}]\n\n`;
+      return { ok: true, value: header + text };
+    } catch (err) {
       return {
         ok: false,
-        error: `Network policy blocked '${result.url}' (hop ${result.hop}): ${result.reason}`,
+        error: err instanceof Error ? err.message : String(err),
         code: 'execution_failed',
       };
     }
-
-    const { response, finalUrl } = result;
-    if (!response.ok) {
-      return {
-        ok: false,
-        error: `HTTP ${response.status} ${response.statusText}`,
-        code: 'execution_failed',
-      };
-    }
-
-    const contentType = response.headers.get('content-type') ?? '';
-    const body = await response.text();
-    const text = contentType.includes('html') ? htmlToText(body) : body;
-    const header = `[${finalUrl}]\n\n`;
-    return { ok: true, value: header + text };
   },
 };
 

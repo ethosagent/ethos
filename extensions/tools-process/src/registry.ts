@@ -1,3 +1,7 @@
+// TODO(capability-migration): Registry persistence uses sync fs ops (advisory
+// lock, JSON read/write, atomic rename). This module is shared between tools and
+// the CLI — migrating to ctx.scopedFs requires threading ctx through every call
+// site, including non-tool code paths (reconcileRegistry at startup). Deferred.
 import {
   existsSync,
   mkdirSync,

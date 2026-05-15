@@ -2,17 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReplicateFluxProvider } from '../providers/replicate-flux';
 
 describe('ReplicateFluxProvider', () => {
-  const provider = new ReplicateFluxProvider();
+  const provider = new ReplicateFluxProvider({ apiKey: 'test-token' });
   let fetchSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    process.env.REPLICATE_API_TOKEN = 'test-token';
     fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
   });
 
   afterEach(() => {
-    delete process.env.REPLICATE_API_TOKEN;
     vi.restoreAllMocks();
   });
 

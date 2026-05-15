@@ -2,6 +2,12 @@
 
 Adapts external Model Context Protocol servers as Ethos tools, exposing each server's tools as `mcp__<server>__<tool>` with auto-reconnect and lifecycle management.
 
+## Capabilities
+
+| Tool | network | secrets | storage | fs_reach | process |
+|------|---------|---------|---------|----------|---------|
+| `mcp__<server>__<tool>` | `{ allowedHosts: ['*'] }` | — | — | — | `{ allowedBinaries: ['*'] }` |
+
 ## Why this exists
 
 MCP is the cross-vendor standard for connecting LLMs to tools and data sources. Rather than write bespoke integrations, this package speaks the protocol and surfaces every remote tool as a normal `Tool<TArgs>` object. One config file (`~/.ethos/mcp.json`) gives an Ethos agent access to any MCP server, over either stdio or SSE.

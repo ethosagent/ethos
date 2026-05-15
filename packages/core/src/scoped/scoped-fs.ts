@@ -1,3 +1,4 @@
+import { normalize, resolve } from 'node:path';
 import type { ScopedFs, Storage } from '@ethosagent/types';
 
 export class ScopedFsImpl implements ScopedFs {
@@ -30,8 +31,16 @@ export class ScopedFsImpl implements ScopedFs {
   }
 
   private checkReach(path: string, allowed: Set<string>, kind: string): void {
+    const canonical = normalize(resolve(path));
     for (const prefix of allowed) {
-      if (path === prefix || path.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`)) return;
+      const canonicalPrefix = normalize(resolve(prefix));
+      if (
+        canonical === canonicalPrefix ||
+        canonical.startsWith(
+          canonicalPrefix.endsWith('/') ? canonicalPrefix : `${canonicalPrefix}/`,
+        )
+      )
+        return;
     }
     throw new Error(`PATH_NOT_REACHABLE: ${kind} not permitted for ${path}`);
   }

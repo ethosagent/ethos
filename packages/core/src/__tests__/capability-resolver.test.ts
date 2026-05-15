@@ -10,12 +10,17 @@ describe('resolveCapabilities', () => {
   const emptyBackends: CapabilityBackends = {};
 
   it('no capabilities returns empty object', () => {
-    const result = resolveCapabilities('tool-a', {}, 'scope-1', emptyBackends);
+    const result = resolveCapabilities('tool-a', {}, { sessionId: 'scope-1' }, emptyBackends);
     expect(result).toEqual({});
   });
 
   it('undefined capabilities returns empty object', () => {
-    const result = resolveCapabilities('tool-a', undefined, 'scope-1', emptyBackends);
+    const result = resolveCapabilities(
+      'tool-a',
+      undefined,
+      { sessionId: 'scope-1' },
+      emptyBackends,
+    );
     expect(result).toEqual({});
   });
 
@@ -23,7 +28,7 @@ describe('resolveCapabilities', () => {
     const result = resolveCapabilities(
       'tool-a',
       { network: { allowedHosts: ['api.example.com'] } },
-      'scope-1',
+      { sessionId: 'scope-1' },
       emptyBackends,
     );
     expect(result.scopedFetch).toBeInstanceOf(ScopedFetchImpl);
@@ -37,7 +42,7 @@ describe('resolveCapabilities', () => {
     const result = resolveCapabilities(
       'tool-a',
       { network: { allowedHosts: ['*'] } },
-      'scope-1',
+      { sessionId: 'scope-1' },
       backends,
     );
     expect(result.scopedFetch).toBeInstanceOf(ScopedFetchImpl);
@@ -47,7 +52,7 @@ describe('resolveCapabilities', () => {
     const result = resolveCapabilities(
       'tool-a',
       { network: { allowedHosts: ['*'] } },
-      'scope-1',
+      { sessionId: 'scope-1' },
       emptyBackends,
     );
     expect(result.scopedFetch).toBeInstanceOf(ScopedFetchImpl);
@@ -60,7 +65,7 @@ describe('resolveCapabilities', () => {
     const result = resolveCapabilities(
       'tool-a',
       { secrets: ['API_KEY', 'DB_PASS'] },
-      'scope-1',
+      { sessionId: 'scope-1' },
       backends,
     );
     expect(result.secretsResolver).toBeInstanceOf(ScopedSecretsImpl);
@@ -71,7 +76,7 @@ describe('resolveCapabilities', () => {
     const result = resolveCapabilities(
       'tool-a',
       { secrets: ['API_KEY'] },
-      'scope-1',
+      { sessionId: 'scope-1' },
       emptyBackends,
     );
     expect(result.secretsResolver).toBeUndefined();
@@ -84,7 +89,7 @@ describe('resolveCapabilities', () => {
     const result = resolveCapabilities(
       'my-tool',
       { storage: { scope: 'tool-private', kind: 'kv' } },
-      'scope-1',
+      { sessionId: 'scope-1' },
       backends,
     );
     expect(result.kvStore).toBeDefined();
@@ -97,7 +102,7 @@ describe('resolveCapabilities', () => {
     const result = resolveCapabilities(
       'my-tool',
       { storage: { scope: 'session', kind: 'kv' } },
-      'sess-42',
+      { sessionId: 'sess-42' },
       backends,
     );
     expect(result.kvStore).toBeDefined();
@@ -110,7 +115,7 @@ describe('resolveCapabilities', () => {
     const result = resolveCapabilities(
       'my-tool',
       { storage: { scope: 'personality', kind: 'kv' } },
-      'p-scope',
+      { sessionId: 'sess-1', personalityId: 'p-scope' },
       backends,
     );
     expect(result.kvStore).toBeDefined();
@@ -121,7 +126,7 @@ describe('resolveCapabilities', () => {
     const result = resolveCapabilities(
       'my-tool',
       { storage: { scope: 'tool-private', kind: 'kv' } },
-      'scope-1',
+      { sessionId: 'scope-1' },
       emptyBackends,
     );
     expect(result.kvStore).toBeUndefined();
@@ -146,7 +151,7 @@ describe('resolveCapabilities', () => {
     const result = resolveCapabilities(
       'tool-a',
       { fs_reach: { read: ['/data'], write: ['/out'] } },
-      'scope-1',
+      { sessionId: 'scope-1' },
       backends,
     );
     expect(result.scopedFs).toBeInstanceOf(ScopedFsImpl);
@@ -174,7 +179,7 @@ describe('resolveCapabilities', () => {
     const result = resolveCapabilities(
       'tool-a',
       { fs_reach: { read: 'from-personality', write: 'from-personality' } },
-      'scope-1',
+      { sessionId: 'scope-1' },
       backends,
     );
     expect(result.scopedFs).toBeInstanceOf(ScopedFsImpl);
@@ -184,7 +189,7 @@ describe('resolveCapabilities', () => {
     const result = resolveCapabilities(
       'tool-a',
       { fs_reach: { read: ['/data'], write: ['/out'] } },
-      'scope-1',
+      { sessionId: 'scope-1' },
       emptyBackends,
     );
     expect(result.scopedFs).toBeUndefined();
@@ -195,7 +200,7 @@ describe('resolveCapabilities', () => {
     const result = resolveCapabilities(
       'tool-a',
       { process: { allowedBinaries: ['echo', 'ls'] } },
-      'scope-1',
+      { sessionId: 'scope-1' },
       emptyBackends,
     );
     expect(result.scopedProcess).toBeInstanceOf(ScopedProcessImpl);
@@ -232,7 +237,7 @@ describe('resolveCapabilities', () => {
         fs_reach: { read: ['/data'], write: ['/out'] },
         process: { allowedBinaries: ['node'] },
       },
-      'scope-all',
+      { sessionId: 'scope-all' },
       backends,
     );
     expect(result.scopedFetch).toBeInstanceOf(ScopedFetchImpl);
@@ -252,7 +257,7 @@ describe('resolveCapabilities', () => {
         network: { allowedHosts: ['api.example.com'] },
         secrets: ['TOKEN'],
       },
-      'scope-1',
+      { sessionId: 'scope-1' },
       backends,
     );
     expect(result.scopedFetch).toBeInstanceOf(ScopedFetchImpl);

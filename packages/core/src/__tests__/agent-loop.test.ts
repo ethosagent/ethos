@@ -150,12 +150,14 @@ describe('AgentLoop', () => {
       name: 'allowed_tool',
       description: 'allowed',
       schema: { type: 'object' },
+      capabilities: {},
       execute: async () => ({ ok: true, value: '' }),
     });
     tools.register({
       name: 'blocked_tool',
       description: 'blocked',
       schema: { type: 'object' },
+      capabilities: {},
       execute: async () => ({ ok: true, value: '' }),
     });
 
@@ -218,6 +220,7 @@ describe('AgentLoop', () => {
         name: toolName,
         description: 'looping tool',
         schema: { type: 'object' },
+        capabilities: {},
         execute: async () => ({ ok: true, value: 'ran' }),
       });
       return tools;
@@ -250,6 +253,7 @@ describe('AgentLoop', () => {
           name: `tool_${i}`,
           description: `t${i}`,
           schema: { type: 'object' },
+          capabilities: {},
           execute: async () => ({ ok: true, value: 'ran' }),
         });
       }
@@ -466,6 +470,7 @@ describe('AgentLoop', () => {
         name: 'emitter',
         description: 'emits a progress event with no audience tag',
         schema: { type: 'object' },
+        capabilities: {},
         execute: async (_args, ctx) => {
           ctx.emit({ type: 'progress', toolName: 'emitter', message: 'silent' });
           return { ok: true, value: 'done' };
@@ -475,6 +480,7 @@ describe('AgentLoop', () => {
         name: 'emitter_user',
         description: 'emits a progress event tagged audience: user',
         schema: { type: 'object' },
+        capabilities: {},
         execute: async (_args, ctx) => {
           ctx.emit({
             type: 'progress',
@@ -557,6 +563,7 @@ describe('AgentLoop', () => {
         name: 'probe',
         description: 'probe storage scope',
         schema: { type: 'object' },
+        capabilities: {},
         async execute(args, ctx) {
           if (!ctx.storage) return { ok: true, value: 'no-storage' };
           const path = (args as { path: string }).path;
@@ -653,6 +660,7 @@ describe('AgentLoop', () => {
         name: 'probe',
         description: 'probe',
         schema: { type: 'object' },
+        capabilities: {},
         async execute(args, ctx) {
           if (!ctx.storage) return { ok: true, value: 'no-storage' };
           const path = (args as { path: string }).path;
@@ -732,6 +740,7 @@ describe('AgentLoop', () => {
         name: 'probe',
         description: 'probe',
         schema: { type: 'object' },
+        capabilities: {},
         async execute(_args, ctx) {
           sawStorage = ctx.storage !== undefined;
           return { ok: true, value: '' };

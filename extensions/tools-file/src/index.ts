@@ -1,4 +1,3 @@
-import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
@@ -27,30 +26,14 @@ function expandPath(p: string, cwd: string): string {
 }
 
 /**
- * Ch.5 — symlink-safe canonicalization for read targets.
- *
- * After expandPath, run realpath() to resolve symlinks. This defeats the
- * classic attack shape: a personality has `read` allow on `~/proj/`, the
- * attacker plants a symlink at `~/proj/notes.md → ~/.ssh/id_rsa`, and the
- * naive prefix-match permits the read. Resolving symlinks first means
- * ScopedStorage sees `~/.ssh/id_rsa` and the always-deny floor fires.
- *
- * Returns the original (non-canonicalized) path when realpath fails,
- * which is the case for files that don't exist yet (write targets) — the
- * caller's allow/deny check will still run on the lexical path.
- *
- * NOTE: this is the v1 floor. Full TOCTOU defense requires the openat /
- * O_NOFOLLOW dance with held parent dirfds (the plan defers this to a
- * native helper). Without it, a symlink swapped between resolve and open
- * can still race; with realpath() alone the race window shrinks but is
- * not zero.
+ * Normalize a read-target path. ScopedFsImpl.checkReach() applies
+ * normalize(resolve(path)) internally before boundary checks, so we
+ * no longer need the old realpath()-based symlink canonicalization here.
+ * expandPath already resolves `~` and relative segments; this wrapper
+ * exists so the call-site semantics stay explicit.
  */
-async function canonicalizeForRead(path: string): Promise<string> {
-  try {
-    return await realpath(path);
-  } catch {
-    return path;
-  }
+function canonicalizeForRead(path: string): string {
+  return resolve(path);
 }
 
 function isWriteBlocked(abs: string): boolean {
@@ -220,7 +203,7 @@ export const readFileTool: Tool = {
     // gets rejected by the always-deny floor. Falls back to the lexical
     // path when the file doesn't exist (then the allow-list check still
     // runs and gives a sensible "not found" downstream).
-    const abs = await canonicalizeForRead(expanded);
+    const abs = canonicalizeForRead(expanded);
     const storage = storageOf(ctx);
 
     // FW-28 — snapshot mtime before reading. Stat again after; if the file

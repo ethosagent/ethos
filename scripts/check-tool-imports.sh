@@ -8,7 +8,7 @@
 # violations but exits 0. After P5, flip BLOCKING=1 to fail the build.
 set -euo pipefail
 
-BLOCKING="${TOOL_IMPORT_LINT_BLOCKING:-0}"
+BLOCKING="${TOOL_IMPORT_LINT_BLOCKING:-1}"
 violations=0
 
 # Scan non-test source files under extensions/tools-*/src/
@@ -18,9 +18,20 @@ while IFS= read -r file; do
     *__tests__*|*.test.ts|*.spec.ts) continue ;;
   esac
 
-  hits=$(grep -nE \
-    "from ['\"]node:fs|from ['\"]node:child_process|process\.env\b" \
-    "$file" 2>/dev/null || true)
+  # tools-process internals: plan Q9 allows thin abstractions below ctx.process
+  case "$file" in
+    *tools-process/src/spawn.ts|*tools-process/src/operations.ts|*tools-process/src/registry.ts) continue ;;
+  esac
+
+  # Exclude isAvailable method bodies — boot-time availability checks
+  # legitimately need process.env (no ctx parameter at that point).
+  # Uses awk to skip lines between isAvailable and the next closing brace.
+  hits=$(awk '
+    /isAvailable/ { skip=1 }
+    skip && /^[[:space:]]*\}/ { skip=0; next }
+    skip { next }
+    /from .node:fs|from .node:child_process|process\.env/ { print NR": "$0 }
+  ' "$file" 2>/dev/null || true)
 
   if [ -n "$hits" ]; then
     echo "TOOL-IMPORT: $file"

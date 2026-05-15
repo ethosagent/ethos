@@ -2,6 +2,15 @@
 
 Filesystem tools for reading, writing, patching, and grep-style searching from an Ethos agent.
 
+## Capabilities
+
+| Tool | network | secrets | storage | fs_reach | process |
+|------|---------|---------|---------|----------|---------|
+| `read_file` | — | — | — | `{ read: 'from-personality' }` | — |
+| `write_file` | — | — | — | `{ read: 'from-personality', write: 'from-personality' }` | — |
+| `patch_file` | — | — | — | `{ read: 'from-personality', write: 'from-personality' }` | — |
+| `search_files` | — | — | — | `{ read: 'from-personality' }` | — |
+
 ## Why this exists
 
 Agents need first-class access to the local filesystem to inspect, edit, and locate code. This package implements the four `Tool<TArgs>` contracts that cover that surface — paginated reads, exact-match patching, blocked-path-aware writes, and a depth-limited text search — without pulling in any external dependencies.

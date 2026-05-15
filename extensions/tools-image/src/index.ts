@@ -56,6 +56,7 @@ function buildImageGenerateTool(providers: ImageGenProvider[]): Tool {
     maxResultChars: 1_000,
     capabilities: {
       network: { allowedHosts: ['api.openai.com', 'api.replicate.com', '*.replicate.delivery'] },
+      secrets: ['providers/openai/apiKey', 'providers/replicate/apiToken'],
     },
     isAvailable() {
       return providers.some((p) => p.isAvailable());
@@ -150,11 +151,29 @@ function buildImageGenerateTool(providers: ImageGenProvider[]): Tool {
             message: msg,
             audience: 'user',
           });
+
+        // Resolve credentials and fetch from ctx capabilities when available.
+        const secrets = ctx.secretsResolver;
+        const net = ctx.scopedFetch;
+
+        let apiKey: string | undefined;
+        if (secrets) {
+          const secretRef =
+            provider.name === 'replicate-flux'
+              ? 'providers/replicate/apiToken'
+              : 'providers/openai/apiKey';
+          apiKey = await secrets.get(secretRef).catch(() => undefined);
+        }
+
+        const fetchImpl = net ? net.fetch.bind(net) : undefined;
+
         ({ buffer, cost_usd, prompt_used } = await provider.generate({
           prompt,
           size,
           quality,
           onProgress,
+          apiKey,
+          fetchImpl,
         }));
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

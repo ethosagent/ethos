@@ -62,9 +62,7 @@ export class DefaultToolRegistry implements ToolRegistry {
   validateToolsForPersonality(personality: PersonalityConfig): CapabilityValidationError[] {
     const errors: CapabilityValidationError[] = [];
     for (const entry of this.tools.values()) {
-      if (entry.tool.capabilities) {
-        errors.push(...validateRegistration(entry.tool, personality));
-      }
+      errors.push(...validateRegistration(entry.tool, personality));
     }
     return errors;
   }
@@ -233,7 +231,7 @@ export class DefaultToolRegistry implements ToolRegistry {
 
         // Fail closed: tools that declare real capabilities require wired backends.
         // capabilities: {} (empty) is opt-in to the framework path without needing backends.
-        if (entry.tool.capabilities && needsBackends(entry.tool.capabilities) && !this.backends) {
+        if (needsBackends(entry.tool.capabilities) && !this.backends) {
           return {
             toolCallId: call.toolCallId,
             name: call.name,
@@ -249,11 +247,11 @@ export class DefaultToolRegistry implements ToolRegistry {
         const toolCtx: ToolContext = { ...ctx, resultBudgetChars: budget };
 
         try {
-          if (entry.tool.capabilities && needsBackends(entry.tool.capabilities) && this.backends) {
+          if (needsBackends(entry.tool.capabilities) && this.backends) {
             const resolved = resolveCapabilities(
               entry.tool.name,
               entry.tool.capabilities,
-              ctx.sessionId,
+              { sessionId: ctx.sessionId, personalityId: ctx.personalityId },
               this.backends,
             );
             Object.assign(toolCtx, resolved);

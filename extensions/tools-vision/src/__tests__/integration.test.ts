@@ -24,13 +24,12 @@
 //     The wiring path itself is a 30-line lambda over the same factory
 //     signature this test stubs.
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CapabilityBackends } from '@ethosagent/core';
 import { DefaultToolRegistry } from '@ethosagent/core';
-import { FsStorage, ScopedStorage } from '@ethosagent/storage-fs';
 import type {
   CompletionChunk,
   CompletionOptions,
@@ -44,25 +43,49 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createVisionTools } from '../index';
 
 // ---------------------------------------------------------------------------
-// Minimal capability backends — vision_analyze declares fs_reach.
-// The tool uses direct imports (ScopedStorage via ctx.storage), so these
-// just need to exist to pass the needsBackends guard.
+// Capability backends — vision_analyze declares fs_reach, so
+// resolveCapabilities creates a ScopedFsImpl from this storage.
+// The storage reads files as latin1 so binary data (images, PDFs)
+// round-trips without loss through the string-returning ScopedFs interface.
 // ---------------------------------------------------------------------------
 
-const testBackends: CapabilityBackends = {
-  storage: {
-    read: async () => null,
-    write: async () => {},
-    exists: async () => false,
-    list: async () => [],
-    mtime: async () => null,
-    listEntries: async () => [],
-    append: async () => {},
-    writeAtomic: async () => {},
-    mkdir: async () => {},
-    remove: async () => {},
-    rename: async () => {},
+import { existsSync, statSync } from 'node:fs';
+import type { Storage } from '@ethosagent/types';
+
+const latin1Storage: Storage = {
+  async read(path: string) {
+    try {
+      return readFileSync(path, 'latin1');
+    } catch {
+      return null;
+    }
   },
+  async write() {},
+  async exists(path: string) {
+    return existsSync(path);
+  },
+  async list() {
+    return [];
+  },
+  async mtime(path: string) {
+    try {
+      return statSync(path).mtimeMs;
+    } catch {
+      return null;
+    }
+  },
+  async listEntries() {
+    return [];
+  },
+  async append() {},
+  async writeAtomic() {},
+  async mkdir() {},
+  async remove() {},
+  async rename() {},
+};
+
+const testBackends: CapabilityBackends = {
+  storage: latin1Storage,
   personalityFsReach: { read: ['/'], write: ['/'] },
 };
 
@@ -122,12 +145,13 @@ function usageChunk(inputTokens: number, outputTokens: number, cost: number): Co
 }
 
 // ---------------------------------------------------------------------------
-// Tool context helper — ScopedStorage rooted at a per-test tmp dir.
+// Tool context helper — ScopedFs rooted at a per-test tmp dir.
 // ---------------------------------------------------------------------------
 
 function makeCtx(workingDir: string): ToolContext {
-  const fs = new FsStorage();
-  const storage = new ScopedStorage(fs, { read: [workingDir], write: [workingDir] });
+  // scopedFs is not set here — resolveCapabilities() in DefaultToolRegistry
+  // creates a ScopedFsImpl from testBackends.storage + personalityFsReach
+  // when the tool declares capabilities.fs_reach.
   return {
     sessionId: 'sess-int',
     sessionKey: 'cli:int-test',
@@ -138,7 +162,6 @@ function makeCtx(workingDir: string): ToolContext {
     abortSignal: new AbortController().signal,
     emit: () => undefined,
     resultBudgetChars: 80_000,
-    storage,
   };
 }
 

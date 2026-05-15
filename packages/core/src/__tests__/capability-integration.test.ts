@@ -66,6 +66,7 @@ const plainTool = (capture: { ctx?: ToolContext }): Tool => ({
   name: 'plain_tool',
   description: 'Tool with no capabilities',
   schema: { type: 'object' },
+  capabilities: {},
   execute: async (_args, ctx) => {
     capture.ctx = ctx;
     return { ok: true, value: 'plain done' };

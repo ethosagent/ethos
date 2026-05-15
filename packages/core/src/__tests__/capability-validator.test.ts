@@ -8,6 +8,7 @@ function makeTool(overrides: Partial<Tool> = {}): Tool {
     name: 'test-tool',
     description: 'a test tool',
     schema: {},
+    capabilities: {},
     execute: async () => ({ ok: true, value: '' }),
     ...overrides,
   };

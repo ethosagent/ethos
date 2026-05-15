@@ -22,10 +22,15 @@ type ResolvedFields = Partial<
   Pick<ToolContext, 'kvStore' | 'secretsResolver' | 'scopedFetch' | 'scopedFs' | 'scopedProcess'>
 >;
 
+export interface CapabilityScopeIds {
+  sessionId: string;
+  personalityId?: string;
+}
+
 export function resolveCapabilities(
   toolName: string,
   capabilities: ToolCapabilities | undefined,
-  scopeId: string,
+  scopeIds: CapabilityScopeIds,
   backends: CapabilityBackends,
 ): ResolvedFields {
   if (!capabilities) return {};
@@ -34,10 +39,27 @@ export function resolveCapabilities(
 
   if (capabilities.network) {
     const declaredHosts = capabilities.network.allowedHosts;
-    const hasInherit = declaredHosts.includes('*');
-    const resolvedHosts = hasInherit
-      ? new Set(backends.personalityNetworkAllow ?? [])
-      : new Set(declaredHosts);
+    const personalityAllow = backends.personalityNetworkAllow;
+    let resolvedHosts: Set<string>;
+    if (declaredHosts.includes('*')) {
+      resolvedHosts = new Set(personalityAllow ?? []);
+    } else if (personalityAllow) {
+      // Intersect: only keep declared hosts covered by a personality pattern
+      resolvedHosts = new Set(
+        declaredHosts.filter((host) =>
+          personalityAllow.some((pattern) => {
+            if (pattern === host || pattern === '*') return true;
+            if (pattern.startsWith('*.')) {
+              const suffix = pattern.slice(1);
+              return host.endsWith(suffix) && host.length > suffix.length;
+            }
+            return false;
+          }),
+        ),
+      );
+    } else {
+      resolvedHosts = new Set(declaredHosts);
+    }
     result.scopedFetch = new ScopedFetchImpl(resolvedHosts);
   }
 
@@ -54,9 +76,9 @@ export function resolveCapabilities(
     if (scope === 'tool-private') {
       resolvedScopeId = `tool:${toolName}`;
     } else if (scope === 'session') {
-      resolvedScopeId = `session:${scopeId}`;
+      resolvedScopeId = `session:${scopeIds.sessionId}`;
     } else {
-      resolvedScopeId = `personality:${scopeId}`;
+      resolvedScopeId = `personality:${scopeIds.personalityId ?? scopeIds.sessionId}`;
     }
     result.kvStore = backends.kvStoreFactory(toolName, resolvedScopeId);
   }

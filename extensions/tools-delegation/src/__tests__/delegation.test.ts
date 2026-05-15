@@ -370,28 +370,25 @@ describe('mesh orchestration tools', () => {
       activeSessions: 1,
     });
 
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string, init?: RequestInit) => {
-        const payload = JSON.parse(String(init?.body)) as { method: string };
-        if (payload.method === 'new_session') {
-          return {
-            json: async () => ({ result: { sessionKey: 'acp:test' } }),
-          };
-        }
-        if (String(url).includes(':6101/')) {
-          throw new Error('network down');
-        }
+    const mockFetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body)) as { method: string };
+      if (payload.method === 'new_session') {
         return {
-          json: async () => ({ result: { text: 'fallback response' } }),
+          json: async () => ({ result: { sessionKey: 'acp:test' } }),
         };
-      }),
-    );
+      }
+      if (String(url).includes(':6101/')) {
+        throw new Error('network down');
+      }
+      return {
+        json: async () => ({ result: { text: 'fallback response' } }),
+      };
+    }) as unknown as (url: string | URL, init?: RequestInit) => Promise<Response>;
 
     const tool = createRouteToAgentTool(registryPath);
     const result = await tool.execute(
       { capability: 'research', prompt: 'analyze', retries: 2, timeout_s: 5 },
-      makeCtx(),
+      makeCtx({ scopedFetch: { fetch: mockFetch } }),
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -421,19 +418,16 @@ describe('mesh orchestration tools', () => {
       activeSessions: 0,
     });
 
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_url: string, init?: RequestInit) => {
-        const payload = JSON.parse(String(init?.body)) as {
-          method: string;
-          params?: { text?: string };
-        };
-        if (payload.method === 'new_session') {
-          return { json: async () => ({ result: { sessionKey: 'acp:test' } }) };
-        }
-        return { json: async () => ({ result: { text: `ok:${payload.params?.text}` } }) };
-      }),
-    );
+    const mockFetch = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body)) as {
+        method: string;
+        params?: { text?: string };
+      };
+      if (payload.method === 'new_session') {
+        return { json: async () => ({ result: { sessionKey: 'acp:test' } }) };
+      }
+      return { json: async () => ({ result: { text: `ok:${payload.params?.text}` } }) };
+    }) as unknown as (url: string | URL, init?: RequestInit) => Promise<Response>;
 
     const tool = createDispatchTeamTool(registryPath);
     const result = await tool.execute(
@@ -443,7 +437,7 @@ describe('mesh orchestration tools', () => {
           { capability: 'code', prompt: 'task B' },
         ],
       },
-      makeCtx(),
+      makeCtx({ scopedFetch: { fetch: mockFetch } }),
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;

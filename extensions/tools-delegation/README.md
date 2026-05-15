@@ -2,6 +2,17 @@
 
 Tools that let an agent spawn local sub-agents (`delegate_task`, `mixture_of_agents`) or hand work off to peer agents over the mesh (`route_to_agent`, `broadcast_to_agents`).
 
+## Capabilities
+
+| Tool | network | secrets | storage | fs_reach | process |
+|------|---------|---------|---------|----------|---------|
+| `delegate_task` | `{ allowedHosts: ['*'] }` | — | — | — | — |
+| `mixture_of_agents` | `{ allowedHosts: ['*'] }` | — | — | — | — |
+| `list_team` | `{ allowedHosts: ['*'] }` | — | — | — | — |
+| `route_to_agent` | `{ allowedHosts: ['*'] }` | — | — | — | — |
+| `dispatch_team` | `{ allowedHosts: ['*'] }` | — | — | — | — |
+| `broadcast_to_agents` | `{ allowedHosts: ['*'] }` | — | — | — | — |
+
 ## Why this exists
 
 Some tasks are cleanly separable — research, review, parallel exploration — and benefit from a fresh context window or a different personality. Local delegation reuses the same `AgentLoop` instance with a derived session key. Mesh delegation reaches other Ethos processes over JSON-RPC at `http://<host>:<port>/rpc`, using the registry written by `ethos serve`.

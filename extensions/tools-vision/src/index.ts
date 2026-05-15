@@ -232,7 +232,7 @@ async function executeVision(
         ...(args.file_base64 !== undefined ? { file_base64: args.file_base64 } : {}),
       },
       {
-        ...(ctx.storage ? { storage: ctx.storage } : {}),
+        ...(ctx.scopedFs ? { scopedFs: ctx.scopedFs } : {}),
         workingDir: ctx.workingDir,
         ...(ctx.networkPolicy ? { networkPolicy: ctx.networkPolicy } : {}),
         abortSignal: ctx.abortSignal,

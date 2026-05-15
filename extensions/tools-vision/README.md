@@ -2,6 +2,12 @@
 
 One-shot vision and PDF question-answering — point `vision_analyze` at an image or PDF, supply a prompt, and the active personality's LLM (or a separately configured auxiliary vision model) returns the answer plus token usage and cost.
 
+## Capabilities
+
+| Tool | network | secrets | storage | fs_reach | process |
+|------|---------|---------|---------|----------|---------|
+| `vision_analyze` | — | — | — | `{ read: 'from-personality' }` | — |
+
 ## Why this exists
 
 Reading images or PDFs is a different routing decision from regular chat. The personality you run for coding may not be vision-capable; the cheapest model that *is* vision-capable may not be the one you want answering text-only turns. `vision_analyze` separates the two: the personality keeps its main model for prose, and PDF / image questions route through a vision-capable model picked at request time (with an auxiliary override for "always send vision to this cheap model").
