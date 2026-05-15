@@ -4,8 +4,9 @@
 // (they fetch it themselves). Local file_path is not supported because the
 // type system has no video content block for base64 inlining.
 
+import { validateUrl } from '@ethosagent/safety-network';
 import type { LLMProvider, Message, Tool, ToolResult } from '@ethosagent/types';
-import { supportsVideo } from './pricing';
+import { supportsVideoUrl } from './pricing';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -51,7 +52,7 @@ export function createVideoAnalyzeTool(opts: VideoToolOptions): Tool {
         model: { type: 'string', description: 'Override model (must support video)' },
       },
     },
-    async execute(args, _ctx): Promise<ToolResult> {
+    async execute(args, ctx): Promise<ToolResult> {
       const {
         file_url,
         prompt = 'Describe this video in detail.',
@@ -70,10 +71,19 @@ export function createVideoAnalyzeTool(opts: VideoToolOptions): Tool {
         };
       }
 
+      // SSRF validation — only allow HTTPS URLs and block private/metadata IPs.
+      if (!file_url.startsWith('https://')) {
+        return { ok: false, error: 'Only HTTPS video URLs are supported', code: 'input_invalid' };
+      }
+      const urlCheck = await validateUrl(file_url, ctx.networkPolicy ?? {});
+      if (!urlCheck.ok) {
+        return { ok: false, error: `URL blocked: ${urlCheck.reason}`, code: 'input_invalid' };
+      }
+
       const resolvedModel = modelArg ?? opts.auxiliaryVisionModel ?? opts.defaultModel;
 
       // Capability gate.
-      if (!supportsVideo(resolvedModel)) {
+      if (!supportsVideoUrl(resolvedModel)) {
         return {
           ok: false,
           error:

@@ -166,7 +166,7 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
   console.log(`${c.dim}  expected   → ${expectedPath}${c.reset}`);
   console.log(`${c.dim}  output     → ${outputPath}${c.reset}\n`);
 
-  const loop = await createAgentLoop(config);
+  const { loop } = await createAgentLoop(config);
   const runner = new EvalRunner(loop, {
     concurrency,
     outputPath,

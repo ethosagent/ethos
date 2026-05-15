@@ -330,7 +330,7 @@ export const browserGetImagesTool: Tool = {
 export const browserDialogTool: Tool = {
   name: 'browser_dialog',
   description:
-    'Handle a pending browser dialog (alert, confirm, prompt). Accept or dismiss the dialog, optionally providing a text value for prompt dialogs.',
+    'Check recent browser dialogs (alert, confirm, prompt). Dialogs are auto-handled to prevent page deadlock: alerts are accepted, confirms/prompts are dismissed. This tool reports what dialogs appeared.',
   toolset: 'browser',
   maxResultChars: 20_000,
   capabilities: {
@@ -340,24 +340,9 @@ export const browserDialogTool: Tool = {
   isAvailable: isPlaywrightInstalled,
   schema: {
     type: 'object',
-    properties: {
-      action: {
-        type: 'string',
-        enum: ['accept', 'dismiss'],
-        description: 'Whether to accept or dismiss the dialog',
-      },
-      value: {
-        type: 'string',
-        description: 'Value to enter for prompt dialogs (only used with action "accept")',
-      },
-    },
-    required: ['action'],
+    properties: {},
   },
-  async execute(args, ctx): Promise<ToolResult> {
-    const { action, value } = args as { action: 'accept' | 'dismiss'; value?: string };
-
-    if (!action) return { ok: false, error: 'action is required', code: 'input_invalid' };
-
+  async execute(_args, ctx): Promise<ToolResult> {
     const session = findActiveSession(ctx.sessionId, ctx.networkPolicy ?? {});
     if (!session) {
       return {
@@ -366,42 +351,13 @@ export const browserDialogTool: Tool = {
         code: 'execution_failed',
       };
     }
-
-    if (session.pendingDialogs.length === 0) {
-      return {
-        ok: false,
-        error: 'No pending dialog to handle.',
-        code: 'execution_failed',
-      };
+    // Dialogs are auto-handled to prevent page deadlock.
+    // Report recent dialog events from the console buffer.
+    const dialogEntries = session.consoleLogs.filter((l) => l.startsWith('[dialog:'));
+    if (dialogEntries.length === 0) {
+      return { ok: true, value: 'No dialogs have appeared in this session.' };
     }
-
-    const dialog = session.pendingDialogs.shift();
-    if (!dialog) {
-      return {
-        ok: false,
-        error: 'No pending dialog to handle.',
-        code: 'execution_failed',
-      };
-    }
-
-    try {
-      if (dialog.handler) {
-        await dialog.handler({ accept: action === 'accept', value });
-      }
-
-      await session.page.waitForTimeout(300);
-
-      return {
-        ok: true,
-        value: `Dialog handled: type=${dialog.type}, message="${dialog.message}", action=${action}`,
-      };
-    } catch (err) {
-      return {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        code: 'execution_failed',
-      };
-    }
+    return { ok: true, value: `Recent dialogs:\n${dialogEntries.join('\n')}` };
   },
 };
 

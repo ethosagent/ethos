@@ -99,7 +99,7 @@ export async function runBatch(args: string[], config: EthosConfig): Promise<voi
   console.log(`${c.dim}  output     → ${outputPath}${c.reset}`);
   console.log(`${c.dim}  checkpoint → ${checkpointPath}${c.reset}\n`);
 
-  const loop = await createAgentLoop(config);
+  const { loop } = await createAgentLoop(config);
 
   const runner = new BatchRunner(loop, {
     concurrency,

@@ -120,7 +120,7 @@ async function runServe(argv: string[]): Promise<void> {
     );
     process.exit(1);
   }
-  const loop = await createAgentLoop(config);
+  const { loop } = await createAgentLoop(config);
   const sessionStore = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
   const server = new EthosMcpServer({
     loop,

@@ -1112,6 +1112,13 @@ export class Gateway {
       return { ok: false, error: `No adapter registered for platform "${platform}"` };
     }
     try {
+      // Route through outbound dedup — same path as normal responses.
+      // Use target as the session key for dedup so repeated sends to the
+      // same target with same content are suppressed within TTL.
+      const dedupKey = `outbound:${platform}:${target}`;
+      if (!this.outboundDedup.shouldSend(dedupKey, body)) {
+        return { ok: true }; // silently deduplicated
+      }
       const result = await adapter.send(target, { text: body });
       if (!result.ok) {
         return { ok: false, error: result.error ?? 'Adapter send failed' };

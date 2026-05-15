@@ -78,21 +78,10 @@ import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrou
 import { capSummary, renderMiddleForSummary, SUMMARIZER_SYSTEM_PROMPT } from './summarizer-prompt';
 
 // ---------------------------------------------------------------------------
-// Messaging gateway — mutable send function, replaced when Gateway starts
+// Messaging gateway — send function type re-exported for callers
 // ---------------------------------------------------------------------------
 
-let gatewaySendFn: MessagingSendFn = async () => ({
-  ok: false,
-  error: 'Gateway not active — send_message requires gateway mode',
-});
-
-/**
- * Replace the messaging tool's send implementation with the real gateway.
- * Called from `apps/ethos/src/commands/gateway.ts` after Gateway construction.
- */
-export function setGatewaySend(fn: MessagingSendFn): void {
-  gatewaySendFn = fn;
-}
+export type { MessagingSendFn } from '@ethosagent/tools-messaging';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -546,10 +535,18 @@ export { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrou
 // AgentLoop assembly
 // ---------------------------------------------------------------------------
 
+export interface CreateAgentLoopResult {
+  loop: AgentLoop;
+  /** Replace the messaging tool's send implementation with the real gateway.
+   *  Called from gateway.ts after Gateway construction. Scoped to this loop
+   *  instance — multiple loops in the same process are independent. */
+  setMessagingSend: (fn: MessagingSendFn) => void;
+}
+
 export async function createAgentLoop(
   config: WiringConfig,
   opts: CreateAgentLoopOptions,
-): Promise<AgentLoop> {
+): Promise<CreateAgentLoopResult> {
   const { dataDir } = opts;
   const workingDir = opts.workingDir ?? process.cwd();
   const profile: WiringProfile = opts.profile ?? 'cli';
@@ -743,9 +740,16 @@ export async function createAgentLoop(
   // The actual `send` function is injected later when the Gateway is constructed
   // (see apps/ethos/src/commands/gateway.ts). When no gateway is active (CLI mode),
   // the tool returns "not_available" via the default gatewaySendFn.
+  // The mutable is scoped to this createAgentLoop invocation (not module-global)
+  // so multiple loops in the same process don't share send state.
+  let gatewaySendFn: MessagingSendFn = async () => ({
+    ok: false,
+    error: 'Gateway not active — send_message requires gateway mode',
+  });
+
   for (const tool of createMessagingTools({
     send: async (platform, target, body, botKey) => gatewaySendFn(platform, target, body, botKey),
-    getAllowedTargets: () => null,
+    getAllowedTargets: () => [], // deny all by default until personality explicitly configures targets
   }))
     tools.register(tool);
 
@@ -1120,7 +1124,12 @@ export async function createAgentLoop(
     );
   }
 
-  return loop;
+  return {
+    loop,
+    setMessagingSend: (fn: MessagingSendFn) => {
+      gatewaySendFn = fn;
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

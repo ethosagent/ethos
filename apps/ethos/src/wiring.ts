@@ -18,6 +18,7 @@ import type {
   TeamManifest,
 } from '@ethosagent/types';
 import {
+  type CreateAgentLoopResult,
   EthosObservability,
   createAgentLoop as packageCreateAgentLoop,
   createLLM as packageCreateLLM,
@@ -171,7 +172,7 @@ export async function createLLM(config: EthosConfig): Promise<LLMProvider> {
 export async function createAgentLoop(
   config: EthosConfig & Pick<WiringConfig, 'teamName' | 'role' | 'postmortems' | 'trustPolicy'>,
   opts: { profile?: WiringProfile; meshRegistryPath?: string } = {},
-): Promise<AgentLoop> {
+): Promise<CreateAgentLoopResult> {
   const rotated = await withRotation(config);
   const wiringConfig: WiringConfig = {
     ...rotated,
@@ -245,7 +246,7 @@ export async function createTeamAgentLoop(
 
   // Plan B — thread teamName + role into the wiring so the kanban store points at
   // the team board and the role-gate hook gets registered.
-  const loop = await createAgentLoop(
+  const { loop } = await createAgentLoop(
     {
       ...coordinatorConfig,
       personality: coordinatorPersonality,
@@ -304,7 +305,7 @@ export async function resolveActiveLoop(
     return { loop, personalityId: coordinatorPersonality, displayName: `team:${teamName}` };
   }
   const personalityId = config.activeContext?.name ?? config.personality;
-  const loop = await createAgentLoop({ ...config, personality: personalityId }, opts);
+  const { loop } = await createAgentLoop({ ...config, personality: personalityId }, opts);
   applyCliOverrideHooks(loop, config);
   return { loop, personalityId, displayName: personalityId };
 }

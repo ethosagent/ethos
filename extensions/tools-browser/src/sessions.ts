@@ -14,13 +14,6 @@ export interface NetworkPolicyShape {
   allow_private_urls?: boolean;
 }
 
-export interface PendingDialog {
-  type: string;
-  message: string;
-  defaultValue?: string;
-  handler?: (opts: { accept: boolean; value?: string }) => Promise<void>;
-}
-
 export interface BrowserSession {
   browser: Browser;
   context: BrowserContext;
@@ -38,8 +31,6 @@ export interface BrowserSession {
   policyFingerprint: string;
   /** Buffer of console messages captured since last read. */
   consoleLogs: string[];
-  /** Queue of pending browser dialogs (alert/confirm/prompt). */
-  pendingDialogs: PendingDialog[];
 }
 
 const sessions = new Map<string, BrowserSession>();
@@ -166,7 +157,6 @@ export async function getOrCreateSession(
     lastUrl: '',
     policyFingerprint: fp,
     consoleLogs: [],
-    pendingDialogs: [],
   };
 
   // Capture console messages for browser_console tool
@@ -179,21 +169,23 @@ export async function getOrCreateSession(
     session.consoleLogs.push(`[${type}] ${text}`);
   });
 
-  // Capture dialogs (alert/confirm/prompt) for browser_dialog tool
-  page.on('dialog', (dialog) => {
-    const pending: PendingDialog = {
-      type: dialog.type(),
-      message: dialog.message(),
-      defaultValue: dialog.defaultValue() || undefined,
-      handler: async (opts) => {
-        if (opts.accept) {
-          await dialog.accept(opts.value);
-        } else {
-          await dialog.dismiss();
-        }
-      },
-    };
-    session.pendingDialogs.push(pending);
+  // Capture dialogs (alert/confirm/prompt) for browser_dialog tool.
+  // Playwright dialogs block the triggering page action until handled.
+  // Auto-dismiss immediately to prevent deadlock, but record the event
+  // so the agent can inspect what happened via browser_console / browser_dialog.
+  page.on('dialog', async (dialog) => {
+    const entry = `[dialog:${dialog.type()}] ${dialog.message()}`;
+    if (session.consoleLogs.length >= MAX_CONSOLE_LOGS) {
+      session.consoleLogs.shift();
+    }
+    session.consoleLogs.push(entry);
+    // Auto-dismiss to unblock the page. Alerts are accepted (they only have OK).
+    // Confirms/prompts are dismissed (safest default).
+    if (dialog.type() === 'alert') {
+      await dialog.accept();
+    } else {
+      await dialog.dismiss();
+    }
   });
 
   sessions.set(key, session);

@@ -3,6 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join, resolve as pathResolve } from 'node:path';
 import { AcpServer } from '@ethosagent/acp-server';
 import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
+import type { AgentLoop } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
@@ -60,7 +61,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   const dir = ethosDir();
   const loopProfile = webEnabled ? 'web' : 'cli';
 
-  let loop: Awaited<ReturnType<typeof createAgentLoop>>;
+  let loop: AgentLoop;
   let activeMeshName: string;
   let activePersonality: string;
 
@@ -71,10 +72,11 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     // so the kanban store routes to the team board and the role hook fires.
     activeMeshName = meshName === 'default' ? teamFlag : meshName;
     activePersonality = personalityOverride;
-    loop = await createAgentLoop(
+    const result = await createAgentLoop(
       { ...config, teamName: teamFlag, ...(roleFlag ? { role: roleFlag } : {}) },
       { profile: loopProfile, meshRegistryPath: meshRegistryPath(activeMeshName) },
     );
+    loop = result.loop;
   } else if (teamFlag) {
     // Chat UX: `ethos serve --team <name>` → run as the team's coordinator.
     const {
@@ -91,10 +93,11 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   } else {
     activeMeshName = meshName;
     activePersonality = config.personality;
-    loop = await createAgentLoop(config, {
+    const result = await createAgentLoop(config, {
       profile: loopProfile,
       meshRegistryPath: meshRegistryPath(activeMeshName),
     });
+    loop = result.loop;
   }
   const session = createSessionStore({ dataDir: dir });
   const mesh = new AgentMesh(meshRegistryPath(activeMeshName));

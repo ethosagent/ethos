@@ -5,7 +5,7 @@ import { createAgentLoop } from '../wiring';
 
 export async function runAcp(config: EthosConfig): Promise<void> {
   const dir = ethosDir();
-  const loop = await createAgentLoop(config);
+  const { loop } = await createAgentLoop(config);
   // separate connection for fork_session / resume_session reads and writes
   const session = createSessionStore({ dataDir: dir });
   const server = new AcpServer({ runner: loop, session });

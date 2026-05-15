@@ -23,7 +23,6 @@ function fakeSession(fp: string): BrowserSession {
     lastUrl: '',
     policyFingerprint: fp,
     consoleLogs: [],
-    pendingDialogs: [],
   };
 }
 

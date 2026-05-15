@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import type { AgentLoop } from '@ethosagent/core';
 import { CronScheduler, isValidCronExpression, nextRun } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
@@ -17,7 +18,7 @@ const c = {
 };
 
 function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup: () => void } {
-  let loop: Awaited<ReturnType<typeof createAgentLoop>> | null = null;
+  let loop: AgentLoop | null = null;
   let personalities: Awaited<ReturnType<typeof createPersonalityRegistry>> | null = null;
 
   const scheduler = new CronScheduler({
@@ -36,7 +37,7 @@ function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup
           });
         }
       }
-      if (!loop) loop = await createAgentLoop(config);
+      if (!loop) loop = (await createAgentLoop(config)).loop;
       const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
       let output = '';
 

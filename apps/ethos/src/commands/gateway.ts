@@ -21,7 +21,11 @@ import {
   type PlatformAdapter,
   resolveModelDisplay,
 } from '@ethosagent/types';
-import { createDangerPredicate, createMemoryProvider, setGatewaySend } from '@ethosagent/wiring';
+import {
+  createDangerPredicate,
+  createMemoryProvider,
+  type MessagingSendFn,
+} from '@ethosagent/wiring';
 import Database from 'better-sqlite3';
 import { ApprovalCoordinator, createSlackApprovalHook } from '../approval-coordinator';
 import {
@@ -216,7 +220,7 @@ export async function runGatewayStart(): Promise<void> {
 
   // Build one AgentLoop per configured bot. Personality bots use
   // `createAgentLoop`; team bots use `createTeamAgentLoop`.
-  const bots = await buildGatewayBots(config);
+  const { bots, messagingSetters: botMessagingSetters } = await buildGatewayBots(config);
 
   // Phase 3: for each team-bound bot, ensure the supervisor is running.
   const supervisorDeps: TeamSupervisorDeps = {
@@ -244,7 +248,8 @@ export async function runGatewayStart(): Promise<void> {
   // System loop used by cron — not bot-bound. Cron jobs route through
   // their own `job.personality` field, not through the platform bot
   // routing table.
-  const systemLoop = await createAgentLoop(config);
+  const { loop: systemLoop, setMessagingSend: setSystemMessagingSend } =
+    await createAgentLoop(config);
 
   // Shared attachment cache for all platform adapters. Hoisted here so the
   // same instance flows into both `buildAdapters` (Telegram, Slack) and the
@@ -364,10 +369,12 @@ export async function runGatewayStart(): Promise<void> {
   }
 
   // Build adapter registry for send_message cross-platform routing.
-  // Key by displayName.toLowerCase() — matches the platform enum in send_message tool.
+  // Derive platform key from adapter.id prefix (e.g. 'telegram:bot-1' → 'telegram',
+  // 'email' → 'email'). This is a stable identifier, unlike displayName which is UI text.
   const adapterMap = new Map<string, PlatformAdapter>();
   for (const adapter of adapters) {
-    const platformKey = adapter.displayName.toLowerCase();
+    const colonIdx = adapter.id.indexOf(':');
+    const platformKey = colonIdx > 0 ? adapter.id.slice(0, colonIdx) : adapter.id;
     // First adapter per platform wins (multi-bot: all share the same send path)
     if (!adapterMap.has(platformKey)) {
       adapterMap.set(platformKey, adapter);
@@ -398,7 +405,13 @@ export async function runGatewayStart(): Promise<void> {
   gatewayRef = gateway;
 
   // Wire send_message tool to the real Gateway send path.
-  setGatewaySend(async (platform, target, body) => gateway.sendTo(platform, target, body));
+  // Each loop's messaging send function is scoped — set on all active loops.
+  const gatewayMessagingSend: MessagingSendFn = async (platform, target, body) =>
+    gateway.sendTo(platform, target, body);
+  setSystemMessagingSend(gatewayMessagingSend);
+  for (const setter of botMessagingSetters) {
+    setter(gatewayMessagingSend);
+  }
 
   // Index bots by botKey so health-check lines can show the binding inline.
   const botByKey = new Map(bots.map((b) => [b.botKey, b]));
@@ -506,8 +519,14 @@ export async function runGatewayStart(): Promise<void> {
  * or a team coordinator loop (`createTeamAgentLoop`). The botKey
  * matches what adapters will stamp on inbound messages.
  */
-async function buildGatewayBots(config: EthosConfig): Promise<GatewayBotConfig[]> {
+interface BuildGatewayBotsResult {
+  bots: GatewayBotConfig[];
+  messagingSetters: Array<(fn: MessagingSendFn) => void>;
+}
+
+async function buildGatewayBots(config: EthosConfig): Promise<BuildGatewayBotsResult> {
   const out: GatewayBotConfig[] = [];
+  const setters: Array<(fn: MessagingSendFn) => void> = [];
   const buildOne = async (bot: TelegramBotConfig | SlackAppConfig): Promise<GatewayBotConfig> => {
     const botKey = deriveBotKey(bot);
     let loop: AgentLoop;
@@ -515,13 +534,15 @@ async function buildGatewayBots(config: EthosConfig): Promise<GatewayBotConfig[]
       const team = await createTeamAgentLoop(config, bot.bind.name);
       loop = team.loop;
     } else {
-      loop = await createAgentLoop({ ...config, personality: bot.bind.name });
+      const result = await createAgentLoop({ ...config, personality: bot.bind.name });
+      loop = result.loop;
+      setters.push(result.setMessagingSend);
     }
     return { botKey, loop, binding: { ...bot.bind } };
   };
   for (const bot of config.telegram?.bots ?? []) out.push(await buildOne(bot));
   for (const app of config.slack?.apps ?? []) out.push(await buildOne(app));
-  return out;
+  return { bots: out, messagingSetters: setters };
 }
 
 // ---------------------------------------------------------------------------
