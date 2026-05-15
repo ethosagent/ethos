@@ -68,8 +68,8 @@ importers:
   apps/ethos:
     dependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.95.2
-        version: 0.95.2(zod@4.3.6)
+        specifier: ^0.96.0
+        version: 0.96.0(zod@4.3.6)
       '@ethosagent/agent-bridge':
         specifier: workspace:*
         version: link:../../packages/agent-bridge
@@ -212,7 +212,7 @@ importers:
         version: link:../../packages/types
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
-        version: 1.29.0(zod@4.3.6)
+        version: 1.29.0(zod@4.4.3)
 
   apps/tui:
     dependencies:
@@ -586,8 +586,8 @@ importers:
   extensions/llm-anthropic:
     dependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.95.2
-        version: 0.95.2(zod@4.3.6)
+        specifier: ^0.96.0
+        version: 0.96.0(zod@4.4.3)
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -599,7 +599,7 @@ importers:
         version: link:../../packages/types
       openai:
         specifier: ^6.37.0
-        version: 6.37.0(ws@8.20.0)(zod@4.3.6)
+        version: 6.37.0(ws@8.20.0)(zod@4.4.3)
 
   extensions/memory-markdown:
     dependencies:
@@ -837,8 +837,8 @@ importers:
   extensions/tools-browser:
     dependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.95.2
-        version: 0.95.2(zod@4.3.6)
+        specifier: ^0.96.0
+        version: 0.96.0(zod@4.4.3)
       '@ethosagent/safety-network':
         specifier: workspace:*
         version: link:../../packages/safety/network
@@ -850,7 +850,7 @@ importers:
         version: link:../../packages/types
       openai:
         specifier: ^6.37.0
-        version: 6.37.0(ws@8.20.0)(zod@4.3.6)
+        version: 6.37.0(ws@8.20.0)(zod@4.4.3)
       playwright:
         specifier: ^1.48.0
         version: 1.59.1
@@ -906,7 +906,7 @@ importers:
     optionalDependencies:
       openai:
         specifier: ^6.37.0
-        version: 6.37.0(ws@8.20.0)(zod@4.3.6)
+        version: 6.37.0(ws@8.20.0)(zod@4.4.3)
 
   extensions/tools-interactive:
     dependencies:
@@ -946,7 +946,7 @@ importers:
         version: link:../../packages/types
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
-        version: 1.29.0(zod@4.3.6)
+        version: 1.29.0(zod@4.4.3)
 
   extensions/tools-memory:
     dependencies:
@@ -1340,8 +1340,8 @@ packages:
     peerDependencies:
       react: '>=16.9.0'
 
-  '@anthropic-ai/sdk@0.95.2':
-    resolution: {integrity: sha512-Egddwo3sheo1PzUrMkZnH6VkQYwS0h/b/i8vSK8Ta9M45UQipAMeDFH57dYuDAfXMEUUGeKw6CMlremgMZgrSQ==}
+  '@anthropic-ai/sdk@0.96.0':
+    resolution: {integrity: sha512-KlCsODtTyb17bLUVCSDC2HtSvAbJf60sEiPEax9dInF+aDF92vS4TZJ5XD7YCQXNb1/5icYaw8Y7wMjPlIV9Zg==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -4198,6 +4198,7 @@ packages:
 
   '@ungap/structured-clone@1.3.0':
     resolution: {integrity: sha512-WmoN8qaIAo7WTYWbAZuG8PYEhn5fkz7dZrqTBZ7dtt//lL2Gwms1IcnQ5yHqjDfX8Ft5j4YzDM23f87zBfDe9g==}
+    deprecated: Potential CWE-502 - Update to 1.3.1 or higher
 
   '@vitejs/plugin-react@4.7.0':
     resolution: {integrity: sha512-gUu9hwfWvvEDBBmgtAowQCojwZmJ5mcLn3aufeCsitijs3+f2NsrPtlAWIR6OPiqljl96GVCUbLe0HyqIpVaoA==}
@@ -9005,6 +9006,7 @@ packages:
 
   uuid@8.3.2:
     resolution: {integrity: sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg==}
+    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
   value-equal@1.0.1:
@@ -9299,6 +9301,9 @@ packages:
   zod@4.3.6:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
@@ -9488,12 +9493,19 @@ snapshots:
       resize-observer-polyfill: 1.5.1
       throttle-debounce: 5.0.2
 
-  '@anthropic-ai/sdk@0.95.2(zod@4.3.6)':
+  '@anthropic-ai/sdk@0.96.0(zod@4.3.6)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.0.0
     optionalDependencies:
       zod: 4.3.6
+
+  '@anthropic-ai/sdk@0.96.0(zod@4.4.3)':
+    dependencies:
+      json-schema-to-ts: 3.1.1
+      standardwebhooks: 1.0.0
+    optionalDependencies:
+      zod: 4.4.3
 
   '@babel/code-frame@7.29.0':
     dependencies:
@@ -11959,6 +11971,28 @@ snapshots:
       raw-body: 3.0.2
       zod: 4.3.6
       zod-to-json-schema: 3.25.2(zod@4.3.6)
+    transitivePeerDependencies:
+      - supports-color
+
+  '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
+    dependencies:
+      '@hono/node-server': 1.19.14(hono@4.12.15)
+      ajv: 8.20.0
+      ajv-formats: 3.0.1(ajv@8.20.0)
+      content-type: 1.0.5
+      cors: 2.8.6
+      cross-spawn: 7.0.6
+      eventsource: 3.0.7
+      eventsource-parser: 3.0.8
+      express: 5.2.1
+      express-rate-limit: 8.4.1(express@5.2.1)
+      hono: 4.12.15
+      jose: 6.2.2
+      json-schema-typed: 8.0.2
+      pkce-challenge: 5.0.1
+      raw-body: 3.0.2
+      zod: 4.4.3
+      zod-to-json-schema: 3.25.2(zod@4.4.3)
     transitivePeerDependencies:
       - supports-color
 
@@ -16533,6 +16567,11 @@ snapshots:
       ws: 8.20.0
       zod: 4.3.6
 
+  openai@6.37.0(ws@8.20.0)(zod@4.4.3):
+    optionalDependencies:
+      ws: 8.20.0
+      zod: 4.4.3
+
   openapi-types@12.1.3: {}
 
   opener@1.5.2: {}
@@ -19234,6 +19273,12 @@ snapshots:
     dependencies:
       zod: 4.3.6
 
+  zod-to-json-schema@3.25.2(zod@4.4.3):
+    dependencies:
+      zod: 4.4.3
+
   zod@4.3.6: {}
+
+  zod@4.4.3: {}
 
   zwitch@2.0.4: {}
