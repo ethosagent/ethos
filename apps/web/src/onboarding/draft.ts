@@ -13,7 +13,16 @@ export function saveDraft(state: DraftState): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify(state));
+      const { apiKey: _, ...safeAnswers } = state.answers;
+      const safeChain = safeAnswers.providersChain?.map(({ apiKey: _k, ...rest }) => rest);
+      const safe: DraftState = {
+        ...state,
+        answers: {
+          ...safeAnswers,
+          providersChain: safeChain as typeof state.answers.providersChain,
+        },
+      };
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(safe));
     } catch {
       // quota exceeded — silent skip
     }

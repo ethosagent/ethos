@@ -61,7 +61,8 @@
         "ethos.cliPath": {
           "type": "string",
           "default": "ethos",
-          "description": "Path to the ethos CLI binary. Defaults to 'ethos' (resolved via PATH)."
+          "scope": "machine",
+          "description": "Path to the ethos CLI binary. Defaults to 'ethos' (resolved via PATH). Machine-scoped to prevent workspace-level override attacks."
         }
       }
     }

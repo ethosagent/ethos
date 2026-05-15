@@ -521,7 +521,7 @@ describe('Phase 4.3 — cross-plan: MCP server gate catches skill+MCP mismatch',
       expect(names.has('run_shell')).toBe(false);
     });
 
-    it('includes all built-in tools when toolset is empty/absent', () => {
+    it('includes all built-in tools when toolset is absent (undefined)', () => {
       const reg = new DefaultToolRegistry();
       reg.register({
         name: 'read_file',
@@ -541,6 +541,29 @@ describe('Phase 4.3 — cross-plan: MCP server gate catches skill+MCP mismatch',
       const names = reg.toolNamesForPersonality({ id: 'r', name: 'R' });
       expect(names.has('read_file')).toBe(true);
       expect(names.has('run_shell')).toBe(true);
+    });
+
+    it('denies all built-in tools when toolset is empty array', () => {
+      const reg = new DefaultToolRegistry();
+      reg.register({
+        name: 'read_file',
+        description: '',
+        schema: {},
+        capabilities: {},
+        execute: async () => ({ ok: true, value: '' }),
+      });
+      reg.register({
+        name: 'run_shell',
+        description: '',
+        schema: {},
+        capabilities: {},
+        execute: async () => ({ ok: true, value: '' }),
+      });
+
+      const names = reg.toolNamesForPersonality({ id: 'r', name: 'R', toolset: [] });
+      expect(names.has('read_file')).toBe(false);
+      expect(names.has('run_shell')).toBe(false);
+      expect(names.size).toBe(0);
     });
 
     it('includes MCP tools whose server is in personality.mcp_servers', () => {

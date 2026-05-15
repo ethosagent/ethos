@@ -154,7 +154,7 @@ export class DefaultToolRegistry implements ToolRegistry {
       if (!isMcp && !isPlugin) {
         // Built-in tool — include if in personality.toolset (or if toolset is unrestricted)
         const toolset = personality.toolset;
-        if (!toolset || toolset.length === 0 || toolset.includes(name)) {
+        if (!toolset || toolset.includes(name)) {
           reach.add(name);
         }
       } else if (isMcp) {
