@@ -167,22 +167,38 @@ const browseUrlTool: Tool = {
       // sessions install the route on a context-level handler before
       // any page navigation.
       const session = await getOrCreateSessionWithRoute(ctx.sessionId, policy);
-      await session.page.goto(url, {
-        waitUntil: wait_for,
-        timeout: 30_000,
-      });
-      session.lastUrl = url;
 
-      const { text, refs, title } = await snapshotPage(session.page);
-      session.refs = refs;
+      // If the caller aborts mid-navigation, close the session so the
+      // headless Chromium instance doesn't leak.
+      if (ctx.abortSignal.aborted) {
+        await closeSession(ctx.sessionId);
+        return { ok: false, error: 'Aborted', code: 'execution_failed' };
+      }
+      const abortHandler = () => {
+        closeSession(ctx.sessionId);
+      };
+      ctx.abortSignal.addEventListener('abort', abortHandler, { once: true });
 
-      const refSummary =
-        refs.size > 0
-          ? `\n\nInteractive elements (${refs.size}): ${[...refs.keys()].join(', ')}`
-          : '';
+      try {
+        await session.page.goto(url, {
+          waitUntil: wait_for,
+          timeout: 30_000,
+        });
+        session.lastUrl = url;
 
-      const header = `[${title}] ${url}\n\n`;
-      return { ok: true, value: header + text + refSummary };
+        const { text, refs, title } = await snapshotPage(session.page);
+        session.refs = refs;
+
+        const refSummary =
+          refs.size > 0
+            ? `\n\nInteractive elements (${refs.size}): ${[...refs.keys()].join(', ')}`
+            : '';
+
+        const header = `[${title}] ${url}\n\n`;
+        return { ok: true, value: header + text + refSummary };
+      } finally {
+        ctx.abortSignal.removeEventListener('abort', abortHandler);
+      }
     } catch (err) {
       await closeSession(ctx.sessionId);
       return {
@@ -388,3 +404,4 @@ export function createBrowserTools(opts?: BrowserToolsOptions): Tool[] {
 
 export type { A11yRef, A11yResult, RawA11yNode } from './a11y';
 export { buildA11yTree, parseAriaSnapshot } from './a11y';
+export { closeAllSessions } from './sessions';

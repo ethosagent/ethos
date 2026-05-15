@@ -334,7 +334,7 @@ function makeProcessWait(dataDir: string): Tool {
       },
       required: ['id'],
     },
-    async execute(args): Promise<ToolResult> {
+    async execute(args, ctx): Promise<ToolResult> {
       const { id, timeout_s } = args as { id: string; timeout_s?: number };
 
       if (!id) return { ok: false, error: 'id is required', code: 'input_invalid' };
@@ -360,6 +360,10 @@ function makeProcessWait(dataDir: string): Tool {
       const deadline = Date.now() + timeoutMs;
 
       while (Date.now() < deadline) {
+        // Respect the caller's abort signal to avoid blocking indefinitely
+        if (ctx.abortSignal.aborted) {
+          return { ok: true, value: JSON.stringify({ exited: false, aborted: true }) };
+        }
         await sleep(WAIT_POLL_MS);
         const current = loadRegistry(dataDir)[id];
         if (!current) break;

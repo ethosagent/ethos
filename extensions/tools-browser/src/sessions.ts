@@ -167,6 +167,21 @@ export async function closeSession(sessionId: string): Promise<void> {
   }
 }
 
+/**
+ * Close ALL browser sessions. Use when the agent loop aborts or the process
+ * is shutting down — prevents headless Chromium instances from leaking.
+ */
+export async function closeAllSessions(): Promise<void> {
+  const entries = [...sessions.entries()];
+  sessions.clear();
+  await Promise.allSettled(
+    entries.map(async ([, s]) => {
+      await s.context.close().catch(() => {});
+      await s.browser.close().catch(() => {});
+    }),
+  );
+}
+
 export function isPlaywrightInstalled(): boolean {
   try {
     import.meta.resolve('playwright');
@@ -177,9 +192,12 @@ export function isPlaywrightInstalled(): boolean {
 }
 
 // Cleanup all sessions on process exit
-process.on('SIGTERM', () => {
+function cleanupOnExit() {
   for (const s of sessions.values()) {
     s.browser.close().catch(() => {});
   }
   sessions.clear();
-});
+}
+
+process.on('SIGTERM', cleanupOnExit);
+process.on('SIGINT', cleanupOnExit);
