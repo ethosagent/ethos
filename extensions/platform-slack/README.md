@@ -1,34 +1,37 @@
 # @ethosagent/platform-slack
 
-Slack `PlatformAdapter` — runs in Socket Mode so Ethos can serve Slack workspaces with no public URL.
+Slack `PlatformAdapter` for Ethos — runs in Socket Mode so your bot serves a Slack workspace with no public URL and no webhook plumbing.
 
-This README covers everything an operator needs to install the Slack app, configure Ethos, and use the per-channel reply modes and `/ethos` slash commands. If you only want the architectural picture, jump to [Internals](#internals).
-
----
-
-## What you get
-
-- Socket Mode (`@slack/bolt` v3.21) — no public URL required
-- Direct messages, channel mentions, threaded replies
-- Multi-bot identity — one Slack app per personality or team
-- **Thread-isolated session lanes** — each thread routes to its own conversation
-- **Per-channel reply mode** — `mention_only`, `thread_follow`, or `all`
-- **`/ethos` slash command** with `ask`, `personality`, `memory`, `kanban`, `channel-mode`, `help` subcommands
-- **Member-join greeting** — the bot introduces itself when added to a channel
-- Block Kit responses for slash commands
-- **App Home tab** — sessions, kanban, memory, and channel-mode dashboard
+This README walks an operator from zero to a working bot in about ten minutes, then documents the slash commands, channel-reply behaviour, and troubleshooting paths. Contributors looking for the architectural picture jump to [Internals](#internals).
 
 ---
 
-## 1 · Slack app setup
+## What you can do
 
-You need one Slack app per Ethos bot. The same workspace can host many apps; each app maps 1:1 to a personality or a team coordinator.
+- **Chat with your Ethos personality from Slack** — DM the bot, @mention it in a channel, or open a thread; the personality answers with its configured prompt, tools, and memory.
+- **Run multiple bots in one workspace** — one Slack app per personality (or per team coordinator). Each bot's conversations stay on its own lane.
+- **Drive the agent without typing `@bot`** — the `/ethos` slash command exposes `ask`, `personality`, `memory`, `channel-mode`, and `help` from anywhere the bot is installed.
+- **Tune per-channel chattiness** — set a channel to `mention_only`, `thread_follow`, or `all` and the bot honours it across restarts.
+- **Get one conversation per thread** — every Slack thread routes to its own session lane; threaded contexts never collide.
+- **See the bot's state at a glance** — open the bot's **Home** tab in Slack for its binding, recent memory, and the channels it lives in.
 
-### 1.1 Create the app
+---
+
+## Quickstart — ten minutes to your first reply
+
+You'll create a Slack app, copy three secrets into Ethos, start the gateway, and DM the bot.
+
+### Prereqs
+
+- `@ethosagent/cli` installed and `ethos setup` has been run (so you have a `~/.ethos/config.yaml` and at least one personality).
+- A Slack workspace where you can install a custom app.
+- About ten minutes.
+
+### Step 1 · Create the Slack app
 
 1. Open the [Slack API dashboard](https://api.slack.com/apps) → **Create New App** → **From an app manifest**.
 2. Pick the workspace.
-3. Paste the manifest below. Replace `<DISPLAY-NAME>` with what you want users to see (e.g. `Researcher`, `Eng Coordinator`).
+3. Paste the manifest below. Replace `<DISPLAY-NAME>` with what you want users to see in Slack (e.g. `Researcher`, `Eng Coordinator`).
 
 ```yaml
 display_information:
@@ -43,7 +46,7 @@ features:
     always_online: true
   slash_commands:
     - command: /ethos
-      description: "Ethos commands (ask, personality, memory, kanban, channel-mode, help)"
+      description: "Ethos commands (ask, personality, memory, channel-mode, help)"
       usage_hint: "ask <prompt>  ·  channel-mode all  ·  help"
       should_escape: false
 oauth_config:
@@ -77,23 +80,19 @@ settings:
   token_rotation_enabled: false
 ```
 
-> The `commands` block is what makes `/ethos` show up in Slack's command picker. The Socket Mode bit makes the bot dial out to Slack so you don't need a public webhook. The `app_home` block enables the **App Home** tab (see [§8](#8-app-home-tab)); the `app_home_opened` bot event is what lets the adapter publish the tab when a user opens it.
+The `commands` block is what makes `/ethos` show up in Slack's command picker. `socket_mode_enabled: true` is what lets the bot dial out to Slack so you don't need a public webhook. The `app_home` block enables the **Home** tab and `app_home_opened` is the event that triggers it.
 
-### 1.2 Generate tokens
+### Step 2 · Generate three secrets
 
-In the app settings, you need three secrets:
-
-| Token | Where to get it |
+| Token | Where to find it |
 |---|---|
-| `botToken` (`xoxb-…`) | OAuth & Permissions → **Install to Workspace**, then copy the *Bot User OAuth Token*. |
-| `appToken` (`xapp-…`) | Basic Information → **App-Level Tokens** → **Generate Token and Scopes** → add `connections:write` and `authorizations:read`. |
-| `signingSecret` | Basic Information → **App Credentials → Signing Secret**. |
+| `botToken` (`xoxb-…`) | **OAuth & Permissions → Install to Workspace**, then copy the *Bot User OAuth Token*. |
+| `appToken` (`xapp-…`) | **Basic Information → App-Level Tokens → Generate Token and Scopes** — add `connections:write` and `authorizations:read`. |
+| `signingSecret` | **Basic Information → App Credentials → Signing Secret**. |
 
----
+### Step 3 · Add the bot to `~/.ethos/config.yaml`
 
-## 2 · Ethos configuration
-
-The Slack adapter is wired through the multi-app config at `~/.ethos/config.yaml`. Each entry is one Slack app:
+Each Slack app gets one entry under `slack.apps.<n>`. Pick any non-negative integer for `<n>`:
 
 ```yaml
 slack.apps.0.botToken: xoxb-…
@@ -101,174 +100,130 @@ slack.apps.0.appToken: xapp-…
 slack.apps.0.signingSecret: …
 slack.apps.0.bind.type: personality       # or 'team'
 slack.apps.0.bind.name: researcher        # personality id or team manifest name
-# Optional, surfaced in logs and used for the gateway lane key.
+# Optional: stable identifier surfaced in logs + gateway lane keys.
 # Defaults to a 24-char sha256(botToken) prefix when omitted.
 slack.apps.0.id: researcher-app
 ```
 
-You can declare any number of apps; each binds to exactly one personality or one team coordinator.
+Declare as many apps as you want; each binds to exactly one personality or team coordinator.
 
-### 2.1 Legacy single-bot config
+### Step 4 · Start the gateway
 
-The old scalar form keeps working through a deprecation shim:
-
-```yaml
-slackBotToken: xoxb-…
-slackAppToken: xapp-…
-slackSigningSecret: …
+```bash
+ethos gateway start
 ```
 
-Boot synthesizes a one-entry `slack.apps[]` list bound to the active personality. A deprecation warning fires once at startup. Migrate when convenient.
+Boot validates that every `bind.name` resolves to a known personality or team and refuses to start otherwise. On success you'll see one health line per bot — including the bound personality — and `Listening for messages.`
 
-### 2.2 Adapter-owned state
+### Step 5 · Invite the bot and say hello
 
-When `storage` is wired (production wiring does this automatically), the adapter persists per-channel mode overrides and "bot has posted in this thread" state under:
+1. In Slack, invite the bot to a channel (or DM it directly).
+2. When the bot joins a channel, it posts a one-line introduction with its binding and the channel's current reply mode.
+3. DM the bot. You should see a reply within a few seconds, in the personality's voice.
 
-```
-~/.ethos/slack/<botKey>/
-├── channel-overrides.jsonl
-└── thread-state.jsonl
-```
-
-JSONL append-only — the latest record per `(channel, mode)` wins. Truncating either file is safe; the adapter rebuilds in-memory state from the lines that remain.
+If you don't see a reply, jump to [Troubleshooting](#troubleshooting).
 
 ---
 
-## 3 · Slash commands
+## `/ethos` slash commands
 
-Once `/ethos` is registered in the Slack app manifest, users can invoke it from any channel the bot is in (and from DMs). All responses are ephemeral by default — only the invoker sees them.
+Once `/ethos` is registered in the manifest, anyone can invoke it from any channel the bot is in, or from a DM. Most responses are ephemeral — only the invoker sees them.
 
-| Command | Audience | What it does |
+| Command | Visibility | What it does |
 |---|---|---|
-| `/ethos ask <prompt>` | in-channel | Submits the prompt to the bot's bound agent loop. The agent's reply arrives via the gateway's normal outbound path (so it follows the channel's thread context and dedup rules). The slash command itself posts a public acknowledgement so other channel members see who asked. |
-| `/ethos personality` | ephemeral | Shows the bot's binding (personality or team coordinator). |
-| `/ethos personality rich` | ephemeral | Full character sheet for the bound personality — identity, model, tools, and resolved skills. Personality bindings only; team bindings fall back to the compact view. Omits filesystem reach, MCP servers, and plugins (recon-sensitive on a command anyone in a channel can run). |
-| `/ethos memory show` | ephemeral | Last 5 entries from the bound personality's `MEMORY.md`. Personality bindings only — team bots get "Memory is unavailable for this bot." |
-| `/ethos memory add <text>` | ephemeral | Appends a memory entry to the bound personality's `MEMORY.md`. Personality bindings only. |
-| `/ethos kanban list` | ephemeral | Block Kit list of open kanban tickets. **Team bots only** — personality bots get a clear "this is a team feature" message. *(Kanban wiring lands in a follow-up.)* |
+| `/ethos ask <prompt>` | public ack + agent reply | Submits the prompt to the bound personality. The slash command posts a short public acknowledgement so the channel sees who asked; the agent's reply arrives through the normal outbound path and threads the same way a regular reply would. |
+| `/ethos personality` | ephemeral | One-line view of the bot's binding (personality or team coordinator). |
+| `/ethos personality rich` | ephemeral | Full character sheet for the bound personality — identity, model, tools, and resolved skills, in Block Kit. Personality bindings only; team bindings fall back to the compact view. Filesystem reach, MCP servers, and plugins are deliberately omitted — they're recon for an attacker on a command anyone in a channel can run; the operator-facing CLI sheet still shows them. |
+| `/ethos memory show` | ephemeral | Last five entries from the bound personality's `MEMORY.md`. Personality bindings only — team bots get "Memory is unavailable for this bot." |
+| `/ethos memory add <text>` | ephemeral | Appends an entry to the bound personality's `MEMORY.md`. Personality bindings only. |
 | `/ethos channel-mode show` | ephemeral | Reports the active mode for the current channel and whether it's an override or the app default. |
-| `/ethos channel-mode <mode>` | ephemeral | Sets the mode. Valid values: `mention_only`, `thread_follow`, `all`. Persisted to `channel-overrides.jsonl`; survives restart. |
-| `/ethos help` | ephemeral | Lists all subcommands with the bot's binding and active channel mode for context. |
+| `/ethos channel-mode <mode>` | ephemeral | Sets the mode. Valid values: `mention_only`, `thread_follow`, `all`. Persisted under `~/.ethos/slack/<botKey>/channel-overrides.jsonl`; survives restart. |
+| `/ethos kanban list` | ephemeral | Block Kit list of open kanban tickets. **Team bots only.** Personality-bound bots get a "this is a team feature" message. The team-kanban reader isn't wired into the gateway yet; the command returns "Kanban is unavailable" until it is. |
+| `/ethos help` | ephemeral | Lists every subcommand with the bot's binding and active channel mode for context. |
 
-Each subcommand returns Block Kit (header + sections + context). The plaintext fallback in the message `text` field carries the same content for notifications and screen-readers.
+Every subcommand returns Block Kit (header + sections + context) plus a plaintext fallback in the message `text` field for notifications and screen-readers.
 
 ---
 
-## 4 · Channel modes
+## Channel reply modes
 
-A bot in a channel can be in one of three modes. Default is `mention_only`.
+A bot in a channel is in one of three modes. Default is `mention_only`.
 
-| Mode | Bot replies when… |
+| Mode | The bot replies when… |
 |---|---|
 | `mention_only` *(default)* | DM, OR explicit `@bot` mention. Silent otherwise. |
-| `thread_follow` | `mention_only` behaviors PLUS any message in a thread the bot has previously posted in. *Once invited, stay.* |
-| `all` | Every message in the channel. For dedicated channels like `#ai-pair`. Use sparingly — the bot will respond to noise too. |
+| `thread_follow` | `mention_only` behaviours plus any message in a thread the bot has previously posted in. *Once invited, stay.* |
+| `all` | Every message in the channel. Use for dedicated channels like `#ai-pair`. The bot will respond to noise too. |
 
-### 4.1 Precedence
+**Precedence:** per-channel override (set via `/ethos channel-mode`) > app-level default (currently always `mention_only`) > built-in default (`mention_only`).
 
-Per-channel override (set via `/ethos channel-mode`) > app-level default (currently always `mention_only`) > built-in default (`mention_only`).
+**DMs ignore the mode** — there's no useful semantic for "only `@mention` me in a DM," so the bot always replies in a direct message.
 
-DMs always behave as if the channel mode were `all` — there's no useful semantic for "only @mention me in a DM."
-
-### 4.2 Cost note for `all` mode
-
-A bot in `all` mode on a busy channel will respond to every message, costing LLM tokens for messages that probably weren't meant for it. The adapter does **not** enforce limits. Operators get a member-join greeting that announces the active mode; that's the discoverability hook.
+**Cost note for `all` mode.** A bot in `all` mode on a busy channel responds to every message, including ones that probably weren't meant for it. The adapter doesn't enforce limits. The member-join greeting tells anyone joining the channel what mode they're walking into.
 
 ---
 
-## 5 · Thread isolation
+## Running multiple bots in one workspace
 
-The Slack adapter routes threaded conversations to their own session lanes:
+You can install one Slack app per personality (or team) into the same workspace. Each app is a separate user in Slack and a separate routing lane in Ethos:
 
-- Threaded replies set `InboundMessage.threadId = thread_ts` (the parent thread's `ts`). The gateway lane key becomes `slack:<botKey>:<channel>:<thread_ts>`, isolated from every other thread in the channel and from the channel root.
-- Channel-root posts leave `threadId` undefined. The lane key stays `slack:<botKey>:<channel>` (the same shape as before this change).
-
-Agent replies are routed back into the same thread automatically: the gateway passes the inbound `threadId` through to the outbound `chat.postMessage`. Top-level posts have no `threadId`, so the agent's reply lands at the channel root.
-
-The threading concept stays inside the Slack adapter — `InboundMessage.threadId` is a generic, opaque routing segment in the platform contract. No sentinel values, no Slack-specific encoding leaks into the gateway or other adapters.
-
-### 5.1 Migration note
-
-Threaded conversations that existed before this change shared the parent channel's session. After upgrade, each thread routes to its own lane on the next message. **This is a one-time history reset for ongoing threaded conversations.** Channel-root conversations are unaffected — their lane key shape is unchanged.
-
-If the reset surprises a user, drop a `/new` to confirm and re-prime — there is no automatic session-key migration.
+- Each bot's lane key is `slack:<botKey>:<channel>[:<thread_ts>]`. Conversations never cross bots.
+- `botKey` defaults to a 24-char `sha256(botToken)` prefix, or you can set `slack.apps.<n>.id` explicitly for a stable, log-friendly identifier.
+- A user can chat with multiple bots in the same channel; each sees only the messages addressed to it (per the channel mode).
 
 ---
 
-## 6 · The bot joining a channel
+## Thread isolation
 
-When someone adds the bot to a channel, it posts a one-line greeting:
+The adapter routes threaded conversations to their own session lanes:
+
+- Threaded replies set `InboundMessage.threadId = thread_ts`. The gateway lane key becomes `slack:<botKey>:<channel>:<thread_ts>`, isolated from every other thread in the channel and from the channel root.
+- Channel-root posts leave `threadId` undefined. The lane key stays `slack:<botKey>:<channel>`.
+
+Agent replies thread automatically: the gateway passes the inbound `threadId` through to `chat.postMessage`, so a reply to a threaded message stays in the thread and a reply to a channel-root post lands at the channel root.
+
+The threading concept stays inside the Slack adapter — `InboundMessage.threadId` is a generic, opaque routing segment in the platform contract. No Slack-specific encoding leaks into the gateway or other adapters.
+
+---
+
+## App Home tab
+
+Click the bot's name in Slack to open its **Home** tab — a read-only dashboard that the adapter publishes on `app_home_opened`. The header (binding, status) and "This bot is in" channel list are populated from day one. A **Refresh** button (`action_id: home:refresh`) re-publishes the tab on demand.
+
+The tab is designed to also show recent sessions, active kanban tickets (team bots), and recent memory updates. Memory is wired today; sessions and kanban readers are not yet plumbed through gateway boot — those sections render empty until they are. Nothing else on the tab is affected.
+
+---
+
+## Adapter-owned state
+
+The adapter persists two things under `~/.ethos/slack/<botKey>/`:
 
 ```
-👋 I'm bound to the personality `researcher`. This channel is in `mention_only` mode.
-Run `/ethos channel-mode` to change it.
+channel-overrides.jsonl    # one record per `/ethos channel-mode` change
+thread-state.jsonl         # one record per (channel, thread) the bot has posted in
 ```
 
-The greeting fires only when the *bot itself* joins (not for any other user). It uses the `member_joined_channel` event and the `users.profile:read`-equivalent identity from `auth.test`.
-
-If the bot lacks `chat:write` in the new channel context (e.g. private channel without explicit invite), the greeting is silently skipped — the rest of the adapter still works.
+Both are JSONL, append-only — the latest record per key wins. Truncating either file is safe; the adapter rebuilds in-memory state from whatever lines remain. Inspect them to confirm a setting took effect; delete them to start fresh.
 
 ---
 
-## 7 · Operator runbook
+## Troubleshooting
 
-### 7.1 Add a new bot
+If something looks wrong after Step 5, work top-to-bottom — earlier rows block later ones.
 
-1. Create the Slack app per [§1.1](#11-create-the-app); copy tokens per [§1.2](#12-generate-tokens).
-2. Add an entry to `~/.ethos/config.yaml`:
-   ```yaml
-   slack.apps.<n>.botToken: xoxb-…
-   slack.apps.<n>.appToken: xapp-…
-   slack.apps.<n>.signingSecret: …
-   slack.apps.<n>.bind.type: personality
-   slack.apps.<n>.bind.name: <personality-id>
-   ```
-   `<n>` is a unique non-negative integer. Existing entries keep their indices.
-3. Restart the gateway (`ethos gateway start`). Boot validates that `bind.name` resolves to a known personality or team and refuses to start otherwise.
-4. Install the Slack app to the workspace, invite the bot to the channels you want it in. Each invite triggers the greeting in [§6](#6-the-bot-joining-a-channel).
-
-### 7.2 Change a channel's reply mode
-
-Any user can run `/ethos channel-mode <mode>` from inside the channel. Mode persists to `~/.ethos/slack/<botKey>/channel-overrides.jsonl`. There is **no** UI gate — anyone in the channel can change it. An admin-gate is a future enhancement.
-
-### 7.3 Inspect / clear adapter state
-
-Files live under `~/.ethos/slack/<botKey>/`:
-
-- `channel-overrides.jsonl` — `{ channel, mode, updatedAt }` lines. Latest wins.
-- `thread-state.jsonl` — `{ channel, threadTs, firstPostedAt }` lines. One per (channel, thread) the bot has posted in.
-
-Truncate either file to start fresh; the adapter is tolerant of empty/missing files.
-
-### 7.4 Required scopes — quick check
-
-If the bot misbehaves silently, check that the manifest in [§1.1](#11-create-the-app) is the live manifest and re-install. Common symptoms:
-
-| Symptom | Likely missing scope / setting |
-|---|---|
-| `/ethos` doesn't appear in the slash command picker | `slash_commands.commands.[/ethos]` block missing from manifest, or app needs reinstall after manifest edit |
-| Channel messages don't reach the bot | `message.channels` (or `message.groups`) not in `event_subscriptions.bot_events` |
-| `member_joined_channel` greeting never fires | event not subscribed, or bot lacks `chat:write` for that channel |
-| App Home tab is blank or shows "Sending messages to this app has been turned off" | `app_home.home_tab_enabled` missing from the manifest, or `app_home_opened` not in `event_subscriptions.bot_events` |
-| Block Kit renders but plaintext fallback shows mrkdwn | this is intentional — Slack strips client-side for notifications |
-
----
-
-## 8 · App Home tab
-
-Clicking the bot's name in Slack opens its **Home** tab — a read-only dashboard rendered by the adapter. It has four sections plus a **Refresh** button:
-
-| Section | Source | Notes |
+| Symptom | Likely cause | Fix |
 |---|---|---|
-| **Header** | `binding` + `auth.test` | Bot display name, bound personality/team, status. |
-| **Recent sessions** | `session` reader | Last few sessions for this bot. Rows deep-link to the Ethos web UI when `webUiBaseUrl` is configured; otherwise they render as plain text. |
-| **Active kanban** | `kanban` reader | Recently active tickets. **Team bots only** — hidden entirely for personality-bound bots. |
-| **Recent memory updates** | `memory` reader | Last 5 `MEMORY.md` entries for the bound personality. |
-| **This bot is in** | `ChannelOverrideStore` | Channels the bot is in with their current channel mode. The **Refresh** button (`action_id: home:refresh`) re-publishes the tab with fresh data. |
+| `ethos gateway start` exits with `bind.name does not resolve` | A `slack.apps.<n>.bind.name` doesn't match any personality or team on disk | Run `ethos personality list` (and check `~/.ethos/teams/`); correct the `bind.name` |
+| Boot succeeds but the bot health line shows `⚠ slack:<key> health check failed` | Wrong `botToken` / `appToken` / `signingSecret`, or Socket Mode disabled | Re-copy the three secrets; confirm `socket_mode_enabled: true` and the `connections:write` + `authorizations:read` scopes on the app token |
+| Bot never replies in a channel | The channel-mode is `mention_only` (default) and you didn't `@mention` the bot | Either `@mention` the bot, DM it, or run `/ethos channel-mode all` from inside the channel |
+| `/ethos` doesn't appear in the slash-command picker | The `slash_commands` block in the manifest didn't get applied, or the app needs reinstall | Re-paste the manifest, then **Reinstall to Workspace** under OAuth & Permissions |
+| Channel messages don't reach the bot at all | `message.channels` (or `message.groups`) missing from `event_subscriptions.bot_events` | Add the missing event(s); reinstall |
+| No greeting when the bot joins a channel | `member_joined_channel` not subscribed, or the bot lacks `chat:write` in that channel | Subscribe the event in the manifest; re-invite the bot |
+| App Home tab is blank or says "Sending messages to this app has been turned off" | `home_tab_enabled` missing, or `app_home_opened` not subscribed | Add both to the manifest; reinstall; re-open the tab |
+| Long agent replies look chopped | Slack's 3000-char limit; the adapter chunks and reflows automatically | Working as intended — the chunks land in the same thread |
+| The plaintext fallback shows raw `*mrkdwn*` | Slack strips formatting in notifications + screen-readers; the in-channel Block Kit is unaffected | Working as intended |
 
-The Home tab **degrades gracefully**: the header and "This bot is in" sections are populated from day one (binding + channel state are always wired), while the session / kanban / memory sections show a tasteful empty state until their readers are wired. *(Reader wiring lands in a follow-up, the same as the `/ethos memory` and `/ethos kanban` commands.)*
-
-To enable it, the Slack app manifest needs the `app_home.home_tab_enabled` feature and the `app_home_opened` bot event — both are in the manifest in [§1.1](#11-create-the-app).
+When in doubt, the live manifest is the source of truth — open the app's **App Manifest** tab in the Slack dashboard and compare to [Step 1](#step-1--create-the-slack-app).
 
 ---
 
@@ -285,7 +240,8 @@ src/
 │
 ├── events/
 │   ├── messages.ts          # message + app_mention → triage → onEnvelope
-│   └── members.ts           # member_joined_channel → greeting
+│   ├── members.ts           # member_joined_channel → greeting
+│   └── links.ts             # link_shared → URL unfurls
 │
 ├── routing/
 │   ├── triage.ts            # raw event → InboundMessage envelope; channel-mode + threadId
@@ -294,20 +250,21 @@ src/
 ├── commands/                # slash command handlers (pure dispatch)
 │   ├── index.ts             # parser + dispatcher
 │   ├── ask.ts
-│   ├── personality.ts
+│   ├── personality.ts       # compact + rich
 │   ├── memory.ts
 │   ├── kanban.ts
 │   ├── channel-mode.ts
 │   └── help.ts
 │
 ├── blocks/                  # pure Block Kit builders — (data) => Block[]
-│   ├── shared.ts            # divider, section, header, context, escapeMrkdwn, plaintextFallback
+│   ├── shared.ts            # divider, section, sectionFields, header, context, escapeMrkdwn, plaintextFallback
 │   ├── help.ts
-│   ├── personality.ts
+│   ├── personality.ts       # compact + rich character-sheet card
 │   ├── memory.ts
 │   ├── kanban.ts
 │   ├── session.ts
 │   ├── approval.ts
+│   ├── unfurl.ts
 │   └── channel-mode.ts
 │
 ├── home/                    # App Home tab — pure view builder + Bolt registrar
@@ -333,30 +290,23 @@ src/
 | `OutboundMessage.threadId` | `@ethosagent/types` | Lets the gateway thread agent replies back into the originating Slack thread. |
 | `SlackAdapterConfig.binding` | `./adapter` | Drives `/ethos personality`, `/ethos help`, member-join greeting. |
 | `SlackAdapterConfig.storage` | `./adapter` | Required for channel-mode persistence and thread-follow state. |
-| `SlackAdapterConfig.memory` | `./adapter` | Optional — wires `/ethos memory show|add` and the App Home memory section when supplied. |
-| `SlackAdapterConfig.kanban` | `./adapter` | Optional — wires `/ethos kanban list` and the App Home kanban section for team bots. |
-| `SlackAdapterConfig.session` | `./adapter` | Optional — wires the App Home "Recent sessions" section. |
-| `SlackAdapterConfig.webUiBaseUrl` | `./adapter` | Optional — Ethos web UI origin; when set, App Home session rows deep-link to `<base>/sessions/<id>`. |
+| `SlackAdapterConfig.memory` | `./adapter` | Wires `/ethos memory show|add` and the App Home memory section. |
+| `SlackAdapterConfig.personalityCard` | `./adapter` | Wires `/ethos personality rich`. |
+| `SlackAdapterConfig.kanban` | `./adapter` | Wires `/ethos kanban list` + App Home kanban section (team bots only). |
+| `SlackAdapterConfig.session` | `./adapter` | Wires the App Home "Recent sessions" section. |
+| `SlackAdapterConfig.webUiBaseUrl` | `./adapter` | When set, App Home session rows deep-link to `<base>/sessions/<id>`. |
 
-### Why pure Block Kit builders
+### Design notes
 
-Every `blocks/<name>.ts` is `(data) => SlackBlock[]`. No I/O, no Slack-client dependency, no side effects. This makes them trivially unit-testable (see `__tests__/blocks.test.ts`) and replaceable for theming later. The Slack web client validates block shape at runtime, so the structural `SlackBlock` type in `blocks/shared.ts` is sufficient — we don't need a direct dep on `@slack/types`.
+**Pure Block Kit builders.** Every `blocks/<name>.ts` is `(data) => SlackBlock[]` — no I/O, no Slack-client dependency, no side effects. Trivially unit-testable (`__tests__/blocks.test.ts`) and replaceable for theming. The Slack web client validates block shape at runtime, so the structural `SlackBlock` type in `blocks/shared.ts` is sufficient — no direct `@slack/types` dep.
 
-### Why pure slash dispatcher
+**Pure slash dispatcher.** `commands/index.ts` exports `dispatch(payload, ctx) => SlashResponse` — a pure function over a structured payload. Bolt registration in `adapter.ts:start()` is the only place that touches Slack; tests exercise `dispatch` directly without a real Slack app.
 
-`commands/index.ts` exports a pure `dispatch(payload, ctx) => SlashResponse` that takes a structured slash command payload and returns the response shape. The Bolt registration in `adapter.ts:start()` is the only place that touches Slack. Tests exercise the dispatcher directly without standing up a real Slack app.
+**Outbound dedup is gateway-only.** Per [ARCHITECTURE.md](../../ARCHITECTURE.md) §V S3, all outbound dedup is centralized in `extensions/gateway/src/dedup.ts`. The Slack adapter does **not** implement adapter-local dedup. If you find any in this tree, it's a bug.
 
-### Outbound dedup is gateway-only
+**`auth.test` at startup.** The adapter calls `client.auth.test()` once during `start()` to resolve the bot's own user id (to filter `member_joined_channel` to self-join) and display name (used as the App Home header). Failure is tolerated — the greeting just won't fire and the Home tab falls back to the generic "Slack" label.
 
-Per [`ARCHITECTURE.md`](../../ARCHITECTURE.md) §V S3, all outbound dedup is centralized in `extensions/gateway/src/dedup.ts`. The Slack adapter does not implement adapter-local dedup. If you find any in this directory tree, it's a bug.
-
-### `auth.test` at startup
-
-The adapter calls `client.auth.test()` once during `start()` to resolve the bot's own user id (used to filter `member_joined_channel` events for self-join only) and display name (used as the App Home header). Failure is tolerated: the greeting just won't fire, and the Home tab falls back to the generic "Slack" label.
-
-### App Home is a pure view builder + a thin registrar
-
-`home/view.ts` exports a pure `buildHomeView(data) => SlackHomeView` — same `(data) => …` discipline as `blocks/`. `home/handlers.ts` exports `registerHomeEvents(app, deps)`, mirroring `events/messages.ts`: it registers `app_home_opened` and the `home:refresh` action, gathers data from the injected readers, and publishes via `client.views.publish`. Reader failures and publish failures are swallowed so a bad Slack event never crashes Bolt's event loop.
+**App Home is a pure view builder + a thin registrar.** `home/view.ts` exports `buildHomeView(data) => SlackHomeView`. `home/handlers.ts` exports `registerHomeEvents(app, deps)` mirroring `events/messages.ts`. Reader and publish failures are swallowed so a bad Slack event never crashes Bolt's event loop.
 
 ---
 
@@ -368,7 +318,7 @@ The adapter calls `client.auth.test()` once during `start()` to resolve the bot'
 | `src/adapter.ts` | The `PlatformAdapter` implementation. |
 | `src/chunking.ts` | `chunkText` + `reflowChunks` (3000-char Slack message limit). |
 | `src/config.ts` | Zod schemas for adapter-internal shapes. |
-| `src/events/` | Bolt event handlers — message, app_mention, member_joined_channel. |
+| `src/events/` | Bolt event handlers — message, app_mention, member_joined_channel, link_shared. |
 | `src/routing/` | Triage + channel-mode pure decisions. |
 | `src/commands/` | Slash subcommands + dispatcher. |
 | `src/blocks/` | Block Kit builders. |
