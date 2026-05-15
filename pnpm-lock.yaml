@@ -1028,6 +1028,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/tools-messaging:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/tools-personality-design:
     dependencies:
       '@ethosagent/types':
@@ -1039,6 +1045,12 @@ importers:
         version: link:../../packages/storage-fs
 
   extensions/tools-process:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
+  extensions/tools-skills:
     dependencies:
       '@ethosagent/types':
         specifier: workspace:*
@@ -1057,6 +1069,12 @@ importers:
         version: link:../../packages/types
 
   extensions/tools-todo:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
+  extensions/tools-tts:
     dependencies:
       '@ethosagent/types':
         specifier: workspace:*

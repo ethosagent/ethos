@@ -22,6 +22,8 @@ function fakeSession(fp: string): BrowserSession {
     refs: new Map(),
     lastUrl: '',
     policyFingerprint: fp,
+    consoleLogs: [],
+    pendingDialogs: [],
   };
 }
 

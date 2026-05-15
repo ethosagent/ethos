@@ -39,6 +39,10 @@ import type {
 } from '@ethosagent/types';
 import { resolveFile, VisionInputError, type VisionInputErrorCode } from './input-resolver';
 import { supportsPdf, supportsVision } from './pricing';
+import { createVideoAnalyzeTool } from './video';
+
+export type { VideoToolOptions } from './video';
+export { createVideoAnalyzeTool } from './video';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -110,7 +114,7 @@ const RESOLVER_CODE_TO_TOOL_CODE: Record<VisionInputErrorCode, ToolErrorCode> = 
 // ---------------------------------------------------------------------------
 
 export function createVisionTools(opts: VisionToolsOptions): Tool[] {
-  return [makeVisionAnalyze(opts)];
+  return [makeVisionAnalyze(opts), createVideoAnalyzeTool(opts)];
 }
 
 // Surfaced for callers that want the single tool without the factory list.

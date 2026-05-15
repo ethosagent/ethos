@@ -6,10 +6,19 @@ import { createHash } from 'node:crypto';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import type { A11yRef } from './a11y';
 
+const MAX_CONSOLE_LOGS = 200;
+
 export interface NetworkPolicyShape {
   allow?: string[];
   deny?: string[];
   allow_private_urls?: boolean;
+}
+
+export interface PendingDialog {
+  type: string;
+  message: string;
+  defaultValue?: string;
+  handler?: (opts: { accept: boolean; value?: string }) => Promise<void>;
 }
 
 export interface BrowserSession {
@@ -27,6 +36,10 @@ export interface BrowserSession {
    * triggers a navigation gated by a stale policy ref.
    */
   policyFingerprint: string;
+  /** Buffer of console messages captured since last read. */
+  consoleLogs: string[];
+  /** Queue of pending browser dialogs (alert/confirm/prompt). */
+  pendingDialogs: PendingDialog[];
 }
 
 const sessions = new Map<string, BrowserSession>();
@@ -152,7 +165,37 @@ export async function getOrCreateSession(
     refs: new Map(),
     lastUrl: '',
     policyFingerprint: fp,
+    consoleLogs: [],
+    pendingDialogs: [],
   };
+
+  // Capture console messages for browser_console tool
+  page.on('console', (msg) => {
+    const type = msg.type();
+    const text = msg.text();
+    if (session.consoleLogs.length >= MAX_CONSOLE_LOGS) {
+      session.consoleLogs.shift();
+    }
+    session.consoleLogs.push(`[${type}] ${text}`);
+  });
+
+  // Capture dialogs (alert/confirm/prompt) for browser_dialog tool
+  page.on('dialog', (dialog) => {
+    const pending: PendingDialog = {
+      type: dialog.type(),
+      message: dialog.message(),
+      defaultValue: dialog.defaultValue() || undefined,
+      handler: async (opts) => {
+        if (opts.accept) {
+          await dialog.accept(opts.value);
+        } else {
+          await dialog.dismiss();
+        }
+      },
+    };
+    session.pendingDialogs.push(pending);
+  });
+
   sessions.set(key, session);
   return session;
 }

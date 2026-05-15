@@ -1,94 +1,26 @@
 import { lookup } from 'node:dns/promises';
-import { type NetworkPolicy, validateUrl } from '@ethosagent/safety-network';
+import { validateUrl } from '@ethosagent/safety-network';
 import { checkSsrf } from '@ethosagent/tools-web';
 import type { Tool, ToolResult } from '@ethosagent/types';
-import type { Page } from 'playwright';
-import { type A11yRef, parseAriaSnapshot } from './a11y';
+import {
+  browserBackTool,
+  browserConsoleTool,
+  browserDialogTool,
+  browserGetImagesTool,
+  browserNavigateTool,
+  browserPressTool,
+  browserScrollTool,
+} from './browser-actions';
 import { browserScreenshotTool } from './browser-screenshot';
 import { createBrowserVisionClickTool } from './browser-vision-click';
 import { createBrowserVisionTypeTool } from './browser-vision-type';
-import {
-  type BrowserSession,
-  closeSession,
-  findActiveSession,
-  getOrCreateSession,
-  isPlaywrightInstalled,
-} from './sessions';
+import { getOrCreateSessionWithRoute } from './session-route';
+import { closeSession, findActiveSession, isPlaywrightInstalled } from './sessions';
+import { snapshotPage } from './snapshot';
 
 async function resolveHost(host: string): Promise<string[]> {
   const records = await lookup(host, { all: true });
   return records.map((r) => r.address);
-}
-
-// Tracks which sessions have had their context-level route installed.
-// We can't put this on BrowserSession itself without circular imports,
-// and the install-once invariant lives at the call-site anyway.
-const installedRoutes = new WeakSet<BrowserSession>();
-
-// Ch.7 — schemes the browser route allows through without policy
-// validation. Default-deny: anything not on this list is aborted, which
-// keeps `file:`, `javascript:`, `chrome:`, `chrome-extension:`, `ftp:`,
-// `gopher:`, `dict:`, `ldap:`, `ws:`, `wss:`, `blob:`, `data:` (per
-// Codex Ch.7 follow-up #7), and any future custom scheme out.
-//
-// The two exceptions are Playwright internal pages — `about:blank` and
-// `about:srcdoc` — which are local-only and used by Playwright itself
-// during page setup. Adding any further entry to this set requires a
-// matching validated policy path for the scheme.
-const BROWSER_ALLOWED_NON_HTTP_PREFIXES = ['about:'];
-
-async function getOrCreateSessionWithRoute(
-  sessionId: string,
-  policy: NetworkPolicy,
-): Promise<BrowserSession> {
-  const session = await getOrCreateSession(sessionId, policy);
-  if (!installedRoutes.has(session)) {
-    // Context-level route covers every page in the context. Service
-    // workers are blocked at context creation (sessions.ts), so a
-    // page can't register one to bypass this check.
-    await session.context.route('**/*', async (route) => {
-      const reqUrl = route.request().url();
-      const isHttp = reqUrl.startsWith('http://') || reqUrl.startsWith('https://');
-      if (!isHttp) {
-        // Default-deny non-http(s). The narrow exception list keeps
-        // Playwright's about:blank/about:srcdoc internal pages working
-        // without opening a hole for file: / javascript: / data: / etc.
-        const allowed = BROWSER_ALLOWED_NON_HTTP_PREFIXES.some((p) => reqUrl.startsWith(p));
-        if (allowed) {
-          await route.continue();
-          return;
-        }
-        await route.abort('failed');
-        return;
-      }
-      const check = await validateUrl(reqUrl, policy, resolveHost);
-      if (!check.ok) {
-        await route.abort('failed');
-        return;
-      }
-      await route.continue();
-    });
-    installedRoutes.add(session);
-  }
-  return session;
-}
-
-// ---------------------------------------------------------------------------
-// Take an accessibility snapshot and format it
-// ---------------------------------------------------------------------------
-
-async function snapshotPage(
-  page: Page,
-): Promise<{ text: string; refs: Map<string, A11yRef>; title: string; url: string }> {
-  const title = await page.title();
-  const url = page.url();
-
-  // page.locator('body').ariaSnapshot() is the Playwright 1.44+ recommended API.
-  // It returns a YAML string; parseAriaSnapshot injects @e{n} refs.
-  const yaml = await page.locator('body').ariaSnapshot();
-  const { text, refs } = parseAriaSnapshot(yaml);
-
-  return { text, refs, title, url };
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +328,13 @@ export function createBrowserTools(opts?: BrowserToolsOptions): Tool[] {
     browseUrlTool,
     browserClickTool,
     browserTypeTool,
+    browserPressTool,
+    browserScrollTool,
+    browserBackTool,
+    browserConsoleTool,
+    browserGetImagesTool,
+    browserDialogTool,
+    browserNavigateTool,
     browserScreenshotTool,
     createBrowserVisionClickTool(visionOpts),
     createBrowserVisionTypeTool(visionOpts),
@@ -404,4 +343,6 @@ export function createBrowserTools(opts?: BrowserToolsOptions): Tool[] {
 
 export type { A11yRef, A11yResult, RawA11yNode } from './a11y';
 export { buildA11yTree, parseAriaSnapshot } from './a11y';
+export { getOrCreateSessionWithRoute } from './session-route';
 export { closeAllSessions } from './sessions';
+export { snapshotPage } from './snapshot';

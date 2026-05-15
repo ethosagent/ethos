@@ -85,6 +85,7 @@
       "@ethosagent/tools-image": ["./extensions/tools-image/src"],
       "@ethosagent/tools-process": ["./extensions/tools-process/src"],
       "@ethosagent/tools-vision": ["./extensions/tools-vision/src"],
+      "@ethosagent/tools-messaging": ["./extensions/tools-messaging/src"],
       "@ethosagent/tools-personality-design": ["./extensions/tools-personality-design/src"],
       "@ethosagent/observability-sqlite": ["./extensions/observability-sqlite/src"],
       "@ethosagent/request-dump": ["./extensions/request-dump/src"],
@@ -93,6 +94,8 @@
       "@ethosagent/safety-network": ["./packages/safety/network/src"],
       "@ethosagent/safety-scanner": ["./packages/safety/scanner/src"],
       "@ethosagent/safety-watcher": ["./packages/safety/watcher/src"],
+      "@ethosagent/tools-skills": ["./extensions/tools-skills/src"],
+      "@ethosagent/tools-tts": ["./extensions/tools-tts/src"],
       "@ethosagent/example-mission-control": ["./examples/mission-control/src"]
     }
   },

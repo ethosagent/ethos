@@ -1,0 +1,121 @@
+import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+export type MessagingSendFn = (
+  platform: string,
+  target: string,
+  body: string,
+  botKey?: string,
+) => Promise<{
+  ok: boolean;
+  error?: string;
+}>;
+
+export interface MessagingToolsOptions {
+  send: MessagingSendFn;
+  getAllowedTargets?: (personalityId?: string) => string[] | null;
+}
+
+// ---------------------------------------------------------------------------
+// Tool factory
+// ---------------------------------------------------------------------------
+
+export function createMessagingTools(opts: MessagingToolsOptions): Tool[] {
+  return [makeSendMessage(opts)];
+}
+
+// ---------------------------------------------------------------------------
+// send_message
+// ---------------------------------------------------------------------------
+
+function makeSendMessage(opts: MessagingToolsOptions): Tool {
+  return {
+    name: 'send_message',
+    description:
+      'Send a message to any configured channel (Slack, Telegram, Discord, Email). ' +
+      'The personality must have messaging.send capability and the target must be in the allowed targets list.',
+    toolset: 'messaging',
+    maxResultChars: 1024,
+    capabilities: {},
+    schema: {
+      type: 'object',
+      properties: {
+        platform: {
+          type: 'string',
+          enum: ['slack', 'telegram', 'discord', 'email'],
+          description: 'Target platform',
+        },
+        target: {
+          type: 'string',
+          description: 'Target identifier (channel ID, chat ID, user ID, or email address)',
+        },
+        body: {
+          type: 'string',
+          description: 'Message content (supports markdown on platforms that allow it)',
+        },
+      },
+      required: ['platform', 'target', 'body'],
+    },
+    async execute(args, ctx): Promise<ToolResult> {
+      return await executeSendMessage(args as SendMessageArgs, ctx, opts);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
+
+interface SendMessageArgs {
+  platform: string;
+  target: string;
+  body: string;
+}
+
+// ---------------------------------------------------------------------------
+// execute()
+// ---------------------------------------------------------------------------
+
+async function executeSendMessage(
+  args: SendMessageArgs,
+  ctx: ToolContext,
+  opts: MessagingToolsOptions,
+): Promise<ToolResult> {
+  const { platform, target, body } = args;
+
+  if (!platform || !target || !body) {
+    return { ok: false, error: 'platform, target, and body are required', code: 'input_invalid' };
+  }
+
+  // Check allowed targets.
+  if (opts.getAllowedTargets) {
+    const allowed = opts.getAllowedTargets(ctx.personalityId);
+    if (allowed !== null) {
+      const targetKey = `${platform}:${target}`;
+      if (!allowed.includes(targetKey) && !allowed.includes('*')) {
+        return {
+          ok: false,
+          error: `Target "${targetKey}" is not in the personality's allowed messaging targets. Allowed: ${allowed.join(', ') || 'none'}`,
+          code: 'input_invalid',
+        };
+      }
+    }
+  }
+
+  try {
+    const result = await opts.send(platform, target, body);
+    if (!result.ok) {
+      return { ok: false, error: result.error ?? 'Send failed', code: 'execution_failed' };
+    }
+    return { ok: true, value: `Message sent to ${platform}:${target}` };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      code: 'execution_failed',
+    };
+  }
+}
