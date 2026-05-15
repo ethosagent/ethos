@@ -1,4 +1,12 @@
+// TODO(capability-migration): spawnDetached requires detached: true + fd-based
+// stdio redirection for log files, which ctx.scopedProcess.spawn does not support
+// (it collects output to memory strings). Keep node:child_process here until
+// ScopedProcess gains a detached/fd mode.
 import { spawn } from 'node:child_process';
+// TODO(capability-migration): Log file rotation uses sync fs ops (open/close/rename/
+// stat/unlink/mkdir) on the dataDir. These could migrate to ctx.scopedFs once the
+// tool threads ctx through to spawnDetached, but the function is also called from
+// non-tool code paths (operations.ts rotate-on-touch). Deferred.
 import { closeSync, mkdirSync, openSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { updateEntryIf } from './registry';

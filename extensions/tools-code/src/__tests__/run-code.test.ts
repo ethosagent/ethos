@@ -1,3 +1,4 @@
+import { ScopedProcessImpl } from '@ethosagent/core';
 import type { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { describe, expect, it, vi } from 'vitest';
 import { createCodeTools } from '../index';
@@ -32,6 +33,7 @@ const ctx = {
   abortSignal: new AbortController().signal,
   emit: () => {},
   resultBudgetChars: 80_000,
+  scopedProcess: new ScopedProcessImpl(new Set(['*'])),
 };
 
 // ---------------------------------------------------------------------------

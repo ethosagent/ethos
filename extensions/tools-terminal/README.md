@@ -2,6 +2,12 @@
 
 Single shell-execution tool plus a `before_tool_call` hook that blocks obviously destructive commands.
 
+## Capabilities
+
+| Tool | network | secrets | storage | fs_reach | process |
+|------|---------|---------|---------|----------|---------|
+| `terminal` | — | — | — | — | `{ allowedBinaries: ['*'] }` |
+
 ## Why this exists
 
 An agent needs a way to run arbitrary shell commands (build, test, git, file ops) but should refuse to run commands that can wipe a disk or a database without human review. This package gives you both: the `terminal` tool and a guard hook that registers against `before_tool_call` to short-circuit dangerous patterns.

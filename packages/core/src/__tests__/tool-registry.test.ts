@@ -18,6 +18,7 @@ const echoTool: Tool = {
   name: 'echo',
   description: 'Echoes input',
   schema: { type: 'object', properties: { text: { type: 'string' } } },
+  capabilities: {},
   execute: async (args) => ({ ok: true, value: String((args as { text: string }).text) }),
 };
 
@@ -25,6 +26,7 @@ const failTool: Tool = {
   name: 'fail',
   description: 'Always fails',
   schema: { type: 'object' },
+  capabilities: {},
   execute: async () => ({ ok: false, error: 'intentional failure', code: 'execution_failed' }),
 };
 
@@ -190,6 +192,7 @@ describe('DefaultToolRegistry', () => {
         name: 'builtin',
         description: 'b',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: '' }),
       });
       reg.register(
@@ -197,6 +200,7 @@ describe('DefaultToolRegistry', () => {
           name: 'plugin_tool',
           description: 'p',
           schema: {},
+          capabilities: {},
           execute: async () => ({ ok: true, value: '' }),
         },
         { pluginId: 'p1' },
@@ -212,6 +216,7 @@ describe('DefaultToolRegistry', () => {
         name: 'builtin',
         description: 'b',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: '' }),
       });
       reg.register(
@@ -219,6 +224,7 @@ describe('DefaultToolRegistry', () => {
           name: 'p1_tool',
           description: 'p',
           schema: {},
+          capabilities: {},
           execute: async () => ({ ok: true, value: '' }),
         },
         { pluginId: 'p1' },
@@ -228,6 +234,7 @@ describe('DefaultToolRegistry', () => {
           name: 'p2_tool',
           description: 'q',
           schema: {},
+          capabilities: {},
           execute: async () => ({ ok: true, value: '' }),
         },
         { pluginId: 'p2' },
@@ -246,12 +253,14 @@ describe('DefaultToolRegistry', () => {
         name: 'builtin',
         description: 'b',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: '' }),
       });
       reg.register({
         name: 'mcp__weather__get',
         description: 'm',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: '' }),
       });
 
@@ -265,12 +274,14 @@ describe('DefaultToolRegistry', () => {
         name: 'mcp__weather__get',
         description: 'w',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: '' }),
       });
       reg.register({
         name: 'mcp__calendar__list',
         description: 'c',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: '' }),
       });
 
@@ -289,18 +300,21 @@ describe('DefaultToolRegistry', () => {
         name: 'terminal',
         description: 't',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: '' }),
       });
       reg.register({
         name: 'read_file',
         description: 'r',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: '' }),
       });
       reg.register({
         name: 'mcp__filesystem__list_directory',
         description: 'm',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: '' }),
       });
 
@@ -315,6 +329,7 @@ describe('DefaultToolRegistry', () => {
         name: 'builtin',
         description: 'b',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: 'ok' }),
       });
       reg.register(
@@ -322,6 +337,7 @@ describe('DefaultToolRegistry', () => {
           name: 'p1_tool',
           description: 'p',
           schema: {},
+          capabilities: {},
           execute: async () => ({ ok: true, value: 'plugin ran' }),
         },
         { pluginId: 'p1' },
@@ -355,6 +371,7 @@ describe('DefaultToolRegistry', () => {
         name,
         description: `tool ${name}`,
         schema: { type: 'object' },
+        capabilities: {},
         execute: exec,
       });
     }
@@ -406,6 +423,7 @@ describe('Phase 4.3 — cross-plan: MCP server gate catches skill+MCP mismatch',
       name: 'read_file',
       description: 'Read a file',
       schema: {},
+      capabilities: {},
       execute: async () => ({ ok: true, value: '' }),
     });
 
@@ -414,6 +432,7 @@ describe('Phase 4.3 — cross-plan: MCP server gate catches skill+MCP mismatch',
       name: 'mcp__linear__get_issue',
       description: 'Get Linear issue',
       schema: {},
+      capabilities: {},
       execute: async () => ({ ok: true, value: '' }),
     });
 
@@ -436,6 +455,7 @@ describe('Phase 4.3 — cross-plan: MCP server gate catches skill+MCP mismatch',
       name: 'mcp__linear__get_issue',
       description: 'Get Linear issue',
       schema: {},
+      capabilities: {},
       execute: executed,
     });
 
@@ -461,12 +481,14 @@ describe('Phase 4.3 — cross-plan: MCP server gate catches skill+MCP mismatch',
         name: 'read_file',
         description: '',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: '' }),
       });
       reg.register({
         name: 'run_shell',
         description: '',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: '' }),
       });
 
@@ -481,12 +503,14 @@ describe('Phase 4.3 — cross-plan: MCP server gate catches skill+MCP mismatch',
         name: 'read_file',
         description: '',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: '' }),
       });
       reg.register({
         name: 'run_shell',
         description: '',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: '' }),
       });
 
@@ -501,6 +525,7 @@ describe('Phase 4.3 — cross-plan: MCP server gate catches skill+MCP mismatch',
         name: 'mcp__linear__get_issue',
         description: '',
         schema: {},
+        capabilities: {},
         execute: async () => ({ ok: true, value: '' }),
       });
 
@@ -522,6 +547,7 @@ describe('Phase 4.3 — cross-plan: MCP server gate catches skill+MCP mismatch',
           name: 'my_plugin_action',
           description: '',
           schema: {},
+          capabilities: {},
           execute: async () => ({ ok: true, value: '' }),
         },
         { pluginId: 'my-plugin' },

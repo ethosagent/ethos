@@ -8,15 +8,15 @@
 // Toolset gating is enforced by ToolRegistry, not by the tool — not tested
 // here per the plan.
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { FsStorage, ScopedStorage } from '@ethosagent/storage-fs';
+import { join, normalize, resolve } from 'node:path';
 import type {
   CompletionChunk,
   CompletionOptions,
   LLMProvider,
   Message,
+  ScopedFs,
   Tool,
   ToolContext,
   ToolDefinitionLite,
@@ -115,12 +115,45 @@ function happyImageChunks(text: string): CompletionChunk[] {
 }
 
 // ---------------------------------------------------------------------------
-// Tool context helper — ScopedStorage rooted at a per-test tmp dir.
+// Tool context helper — ScopedFs rooted at a per-test tmp dir.
 // ---------------------------------------------------------------------------
 
+function makeScopedFs(allowedPrefixes: string[]): ScopedFs {
+  const prefixes = allowedPrefixes.map((p) => (p.endsWith('/') ? p : `${p}/`));
+  return {
+    async read(path: string): Promise<string> {
+      const canonical = normalize(resolve(path));
+      const allowed = prefixes.some(
+        (pfx) => canonical === pfx.slice(0, -1) || canonical.startsWith(pfx),
+      );
+      if (!allowed) throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
+      try {
+        return readFileSync(path, 'latin1');
+      } catch {
+        throw new Error(`File not found: ${path}`);
+      }
+    },
+    async write(): Promise<void> {},
+    async exists(path: string): Promise<boolean> {
+      const canonical = normalize(resolve(path));
+      const allowed = prefixes.some(
+        (pfx) => canonical === pfx.slice(0, -1) || canonical.startsWith(pfx),
+      );
+      if (!allowed) throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
+      try {
+        readFileSync(path);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async list(): Promise<string[]> {
+      return [];
+    },
+  };
+}
+
 function makeCtx(opts: { workingDir: string; allowed: string[] }): ToolContext {
-  const fs = new FsStorage();
-  const storage = new ScopedStorage(fs, { read: opts.allowed, write: opts.allowed });
   return {
     sessionId: 'sess',
     sessionKey: 'cli:test',
@@ -131,7 +164,7 @@ function makeCtx(opts: { workingDir: string; allowed: string[] }): ToolContext {
     abortSignal: new AbortController().signal,
     emit: () => undefined,
     resultBudgetChars: 80_000,
-    storage,
+    scopedFs: makeScopedFs(opts.allowed),
   };
 }
 

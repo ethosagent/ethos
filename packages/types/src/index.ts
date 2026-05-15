@@ -22,3 +22,4 @@ export * from './storage';
 export * from './team';
 export * from './todo';
 export * from './tool';
+export * from './tool-capabilities';

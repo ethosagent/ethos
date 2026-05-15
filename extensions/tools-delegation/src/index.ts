@@ -68,6 +68,9 @@ export function createDelegateTaskTool(loop: AgentLoop): Tool {
       `Maximum spawn depth: ${MAX_SPAWN_DEPTH}.`,
     toolset: 'delegation',
     maxResultChars: 20_000,
+    capabilities: {
+      network: { allowedHosts: ['*'] }, // agent-supplied URL — bounded by personality.network.allow
+    },
     schema: {
       type: 'object',
       properties: {
@@ -142,6 +145,9 @@ export function createMixtureOfAgentsTool(loop: AgentLoop): Tool {
       `Maximum ${MAX_SPAWN_DEPTH} total spawn depth. Maximum 5 agents per call.`,
     toolset: 'delegation',
     maxResultChars: 40_000,
+    capabilities: {
+      network: { allowedHosts: ['*'] }, // agent-supplied URL — bounded by personality.network.allow
+    },
     schema: {
       type: 'object',
       properties: {
@@ -270,17 +276,20 @@ export function createMixtureOfAgentsTool(loop: AgentLoop): Tool {
 // Mesh routing — HTTP JSON-RPC calls to registered peer agents
 // ---------------------------------------------------------------------------
 
+type FetchImpl = (url: string | URL, init?: RequestInit) => Promise<Response>;
+
 async function callMeshAgent(
   host: string,
   port: number,
   prompt: string,
-  personalityId?: string,
-  signal?: AbortSignal,
+  personalityId: string | undefined,
+  signal: AbortSignal | undefined,
+  fetchImpl: FetchImpl,
 ): Promise<string> {
   const base = `http://${host}:${port}/rpc`;
 
   // Create a fresh session on the remote agent
-  const sessionRes = await fetch(base, {
+  const sessionRes = await fetchImpl(base, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -295,7 +304,7 @@ async function callMeshAgent(
   const sessionKey = sessionData.result?.sessionKey ?? `acp:${Date.now()}`;
 
   // Send the prompt and wait for the full result
-  const promptRes = await fetch(base, {
+  const promptRes = await fetchImpl(base, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -352,6 +361,7 @@ async function routeWithFailover(params: {
   timeoutMs: number;
   abortSignal?: AbortSignal;
   personalityId?: string;
+  fetchImpl: FetchImpl;
 }): Promise<RoutedCall> {
   const candidates = selectCandidates(params.entries, params.capability);
   if (candidates.length === 0)
@@ -371,6 +381,7 @@ async function routeWithFailover(params: {
         params.prompt,
         params.personalityId,
         signal,
+        params.fetchImpl,
       );
       return { ok: true, agent, text, attempts: i + 1, errors };
     } catch (err) {
@@ -389,6 +400,9 @@ export function createListTeamTool(registryPath = defaultRegistryPath()): Tool {
       'Use before dispatch planning to decide which specialist should handle each task.',
     toolset: 'delegation',
     maxResultChars: 20_000,
+    capabilities: {
+      network: { allowedHosts: ['*'] }, // agent-supplied URL — bounded by personality.network.allow
+    },
     schema: {
       type: 'object',
       properties: {
@@ -429,6 +443,9 @@ export function createRouteToAgentTool(registryPath = defaultRegistryPath()): To
       'Does not fall back to local execution if no matching agent is found.',
     toolset: 'delegation',
     maxResultChars: 20_000,
+    capabilities: {
+      network: { allowedHosts: ['*'] }, // agent-supplied URL — bounded by personality.network.allow
+    },
     schema: {
       type: 'object',
       properties: {
@@ -461,6 +478,14 @@ export function createRouteToAgentTool(registryPath = defaultRegistryPath()): To
       if (!capability) return { ok: false, error: 'capability is required', code: 'input_invalid' };
       if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
 
+      const fetchFn = ctx.scopedFetch?.fetch.bind(ctx.scopedFetch);
+      if (!fetchFn)
+        return {
+          ok: false,
+          error: 'Network capability not configured',
+          code: 'not_available' as const,
+        };
+
       const mesh = new AgentMesh(registryPath);
       const peers = await mesh.list();
       const timeoutMs = Math.max(1, timeout_s ?? 60) * 1000;
@@ -473,6 +498,7 @@ export function createRouteToAgentTool(registryPath = defaultRegistryPath()): To
         retries: retryCount,
         timeoutMs,
         abortSignal: ctx.abortSignal,
+        fetchImpl: fetchFn,
       });
 
       if (!routed.ok || !routed.agent || routed.text === undefined) {
@@ -514,6 +540,9 @@ export function createDispatchTeamTool(registryPath = defaultRegistryPath()): To
       'Each task picks the best available specialist and retries alternate peers on failure.',
     toolset: 'delegation',
     maxResultChars: 60_000,
+    capabilities: {
+      network: { allowedHosts: ['*'] }, // agent-supplied URL — bounded by personality.network.allow
+    },
     schema: {
       type: 'object',
       properties: {
@@ -553,6 +582,14 @@ export function createDispatchTeamTool(registryPath = defaultRegistryPath()): To
         };
       }
 
+      const fetchFn = ctx.scopedFetch?.fetch.bind(ctx.scopedFetch);
+      if (!fetchFn)
+        return {
+          ok: false,
+          error: 'Network capability not configured',
+          code: 'not_available' as const,
+        };
+
       const mesh = new AgentMesh(registryPath);
       const peers = await mesh.list();
 
@@ -567,6 +604,7 @@ export function createDispatchTeamTool(registryPath = defaultRegistryPath()): To
             retries: retryCount,
             timeoutMs,
             abortSignal: ctx.abortSignal,
+            fetchImpl: fetchFn,
           });
 
           if (!routed.ok || !routed.agent || routed.text === undefined) {
@@ -613,6 +651,9 @@ export function createBroadcastToAgentsTool(registryPath = defaultRegistryPath()
       'Useful for getting multiple perspectives or running parallel reviews.',
     toolset: 'delegation',
     maxResultChars: 60_000,
+    capabilities: {
+      network: { allowedHosts: ['*'] }, // agent-supplied URL — bounded by personality.network.allow
+    },
     schema: {
       type: 'object',
       properties: {
@@ -626,6 +667,14 @@ export function createBroadcastToAgentsTool(registryPath = defaultRegistryPath()
     async execute(args, ctx): Promise<ToolResult> {
       const { prompt } = args as { prompt: string };
       if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
+
+      const fetchFn = ctx.scopedFetch?.fetch.bind(ctx.scopedFetch);
+      if (!fetchFn)
+        return {
+          ok: false,
+          error: 'Network capability not configured',
+          code: 'not_available' as const,
+        };
 
       const mesh = new AgentMesh(registryPath);
       const agents = await mesh.list();
@@ -641,6 +690,7 @@ export function createBroadcastToAgentsTool(registryPath = defaultRegistryPath()
             prompt,
             undefined,
             ctx.abortSignal,
+            fetchFn,
           );
           return { agentId: agent.agentId, text };
         }),

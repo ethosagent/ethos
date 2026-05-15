@@ -10,6 +10,10 @@ export const browserScreenshotTool: Tool = {
   description: 'Take a screenshot of the current browser page. Returns base64-encoded PNG.',
   toolset: 'browser',
   maxResultChars: 500_000,
+  capabilities: {
+    network: { allowedHosts: ['*'] }, // browser navigates agent-supplied URLs
+    process: { allowedBinaries: ['docker'] },
+  },
   isAvailable: isPlaywrightInstalled,
   schema: { type: 'object', properties: {}, required: [] },
   async execute(_, ctx): Promise<ToolResult> {

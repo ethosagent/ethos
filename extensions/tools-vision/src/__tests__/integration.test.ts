@@ -24,12 +24,12 @@
 //     The wiring path itself is a 30-line lambda over the same factory
 //     signature this test stubs.
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { CapabilityBackends } from '@ethosagent/core';
 import { DefaultToolRegistry } from '@ethosagent/core';
-import { FsStorage, ScopedStorage } from '@ethosagent/storage-fs';
 import type {
   CompletionChunk,
   CompletionOptions,
@@ -41,6 +41,53 @@ import type {
 } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createVisionTools } from '../index';
+
+// ---------------------------------------------------------------------------
+// Capability backends — vision_analyze declares fs_reach, so
+// resolveCapabilities creates a ScopedFsImpl from this storage.
+// The storage reads files as latin1 so binary data (images, PDFs)
+// round-trips without loss through the string-returning ScopedFs interface.
+// ---------------------------------------------------------------------------
+
+import { existsSync, statSync } from 'node:fs';
+import type { Storage } from '@ethosagent/types';
+
+const latin1Storage: Storage = {
+  async read(path: string) {
+    try {
+      return readFileSync(path, 'latin1');
+    } catch {
+      return null;
+    }
+  },
+  async write() {},
+  async exists(path: string) {
+    return existsSync(path);
+  },
+  async list() {
+    return [];
+  },
+  async mtime(path: string) {
+    try {
+      return statSync(path).mtimeMs;
+    } catch {
+      return null;
+    }
+  },
+  async listEntries() {
+    return [];
+  },
+  async append() {},
+  async writeAtomic() {},
+  async mkdir() {},
+  async remove() {},
+  async rename() {},
+};
+
+const testBackends: CapabilityBackends = {
+  storage: latin1Storage,
+  personalityFsReach: { read: ['/'], write: ['/'] },
+};
 
 // Minimal valid fixtures — same byte sequences the unit tests use.
 const TINY_PNG = Buffer.from(
@@ -98,12 +145,13 @@ function usageChunk(inputTokens: number, outputTokens: number, cost: number): Co
 }
 
 // ---------------------------------------------------------------------------
-// Tool context helper — ScopedStorage rooted at a per-test tmp dir.
+// Tool context helper — ScopedFs rooted at a per-test tmp dir.
 // ---------------------------------------------------------------------------
 
 function makeCtx(workingDir: string): ToolContext {
-  const fs = new FsStorage();
-  const storage = new ScopedStorage(fs, { read: [workingDir], write: [workingDir] });
+  // scopedFs is not set here — resolveCapabilities() in DefaultToolRegistry
+  // creates a ScopedFsImpl from testBackends.storage + personalityFsReach
+  // when the tool declares capabilities.fs_reach.
   return {
     sessionId: 'sess-int',
     sessionKey: 'cli:int-test',
@@ -114,7 +162,6 @@ function makeCtx(workingDir: string): ToolContext {
     abortSignal: new AbortController().signal,
     emit: () => undefined,
     resultBudgetChars: 80_000,
-    storage,
   };
 }
 
@@ -150,7 +197,7 @@ function buildRegistryWithVision(opts: {
   auxProvider?: LLMProvider;
   auxModel?: string;
 }): { registry: DefaultToolRegistry; tool: Tool } {
-  const registry = new DefaultToolRegistry();
+  const registry = new DefaultToolRegistry(testBackends);
   const tools = createVisionTools({
     resolveProvider: (model) => {
       if (model === opts.defaultModel) return opts.primary;
@@ -359,7 +406,7 @@ describe('vision_analyze — P3 wiring integration', () => {
         return 0;
       },
     };
-    const registry = new DefaultToolRegistry();
+    const registry = new DefaultToolRegistry(testBackends);
     const tools = createVisionTools({
       resolveProvider: () => routingProvider,
       defaultModel: 'claude-opus-4-7',

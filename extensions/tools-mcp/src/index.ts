@@ -217,6 +217,10 @@ function adaptMcpTool(mcpTool: McpToolDef, serverName: string, client: McpClient
     schema: mcpTool.inputSchema,
     toolset: 'mcp',
     maxResultChars: 50_000,
+    capabilities: {
+      network: { allowedHosts: ['*'] }, // MCP server may access arbitrary hosts
+      process: { allowedBinaries: ['*'] },
+    },
     isAvailable: () => client.isConnected(),
     execute(args) {
       return client.callTool(mcpTool.name, args);

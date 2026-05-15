@@ -26,6 +26,7 @@ export interface ToolDefinition<TArgs = unknown> {
   schema: Record<string, unknown>;
   toolset?: string;
   maxResultChars?: number;
+  capabilities?: import('@ethosagent/types').ToolCapabilities;
   isAvailable?: () => boolean;
   execute: (args: TArgs, ctx: ToolContext) => Promise<ToolResult>;
 }
@@ -45,5 +46,5 @@ export interface ToolDefinition<TArgs = unknown> {
  * });
  */
 export function defineTool<TArgs = unknown>(def: ToolDefinition<TArgs>): Tool<TArgs> {
-  return def as Tool<TArgs>;
+  return { capabilities: {}, ...def } as Tool<TArgs>;
 }

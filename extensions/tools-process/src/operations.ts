@@ -1,3 +1,7 @@
+// TODO(capability-migration): readLastLines uses sync fs reads on the process
+// log directory. These could migrate to ctx.scopedFs, but this module is shared
+// between tools (which have ctx) and the CLI `ethos process` command (which does
+// not). Threading ctx through the shared API is deferred.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {

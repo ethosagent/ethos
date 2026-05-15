@@ -61,6 +61,7 @@ export function mockTool(name: string, result: ToolResult | string): Tool {
     name,
     description: `Mock tool: ${name}`,
     schema: { type: 'object', properties: {} },
+    capabilities: {},
     async execute(_args, _ctx): Promise<ToolResult> {
       return toolResult;
     },

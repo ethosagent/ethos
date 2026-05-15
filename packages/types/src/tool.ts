@@ -93,6 +93,11 @@ export interface ToolContext {
     deny?: string[];
     allow_private_urls?: boolean;
   };
+  kvStore?: import('./tool-capabilities').KeyValueStore;
+  secretsResolver?: import('./tool-capabilities').ScopedSecretsResolver;
+  scopedFetch?: import('./tool-capabilities').ScopedFetch;
+  scopedFs?: import('./tool-capabilities').ScopedFs;
+  scopedProcess?: import('./tool-capabilities').ScopedProcess;
 }
 
 export interface Tool<TArgs = unknown> {
@@ -101,6 +106,7 @@ export interface Tool<TArgs = unknown> {
   schema: Record<string, unknown>;
   toolset?: string;
   maxResultChars?: number;
+  capabilities: import('./tool-capabilities').ToolCapabilities;
   execute: (args: TArgs, ctx: ToolContext) => Promise<ToolResult>;
   isAvailable?: () => boolean;
   /**

@@ -1,9 +1,5 @@
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
 import type { DockerSandbox } from '@ethosagent/sandbox-docker';
 import type { Tool, ToolResult } from '@ethosagent/types';
-
-const execAsync = promisify(exec);
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -32,6 +28,9 @@ function createRunCodeTool(sandbox: DockerSandbox): Tool {
     toolset: 'code',
     maxResultChars: 10_000,
     outputIsUntrusted: true,
+    capabilities: {
+      process: { allowedBinaries: ['docker'] },
+    },
     isAvailable() {
       return sandbox.isAvailable();
     },
@@ -105,6 +104,9 @@ const runTestsTool: Tool = {
   toolset: 'code',
   maxResultChars: 20_000,
   outputIsUntrusted: true,
+  capabilities: {
+    process: { allowedBinaries: ['docker'] },
+  },
   schema: {
     type: 'object',
     properties: {
@@ -121,26 +123,33 @@ const runTestsTool: Tool = {
   async execute(args, ctx): Promise<ToolResult> {
     const { command = 'pnpm test', cwd } = args as { command?: string; cwd?: string };
 
+    if (!ctx.scopedProcess) {
+      return {
+        ok: false,
+        error: 'Process capability not configured',
+        code: 'not_available' as const,
+      };
+    }
+
     const workDir = cwd ?? ctx.workingDir;
 
     try {
-      const { stdout, stderr } = await execAsync(command, {
+      const { exitCode, stdout, stderr } = await ctx.scopedProcess.spawn('bash', ['-c', command], {
         cwd: workDir,
         timeout: 120_000,
-        maxBuffer: 10 * 1024 * 1024,
       });
       const out = [stdout, stderr].filter(Boolean).join('\n').trim();
-      return { ok: true, value: out || '(tests passed with no output)' };
-    } catch (err) {
-      if (err instanceof Error && 'stdout' in err) {
-        const e = err as Error & { stdout: string; stderr: string; code?: number };
-        const out = [e.stdout, e.stderr].filter(Boolean).join('\n').trim();
+
+      if (exitCode !== 0) {
         return {
           ok: false,
-          error: `Tests failed (code ${e.code ?? '?'}):\n${out || err.message}`,
+          error: `Tests failed (code ${exitCode}):\n${out || '(no output)'}`,
           code: 'execution_failed',
         };
       }
+
+      return { ok: true, value: out || '(tests passed with no output)' };
+    } catch (err) {
       return {
         ok: false,
         error: err instanceof Error ? err.message : String(err),
@@ -161,6 +170,9 @@ const lintTool: Tool = {
   toolset: 'code',
   maxResultChars: 10_000,
   outputIsUntrusted: true,
+  capabilities: {
+    process: { allowedBinaries: ['docker'] },
+  },
   schema: {
     type: 'object',
     properties: {
@@ -177,26 +189,33 @@ const lintTool: Tool = {
   async execute(args, ctx): Promise<ToolResult> {
     const { command = 'pnpm lint', cwd } = args as { command?: string; cwd?: string };
 
+    if (!ctx.scopedProcess) {
+      return {
+        ok: false,
+        error: 'Process capability not configured',
+        code: 'not_available' as const,
+      };
+    }
+
     const workDir = cwd ?? ctx.workingDir;
 
     try {
-      const { stdout, stderr } = await execAsync(command, {
+      const { exitCode, stdout, stderr } = await ctx.scopedProcess.spawn('bash', ['-c', command], {
         cwd: workDir,
         timeout: 60_000,
-        maxBuffer: 5 * 1024 * 1024,
       });
       const out = [stdout, stderr].filter(Boolean).join('\n').trim();
-      return { ok: true, value: out || '(no lint issues)' };
-    } catch (err) {
-      if (err instanceof Error && 'stdout' in err) {
-        const e = err as Error & { stdout: string; stderr: string; code?: number };
-        const out = [e.stdout, e.stderr].filter(Boolean).join('\n').trim();
+
+      if (exitCode !== 0) {
         return {
           ok: false,
-          error: `Lint failed:\n${out || err.message}`,
+          error: `Lint failed:\n${out || '(no output)'}`,
           code: 'execution_failed',
         };
       }
+
+      return { ok: true, value: out || '(no lint issues)' };
+    } catch (err) {
       return {
         ok: false,
         error: err instanceof Error ? err.message : String(err),

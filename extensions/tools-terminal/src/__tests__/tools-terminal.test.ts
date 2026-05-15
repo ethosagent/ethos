@@ -1,3 +1,4 @@
+import { ScopedProcessImpl } from '@ethosagent/core';
 import { describe, expect, it } from 'vitest';
 import { terminalTool } from '../index';
 
@@ -11,6 +12,7 @@ const ctx = {
   abortSignal: new AbortController().signal,
   emit: () => {},
   resultBudgetChars: 80_000,
+  scopedProcess: new ScopedProcessImpl(new Set(['*'])),
 };
 
 describe('terminal', () => {
@@ -42,5 +44,12 @@ describe('terminal', () => {
     const result = await terminalTool.execute({ command: 'pwd', cwd: '/tmp' }, ctx);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toContain('/tmp');
+  });
+
+  it('returns not_available when scopedProcess is absent', async () => {
+    const ctxNoProcess = { ...ctx, scopedProcess: undefined };
+    const result = await terminalTool.execute({ command: 'echo hi' }, ctxNoProcess);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('not_available');
   });
 });

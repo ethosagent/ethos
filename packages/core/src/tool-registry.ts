@@ -1,11 +1,20 @@
 import type {
   PersonalityConfig,
   Tool,
+  ToolCapabilities,
   ToolContext,
   ToolFilterOpts,
   ToolRegistry,
   ToolResult,
 } from '@ethosagent/types';
+import type { CapabilityBackends } from './capability-resolver';
+import { resolveCapabilities } from './capability-resolver';
+import type { CapabilityValidationError } from './capability-validator';
+import { validateRegistration } from './capability-validator';
+
+function needsBackends(caps: ToolCapabilities): boolean {
+  return !!(caps.network || caps.secrets || caps.storage || caps.fs_reach || caps.process);
+}
 
 interface ToolEntry {
   tool: Tool;
@@ -40,9 +49,22 @@ function passesFilter(entry: ToolEntry, filterOpts: ToolFilterOpts | undefined):
 
 export class DefaultToolRegistry implements ToolRegistry {
   private readonly tools = new Map<string, ToolEntry>();
+  private readonly backends?: CapabilityBackends;
+
+  constructor(backends?: CapabilityBackends) {
+    this.backends = backends;
+  }
 
   register(tool: Tool, opts?: { pluginId?: string }): void {
     this.tools.set(tool.name, { tool, pluginId: opts?.pluginId });
+  }
+
+  validateToolsForPersonality(personality: PersonalityConfig): CapabilityValidationError[] {
+    const errors: CapabilityValidationError[] = [];
+    for (const entry of this.tools.values()) {
+      errors.push(...validateRegistration(entry.tool, personality));
+    }
+    return errors;
   }
 
   registerAll(tools: Tool[]): void {
@@ -207,10 +229,33 @@ export class DefaultToolRegistry implements ToolRegistry {
           };
         }
 
+        // Fail closed: tools that declare real capabilities require wired backends.
+        // capabilities: {} (empty) is opt-in to the framework path without needing backends.
+        if (needsBackends(entry.tool.capabilities) && !this.backends) {
+          return {
+            toolCallId: call.toolCallId,
+            name: call.name,
+            result: {
+              ok: false,
+              error: `Tool ${call.name} declares capabilities but no capability backends are configured`,
+              code: 'not_available',
+            } as ToolResult,
+          };
+        }
+
         const budget = Math.min(perCallBudget, entry.tool.maxResultChars ?? perCallBudget);
         const toolCtx: ToolContext = { ...ctx, resultBudgetChars: budget };
 
         try {
+          if (needsBackends(entry.tool.capabilities) && this.backends) {
+            const resolved = resolveCapabilities(
+              entry.tool.name,
+              entry.tool.capabilities,
+              { sessionId: ctx.sessionId, personalityId: ctx.personalityId },
+              this.backends,
+            );
+            Object.assign(toolCtx, resolved);
+          }
           const result = await entry.tool.execute(call.args, toolCtx);
           // Post-trim result to budget
           if (result.ok && result.value.length > budget) {

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // Mock the openai SDK before importing the provider
@@ -17,15 +17,10 @@ vi.mock('openai', () => {
 import { OpenAIDalleProvider } from '../providers/openai-dalle';
 
 describe('OpenAIDalleProvider', () => {
-  const provider = new OpenAIDalleProvider();
+  const provider = new OpenAIDalleProvider({ apiKey: 'test-key' });
 
   beforeEach(() => {
-    process.env.OPENAI_API_KEY = 'test-key';
     mockGenerate.mockReset();
-  });
-
-  afterEach(() => {
-    delete process.env.OPENAI_API_KEY;
   });
 
   // -------------------------------------------------------------------------

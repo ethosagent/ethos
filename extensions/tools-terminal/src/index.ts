@@ -1,12 +1,7 @@
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
 import type { Tool, ToolResult } from '@ethosagent/types';
-
-const execAsync = promisify(exec);
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 300_000; // 5 minutes
-const MAX_OUTPUT_BYTES = 5 * 1024 * 1024; // 5MB buffer
 
 // ---------------------------------------------------------------------------
 // terminal
@@ -19,6 +14,9 @@ export const terminalTool: Tool = {
   toolset: 'terminal',
   maxResultChars: 20_000,
   outputIsUntrusted: true,
+  capabilities: {
+    process: { allowedBinaries: ['*'] },
+  },
   schema: {
     type: 'object',
     properties: {
@@ -46,33 +44,38 @@ export const terminalTool: Tool = {
 
     if (!command) return { ok: false, error: 'command is required', code: 'input_invalid' };
 
+    if (!ctx.scopedProcess) {
+      return {
+        ok: false,
+        error: 'Process capability not configured',
+        code: 'not_available' as const,
+      };
+    }
+
     const workDir = cwd ?? ctx.workingDir;
     const timeout = Math.min(timeout_ms ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
 
     try {
-      const { stdout, stderr } = await execAsync(command, {
+      const { exitCode, stdout, stderr } = await ctx.scopedProcess.spawn('bash', ['-c', command], {
         cwd: workDir,
         timeout,
-        maxBuffer: MAX_OUTPUT_BYTES,
-        shell: '/bin/bash',
       });
 
       const out = [stdout, stderr].filter(Boolean).join('\n').trim();
+
+      if (exitCode !== 0) {
+        return {
+          ok: false,
+          error: `Command exited with error (code ${exitCode}):\n${out || '(no output)'}`,
+          code: 'execution_failed',
+        };
+      }
+
       return {
         ok: true,
         value: out || '(command completed with no output)',
       };
     } catch (err) {
-      // exec throws on non-zero exit code; the output is still useful
-      if (err instanceof Error && 'stdout' in err) {
-        const execErr = err as Error & { stdout: string; stderr: string; code?: number };
-        const out = [execErr.stdout, execErr.stderr].filter(Boolean).join('\n').trim();
-        return {
-          ok: false,
-          error: `Command exited with error (code ${execErr.code ?? '?'}):\n${out || err.message}`,
-          code: 'execution_failed',
-        };
-      }
       return {
         ok: false,
         error: err instanceof Error ? err.message : String(err),

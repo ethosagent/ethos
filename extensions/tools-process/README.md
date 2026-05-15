@@ -2,6 +2,16 @@
 
 Background process lifecycle tools — start long-running commands, tail their logs, and stop them, all tracked across agent turns.
 
+## Capabilities
+
+| Tool | network | secrets | storage | fs_reach | process |
+|------|---------|---------|---------|----------|---------|
+| `process_start` | — | — | `{ scope: 'session', kind: 'kv' }` | `{ read: 'from-personality', write: 'from-personality' }` | `{ allowedBinaries: ['*'] }` |
+| `process_list` | — | — | `{ scope: 'session', kind: 'kv' }` | `{ read: 'from-personality', write: 'from-personality' }` | `{ allowedBinaries: ['*'] }` |
+| `process_logs` | — | — | `{ scope: 'session', kind: 'kv' }` | `{ read: 'from-personality', write: 'from-personality' }` | `{ allowedBinaries: ['*'] }` |
+| `process_stop` | — | — | `{ scope: 'session', kind: 'kv' }` | `{ read: 'from-personality', write: 'from-personality' }` | `{ allowedBinaries: ['*'] }` |
+| `process_wait` | — | — | `{ scope: 'session', kind: 'kv' }` | `{ read: 'from-personality', write: 'from-personality' }` | `{ allowedBinaries: ['*'] }` |
+
 ## Why this exists
 
 `terminal` runs one-shot commands and waits. This package handles the other case: `pnpm dev`, `python server.py`, `docker compose up` — processes that run indefinitely and need to stay alive while the agent does other work.

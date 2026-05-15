@@ -18,6 +18,7 @@ export function createMemoryReadTool(memory: MemoryProvider): Tool {
       'Read the current memory files (MEMORY.md and USER.md). Use to recall past context, user preferences, or project notes before starting a new task.',
     toolset: 'memory',
     maxResultChars: 20_000,
+    capabilities: {},
     schema: {
       type: 'object',
       properties: {
@@ -69,6 +70,7 @@ export function createMemoryWriteTool(memory: MemoryProvider): Tool {
     description:
       'Update the memory files. Use "add" to append a new fact, "replace" to overwrite the entire file, "remove" to delete a specific line. The "memory" store holds project context; "user" holds information about the user.',
     toolset: 'memory',
+    capabilities: {},
     schema: {
       type: 'object',
       properties: {
@@ -139,6 +141,7 @@ export function createSessionSearchTool(session: SessionStore): Tool {
       'Search the session history using full-text search. Returns messages matching the query across all sessions.',
     toolset: 'memory',
     maxResultChars: 10_000,
+    capabilities: {},
     schema: {
       type: 'object',
       properties: {
@@ -187,6 +190,7 @@ export function createTeamMemoryReadTool(teamMemory: MemoryProvider): Tool {
       'Read a single team memory topic file. Use to load shared team knowledge before working on team tasks.',
     toolset: 'team_memory',
     maxResultChars: 20_000,
+    capabilities: {},
     schema: {
       type: 'object',
       properties: {
@@ -227,6 +231,7 @@ export function createTeamMemoryWriteTool(teamMemory: MemoryProvider): Tool {
     description:
       'Update a team memory topic file. "add" appends a fact, "replace" overwrites the topic, "remove" deletes matching lines, "delete" removes the topic entirely.',
     toolset: 'team_memory',
+    capabilities: {},
     schema: {
       type: 'object',
       properties: {
@@ -324,6 +329,7 @@ export function createTeamMemorySearchTool(teamMemory: MemoryProvider): Tool {
     description: 'Search team memory topics by keyword. Returns matching topic files.',
     toolset: 'team_memory',
     maxResultChars: 10_000,
+    capabilities: {},
     schema: {
       type: 'object',
       properties: {

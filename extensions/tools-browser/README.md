@@ -2,6 +2,17 @@
 
 Headless Chromium tools for navigating, clicking, and typing on web pages, exposing an accessibility-tree view with stable element references.
 
+## Capabilities
+
+| Tool | network | secrets | storage | fs_reach | process |
+|------|---------|---------|---------|----------|---------|
+| `browse_url` | `{ allowedHosts: ['*'] }` | — | — | — | `{ allowedBinaries: ['docker'] }` |
+| `browser_click` | `{ allowedHosts: ['*'] }` | — | — | — | `{ allowedBinaries: ['docker'] }` |
+| `browser_type` | `{ allowedHosts: ['*'] }` | — | — | — | `{ allowedBinaries: ['docker'] }` |
+| `browser_screenshot` | `{ allowedHosts: ['*'] }` | — | — | — | `{ allowedBinaries: ['docker'] }` |
+| `browser_vision_click` | `{ allowedHosts: ['*'] }` | — | — | — | `{ allowedBinaries: ['docker'] }` |
+| `browser_vision_type` | `{ allowedHosts: ['*'] }` | — | — | — | `{ allowedBinaries: ['docker'] }` |
+
 ## Why this exists
 
 `web_extract` reads static HTML; this package drives a real browser for SPAs and forms. The agent never sees pixels — instead it sees a YAML-formatted accessibility tree where every interactive element is tagged with an `@e{n}` reference that subsequent click/type calls use to locate the element by ARIA role + name.

@@ -8,6 +8,10 @@ mints a fresh `sessionKey`, the prior list becomes unreachable.
 For durable single-agent notes use `memory_write`; for multi-personality
 coordination, the upcoming **kanban** surface is the right tool.
 
+## Capabilities
+
+All tools in this package declare empty capabilities (`{}`). They use framework-provided domain stores and require no direct side-effect access.
+
 ## Tools (five, all in `toolset: 'todo'`)
 
 | Name | Signature |

@@ -2,6 +2,12 @@
 
 Text-to-image generation via DALL-E 3 or Replicate Flux, with automatic provider selection, cost tracking, and personality toolset gating.
 
+## Capabilities
+
+| Tool | network | secrets | storage | fs_reach | process |
+|------|---------|---------|---------|----------|---------|
+| `image_generate` | `{ allowedHosts: ['api.openai.com', 'api.replicate.com', '*.replicate.delivery'] }` | `['providers/openai/apiKey', 'providers/replicate/apiToken']` | — | — | — |
+
 ## Why this exists
 
 | Without `image_generate` | With `image_generate` |

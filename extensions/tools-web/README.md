@@ -2,6 +2,13 @@
 
 Web search and URL fetch tools with built-in SSRF protection.
 
+## Capabilities
+
+| Tool | network | secrets | storage | fs_reach | process |
+|------|---------|---------|---------|----------|---------|
+| `web_search` | `{ allowedHosts: ['api.exa.ai'] }` | `['providers/exa/apiKey']` | — | — | — |
+| `web_extract` | `{ allowedHosts: ['api.exa.ai'] }` | `['providers/exa/apiKey']` | — | — | — |
+
 ## Why this exists
 
 Agents that can browse the public web also need to be stopped from probing private networks (cloud metadata, RFC1918, loopback). This package provides one search tool, one extract tool, and a reusable `checkSsrf` helper that the browser package also consumes.

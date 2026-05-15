@@ -54,6 +54,11 @@ function makeProcessStart(dataDir: string, capMax: number): Tool {
     description: 'Start a long-running process in the background. Returns an id for tracking.',
     toolset: 'process',
     maxResultChars: 1024,
+    capabilities: {
+      process: { allowedBinaries: ['*'] },
+      fs_reach: { read: 'from-personality', write: 'from-personality' },
+      storage: { scope: 'session', kind: 'kv' as const },
+    },
     schema: {
       type: 'object',
       properties: {
@@ -174,6 +179,11 @@ function makeProcessList(dataDir: string): Tool {
     name: 'process_list',
     description: 'List all tracked processes with their current status.',
     toolset: 'process',
+    capabilities: {
+      process: { allowedBinaries: ['*'] },
+      fs_reach: { read: 'from-personality', write: 'from-personality' },
+      storage: { scope: 'session', kind: 'kv' as const },
+    },
     schema: { type: 'object', properties: {} },
     async execute(): Promise<ToolResult> {
       const items = await listProcesses(dataDir);
@@ -193,6 +203,11 @@ function makeProcessLogs(dataDir: string): Tool {
     toolset: 'process',
     maxResultChars: 64_000,
     outputIsUntrusted: true,
+    capabilities: {
+      process: { allowedBinaries: ['*'] },
+      fs_reach: { read: 'from-personality', write: 'from-personality' },
+      storage: { scope: 'session', kind: 'kv' as const },
+    },
     schema: {
       type: 'object',
       properties: {
@@ -242,6 +257,11 @@ function makeProcessStop(dataDir: string): Tool {
     description: 'Send a signal to stop a running process.',
     toolset: 'process',
     maxResultChars: 1024,
+    capabilities: {
+      process: { allowedBinaries: ['*'] },
+      fs_reach: { read: 'from-personality', write: 'from-personality' },
+      storage: { scope: 'session', kind: 'kv' as const },
+    },
     schema: {
       type: 'object',
       properties: {
@@ -298,6 +318,11 @@ function makeProcessWait(dataDir: string): Tool {
     description: 'Wait for a process to exit, up to timeout_s seconds.',
     toolset: 'process',
     maxResultChars: 1024,
+    capabilities: {
+      process: { allowedBinaries: ['*'] },
+      fs_reach: { read: 'from-personality', write: 'from-personality' },
+      storage: { scope: 'session', kind: 'kv' as const },
+    },
     schema: {
       type: 'object',
       properties: {

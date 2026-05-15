@@ -2,6 +2,14 @@
 
 Tools for executing untrusted code in a Docker sandbox and for running the host project's tests and linter.
 
+## Capabilities
+
+| Tool | network | secrets | storage | fs_reach | process |
+|------|---------|---------|---------|----------|---------|
+| `run_code` | — | — | — | — | `{ allowedBinaries: ['docker'] }` |
+| `run_tests` | — | — | — | — | `{ allowedBinaries: ['docker'] }` |
+| `lint` | — | — | — | — | `{ allowedBinaries: ['docker'] }` |
+
 ## Why this exists
 
 The agent often needs to run a quick script (Python, Node, bash) without touching the host. `run_code` delegates to `@ethosagent/sandbox-docker`, which executes inside an isolated container with no network and 256 MB memory. `run_tests` and `lint` are the everyday host-side commands an agent uses to verify its own changes — they are intentionally unsandboxed because they need to see the project on disk.

@@ -1,11 +1,21 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { CapabilityBackends } from '@ethosagent/core';
 import { DefaultToolRegistry } from '@ethosagent/core';
 import type { ToolContext, ToolResult } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createImageTools } from '../index';
 import type { ImageGenProvider } from '../providers/types';
+
+// ---------------------------------------------------------------------------
+// Minimal capability backends — image_generate declares network + secrets.
+// The tool uses direct imports, not ctx.*, so these just pass the guard.
+// ---------------------------------------------------------------------------
+
+const testBackends: CapabilityBackends = {
+  personalityNetworkAllow: ['api.openai.com', 'api.replicate.com', '*.replicate.delivery'],
+};
 
 // ---------------------------------------------------------------------------
 // PNG magic bytes
@@ -80,7 +90,7 @@ describe('image_generate integration', () => {
 
   it('runs image_generate through DefaultToolRegistry and writes a real file', async () => {
     const mockProvider = makeMockProvider('openai-dalle', true, 0.04);
-    const registry = new DefaultToolRegistry();
+    const registry = new DefaultToolRegistry(testBackends);
     const tools = createImageTools({ providers: [mockProvider] });
     registry.registerAll(tools);
 
@@ -133,7 +143,7 @@ describe('image_generate integration', () => {
 
   it('returns not_available when image_generate is not in the allowed toolset', async () => {
     const mockProvider = makeMockProvider('openai-dalle', true);
-    const registry = new DefaultToolRegistry();
+    const registry = new DefaultToolRegistry(testBackends);
     const tools = createImageTools({ providers: [mockProvider] });
     registry.registerAll(tools);
 
@@ -163,7 +173,7 @@ describe('image_generate integration', () => {
 
   it('ToolResult carries cost_usd from a successful generation', async () => {
     const mockProvider = makeMockProvider('openai-dalle', true, 0.08);
-    const registry = new DefaultToolRegistry();
+    const registry = new DefaultToolRegistry(testBackends);
     const tools = createImageTools({ providers: [mockProvider] });
     registry.registerAll(tools);
 
@@ -198,7 +208,7 @@ describe('image_generate integration', () => {
 
   it('written PNG file has correct magic bytes via Storage.writeAtomic', async () => {
     const mockProvider = makeMockProvider('openai-dalle', true, 0.04);
-    const registry = new DefaultToolRegistry();
+    const registry = new DefaultToolRegistry(testBackends);
     const tools = createImageTools({ providers: [mockProvider] });
     registry.registerAll(tools);
 
@@ -241,7 +251,7 @@ describe('image_generate integration', () => {
 
   it('ToolResult.cost_usd is set on a successful generation for budgetCapUsd enforcement', async () => {
     const mockProvider = makeMockProvider('openai-dalle', true, 0.12);
-    const registry = new DefaultToolRegistry();
+    const registry = new DefaultToolRegistry(testBackends);
     const tools = createImageTools({ providers: [mockProvider] });
     registry.registerAll(tools);
 
@@ -275,7 +285,7 @@ describe('image_generate integration', () => {
 
   it('createImageTools registers image_generate with correct metadata', () => {
     const mockProvider = makeMockProvider('openai-dalle', true);
-    const registry = new DefaultToolRegistry();
+    const registry = new DefaultToolRegistry(testBackends);
     const tools = createImageTools({ providers: [mockProvider] });
     registry.registerAll(tools);
 
@@ -287,7 +297,7 @@ describe('image_generate integration', () => {
 
   it('toDefinitions includes image_generate when in allowedTools', () => {
     const mockProvider = makeMockProvider('openai-dalle', true);
-    const registry = new DefaultToolRegistry();
+    const registry = new DefaultToolRegistry(testBackends);
     registry.registerAll(createImageTools({ providers: [mockProvider] }));
 
     const defs = registry.toDefinitions(['image_generate']);
@@ -297,7 +307,7 @@ describe('image_generate integration', () => {
 
   it('toDefinitions excludes image_generate when not in allowedTools', () => {
     const mockProvider = makeMockProvider('openai-dalle', true);
-    const registry = new DefaultToolRegistry();
+    const registry = new DefaultToolRegistry(testBackends);
     registry.registerAll(createImageTools({ providers: [mockProvider] }));
 
     const defs = registry.toDefinitions(['terminal']);

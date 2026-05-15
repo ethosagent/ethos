@@ -26,6 +26,7 @@ function createJobTool(scheduler: CronScheduler): Tool {
     description:
       'Schedule a recurring task. The agent will run the given prompt automatically on the cron schedule and save the output.',
     toolset: 'cron',
+    capabilities: {},
     schema: {
       type: 'object',
       properties: {
@@ -115,6 +116,7 @@ function listJobsTool(scheduler: CronScheduler): Tool {
     name: 'list_cron_jobs',
     description: 'List all scheduled cron jobs with their status and next run time.',
     toolset: 'cron',
+    capabilities: {},
     schema: { type: 'object', properties: {} },
     async execute(): Promise<ToolResult> {
       const jobs = await scheduler.listJobs();
@@ -141,6 +143,7 @@ function deleteJobTool(scheduler: CronScheduler): Tool {
     name: 'delete_cron_job',
     description: 'Permanently delete a cron job.',
     toolset: 'cron',
+    capabilities: {},
     schema: {
       type: 'object',
       properties: {
@@ -175,6 +178,7 @@ function pauseJobTool(scheduler: CronScheduler): Tool {
     name: 'pause_cron_job',
     description: 'Pause a cron job without deleting it. Resumable with resume_cron_job.',
     toolset: 'cron',
+    capabilities: {},
     schema: {
       type: 'object',
       properties: { id: { type: 'string', description: 'Job id' } },
@@ -197,6 +201,7 @@ function resumeJobTool(scheduler: CronScheduler): Tool {
     name: 'resume_cron_job',
     description: 'Resume a paused cron job.',
     toolset: 'cron',
+    capabilities: {},
     schema: {
       type: 'object',
       properties: { id: { type: 'string', description: 'Job id' } },
@@ -224,6 +229,7 @@ function runJobNowTool(scheduler: CronScheduler): Tool {
     description: 'Run a cron job immediately, outside its normal schedule.',
     toolset: 'cron',
     maxResultChars: 10_000,
+    capabilities: {},
     schema: {
       type: 'object',
       properties: { id: { type: 'string', description: 'Job id' } },

@@ -3,6 +3,8 @@ export interface GenerateOpts {
   size: string;
   quality: 'standard' | 'hd';
   onProgress?: (msg: string) => void;
+  apiKey?: string;
+  fetchImpl?: (url: string | URL, init?: RequestInit) => Promise<Response>;
 }
 
 export interface GenerateResult {

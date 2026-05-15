@@ -34,6 +34,7 @@ export class GetSkillTool implements Tool<GetSkillArgs> {
     additionalProperties: false,
   };
   readonly alwaysInclude = true;
+  readonly capabilities = {};
 
   constructor(private readonly scanner: UniversalScanner) {}
 
