@@ -5,8 +5,10 @@ kind: how-to
 audience: user
 slug: run-as-daemon
 time: "10 min"
-updated: 2026-05-12
+updated: 2026-05-15
 ---
+
+> **Looking for the full production setup?** If you want **both** the gateway (Telegram + Slack + Discord + Email) **and** the web dashboard up under one supervisor, with reboot survival on a mini-PC / VPS / home server, jump to [Deploy in production](deploy-in-production.md) — it uses `ethos run-all` and PM2 and is the shorter path. This page is the building-block reference for daemonising a **single** `ethos` command (the gateway by itself, or cron, or serve).
 
 ## Task
 
@@ -194,22 +196,9 @@ pm2 monit
 pm2 logs    ethos-gateway --lines 200
 ```
 
-Run multiple Ethos processes side by side with a pm2 ecosystem file (`ecosystem.config.js`):
+Running gateway + serve together as one supervised unit? Don't list them as separate PM2 apps — use [Deploy in production](deploy-in-production.md), which wraps `ethos run-all` as a single PM2 process that spawns and watches both children. That gives you in-process restart-on-crash AND PM2's reboot survival without the double-supervision footgun.
 
-```javascript
-module.exports = {
-  apps: [
-    { name: 'ethos-gateway', script: 'ethos', args: 'gateway start' },
-    { name: 'ethos-cron',    script: 'ethos', args: 'cron run' },
-    { name: 'ethos-serve',   script: 'ethos', args: 'serve --port 3000' },
-  ],
-};
-```
-
-```bash
-pm2 start ecosystem.config.js
-pm2 save
-```
+The pm2-app-per-ethos-command shape *is* still right when you want to daemonise just one long-running command (e.g. only `ethos cron run` for a scheduled-job worker without the gateway), which is what this page is about.
 
 ### 3. Update the daemon after `ethos upgrade`
 

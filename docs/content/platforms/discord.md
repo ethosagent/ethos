@@ -52,7 +52,7 @@ discordToken: "MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Yy....your-bot-token-here"
 ethos gateway start
 ```
 
-Expected boot lines include `✓ Discord online`. For production, wrap the same command in `launchd`, `systemd`, or `pm2` — see [Run Ethos as a daemon](../using/how-to/run-as-daemon.md).
+Expected boot lines include `✓ Discord online`. For production with the web dashboard alongside, use `ethos run-all` under PM2 — see [Deploy in production](../using/how-to/deploy-in-production.md). For just the Discord gateway by itself under `launchd` / `systemd` / `pm2`, see [Run Ethos as a daemon](../using/how-to/run-as-daemon.md).
 
 ### 3. Confirm intents
 

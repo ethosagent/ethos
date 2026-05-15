@@ -36,8 +36,10 @@ const sidebars: SidebarsConfig = {
           collapsed: true,
           items: [
             'using/how-to/configure-providers',
-            'using/how-to/use-skills',
+            'using/how-to/deploy-in-production',
+            'using/how-to/deploy-on-ec2',
             'using/how-to/run-as-daemon',
+            'using/how-to/use-skills',
             'using/how-to/migrate-from-openclaw',
             'using/how-to/use-as-mcp-server',
             'using/how-to/run-a-team-with-kanban',

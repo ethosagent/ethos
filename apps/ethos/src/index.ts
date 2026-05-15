@@ -28,6 +28,7 @@ import { runPerf } from './commands/perf';
 import { runPlugin } from './commands/plugin';
 import { runProcessCommand } from './commands/process';
 import { runRetention } from './commands/retention';
+import { runAll } from './commands/run-all';
 import { runSecurityAudit } from './commands/security-audit';
 import { runServe } from './commands/serve';
 import { runSessionsCommand } from './commands/sessions';
@@ -49,7 +50,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [setup | chat | sessions | serve | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
+  'Usage: ethos [setup | chat | sessions | serve | run-all | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -408,6 +409,20 @@ try {
         process.exit(1);
       }
       await runServe(args.slice(1), config);
+      break;
+    }
+
+    // `ethos run-all` — child-process supervisor. Spawns `gateway start` and
+    // `serve --web-experimental` as subprocesses and restarts them on crash.
+    // One command for the full production surface; wrap it in PM2/systemd for
+    // reboot survival. See docs/content/using/how-to/deploy-in-production.md.
+    case 'run-all': {
+      const config = await readConfig(getStorage());
+      if (!config) {
+        console.error('Run ethos setup first.');
+        process.exit(1);
+      }
+      await runAll();
       break;
     }
 

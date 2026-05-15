@@ -76,7 +76,7 @@ slackSigningSecret: "abc123…"
 ethos gateway start
 ```
 
-Expected boot lines include `⚡️ Bolt app started`. For production, wrap the same command in `launchd`, `systemd`, or `pm2` — see [Run Ethos as a daemon](../using/how-to/run-as-daemon.md). Socket Mode means no reverse proxy, no domain, no inbound port.
+Expected boot lines include `⚡️ Bolt app started`. Socket Mode means no reverse proxy, no domain, no inbound port. For production with the web dashboard alongside, use `ethos run-all` under PM2 — see [Deploy in production](../using/how-to/deploy-in-production.md). For just the Slack gateway by itself under `launchd` / `systemd` / `pm2`, see [Run Ethos as a daemon](../using/how-to/run-as-daemon.md).
 
 ### 4. Understand routing
 

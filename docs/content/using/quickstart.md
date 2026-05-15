@@ -210,5 +210,6 @@ Everything else (`mcp.json`, `communications.json`, `keys.json`, `skills/`) is c
 You have a working agent. The next tutorial walks you through the turn cycle conceptually while you do it: send three messages, watch tool calls render, check usage, exit and reopen to verify session persistence, switch personality.
 
 - [Build your first agent](./tutorials/first-agent.md) — three messages, two personalities, ten minutes.
+- [Deploy in production](./how-to/deploy-in-production.md) — bots and dashboard running on a mini PC or VPS, surviving reboots, in three commands.
 - [config.yaml reference](./reference/config-yaml.md) — every field the file accepts, if you want to read ahead.
 - [Glossary](../getting-started/glossary.md) — every domain term in one place.

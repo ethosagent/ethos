@@ -19,6 +19,19 @@ ethos chat                        # talk to the agent
 
 Full install paths, supported providers, and surface setup: [ethosagent.ai/docs/using/quickstart](https://ethosagent.ai/docs/using/quickstart).
 
+## Run it in production
+
+Three commands, and your bots (Telegram + Slack + Discord + Email) and the web dashboard come up under one supervisor, survive reboots, and restart on crash. Works on a mini PC, Raspberry Pi 4+, cheap VPS, or any always-on box:
+
+```bash
+npm i -g @ethosagent/cli pm2
+ethos setup
+curl -O https://ethosagent.ai/ecosystem.config.js
+pm2 start ecosystem.config.js && pm2 save && pm2 startup
+```
+
+`ethos run-all` is the supervisor (one command spawns gateway + web dashboard); PM2 keeps it alive across reboots. Full walkthrough with sizing, logs, upgrade, and troubleshooting: [Deploy in production →](https://ethosagent.ai/docs/using/how-to/deploy-in-production).
+
 ## Two doors
 
 | Path | What it covers |
