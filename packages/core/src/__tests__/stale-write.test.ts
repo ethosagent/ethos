@@ -5,6 +5,7 @@ import type { CompletionChunk, LLMProvider, Message } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
+import type { CapabilityBackends } from '../capability-resolver';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -53,10 +54,32 @@ function makeScriptedLLM(script: ScriptStep[]): LLMProvider {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Minimal capability backends — file tools declare fs_reach.
+// The tools use direct imports, not ctx.*, so these just pass the guard.
+// ---------------------------------------------------------------------------
+
+const testBackends: CapabilityBackends = {
+  storage: {
+    read: async () => null,
+    write: async () => {},
+    exists: async () => false,
+    list: async () => [],
+    mtime: async () => null,
+    listEntries: async () => [],
+    append: async () => {},
+    writeAtomic: async () => {},
+    mkdir: async () => {},
+    remove: async () => {},
+    rename: async () => {},
+  },
+  personalityFsReach: { read: ['/'], write: ['/'] },
+};
+
 async function buildFileRegistry() {
   const { DefaultToolRegistry } = await import('../tool-registry');
   const { createFileTools } = await import('@ethosagent/tools-file');
-  const tools = new DefaultToolRegistry();
+  const tools = new DefaultToolRegistry(testBackends);
   tools.registerAll(createFileTools());
   return tools;
 }

@@ -68,6 +68,9 @@ export function createDelegateTaskTool(loop: AgentLoop): Tool {
       `Maximum spawn depth: ${MAX_SPAWN_DEPTH}.`,
     toolset: 'delegation',
     maxResultChars: 20_000,
+    capabilities: {
+      network: { allowedHosts: ['*'] }, // agent-supplied URL — bounded by personality.network.allow
+    },
     schema: {
       type: 'object',
       properties: {
@@ -142,6 +145,9 @@ export function createMixtureOfAgentsTool(loop: AgentLoop): Tool {
       `Maximum ${MAX_SPAWN_DEPTH} total spawn depth. Maximum 5 agents per call.`,
     toolset: 'delegation',
     maxResultChars: 40_000,
+    capabilities: {
+      network: { allowedHosts: ['*'] }, // agent-supplied URL — bounded by personality.network.allow
+    },
     schema: {
       type: 'object',
       properties: {
@@ -389,6 +395,9 @@ export function createListTeamTool(registryPath = defaultRegistryPath()): Tool {
       'Use before dispatch planning to decide which specialist should handle each task.',
     toolset: 'delegation',
     maxResultChars: 20_000,
+    capabilities: {
+      network: { allowedHosts: ['*'] }, // agent-supplied URL — bounded by personality.network.allow
+    },
     schema: {
       type: 'object',
       properties: {
@@ -429,6 +438,9 @@ export function createRouteToAgentTool(registryPath = defaultRegistryPath()): To
       'Does not fall back to local execution if no matching agent is found.',
     toolset: 'delegation',
     maxResultChars: 20_000,
+    capabilities: {
+      network: { allowedHosts: ['*'] }, // agent-supplied URL — bounded by personality.network.allow
+    },
     schema: {
       type: 'object',
       properties: {
@@ -514,6 +526,9 @@ export function createDispatchTeamTool(registryPath = defaultRegistryPath()): To
       'Each task picks the best available specialist and retries alternate peers on failure.',
     toolset: 'delegation',
     maxResultChars: 60_000,
+    capabilities: {
+      network: { allowedHosts: ['*'] }, // agent-supplied URL — bounded by personality.network.allow
+    },
     schema: {
       type: 'object',
       properties: {
@@ -613,6 +628,9 @@ export function createBroadcastToAgentsTool(registryPath = defaultRegistryPath()
       'Useful for getting multiple perspectives or running parallel reviews.',
     toolset: 'delegation',
     maxResultChars: 60_000,
+    capabilities: {
+      network: { allowedHosts: ['*'] }, // agent-supplied URL — bounded by personality.network.allow
+    },
     schema: {
       type: 'object',
       properties: {

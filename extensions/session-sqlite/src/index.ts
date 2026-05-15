@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
   CompressionEvent,
+  KeyValueStore,
   SearchResult,
   Session,
   SessionFilter,
@@ -9,6 +10,7 @@ import type {
   StoredMessage,
 } from '@ethosagent/types';
 import Database from 'better-sqlite3';
+import { SqliteKeyValueStore } from './kv-store';
 
 export {
   AmbiguousPrefixError,
@@ -24,6 +26,7 @@ export {
   migrateSessionKeys,
   type SessionKeyMigrationResult,
 } from './session-key-migration';
+export { SqliteKeyValueStore };
 
 // ---------------------------------------------------------------------------
 // SQLiteSessionStore
@@ -38,6 +41,11 @@ export class SQLiteSessionStore implements SessionStore {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.migrate();
+    SqliteKeyValueStore.migrate(this.db);
+  }
+
+  kvStoreFactory(): (tool: string, scopeId: string) => KeyValueStore {
+    return (tool, scopeId) => new SqliteKeyValueStore(this.db, tool, scopeId);
   }
 
   // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import {
   AgentLoop,
+  type CapabilityBackends,
   ChainedProvider,
   ClarifyBridge,
   DefaultHookRegistry,
@@ -374,7 +375,16 @@ export async function createAgentLoop(
   // skill injectors, terminal guard, kanban role gate, and plugin hooks onto it.
   const hooks = new DefaultHookRegistry();
 
-  const tools = new DefaultToolRegistry();
+  const capabilityBackends: CapabilityBackends = {
+    kvStoreFactory: session.kvStoreFactory(),
+    storage: new FsStorage(),
+    personalityFsReach: {
+      read: activePerson.fs_reach?.read ?? [],
+      write: activePerson.fs_reach?.write ?? [],
+    },
+    personalityNetworkAllow: activePerson.safety?.network?.allow,
+  };
+  const tools = new DefaultToolRegistry(capabilityBackends);
   for (const tool of createFileTools()) tools.register(tool);
   for (const tool of createTerminalTools()) tools.register(tool);
   for (const tool of createWebTools()) tools.register(tool);

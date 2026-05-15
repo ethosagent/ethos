@@ -53,6 +53,7 @@ export function createClarifyTool(bridge: ClarifyBridge): Tool<ClarifyArgs> {
     description: DESCRIPTION,
     toolset: 'interactive',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['question'],

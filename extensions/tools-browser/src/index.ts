@@ -101,6 +101,10 @@ const browseUrlTool: Tool = {
     'Navigate a browser to a URL and return an accessibility tree with @e{n} element references. Use browser_click and browser_type to interact with elements.',
   toolset: 'browser',
   maxResultChars: 20_000,
+  capabilities: {
+    network: { allowedHosts: ['*'] }, // browser navigates agent-supplied URLs
+    process: { allowedBinaries: ['docker'] },
+  },
   outputIsUntrusted: true,
   isAvailable: isPlaywrightInstalled,
   schema: {
@@ -200,6 +204,10 @@ const browserClickTool: Tool = {
     'Click an element in the browser identified by its @e{n} reference from browse_url. Returns the updated page accessibility tree.',
   toolset: 'browser',
   maxResultChars: 20_000,
+  capabilities: {
+    network: { allowedHosts: ['*'] }, // browser navigates agent-supplied URLs
+    process: { allowedBinaries: ['docker'] },
+  },
   isAvailable: isPlaywrightInstalled,
   schema: {
     type: 'object',
@@ -270,6 +278,10 @@ const browserTypeTool: Tool = {
     'Type text into an input element identified by its @e{n} reference. Use browse_url first to get element refs.',
   toolset: 'browser',
   maxResultChars: 20_000,
+  capabilities: {
+    network: { allowedHosts: ['*'] }, // browser navigates agent-supplied URLs
+    process: { allowedBinaries: ['docker'] },
+  },
   isAvailable: isPlaywrightInstalled,
   schema: {
     type: 'object',

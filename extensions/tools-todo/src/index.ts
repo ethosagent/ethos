@@ -63,6 +63,7 @@ function createTodoSet(store: InMemoryTodoStore): Tool {
       RULES,
     toolset: 'todo',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['todos'],
@@ -122,6 +123,7 @@ function createTodoAdd(store: InMemoryTodoStore): Tool {
       RULES,
     toolset: 'todo',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['content', 'activeForm'],
@@ -169,6 +171,7 @@ function createTodoUpdate(store: InMemoryTodoStore): Tool {
       RULES,
     toolset: 'todo',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['id'],
@@ -229,6 +232,7 @@ function createTodoList(store: InMemoryTodoStore): Tool {
       RULES,
     toolset: 'todo',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       properties: {
@@ -259,6 +263,7 @@ function createTodoClear(store: InMemoryTodoStore): Tool {
       RULES,
     toolset: 'todo',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: { type: 'object', properties: {} },
     async execute(_args, ctx): Promise<ToolResult> {
       const result = await store.clear(ctx.sessionKey);

@@ -194,6 +194,9 @@ export const readFileTool: Tool = {
   toolset: 'file',
   maxResultChars: 40_000,
   outputIsUntrusted: true,
+  capabilities: {
+    fs_reach: { read: 'from-personality' },
+  },
   schema: {
     type: 'object',
     properties: {
@@ -287,6 +290,9 @@ export const writeFileTool: Tool = {
   description:
     'Write content to a file. Creates parent directories if needed. Blocked for ~/.ethos/config.yaml and session storage.',
   toolset: 'file',
+  capabilities: {
+    fs_reach: { read: 'from-personality', write: 'from-personality' },
+  },
   schema: {
     type: 'object',
     properties: {
@@ -350,6 +356,9 @@ export const patchFileTool: Tool = {
   description:
     'Replace an exact block of text in a file with new content. old_text must match the file content exactly (including whitespace and indentation). Use read_file first to confirm the exact text.',
   toolset: 'file',
+  capabilities: {
+    fs_reach: { read: 'from-personality', write: 'from-personality' },
+  },
   schema: {
     type: 'object',
     properties: {
@@ -511,6 +520,9 @@ export const searchFilesTool: Tool = {
   toolset: 'file',
   maxResultChars: 20_000,
   outputIsUntrusted: true,
+  capabilities: {
+    fs_reach: { read: 'from-personality' },
+  },
   schema: {
     type: 'object',
     properties: {

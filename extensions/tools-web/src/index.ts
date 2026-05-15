@@ -37,6 +37,9 @@ export const webSearchTool: Tool = {
     'Search the web for current information. Returns titles, URLs, and text snippets. Requires ETHOS_EXA_API_KEY environment variable.',
   toolset: 'web',
   maxResultChars: 15_000,
+  capabilities: {
+    network: { allowedHosts: ['api.exa.ai'] },
+  },
   outputIsUntrusted: true,
   isAvailable() {
     return Boolean(process.env.ETHOS_EXA_API_KEY);
@@ -122,6 +125,9 @@ export const webExtractTool: Tool = {
     'Fetch a URL and extract its text content. Use to read articles, documentation, or any web page.',
   toolset: 'web',
   maxResultChars: 20_000,
+  capabilities: {
+    network: { allowedHosts: ['api.exa.ai'] },
+  },
   outputIsUntrusted: true,
   schema: {
     type: 'object',

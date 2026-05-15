@@ -28,6 +28,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { CapabilityBackends } from '@ethosagent/core';
 import { DefaultToolRegistry } from '@ethosagent/core';
 import { FsStorage, ScopedStorage } from '@ethosagent/storage-fs';
 import type {
@@ -41,6 +42,29 @@ import type {
 } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createVisionTools } from '../index';
+
+// ---------------------------------------------------------------------------
+// Minimal capability backends — vision_analyze declares fs_reach.
+// The tool uses direct imports (ScopedStorage via ctx.storage), so these
+// just need to exist to pass the needsBackends guard.
+// ---------------------------------------------------------------------------
+
+const testBackends: CapabilityBackends = {
+  storage: {
+    read: async () => null,
+    write: async () => {},
+    exists: async () => false,
+    list: async () => [],
+    mtime: async () => null,
+    listEntries: async () => [],
+    append: async () => {},
+    writeAtomic: async () => {},
+    mkdir: async () => {},
+    remove: async () => {},
+    rename: async () => {},
+  },
+  personalityFsReach: { read: ['/'], write: ['/'] },
+};
 
 // Minimal valid fixtures — same byte sequences the unit tests use.
 const TINY_PNG = Buffer.from(
@@ -150,7 +174,7 @@ function buildRegistryWithVision(opts: {
   auxProvider?: LLMProvider;
   auxModel?: string;
 }): { registry: DefaultToolRegistry; tool: Tool } {
-  const registry = new DefaultToolRegistry();
+  const registry = new DefaultToolRegistry(testBackends);
   const tools = createVisionTools({
     resolveProvider: (model) => {
       if (model === opts.defaultModel) return opts.primary;
@@ -359,7 +383,7 @@ describe('vision_analyze — P3 wiring integration', () => {
         return 0;
       },
     };
-    const registry = new DefaultToolRegistry();
+    const registry = new DefaultToolRegistry(testBackends);
     const tools = createVisionTools({
       resolveProvider: () => routingProvider,
       defaultModel: 'claude-opus-4-7',

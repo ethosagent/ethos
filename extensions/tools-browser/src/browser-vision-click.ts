@@ -14,6 +14,10 @@ export function createBrowserVisionClickTool(visionOpts: VisionResolverOptions):
       'Click an element described in natural language. Uses accessibility tree first, falls back to vision model.',
     toolset: 'browser',
     maxResultChars: 500,
+    capabilities: {
+      network: { allowedHosts: ['*'] }, // browser navigates agent-supplied URLs
+      process: { allowedBinaries: ['docker'] },
+    },
     isAvailable: isPlaywrightInstalled,
     schema: {
       type: 'object',

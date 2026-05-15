@@ -19,6 +19,9 @@ export const terminalTool: Tool = {
   toolset: 'terminal',
   maxResultChars: 20_000,
   outputIsUntrusted: true,
+  capabilities: {
+    process: { allowedBinaries: ['*'] },
+  },
   schema: {
     type: 'object',
     properties: {

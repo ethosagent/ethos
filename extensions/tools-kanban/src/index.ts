@@ -178,6 +178,7 @@ function createKanbanCreate(store: KanbanStore): Tool {
       RULES,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['title'],
@@ -313,6 +314,7 @@ function createKanbanCreateGoal(store: KanbanStore): Tool {
       RULES,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['title'],
@@ -408,6 +410,7 @@ function createKanbanList(store: KanbanStore): Tool {
       RULES,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       properties: {
@@ -475,6 +478,7 @@ function createKanbanShow(store: KanbanStore): Tool {
       RULES,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['task_id'],
@@ -512,6 +516,7 @@ function createKanbanUpdateStatus(store: KanbanStore): Tool {
       RULES,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['task_id', 'status'],
@@ -550,6 +555,7 @@ function createKanbanComment(store: KanbanStore): Tool {
     description: `Append a comment to a task. Append-only; edits happen by adding new comments.\n${RULES}`,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['task_id', 'body'],
@@ -593,6 +599,7 @@ function createKanbanComplete(store: KanbanStore, hooks?: HookRegistry): Tool {
     description: `End the open run with outcome=completed, set status=done.\n${RULES}`,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['task_id', 'summary'],
@@ -662,6 +669,7 @@ function createKanbanBlock(store: KanbanStore): Tool {
       RULES,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['task_id', 'reason'],
@@ -699,6 +707,7 @@ function createKanbanUnblock(store: KanbanStore): Tool {
       RULES,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['task_id'],
@@ -742,6 +751,7 @@ function createKanbanHeartbeat(store: KanbanStore): Tool {
     description: `Bump last_heartbeat_at on the open run + write a heartbeat audit event.\n${RULES}`,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['task_id'],
@@ -774,6 +784,7 @@ function createKanbanLink(store: KanbanStore): Tool {
       RULES,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['parent_id', 'child_id'],
@@ -803,6 +814,7 @@ function createKanbanAssign(store: KanbanStore): Tool {
     description: `Set the assignee (personality id or "human:<name>"). Pass null to unassign.\n${RULES}`,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['task_id'],
@@ -843,6 +855,7 @@ function createKanbanArchive(store: KanbanStore): Tool {
       RULES,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {},
     schema: {
       type: 'object',
       required: ['task_id'],

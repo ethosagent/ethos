@@ -15,10 +15,20 @@
 // directly OR into a memory record that the `## Memory` injector then merges
 // into the system prompt. Both scenarios fall under assertion (a) below.
 
+import type { CapabilityBackends } from '@ethosagent/core';
 import { AgentLoop, DefaultToolRegistry } from '@ethosagent/core';
 import type { CompletionChunk, LLMProvider, Message } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { createDelegateTaskTool } from '../index';
+
+// ---------------------------------------------------------------------------
+// Minimal capability backends — delegation tools declare network: ['*'].
+// The tool uses direct imports, not ctx.*, so these just pass the guard.
+// ---------------------------------------------------------------------------
+
+const testBackends: CapabilityBackends = {
+  personalityNetworkAllow: ['*'],
+};
 
 const MARKER = 'PINEAPPLE-MARKER-30-1';
 
@@ -83,7 +93,7 @@ describe('subagent task contract — task lives only in child first user message
       },
     };
 
-    const tools = new DefaultToolRegistry();
+    const tools = new DefaultToolRegistry(testBackends);
     const loop = new AgentLoop({ llm, tools });
     tools.register(createDelegateTaskTool(loop));
 

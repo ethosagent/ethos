@@ -32,6 +32,9 @@ function createRunCodeTool(sandbox: DockerSandbox): Tool {
     toolset: 'code',
     maxResultChars: 10_000,
     outputIsUntrusted: true,
+    capabilities: {
+      process: { allowedBinaries: ['docker'] },
+    },
     isAvailable() {
       return sandbox.isAvailable();
     },
@@ -105,6 +108,9 @@ const runTestsTool: Tool = {
   toolset: 'code',
   maxResultChars: 20_000,
   outputIsUntrusted: true,
+  capabilities: {
+    process: { allowedBinaries: ['docker'] },
+  },
   schema: {
     type: 'object',
     properties: {
@@ -161,6 +167,9 @@ const lintTool: Tool = {
   toolset: 'code',
   maxResultChars: 10_000,
   outputIsUntrusted: true,
+  capabilities: {
+    process: { allowedBinaries: ['docker'] },
+  },
   schema: {
     type: 'object',
     properties: {

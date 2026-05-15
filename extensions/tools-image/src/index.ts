@@ -54,6 +54,9 @@ function buildImageGenerateTool(providers: ImageGenProvider[]): Tool {
       'Generate an image from a text prompt using DALL-E 3 or Replicate Flux. Returns the file path, dimensions, cost, and provider used. Requires OPENAI_API_KEY or REPLICATE_API_TOKEN.',
     toolset: 'image',
     maxResultChars: 1_000,
+    capabilities: {
+      network: { allowedHosts: ['api.openai.com', 'api.replicate.com', '*.replicate.delivery'] },
+    },
     isAvailable() {
       return providers.some((p) => p.isAvailable());
     },

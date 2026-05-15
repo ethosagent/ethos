@@ -124,6 +124,9 @@ export function makeVisionAnalyze(opts: VisionToolsOptions): Tool {
       'v1 limitation: format.schema must have type "object" (array / primitive top-level types are not supported).',
     toolset: 'vision',
     maxResultChars: MAX_RESULT_CHARS,
+    capabilities: {
+      fs_reach: { read: 'from-personality' },
+    },
     // Tool output is the LLM's interpretation of an image / document the user
     // supplied — owner-authored prompt + the model's reply. Not adversary
     // content the way a fetched webpage is, but the underlying image bytes

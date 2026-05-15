@@ -1,5 +1,9 @@
 export type { AgentEvent, AgentLoopConfig, RunOptions } from './agent-loop';
 export { AgentLoop } from './agent-loop';
+export type { CapabilityBackends } from './capability-resolver';
+export { resolveCapabilities } from './capability-resolver';
+export type { CapabilityValidationError } from './capability-validator';
+export { validateRegistration } from './capability-validator';
 export {
   ClarifyBridge,
   ClarifyBusyError,
@@ -23,6 +27,8 @@ export {
   estimateTokens,
 } from './context-engines/token-estimator';
 export { InMemorySessionStore } from './defaults/in-memory-session';
+export type { InMemoryToolContextOptions } from './defaults/in-memory-tool-context';
+export { makeTestToolContext } from './defaults/in-memory-tool-context';
 export { NoopMemoryProvider } from './defaults/noop-memory';
 export { DefaultPersonalityRegistry } from './defaults/noop-personality';
 export { DefaultHookRegistry } from './hook-registry';
@@ -37,4 +43,6 @@ export type { PluginFactory } from './plugin-registry';
 export { PluginRegistry } from './plugin-registry';
 export type { ChainedProviderOptions } from './providers/chained-provider';
 export { ChainedProvider } from './providers/chained-provider';
+export type { SecretsBackend } from './scoped';
+export { ScopedFetchImpl, ScopedFsImpl, ScopedProcessImpl, ScopedSecretsImpl } from './scoped';
 export { DefaultToolRegistry } from './tool-registry';
