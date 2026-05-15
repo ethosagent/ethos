@@ -16,6 +16,7 @@ import {
   createSessionStore,
 } from '@ethosagent/wiring';
 import { type EthosConfig, ethosDir } from '../config';
+import { emitReady } from '../logger';
 import { createAgentLoop, createTeamAgentLoop } from '../wiring';
 import { hasFlag, parseFlagValue, parsePort } from './serve-helpers';
 import { listenWithFallback } from './serve-listen';
@@ -242,6 +243,8 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
         server.close(() => resolve());
       });
   }
+
+  emitReady('serve');
 
   const cleanup = async () => {
     stopHeartbeat();

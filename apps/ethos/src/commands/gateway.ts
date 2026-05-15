@@ -41,6 +41,7 @@ import {
   validateBotBindings,
   writeConfig,
 } from '../config';
+import { emitReady } from '../logger';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';
 import { createAgentLoop, createTeamAgentLoop, getSecretsResolver, getStorage } from '../wiring';
 import {
@@ -551,6 +552,7 @@ export async function runGatewayStart(): Promise<void> {
     }
   }
 
+  emitReady('gateway');
   console.log(`${c.dim}Listening for messages. Press Ctrl+C to stop.${c.reset}\n`);
 
   // Graceful shutdown on SIGINT / SIGTERM. Tell every in-flight chat that the

@@ -2,7 +2,8 @@
 //
 // Every `EthosError` rendered through the surface path is appended as one
 // JSON line to `~/.ethos/logs/errors.jsonl`. Local-only — no upload, no
-// telemetry. Capped at 10MB; rotates to `errors.jsonl.1` (single backup).
+// telemetry. Rotates to `errors.jsonl.1`, `errors.jsonl.2`, … up to maxFiles
+// when the file exceeds maxBytes (default: 10 MiB, 5 backups).
 //
 // Surfaced via `ethos doctor --recent-errors` so users can see "I've hit
 // PROVIDER_AUTH_FAILED 12 times this week" without filing an issue.
@@ -11,7 +12,15 @@
 // read-only, we silently drop the line rather than masking the original
 // error. The original error still renders to stderr.
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import type { EthosError } from '@ethosagent/types';
 import { ethosDir } from './config';
@@ -31,7 +40,35 @@ export function setObservabilityService(obs: ErrorLogObservability): void {
   _obs = obs;
 }
 
-const MAX_BYTES = 10 * 1024 * 1024;
+export interface LogRotationConfig {
+  /** Maximum file size in bytes before rotation. Default: 10 MiB. */
+  maxBytes: number;
+  /** Maximum number of rotated backup files to keep. Default: 5. */
+  maxFiles: number;
+  /** Whether rotation is enabled. Default: true. */
+  enabled: boolean;
+}
+
+const DEFAULT_ROTATION: LogRotationConfig = {
+  maxBytes: 10 * 1024 * 1024,
+  maxFiles: 5,
+  enabled: true,
+};
+
+let _rotation: LogRotationConfig = DEFAULT_ROTATION;
+
+/**
+ * Override the default rotation config. Call this once during CLI startup,
+ * e.g. from wiring.ts after reading ~/.ethos/config.yaml.
+ */
+export function setRotationConfig(config: Partial<LogRotationConfig>): void {
+  const merged = { ...DEFAULT_ROTATION, ...config };
+  if (!Number.isFinite(merged.maxBytes) || merged.maxBytes <= 0)
+    merged.maxBytes = DEFAULT_ROTATION.maxBytes;
+  if (!Number.isFinite(merged.maxFiles) || merged.maxFiles < 1)
+    merged.maxFiles = DEFAULT_ROTATION.maxFiles;
+  _rotation = merged;
+}
 
 function logsDir(): string {
   return join(ethosDir(), 'logs');
@@ -39,10 +76,6 @@ function logsDir(): string {
 
 function logPath(): string {
   return join(logsDir(), 'errors.jsonl');
-}
-
-function backupPath(): string {
-  return join(logsDir(), 'errors.jsonl.1');
 }
 
 interface LogContext {
@@ -64,15 +97,36 @@ export interface LoggedError {
   command?: string;
 }
 
-function rotateIfNeeded(): void {
+export function rotateIfNeeded(filePath: string, config: LogRotationConfig): void {
+  if (!config.enabled) return;
+  if (!Number.isFinite(config.maxBytes) || config.maxBytes <= 0) return;
+  if (!Number.isFinite(config.maxFiles) || config.maxFiles < 1) return;
+  const maxFiles = Math.floor(config.maxFiles);
   try {
-    const stats = statSync(logPath());
-    if (stats.size >= MAX_BYTES) {
-      // Single rolling backup — overwrite the prior backup with the current log.
-      renameSync(logPath(), backupPath());
-    }
+    const stat = statSync(filePath);
+    if (stat.size < config.maxBytes) return;
   } catch {
-    // No file yet, or stat failed — nothing to rotate.
+    return; // file doesn't exist yet
+  }
+  // Delete oldest backup if at max count
+  try {
+    unlinkSync(`${filePath}.${maxFiles}`);
+  } catch {
+    /* ok — missing is fine */
+  }
+  // Shift existing backups: .N → .N+1
+  for (let i = maxFiles - 1; i >= 1; i--) {
+    try {
+      renameSync(`${filePath}.${i}`, `${filePath}.${i + 1}`);
+    } catch {
+      /* ok — missing is fine */
+    }
+  }
+  // Rename current log → .1
+  try {
+    renameSync(filePath, `${filePath}.1`);
+  } catch {
+    /* ok */
   }
 }
 
@@ -84,7 +138,7 @@ function rotateIfNeeded(): void {
 export function appendErrorLog(err: EthosError, ctx: LogContext = {}): void {
   try {
     mkdirSync(logsDir(), { recursive: true });
-    rotateIfNeeded();
+    rotateIfNeeded(logPath(), _rotation);
     const entry: LoggedError = {
       ts: new Date().toISOString(),
       code: err.code,

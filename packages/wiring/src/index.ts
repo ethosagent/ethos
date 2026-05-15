@@ -29,7 +29,7 @@ import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { createKvStoreFactory, SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { createInjectors, UniversalScanner } from '@ethosagent/skills';
 import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
-import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
+import { FsAttachmentCache, FsStorage, REF_TO_ENV } from '@ethosagent/storage-fs';
 import { createBrowserTools } from '@ethosagent/tools-browser';
 import { createCodeTools } from '@ethosagent/tools-code';
 import { createCronTools } from '@ethosagent/tools-cron';
@@ -675,11 +675,6 @@ export async function createAgentLoop(
   // skill injectors, terminal guard, kanban role gate, and plugin hooks onto it.
   const hooks = new DefaultHookRegistry();
 
-  const secretsEnvMap: Record<string, string> = {
-    'providers/exa/apiKey': 'ETHOS_EXA_API_KEY',
-    'providers/openai/apiKey': 'OPENAI_API_KEY',
-    'providers/replicate/apiToken': 'REPLICATE_API_TOKEN',
-  };
   const resolver = config.secretsResolver;
   const capabilityBackends: CapabilityBackends = {
     kvStoreFactory: createKvStoreFactory(join(dataDir, 'sessions.db')),
@@ -688,12 +683,13 @@ export async function createAgentLoop(
         const val = await resolver.get(ref);
         if (val !== null) return val;
       }
-      const envVar = secretsEnvMap[ref];
-      if (envVar) {
-        const value = process.env[envVar];
-        if (value) return value;
+      // Self-contained env fallback so callers without MergedSecretsResolver still get env support
+      const envKey = REF_TO_ENV.get(ref);
+      if (envKey) {
+        const envVal = process.env[envKey];
+        if (envVal) return envVal;
       }
-      throw new Error(`Secret ${ref} not found (checked secrets store + env)`);
+      throw new Error(`Secret ${ref} not found`);
     },
     storage: new FsStorage(),
     personalityFsReach: {

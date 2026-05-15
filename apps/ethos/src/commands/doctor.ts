@@ -22,6 +22,7 @@ import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
 import type { Skill } from '@ethosagent/types';
 import { type EthosConfig, ethosDir, readRawConfig } from '../config';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
+import { buildVersionInfo } from '../version-info';
 import { getStorage } from '../wiring';
 
 const c = {
@@ -132,6 +133,56 @@ export async function runDoctor(args: string[] = []): Promise<void> {
 
   if (args.includes('--fix')) {
     await runDoctorFix();
+    return;
+  }
+
+  const jsonMode = args.includes('--json');
+
+  if (jsonMode) {
+    const storage = getStorage();
+    const config = await readRawConfig(storage);
+    const cfgPath = join(ethosDir(), 'config.yaml');
+    const userPersonalitiesDir = join(homedir(), '.ethos', 'personalities');
+    const personalitiesLoadable = await storage.exists(userPersonalitiesDir);
+
+    const sdks: Array<{
+      label: string;
+      module: string;
+      required: boolean;
+      configured?: boolean;
+      loadable: boolean;
+    }> = [];
+
+    for (const row of CORE_SDKS) {
+      const { ok } = await checkSdk(row.module);
+      sdks.push({ label: row.label, module: row.module, required: true, loadable: ok });
+    }
+    for (const row of CHANNEL_SDKS) {
+      const { ok } = await checkSdk(row.module);
+      const configured = config ? Boolean(row.configuredWhen?.(config)) : false;
+      sdks.push({
+        label: row.label,
+        module: row.module,
+        required: false,
+        configured,
+        loadable: ok,
+      });
+    }
+
+    const coreFailures = sdks.filter((s) => s.required && !s.loadable);
+    const configuredMissing = sdks.filter((s) => !s.required && s.configured && !s.loadable);
+    const exitCode = coreFailures.length > 0 || configuredMissing.length > 0 ? 1 : 0;
+
+    const result = {
+      version: buildVersionInfo(),
+      sdks,
+      config: config ? { present: true, path: cfgPath } : { present: false, path: cfgPath },
+      personalities: { dir: userPersonalitiesDir, loadable: personalitiesLoadable },
+      skillCliIssues: await buildSkillsCliJson(),
+      exit: exitCode,
+    };
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    if (exitCode > 0) process.exit(exitCode);
     return;
   }
 
@@ -457,4 +508,11 @@ async function checkSkillPrerequisites(): Promise<SkillPrereqIssue[]> {
   }
 
   return issues;
+}
+
+async function buildSkillsCliJson(): Promise<
+  Array<{ name: string; path: string | null; ok: boolean }>
+> {
+  const skillIssues = await checkSkillPrerequisites();
+  return skillIssues.map((i) => ({ name: i.cli, path: null, ok: false }));
 }

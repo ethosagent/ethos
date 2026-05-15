@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { type EthosConfig, ethosDir, readRawConfig } from '../config';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
+import { buildVersionInfo } from '../version-info';
 import { getStorage } from '../wiring';
 
 // `ethos status` — single-pane health summary.
@@ -30,20 +31,63 @@ declare const __ETHOS_VERSION__: string;
 const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
-export async function runStatus(_args: string[] = []): Promise<void> {
+export async function runStatus(cmdArgs: string[] = []): Promise<void> {
+  const jsonMode = cmdArgs.includes('--json');
   let hardErrors = 0;
 
-  console.log(`${c.bold}ethos${c.reset} ${c.dim}${ETHOS_VERSION}${c.reset}\n`);
+  if (!jsonMode) {
+    console.log(`${c.bold}ethos${c.reset} ${c.dim}${ETHOS_VERSION}${c.reset}\n`);
+  }
 
   // ---- Config ------------------------------------------------------------
   const storage = getStorage();
   const config = await readRawConfig(storage);
   if (!config) {
+    if (jsonMode) {
+      process.stdout.write(
+        `${JSON.stringify({ version: buildVersionInfo(), config: { present: false }, adapters: [], personalities: { count: 0, dir: '' }, errorLog: { exists: false, recentCount: 0 }, exit: 1 })}\n`,
+      );
+      process.exit(1);
+    }
     console.log(
       `${R} ${c.bold}config${c.reset}        no ~/.ethos/config.yaml — run ${c.bold}ethos setup${c.reset}`,
     );
     process.exit(1);
   }
+  // ---- Personality data dir (shared data collection) -------------------
+  const pdir = join(ethosDir(), 'personalities');
+  const personalityCount = existsSync(pdir)
+    ? readdirSync(pdir).filter((n) => !n.startsWith('.')).length
+    : 0;
+
+  // ---- Channel-filter (shared: may increment hardErrors) ---------------
+  const adapterLines = adapterStatus(config);
+  const channelFilters = countChannelFilters(config);
+  if (channelFilters === 0 && adapterLines.length > 0) {
+    hardErrors++;
+  }
+
+  // ---- JSON path -------------------------------------------------------
+  if (jsonMode) {
+    const result = {
+      version: buildVersionInfo(),
+      config: {
+        present: true,
+        provider: config.provider,
+        model: config.model,
+        personality: config.personality,
+      },
+      adapters: buildAdapterJson(config),
+      personalities: { count: personalityCount, dir: pdir },
+      errorLog: { exists: errorLogExists(), recentCount: readRecentErrors(10).length },
+      exit: hardErrors > 0 ? 1 : 0,
+    };
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    if (hardErrors > 0) process.exit(1);
+    return;
+  }
+
+  // ---- TTY path (unchanged from original) ------------------------------
   const cfgLine =
     `${G} ${c.bold}config${c.reset}        ${c.cyan}${config.provider}${c.reset} · ${config.model}` +
     ` · personality=${config.personality}` +
@@ -53,11 +97,9 @@ export async function runStatus(_args: string[] = []): Promise<void> {
   console.log(cfgLine);
 
   // ---- Adapters configured ----------------------------------------------
-  const adapterLines = adapterStatus(config);
   for (const line of adapterLines) console.log(line);
 
   // ---- Personality data dir -------------------------------------------
-  const pdir = join(ethosDir(), 'personalities');
   if (existsSync(pdir)) {
     const ids = readdirSync(pdir).filter((n) => !n.startsWith('.'));
     console.log(
@@ -118,7 +160,6 @@ export async function runStatus(_args: string[] = []): Promise<void> {
   }
 
   // ---- Channel-filter --------------------------------------------------
-  const channelFilters = countChannelFilters(config);
   if (channelFilters > 0) {
     console.log(
       `${G} ${c.bold}channel_filter${c.reset} ${channelFilters} platform${channelFilters === 1 ? '' : 's'} owner-gated`,
@@ -127,7 +168,6 @@ export async function runStatus(_args: string[] = []): Promise<void> {
     console.log(
       `${R} ${c.bold}channel_filter${c.reset} adapters configured but no ${c.bold}channel_filter.<platform>.ownerUserId${c.reset} set — gateway will refuse to start`,
     );
-    hardErrors++;
   }
 
   // ---- Recent errors --------------------------------------------------
@@ -203,6 +243,29 @@ function adapterStatus(config: EthosConfig): string[] {
   }
 
   return lines;
+}
+
+function buildAdapterJson(
+  config: EthosConfig,
+): Array<{ name: string; configured: boolean; ok: boolean | null }> {
+  const adapters: Array<{ name: string; configured: boolean; ok: boolean | null }> = [];
+  const tgConfigured = Boolean(config.telegramToken || (config.telegram?.bots?.length ?? 0) > 0);
+  adapters.push({ name: 'telegram', configured: tgConfigured, ok: tgConfigured ? true : null });
+  const slackConfigured = Boolean(
+    (config.slackBotToken && config.slackAppToken && config.slackSigningSecret) ||
+      (config.slack?.apps?.length ?? 0) > 0,
+  );
+  adapters.push({ name: 'slack', configured: slackConfigured, ok: slackConfigured ? true : null });
+  adapters.push({
+    name: 'discord',
+    configured: Boolean(config.discordToken),
+    ok: config.discordToken ? true : null,
+  });
+  const emailConfigured = Boolean(
+    config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost,
+  );
+  adapters.push({ name: 'email', configured: emailConfigured, ok: emailConfigured ? true : null });
+  return adapters;
 }
 
 function countChannelFilters(config: EthosConfig): number {
