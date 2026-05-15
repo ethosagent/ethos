@@ -305,6 +305,9 @@ importers:
       '@ethosagent/batch-runner':
         specifier: workspace:*
         version: link:../../extensions/batch-runner
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/cron':
         specifier: workspace:*
         version: link:../../extensions/cron

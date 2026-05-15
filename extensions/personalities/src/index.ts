@@ -878,15 +878,22 @@ function validateUnsafeCombinations(id: string, config: PersonalityConfig): void
   }
 }
 
+function yamlScalar(value: string): string {
+  if (/[:\n\r#[\]{}&*!|>'"%@`]/.test(value) || value.trim() !== value) {
+    return JSON.stringify(value);
+  }
+  return value;
+}
+
 function renderConfigYaml(
   input: CreatePersonalityInput & {
     mcp_servers?: string[];
     plugins?: string[];
   },
 ): string {
-  const lines: string[] = [`name: ${input.name}`];
-  if (input.description) lines.push(`description: ${input.description}`);
-  if (input.model) lines.push(`model: ${input.model}`);
+  const lines: string[] = [`name: ${yamlScalar(input.name)}`];
+  if (input.description) lines.push(`description: ${yamlScalar(input.description)}`);
+  if (input.model) lines.push(`model: ${yamlScalar(input.model)}`);
   if (input.memoryScope) lines.push(`memoryScope: ${input.memoryScope}`);
   if (input.mcp_servers !== undefined) lines.push(`mcp_servers: ${input.mcp_servers.join(' ')}`);
   if (input.plugins !== undefined) lines.push(`plugins: ${input.plugins.join(' ')}`);
