@@ -190,7 +190,7 @@ What this deployment shape deliberately *doesn't* solve, and what to add if you 
 | Restart the service | `sudo systemctl restart ethos` |
 | Stop / start | `sudo systemctl stop ethos` / `sudo systemctl start ethos` |
 | Status + last 10 log lines | `sudo systemctl status ethos` |
-| Upgrade | `sudo -iu ethos npm i -g @ethosagent/cli && sudo systemctl restart ethos` |
+| Upgrade | `sudo -iu ethos ethos upgrade && sudo systemctl restart ethos` |
 | Talk to the agent from your laptop | SSM/SSH in, run `ethos chat` (uses its own session lane, doesn't collide with the bots) |
 
 State volume layout reminder:
@@ -216,7 +216,7 @@ Operator's laptop story: `ethos chat` on your laptop uses its own `~/.ethos/` (t
 | SSM session won't start | Missing IAM role / SSM agent not running | Confirm `AmazonSSMManagedInstanceCore` is attached; on AL2023 SSM is preinstalled. On Ubuntu, `sudo snap install amazon-ssm-agent --classic`. |
 | State lost after instance replacement | EBS volume wasn't separate / wasn't attached to the new instance | Step 1's "second volume mounted at `/var/lib/ethos`" is the load-bearing call. AWS Backup snapshots are the recovery path. |
 | Telegram bot stops responding but `systemctl status ethos` shows `active` | Token revoked, or Telegram API blocked | `journalctl -u ethos -n 100` — the error is usually one line. Fix the token in `~/.ethos/config.yaml`, restart. |
-| `ethos upgrade` fails inside `sudo -iu ethos` | npm prefix unset for this shell | Re-set: `npm config set prefix /home/ethos/.npm-global` then retry |
+| `ethos upgrade` says "command not found: npm" | Bare `sudo -u ethos ethos upgrade` (without `-i`); login shell wasn't sourced | Always use `sudo -iu ethos ethos upgrade` — the `-i` is what loads PATH and HOME correctly |
 
 For everything else: `journalctl -u ethos -n 200`, `ethos doctor`, [Troubleshooting reference](../../troubleshooting.md).
 
