@@ -7,11 +7,11 @@ slug: service-coupling-audit
 updated: 2026-05-13
 ---
 
-## Summary
+## Synopsis {#synopsis}
 
 The service layer is overwhelmingly clean. None of the 18 service files import from `hono`, access `Context`/`c.req`/`c.res`, or use HTTP status codes as logic gates. The only coupling worth tracking is the `SseEvent` wire-format type used by `ChatService` and the SSE-oriented `SessionStreamBuffer` it depends on, both of which name SSE in their types but are structurally transport-agnostic (discriminated union + generic ring buffer). A future in-process transport can call every service without an HTTP request in scope.
 
-## Findings
+## Findings {#findings}
 
 | File | Finding | Classification |
 |---|---|---|
@@ -36,15 +36,15 @@ The service layer is overwhelmingly clean. None of the 18 service files import f
 | `services/sessions.service.ts` | No HTTP coupling | clean |
 | `services/skills.service.ts` | No HTTP coupling | clean |
 
-## Classification key
+## Classification key {#classification-key}
 
 - **clean** — no HTTP coupling found
 - **cheap fix (v1)** — can be factored out in <30 min
 - **v1.1 follow-up** — requires deeper refactoring, tracked for next release
 
-## Details
+## Details {#details}
 
-### `ChatService` — SSE-flavored type names (cheap fix)
+### `ChatService` — SSE-flavored type names (cheap fix) {#chat-service-sse-type-names}
 
 `ChatService` is the only service with any coupling signal, and it is mild. Three observations:
 
@@ -56,18 +56,18 @@ The service layer is overwhelmingly clean. None of the 18 service files import f
 
 **Verdict**: `ChatService` is callable without an HTTP request today. The SSE naming is cosmetic, not structural. A v1 rename pass would remove the naming ambiguity so future readers do not mistake it for real coupling.
 
-### RPC handlers — verified clean
+### RPC handlers — verified clean {#rpc-handlers-clean}
 
 All 19 files in `apps/web-api/src/rpc/` import only from `./context` (which provides the oRPC `os` builder) and delegate to service methods. No handler imports from `hono`, accesses `c.req`/`c.res`, or touches HTTP primitives. The oRPC layer handles serialization/deserialization; handlers receive typed `input` and return typed output.
 
-### SSE route — coupling is correctly contained
+### SSE route — coupling is correctly contained {#sse-route-coupling-contained}
 
 `apps/web-api/src/routes/sse.ts` is the only file that imports from `hono` and `hono/streaming`. It reads `c.req.param('id')` and `c.req.header('Last-Event-ID')`, then delegates to `ChatService.subscribe()`. This is the expected boundary — the route is the HTTP adapter; the service is transport-free.
 
-### `rpc/context.ts` — injection container, no HTTP types
+### `rpc/context.ts` — injection container, no HTTP types {#rpc-context-injection}
 
 The `RpcContext` interface holds typed service references. It imports from `@orpc/server` (for the `implement` builder) but does not import or expose any HTTP types. Services are injected by `createWebApi` in `index.ts`.
 
-### `createWebApi` (index.ts) — Hono is imported but only for the return type
+### `createWebApi` (index.ts) — Hono is imported but only for the return type {#create-web-api-hono-return}
 
 `index.ts` imports `type { Hono } from 'hono'` for the `CreateWebApiResult.app` return type. All service construction is pure — no HTTP context flows into any service constructor. The Hono app is assembled in `createRoutes`, which is a separate routing layer.

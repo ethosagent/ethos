@@ -1,5 +1,5 @@
 ---
-title: "Memory model for dashboard builders"
+title: "Why does a dashboard see four layers of memory instead of one?"
 description: "The four layers of agent memory — MEMORY.md, USER.md, session messages, and the session store — and which ones a dashboard may safely read or write."
 kind: explanation
 audience: developer

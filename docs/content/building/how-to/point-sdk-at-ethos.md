@@ -144,6 +144,15 @@ const sub = EventStream({
 
 Pass `ethos.baseUrl` to keep the two in sync. The SSE endpoint is `GET /sse/sessions/:id`.
 
+## Verify
+
+```typescript
+const { sessions } = await ethos.rpc.sessions.list({ limit: 1 });
+console.log(sessions.length, ethos.baseUrl);
+```
+
+Runs without throwing. With a deliberately wrong `apiKey`, the call fails with `401 Unauthorized`; with the wrong `Origin`, `403 Forbidden`.
+
 ## Troubleshooting
 
 **`ECONNREFUSED` on `localhost:3000`** — Ethos is not running. Start it with `ethos serve` or `pnpm dev` in the monorepo. If Ethos runs on a different port, update `baseUrl`.

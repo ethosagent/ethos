@@ -1,5 +1,5 @@
 ---
-title: "Why capabilities"
+title: "Why declare capabilities instead of importing dependencies?"
 description: "The architectural insight behind the tool capability framework: declarative capabilities, framework-enforced, no escape hatches in tool code."
 kind: explanation
 audience: developer

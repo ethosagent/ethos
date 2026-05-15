@@ -122,9 +122,9 @@ pnpm build
 pnpm start
 ```
 
-### 6. Verify the connection
+## Verify
 
-Open the deployed dashboard. The Sessions panel should load. Send a test message — the SSE stream should deliver events in real time.
+Open the deployed dashboard. The Sessions panel loads. Send a test message — the SSE stream delivers events in real time.
 
 Check the browser Network tab:
 

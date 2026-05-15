@@ -1,5 +1,5 @@
 ---
-title: "The personality system from outside"
+title: "Why can a dashboard read a personality but not expand its toolset?"
 description: "What an external dashboard can read about a personality, what it cannot change, and why the toolset boundary matters for UI rendering."
 kind: explanation
 audience: developer

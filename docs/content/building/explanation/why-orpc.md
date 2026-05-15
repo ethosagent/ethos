@@ -1,5 +1,5 @@
 ---
-title: "Why oRPC"
+title: "Why oRPC over GraphQL, tRPC, or REST?"
 description: "The reasoning behind choosing oRPC as the RPC framework for the Ethos control plane, and what that choice means for SDK consumers."
 kind: explanation
 audience: developer

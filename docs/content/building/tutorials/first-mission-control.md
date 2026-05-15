@@ -1,6 +1,6 @@
 ---
 title: "Build your first Mission Control in 15 minutes"
-description: "Clone the SDK repo, install dependencies, mint an API key, configure .env, run the example Mission Control, and see sessions, chat, and memory working end to end."
+description: "Clone the SDK repo, mint an API key, run the example Mission Control, and see sessions, chat, and memory streaming end to end."
 kind: tutorial
 audience: developer
 slug: first-mission-control
@@ -172,7 +172,7 @@ export const ethos = new EthosClient({
 - API keys are scoped by capability and pinned to allowed origins.
 - The three-panel layout is a starting point — fork it and reshape for your use case.
 
-## Where to next
+## Next step
 
 The example is a template, not a final product. Build on it:
 

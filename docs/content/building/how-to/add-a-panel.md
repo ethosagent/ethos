@@ -148,6 +148,10 @@ const [activePersonalityId, setActivePersonalityId] = useState<string | null>(nu
 
 For more complex state sharing — multiple panels updating the same data — lift the state to `page.tsx` or introduce a context provider.
 
+## Verify
+
+Save the file and reload the dashboard. The new panel appears in the grid; the RPC call's data renders inside it. Select a different session — the panel updates, confirming the prop is wired. The browser Network tab shows one `POST /rpc/...` per load.
+
 ## Alternatives
 
 - **Replace an existing panel** — swap `SidePanel` for your component instead of adding a fourth column.

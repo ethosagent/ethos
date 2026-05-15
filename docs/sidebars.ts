@@ -82,6 +82,7 @@ const sidebars: SidebarsConfig = {
           collapsed: true,
           items: [
             'building/tutorials/write-your-first-tool',
+            'building/tutorials/first-custom-tool-with-capabilities',
             'building/tutorials/add-an-llm-provider',
             'building/tutorials/add-a-channel-adapter',
             'building/tutorials/first-mission-control',
@@ -96,6 +97,9 @@ const sidebars: SidebarsConfig = {
             'building/how-to/add-a-memory-provider',
             'building/how-to/add-a-hook',
             'building/how-to/add-a-skill',
+            'building/how-to/add-a-filesystem-tool',
+            'building/how-to/add-a-network-tool',
+            'building/how-to/add-a-stateful-tool',
             'building/how-to/point-sdk-at-ethos',
             'building/how-to/add-a-panel',
             'building/how-to/display-live-tool-events',
@@ -125,6 +129,7 @@ const sidebars: SidebarsConfig = {
             'building/reference/sdk-event-stream',
             'building/reference/stability-tier-table',
             'building/reference/api-key-scopes',
+            'building/reference/service-coupling-audit',
           ],
         },
         {

@@ -96,9 +96,9 @@ const sub = EventStream({
 
 If your code sets `credentials`, `withCredentials`, or cookie-forwarding headers, remove them. The SDK handles auth mode automatically based on whether `apiKey` is present.
 
-### 5. Verify
+## Verify
 
-Open the browser Network tab. RPC requests should show an `Authorization: Bearer sk-ethos-...` header. SSE requests should show the same header. No `Cookie` header should be present on cross-origin requests.
+Open the browser Network tab. RPC requests show `Authorization: Bearer sk-ethos-...`. SSE requests show the same header. No `Cookie` header is present on cross-origin requests.
 
 ```typescript
 const { sessions } = await ethos.rpc.sessions.list({ limit: 5 });

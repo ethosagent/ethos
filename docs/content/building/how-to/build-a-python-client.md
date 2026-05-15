@@ -101,6 +101,16 @@ with httpx.stream(
             print(line[5:])
 ```
 
+## Verify
+
+Run a one-line smoke test against a server with at least one session:
+
+```python
+print(sessions_api.sessions_list(limit=1).sessions[0].id)
+```
+
+It prints a session id without raising. If the API key is wrong, the call raises `ApiException` with status `401`; if the origin is missing from the key's allowlist, status `403`.
+
 ## Keeping the client up to date
 
 Re-fetch the spec and re-generate whenever the Ethos server is updated. The OpenAPI spec is generated from the same oRPC contract the TypeScript SDK uses, so it stays in sync with the server — but the generated Python code needs to be regenerated manually.

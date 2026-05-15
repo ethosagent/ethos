@@ -170,3 +170,7 @@ useEffect(() => {
 ```
 
 The `EventStream` function returns an `EventStreamSubscription` with `close()`, `lastSeq`, and `closed` properties. Always close the subscription to avoid leaked connections.
+
+## Verify
+
+Trigger a turn that runs at least one tool — ask the agent to read a file, list directory contents, or fetch a URL. Tool cards appear in the order the tools execute, transition from `running` to `completed` or `failed`, and show `durationMs` on completion. Disconnect the network briefly: on reconnect, `EventStream` resumes from `lastSeq` and no events are duplicated.

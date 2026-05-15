@@ -1,5 +1,5 @@
 ---
-title: "Tool isolation model"
+title: "Why does the tool isolation model have three enforcement points?"
 description: "What a tool cannot do, why each enforcement point matters, and the boundary between framework-provided and capability-gated surfaces."
 kind: explanation
 audience: developer

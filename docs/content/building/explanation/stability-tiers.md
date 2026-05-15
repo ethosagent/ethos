@@ -1,5 +1,5 @@
 ---
-title: "Stability tiers"
+title: "Why do contract namespaces carry @stable and @experimental tags?"
 description: "What the @stable and @experimental tags on contract namespaces promise, and how CI enforces them."
 kind: explanation
 audience: developer

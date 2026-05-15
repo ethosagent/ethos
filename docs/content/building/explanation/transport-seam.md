@@ -1,6 +1,6 @@
 ---
-title: "The transport seam"
-description: "The SDK delegates to RPCLink internally, creating a seam that separates the public API shape from the transport mechanism and enables future in-process dispatch."
+title: "Why does the SDK hide its transport behind a seam?"
+description: "The SDK hides its transport behind a seam — RPC calls flow through RPCLink today, but the same surface can dispatch in-process when a future link lands."
 kind: explanation
 audience: developer
 slug: transport-seam

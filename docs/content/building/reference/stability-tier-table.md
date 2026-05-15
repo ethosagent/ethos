@@ -7,7 +7,9 @@ slug: stability-tier-table
 updated: 2026-05-13
 ---
 
-The Ethos control-plane contract assigns each namespace a stability tier. Stable namespaces follow semver -- breaking changes require a major version bump. Experimental namespaces may change in any minor release.
+## Synopsis {#synopsis}
+
+The Ethos control-plane contract assigns each namespace a stability tier. Stable namespaces follow semver -- breaking changes require a major version bump. Experimental namespaces may change in any minor release. This page lists every namespace, its tier, and the procedures it exposes today.
 
 ## Tiers {#tiers}
 

@@ -135,6 +135,10 @@ export async function POST(req: NextRequest) {
 
 Ethos does not know about your users. Any audit trail that maps dashboard users to Ethos actions must live in your proxy layer.
 
+## Verify
+
+Open the dashboard in an incognito window. The auth provider's login page loads first; the dashboard never renders unauthenticated. After signing in, RPC calls succeed. In the browser Network tab, requests target your `/api/ethos/*` proxy — no `Authorization: Bearer` header is visible on the browser side. The Ethos key only travels between your proxy and Ethos.
+
 ## What this does NOT do
 
 - **Per-user Ethos sessions** — all dashboard users share the same Ethos session pool. One user can see and delete another user's sessions.
