@@ -30,7 +30,6 @@ const TeamManifestSchema: z.ZodType<TeamManifest> = z
     trust_policy: z
       .object({
         mode: z.enum(['flat', 'tiered']),
-        demotion: z.enum(['gradual', 'strict']).optional(),
         thresholds: z
           .object({
             standard_min_completed: z.number().int().nonnegative().optional(),
