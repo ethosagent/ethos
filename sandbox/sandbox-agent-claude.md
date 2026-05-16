@@ -41,6 +41,37 @@ Project rules in this `CLAUDE.md` take precedence over Codex findings. If Codex 
 
 User can opt out for a single command: prefix with `SKIP_CODEX_REVIEW=1` or say "ship it" / "skip review".
 
+## Git Safety
+
+- NEVER commit directly to main without explicit user confirmation
+- NEVER delete files or run destructive git operations (push, reset --hard, branch -D, checkout --, clean -f) without confirmation
+- When asked to "fix" or "clean up," stop and confirm scope before taking destructive actions
+- Approval for one destructive action is not approval for the next — confirm each time
+
+## Plan vs Implementation
+
+- When the user asks to update, refine, or revise a plan document, ONLY edit the plan file — do NOT begin implementing the code changes described in the plan
+- Wait for an explicit "now implement" instruction before writing implementation code
+- The ethos `plan/` directory is gitignored — do not create worktrees for plan-only edits
+
+## Verification Before Claims
+
+- Before reporting a phase or task as complete, re-verify by running `pnpm test && pnpm typecheck && pnpm lint` (or `pnpm check` for all three)
+- When reviewing code from sub-agents, verify each claimed bug against the actual source before accepting it — sub-agent reviews have hallucinated bugs in the past
+- Do not claim "tests pass" or "lint clean" from memory; re-run
+
+## Main session orchestrates; sub-agents execute
+
+The main session does not write or edit files. Every code or doc change — even a one-line typo, a single-file rename, a single-language tweak — is delegated to a sub-agent via the Agent tool. The main session's job is: understand the request, draft a self-contained brief, review the result against the brief, report to the user.
+
+- **Applies to:** Edit, Write, MultiEdit, and any Bash command that mutates the repository (git operations that change state, `mv`, `rm`, package installs, code generation that produces files).
+- **Does NOT apply to:** read-only inspection (Read, Grep, Glob, `ls`/`cat`/`find`/`git status`/`git diff`/`git log` via Bash) and read-only verification commands (`pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm check` — they do not mutate source).
+- **Exception:** edits to AGENTS.md, CLAUDE.md, and other meta files that define agent operating rules may be made in the main session, since they govern the orchestration loop itself.
+
+Sub-agents must still follow the worktree workflow above — the delegation rule composes with the worktree rule, it does not replace it. Briefs to sub-agents should name the worktree path explicitly (`{{SANDBOX_DIR}}/worktree/<slug>`) so the sub-agent edits in the right place.
+
+Why: the main session's context fills with conversation; sub-agents get clean, scoped context for the actual change. Mistakes contained to a sub-agent do not pollute the main session's understanding of the codebase.
+
 ## Engineering rules (hard)
 
 These apply to every task, in addition to the worktree and code-review workflows above.

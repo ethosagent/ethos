@@ -5,7 +5,7 @@ import type { AgentLoop } from '@ethosagent/core';
 import { DEFAULT_TOKENS } from '@ethosagent/design-tokens';
 import type { PendingClarify, Session } from '@ethosagent/types';
 import { createMemoryProvider } from '@ethosagent/wiring';
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BUILTIN_SKIN_NAMES,
@@ -17,7 +17,7 @@ import {
 } from '../skin';
 import { getUpdateStatus, type UpdateStatus } from '../update-check';
 import { AccordionSection, type DetailsMode } from './AccordionSection';
-import { type ChatMessage, ChatPane } from './ChatPane';
+import { type ChatMessage, ChatRow, StreamingRow } from './ChatPane';
 import { ClarifyModal } from './ClarifyModal';
 import { CompletionPanel, getMatches } from './CompletionPanel';
 import { ConsoleHeader } from './ConsoleHeader';
@@ -1001,6 +1001,17 @@ export function App({
 
   return (
     <SkinContext.Provider value={tokens}>
+      {/*
+        Committed chat history prints once via Ink's <Static>. Each settled
+        message lands in terminal scrollback and never re-renders, so the
+        dynamic Ink frame below stays small enough to fit the viewport even
+        across long sessions. Without this the entire chrome would re-print
+        on every state change once total height exceeded the terminal rows —
+        see the duplicated-header symptom we fixed.
+      */}
+      <Static items={messages}>
+        {(msg) => <ChatRow key={msg.id} message={msg} accentColor={accentColor} />}
+      </Static>
       <Box flexDirection="column">
         <ConsoleHeader
           model={currentModel}
@@ -1048,11 +1059,7 @@ export function App({
                 inventory={inventory}
               />
             ) : (
-              <ChatPane
-                messages={messages}
-                streamingText={streamingText}
-                accentColor={accentColor}
-              />
+              <StreamingRow text={streamingText} accentColor={accentColor} />
             )}
             {thinkingText && (
               <AccordionSection

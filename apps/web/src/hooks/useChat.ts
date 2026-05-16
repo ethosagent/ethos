@@ -151,6 +151,15 @@ export function useChat(opts: UseChatOptions): UseChatResult {
           ...(personalityId ? { personalityId } : {}),
         });
         if (!currentSessionId && response.sessionId !== currentSessionId) {
+          // We just created this session locally — the user message lives in
+          // optimistic state and the assistant response will arrive via SSE.
+          // Mark history as "loaded" BEFORE setCurrentSessionId so the
+          // load effect skips its fetch. Otherwise it would race the agent
+          // loop (which persists the user message asynchronously after
+          // chat.send returns) and overwrite state.messages with an empty
+          // array — wiping the optimistic user bubble and leaving only the
+          // assistant response.
+          historyLoadedFor.current = response.sessionId;
           setCurrentSessionId(response.sessionId);
           onSessionCreated?.(response.sessionId);
         }
