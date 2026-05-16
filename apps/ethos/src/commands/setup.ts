@@ -1,8 +1,8 @@
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { WizardStepId } from '@ethosagent/tui/setup';
-import { type EthosConfig, ethosDir, readConfig, writeConfig, writeKeys } from '../config';
-import { getStorage } from '../wiring';
+import { type EthosConfig, ethosDir, readRawConfig, writeConfig, writeKeys } from '../config';
+import { getSecretsResolver, getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -24,7 +24,7 @@ export interface SetupResult {
 
 export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult | null> {
   const storage = getStorage();
-  const existingConfig = await readConfig(storage);
+  const existingConfig = await readRawConfig(storage);
 
   if (process.stdin.isTTY && process.stdout.isTTY) {
     const { runSetupWizard } = await import('@ethosagent/tui/setup');
@@ -60,23 +60,47 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult 
     if (!result) return null;
 
     const { answers } = result;
+    const secrets = getSecretsResolver();
+    const provider = answers.provider ?? 'anthropic';
+
+    let apiKeyRef = '';
+    if (answers.apiKey) {
+      const ref = `providers/${provider}/apiKey`;
+      await secrets.set(ref, answers.apiKey);
+      apiKeyRef = `\${secrets:${ref}}`;
+    }
+
     const config: EthosConfig = {
-      provider: answers.provider ?? 'anthropic',
+      provider,
       model: answers.model ?? 'claude-opus-4-7',
-      apiKey: answers.apiKey ?? '',
+      apiKey: apiKeyRef,
       personality: answers.personality ?? 'researcher',
       memory: answers.memory,
       baseUrl: answers.baseUrl,
-      providers: answers.providers,
-      telegramToken: answers.telegramToken,
-      discordToken: answers.discordToken,
-      slackBotToken: answers.slackBotToken,
-      slackAppToken: answers.slackAppToken,
-      slackSigningSecret: answers.slackSigningSecret,
+      providers: answers.providers
+        ? await storeProviderSecrets(answers.providers, secrets)
+        : undefined,
+      telegramToken: answers.telegramToken
+        ? await storeSecret(secrets, 'telegram/token', answers.telegramToken)
+        : undefined,
+      discordToken: answers.discordToken
+        ? await storeSecret(secrets, 'discord/token', answers.discordToken)
+        : undefined,
+      slackBotToken: answers.slackBotToken
+        ? await storeSecret(secrets, 'slack/botToken', answers.slackBotToken)
+        : undefined,
+      slackAppToken: answers.slackAppToken
+        ? await storeSecret(secrets, 'slack/appToken', answers.slackAppToken)
+        : undefined,
+      slackSigningSecret: answers.slackSigningSecret
+        ? await storeSecret(secrets, 'slack/signingSecret', answers.slackSigningSecret)
+        : undefined,
       emailImapHost: answers.emailImapHost,
       emailImapPort: answers.emailImapPort,
       emailUser: answers.emailUser,
-      emailPassword: answers.emailPassword,
+      emailPassword: answers.emailPassword
+        ? await storeSecret(secrets, 'email/password', answers.emailPassword)
+        : undefined,
       emailSmtpHost: answers.emailSmtpHost,
       emailSmtpPort: answers.emailSmtpPort,
     };
@@ -158,7 +182,15 @@ async function runReadlineFallback({
 
   rl.close();
 
-  const config: EthosConfig = { provider, model, apiKey, personality, baseUrl };
+  let apiKeyRef = '';
+  if (apiKey) {
+    const secrets = getSecretsResolver();
+    const ref = `providers/${provider}/apiKey`;
+    await secrets.set(ref, apiKey);
+    apiKeyRef = `\${secrets:${ref}}`;
+  }
+
+  const config: EthosConfig = { provider, model, apiKey: apiKeyRef, personality, baseUrl };
   await writeConfig(storage, config);
   await scaffoldEthosDir(storage);
 
@@ -169,4 +201,27 @@ async function runReadlineFallback({
   );
 
   return config;
+}
+
+async function storeSecret(
+  secrets: import('@ethosagent/types').SecretsResolver,
+  ref: string,
+  value: string,
+): Promise<string> {
+  await secrets.set(ref, value);
+  return `\${secrets:${ref}}`;
+}
+
+async function storeProviderSecrets(
+  providers: Array<{ provider: string; apiKey: string; model?: string; baseUrl?: string }>,
+  secrets: import('@ethosagent/types').SecretsResolver,
+): Promise<Array<{ provider: string; apiKey: string; model?: string; baseUrl?: string }>> {
+  return Promise.all(
+    providers.map(async (p, i) => ({
+      ...p,
+      apiKey: p.apiKey
+        ? await storeSecret(secrets, `providers/${i}/${p.provider}/apiKey`, p.apiKey)
+        : '',
+    })),
+  );
 }

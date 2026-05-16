@@ -27,14 +27,14 @@ import {
   type EthosConfig,
   ethosDir,
   loadConfigStrict,
-  readConfig,
+  readRawConfig,
   type SlackAppConfig,
   type TelegramBotConfig,
   validateBotBindings,
   writeConfig,
 } from '../config';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';
-import { createAgentLoop, createTeamAgentLoop, getStorage } from '../wiring';
+import { createAgentLoop, createTeamAgentLoop, getSecretsResolver, getStorage } from '../wiring';
 import {
   ensureTeamSupervisors,
   stopTeamSupervisors,
@@ -110,7 +110,7 @@ export async function runGatewaySetup(): Promise<void> {
   }
 
   const storage = getStorage();
-  const config = await readConfig(storage);
+  const config = await readRawConfig(storage);
   if (!config) {
     console.log(`${c.red}No ethos config found. Run ethos setup first.${c.reset}`);
     return;
@@ -134,7 +134,7 @@ export async function runGatewayStart(): Promise<void> {
   // list-shape shim and returns the deprecation messages we should
   // surface before any other work.
   const storage = getStorage();
-  const loaded = await loadConfigStrict(storage);
+  const loaded = await loadConfigStrict(storage, getSecretsResolver());
   if (!loaded) {
     console.error('Run ethos setup first.');
     process.exit(1);

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { teamsDir } from '@ethosagent/team-supervisor';
 import { EthosError } from '@ethosagent/types';
 import type { EthosConfig } from '../config';
-import { readConfig, writeConfig } from '../config';
+import { readRawConfig, writeConfig } from '../config';
 import { getStorage } from '../wiring';
 
 const c = {
@@ -37,7 +37,7 @@ function resolveTeamExists(name: string): void {
 }
 
 async function requireConfig(): Promise<EthosConfig> {
-  const cfg = await readConfig(getStorage());
+  const cfg = await readRawConfig(getStorage());
   if (!cfg) {
     console.error('No config found. Run ethos setup first.');
     process.exit(1);

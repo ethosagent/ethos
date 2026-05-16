@@ -13,7 +13,7 @@ import {
 } from '@ethosagent/observability-sqlite';
 import { RETENTION_DEFAULTS } from '@ethosagent/types';
 import { EthosObservability } from '@ethosagent/wiring';
-import { ethosDir, readConfig } from '../config';
+import { ethosDir, readRawConfig } from '../config';
 import { getStorage } from '../wiring';
 
 // ---------------------------------------------------------------------------
@@ -146,7 +146,7 @@ async function runStats(): Promise<void> {
 async function runPrune(argv: string[]): Promise<void> {
   const flags = parseFlags(argv);
   const storage = getStorage();
-  const config = await readConfig(storage);
+  const config = await readRawConfig(storage);
 
   const globalRetention = config?.retention;
   const baseConfig = mergeRetentionConfig(RETENTION_DEFAULTS, globalRetention ?? {});

@@ -29,6 +29,7 @@ import { runPlugin } from './commands/plugin';
 import { runProcessCommand } from './commands/process';
 import { runRetention } from './commands/retention';
 import { runAll } from './commands/run-all';
+import { runSecrets } from './commands/secrets';
 import { runSecurityAudit } from './commands/security-audit';
 import { runServe } from './commands/serve';
 import { runSessionsCommand } from './commands/sessions';
@@ -42,7 +43,7 @@ import { runTrace } from './commands/trace';
 import { runUpgrade } from './commands/upgrade';
 import { ethosDir, readConfig } from './config';
 import { appendErrorLog } from './error-log';
-import { getStorage } from './wiring';
+import { getSecretsResolver, getStorage } from './wiring';
 
 // Compile-time injected by tsup via define (or read from env at runtime in dev).
 declare const __ETHOS_VERSION__: string;
@@ -50,7 +51,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [setup | chat | sessions | serve | run-all | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
+  'Usage: ethos [setup | chat | sessions | serve | run-all | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | secrets | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -193,7 +194,7 @@ try {
         }
       }
 
-      const config = await readConfig(getStorage());
+      const config = await readConfig(getStorage(), getSecretsResolver());
       if (!config) {
         console.log('No config found. Running setup first...\n');
         const setupResult = await runSetup();
@@ -246,7 +247,7 @@ try {
         }
         console.log();
       } else if (sub === 'set' && args[2]) {
-        const { writeConfig, readConfig: rc } = await import('./config');
+        const { writeConfig, readRawConfig: rc } = await import('./config');
         const cfg = await rc(getStorage());
         if (!cfg) {
           console.error('Run ethos setup first.');
@@ -277,7 +278,7 @@ try {
 
     case 'memory': {
       const sub = args[1] ?? 'show';
-      const config = await readConfig(getStorage());
+      const config = await readConfig(getStorage(), getSecretsResolver());
 
       if (config?.memory === 'vector') {
         const { VectorMemoryProvider } = await import('@ethosagent/memory-vector');
@@ -383,7 +384,7 @@ try {
     }
 
     case 'cron': {
-      const config = await readConfig(getStorage());
+      const config = await readConfig(getStorage(), getSecretsResolver());
       if (!config) {
         console.error('Run ethos setup first.');
         process.exit(1);
@@ -393,7 +394,7 @@ try {
     }
 
     case 'acp': {
-      const config = await readConfig(getStorage());
+      const config = await readConfig(getStorage(), getSecretsResolver());
       if (!config) {
         console.error('Run ethos setup first.');
         process.exit(1);
@@ -403,7 +404,7 @@ try {
     }
 
     case 'serve': {
-      const config = await readConfig(getStorage());
+      const config = await readConfig(getStorage(), getSecretsResolver());
       if (!config) {
         console.error('Run ethos setup first.');
         process.exit(1);
@@ -417,7 +418,7 @@ try {
     // One command for the full production surface; wrap it in PM2/systemd for
     // reboot survival. See docs/content/using/how-to/deploy-in-production.md.
     case 'run-all': {
-      const config = await readConfig(getStorage());
+      const config = await readConfig(getStorage(), getSecretsResolver());
       if (!config) {
         console.error('Run ethos setup first.');
         process.exit(1);
@@ -427,7 +428,7 @@ try {
     }
 
     case 'batch': {
-      const config = await readConfig(getStorage());
+      const config = await readConfig(getStorage(), getSecretsResolver());
       if (!config) {
         console.error('Run ethos setup first.');
         process.exit(1);
@@ -437,7 +438,7 @@ try {
     }
 
     case 'eval': {
-      const config = await readConfig(getStorage());
+      const config = await readConfig(getStorage(), getSecretsResolver());
       if (!config) {
         console.error('Run ethos setup first.');
         process.exit(1);
@@ -447,7 +448,7 @@ try {
     }
 
     case 'evolve': {
-      const config = await readConfig(getStorage());
+      const config = await readConfig(getStorage(), getSecretsResolver());
       if (!config) {
         console.error('Run ethos setup first.');
         process.exit(1);
@@ -468,6 +469,11 @@ try {
 
     case 'keys': {
       await runKeys(args.slice(1));
+      break;
+    }
+
+    case 'secrets': {
+      await runSecrets(args.slice(1));
       break;
     }
 

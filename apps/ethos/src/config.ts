@@ -1,7 +1,36 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { RetentionConfig, RetentionEventsConfig, Storage } from '@ethosagent/types';
+import type {
+  RetentionConfig,
+  RetentionEventsConfig,
+  SecretsResolver,
+  Storage,
+} from '@ethosagent/types';
+
+// ---------------------------------------------------------------------------
+// ${secrets:ref} substitution
+// ---------------------------------------------------------------------------
+
+const SECRETS_REF_RE = /\$\{secrets:([^}]+)\}/g;
+
+async function resolveSecretValue(value: string, secrets: SecretsResolver): Promise<string> {
+  const matches = [...value.matchAll(SECRETS_REF_RE)];
+  if (matches.length === 0) return value;
+  let resolved = value;
+  for (const m of matches) {
+    const ref = m[1];
+    if (!ref) continue;
+    const secret = await secrets.get(ref);
+    if (secret === null) {
+      throw new Error(
+        `Secret not found: ${ref}. Run 'ethos secrets set ${ref} <value>' to store it.`,
+      );
+    }
+    resolved = resolved.replace(m[0], secret);
+  }
+  return resolved;
+}
 
 // ---------------------------------------------------------------------------
 // Key rotation pool
@@ -13,11 +42,17 @@ export interface KeyProfile {
   label?: string;
 }
 
-export async function readKeys(storage: Storage): Promise<KeyProfile[]> {
+export async function readKeys(storage: Storage, secrets?: SecretsResolver): Promise<KeyProfile[]> {
   const src = await storage.read(join(ethosDir(), 'keys.json'));
   if (!src) return [];
   try {
-    return JSON.parse(src) as KeyProfile[];
+    const keys = JSON.parse(src) as KeyProfile[];
+    if (secrets) {
+      for (const k of keys) {
+        k.apiKey = await resolveSecretValue(k.apiKey, secrets);
+      }
+    }
+    return keys;
   } catch {
     return [];
   }
@@ -291,10 +326,19 @@ export function ethosDir(): string {
   return join(homedir(), '.ethos');
 }
 
-export async function readConfig(storage: Storage): Promise<EthosConfig | null> {
+export async function readRawConfig(storage: Storage): Promise<EthosConfig | null> {
   const src = await storage.read(join(ethosDir(), 'config.yaml'));
   if (!src) return null;
   return parseConfigYaml(src);
+}
+
+export async function readConfig(
+  storage: Storage,
+  secrets: SecretsResolver,
+): Promise<EthosConfig | null> {
+  const raw = await readRawConfig(storage);
+  if (!raw) return null;
+  return resolveConfigSecrets(raw, secrets);
 }
 
 export async function writeConfig(storage: Storage, config: EthosConfig): Promise<void> {
@@ -392,6 +436,73 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
     if (v.baseUrl) lines.push(`auxiliary.vision.baseUrl: ${v.baseUrl}`);
   }
   await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`);
+}
+
+export async function resolveConfigSecrets(
+  config: EthosConfig,
+  secrets: SecretsResolver,
+): Promise<EthosConfig> {
+  const r = { ...config };
+  r.apiKey = await resolveSecretValue(r.apiKey, secrets);
+  if (r.baseUrl) r.baseUrl = await resolveSecretValue(r.baseUrl, secrets);
+  if (r.telegramToken) r.telegramToken = await resolveSecretValue(r.telegramToken, secrets);
+  if (r.discordToken) r.discordToken = await resolveSecretValue(r.discordToken, secrets);
+  if (r.slackBotToken) r.slackBotToken = await resolveSecretValue(r.slackBotToken, secrets);
+  if (r.slackAppToken) r.slackAppToken = await resolveSecretValue(r.slackAppToken, secrets);
+  if (r.slackSigningSecret)
+    r.slackSigningSecret = await resolveSecretValue(r.slackSigningSecret, secrets);
+  if (r.emailPassword) r.emailPassword = await resolveSecretValue(r.emailPassword, secrets);
+  if (r.providers) {
+    r.providers = await Promise.all(
+      r.providers.map(async (p) => ({
+        ...p,
+        apiKey: await resolveSecretValue(p.apiKey, secrets),
+      })),
+    );
+  }
+  if (r.telegram?.bots) {
+    r.telegram = {
+      ...r.telegram,
+      bots: await Promise.all(
+        r.telegram.bots.map(async (bot) => ({
+          ...bot,
+          token: await resolveSecretValue(bot.token, secrets),
+        })),
+      ),
+    };
+  }
+  if (r.slack?.apps) {
+    r.slack = {
+      ...r.slack,
+      apps: await Promise.all(
+        r.slack.apps.map(async (app) => ({
+          ...app,
+          botToken: await resolveSecretValue(app.botToken, secrets),
+          appToken: await resolveSecretValue(app.appToken, secrets),
+          signingSecret: await resolveSecretValue(app.signingSecret, secrets),
+        })),
+      ),
+    };
+  }
+  if (r.auxiliary?.compression?.apiKey) {
+    r.auxiliary = {
+      ...r.auxiliary,
+      compression: {
+        ...r.auxiliary.compression,
+        apiKey: await resolveSecretValue(r.auxiliary.compression.apiKey, secrets),
+      },
+    };
+  }
+  if (r.auxiliary?.vision?.apiKey) {
+    r.auxiliary = {
+      ...r.auxiliary,
+      vision: {
+        ...r.auxiliary.vision,
+        apiKey: await resolveSecretValue(r.auxiliary.vision.apiKey, secrets),
+      },
+    };
+  }
+  return r;
 }
 
 function parseConfigYaml(src: string): EthosConfig {
@@ -632,7 +743,7 @@ function parseConfigYaml(src: string): EthosConfig {
         : undefined,
   };
   // Stash parse errors so the strict loader can surface them at boot.
-  // readConfig (used by CLI commands that don't gateway-boot) ignores them
+  // readRawConfig (used by CLI commands that don't gateway-boot) ignores them
   // and continues with whatever entries did parse.
   parseErrorsByConfig.set(config, parseErrors);
   return config;
@@ -655,11 +766,15 @@ export interface LoadedConfig {
   deprecations: string[];
 }
 
-export async function loadConfigStrict(storage: Storage): Promise<LoadedConfig | null> {
-  const raw = await readConfig(storage);
-  if (!raw) return null;
-  const parseErrors = parseErrorsByConfig.get(raw) ?? [];
-  const { config, deprecations } = applyPlatformShim(raw);
+export async function loadConfigStrict(
+  storage: Storage,
+  secrets?: SecretsResolver,
+): Promise<LoadedConfig | null> {
+  const parsed = await readRawConfig(storage);
+  if (!parsed) return null;
+  const parseErrors = parseErrorsByConfig.get(parsed) ?? [];
+  const resolved = secrets ? await resolveConfigSecrets(parsed, secrets) : parsed;
+  const { config, deprecations } = applyPlatformShim(resolved);
   return { config, parseErrors, deprecations };
 }
 

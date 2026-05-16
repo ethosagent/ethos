@@ -1,6 +1,6 @@
 import { mergeRetentionConfig, parseDuration } from '@ethosagent/observability-sqlite';
 import { RETENTION_DEFAULTS, type RetentionConfig } from '@ethosagent/types';
-import { readConfig, writeConfig } from '../config';
+import { readRawConfig, writeConfig } from '../config';
 import { getStorage } from '../wiring';
 
 // ---------------------------------------------------------------------------
@@ -172,7 +172,7 @@ function parseFlags(argv: string[]): {
 
 export async function runRetention(sub: string, argv: string[]): Promise<void> {
   const storage = getStorage();
-  const config = await readConfig(storage);
+  const config = await readRawConfig(storage);
   if (!config) {
     console.error('Run ethos setup first.');
     process.exit(1);

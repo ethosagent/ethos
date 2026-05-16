@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
-import { ethosDir, readConfig, writeConfig } from '../config';
+import { ethosDir, readRawConfig, writeConfig } from '../config';
 
 // context_compression F1 — auxiliary.compression config block.
 describe('auxiliary.compression config parsing', () => {
@@ -9,7 +9,7 @@ describe('auxiliary.compression config parsing', () => {
     const storage = new InMemoryStorage();
     await storage.mkdir(ethosDir());
     await storage.write(join(ethosDir(), 'config.yaml'), yaml);
-    return readConfig(storage);
+    return readRawConfig(storage);
   }
 
   const base = ['provider: anthropic', 'model: claude-opus-4-7', 'apiKey: sk', 'personality: p'];
@@ -61,7 +61,7 @@ describe('auxiliary.compression config parsing', () => {
       },
     };
     await writeConfig(storage, original);
-    const roundTripped = await readConfig(storage);
+    const roundTripped = await readRawConfig(storage);
     expect(roundTripped?.auxiliary?.compression).toEqual(original.auxiliary.compression);
   });
 });
@@ -75,7 +75,7 @@ describe('auxiliary.vision config parsing', () => {
     const storage = new InMemoryStorage();
     await storage.mkdir(ethosDir());
     await storage.write(join(ethosDir(), 'config.yaml'), yaml);
-    return readConfig(storage);
+    return readRawConfig(storage);
   }
 
   const base = ['provider: anthropic', 'model: claude-opus-4-7', 'apiKey: sk', 'personality: p'];
@@ -125,7 +125,7 @@ describe('auxiliary.vision config parsing', () => {
       },
     };
     await writeConfig(storage, original);
-    const roundTripped = await readConfig(storage);
+    const roundTripped = await readRawConfig(storage);
     expect(roundTripped?.auxiliary?.vision).toEqual(original.auxiliary.vision);
   });
 
