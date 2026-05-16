@@ -6,10 +6,9 @@ import type {
   Session,
   SessionFilter,
   SessionStore,
-  SessionUsage,
   StoredMessage,
 } from '@ethosagent/types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   AcpServer,
   type AgentRunner,

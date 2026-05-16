@@ -1,4 +1,4 @@
-import type { Message, TokenUsage, ToolDefinitionLite } from './llm';
+import type { Message, ToolDefinitionLite } from './llm';
 import type { PersonalityConfig } from './personality';
 import type { InboundMessage, OutboundMessage } from './platform';
 import type { StoredMessage } from './session';

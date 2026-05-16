@@ -59,7 +59,7 @@ export class JsonlRequestDumpStore implements RequestDumpStore {
     await this.ensureDir();
     await this.initSize();
     if (this.shouldRotate()) await this.rotate();
-    const line = JSON.stringify(record) + '\n';
+    const line = `${JSON.stringify(record)}\n`;
     await appendFile(this.currentFile, line, 'utf-8');
     this.currentSize += Buffer.byteLength(line);
   }

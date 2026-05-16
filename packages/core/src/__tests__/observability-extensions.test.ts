@@ -5,7 +5,7 @@ import type {
   Message,
   RequestDumpRecord,
 } from '@ethosagent/types';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
 import { DefaultHookRegistry } from '../hook-registry';
@@ -87,6 +87,7 @@ describe('Observability Extensions', () => {
       });
 
       const loop = new AgentLoop({ llm: makeMockLLM(['response']), hooks });
+      // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
       loop['personalities'].define({
         id: 'obs-test',
         name: 'ObsTest',
@@ -128,6 +129,7 @@ describe('Observability Extensions', () => {
       });
 
       const loop = new AgentLoop({ llm: makeMockLLM(['enriched response']), hooks });
+      // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
       loop['personalities'].define({
         id: 'obs-test',
         name: 'ObsTest',
@@ -265,6 +267,7 @@ describe('Observability Extensions', () => {
         llm: makeMockLLM(['dump test']),
         requestDumpStore: store,
       });
+      // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
       loop['personalities'].define({
         id: 'dump-test',
         name: 'DumpTest',

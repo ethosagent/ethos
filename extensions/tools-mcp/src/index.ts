@@ -7,7 +7,6 @@ import type { Logger, SecretsResolver, Storage, Tool, ToolResult } from '@ethosa
 import { Client } from '@modelcontextprotocol/sdk/client';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
-import type { OAuthConfig } from './oauth';
 import { ensureValidToken, refreshToken } from './oauth';
 import { rewriteDefinitionsToRefs } from './schema-rewrite';
 
@@ -237,7 +236,7 @@ export class McpClient {
       const headers = { ...this._config.headers };
       if (this._config.auth?.type === 'oauth2' && this._secrets) {
         const token = await ensureValidToken(this._config.name, this._config.auth, this._secrets);
-        headers['Authorization'] = `Bearer ${token}`;
+        headers.Authorization = `Bearer ${token}`;
       }
       const { StreamableHTTPClientTransport } = await import(
         '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -257,7 +256,7 @@ export class McpClient {
       const headers = { ...this._config.headers };
       if (this._config.auth?.type === 'oauth2' && this._secrets) {
         const token = await ensureValidToken(this._config.name, this._config.auth, this._secrets);
-        headers['Authorization'] = `Bearer ${token}`;
+        headers.Authorization = `Bearer ${token}`;
       }
       // Lazy import to avoid pulling in eventsource when not needed
       const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');

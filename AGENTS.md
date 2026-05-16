@@ -54,6 +54,24 @@ If two existing patterns in the codebase contradict, don't blend them. Pick one 
 
 If your change conflicts with the constitution, either refactor to fit or open a constitutional amendment per [ARCHITECTURE.md §VI](./ARCHITECTURE.md). Do not introduce constitutional violations to land a feature faster — the cost compounds.
 
+8. Git Safety
+Never commit directly to main without explicit user confirmation. Never delete files or run destructive git operations (push, reset --hard, branch -D, checkout --, clean -f) without confirmation. When asked to "fix" or "clean up," stop and confirm scope before taking destructive actions. Approval for one destructive action is not approval for the next — confirm each time.
+
+9. Plan vs Implementation
+When the user asks to update, refine, or revise a plan document, ONLY edit the plan file — do not begin implementing the code changes described in the plan. Wait for an explicit "now implement" instruction before writing implementation code. The plan/ directory is gitignored — do not create worktrees for plan-only edits.
+
+10. Verification Before Claims
+Before reporting a phase or task as complete, re-verify by running `pnpm test && pnpm typecheck && pnpm lint`. When reviewing code from sub-agents, verify each claimed bug against the actual source before accepting or acting on it — sub-agent reviews have hallucinated bugs in the past. Do not claim "tests pass" or "lint clean" from memory; re-run.
+
+11. Main session orchestrates; sub-agents execute
+The main session does not write or edit files. Every code or doc change — even a one-line typo, a single-file rename, a single-language tweak — is delegated to a sub-agent via the Agent tool. The main session's job is: understand the request, draft a self-contained brief, review the result against the brief, report to the user.
+
+- Applies to: Edit, Write, MultiEdit, and any Bash command that mutates the repository (git operations that change state, mv, rm, package installs, code generation that produces files).
+- Does NOT apply to: read-only inspection (Read, Grep, Glob, `ls`/`cat`/`find`/`git status`/`git diff`/`git log` via Bash) and read-only verification (`pnpm test`, `pnpm typecheck`, `pnpm lint` — they do not mutate source).
+- Exception: edits to AGENTS.md, CLAUDE.md, and other meta files that define agent operating rules may be made in the main session, since they govern the orchestration loop itself.
+
+Why: the main session's context fills with conversation; sub-agents get clean, scoped context for the actual change. Mistakes contained to a sub-agent do not pollute the main session's understanding of the codebase.
+
 What this is
 Ethos is a TypeScript agent framework where personality is architecture. A personality (ETHOS.md + toolset.yaml + config.yaml) is a structural component — not a system prompt string — that shapes tool access, memory filtering, model routing, and communication style simultaneously.
 

@@ -4,7 +4,6 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { describe, expect, it } from 'vitest';
 import {
   isServerAllowed,
-  McpClient,
   McpManager,
   type McpServerConfig,
   McpSessionView,
@@ -41,20 +40,6 @@ async function createTestServer(name = 'test-server') {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   return { clientTransport, server };
-}
-
-class TestMcpClient extends McpClient {
-  private _inMemoryTransport: InstanceType<typeof InMemoryTransport>;
-
-  constructor(transport: InstanceType<typeof InMemoryTransport>, name = 'test') {
-    super({ name, transport: 'stdio', command: 'unused', keepaliveSeconds: 0 });
-    this._inMemoryTransport = transport;
-  }
-
-  // biome-ignore lint/suspicious/noExplicitAny: override for test
-  protected override async _createTransport(): Promise<any> {
-    return this._inMemoryTransport;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +114,7 @@ describe('McpSessionView', () => {
     expect(view.getTools()).toHaveLength(0);
 
     // Register a session server
-    const { clientTransport } = await createTestServer('session-srv');
+    await createTestServer('session-srv');
 
     // We need to mock the McpClient to use in-memory transport.
     // Since registerSessionServers creates clients internally, we test

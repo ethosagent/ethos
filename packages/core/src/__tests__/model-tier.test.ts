@@ -47,6 +47,7 @@ describe('Model tier resolution', () => {
     const llm = makeMockLLM(onComplete);
     const loop = new AgentLoop({ llm });
 
+    // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
     loop['personalities'].define({
       id: 'tiered',
       name: 'Tiered',
@@ -66,6 +67,7 @@ describe('Model tier resolution', () => {
     const llm = makeMockLLM(onComplete);
     const loop = new AgentLoop({ llm });
 
+    // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
     loop['personalities'].define({
       id: 'tiered',
       name: 'Tiered',
@@ -84,6 +86,7 @@ describe('Model tier resolution', () => {
     const llm = makeMockLLM(onComplete);
     const loop = new AgentLoop({ llm });
 
+    // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
     loop['personalities'].define({
       id: 'plain',
       name: 'Plain',
@@ -101,6 +104,7 @@ describe('Model tier resolution', () => {
     const llm = makeMockLLM(onComplete);
     const loop = new AgentLoop({ llm });
 
+    // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
     loop['personalities'].define({
       id: 'tiered',
       name: 'Tiered',
@@ -119,6 +123,7 @@ describe('Model tier resolution', () => {
     const llm = makeMockLLM(onComplete);
     const loop = new AgentLoop({ llm });
 
+    // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
     loop['personalities'].define({
       id: 'tiered',
       name: 'Tiered',
@@ -143,6 +148,7 @@ describe('Model tier resolution', () => {
       modelRouting: { tiered: 'override-model' },
     });
 
+    // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
     loop['personalities'].define({
       id: 'tiered',
       name: 'Tiered',
@@ -160,6 +166,7 @@ describe('Model tier resolution', () => {
     const llm = makeMockLLM();
     const loop = new AgentLoop({ llm });
 
+    // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
     loop['personalities'].define({
       id: 'tiered',
       name: 'Tiered',
