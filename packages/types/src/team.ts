@@ -54,6 +54,19 @@ export interface TeamManifest {
   dispatch_prefer_reliable?: boolean;
   /** Agents to boot as part of this team. */
   members: TeamMember[];
+  /** When true, bounced tickets produce structured postmortem entries in team memory. Default: true for multi-member teams. */
+  postmortems?: boolean;
+  /** Reputation-aware autonomy tiers. When mode is 'tiered', agents earn higher retry budgets and can skip optional gates based on their success ratio. */
+  trust_policy?: {
+    mode: 'flat' | 'tiered';
+    demotion?: 'gradual' | 'strict';
+    thresholds?: {
+      standard_min_completed?: number;
+      standard_min_ratio?: number;
+      trusted_min_completed?: number;
+      trusted_min_ratio?: number;
+    };
+  };
   /** Plan B — kanban dispatcher tuning. Optional; all fields have sane defaults. */
   kanban?: {
     /**

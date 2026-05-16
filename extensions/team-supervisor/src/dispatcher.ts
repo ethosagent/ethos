@@ -1,4 +1,5 @@
 import type { KanbanStore, Task } from '@ethosagent/kanban-store';
+import { autonomyTier, type TrustPolicy, tierMaxRetries } from '@ethosagent/kanban-store';
 import type { MemberRuntime } from './runtime';
 
 // ---------------------------------------------------------------------------
@@ -87,6 +88,7 @@ export interface DispatcherOptions {
    * perfect record (ratio 1) so new members are not penalized. Default: false.
    */
   preferReliable?: boolean;
+  trustPolicy?: TrustPolicy;
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +114,7 @@ export class Dispatcher {
   private readonly orphanGracePeriodMs: number;
   private readonly stalenessThresholdMs: number;
   private readonly preferReliable: boolean;
+  private readonly trustPolicy: TrustPolicy | undefined;
   private readonly inflight = new Map<string, AbortController>();
   private timer: NodeJS.Timeout | null = null;
   private running = false;
@@ -128,6 +131,7 @@ export class Dispatcher {
     this.orphanGracePeriodMs = opts.orphanGracePeriodMs ?? DEFAULT_ORPHAN_GRACE_MS;
     this.stalenessThresholdMs = opts.stalenessThresholdMs ?? DEFAULT_STALENESS_THRESHOLD_MS;
     this.preferReliable = opts.preferReliable ?? false;
+    this.trustPolicy = opts.trustPolicy;
   }
 
   /**
@@ -211,15 +215,17 @@ export class Dispatcher {
       const status = this.supervisor.statusOf(assignee);
       if (port === null || status !== 'running') continue;
 
-      // Claim atomically; if a concurrent claim already moved it to running,
-      // findReadyToDispatch wouldn't have returned it — still, guard.
-      //
-      // `updateStatus` owns the retry-budget invariant: a re-claim that would
-      // push retry_count past max_retries lands the task in 'failed' instead of
-      // 'running'. So after the claim we check what status it actually reached —
-      // if it's not 'running', the budget was exhausted and there's nothing to
-      // dispatch. This is the "agent keeps retrying the impossible task forever"
-      // guard.
+      // Tier-based max_retries: when a task has no explicit max_retries and a
+      // trust_policy is configured, set it from the assignee's autonomy tier.
+      if (task.maxRetries === null && this.trustPolicy?.mode === 'tiered') {
+        const stats = this.board.getMemberStats();
+        const memberStats = stats.get(assignee);
+        if (memberStats) {
+          const tier = autonomyTier(memberStats, this.trustPolicy);
+          this.board.setMaxRetries(task.id, tierMaxRetries(tier));
+        }
+      }
+
       let claimed: Task;
       try {
         claimed = this.board.updateStatus(task.id, 'running', 'dispatched', 'dispatcher');

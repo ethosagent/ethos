@@ -150,7 +150,7 @@ export async function createLLM(config: EthosConfig): Promise<LLMProvider> {
 }
 
 export async function createAgentLoop(
-  config: EthosConfig & Pick<WiringConfig, 'teamName' | 'role'>,
+  config: EthosConfig & Pick<WiringConfig, 'teamName' | 'role' | 'postmortems' | 'trustPolicy'>,
   opts: { profile?: WiringProfile; meshRegistryPath?: string } = {},
 ): Promise<AgentLoop> {
   const rotated = await withRotation(config);
@@ -162,6 +162,8 @@ export async function createAgentLoop(
       ? { auxiliaryCompression: config.auxiliary.compression }
       : {}),
     ...(config.auxiliary?.vision ? { auxiliaryVision: config.auxiliary.vision } : {}),
+    ...(config.postmortems !== undefined ? { postmortems: config.postmortems } : {}),
+    ...(config.trustPolicy !== undefined ? { trustPolicy: config.trustPolicy } : {}),
   };
   return packageCreateAgentLoop(wiringConfig, {
     dataDir: ethosDir(),
@@ -229,6 +231,8 @@ export async function createTeamAgentLoop(
       personality: coordinatorPersonality,
       teamName,
       role: opts.role ?? 'coordinator',
+      postmortems: manifest.postmortems,
+      trustPolicy: manifest.trust_policy,
     },
     { profile: opts.profile ?? 'cli', meshRegistryPath: meshRegistryPath(meshName) },
   );

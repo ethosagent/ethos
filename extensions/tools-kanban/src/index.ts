@@ -9,6 +9,7 @@ import type {
 } from '@ethosagent/kanban-store';
 import type { HookRegistry, Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
+export { type PostmortemHandlerOptions, registerPostmortemHandler } from './postmortem';
 export {
   createKanbanRoleGateHook,
   type KanbanRoleGateOptions,
@@ -593,7 +594,11 @@ function createKanbanComment(store: KanbanStore): Tool {
 // kanban_complete / kanban_block / kanban_unblock
 // ---------------------------------------------------------------------------
 
-function createKanbanComplete(store: KanbanStore, hooks?: HookRegistry): Tool {
+function createKanbanComplete(
+  store: KanbanStore,
+  hooks?: HookRegistry,
+  autonomyTierOf?: AutonomyTierOf,
+): Tool {
   return {
     name: 'kanban_complete',
     description: `End the open run with outcome=completed, set status=done.\n${RULES}`,
@@ -635,20 +640,28 @@ function createKanbanComplete(store: KanbanStore, hooks?: HookRegistry): Tool {
           if (task?.status !== 'running') {
             return errorResult(`no open run: ${taskId}`, 'execution_failed');
           }
+          const assigneeTier =
+            task.assignee && autonomyTierOf ? autonomyTierOf(task.assignee) : undefined;
           const verdict = await hooks.fireClaiming('before_ticket_complete', {
             taskId,
             summary,
             ...(task?.acceptanceCriteria != null
               ? { acceptanceCriteria: task.acceptanceCriteria }
               : {}),
+            ...(assigneeTier ? { autonomyTier: assigneeTier } : {}),
           });
           if (verdict.handled) {
-            const t = store.updateStatus(
+            const reason = verdict.reason ?? 'completion rejected';
+            const t = store.updateStatus(taskId, 'needs_revision', reason, actorOf(ctx));
+            hooks.fireVoid('after_ticket_revision', {
               taskId,
-              'needs_revision',
-              verdict.reason ?? 'completion rejected',
-              actorOf(ctx),
-            );
+              summary,
+              ...(task?.acceptanceCriteria != null
+                ? { acceptanceCriteria: task.acceptanceCriteria }
+                : {}),
+              reason,
+              assignee: task.assignee ?? actorOf(ctx),
+            });
             return jsonResult(fullTask(t));
           }
         }
@@ -880,7 +893,15 @@ function createKanbanArchive(store: KanbanStore): Tool {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createKanbanTools(opts: { store: KanbanStore; hooks?: HookRegistry }): Tool[] {
+export type AutonomyTierOf = (
+  assignee: string,
+) => 'probationary' | 'standard' | 'trusted' | undefined;
+
+export function createKanbanTools(opts: {
+  store: KanbanStore;
+  hooks?: HookRegistry;
+  autonomyTierOf?: AutonomyTierOf;
+}): Tool[] {
   const { store, hooks } = opts;
   return [
     createKanbanCreate(store),
@@ -889,7 +910,7 @@ export function createKanbanTools(opts: { store: KanbanStore; hooks?: HookRegist
     createKanbanShow(store),
     createKanbanUpdateStatus(store),
     createKanbanComment(store),
-    createKanbanComplete(store, hooks),
+    createKanbanComplete(store, hooks, opts.autonomyTierOf),
     createKanbanBlock(store),
     createKanbanUnblock(store),
     createKanbanHeartbeat(store),
