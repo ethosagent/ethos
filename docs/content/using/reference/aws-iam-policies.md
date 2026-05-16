@@ -13,7 +13,7 @@ Two IAM policies cover every AWS Secrets Manager operation Ethos needs. The **re
 
 ## Read-only instance role {#read-only-instance-role}
 
-Attach this policy to the IAM role your Ethos instance assumes. It grants exactly two actions: fetch a secret value and describe its metadata.
+Attach this policy to the IAM role your Ethos instance assumes. It grants exactly three actions: fetch a secret value, describe its metadata, and list secrets under the prefix.
 
 ```json
 {
@@ -23,14 +23,15 @@ Attach this policy to the IAM role your Ethos instance assumes. It grants exactl
     "Effect": "Allow",
     "Action": [
       "secretsmanager:GetSecretValue",
-      "secretsmanager:DescribeSecret"
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:ListSecrets"
     ],
     "Resource": "arn:aws:secretsmanager:<region>:<account>:secret:ethos/<deployment>/*"
   }]
 }
 ```
 
-This is the policy from the [Configure AWS Secrets Manager](../how-to/configure-aws-secrets.md) guide. The instance can read its own secrets and nothing else.
+This is the policy from the [Configure AWS Secrets Manager](../how-to/configure-aws-secrets.md) guide. The instance can read and list its own secrets and nothing else.
 
 ## Rotation-operator role {#rotation-operator-role}
 

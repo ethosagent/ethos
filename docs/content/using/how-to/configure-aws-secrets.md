@@ -29,7 +29,7 @@ Fetch Ethos [secrets](../../getting-started/glossary.md#secret) from AWS Secrets
 
 ### 1. Create the IAM policy
 
-The policy grants two actions scoped to a single prefix. Nothing else.
+The policy grants three actions scoped to a single prefix. Nothing else.
 
 ```json
 {
@@ -39,7 +39,8 @@ The policy grants two actions scoped to a single prefix. Nothing else.
     "Effect": "Allow",
     "Action": [
       "secretsmanager:GetSecretValue",
-      "secretsmanager:DescribeSecret"
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:ListSecrets"
     ],
     "Resource": "arn:aws:secretsmanager:<region>:<account>:secret:ethos/<deployment>/*"
   }]
