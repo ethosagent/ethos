@@ -437,7 +437,9 @@ export async function createAgentLoop(
         const stats = store.getMemberStats();
         const s = stats.get(assignee);
         if (!s) return undefined;
-        return autonomyTier(s, policy);
+        const total = s.ticketsCompleted + s.ticketsFailed + s.ticketsOrphaned;
+        const ratio = total > 0 ? s.ticketsCompleted / total : 0;
+        return { tier: autonomyTier(s, policy), ratio };
       };
     }
     for (const tool of createKanbanTools(kanbanOpts)) tools.register(tool);

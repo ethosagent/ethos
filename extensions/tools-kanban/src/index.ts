@@ -640,7 +640,7 @@ function createKanbanComplete(
           if (task?.status !== 'running') {
             return errorResult(`no open run: ${taskId}`, 'execution_failed');
           }
-          const assigneeTier =
+          const assigneeInfo =
             task.assignee && autonomyTierOf ? autonomyTierOf(task.assignee) : undefined;
           const verdict = await hooks.fireClaiming('before_ticket_complete', {
             taskId,
@@ -648,12 +648,12 @@ function createKanbanComplete(
             ...(task?.acceptanceCriteria != null
               ? { acceptanceCriteria: task.acceptanceCriteria }
               : {}),
-            ...(assigneeTier ? { autonomyTier: assigneeTier } : {}),
+            ...(assigneeInfo ? { autonomyTier: assigneeInfo.tier } : {}),
           });
           if (verdict.handled) {
             const reason = verdict.reason ?? 'completion rejected';
             const t = store.updateStatus(taskId, 'needs_revision', reason, actorOf(ctx));
-            hooks.fireVoid('after_ticket_revision', {
+            await hooks.fireVoid('after_ticket_revision', {
               taskId,
               summary,
               ...(task?.acceptanceCriteria != null
@@ -661,6 +661,9 @@ function createKanbanComplete(
                 : {}),
               reason,
               assignee: task.assignee ?? actorOf(ctx),
+              ...(assigneeInfo
+                ? { autonomyTier: assigneeInfo.tier, successRatio: assigneeInfo.ratio }
+                : {}),
             });
             return jsonResult(fullTask(t));
           }
@@ -893,9 +896,12 @@ function createKanbanArchive(store: KanbanStore): Tool {
 // Factory
 // ---------------------------------------------------------------------------
 
-export type AutonomyTierOf = (
-  assignee: string,
-) => 'probationary' | 'standard' | 'trusted' | undefined;
+export interface AutonomyInfo {
+  tier: 'probationary' | 'standard' | 'trusted';
+  ratio: number;
+}
+
+export type AutonomyTierOf = (assignee: string) => AutonomyInfo | undefined;
 
 export function createKanbanTools(opts: {
   store: KanbanStore;
