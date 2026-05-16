@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-slack
 time: "15 min"
-updated: 2026-05-12
+updated: 2026-05-16
 ---
 
 ## Task
@@ -51,6 +51,8 @@ In `https://api.slack.com/apps`:
    - `im:write` — open DM channels for outbound messages.
    - `chat:write` — post messages and edit them.
    - `users:read` — resolve user ids when audit-logging.
+   - `files:read` — download user-attached files from `url_private_download`. Without it, Slack returns an HTML page in place of the file bytes; see [Receive files via Slack](../using/how-to/receive-files-via-slack.md).
+   - `reactions:write` — set and clear the 👀 receipt reaction on inbound messages (best-effort; missing scope just drops the reaction).
 3. Under **Socket Mode** → **Enable Socket Mode**.
 4. Under **Basic Information** → **App-Level Tokens** → **Generate Token and Scopes**, add the `connections:write` scope. Copy the `xapp-…` token.
 5. Under **Event Subscriptions** → **Enable Events**, subscribe to bot events:

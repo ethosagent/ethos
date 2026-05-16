@@ -1,5 +1,28 @@
 export type ToolResult =
-  | { ok: true; value: string; cost_usd?: number }
+  | {
+      ok: true;
+      /**
+       * Human/LLM-readable string. Always present. Multimodal or
+       * structured-data tools populate `structured` alongside and use
+       * `value` as a concise text summary so the LLM has something to
+       * react to without parsing JSON.
+       */
+      value: string;
+      /**
+       * Optional structured payload for tools that produce non-string
+       * results — image bytes (as base64 or a path), tabular data, JSON
+       * documents, multi-part content. Consumers that don't know about a
+       * tool's specific structured shape SHOULD ignore this field; the
+       * `value` string carries the authoritative summary.
+       *
+       * Added in v0.x. Forward-compatible: existing tools never set this
+       * and existing consumers never read it; adding it later in a
+       * release that already has external `ToolResult` consumers
+       * (plugin authors, SDK clients) would force a typed break.
+       */
+      structured?: Record<string, unknown>;
+      cost_usd?: number;
+    }
   | {
       ok: false;
       error: string;

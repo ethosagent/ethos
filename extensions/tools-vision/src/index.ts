@@ -127,7 +127,12 @@ export function makeVisionAnalyze(opts: VisionToolsOptions): Tool {
     maxResultChars: MAX_RESULT_CHARS,
     capabilities: {
       fs_reach: { read: 'from-personality' },
-      attachments: { kinds: ['image'] },
+      // The tool description and capability table both support PDFs ('file'
+      // kind in Telegram/Slack's classification). Without 'file' here, the
+      // ScopedAttachments filter drops PDFs before the tool sees them and
+      // openByRef throws 'No attachment with ref "att-0"' — misleading
+      // because the attachment exists, just not in this tool's scope.
+      attachments: { kinds: ['image', 'file'] },
     },
     // Tool output is the LLM's interpretation of an image / document the user
     // supplied — owner-authored prompt + the model's reply. Not adversary

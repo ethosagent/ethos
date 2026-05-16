@@ -166,6 +166,13 @@ export interface SlackAdapterConfig {
   personalityUnfurl?: PersonalityUnfurlReader;
   /** Optional attachment cache for downloading and caching inbound file attachments. */
   cache?: AttachmentCache;
+  /**
+   * Slack emoji name (no colons) set as a reaction on inbound messages to
+   * acknowledge receipt, then cleared once the agent's reply has landed.
+   * Default `'eyes'` (👀). Requires the `reactions:write` bot scope; missing
+   * scope is swallowed silently so the bot still works without it.
+   */
+  receiptReaction?: string;
 }
 
 export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
@@ -173,7 +180,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   readonly displayName = 'Slack';
   readonly canSendTyping = false;
   readonly canEditMessage = true;
-  readonly canReact = false; // capabilities don't lie — reactions land in a future phase
+  readonly canReact = true;
   readonly canSendFiles = false;
   readonly maxMessageLength = 3000;
 
@@ -217,6 +224,17 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   private readonly chunkMap = new Map<string, string[]>();
   private readonly chunkMapMaxEntries = 1024;
 
+  /** Emoji name (no colons) for the inbound-receipt reaction. */
+  private readonly receiptReaction: string;
+  /**
+   * Pending receipt-reaction ledger. Keyed by `${chatId}:${threadTs|'top'}`
+   * so concurrent in-flight replies in different threads of the same channel
+   * don't clobber each other's tracked message ts. Value is the original
+   * inbound message ts that carries the reaction.
+   */
+  private readonly pendingReactions = new Map<string, string>();
+  private readonly pendingReactionsMaxEntries = 1024;
+
   constructor(config: SlackAdapterConfig) {
     this.app = new App({
       token: config.botToken,
@@ -240,6 +258,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     this.webUiBaseUrl = normalizeWebUiBaseUrl(config.webUiBaseUrl);
     this.cache = config.cache;
     this.botToken = config.botToken;
+    this.receiptReaction = config.receiptReaction ?? 'eyes';
 
     if (config.storage) {
       const slackDir = config.slackDir ?? join(homeEthosDir(), 'slack');
@@ -281,6 +300,11 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       },
       {
         onEnvelope: (msg) => {
+          // Acknowledge receipt with an emoji reaction immediately, before
+          // any attachment download or agent work. Matches Telegram's UX:
+          // the user sees we got their message in <100 ms.
+          this.addReceiptReaction(msg);
+
           const raw = msg.raw as Record<string, unknown> | undefined;
           const files = raw?.files as RawSlackFile[] | undefined;
           if (files && files.length > 0 && this.cache) {
@@ -551,10 +575,60 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       if (threadTs) {
         await this.threadState?.recordPost(chatId, threadTs);
       }
+      // Clear the receipt reaction now that the reply has landed.
+      this.clearReceiptReaction(chatId, threadTs);
       return { ok: true, messageId: ids[0] };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Receipt reactions — best-effort acknowledgement of inbound messages.
+  //
+  // Telegram has the same behaviour: set 👀 on inbound, clear when the reply
+  // lands. Slack's analogue uses `reactions.add`/`reactions.remove`, which
+  // require the `reactions:write` bot scope. Both calls are fire-and-forget;
+  // missing scope, transient network failures, and "already_reacted" are all
+  // swallowed silently so the agent still works without the scope.
+  // ---------------------------------------------------------------------------
+
+  /** Compose the pending-reactions ledger key for a (channel, thread) pair.
+   *  Top-level posts have no threadTs and bucket under the `'top'` suffix. */
+  private reactionLaneKey(chatId: string, threadTs: string | undefined): string {
+    return `${chatId}:${threadTs ?? 'top'}`;
+  }
+
+  private addReceiptReaction(msg: InboundMessage): void {
+    const ts = msg.messageId;
+    if (!ts) return;
+    const lane = this.reactionLaneKey(msg.chatId, msg.threadId);
+
+    // Bound the ledger so a long-running adapter never grows unboundedly when
+    // sends fail repeatedly and never clear their entries.
+    while (
+      this.pendingReactions.size >= this.pendingReactionsMaxEntries &&
+      !this.pendingReactions.has(lane)
+    ) {
+      const oldestKey = this.pendingReactions.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.pendingReactions.delete(oldestKey);
+    }
+
+    this.pendingReactions.set(lane, ts);
+    this.client.reactions
+      .add({ channel: msg.chatId, timestamp: ts, name: this.receiptReaction })
+      .catch(() => {});
+  }
+
+  private clearReceiptReaction(chatId: string, threadTs: string | undefined): void {
+    const lane = this.reactionLaneKey(chatId, threadTs);
+    const ts = this.pendingReactions.get(lane);
+    if (!ts) return;
+    this.pendingReactions.delete(lane);
+    this.client.reactions
+      .remove({ channel: chatId, timestamp: ts, name: this.receiptReaction })
+      .catch(() => {});
   }
 
   async editMessage(chatId: string, messageId: string, text: string): Promise<DeliveryResult> {

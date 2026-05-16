@@ -1,5 +1,10 @@
-export type { AgentEvent, AgentLoopConfig, RunOptions } from './agent-loop';
-export { AgentLoop } from './agent-loop';
+export type {
+  AgentEvent,
+  AgentLoopConfig,
+  KnownAgentEventType,
+  RunOptions,
+} from './agent-loop';
+export { AgentLoop, isKnownAgentEvent, KNOWN_AGENT_EVENT_TYPES } from './agent-loop';
 export { buildAttachmentAnnotation } from './attachment-annotation';
 export type { CapabilityBackends, CapabilityScopeIds } from './capability-resolver';
 export { resolveCapabilities } from './capability-resolver';

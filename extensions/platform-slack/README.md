@@ -56,12 +56,14 @@ oauth_config:
       - channels:history
       - chat:write
       - commands
+      - files:read
       - groups:history
       - im:history
       - im:read
       - im:write
       - mpim:history
       - mpim:read
+      - reactions:write
       - users:read
 settings:
   event_subscriptions:
@@ -233,7 +235,7 @@ The adapter ingests files from Slack `file_share` messages. Files are downloaded
 
 ### Required scope
 
-`files:read` -- the bot token must have this scope to download files from `url_private_download`. The app manifest in [Step 1](#step-1--create-the-slack-app) does not include it by default. Add the scope under **OAuth & Permissions > Bot Token Scopes** and reinstall to the workspace.
+`files:read` -- the bot token must have this scope to download files from `url_private_download`. The manifest in [Step 1](#step-1--create-the-slack-app) includes it. If you installed your app from an older manifest that omits it, add the scope under **OAuth & Permissions > Bot Token Scopes** and reinstall to the workspace. Without `files:read`, Slack serves an HTML login page in place of the file bytes; the adapter caches the HTML and the agent reports the attachment as not a valid image/PDF.
 
 ### Supported types
 
@@ -253,6 +255,16 @@ Downloaded files are written to `~/.ethos/cache/attachments/` via the `Attachmen
 ### Deferred
 
 Audio (mp3, wav, ogg, flac, aac, m4a) and video (mp4, mov, webm, avi, mkv) files are intentionally skipped. These types are deferred until transcription and media analysis tools ship.
+
+---
+
+## Receipt reactions
+
+On every inbound message the adapter sets a 👀 (`eyes`) reaction so the user can see the agent has the message; the reaction is cleared once the reply lands. Matches Telegram's behaviour. Override via the `receiptReaction` config option (Slack emoji name, no colons — e.g. `'thinking_face'`).
+
+### Required scope
+
+`reactions:write` -- the bot token must have this scope to set or clear the reaction. The manifest in [Step 1](#step-1--create-the-slack-app) includes it. If you installed your app from an older manifest that omits it, add the scope under **OAuth & Permissions > Bot Token Scopes** and reinstall to the workspace. Without the scope the reaction calls fail silently and the rest of the bot continues to work — you just don't get the receipt cue.
 
 ---
 

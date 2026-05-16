@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { chunkText, reflowChunks, SlackAdapter } from '../index';
 
 describe('Slack chunkText', () => {
@@ -186,5 +186,130 @@ describe('SlackAdapter — webUiBaseUrl normalization', () => {
 
   it('treats an absent value as absent', () => {
     expect(baseUrlOf(make(undefined))).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SlackAdapter — receipt reactions
+//
+// Same UX as Telegram's `setMessageReaction` — 👀 on inbound, cleared once
+// the reply lands. Slack uses named emoji (`'eyes'`) via reactions.add /
+// reactions.remove. Both calls are fire-and-forget; the bot still works
+// without the `reactions:write` scope.
+// ---------------------------------------------------------------------------
+
+describe('SlackAdapter — receipt reactions', () => {
+  /** Build an adapter with its Slack client swapped for a spy. The real Bolt
+   *  App is constructed but its socket is never opened (no `start()`), so the
+   *  network never fires — only the reactions client surface is exercised. */
+  const makeAdapter = (opts?: { receiptReaction?: string }) => {
+    const adapter = new SlackAdapter({
+      botToken: 'xoxb-fake',
+      appToken: 'xapp-fake',
+      signingSecret: 'sig-fake',
+      ...(opts?.receiptReaction ? { receiptReaction: opts.receiptReaction } : {}),
+    });
+
+    const calls: Array<{ op: 'add' | 'remove'; channel: string; ts: string; name: string }> = [];
+    const stub = {
+      add: vi.fn(async (args: { channel: string; timestamp: string; name: string }) => {
+        calls.push({ op: 'add', channel: args.channel, ts: args.timestamp, name: args.name });
+      }),
+      remove: vi.fn(async (args: { channel: string; timestamp: string; name: string }) => {
+        calls.push({ op: 'remove', channel: args.channel, ts: args.timestamp, name: args.name });
+      }),
+    };
+    (adapter as unknown as { client: { reactions: typeof stub } }).client = {
+      reactions: stub,
+    } as never;
+
+    type ReactionInternals = {
+      addReceiptReaction: (msg: unknown) => void;
+      clearReceiptReaction: (chatId: string, threadTs: string | undefined) => void;
+      pendingReactions: Map<string, string>;
+    };
+    const internals = adapter as unknown as ReactionInternals;
+    return { adapter, internals, calls };
+  };
+
+  it('exposes canReact = true', () => {
+    const { adapter } = makeAdapter();
+    expect(adapter.canReact).toBe(true);
+  });
+
+  it("adds the 'eyes' reaction on inbound and clears it on reply (top-level post)", async () => {
+    const { internals, calls } = makeAdapter();
+
+    internals.addReceiptReaction({
+      platform: 'slack',
+      botKey: 'b',
+      chatId: 'C123',
+      messageId: '111.222',
+    });
+    expect(calls).toEqual([{ op: 'add', channel: 'C123', ts: '111.222', name: 'eyes' }]);
+
+    internals.clearReceiptReaction('C123', undefined);
+    expect(calls).toEqual([
+      { op: 'add', channel: 'C123', ts: '111.222', name: 'eyes' },
+      { op: 'remove', channel: 'C123', ts: '111.222', name: 'eyes' },
+    ]);
+    expect(internals.pendingReactions.size).toBe(0);
+  });
+
+  it('tracks concurrent inbounds in different threads of the same channel', async () => {
+    const { internals, calls } = makeAdapter();
+
+    internals.addReceiptReaction({
+      platform: 'slack',
+      botKey: 'b',
+      chatId: 'C1',
+      messageId: '200.0',
+      threadId: '100.0',
+    });
+    internals.addReceiptReaction({
+      platform: 'slack',
+      botKey: 'b',
+      chatId: 'C1',
+      messageId: '300.0',
+      threadId: '150.0',
+    });
+
+    // Clearing the second thread must not touch the first thread's reaction.
+    internals.clearReceiptReaction('C1', '150.0');
+    expect(calls.filter((c) => c.op === 'remove')).toEqual([
+      { op: 'remove', channel: 'C1', ts: '300.0', name: 'eyes' },
+    ]);
+    expect(internals.pendingReactions.size).toBe(1);
+
+    internals.clearReceiptReaction('C1', '100.0');
+    expect(calls.filter((c) => c.op === 'remove')).toEqual([
+      { op: 'remove', channel: 'C1', ts: '300.0', name: 'eyes' },
+      { op: 'remove', channel: 'C1', ts: '200.0', name: 'eyes' },
+    ]);
+    expect(internals.pendingReactions.size).toBe(0);
+  });
+
+  it('honours a custom receiptReaction', () => {
+    const { internals, calls } = makeAdapter({ receiptReaction: 'thinking_face' });
+    internals.addReceiptReaction({
+      platform: 'slack',
+      botKey: 'b',
+      chatId: 'C9',
+      messageId: '9.9',
+    });
+    expect(calls[0]?.name).toBe('thinking_face');
+  });
+
+  it('is a no-op when the inbound has no messageId', () => {
+    const { internals, calls } = makeAdapter();
+    internals.addReceiptReaction({ platform: 'slack', botKey: 'b', chatId: 'C1' });
+    expect(calls).toEqual([]);
+    expect(internals.pendingReactions.size).toBe(0);
+  });
+
+  it('clear is a no-op when no reaction is pending for the lane', () => {
+    const { internals, calls } = makeAdapter();
+    internals.clearReceiptReaction('C1', undefined);
+    expect(calls).toEqual([]);
   });
 });

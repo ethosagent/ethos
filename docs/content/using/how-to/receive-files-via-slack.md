@@ -5,7 +5,7 @@ kind: how-to
 audience: operator
 slug: receive-files-via-slack
 time: "5 min"
-updated: 2026-05-14
+updated: 2026-05-16
 ---
 
 ## Task
@@ -33,7 +33,7 @@ The Slack adapter needs the `files:read` bot token scope to download files from 
 4. Add `files:read`.
 5. **Reinstall to Workspace** to apply the new scope.
 
-Without `files:read`, the adapter cannot download files from `url_private_download` and file attachments are silently skipped.
+Without `files:read`, Slack does not return the file bytes from `url_private_download`. It returns its HTML "loading" page instead with HTTP 200, so the adapter cannot tell the request failed: it caches the HTML under the original filename. The first tool that opens the attachment (`vision_analyze`, `read_file`) then rejects the bytes as not a valid image, PDF, or text file, and the agent surfaces a confusing error about the file format. Add the scope and the symptom disappears.
 
 ### 2. Verify the personality has attachment-capable tools
 
@@ -89,7 +89,7 @@ Audio (mp3, wav, ogg, flac, aac, m4a) and video (mp4, mov, webm, avi, mkv) files
 
 **Agent ignores the attached file.** -- Check that the personality's `toolset.yaml` includes `vision_analyze` (for images) or `read_file` (for documents). Without attachment-capable tools, the agent cannot open the file.
 
-**Files are silently skipped.** -- Verify the `files:read` scope is present. Go to **OAuth & Permissions** in the Slack app dashboard and confirm it is listed. Reinstall if you just added it.
+**Agent says the file is not a valid image / PDF / text file even though Slack shows it as one.** -- The `files:read` scope is missing. Slack returns an HTML page in place of the file bytes and the adapter caches it. Verify the scope under **OAuth & Permissions** in the Slack app dashboard, add it if absent, and **Reinstall to Workspace** to mint a fresh bot token. Update `slack.apps.<n>.botToken` in `~/.ethos/config.yaml` with the new `xoxb-…`. To confirm the cache contains HTML rather than image bytes, run `file ~/.ethos/cache/attachments/<session-hash>/<message-hash>/<filename>` — the line will read `HTML document text` instead of `PNG image data` / `JPEG image data` / `PDF document`.
 
 **Bot does not respond to file-only messages.** -- Check the channel mode. In `mention_only` mode (the default), you must @mention the bot even when attaching a file. DMs always respond regardless of mode.
 

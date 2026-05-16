@@ -45,7 +45,53 @@ import { DefaultToolRegistry } from './tool-registry';
 
 // ---------------------------------------------------------------------------
 // Agent events emitted by run()
+//
+// AgentEvent is a forward-compatible discriminated union. New event `type`
+// values may be added in any release. **Consumers MUST treat unknown event
+// types as a no-op, not throw.** A `switch (event.type)` with no `default`
+// case is a forward-compat bug — it will silently break the moment a new
+// variant ships. Use `isKnownAgentEvent(event)` if you want an opt-in
+// warning during development that a new event type appeared.
+//
+// Known event types live in `KNOWN_AGENT_EVENT_TYPES` below. Keep it in
+// sync when adding a new variant — the `isKnownAgentEvent` helper reads
+// from it, and downstream tools (the CLI verbose mode, telemetry filters)
+// can iterate it.
 // ---------------------------------------------------------------------------
+
+export const KNOWN_AGENT_EVENT_TYPES = [
+  'text_delta',
+  'thinking_delta',
+  'tool_start',
+  'tool_progress',
+  'tool_end',
+  'usage',
+  'error',
+  'done',
+  'context_meta',
+  'run_start',
+] as const;
+
+export type KnownAgentEventType = (typeof KNOWN_AGENT_EVENT_TYPES)[number];
+
+/**
+ * Returns true when the event's `type` is one a current consumer knows
+ * about. Useful for development-mode warnings:
+ *
+ *     for await (const event of loop.run(...)) {
+ *       if (!isKnownAgentEvent(event)) {
+ *         console.warn('Unknown AgentEvent type:', event.type);
+ *         continue;
+ *       }
+ *       switch (event.type) { ... }
+ *     }
+ *
+ * Production code should silently skip unknown events; this helper is for
+ * test runs and dev surfaces that want to alert on newly-added variants.
+ */
+export function isKnownAgentEvent(event: { type: string }): event is AgentEvent {
+  return (KNOWN_AGENT_EVENT_TYPES as readonly string[]).includes(event.type);
+}
 
 export type AgentEvent =
   | { type: 'text_delta'; text: string }

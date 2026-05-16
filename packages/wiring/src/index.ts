@@ -204,9 +204,14 @@ function personalityWantsKanban(p: { toolset?: readonly string[] }): boolean {
 
 export { resolveKanbanDbPath } from './kanban-path';
 
-// Default Azure REST API version. Bump when the next stable GA version lands;
-// users override per-deployment via `apiVersion` in config.
-const AZURE_DEFAULT_API_VERSION = '2024-10-21';
+// Default Azure REST API version. Picked to match the model lineup in
+// `model-catalog.ts` — older stable api-versions (2024-10-21 and earlier)
+// don't know about the `file` content part required for PDF input through
+// Chat Completions, so requests against gpt-5.4 / Claude-on-Azure with a
+// PDF attachment fail with a 500. Preview suffix is intentional: stable
+// GA api-versions lag the model-feature surface by ~6 months. Users
+// override per-deployment via `apiVersion` in ~/.ethos/config.yaml.
+const AZURE_DEFAULT_API_VERSION = '2024-12-01-preview';
 
 function createSingleProvider(cfg: {
   provider: string;

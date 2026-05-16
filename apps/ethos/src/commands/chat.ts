@@ -768,6 +768,15 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
     case 'context_meta':
       // Not surfaced in the rendered stream.
       break;
+
+    default:
+      // Forward-compat: AgentEvent may grow new variants in any release.
+      // Unknown types are a no-op here by design — do NOT add an
+      // `assertNever(event)` exhaustiveness check; it would force a
+      // breaking change on every consumer the moment a new event ships.
+      // See KNOWN_AGENT_EVENT_TYPES in @ethosagent/core for the current
+      // known set; use `isKnownAgentEvent` for opt-in dev-mode warnings.
+      break;
   }
 
   // Debug verbosity: dump raw JSON for every event (after primary render).

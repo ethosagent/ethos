@@ -153,7 +153,27 @@ export interface AuxiliaryVisionConfig {
   baseUrl?: string;
 }
 
+/**
+ * On-disk schema version for `~/.ethos/config.yaml`. Bump on a breaking
+ * field rename, type change, or required-field addition; do NOT bump on
+ * additive optional fields. The loader uses this to drive migrations in
+ * future releases without guessing whether an unknown field is an
+ * operator typo or an older shape.
+ *
+ * Current shape lives at version 1. Pre-versioned configs (created before
+ * this field shipped) load with a one-line deprecation warning and are
+ * treated as `1`; the writer always emits the current value going
+ * forward.
+ */
+export const CURRENT_ETHOS_CONFIG_SCHEMA_VERSION = 1;
+
 export interface EthosConfig {
+  /**
+   * On-disk schema version. Optional for backward compatibility — pre-
+   * versioned configs are accepted as `1` with a deprecation warning.
+   * Always written by `writeConfig` going forward.
+   */
+  schemaVersion?: number;
   provider: string;
   model: string;
   apiKey: string;
@@ -332,10 +352,26 @@ export function ethosDir(): string {
   return join(homedir(), '.ethos');
 }
 
+/**
+ * Set to true once per process after emitting the pre-versioned-config
+ * deprecation warning so we don't spam stderr across repeated reads.
+ */
+let preVersionedConfigWarned = false;
+
 export async function readRawConfig(storage: Storage): Promise<EthosConfig | null> {
   const src = await storage.read(join(ethosDir(), 'config.yaml'));
   if (!src) return null;
-  return parseConfigYaml(src);
+  const parsed = parseConfigYaml(src);
+  if (parsed.schemaVersion === undefined && !preVersionedConfigWarned) {
+    preVersionedConfigWarned = true;
+    console.warn(
+      `\n[ethos] ~/.ethos/config.yaml is missing 'schemaVersion'. ` +
+        `Treating as schemaVersion: ${CURRENT_ETHOS_CONFIG_SCHEMA_VERSION}. ` +
+        `Re-running 'ethos setup' (or adding 'schemaVersion: ${CURRENT_ETHOS_CONFIG_SCHEMA_VERSION}' to the top of the file) ` +
+        `will silence this warning and let future migrations key off the version.\n`,
+    );
+  }
+  return parsed;
 }
 
 export async function readConfig(
@@ -350,6 +386,7 @@ export async function readConfig(
 export async function writeConfig(storage: Storage, config: EthosConfig): Promise<void> {
   await storage.mkdir(ethosDir());
   const lines = [
+    `schemaVersion: ${config.schemaVersion ?? CURRENT_ETHOS_CONFIG_SCHEMA_VERSION}`,
     `provider: ${config.provider}`,
     `model: ${config.model}`,
     `apiKey: ${config.apiKey}`,
@@ -698,7 +735,9 @@ function parseConfigYaml(src: string): EthosConfig {
   const quick_commands = buildQuickCommands(qcKv);
   const parseErrors = [...telegramResult.errors, ...slackResult.errors];
 
+  const parsedSchemaVersion = kv.schemaVersion ? Number(kv.schemaVersion) : undefined;
   const config: EthosConfig = {
+    schemaVersion: Number.isFinite(parsedSchemaVersion) ? parsedSchemaVersion : undefined,
     provider: kv.provider ?? 'anthropic',
     model: kv.model ?? 'claude-opus-4-7',
     apiKey: kv.apiKey ?? '',
