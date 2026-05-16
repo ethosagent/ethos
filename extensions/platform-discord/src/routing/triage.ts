@@ -74,6 +74,8 @@ export async function triageMessage(
       threadId,
       isDm: msg.isDm,
       isGroupMention: msg.isMention,
+      replyToId: msg.reference?.messageId,
+      replyToUserId: msg.reference?.userId,
       raw: msg.raw,
     }),
     effectiveMode: channelMode,
@@ -95,6 +97,8 @@ interface EnvelopeInputs {
   threadId: string | undefined;
   isDm: boolean;
   isGroupMention: boolean;
+  replyToId?: string;
+  replyToUserId?: string;
   raw: unknown;
 }
 
@@ -106,6 +110,8 @@ function buildEnvelope(input: EnvelopeInputs): InboundMessage {
     userId: input.userId,
     username: input.username,
     text: input.text,
+    replyToId: input.replyToId,
+    replyToUserId: input.replyToUserId,
     isDm: input.isDm,
     isGroupMention: input.isGroupMention,
     messageId: input.messageId,

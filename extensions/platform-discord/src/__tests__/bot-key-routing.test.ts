@@ -1,42 +1,36 @@
-import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-
-function deriveDefaultBotKey(token: string): string {
-  return createHash('sha256').update(token).digest('hex').slice(0, 24);
-}
+import { DiscordAdapter } from '../index';
 
 describe('botKey routing', () => {
   it('derives a stable botKey from token', () => {
-    const key = deriveDefaultBotKey('test-token-123');
-    expect(key).toHaveLength(24);
-    expect(key).toBe(deriveDefaultBotKey('test-token-123'));
+    const adapter = new DiscordAdapter({ token: 'test-token-123' });
+    expect(adapter.botKey).toHaveLength(24);
+    const adapter2 = new DiscordAdapter({ token: 'test-token-123' });
+    expect(adapter.botKey).toBe(adapter2.botKey);
   });
 
   it('different tokens produce different botKeys', () => {
-    const key1 = deriveDefaultBotKey('bot-token-alpha');
-    const key2 = deriveDefaultBotKey('bot-token-beta');
-    expect(key1).not.toBe(key2);
+    const a1 = new DiscordAdapter({ token: 'bot-token-alpha' });
+    const a2 = new DiscordAdapter({ token: 'bot-token-beta' });
+    expect(a1.botKey).not.toBe(a2.botKey);
   });
 
   it('explicit botKey overrides derived default', () => {
-    // The DiscordAdapterConfig accepts an optional botKey
-    // When provided, it takes precedence
-    const explicit = 'my-custom-bot-key-12345';
-    expect(explicit).not.toBe(deriveDefaultBotKey('some-token'));
+    const adapter = new DiscordAdapter({ token: 'some-token', botKey: 'my-custom-key' });
+    expect(adapter.botKey).toBe('my-custom-key');
   });
 
-  it('lane key format includes platform and botKey', () => {
-    const botKey = deriveDefaultBotKey('token');
-    const chatId = '123456789';
-    const laneKey = `discord:${botKey}:${chatId}`;
-    expect(laneKey).toMatch(/^discord:[a-f0-9]{24}:\d+$/);
+  it('adapter id includes platform and botKey', () => {
+    const adapter = new DiscordAdapter({ token: 'token-abc' });
+    expect(adapter.id).toBe(`discord:${adapter.botKey}`);
   });
 
-  it('threaded lane key includes threadId', () => {
-    const botKey = deriveDefaultBotKey('token');
+  it('lane key format with threadId for threaded routing', () => {
+    const adapter = new DiscordAdapter({ token: 'token' });
     const chatId = '123456789';
     const threadId = '987654321';
-    const laneKey = `discord:${botKey}:${chatId}:${threadId}`;
+    const laneKey = `discord:${adapter.botKey}:${chatId}:${threadId}`;
+    expect(laneKey).toContain(adapter.botKey);
     expect(laneKey).toContain(threadId);
   });
 });

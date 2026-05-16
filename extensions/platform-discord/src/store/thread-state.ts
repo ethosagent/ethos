@@ -34,8 +34,12 @@ export class ThreadStateStore {
       for (const line of raw.split('\n')) {
         const trimmed = line.trim();
         if (!trimmed) continue;
-        const parsed = RecordSchema.safeParse(JSON.parse(trimmed));
-        if (parsed.success) this.seen.add(this.key(parsed.data.channel, parsed.data.threadId));
+        try {
+          const parsed = RecordSchema.safeParse(JSON.parse(trimmed));
+          if (parsed.success) this.seen.add(this.key(parsed.data.channel, parsed.data.threadId));
+        } catch {
+          // Skip malformed lines — partial writes or manual edits.
+        }
       }
     }
     this.loaded = true;

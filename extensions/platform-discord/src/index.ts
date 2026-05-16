@@ -47,11 +47,16 @@ interface DiscordAdapterConfig {
   registerCommandsTo?: 'global' | string;
   /**
    * Discord role IDs permitted to approve/deny tool executions.
-   * When set, only users holding at least one of these roles can resolve
-   * approval cards. When unset, any user who can click the button is accepted
-   * — the approval coordinator upstream is expected to enforce authorization.
+   * Required when approvalPolicy is 'role_gate' (the default).
    */
   approvalRoleIds?: string[];
+  /**
+   * Who may click approval buttons.
+   * - `'role_gate'` (default): only users with a role in `approvalRoleIds`
+   *   may resolve. If `approvalRoleIds` is empty/unset, all clicks are rejected.
+   * - `'allow_any'`: any channel member may approve (explicit opt-in to open).
+   */
+  approvalPolicy?: 'role_gate' | 'allow_any';
 }
 
 function deriveDefaultBotKey(token: string): string {
@@ -77,7 +82,8 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   private readonly registerCommandsTo?: 'global' | string;
   private readonly binding: Binding;
   private readonly defaultChannelMode: ChannelMode;
-  private readonly approvalRoleIds?: string[];
+  private readonly approvalRoleIds: string[];
+  private readonly approvalPolicy: 'role_gate' | 'allow_any';
 
   private readonly threadState?: ThreadStateStore;
   private readonly channelOverrides?: ChannelOverrideStore;
@@ -90,8 +96,9 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   private readonly pendingInteractions = new Map<string, Interaction>();
   private readonly chunkMap = new Map<string, string[]>();
   private readonly chunkMapMaxEntries = 1024;
-  /** Receipt reactions pending clearing, keyed by inbound messageId → channelId. */
+  /** Receipt reactions pending clearing, keyed by inbound messageId → channelId. Bounded FIFO. */
   private readonly pendingReactions = new Map<string, string>();
+  private readonly pendingReactionsMax = 256;
 
   constructor(config: DiscordAdapterConfig) {
     this.token = config.token;
@@ -104,7 +111,8 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     this.registerCommandsTo = config.registerCommandsTo;
     this.binding = config.binding ?? { type: 'personality', name: 'default' };
     this.defaultChannelMode = config.defaultChannelMode ?? DEFAULT_CHANNEL_MODE;
-    this.approvalRoleIds = config.approvalRoleIds;
+    this.approvalRoleIds = config.approvalRoleIds ?? [];
+    this.approvalPolicy = config.approvalPolicy ?? 'role_gate';
 
     if (config.storage) {
       const dir = config.discordDir ?? 'discord';
@@ -138,8 +146,12 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       channelOverrides: this.channelOverrides,
       threadState: this.threadState,
       onMessage: (msg) => this.messageHandler?.(msg),
-      onReceipt: (_channelId, messageId) => {
-        this.pendingReactions.set(messageId, _channelId);
+      onReceipt: (channelId, messageId) => {
+        if (this.pendingReactions.size >= this.pendingReactionsMax) {
+          const oldest = this.pendingReactions.keys().next().value;
+          if (oldest !== undefined) this.pendingReactions.delete(oldest);
+        }
+        this.pendingReactions.set(messageId, channelId);
       },
     });
 
@@ -457,9 +469,16 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   ): void {
     if (!interaction.isButton()) return;
 
-    // Authorization gate: when approvalRoleIds is configured, reject users
-    // who don't hold at least one of the required roles.
-    if (this.approvalRoleIds && this.approvalRoleIds.length > 0) {
+    // Authorization: default-deny unless the user passes the configured policy.
+    if (this.approvalPolicy === 'role_gate') {
+      if (this.approvalRoleIds.length === 0) {
+        // No roles configured → no one can approve. This is intentional:
+        // the operator must explicitly configure approvalRoleIds or opt into 'allow_any'.
+        interaction
+          .reply({ content: 'Approval roles not configured. No one can approve.', ephemeral: true })
+          .catch(() => {});
+        return;
+      }
       const member = interaction.member;
       const memberRoles =
         member && 'cache' in (member.roles as object)

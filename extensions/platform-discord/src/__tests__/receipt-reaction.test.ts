@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 describe('receipt reaction', () => {
   it('defaults to 👀 when no config provided', () => {
-    const config = { token: 'test' };
-    const reaction = (config as any).receiptReaction ?? '👀';
+    const config: { token: string; receiptReaction?: string } = { token: 'test' };
+    const reaction = config.receiptReaction ?? '👀';
     expect(reaction).toBe('👀');
   });
 

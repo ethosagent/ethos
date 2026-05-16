@@ -1,7 +1,8 @@
+import type { Storage } from '@ethosagent/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ChannelOverrideStore } from '../store/channel-overrides';
 
-function createInMemoryStorage() {
+function createInMemoryStorage(): Storage {
   const files = new Map<string, string>();
   return {
     read: async (path: string) => files.get(path) ?? null,
@@ -31,11 +32,11 @@ function createInMemoryStorage() {
 
 describe('ChannelOverrideStore', () => {
   let store: ChannelOverrideStore;
-  let storage: ReturnType<typeof createInMemoryStorage>;
+  let storage: Storage;
 
   beforeEach(() => {
     storage = createInMemoryStorage();
-    store = new ChannelOverrideStore(storage as any, 'discord', 'bot123');
+    store = new ChannelOverrideStore(storage, 'discord', 'bot123');
   });
 
   it('returns undefined for unknown channels', async () => {
@@ -56,7 +57,7 @@ describe('ChannelOverrideStore', () => {
 
   it('persists across store instances', async () => {
     await store.set('ch1', 'all');
-    const store2 = new ChannelOverrideStore(storage as any, 'discord', 'bot123');
+    const store2 = new ChannelOverrideStore(storage, 'discord', 'bot123');
     await store2.load();
     expect(store2.get('ch1')).toBe('all');
   });
@@ -67,5 +68,13 @@ describe('ChannelOverrideStore', () => {
     const entries = store.entries();
     expect(entries).toContainEqual(['ch1', 'all']);
     expect(entries).toContainEqual(['ch2', 'mention_only']);
+  });
+
+  it('skips corrupted lines and loads valid ones', async () => {
+    const valid = JSON.stringify({ channel: 'ch1', mode: 'all', updatedAt: 1 });
+    await storage.write('discord/bot123/channel-overrides.jsonl', `garbage\n${valid}\n{nope\n`);
+    const freshStore = new ChannelOverrideStore(storage, 'discord', 'bot123');
+    await freshStore.load();
+    expect(freshStore.get('ch1')).toBe('all');
   });
 });

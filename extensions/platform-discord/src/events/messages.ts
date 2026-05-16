@@ -1,12 +1,14 @@
 import type { Attachment, AttachmentCache, InboundMessage } from '@ethosagent/types';
 import type { Client, Message } from 'discord.js';
 import type { ChannelMode } from '../config';
-import { shouldRespond } from '../routing/channel-mode';
+import type { TriageContext } from '../routing/triage';
+import { triageMessage } from '../routing/triage';
 import type { ChannelOverrideStore } from '../store/channel-overrides';
 import type { ThreadStateStore } from '../store/thread-state';
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 
+const IMAGE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
 const SKIP_EXTS = new Set(['exe', 'dll', 'so', 'dylib']);
 
@@ -24,35 +26,55 @@ interface MessageContext {
 }
 
 export function registerMessageHandler(ctx: MessageContext): void {
-  ctx.client.on('messageCreate', (message: Message) => {
+  ctx.client.on('messageCreate', async (message: Message) => {
     if (message.author.bot) return;
 
     const isDm = message.channel.isDMBased();
     const isMention = ctx.client.user ? message.mentions.has(ctx.client.user) : false;
     const isThread = message.channel.isThread();
 
-    const channelId = isThread
-      ? (message.channel.parentId ?? message.channelId)
-      : message.channelId;
-    const threadId = isThread ? message.channelId : undefined;
-
-    const channelMode = resolveMode(channelId, ctx);
-    const hasBotPosted =
-      threadId && ctx.threadState ? ctx.threadState.hasBotPosted(channelId, threadId) : false;
-
-    const responds = shouldRespond({
-      isDm,
-      isGroupMention: isMention && !isDm,
-      channelMode,
-      hasBotPosted,
-    });
-
-    if (!responds && ctx.mentionOnly && !isDm && !isMention) return;
-    if (!responds) return;
-
     let text = message.content;
     if (ctx.client.user) {
       text = text.replace(new RegExp(`<@!?${ctx.client.user.id}>`, 'g'), '').trim();
+    }
+
+    const triageCtx: TriageContext = {
+      botKey: ctx.botKey,
+      defaultChannelMode: ctx.defaultChannelMode,
+      channelOverrides: ctx.channelOverrides,
+      threadState: ctx.threadState,
+    };
+
+    const result = await triageMessage(
+      {
+        channelId: message.channelId,
+        userId: message.author.id,
+        username: message.author.username,
+        text,
+        messageId: message.id,
+        isDm,
+        isThread,
+        threadId: isThread ? message.channelId : undefined,
+        parentChannelId: isThread ? (message.channel.parentId ?? undefined) : undefined,
+        isMention: isMention && !isDm,
+        reference: {
+          messageId: message.reference?.messageId ?? undefined,
+          userId: message.mentions.repliedUser?.id ?? undefined,
+        },
+        raw: message,
+      },
+      triageCtx,
+    );
+
+    if (!result.envelope) return;
+
+    // Populate replyToId/replyToUserId from the reference
+    const envelope = result.envelope;
+    if (message.reference?.messageId) {
+      envelope.replyToId = message.reference.messageId;
+    }
+    if (message.mentions.repliedUser?.id) {
+      envelope.replyToUserId = message.mentions.repliedUser.id;
     }
 
     // Receipt reaction (best-effort, non-blocking)
@@ -61,42 +83,32 @@ export function registerMessageHandler(ctx: MessageContext): void {
       ctx.onReceipt(message.channelId, message.id);
     }
 
-    const msg: InboundMessage = {
-      platform: 'discord',
-      botKey: ctx.botKey,
-      chatId: channelId,
-      userId: message.author.id,
-      username: message.author.username,
-      text,
-      isDm,
-      isGroupMention: isMention && !isDm,
-      replyToId: message.reference?.messageId ?? undefined,
-      replyToUserId: undefined,
-      messageId: message.id,
-      threadId,
-      raw: message,
-    };
-
     if (message.attachments.size === 0 || !ctx.cache) {
-      ctx.onMessage(msg);
+      ctx.onMessage(envelope);
       return;
     }
 
-    void downloadAttachments(message, ctx.cache).then((attachments) => {
-      if (attachments.length > 0) {
-        msg.attachments = attachments;
-        if (!msg.text) {
-          msg.text = attachments[0].type === 'image' ? '(attached image)' : '(attached file)';
-        }
+    const attachments = await downloadAttachments(message, ctx.cache);
+    if (attachments.length > 0) {
+      envelope.attachments = attachments;
+      if (!envelope.text) {
+        envelope.text = attachments[0].type === 'image' ? '(attached image)' : '(attached file)';
       }
-      ctx.onMessage(msg);
-    });
+    }
+    ctx.onMessage(envelope);
   });
 }
 
-function resolveMode(channelId: string, ctx: MessageContext): ChannelMode {
-  const override = ctx.channelOverrides?.get(channelId);
-  return override ?? ctx.defaultChannelMode;
+function classifyAttachmentType(
+  contentType: string | null,
+  filename: string | undefined,
+): 'image' | 'file' {
+  // Trust contentType first when available
+  if (contentType && IMAGE_CONTENT_TYPES.has(contentType)) return 'image';
+  // Fall back to extension
+  const ext = filename?.split('.').pop()?.toLowerCase() ?? '';
+  if (IMAGE_EXTS.has(ext)) return 'image';
+  return 'file';
 }
 
 async function downloadAttachments(
@@ -111,8 +123,8 @@ async function downloadAttachments(
     const ext = attachment.name?.split('.').pop()?.toLowerCase() ?? '';
     if (SKIP_EXTS.has(ext)) continue;
 
-    const type: Attachment['type'] = IMAGE_EXTS.has(ext) ? 'image' : 'file';
     const mimeType = attachment.contentType ?? 'application/octet-stream';
+    const type = classifyAttachmentType(attachment.contentType, attachment.name ?? undefined);
 
     try {
       const resp = await fetch(attachment.url);

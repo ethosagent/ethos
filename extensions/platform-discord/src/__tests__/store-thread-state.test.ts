@@ -1,7 +1,8 @@
+import type { Storage } from '@ethosagent/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ThreadStateStore } from '../store/thread-state';
 
-function createInMemoryStorage() {
+function createInMemoryStorage(): Storage {
   const files = new Map<string, string>();
   return {
     read: async (path: string) => files.get(path) ?? null,
@@ -31,11 +32,11 @@ function createInMemoryStorage() {
 
 describe('ThreadStateStore', () => {
   let store: ThreadStateStore;
-  let storage: ReturnType<typeof createInMemoryStorage>;
+  let storage: Storage;
 
   beforeEach(() => {
     storage = createInMemoryStorage();
-    store = new ThreadStateStore(storage as any, 'discord', 'bot123');
+    store = new ThreadStateStore(storage, 'discord', 'bot123');
   });
 
   it('initially reports no threads', async () => {
@@ -55,7 +56,7 @@ describe('ThreadStateStore', () => {
 
   it('persists across store instances', async () => {
     await store.recordPost('channel1', 'thread1');
-    const store2 = new ThreadStateStore(storage as any, 'discord', 'bot123');
+    const store2 = new ThreadStateStore(storage, 'discord', 'bot123');
     await store2.load();
     expect(store2.hasBotPosted('channel1', 'thread1')).toBe(true);
   });
@@ -66,5 +67,13 @@ describe('ThreadStateStore', () => {
     const file = await storage.read('discord/bot123/thread-state.jsonl');
     const lines = file?.split('\n').filter(Boolean) ?? [];
     expect(lines).toHaveLength(1);
+  });
+
+  it('skips corrupted lines and loads valid ones', async () => {
+    const valid = JSON.stringify({ channel: 'ch1', threadId: 't1', firstPostedAt: 1 });
+    await storage.write('discord/bot123/thread-state.jsonl', `not valid json\n${valid}\n{broken\n`);
+    const freshStore = new ThreadStateStore(storage, 'discord', 'bot123');
+    await freshStore.load();
+    expect(freshStore.hasBotPosted('ch1', 't1')).toBe(true);
   });
 });
