@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { McpClient, McpManager, rewriteDefinitionsToRefs } from '../index';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { McpServerConfig } from '../index';
+import { McpClient, McpManager, rewriteDefinitionsToRefs } from '../index';
 
 // ---------------------------------------------------------------------------
 // Mock the MCP SDK
@@ -28,12 +28,14 @@ vi.mock('@modelcontextprotocol/sdk/client', () => ({
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
+  // biome-ignore lint/complexity/useArrowFunction: invoked as `new StdioClientTransport(...)`; arrow functions are not constructable
   StdioClientTransport: vi.fn().mockImplementation(function () {
     return { type: 'stdio-transport' };
   }),
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
+  // biome-ignore lint/complexity/useArrowFunction: invoked as `new SSEClientTransport(...)`; arrow functions are not constructable
   SSEClientTransport: vi.fn().mockImplementation(function () {
     return { type: 'sse-transport' };
   }),
@@ -89,9 +91,7 @@ describe('Wire format conformance (Phases 2.3-2.7)', () => {
 
     it('re-fetches tools when notification fires', async () => {
       mockListTools.mockResolvedValue({
-        tools: [
-          { name: 'alpha', description: 'A', inputSchema: { type: 'object' } },
-        ],
+        tools: [{ name: 'alpha', description: 'A', inputSchema: { type: 'object' } }],
       });
 
       const client = await connectedClient();
@@ -101,9 +101,7 @@ describe('Wire format conformance (Phases 2.3-2.7)', () => {
       // Simulate the server sending the notification
       const handler = mockSetNotificationHandler.mock.calls[0][1] as () => Promise<void>;
       mockListTools.mockResolvedValue({
-        tools: [
-          { name: 'beta', description: 'B', inputSchema: { type: 'object' } },
-        ],
+        tools: [{ name: 'beta', description: 'B', inputSchema: { type: 'object' } }],
       });
 
       await handler();
@@ -116,9 +114,7 @@ describe('Wire format conformance (Phases 2.3-2.7)', () => {
 
     it('McpManager updates tools on list_changed', async () => {
       mockListTools.mockResolvedValue({
-        tools: [
-          { name: 'old_tool', description: 'Old', inputSchema: { type: 'object' } },
-        ],
+        tools: [{ name: 'old_tool', description: 'Old', inputSchema: { type: 'object' } }],
       });
 
       const manager = new McpManager([makeConfig('srv')]);
@@ -140,10 +136,7 @@ describe('Wire format conformance (Phases 2.3-2.7)', () => {
 
       const tools = manager.getTools();
       expect(tools).toHaveLength(2);
-      expect(tools.map((t) => t.name)).toEqual([
-        'mcp__srv__new_tool_a',
-        'mcp__srv__new_tool_b',
-      ]);
+      expect(tools.map((t) => t.name)).toEqual(['mcp__srv__new_tool_a', 'mcp__srv__new_tool_b']);
     });
 
     it('does not crash if listTools fails during notification', async () => {
@@ -284,9 +277,7 @@ describe('Wire format conformance (Phases 2.3-2.7)', () => {
     it('represents image blocks as text descriptions', async () => {
       const base64Data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAA';
       mockCallTool.mockResolvedValue({
-        content: [
-          { type: 'image', data: base64Data, mimeType: 'image/png' },
-        ],
+        content: [{ type: 'image', data: base64Data, mimeType: 'image/png' }],
       });
 
       const client = await connectedClient();
@@ -435,10 +426,7 @@ describe('Wire format conformance (Phases 2.3-2.7)', () => {
         },
         properties: {
           pet: {
-            oneOf: [
-              { $ref: '#/definitions/Cat' },
-              { $ref: '#/definitions/Dog' },
-            ],
+            oneOf: [{ $ref: '#/definitions/Cat' }, { $ref: '#/definitions/Dog' }],
           },
         },
       };

@@ -73,10 +73,7 @@ export async function loadAccessToken(
   return secrets.get(accessTokenRef(serverName));
 }
 
-export async function deleteTokens(
-  serverName: string,
-  secrets: SecretsResolver,
-): Promise<void> {
+export async function deleteTokens(serverName: string, secrets: SecretsResolver): Promise<void> {
   await secrets.delete(accessTokenRef(serverName));
   await secrets.delete(refreshTokenRef(serverName));
   await secrets.delete(expiresAtRef(serverName));
@@ -132,7 +129,9 @@ export async function startCallbackServer(): Promise<CallbackResult> {
       if (error) {
         settled = true;
         res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end('<html><body><h1>Authorization failed</h1><p>You may close this tab.</p></body></html>');
+        res.end(
+          '<html><body><h1>Authorization failed</h1><p>You may close this tab.</p></body></html>',
+        );
         rejectCode(new Error(`OAuth error: ${error}`));
         closeServer();
         return;
@@ -146,7 +145,9 @@ export async function startCallbackServer(): Promise<CallbackResult> {
 
       settled = true;
       res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end('<html><body><h1>Authorization successful</h1><p>You may close this tab.</p></body></html>');
+      res.end(
+        '<html><body><h1>Authorization successful</h1><p>You may close this tab.</p></body></html>',
+      );
       resolveCode(code);
       closeServer();
     });

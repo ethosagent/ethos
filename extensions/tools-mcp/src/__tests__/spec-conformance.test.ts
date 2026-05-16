@@ -1,9 +1,9 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
-import { McpClient, McpManager, loadMcpConfig } from '../index';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { McpServerConfig } from '../index';
+import { loadMcpConfig, McpClient, McpManager } from '../index';
 
 // ---------------------------------------------------------------------------
 // Mock the MCP SDK — no real subprocess or network transport
@@ -30,12 +30,14 @@ vi.mock('@modelcontextprotocol/sdk/client', () => ({
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
+  // biome-ignore lint/complexity/useArrowFunction: invoked as `new StdioClientTransport(...)`; arrow functions are not constructable
   StdioClientTransport: vi.fn().mockImplementation(function () {
     return { type: 'stdio-transport' };
   }),
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
+  // biome-ignore lint/complexity/useArrowFunction: invoked as `new SSEClientTransport(...)`; arrow functions are not constructable
   SSEClientTransport: vi.fn().mockImplementation(function () {
     return { type: 'sse-transport' };
   }),
@@ -103,9 +105,7 @@ describe('MCP spec conformance', () => {
         // command intentionally omitted
       };
       const client = new McpClient(config);
-      await expect(client.connect()).rejects.toThrow(
-        "stdio transport requires 'command'",
-      );
+      await expect(client.connect()).rejects.toThrow("stdio transport requires 'command'");
     });
 
     it('sse transport requires url', async () => {
@@ -115,9 +115,7 @@ describe('MCP spec conformance', () => {
         // url intentionally omitted
       };
       const client = new McpClient(config);
-      await expect(client.connect()).rejects.toThrow(
-        "sse transport requires 'url'",
-      );
+      await expect(client.connect()).rejects.toThrow("sse transport requires 'url'");
     });
   });
 
@@ -255,9 +253,7 @@ describe('MCP spec conformance', () => {
         ],
       });
 
-      const manager = new McpManager([
-        { name: 'filesystem', transport: 'stdio', command: 'node' },
-      ]);
+      const manager = new McpManager([{ name: 'filesystem', transport: 'stdio', command: 'node' }]);
       await manager.connect();
 
       const tools = manager.getTools();
@@ -281,9 +277,7 @@ describe('MCP spec conformance', () => {
         ],
       });
 
-      const manager = new McpManager([
-        { name: 'fs', transport: 'stdio', command: 'node' },
-      ]);
+      const manager = new McpManager([{ name: 'fs', transport: 'stdio', command: 'node' }]);
       await manager.connect();
 
       const tool = manager.getTools()[0];

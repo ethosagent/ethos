@@ -51,7 +51,11 @@ function toWirePlugin(m: InstalledPluginManifest): PluginInfo {
 
 function isValidMcpServer(entry: McpServerConfig): boolean {
   if (typeof entry.name !== 'string') return false;
-  return entry.transport === 'stdio' || entry.transport === 'sse' || entry.transport === 'streamable-http';
+  return (
+    entry.transport === 'stdio' ||
+    entry.transport === 'sse' ||
+    entry.transport === 'streamable-http'
+  );
 }
 
 function toWireMcpServer(entry: McpServerConfig): McpServerInfo {

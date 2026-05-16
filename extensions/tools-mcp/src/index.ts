@@ -7,12 +7,11 @@ import type { Logger, SecretsResolver, Storage, Tool, ToolResult } from '@ethosa
 import { Client } from '@modelcontextprotocol/sdk/client';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
-import { ensureValidToken, refreshToken } from './oauth';
 import type { OAuthConfig } from './oauth';
+import { ensureValidToken, refreshToken } from './oauth';
 import { rewriteDefinitionsToRefs } from './schema-rewrite';
 
-export { MCP_PRESETS, getPreset } from './presets';
-export type { McpPreset } from './presets';
+export type { CallbackResult, OAuthConfig, TokenSet } from './oauth';
 export {
   buildAuthorizationUrl,
   deleteTokens,
@@ -28,9 +27,10 @@ export {
   startCallbackServer,
   storeTokens,
 } from './oauth';
-export type { CallbackResult, OAuthConfig, TokenSet } from './oauth';
-export { checkOsvVulnerabilities, clearOsvCache } from './osv-check';
 export type { OsvAdvisory, OsvResult } from './osv-check';
+export { checkOsvVulnerabilities, clearOsvCache } from './osv-check';
+export type { McpPreset } from './presets';
+export { getPreset, MCP_PRESETS } from './presets';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -50,7 +50,10 @@ const PINNED_MCP_KEYS = new Set([
 
 export interface McpServerConfig {
   name: string;
-  transport: 'stdio' | 'streamable-http' | /** @deprecated Use 'streamable-http' for HTTP-based MCP servers. Legacy SSE kept for one release. */ 'sse';
+  transport:
+    | 'stdio'
+    | 'streamable-http'
+    | /** @deprecated Use 'streamable-http' for HTTP-based MCP servers. Legacy SSE kept for one release. */ 'sse';
   // stdio
   command?: string;
   args?: string[];
@@ -139,24 +142,21 @@ export class McpClient {
     this._connected = true;
 
     // Phase 2.3 — dynamic tool discovery via notifications/tools/list_changed
-    this._sdk.setNotificationHandler(
-      ToolListChangedNotificationSchema,
-      async () => {
-        try {
-          const tools = await this.listTools();
-          this.onToolsChanged?.(tools);
-        } catch (err) {
-          this._logger.warn(
-            `[ethos] MCP server '${this._config.name}' tools/list_changed re-fetch failed`,
-            {
-              component: 'tools-mcp',
-              server: this._config.name,
-              error: err instanceof Error ? err.message : String(err),
-            },
-          );
-        }
-      },
-    );
+    this._sdk.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
+      try {
+        const tools = await this.listTools();
+        this.onToolsChanged?.(tools);
+      } catch (err) {
+        this._logger.warn(
+          `[ethos] MCP server '${this._config.name}' tools/list_changed re-fetch failed`,
+          {
+            component: 'tools-mcp',
+            server: this._config.name,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
+      }
+    });
 
     this._startKeepalive();
   }
@@ -169,9 +169,7 @@ export class McpClient {
       try {
         await Promise.race([
           this._sdk.ping(),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('ping timeout')), 5000),
-          ),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('ping timeout')), 5000)),
         ]);
       } catch {
         this._logger.warn(
@@ -180,8 +178,16 @@ export class McpClient {
         );
         this._clearKeepalive();
         this._connected = false;
-        try { await this._transport?.close?.(); } catch { /* ignore */ }
-        try { await this._sdk.close(); } catch { /* ignore */ }
+        try {
+          await this._transport?.close?.();
+        } catch {
+          /* ignore */
+        }
+        try {
+          await this._sdk.close();
+        } catch {
+          /* ignore */
+        }
         this._transport = null;
         if (!this._destroyed) this._scheduleReconnect(0);
       }
@@ -224,13 +230,18 @@ export class McpClient {
 
     if (this._config.transport === 'streamable-http') {
       const { url } = this._config;
-      if (!url) throw new Error(`MCP server '${this._config.name}': streamable-http transport requires 'url'`);
+      if (!url)
+        throw new Error(
+          `MCP server '${this._config.name}': streamable-http transport requires 'url'`,
+        );
       const headers = { ...this._config.headers };
       if (this._config.auth?.type === 'oauth2' && this._secrets) {
         const token = await ensureValidToken(this._config.name, this._config.auth, this._secrets);
         headers['Authorization'] = `Bearer ${token}`;
       }
-      const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+      const { StreamableHTTPClientTransport } = await import(
+        '@modelcontextprotocol/sdk/client/streamableHttp.js'
+      );
       return new StreamableHTTPClientTransport(new URL(url), {
         requestInit: Object.keys(headers).length > 0 ? { headers } : undefined,
       });
@@ -282,7 +293,11 @@ export class McpClient {
           ),
         ]);
         if (gen !== this._generation) {
-          try { await this._sdk.close(); } catch { /* stale */ }
+          try {
+            await this._sdk.close();
+          } catch {
+            /* stale */
+          }
           return;
         }
         this._reconnectResolve?.();
@@ -345,11 +360,12 @@ export class McpClient {
 
       // Phase 2.5 — merge both when structuredContent (non-sentinel) and content co-exist
       if (structured && structured !== 'no_mcp' && content?.length) {
-        const textPart = content.filter((c) => c.type === 'text').map((c) => c.text ?? '').join('\n');
+        const textPart = content
+          .filter((c) => c.type === 'text')
+          .map((c) => c.text ?? '')
+          .join('\n');
         const json = JSON.stringify(structured, null, 2);
-        const merged = textPart
-          ? `${textPart}\n\n--- Structured Data ---\n${json}`
-          : json;
+        const merged = textPart ? `${textPart}\n\n--- Structured Data ---\n${json}` : json;
         if (isError) {
           return { ok: false, error: merged || 'Tool returned an error', code: 'execution_failed' };
         }
@@ -371,7 +387,9 @@ export class McpClient {
         if (block.type === 'text') {
           parts.push(block.text ?? '');
         } else if (block.type === 'image') {
-          parts.push(`[Image: ${block.mimeType ?? 'image/unknown'}, ${block.data?.length ?? 0} bytes base64]`);
+          parts.push(
+            `[Image: ${block.mimeType ?? 'image/unknown'}, ${block.data?.length ?? 0} bytes base64]`,
+          );
         }
       }
       const text = parts.join('\n');
@@ -384,7 +402,12 @@ export class McpClient {
       const msg = err instanceof Error ? err.message : String(err);
 
       // OAuth 401 retry — refresh token and reconnect once
-      if (allowRetry && this._is401Error(msg) && this._config.auth?.type === 'oauth2' && this._secrets) {
+      if (
+        allowRetry &&
+        this._is401Error(msg) &&
+        this._config.auth?.type === 'oauth2' &&
+        this._secrets
+      ) {
         this._logger.warn(
           `[ethos] MCP server '${this._config.name}' returned 401, attempting token refresh`,
           { component: 'tools-mcp', server: this._config.name },
@@ -393,7 +416,11 @@ export class McpClient {
           await refreshToken(this._config.name, this._config.auth, this._secrets);
           // Reconnect with fresh token
           this._connected = false;
-          try { await this._transport?.close?.(); } catch { /* ignore */ }
+          try {
+            await this._transport?.close?.();
+          } catch {
+            /* ignore */
+          }
           this._sdk = new Client({ name: 'ethos', version: '1.0.0' }, { capabilities: {} });
           await this.connect();
           return this._callToolInner(name, args, false);
@@ -403,18 +430,16 @@ export class McpClient {
       }
 
       if (allowRetry && this._isConnectionError(msg)) {
-        this._logger.warn(
-          `[ethos] MCP server '${this._config.name}' pipe error, retrying once`,
-          { component: 'tools-mcp', server: this._config.name, error: msg },
-        );
+        this._logger.warn(`[ethos] MCP server '${this._config.name}' pipe error, retrying once`, {
+          component: 'tools-mcp',
+          server: this._config.name,
+          error: msg,
+        });
         this._connected = false;
         if (!this._destroyed) this._scheduleReconnect(0);
         if (this._reconnectPromise) {
           const deadline = this._config.connectTimeoutMs ?? 10_000;
-          await Promise.race([
-            this._reconnectPromise,
-            new Promise((r) => setTimeout(r, deadline)),
-          ]);
+          await Promise.race([this._reconnectPromise, new Promise((r) => setTimeout(r, deadline))]);
         }
         return this._callToolInner(name, args, false);
       }
@@ -580,8 +605,7 @@ export class McpManager {
     for (const [toolName, servers] of nameToServers) {
       if (servers.length < 2) continue;
 
-      const msg =
-        `[ethos] Tool name collision: '${toolName}' exposed by servers: ${servers.join(', ')}`;
+      const msg = `[ethos] Tool name collision: '${toolName}' exposed by servers: ${servers.join(', ')}`;
       if (this._collisionPolicy === 'error') {
         throw new Error(msg);
       }
@@ -606,7 +630,6 @@ export class McpManager {
     return this.disconnect();
   }
 }
-
 
 // ---------------------------------------------------------------------------
 // Glob matching — simple patterns for personality MCP allowlists
@@ -703,7 +726,6 @@ export class McpSessionView {
     this._sessionClients.length = 0;
     this._sessionTools.length = 0;
   }
-
 }
 // ---------------------------------------------------------------------------
 // Config loader

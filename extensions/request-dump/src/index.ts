@@ -1,7 +1,7 @@
 // Constitutional exception: raw node:fs used here (same class as session-sqlite
 // and memory-vector). JSONL append + rotation + streaming reads require direct
 // file control that the Storage interface doesn't expose (append, stat, readdir).
-import { appendFile, mkdir, readFile, readdir, stat } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { RequestDumpRecord, RequestDumpStore } from '@ethosagent/types';
 

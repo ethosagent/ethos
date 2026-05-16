@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { OAuthConfig, TokenSet } from '../oauth';
 import {
   buildAuthorizationUrl,
   deleteTokens,
@@ -12,7 +13,6 @@ import {
   startCallbackServer,
   storeTokens,
 } from '../oauth';
-import type { OAuthConfig, TokenSet } from '../oauth';
 
 // ---------------------------------------------------------------------------
 // In-memory secrets resolver for tests
@@ -22,8 +22,12 @@ function createMockSecrets() {
   const store = new Map<string, string>();
   return {
     get: vi.fn(async (ref: string) => store.get(ref) ?? null),
-    set: vi.fn(async (ref: string, value: string) => { store.set(ref, value); }),
-    delete: vi.fn(async (ref: string) => { store.delete(ref); }),
+    set: vi.fn(async (ref: string, value: string) => {
+      store.set(ref, value);
+    }),
+    delete: vi.fn(async (ref: string) => {
+      store.delete(ref);
+    }),
     list: vi.fn(async (prefix?: string) => {
       const all = [...store.keys()];
       if (!prefix) return all;
@@ -91,7 +95,10 @@ describe('token storage', () => {
 
     expect(secrets.set).toHaveBeenCalledWith('mcp/my-server/access_token', 'access-123');
     expect(secrets.set).toHaveBeenCalledWith('mcp/my-server/refresh_token', 'refresh-456');
-    expect(secrets.set).toHaveBeenCalledWith('mcp/my-server/expires_at', '2026-12-01T00:00:00.000Z');
+    expect(secrets.set).toHaveBeenCalledWith(
+      'mcp/my-server/expires_at',
+      '2026-12-01T00:00:00.000Z',
+    );
   });
 
   it('storeTokens skips optional fields when absent', async () => {
@@ -255,14 +262,17 @@ describe('refreshToken', () => {
     const secrets = createMockSecrets();
     secrets._store.set('mcp/srv/refresh_token', 'rt-old');
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        access_token: 'new-at',
-        refresh_token: 'new-rt',
-        expires_in: 7200,
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          access_token: 'new-at',
+          refresh_token: 'new-rt',
+          expires_in: 7200,
+        }),
       }),
-    }));
+    );
 
     await refreshToken('srv', config, secrets);
 
@@ -312,13 +322,18 @@ describe('exchangeCode', () => {
   });
 
   it('throws on non-ok response', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false,
-      status: 400,
-      text: async () => 'invalid_grant',
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: async () => 'invalid_grant',
+      }),
+    );
 
-    await expect(exchangeCode(config, 'bad', 'http://x', 'v')).rejects.toThrow('Token exchange failed (400)');
+    await expect(exchangeCode(config, 'bad', 'http://x', 'v')).rejects.toThrow(
+      'Token exchange failed (400)',
+    );
   });
 });
 
@@ -364,16 +379,23 @@ describe('TOCTOU safety', () => {
     const secrets = createMockSecrets();
     secrets._store.set('mcp/srv/refresh_token', 'rt');
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ access_token: 'new' }),
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ access_token: 'new' }),
+      }),
+    );
 
-    await refreshToken('srv', {
-      authorization_endpoint: 'https://a',
-      token_endpoint: 'https://t',
-      client_id: 'c',
-    }, secrets);
+    await refreshToken(
+      'srv',
+      {
+        authorization_endpoint: 'https://a',
+        token_endpoint: 'https://t',
+        client_id: 'c',
+      },
+      secrets,
+    );
 
     // Verify only get() was called for the refresh token — no list() or exists() pattern
     const getCalls = secrets.get.mock.calls.map((c: [string]) => c[0]);

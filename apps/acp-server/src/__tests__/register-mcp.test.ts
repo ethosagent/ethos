@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { PassThrough } from 'node:stream';
 import { isServerAllowed, type McpServerConfig, type McpSessionView } from '@ethosagent/tools-mcp';
 import type {
@@ -8,7 +9,6 @@ import type {
   SessionUsage,
   StoredMessage,
 } from '@ethosagent/types';
-import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AcpServer,
@@ -108,10 +108,7 @@ function makeMockSessionView() {
 
   const view: McpSessionView = {
     registerSessionServers: vi.fn(
-      async (
-        configs: McpServerConfig[],
-        allowlist: string[] | undefined,
-      ) => {
+      async (configs: McpServerConfig[], allowlist: string[] | undefined) => {
         const registered: string[] = [];
         const rejected: { name: string; reason: string }[] = [];
 
@@ -218,7 +215,9 @@ describe('session/registerMcpServers', () => {
       },
     });
 
-    const [resp] = (await lines) as [{ result: { registered: string[]; rejected: { name: string; reason: string }[] } }];
+    const [resp] = (await lines) as [
+      { result: { registered: string[]; rejected: { name: string; reason: string }[] } },
+    ];
     expect(resp.result.registered).toContain('github-api');
     expect(resp.result.registered).toContain('docs');
     expect(resp.result.rejected).toHaveLength(1);
@@ -247,7 +246,9 @@ describe('session/registerMcpServers', () => {
       },
     });
 
-    const [resp] = (await lines) as [{ result: { registered: string[]; rejected: { name: string; reason: string }[] } }];
+    const [resp] = (await lines) as [
+      { result: { registered: string[]; rejected: { name: string; reason: string }[] } },
+    ];
     expect(resp.result.registered).toHaveLength(0);
     expect(resp.result.rejected).toHaveLength(1);
     expect(resp.result.rejected[0].reason).toContain('not in personality MCP allowlist');
@@ -300,7 +301,9 @@ describe('session/registerMcpServers', () => {
       },
     });
 
-    const [resp] = (await lines) as [{ result: { registered: string[]; rejected: { name: string; reason: string }[] } }];
+    const [resp] = (await lines) as [
+      { result: { registered: string[]; rejected: { name: string; reason: string }[] } },
+    ];
     expect(resp.result.registered).toHaveLength(0);
     expect(resp.result.rejected).toHaveLength(1);
     expect(resp.result.rejected[0].reason).toContain('not configured');
@@ -329,7 +332,9 @@ describe('session/registerMcpServers', () => {
       },
     });
 
-    const [resp] = (await lines) as [{ result: { registered: string[]; rejected: { name: string; reason: string }[] } }];
+    const [resp] = (await lines) as [
+      { result: { registered: string[]; rejected: { name: string; reason: string }[] } },
+    ];
     expect(resp.result.registered).toContain('any-server');
     expect(resp.result.registered).toContain('another-server');
     expect(resp.result.rejected).toHaveLength(0);

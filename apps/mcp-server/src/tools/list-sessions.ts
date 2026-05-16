@@ -1,9 +1,6 @@
 import type { SessionStore } from '@ethosagent/types';
 
-export async function listSessions(
-  sessionStore: SessionStore,
-  limit: number,
-): Promise<unknown[]> {
+export async function listSessions(sessionStore: SessionStore, limit: number): Promise<unknown[]> {
   const sessions = await sessionStore.listSessions({ limit });
   return sessions.map((s) => ({
     id: s.id,

@@ -3,11 +3,11 @@ import { Server } from '@modelcontextprotocol/sdk/server';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it } from 'vitest';
 import {
+  isServerAllowed,
   McpClient,
   McpManager,
-  McpSessionView,
   type McpServerConfig,
-  isServerAllowed,
+  McpSessionView,
   matchesGlob,
 } from '../index';
 
@@ -16,10 +16,7 @@ import {
 // ---------------------------------------------------------------------------
 
 async function createTestServer(name = 'test-server') {
-  const server = new Server(
-    { name, version: '1.0.0' },
-    { capabilities: { tools: {} } },
-  );
+  const server = new Server({ name, version: '1.0.0' }, { capabilities: { tools: {} } });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [

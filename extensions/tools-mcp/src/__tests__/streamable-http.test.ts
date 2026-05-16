@@ -23,9 +23,12 @@ class ExposedMcpClient extends McpClient {
 
 describe('streamable-http transport', () => {
   it('creates StreamableHTTPClientTransport for streamable-http config', async () => {
-    const client = new ExposedMcpClient(
-      { name: 'test-sh', transport: 'streamable-http', url: 'http://localhost:3300/mcp', keepaliveSeconds: 0 },
-    );
+    const client = new ExposedMcpClient({
+      name: 'test-sh',
+      transport: 'streamable-http',
+      url: 'http://localhost:3300/mcp',
+      keepaliveSeconds: 0,
+    });
 
     const transport = await client.createTransportPublic();
     // The transport should be an instance of StreamableHTTPClientTransport
@@ -34,9 +37,11 @@ describe('streamable-http transport', () => {
   });
 
   it('throws when streamable-http config lacks url', async () => {
-    const client = new ExposedMcpClient(
-      { name: 'no-url', transport: 'streamable-http', keepaliveSeconds: 0 },
-    );
+    const client = new ExposedMcpClient({
+      name: 'no-url',
+      transport: 'streamable-http',
+      keepaliveSeconds: 0,
+    });
 
     await expect(client.createTransportPublic()).rejects.toThrow(
       "streamable-http transport requires 'url'",
@@ -60,7 +65,12 @@ describe('SSE deprecation warning', () => {
     };
 
     const client = new ExposedMcpClient(
-      { name: 'legacy-sse', transport: 'sse', url: 'http://localhost:9999/sse', keepaliveSeconds: 0 },
+      {
+        name: 'legacy-sse',
+        transport: 'sse',
+        url: 'http://localhost:9999/sse',
+        keepaliveSeconds: 0,
+      },
       { logger },
     );
 
@@ -83,7 +93,12 @@ describe('SSE deprecation warning', () => {
     };
 
     const client = new ExposedMcpClient(
-      { name: 'modern', transport: 'streamable-http', url: 'http://localhost:9999/mcp', keepaliveSeconds: 0 },
+      {
+        name: 'modern',
+        transport: 'streamable-http',
+        url: 'http://localhost:9999/mcp',
+        keepaliveSeconds: 0,
+      },
       { logger },
     );
 

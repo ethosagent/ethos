@@ -12,18 +12,21 @@ describe('checkOsvVulnerabilities', () => {
   });
 
   it('returns safe:false for high-severity vulnerabilities', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        vulns: [
-          {
-            id: 'GHSA-1234',
-            summary: 'Remote code execution',
-            severity: [{ type: 'CVSS_V3', score: '9.8' }],
-          },
-        ],
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          vulns: [
+            {
+              id: 'GHSA-1234',
+              summary: 'Remote code execution',
+              severity: [{ type: 'CVSS_V3', score: '9.8' }],
+            },
+          ],
+        }),
       }),
-    }));
+    );
 
     const result = await checkOsvVulnerabilities('vulnerable-pkg');
     expect(result.safe).toBe(false);
@@ -33,18 +36,21 @@ describe('checkOsvVulnerabilities', () => {
   });
 
   it('returns safe:true for low-severity vulnerabilities only', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        vulns: [
-          {
-            id: 'GHSA-low',
-            summary: 'Minor issue',
-            severity: [{ type: 'CVSS_V3', score: '2.1' }],
-          },
-        ],
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          vulns: [
+            {
+              id: 'GHSA-low',
+              summary: 'Minor issue',
+              severity: [{ type: 'CVSS_V3', score: '2.1' }],
+            },
+          ],
+        }),
       }),
-    }));
+    );
 
     const result = await checkOsvVulnerabilities('safe-pkg');
     expect(result.safe).toBe(true);
@@ -53,10 +59,13 @@ describe('checkOsvVulnerabilities', () => {
   });
 
   it('returns safe:true when no vulns are found', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({}),
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({}),
+      }),
+    );
 
     const result = await checkOsvVulnerabilities('clean-pkg');
     expect(result.safe).toBe(true);
@@ -91,10 +100,13 @@ describe('checkOsvVulnerabilities', () => {
   });
 
   it('returns safe:true when OSV API returns non-ok status (warn, not block)', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false,
-      status: 500,
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+      }),
+    );
 
     const result = await checkOsvVulnerabilities('unreachable-pkg');
     expect(result.safe).toBe(true);
@@ -110,18 +122,21 @@ describe('checkOsvVulnerabilities', () => {
   });
 
   it('uses database_specific.severity as fallback', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        vulns: [
-          {
-            id: 'GHSA-5678',
-            summary: 'Issue with fallback severity',
-            database_specific: { severity: 'HIGH' },
-          },
-        ],
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          vulns: [
+            {
+              id: 'GHSA-5678',
+              summary: 'Issue with fallback severity',
+              database_specific: { severity: 'HIGH' },
+            },
+          ],
+        }),
       }),
-    }));
+    );
 
     const result = await checkOsvVulnerabilities('fallback-pkg');
     expect(result.safe).toBe(false);

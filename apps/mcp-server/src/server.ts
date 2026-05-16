@@ -114,9 +114,7 @@ export class EthosMcpServer {
         if (name === 'list_sessions') {
           if (!sessionStore) {
             return {
-              content: [
-                { type: 'text' as const, text: 'Session store not configured' },
-              ],
+              content: [{ type: 'text' as const, text: 'Session store not configured' }],
               isError: true,
             };
           }
@@ -130,9 +128,7 @@ export class EthosMcpServer {
         if (name === 'get_session') {
           if (!sessionStore) {
             return {
-              content: [
-                { type: 'text' as const, text: 'Session store not configured' },
-              ],
+              content: [{ type: 'text' as const, text: 'Session store not configured' }],
               isError: true,
             };
           }
@@ -153,9 +149,7 @@ export class EthosMcpServer {
         if (name === 'get_messages') {
           if (!sessionStore) {
             return {
-              content: [
-                { type: 'text' as const, text: 'Session store not configured' },
-              ],
+              content: [{ type: 'text' as const, text: 'Session store not configured' }],
               isError: true,
             };
           }
@@ -170,9 +164,7 @@ export class EthosMcpServer {
         if (name === 'search_sessions') {
           if (!sessionStore) {
             return {
-              content: [
-                { type: 'text' as const, text: 'Session store not configured' },
-              ],
+              content: [{ type: 'text' as const, text: 'Session store not configured' }],
               isError: true,
             };
           }

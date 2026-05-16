@@ -23,8 +23,8 @@ import {
   zed,
 } from '@ethosagent/mcp-server';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import { getPreset, MCP_PRESETS, revokeToken, runPkceLogin } from '@ethosagent/tools-mcp';
 import type { McpServerConfig, OAuthConfig } from '@ethosagent/tools-mcp';
+import { getPreset, MCP_PRESETS, revokeToken, runPkceLogin } from '@ethosagent/tools-mcp';
 import { ethosDir, readConfig } from '../config';
 import { createAgentLoop, getSecretsResolver, getStorage } from '../wiring';
 
@@ -320,12 +320,16 @@ function readMcpJson(): McpServerConfig[] | null {
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    console.error(`Error: ~/.ethos/mcp.json contains invalid JSON. Fix it manually before adding servers.`);
+    console.error(
+      `Error: ~/.ethos/mcp.json contains invalid JSON. Fix it manually before adding servers.`,
+    );
     console.error(err instanceof Error ? err.message : String(err));
     return null;
   }
   if (!Array.isArray(parsed)) {
-    console.error('Error: ~/.ethos/mcp.json must be a JSON array. Fix it manually before adding servers.');
+    console.error(
+      'Error: ~/.ethos/mcp.json must be a JSON array. Fix it manually before adding servers.',
+    );
     return null;
   }
   return parsed as McpServerConfig[];
@@ -616,7 +620,8 @@ async function runLogout(argv: string[]): Promise<void> {
   }
 
   const secrets = getSecretsResolver();
-  const oauthConfig: OAuthConfig | undefined = config.auth?.type === 'oauth2' ? config.auth : undefined;
+  const oauthConfig: OAuthConfig | undefined =
+    config.auth?.type === 'oauth2' ? config.auth : undefined;
 
   if (!oauthConfig) {
     console.error(`MCP server '${serverName}' does not have OAuth 2.1 auth configured`);
@@ -632,4 +637,3 @@ async function runLogout(argv: string[]): Promise<void> {
     process.exitCode = 1;
   }
 }
-

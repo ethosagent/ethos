@@ -105,9 +105,7 @@ describe('Observability Extensions', () => {
       expect(p.requestId).toBeDefined();
       expect(typeof p.requestId).toBe('string');
       // requestId should be a UUID format
-      expect(p.requestId).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-      );
+      expect(p.requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     });
   });
 

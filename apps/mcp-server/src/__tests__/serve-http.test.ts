@@ -19,9 +19,7 @@ describe('EthosMcpServer.serveHttp', () => {
       logger: noopLogger,
     });
 
-    await expect(server.serveHttp({ port: 3300, host: '0.0.0.0' })).rejects.toThrow(
-      'loopback',
-    );
+    await expect(server.serveHttp({ port: 3300, host: '0.0.0.0' })).rejects.toThrow('loopback');
   });
 
   it('defaults to 127.0.0.1 when no host specified', async () => {
