@@ -1,119 +1,69 @@
 import { createHash } from 'node:crypto';
 import type {
+  ApprovalCapableAdapter,
+  ApprovalDecisionEvent,
+  AttachmentCache,
   DeliveryResult,
   InboundMessage,
   OutboundMessage,
   PlatformAdapter,
+  Storage,
 } from '@ethosagent/types';
-import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  Client,
-  Events,
-  GatewayIntentBits,
-  type Interaction,
-  type Message,
-  ModalBuilder,
-  Partials,
-  TextInputBuilder,
-  TextInputStyle,
-} from 'discord.js';
-import { CLARIFY_MODAL_INPUT_ID, type clarifyModalPayload } from './clarify-blocks';
-import {
-  type ClarifyButtonPayload,
-  type ClarifyInteractionEvent,
-  type ClarifyModalPayload,
-  handleClarifyButton,
-  handleClarifyModal,
-} from './clarify-interactions';
+import { Client, GatewayIntentBits, type Interaction, Partials, REST, Routes } from 'discord.js';
+import { chunkText, reflowChunks } from './chunking';
+import type { clarifyModalPayload } from './clarify-blocks';
+import type { CommandContext, CommandPayload } from './commands';
+import { COMMAND_DEFINITIONS, dispatch } from './commands';
+import type { Binding, ChannelMode } from './config';
+import { DEFAULT_CHANNEL_MODE } from './config';
+import { buildModal, registerInteractionHandler, toActionRowBuilder } from './events/interactions';
+import { registerMessageHandler } from './events/messages';
+import { ChannelOverrideStore } from './store/channel-overrides';
+import { ThreadStateStore } from './store/thread-state';
+import type { DiscordClarifyInteraction } from './types';
 
-// ---------------------------------------------------------------------------
-// Text chunking — Discord 2000 char limit
-// ---------------------------------------------------------------------------
+export { chunkText, reflowChunks } from './chunking';
+export type { DiscordClarifyInteraction } from './types';
+export type { DiscordAdapterConfig };
 
-export function chunkText(text: string, maxLength = 2000): string[] {
-  if (text.length <= maxLength) return [text];
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      chunks.push(remaining);
-      break;
-    }
-    const newline = remaining.lastIndexOf('\n', maxLength);
-    const cutAt = newline > maxLength * 0.6 ? newline + 1 : maxLength;
-    chunks.push(remaining.slice(0, cutAt));
-    remaining = remaining.slice(cutAt);
-  }
-
-  return chunks;
-}
-
-/**
- * Re-flow `newChunks` over `existingIds`. Edits the first N chunks in place,
- * appends extras, and deletes trailing existing chunks no longer needed.
- * Delete failures are swallowed (best-effort) — they shouldn't block an edit.
- * Returns the new ordered chunk ids.
- */
-export async function reflowChunks(
-  newChunks: string[],
-  existingIds: string[],
-  ops: {
-    edit: (id: string, text: string) => Promise<string>;
-    append: (text: string) => Promise<string>;
-    deleteId: (id: string) => Promise<void>;
-  },
-): Promise<string[]> {
-  const updated: string[] = [];
-  for (let i = 0; i < newChunks.length; i++) {
-    if (i < existingIds.length) {
-      updated.push(await ops.edit(existingIds[i], newChunks[i]));
-    } else {
-      updated.push(await ops.append(newChunks[i]));
-    }
-  }
-  for (let i = newChunks.length; i < existingIds.length; i++) {
-    try {
-      await ops.deleteId(existingIds[i]);
-    } catch {
-      // best-effort delete
-    }
-  }
-  return updated;
-}
-
-// ---------------------------------------------------------------------------
-// DiscordAdapter
-// ---------------------------------------------------------------------------
-
-export interface DiscordAdapterConfig {
+interface DiscordAdapterConfig {
   token: string;
-  /**
-   * When true (default), the bot only responds in DMs and when @mentioned.
-   * Set to false to respond to every message the bot can see.
-   */
   mentionOnly?: boolean;
-  /** Stable per-bot identifier — defaults to sha256(token).slice(0,24). */
   botKey?: string;
+  receiptReaction?: string;
+  cache?: AttachmentCache;
+  storage?: Storage;
+  discordDir?: string;
+  binding?: Binding;
+  defaultChannelMode?: ChannelMode;
+  applicationId?: string;
+  /**
+   * Where to register slash commands. Omit or set to `undefined` to skip
+   * registration entirely (production default — register via a separate
+   * provisioning step). Set to a guild ID string for instant dev iteration.
+   * Set to `'global'` only when you explicitly want to overwrite the
+   * application's entire global command set on every startup.
+   */
+  registerCommandsTo?: 'global' | string;
+  /**
+   * Discord role IDs permitted to approve/deny tool executions.
+   * Required when approvalPolicy is 'role_gate' (the default).
+   */
+  approvalRoleIds?: string[];
+  /**
+   * Who may click approval buttons.
+   * - `'role_gate'` (default): only users with a role in `approvalRoleIds`
+   *   may resolve. If `approvalRoleIds` is empty/unset, all clicks are rejected.
+   * - `'allow_any'`: any channel member may approve (explicit opt-in to open).
+   */
+  approvalPolicy?: 'role_gate' | 'allow_any';
 }
 
-/** First 24 hex chars of sha256(token) — matches `deriveBotKey` in
- *  `apps/ethos/src/config.ts` so an adapter constructed without an explicit
- *  `botKey` round-trips the same identity the boot path would have produced. */
 function deriveDefaultBotKey(token: string): string {
   return createHash('sha256').update(token).digest('hex').slice(0, 24);
 }
 
-/** Raw clarify interaction event delivered to the surface. */
-export interface DiscordClarifyInteraction {
-  event: ClarifyInteractionEvent;
-  interactionId: string;
-  interactionToken: string;
-}
-
-export class DiscordAdapter implements PlatformAdapter {
+export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   readonly id: string;
   readonly displayName = 'Discord';
   readonly canSendTyping = true;
@@ -126,128 +76,97 @@ export class DiscordAdapter implements PlatformAdapter {
   private readonly client: Client;
   private readonly token: string;
   private readonly mentionOnly: boolean;
+  private readonly receiptReaction: string;
+  private readonly cache?: AttachmentCache;
+  private readonly applicationId?: string;
+  private readonly registerCommandsTo?: 'global' | string;
+  private readonly binding: Binding;
+  private readonly defaultChannelMode: ChannelMode;
+  private readonly approvalRoleIds: string[];
+  private readonly approvalPolicy: 'role_gate' | 'allow_any';
+
+  private readonly threadState?: ThreadStateStore;
+  private readonly channelOverrides?: ChannelOverrideStore;
+
   private messageHandler?: (message: InboundMessage) => void;
-  /** Clarify-interaction handler, wired by the Discord clarify surface. */
   private clarifyInteractionHandler?: (raw: DiscordClarifyInteraction) => void;
-  /** Pending interactions awaiting their first ack — keyed by interactionId.
-   *  discord.js's `Interaction` object carries the methods we need (deferUpdate,
-   *  showModal, reply); we hold the live object until the surface acks it. */
+  private approvalDecisionHandler?: (event: ApprovalDecisionEvent) => void;
+  private commandContext?: CommandContext;
+
   private readonly pendingInteractions = new Map<string, Interaction>();
-  /**
-   * Chunk-id ledger so `editMessage` can re-flow multi-chunk responses.
-   * Keyed by the primary (first) chunk id, value = ordered list of all
-   * chunk ids in the response. Bounded to `chunkMapMaxEntries` with FIFO
-   * eviction so long-running bots don't grow unbounded.
-   */
   private readonly chunkMap = new Map<string, string[]>();
   private readonly chunkMapMaxEntries = 1024;
+  /** Receipt reactions pending clearing, keyed by inbound messageId → channelId. Bounded FIFO. */
+  private readonly pendingReactions = new Map<string, string>();
+  private readonly pendingReactionsMax = 256;
 
   constructor(config: DiscordAdapterConfig) {
     this.token = config.token;
     this.mentionOnly = config.mentionOnly ?? true;
+    this.receiptReaction = config.receiptReaction ?? '👀';
     this.botKey = config.botKey ?? deriveDefaultBotKey(config.token);
     this.id = `discord:${this.botKey}`;
+    this.cache = config.cache;
+    this.applicationId = config.applicationId;
+    this.registerCommandsTo = config.registerCommandsTo;
+    this.binding = config.binding ?? { type: 'personality', name: 'default' };
+    this.defaultChannelMode = config.defaultChannelMode ?? DEFAULT_CHANNEL_MODE;
+    this.approvalRoleIds = config.approvalRoleIds ?? [];
+    this.approvalPolicy = config.approvalPolicy ?? 'role_gate';
+
+    if (config.storage) {
+      const dir = config.discordDir ?? 'discord';
+      this.threadState = new ThreadStateStore(config.storage, dir, this.botKey);
+      this.channelOverrides = new ChannelOverrideStore(config.storage, dir, this.botKey);
+    }
 
     this.client = new Client({
       intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent, // requires privileged intent in dev portal
+        GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.GuildMessageReactions,
       ],
-      partials: [Partials.Channel, Partials.Message],
+      partials: [Partials.Channel, Partials.Message, Partials.Reaction],
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // Lifecycle
-  // ---------------------------------------------------------------------------
-
   async start(): Promise<void> {
-    // Component / modal interactions for the clarify card. Routed through
-    // the pure handlers in `clarify-interactions.ts`; the adapter just
-    // shapes the discord.js `Interaction` into the typed payload.
-    this.client.on(Events.InteractionCreate, async (interaction: Interaction) => {
-      const handler = this.clarifyInteractionHandler;
-      if (!handler) return;
-      try {
-        if (interaction.isButton()) {
-          const payload: ClarifyButtonPayload = {
-            customId: interaction.customId,
-            userId: interaction.user.id,
-            channelId: interaction.channelId ?? '',
-            messageId: interaction.message.id,
-          };
-          // Only store the interaction AFTER the pure handler accepts it
-          // (calls onEvent). Non-clarify buttons and malformed payloads
-          // never reach onEvent, so nothing leaks.
-          await handleClarifyButton(payload, {
-            onEvent: async (event) => {
-              this.pendingInteractions.set(interaction.id, interaction);
-              handler({
-                event,
-                interactionId: interaction.id,
-                interactionToken: interaction.token,
-              });
-            },
-          });
-        } else if (interaction.isModalSubmit()) {
-          const answer = interaction.fields.getTextInputValue(CLARIFY_MODAL_INPUT_ID)?.trim() ?? '';
-          const payload: ClarifyModalPayload = {
-            customId: interaction.customId,
-            userId: interaction.user.id,
-            channelId: interaction.channelId ?? '',
-            answer,
-          };
-          await handleClarifyModal(payload, {
-            onEvent: async (event) => {
-              this.pendingInteractions.set(interaction.id, interaction);
-              handler({
-                event,
-                interactionId: interaction.id,
-                interactionToken: interaction.token,
-              });
-            },
-          });
+    await this.threadState?.load();
+    await this.channelOverrides?.load();
+
+    registerMessageHandler({
+      client: this.client,
+      botKey: this.botKey,
+      mentionOnly: this.mentionOnly,
+      defaultChannelMode: this.defaultChannelMode,
+      receiptReaction: this.receiptReaction,
+      cache: this.cache,
+      channelOverrides: this.channelOverrides,
+      threadState: this.threadState,
+      onMessage: (msg) => this.messageHandler?.(msg),
+      onReceipt: (channelId, messageId) => {
+        if (this.pendingReactions.size >= this.pendingReactionsMax) {
+          const oldest = this.pendingReactions.keys().next().value;
+          if (oldest !== undefined) this.pendingReactions.delete(oldest);
         }
-      } catch {
-        // Discord is the thing we don't control — a malformed payload or
-        // discord.js API drift must not throw inside the event loop.
-      }
+        this.pendingReactions.set(messageId, channelId);
+      },
     });
 
-    this.client.on(Events.MessageCreate, (message: Message) => {
-      if (!this.messageHandler) return;
-      if (message.author.bot) return;
-
-      const isDm = message.channel.isDMBased();
-      const isMention = this.client.user ? message.mentions.has(this.client.user) : false;
-
-      // In servers, only respond when @mentioned (unless mentionOnly=false)
-      if (!isDm && this.mentionOnly && !isMention) return;
-
-      // Strip the @mention prefix from the message text
-      let text = message.content;
-      if (this.client.user) {
-        text = text.replace(`<@${this.client.user.id}>`, '').trim();
-      }
-
-      const msg: InboundMessage = {
-        platform: 'discord',
-        chatId: message.channelId,
-        userId: message.author.id,
-        username: message.author.username,
-        text,
-        isDm,
-        isGroupMention: isMention && !isDm,
-        replyToId: message.reference?.messageId ?? undefined,
-        replyToUserId: message.mentions.repliedUser?.id ?? undefined,
-        messageId: message.id,
-        raw: message,
-      };
-
-      this.messageHandler(msg);
+    registerInteractionHandler(this.client, {
+      pendingInteractions: this.pendingInteractions,
+      onClarifyInteraction: (raw) => this.clarifyInteractionHandler?.(raw),
+      onCommand: (payload, interaction) => this.handleCommand(payload, interaction),
+      onApprovalDecision: (approvalId, decision, userId, interaction) => {
+        this.handleApprovalDecision(approvalId, decision, userId, interaction);
+      },
     });
+
+    if (this.applicationId && this.registerCommandsTo) {
+      await this.registerSlashCommands();
+    }
 
     await this.client.login(this.token);
   }
@@ -266,7 +185,8 @@ export class DiscordAdapter implements PlatformAdapter {
 
   async send(chatId: string, message: OutboundMessage): Promise<DeliveryResult> {
     try {
-      const channel = await this.client.channels.fetch(chatId);
+      const targetId = message.threadId ?? chatId;
+      const channel = await this.client.channels.fetch(targetId);
       if (!channel || !('send' in channel)) {
         return { ok: false, error: 'Channel not found or not sendable' };
       }
@@ -275,12 +195,18 @@ export class DiscordAdapter implements PlatformAdapter {
       const ids: string[] = [];
 
       for (const chunk of chunks) {
-        // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union excludes PartialGroupDM
+        // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
         const sent = await (channel as any).send({ content: chunk });
         ids.push(String(sent.id));
       }
 
       this.rememberChunkIds(ids);
+      await this.clearReceiptReaction(chatId);
+
+      if (message.threadId && this.threadState) {
+        await this.threadState.recordPost(chatId, message.threadId);
+      }
+
       return { ok: true, messageId: ids[0] };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -328,25 +254,12 @@ export class DiscordAdapter implements PlatformAdapter {
         },
       });
 
-      // Re-key the map under the (possibly new) first id, drop the old key
-      // when it changed, so future edits still resolve.
       this.chunkMap.delete(messageId);
       this.rememberChunkIds(updatedIds);
       return { ok: true, messageId: updatedIds[0] };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
-  }
-
-  private rememberChunkIds(ids: string[]): void {
-    if (ids.length === 0) return;
-    const primary = ids[0];
-    while (this.chunkMap.size >= this.chunkMapMaxEntries && !this.chunkMap.has(primary)) {
-      const oldestKey = this.chunkMap.keys().next().value;
-      if (oldestKey === undefined) break;
-      this.chunkMap.delete(oldestKey);
-    }
-    this.chunkMap.set(primary, ids);
   }
 
   async health(): Promise<{ ok: boolean; latencyMs?: number }> {
@@ -357,15 +270,9 @@ export class DiscordAdapter implements PlatformAdapter {
   }
 
   // ---------------------------------------------------------------------------
-  // Clarify cards (interactive question/answer)
-  //
-  // Mirrors `SlackAdapter`'s clarify methods. The Discord clarify surface
-  // drives them: post a card with Button components when the agent calls
-  // `clarify`, edit the card in place (components removed) once resolved.
+  // Clarify
   // ---------------------------------------------------------------------------
 
-  /** Post the pending clarify card. Returns the message id so the surface
-   *  can later edit it in place to the resolved state. */
   async postClarifyCard(input: {
     chatId: string;
     content: string;
@@ -374,7 +281,7 @@ export class DiscordAdapter implements PlatformAdapter {
     try {
       const channel = await this.client.channels.fetch(input.chatId);
       if (!channel || !('send' in channel)) return { error: 'Channel not found or not sendable' };
-      // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union excludes PartialGroupDM
+      // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
       const sent = await (channel as any).send({
         content: input.content,
         components: input.components.map(toActionRowBuilder),
@@ -385,7 +292,6 @@ export class DiscordAdapter implements PlatformAdapter {
     }
   }
 
-  /** Replace the card with its resolved state — components removed. */
   async updateClarifyCard(input: {
     chatId: string;
     messageId: string;
@@ -407,50 +313,25 @@ export class DiscordAdapter implements PlatformAdapter {
     }
   }
 
-  /** Open the free-form modal via the pending interaction. The interaction
-   *  must be a button click (we use `interaction.showModal`). The interaction
-   *  is removed from `pendingInteractions` once consumed. */
   async openClarifyModal(input: {
     interactionId: string;
     interactionToken: string;
     modal: ReturnType<typeof clarifyModalPayload>;
   }): Promise<{ ok: true } | { ok: false; error: string }> {
-    void input.interactionToken; // discord.js looks up via interactionId
+    void input.interactionToken;
     const pending = this.pendingInteractions.get(input.interactionId);
     if (!pending?.isButton()) {
       return { ok: false, error: 'No pending button interaction for this id' };
     }
     this.pendingInteractions.delete(input.interactionId);
     try {
-      const modal = new ModalBuilder()
-        .setCustomId(input.modal.custom_id)
-        .setTitle(input.modal.title);
-      for (const row of input.modal.components) {
-        const arBuilder = new ActionRowBuilder<TextInputBuilder>();
-        for (const el of row.components) {
-          arBuilder.addComponents(
-            new TextInputBuilder()
-              .setCustomId(el.custom_id)
-              .setLabel(el.label)
-              .setStyle(el.style === 1 ? TextInputStyle.Short : TextInputStyle.Paragraph)
-              .setRequired(el.required),
-          );
-        }
-        modal.addComponents(arBuilder);
-      }
-      await pending.showModal(modal);
+      await pending.showModal(buildModal(input.modal));
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 
-  /** Acknowledge a button click with `deferUpdate()` (the no-visible-change
-   *  ack discord.js requires within 3s). Drains the pending entry so the
-   *  Interaction object is released. Callers using the open-modal path
-   *  must call `openClarifyModal` INSTEAD of this — `showModal` is the
-   *  first response for that path, and `deferUpdate` consumes the response
-   *  window. */
   async ackButtonClick(input: { interactionId: string; interactionToken: string }): Promise<void> {
     void input.interactionToken;
     const pending = this.pendingInteractions.get(input.interactionId);
@@ -459,11 +340,10 @@ export class DiscordAdapter implements PlatformAdapter {
     try {
       await pending.deferUpdate();
     } catch {
-      // Best-effort — Discord rejects double-ack. Swallow.
+      // Best-effort
     }
   }
 
-  /** Acknowledge a modal submission. */
   async ackModalSubmit(input: { interactionId: string; interactionToken: string }): Promise<void> {
     void input.interactionToken;
     const pending = this.pendingInteractions.get(input.interactionId);
@@ -476,46 +356,204 @@ export class DiscordAdapter implements PlatformAdapter {
     }
   }
 
-  /** Register the clarify-interaction handler. Called by the Discord
-   *  clarify surface in its constructor. */
   onClarifyInteraction(handler: (raw: DiscordClarifyInteraction) => void): void {
     this.clarifyInteractionHandler = handler;
   }
-}
 
-/**
- * Convert a serialized API action row into a discord.js `ActionRowBuilder`.
- * Used by `postClarifyCard` / `updateClarifyCard` so the pure builders in
- * `clarify-blocks.ts` don't need to depend on discord.js's class hierarchy.
- */
-function toActionRowBuilder(row: unknown): ActionRowBuilder<ButtonBuilder> {
-  const r = row as {
-    type: number;
-    components: Array<{ style: number; label: string; custom_id: string }>;
-  };
-  const ar = new ActionRowBuilder<ButtonBuilder>();
-  for (const c of r.components) {
-    ar.addComponents(
-      new ButtonBuilder()
-        .setCustomId(c.custom_id)
-        .setLabel(c.label)
-        .setStyle(buttonStyleFromInt(c.style)),
-    );
+  // ---------------------------------------------------------------------------
+  // Approval (Move 7)
+  // ---------------------------------------------------------------------------
+
+  async postApprovalCard(input: {
+    chatId: string;
+    threadId?: string;
+    approvalId: string;
+    toolName: string;
+    reason: string | null;
+    args: unknown;
+  }): Promise<{ messageTs: string } | { error: string }> {
+    try {
+      const targetId = input.threadId ?? input.chatId;
+      const channel = await this.client.channels.fetch(targetId);
+      if (!channel || !('send' in channel)) return { error: 'Channel not found' };
+      const { approvalPendingEmbed, approvalPendingButtons } = await import('./blocks/approval');
+      const emb = approvalPendingEmbed({
+        approvalId: input.approvalId,
+        toolName: input.toolName,
+        reason: input.reason,
+        args: input.args,
+      });
+      const buttons = approvalPendingButtons(input.approvalId);
+      // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
+      const sent = await (channel as any).send({
+        embeds: [emb],
+        components: [toActionRowBuilder(buttons)],
+      });
+      return { messageTs: String(sent.id) };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
   }
-  return ar;
-}
 
-function buttonStyleFromInt(n: number): ButtonStyle {
-  switch (n) {
-    case 1:
-      return ButtonStyle.Primary;
-    case 2:
-      return ButtonStyle.Secondary;
-    case 3:
-      return ButtonStyle.Success;
-    case 4:
-      return ButtonStyle.Danger;
-    default:
-      return ButtonStyle.Secondary;
+  async updateApprovalCard(input: {
+    chatId: string;
+    messageTs: string;
+    toolName: string;
+    decision: 'allow' | 'deny';
+    decidedBy: string;
+  }): Promise<DeliveryResult> {
+    try {
+      const { approvalResolvedEmbed } = await import('./blocks/approval');
+      const emb = approvalResolvedEmbed({
+        toolName: input.toolName,
+        decision: input.decision,
+        decidedBy: input.decidedBy,
+      });
+      // The message lives in whatever channel/thread postApprovalCard sent it to.
+      // The gateway passes the interaction's channelId as chatId — for threaded
+      // approvals this is the thread channel, matching where the card was posted.
+      const channel = await this.client.channels.fetch(input.chatId);
+      if (!channel || !('messages' in channel)) return { ok: false, error: 'Channel not found' };
+      // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
+      const msg = await (channel as any).messages.fetch(input.messageTs);
+      await msg.edit({ embeds: [emb], components: [] });
+      return { ok: true, messageId: input.messageTs };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  onApprovalDecision(handler: (event: ApprovalDecisionEvent) => void): void {
+    this.approvalDecisionHandler = handler;
+  }
+
+  setCommandContext(ctx: CommandContext): void {
+    this.commandContext = ctx;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private
+  // ---------------------------------------------------------------------------
+
+  private async handleCommand(payload: CommandPayload, interaction: Interaction): Promise<void> {
+    if (!interaction.isChatInputCommand()) return;
+    try {
+      await interaction.deferReply({ ephemeral: true });
+      const ctx: CommandContext = this.commandContext ?? {
+        binding: this.binding,
+        defaultChannelMode: this.defaultChannelMode,
+        channelOverrides: this.channelOverrides,
+      };
+      const response = await dispatch(payload, ctx);
+      await interaction.editReply({
+        content: response.content,
+        // biome-ignore lint/suspicious/noExplicitAny: embed shape matches Discord API
+        embeds: response.embeds as any[],
+      });
+    } catch {
+      try {
+        if (interaction.deferred) {
+          await interaction.editReply({ content: 'An error occurred processing this command.' });
+        }
+      } catch {
+        // Best-effort
+      }
+    }
+  }
+
+  private handleApprovalDecision(
+    approvalId: string,
+    decision: 'allow' | 'deny',
+    userId: string,
+    interaction: Interaction,
+  ): void {
+    if (!interaction.isButton()) return;
+
+    // Authorization: default-deny unless the user passes the configured policy.
+    if (this.approvalPolicy === 'role_gate') {
+      if (this.approvalRoleIds.length === 0) {
+        // No roles configured → no one can approve. This is intentional:
+        // the operator must explicitly configure approvalRoleIds or opt into 'allow_any'.
+        interaction
+          .reply({ content: 'Approval roles not configured. No one can approve.', ephemeral: true })
+          .catch(() => {});
+        return;
+      }
+      const member = interaction.member;
+      const memberRoles =
+        member && 'cache' in (member.roles as object)
+          ? (member.roles as { cache: Map<string, unknown> }).cache
+          : null;
+      const hasRole = memberRoles ? this.approvalRoleIds.some((id) => memberRoles.has(id)) : false;
+      if (!hasRole) {
+        interaction
+          .reply({ content: 'You do not have permission to approve/deny.', ephemeral: true })
+          .catch(() => {});
+        return;
+      }
+    }
+
+    interaction.deferUpdate().catch(() => {});
+    this.approvalDecisionHandler?.({
+      approvalId,
+      decision,
+      decidedBy: userId,
+      channelId: interaction.channelId ?? '',
+      messageTs: interaction.message.id,
+    });
+  }
+
+  private async registerSlashCommands(): Promise<void> {
+    try {
+      const rest = new REST({ version: '10' }).setToken(this.token);
+      const appId = this.applicationId;
+      const target = this.registerCommandsTo;
+      if (!appId || !target) return;
+      // Guild-scoped registration is instant and safe for iteration.
+      // Global registration overwrites the entire application command set —
+      // only use when this adapter owns the full command surface.
+      const route =
+        target === 'global'
+          ? Routes.applicationCommands(appId)
+          : Routes.applicationGuildCommands(appId, target);
+      await rest.put(route, { body: COMMAND_DEFINITIONS });
+    } catch {
+      // Non-fatal — commands won't appear but the bot still works.
+    }
+  }
+
+  private async clearReceiptReaction(chatId: string): Promise<void> {
+    // Find all pending reactions belonging to this channel and clear them.
+    const toClear: string[] = [];
+    for (const [msgId, chId] of this.pendingReactions) {
+      if (chId === chatId) toClear.push(msgId);
+    }
+    if (toClear.length === 0) return;
+    for (const msgId of toClear) this.pendingReactions.delete(msgId);
+    try {
+      const channel = await this.client.channels.fetch(chatId);
+      if (channel && 'messages' in channel) {
+        for (const msgId of toClear) {
+          // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
+          const msg = await (channel as any).messages.fetch(msgId);
+          if (this.client.user) {
+            await msg.reactions.cache.get(this.receiptReaction)?.users.remove(this.client.user.id);
+          }
+        }
+      }
+    } catch {
+      // Best-effort reaction removal
+    }
+  }
+
+  private rememberChunkIds(ids: string[]): void {
+    if (ids.length === 0) return;
+    const primary = ids[0];
+    while (this.chunkMap.size >= this.chunkMapMaxEntries && !this.chunkMap.has(primary)) {
+      const oldestKey = this.chunkMap.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.chunkMap.delete(oldestKey);
+    }
+    this.chunkMap.set(primary, ids);
   }
 }

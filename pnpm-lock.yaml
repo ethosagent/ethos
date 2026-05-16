@@ -58,6 +58,9 @@ importers:
       '@ethosagent/agent-mesh':
         specifier: workspace:*
         version: link:../../extensions/agent-mesh
+      '@ethosagent/tools-mcp':
+        specifier: workspace:*
+        version: link:../../extensions/tools-mcp
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
