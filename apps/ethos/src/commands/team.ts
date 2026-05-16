@@ -379,6 +379,34 @@ async function runTeamStatus(name: string | undefined): Promise<void> {
       `  ${m.personality.padEnd(22)}${String(m.port).padEnd(8)}${sc}${m.status.padEnd(14)}${c.reset}${String(m.pid ?? '—').padEnd(10)}${m.failureCount}`,
     );
   }
+
+  const { ethosDir } = await import('../config');
+  const boardPath = join(ethosDir(), 'teams', name, 'board.db');
+  if (existsSync(boardPath)) {
+    try {
+      const { KanbanStore, autonomyTier } = await import('@ethosagent/kanban-store');
+      const manifest = parseTeamManifest(readFileSync(resolveManifestPath(name), 'utf-8'));
+      const board = new KanbanStore(boardPath, { teamId: name });
+      const stats = board.getMemberStats();
+      board.close();
+      if (stats.size > 0) {
+        console.log(
+          `  ${'Member'.padEnd(22)}${'Completed'.padEnd(12)}${'Failed'.padEnd(10)}${'Tier'}`,
+        );
+        console.log(`  ${'-'.repeat(52)}`);
+        for (const [id, s] of stats) {
+          const tier = autonomyTier(s, manifest.trust_policy);
+          console.log(
+            `  ${id.padEnd(22)}${String(s.ticketsCompleted).padEnd(12)}${String(s.ticketsFailed).padEnd(10)}${tier}`,
+          );
+        }
+      }
+    } catch (err) {
+      console.error(
+        `  ${c.yellow}Warning: could not read board stats: ${err instanceof Error ? err.message : String(err)}${c.reset}`,
+      );
+    }
+  }
   console.log();
 }
 
@@ -586,6 +614,9 @@ export async function runTeamCommand(sub: string, args: string[]): Promise<void>
     case 'logs':
       await runTeamLogs(args[0], args.slice(1));
       break;
+    case 'retro':
+      await runTeamRetro(args[0]);
+      break;
     default: {
       // `ethos team <name> add|remove <personality>`
       const action = args[0] ?? '';
@@ -600,6 +631,58 @@ export async function runTeamCommand(sub: string, args: string[]): Promise<void>
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// retro
+// ---------------------------------------------------------------------------
+
+async function runTeamRetro(name: string | undefined): Promise<void> {
+  if (!name) {
+    console.error('Usage: ethos team retro <name>');
+    process.exit(1);
+  }
+
+  const { ethosDir } = await import('../config');
+  const { getStorage } = await import('../wiring');
+  const storage = getStorage();
+  const pmDir = join(ethosDir(), 'teams', name, 'memory', 'postmortems');
+  const entries = await storage.listEntries(pmDir).catch(() => []);
+  const files = entries.filter((e) => !e.isDir && e.name.endsWith('.md'));
+
+  if (files.length === 0) {
+    console.log(`\n${c.dim}No postmortems for team "${name}".${c.reset}\n`);
+    return;
+  }
+
+  console.log(
+    `\n${c.bold}Postmortems for team "${name}"${c.reset}  ${c.dim}(${files.length} entries)${c.reset}\n`,
+  );
+
+  const reasons: Map<string, number> = new Map();
+  for (const f of files) {
+    const content = await storage.read(join(pmDir, f.name));
+    if (!content) continue;
+    const reasonMatch = content.match(/\*\*Why it bounced:\*\*\s*(.+)/);
+    if (reasonMatch) {
+      const r = reasonMatch[1].trim();
+      reasons.set(r, (reasons.get(r) ?? 0) + 1);
+    }
+    const titleMatch = content.match(/^# (.+)/);
+    const assigneeMatch = content.match(/\*\*Assignee:\*\*\s*(.+)/);
+    const title = titleMatch ? titleMatch[1] : f.name;
+    const assignee = assigneeMatch ? assigneeMatch[1].trim() : '?';
+    console.log(`  ${c.cyan}${title}${c.reset}  ${c.dim}assignee: ${assignee}${c.reset}`);
+  }
+
+  const sorted = [...reasons.entries()].sort((a, b) => b[1] - a[1]);
+  if (sorted.length > 0) {
+    console.log(`\n${c.bold}Top recurring reasons${c.reset}\n`);
+    for (const [reason, count] of sorted.slice(0, 3)) {
+      console.log(`  ${c.yellow}${count}x${c.reset}  ${reason}`);
+    }
+  }
+  console.log();
 }
 
 export function buildSupervisorLaunchArgs(

@@ -225,7 +225,19 @@ export class Dispatcher {
         const stats = memberStats.get(assignee);
         if (stats) {
           const budget = tierMaxRetries(autonomyTier(stats, this.trustPolicy));
-          if (task.retryCount > budget) continue;
+          if (task.retryCount > budget) {
+            try {
+              this.board.updateStatus(
+                task.id,
+                'failed',
+                'tier_retry_budget_exhausted',
+                'dispatcher',
+              );
+            } catch {
+              /* already transitioned */
+            }
+            continue;
+          }
         }
       }
 

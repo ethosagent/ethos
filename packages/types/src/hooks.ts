@@ -188,6 +188,8 @@ export interface AfterTicketRevisionPayload {
   acceptanceCriteria?: string;
   reason: string;
   assignee: string;
+  autonomyTier?: 'probationary' | 'standard' | 'trusted';
+  successRatio?: number;
 }
 
 // ---------------------------------------------------------------------------

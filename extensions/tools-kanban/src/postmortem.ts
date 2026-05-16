@@ -26,6 +26,9 @@ export function registerPostmortemHandler(opts: PostmortemHandlerOptions): () =>
         '',
         `**Ticket:** ${payload.taskId}`,
         `**Assignee:** ${payload.assignee}`,
+        ...(payload.autonomyTier
+          ? [`**Tier:** ${payload.autonomyTier} (ratio ${(payload.successRatio ?? 0).toFixed(2)})`]
+          : []),
         `**Why it bounced:** ${payload.reason}`,
         '',
         `**Summary submitted:** ${payload.summary}`,
