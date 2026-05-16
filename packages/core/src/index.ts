@@ -45,6 +45,7 @@ export {
   MemoryConflictError,
 } from './memory-policies';
 export type { AgentLoopObservability } from './observability/agent-loop-observability';
+export { InMemoryRequestDumpStore } from './request-dump-store';
 export type { PluginFactory } from './plugin-registry';
 export { PluginRegistry } from './plugin-registry';
 export type { ChainedProviderOptions } from './providers/chained-provider';

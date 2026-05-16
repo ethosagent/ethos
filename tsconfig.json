@@ -86,6 +86,7 @@
       "@ethosagent/tools-process": ["./extensions/tools-process/src"],
       "@ethosagent/tools-vision": ["./extensions/tools-vision/src"],
       "@ethosagent/observability-sqlite": ["./extensions/observability-sqlite/src"],
+      "@ethosagent/request-dump": ["./extensions/request-dump/src"],
       "@ethosagent/safety-channel": ["./packages/safety/channel/src"],
       "@ethosagent/safety-injection": ["./packages/safety/injection/src"],
       "@ethosagent/safety-network": ["./packages/safety/network/src"],

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -24,6 +24,7 @@ import type {
   PersonalityConfig,
   PersonalityRegistry,
   PromptContext,
+  RequestDumpStore,
   SessionStore,
   SteerSink,
   Storage,
@@ -234,6 +235,11 @@ export interface AgentLoopConfig {
    * reports `CLARIFY_NO_SURFACE` and the agent falls back to plain prose.
    */
   clarifyBridge?: ClarifyBridge;
+  /**
+   * Optional request dump store. When provided, AgentLoop appends a full
+   * record of each LLM request/response for offline analysis and debugging.
+   */
+  requestDumpStore?: RequestDumpStore;
   options?: {
     maxIterations?: number;
     historyLimit?: number;
@@ -332,6 +338,8 @@ export class AgentLoop {
   private readonly contextEngines: ContextEngineRegistry;
   /** Bridge for the `clarify` tool; undefined when no interactive surface is wired. */
   readonly clarifyBridge?: ClarifyBridge;
+  /** Optional request dump store for full LLM request/response recording. */
+  private readonly requestDumpStore?: import('@ethosagent/types').RequestDumpStore;
   /** Phase 3 — team id stamped onto ToolContext when loop runs inside a team. */
   private readonly teamId?: string;
   /** Per-session accumulated spend in USD. Keyed by sessionKey. Reset via resetSessionCost(). */
@@ -368,6 +376,7 @@ export class AgentLoop {
     if (config.injectionClassifier) this.injectionClassifier = config.injectionClassifier;
     if (config.watcher) this.watcher = config.watcher;
     if (config.clarifyBridge) this.clarifyBridge = config.clarifyBridge;
+    if (config.requestDumpStore) this.requestDumpStore = config.requestDumpStore;
     this.contextEngines = config.contextEngines ?? new DefaultContextEngineRegistry();
   }
 
@@ -843,13 +852,20 @@ export class AgentLoop {
         break;
       }
 
-      // Fire before_llm_call
+      // Compute tool definitions once for hooks, LLM call, and dump store.
+      const toolDefs = this.tools.toDefinitions(allowedTools, filterOpts);
+      const requestId = randomUUID();
+      const includeContent = obsConfig?.storeLlmPayloads === 'full';
+
+      // Fire before_llm_call — content only included when personality opts in
       await this.hooks.fireVoid(
         'before_llm_call',
         {
           sessionId,
           model: this.llm.model,
           turnNumber: turnCount,
+          requestId,
+          ...(includeContent ? { system: systemPrompt, tools: toolDefs, messages: llmMessages } : {}),
         },
         allowedPlugins,
       );
@@ -902,12 +918,18 @@ export class AgentLoop {
       });
       let llmInputTokens = 0;
       let llmOutputTokens = 0;
+      let llmCacheReadTokens = 0;
+      let llmCacheCreationTokens = 0;
+      let llmEstimatedCostUsd = 0;
+      let llmRequestTokens: { system: number; tools: number; messages: number } | undefined;
+      let llmFinishReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' | undefined;
+      const llmStartTs = Date.now();
 
       try {
         armWatchdog();
         const stream = this.llm.complete(
           llmMessages,
-          this.tools.toDefinitions(allowedTools, filterOpts),
+          toolDefs,
           {
             system: systemPrompt,
             cacheSystemPrompt: true,
@@ -921,6 +943,13 @@ export class AgentLoop {
           if (abortSignal.aborted) break;
           if (watchdogController.signal.aborted) break;
           armWatchdog();
+          if (chunk.type === 'done') llmFinishReason = chunk.finishReason;
+          if (chunk.type === 'usage') {
+            llmCacheReadTokens += chunk.usage.cacheReadTokens;
+            llmCacheCreationTokens += chunk.usage.cacheCreationTokens;
+            llmEstimatedCostUsd += chunk.usage.estimatedCostUsd;
+            if (chunk.usage.requestTokens) llmRequestTokens = chunk.usage.requestTokens;
+          }
           for (const event of this.handleChunk(chunk, pendingToolCalls, (t) => {
             chunkText += t;
             fullText += t;
@@ -1002,16 +1031,54 @@ export class AgentLoop {
         }),
       });
 
-      // Fire after_llm_call
+      // Fire after_llm_call — content gated by personality observability config
+      const llmDurationMs = Date.now() - llmStartTs;
       await this.hooks.fireVoid(
         'after_llm_call',
         {
           sessionId,
           text: chunkText,
-          usage: { inputTokens: 0, outputTokens: 0 },
+          usage: {
+            inputTokens: llmInputTokens,
+            outputTokens: llmOutputTokens,
+            ...(llmCacheReadTokens ? { cacheReadTokens: llmCacheReadTokens } : {}),
+            ...(llmCacheCreationTokens ? { cacheCreationTokens: llmCacheCreationTokens } : {}),
+            ...(llmEstimatedCostUsd ? { estimatedCostUsd: llmEstimatedCostUsd } : {}),
+            ...(llmRequestTokens ? { requestTokens: llmRequestTokens } : {}),
+          },
+          requestId,
+          finishReason: llmFinishReason,
+          durationMs: llmDurationMs,
+          ...(includeContent ? { system: systemPrompt, tools: toolDefs, messages: llmMessages } : {}),
         },
         allowedPlugins,
       );
+
+      // Append to request dump store if wired (awaited for reliability).
+      // Content fields only included when personality observability opts in.
+      if (this.requestDumpStore) {
+        await this.requestDumpStore.append({
+          requestId,
+          timestamp: new Date().toISOString(),
+          sessionId,
+          personalityId: personality.id,
+          turnNumber: turnCount,
+          model: iterModelOverride ?? this.llm.model,
+          durationMs: llmDurationMs,
+          requestTokens: llmRequestTokens,
+          responseTokens: llmOutputTokens || undefined,
+          cacheReadTokens: llmCacheReadTokens || undefined,
+          cacheCreationTokens: llmCacheCreationTokens || undefined,
+          estimatedCostUsd: llmEstimatedCostUsd || undefined,
+          finishReason: llmFinishReason,
+          ...(includeContent ? {
+            system: systemPrompt,
+            tools: toolDefs,
+            messages: llmMessages,
+            responseText: chunkText,
+          } : {}),
+        });
+      }
 
       // Push assistant message with proper content blocks for next iteration
       if (completedToolCalls.length > 0) {

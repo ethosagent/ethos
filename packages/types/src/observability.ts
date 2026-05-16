@@ -151,3 +151,38 @@ export interface ObservabilityWriter {
   recordEvent(event: Omit<ObsEvent, 'eventId' | 'ts'>): void;
   flush(): void;
 }
+
+// ---------------------------------------------------------------------------
+// Request dump store — full LLM request/response recording
+// ---------------------------------------------------------------------------
+
+export interface RequestDumpRecord {
+  requestId: string;
+  timestamp: string;
+  sessionId: string;
+  personalityId?: string;
+  turnNumber: number;
+  model: string;
+  durationMs?: number;
+  requestTokens?: { system: number; tools: number; messages: number };
+  responseTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  estimatedCostUsd?: number;
+  finishReason?: string;
+  system?: string;
+  tools?: import('./llm').ToolDefinitionLite[];
+  messages?: import('./llm').Message[];
+  responseText?: string;
+}
+
+export interface RequestDumpStore {
+  append(record: RequestDumpRecord): Promise<void>;
+  recent(opts: {
+    limit: number;
+    sessionId?: string;
+    since?: Date;
+    includeContent?: boolean;
+  }): Promise<RequestDumpRecord[]>;
+  close(): Promise<void>;
+}

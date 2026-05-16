@@ -72,6 +72,7 @@
     "@ethosagent/gateway": "workspace:*",
     "@ethosagent/mcp-server": "workspace:*",
     "@ethosagent/observability-sqlite": "workspace:*",
+    "@ethosagent/request-dump": "workspace:*",
     "@ethosagent/personalities": "workspace:*",
     "@ethosagent/skills": "workspace:*",
     "@ethosagent/skills-coding": "workspace:*",

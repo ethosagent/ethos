@@ -4,6 +4,8 @@ export interface TokenUsage {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   estimatedCostUsd: number;
+  /** Per-slice breakdown of input tokens by request component. */
+  requestTokens?: { system: number; tools: number; messages: number };
 }
 
 export type CompletionChunk =
