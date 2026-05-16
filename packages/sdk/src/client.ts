@@ -11,9 +11,7 @@ export class EthosClient {
     this.rpc = dispatcher.rpc;
   }
 
-  stream(
-    ...args: Parameters<Dispatcher['stream']>
-  ): ReturnType<Dispatcher['stream']> {
+  stream(...args: Parameters<Dispatcher['stream']>): ReturnType<Dispatcher['stream']> {
     return this.dispatcher.stream(...args);
   }
 }

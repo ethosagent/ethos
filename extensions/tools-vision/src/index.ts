@@ -246,7 +246,9 @@ async function executeVision(
       {
         ...(effectiveArgs.file_path !== undefined ? { file_path: effectiveArgs.file_path } : {}),
         ...(effectiveArgs.file_url !== undefined ? { file_url: effectiveArgs.file_url } : {}),
-        ...(effectiveArgs.file_base64 !== undefined ? { file_base64: effectiveArgs.file_base64 } : {}),
+        ...(effectiveArgs.file_base64 !== undefined
+          ? { file_base64: effectiveArgs.file_base64 }
+          : {}),
       },
       {
         ...(ctx.scopedFs ? { scopedFs: ctx.scopedFs } : {}),

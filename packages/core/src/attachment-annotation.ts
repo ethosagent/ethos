@@ -8,7 +8,11 @@ function formatSize(bytes?: number): string {
 }
 
 function escapeXmlAttr(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 export function buildAttachmentAnnotation(attachments: Attachment[]): string {

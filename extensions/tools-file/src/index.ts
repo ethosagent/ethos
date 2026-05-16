@@ -209,7 +209,11 @@ export const readFileTool: Tool = {
     let resolvedPath = path;
     if (ref) {
       if (!ctx.attachments) {
-        return { ok: false, error: 'No attachments available for this turn.', code: 'not_available' };
+        return {
+          ok: false,
+          error: 'No attachments available for this turn.',
+          code: 'not_available',
+        };
       }
       const att = await ctx.attachments.openByRef(ref);
       resolvedPath = att.path;

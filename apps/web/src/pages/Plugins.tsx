@@ -264,9 +264,7 @@ function AttachCell({
         if (!old) return old;
         return {
           ...old,
-          items: old.items.map((p) =>
-            p.id === personality.id ? { ...p, plugins: next } : p,
-          ),
+          items: old.items.map((p) => (p.id === personality.id ? { ...p, plugins: next } : p)),
         };
       });
       return { prev };
@@ -374,9 +372,7 @@ function AttachedPersonalitiesCell({ serverName }: { serverName: string }) {
     queryKey: ['personalities', 'list'],
     queryFn: () => rpc.personalities.list({}),
   });
-  const attached = (data?.items ?? []).filter((p) =>
-    (p.mcp_servers ?? []).includes(serverName),
-  );
+  const attached = (data?.items ?? []).filter((p) => (p.mcp_servers ?? []).includes(serverName));
   if (attached.length === 0) {
     return <Typography.Text type="secondary">none</Typography.Text>;
   }

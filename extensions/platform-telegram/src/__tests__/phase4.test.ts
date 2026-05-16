@@ -1,5 +1,5 @@
-import type { ApprovalDecisionEvent } from '@ethosagent/types';
 import { InMemoryAttachmentCache } from '@ethosagent/storage-fs';
+import type { ApprovalDecisionEvent } from '@ethosagent/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------

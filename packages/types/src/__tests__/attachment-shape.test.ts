@@ -15,8 +15,18 @@ describe('Attachment shape', () => {
   });
 
   it('type union is image | file', () => {
-    const img: Attachment = { type: 'image', ref: 'att-0', url: 'file:///a', mimeType: 'image/png' };
-    const doc: Attachment = { type: 'file', ref: 'att-1', url: 'file:///b', mimeType: 'application/pdf' };
+    const img: Attachment = {
+      type: 'image',
+      ref: 'att-0',
+      url: 'file:///a',
+      mimeType: 'image/png',
+    };
+    const doc: Attachment = {
+      type: 'file',
+      ref: 'att-1',
+      url: 'file:///b',
+      mimeType: 'application/pdf',
+    };
     expect(img.type).toBe('image');
     expect(doc.type).toBe('file');
   });
