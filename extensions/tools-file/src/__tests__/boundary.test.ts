@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FsStorage, ScopedStorage } from '@ethosagent/storage-fs';
+import { ScopedFsImpl } from '@ethosagent/core';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { ToolContext } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readFileTool, writeFileTool } from '../index';
@@ -10,11 +11,11 @@ import { readFileTool, writeFileTool } from '../index';
 //
 // A personality with read_file/write_file in its toolset must NOT be able
 // to reach paths outside its fs_reach allowlist. Builds a real FsStorage
-// rooted at a tmp ~/.ethos look-alike, wraps it in ScopedStorage with the
-// "researcher" scope, and asserts that reaching into engineer's MEMORY.md
+// rooted at a tmp ~/.ethos look-alike, wraps it in ScopedFsImpl with the
+// "researcher" reach, and asserts that reaching into engineer's MEMORY.md
 // returns a tool error rather than the file body.
 
-function makeCtx(opts: { workingDir: string; storage?: ToolContext['storage'] }): ToolContext {
+function makeCtx(opts: { workingDir: string; scopedFs?: ToolContext['scopedFs'] }): ToolContext {
   return {
     sessionId: 'test',
     sessionKey: 'cli:boundary',
@@ -25,7 +26,7 @@ function makeCtx(opts: { workingDir: string; storage?: ToolContext['storage'] })
     abortSignal: new AbortController().signal,
     emit: () => {},
     resultBudgetChars: 80_000,
-    ...(opts.storage ? { storage: opts.storage } : {}),
+    ...(opts.scopedFs ? { scopedFs: opts.scopedFs } : {}),
   };
 }
 
@@ -36,10 +37,9 @@ describe('tools-file — fs_reach boundary enforcement', () => {
   beforeEach(async () => {
     // Canonicalize through realpath: on macOS, tmpdir() lives under
     // /var/folders/... which is a symlink to /private/var/folders/...
-    // The read tool calls realpath() on the request path (Ch.5 symlink
-    // defense), so the allowlist prefixes must already be canonical or
-    // ScopedStorage's prefix check sees a /private/var path against a
-    // /var prefix and rejects.
+    // ScopedFsImpl.checkReach() compares canonicalized paths with
+    // normalize(resolve(...)), which does NOT follow symlinks, so the
+    // allowlist prefixes and the request paths must share canonical form.
     dataDir = await realpath(await mkdtemp(join(tmpdir(), 'ethos-fsreach-')));
     cwd = await realpath(await mkdtemp(join(tmpdir(), 'ethos-cwd-')));
     // Seed two personality dirs with their own MEMORY.md
@@ -55,15 +55,13 @@ describe('tools-file — fs_reach boundary enforcement', () => {
     await rm(cwd, { recursive: true, force: true });
   });
 
-  function researcherStorage() {
-    return new ScopedStorage(new FsStorage(), {
-      read: [`${join(dataDir, 'personalities', 'researcher')}/`, cwd],
-      write: [`${join(dataDir, 'personalities', 'researcher')}/`, cwd],
-    });
+  function researcherFs() {
+    const reach = new Set([join(dataDir, 'personalities', 'researcher'), cwd]);
+    return new ScopedFsImpl(new FsStorage(), reach, reach);
   }
 
   it('researcher CAN read its own MEMORY.md', async () => {
-    const ctx = makeCtx({ workingDir: cwd, storage: researcherStorage() });
+    const ctx = makeCtx({ workingDir: cwd, scopedFs: researcherFs() });
     const result = await readFileTool.execute(
       { path: join(dataDir, 'personalities', 'researcher', 'MEMORY.md') },
       ctx,
@@ -73,7 +71,7 @@ describe('tools-file — fs_reach boundary enforcement', () => {
   });
 
   it("researcher CANNOT read engineer's MEMORY.md", async () => {
-    const ctx = makeCtx({ workingDir: cwd, storage: researcherStorage() });
+    const ctx = makeCtx({ workingDir: cwd, scopedFs: researcherFs() });
     const result = await readFileTool.execute(
       { path: join(dataDir, 'personalities', 'engineer', 'MEMORY.md') },
       ctx,
@@ -85,13 +83,13 @@ describe('tools-file — fs_reach boundary enforcement', () => {
     }
   });
 
-  it('out-of-scope rejection is shaped by the tool, not leaked from Storage', async () => {
-    // Phase 5 verification: when ScopedStorage throws BoundaryError, the
-    // tool catches it and emits a tool-shaped ToolResult — the LLM does
-    // not see the raw error class. The check matters because a leaky
-    // tool would let storage internals (BoundaryError, fs error codes)
-    // surface to the model as opaque exceptions.
-    const ctx = makeCtx({ workingDir: cwd, storage: researcherStorage() });
+  it('out-of-scope rejection is shaped by the tool, not leaked from ScopedFs', async () => {
+    // When ScopedFsImpl throws PATH_NOT_REACHABLE, the tool catches it
+    // and emits a tool-shaped ToolResult — the LLM does not see the
+    // raw error class. The check matters because a leaky tool would
+    // let capability internals surface to the model as opaque
+    // exceptions.
+    const ctx = makeCtx({ workingDir: cwd, scopedFs: researcherFs() });
     const result = await readFileTool.execute(
       { path: join(dataDir, 'personalities', 'engineer', 'MEMORY.md') },
       ctx,
@@ -99,81 +97,65 @@ describe('tools-file — fs_reach boundary enforcement', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('execution_failed');
-      // Tool wording, not Storage wording.
+      // Tool wording, not capability wording.
       expect(result.error).toMatch(/Filesystem boundary: read/);
       expect(result.error).toMatch(/personality's fs_reach allowlist/);
     }
   });
 
   it('researcher CAN read files in its working dir', async () => {
-    const ctx = makeCtx({ workingDir: cwd, storage: researcherStorage() });
+    const ctx = makeCtx({ workingDir: cwd, scopedFs: researcherFs() });
     const result = await readFileTool.execute({ path: join(cwd, 'project-notes.md') }, ctx);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toContain('cwd notes');
   });
 
   it('researcher CAN write into its own personality dir', async () => {
-    const ctx = makeCtx({ workingDir: cwd, storage: researcherStorage() });
+    const ctx = makeCtx({ workingDir: cwd, scopedFs: researcherFs() });
     const target = join(dataDir, 'personalities', 'researcher', 'note.md');
     const result = await writeFileTool.execute({ path: target, content: 'fresh' }, ctx);
     expect(result.ok).toBe(true);
   });
 
   it("researcher CANNOT write into engineer's personality dir", async () => {
-    const ctx = makeCtx({ workingDir: cwd, storage: researcherStorage() });
+    const ctx = makeCtx({ workingDir: cwd, scopedFs: researcherFs() });
     const target = join(dataDir, 'personalities', 'engineer', 'sneak.md');
     const result = await writeFileTool.execute({ path: target, content: 'evil' }, ctx);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/Filesystem boundary/);
   });
 
-  it('default fall-through (no ctx.storage) works without restrictions — legacy callers', async () => {
+  it('returns not_available when ctx.scopedFs is missing — no silent fallback', async () => {
     const ctx = makeCtx({ workingDir: cwd });
     const result = await readFileTool.execute(
       { path: join(dataDir, 'personalities', 'engineer', 'MEMORY.md') },
       ctx,
     );
-    // Without ctx.storage the tool falls back to FsStorage with no scope —
-    // matches pre-Phase-4 behaviour for tests / standalone tool usage.
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value).toContain('theirs');
+    // Pre-migration the absence of ctx.storage fell through to an
+    // unrestricted FsStorage. With ctx.scopedFs the absence is fail-
+    // closed: the tool returns `not_available` so the LLM never gets
+    // a free pass when the capability backend is unwired.
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('not_available');
   });
 
   // Ch.5 — symlink-defeats-allowlist coverage
-  // Symlink resolution moved out of the tool layer: ScopedFsImpl / ScopedStorage
-  // is responsible for resolving symlinks before boundary checks. The tool now
-  // passes the lexical path through; these tests belong in the scoped-storage
-  // or scoped-fs test suite once that layer gains realpath support.
+  // Symlink resolution moved out of the tool layer: ScopedFsImpl is
+  // responsible for resolving symlinks before boundary checks. The tool
+  // now passes the lexical path through; these tests belong in the
+  // scoped-fs test suite once that layer gains realpath support.
   it.skip('rejects a symlink inside the allowlist that points outside it', async () => {
-    const target = await mkdtemp(join(tmpdir(), 'ethos-secret-'));
-    await writeFile(join(target, 'id_rsa'), 'PRIVATE KEY MATERIAL');
-    const linkInsideCwd = join(cwd, 'innocent-looking.md');
-    const { symlink } = await import('node:fs/promises');
-    await symlink(join(target, 'id_rsa'), linkInsideCwd);
-
-    const scoped = new ScopedStorage(new FsStorage(), {
-      read: [`${cwd}/`, `${join(dataDir, 'personalities', 'researcher')}/`],
-      write: [`${cwd}/`, `${join(dataDir, 'personalities', 'researcher')}/`],
-      alwaysDeny: [target],
-    });
-    const ctx = makeCtx({ workingDir: cwd, storage: scoped });
-    const result = await readFileTool.execute({ path: linkInsideCwd }, ctx);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toMatch(/Filesystem boundary/);
-    await rm(target, { recursive: true, force: true });
+    // Skipped — see comment above.
   });
 
   it('rejects a path matching the alwaysDeny floor even when allow includes its parent', async () => {
-    const ssh = join(cwd, '.ssh');
-    await mkdir(ssh);
-    await writeFile(join(ssh, 'id_rsa'), 'PRIVATE');
-    const scoped = new ScopedStorage(new FsStorage(), {
-      read: [`${cwd}/`],
-      write: [`${cwd}/`],
-      alwaysDeny: [ssh],
-    });
-    const ctx = makeCtx({ workingDir: cwd, storage: scoped });
-    const result = await readFileTool.execute({ path: join(ssh, 'id_rsa') }, ctx);
+    // Use a path the deny floor catches structurally (`/etc/passwd`).
+    // The researcher's reach intentionally does NOT include /etc, but
+    // even if it did, the floor would still fire — that's the test.
+    const reachIncludingEtc = new Set([cwd, '/etc']);
+    const permissive = new ScopedFsImpl(new FsStorage(), reachIncludingEtc, reachIncludingEtc);
+    const ctx = makeCtx({ workingDir: cwd, scopedFs: permissive });
+    const result = await readFileTool.execute({ path: '/etc/passwd' }, ctx);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/Filesystem boundary/);
   });
@@ -183,21 +165,11 @@ describe('tools-file — fs_reach boundary enforcement', () => {
   // case variants, encoded forms. Each rejected path proves a different
   // attack shape that earlier drafts of fs-boundary code missed.
   describe('Ch.5 evasion shapes — should all be rejected', () => {
-    let secret: string;
-    let scoped: ScopedStorage;
+    let scoped: ScopedFsImpl;
 
-    beforeEach(async () => {
-      secret = await mkdtemp(join(tmpdir(), 'ethos-secret-'));
-      await writeFile(join(secret, 'id_rsa'), 'PRIVATE');
-      scoped = new ScopedStorage(new FsStorage(), {
-        read: [`${cwd}/`],
-        write: [`${cwd}/`],
-        alwaysDeny: [secret],
-      });
-    });
-
-    afterEach(async () => {
-      await rm(secret, { recursive: true, force: true });
+    beforeEach(() => {
+      const reach = new Set([cwd]);
+      scoped = new ScopedFsImpl(new FsStorage(), reach, reach);
     });
 
     it.each([
@@ -211,7 +183,7 @@ describe('tools-file — fs_reach boundary enforcement', () => {
       ['traversal with redundant slashes', () => `${cwd}//../..//etc//passwd`],
       ['traversal with redundant dots', () => `${cwd}/./../etc/passwd`],
     ])('rejects %s', async (_name, makePath) => {
-      const ctx = makeCtx({ workingDir: cwd, storage: scoped });
+      const ctx = makeCtx({ workingDir: cwd, scopedFs: scoped });
       const result = await readFileTool.execute({ path: makePath() }, ctx);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/Filesystem boundary/);
@@ -220,29 +192,13 @@ describe('tools-file — fs_reach boundary enforcement', () => {
     // Symlink resolution moved out of the tool layer — see comment above
     // the first skipped symlink test in this file.
     it.skip('rejects a symlink chain that lands in the deny prefix after multiple hops', async () => {
-      const { symlink } = await import('node:fs/promises');
-      const link1 = join(cwd, 'hop1');
-      const link2 = join(cwd, 'hop2.md');
-      await symlink(join(secret, 'id_rsa'), link1);
-      await symlink(link1, link2);
-      const ctx = makeCtx({ workingDir: cwd, storage: scoped });
-      const result = await readFileTool.execute({ path: link2 }, ctx);
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error).toMatch(/Filesystem boundary/);
+      // Skipped — see comment above.
     });
 
     // Symlink resolution moved out of the tool layer — see comment above
     // the first skipped symlink test in this file.
     it.skip('rejects a symlink to a deny-listed directory (not just files inside it)', async () => {
-      const { symlink } = await import('node:fs/promises');
-      const linkToDir = join(cwd, 'dir-link');
-      await symlink(secret, linkToDir);
-      const ctx = makeCtx({ workingDir: cwd, storage: scoped });
-      // Read a file *through* the directory symlink → resolves to
-      // secret/id_rsa → deny floor fires.
-      const result = await readFileTool.execute({ path: join(linkToDir, 'id_rsa') }, ctx);
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error).toMatch(/Filesystem boundary/);
+      // Skipped — see comment above.
     });
   });
 });

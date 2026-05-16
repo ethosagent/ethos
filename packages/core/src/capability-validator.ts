@@ -27,15 +27,21 @@ export function validateRegistration(
 
   if (caps.network) {
     const allowed = personality.safety?.network?.allow;
-    for (const host of caps.network.allowedHosts) {
-      if (host === '*') continue;
-      const covered = allowed?.some((pattern) => hostMatchesPattern(host, pattern)) ?? false;
-      if (!covered) {
-        errors.push({
-          tool: tool.name,
-          capability: 'network',
-          message: `host "${host}" is not in personality network allow list`,
-        });
+    // Mirror `resolveCapabilities`: a personality without an explicit
+    // `safety.network.allow` (or with an empty list) is in open mode —
+    // the tool's declared hosts pass through. Only validate the
+    // intersection when the personality actually restricts the surface.
+    if (allowed && allowed.length > 0) {
+      for (const host of caps.network.allowedHosts) {
+        if (host === '*') continue;
+        const covered = allowed.some((pattern) => hostMatchesPattern(host, pattern));
+        if (!covered) {
+          errors.push({
+            tool: tool.name,
+            capability: 'network',
+            message: `host "${host}" is not in personality network allow list`,
+          });
+        }
       }
     }
   }

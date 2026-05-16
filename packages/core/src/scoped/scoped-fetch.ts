@@ -1,14 +1,59 @@
+import { type NetworkPolicy, safeFetch } from '@ethosagent/safety-network';
 import type { ScopedFetch } from '@ethosagent/types';
 
+/**
+ * Test seam — `safeFetch`'s injection points, mirrored on the wrapper so
+ * tests can stub DNS + fetch hermetically. Production wiring leaves
+ * these undefined; `safeFetch` defaults to `node:dns/promises#lookup`
+ * and `globalThis.fetch`.
+ */
+export interface ScopedFetchTestSeam {
+  fetchImpl?: typeof fetch;
+  resolveHost?: (hostname: string) => Promise<string[]>;
+}
+
+/**
+ * Scoped network capability. Enforces two layers in order:
+ *
+ *  1. **Declared host allowlist** — the intersection of the tool's
+ *     `capabilities.network.allowedHosts` with the personality's
+ *     `safety.network.allow`, resolved at registration time.
+ *  2. **Non-overridable safety floor** — `safeFetch` runs scheme +
+ *     cloud-metadata + private-network + per-redirect-hop revalidation
+ *     regardless of declared hosts. A tool declaring `'*'` does NOT
+ *     bypass the floor; a personality permitting `169.254.169.254` is
+ *     still denied at the cloud-metadata layer.
+ *
+ * The two layers are not redundant: the allowlist is the policy
+ * surface tool authors and operators reason about; the floor catches
+ * the categories an allowlist can't (SSRF via redirect, DNS rebinding
+ * partial mitigation, file/data/javascript schemes).
+ */
 export class ScopedFetchImpl implements ScopedFetch {
-  constructor(private readonly allowedHosts: Set<string>) {}
+  constructor(
+    private readonly allowedHosts: Set<string>,
+    private readonly policy: NetworkPolicy,
+    private readonly testSeam: ScopedFetchTestSeam = {},
+  ) {}
 
   async fetch(url: string | URL, init?: RequestInit): Promise<Response> {
     const parsed = new URL(url);
     if (!this.isHostAllowed(parsed.hostname)) {
       throw new Error(`HOST_NOT_ALLOWED: ${parsed.hostname} is not in the declared allowedHosts`);
     }
-    return globalThis.fetch(parsed, init);
+    // redirect is forced to 'manual' inside safeFetch — strip it so the
+    // omit-typed init shape lines up.
+    const { redirect: _redirect, ...rest } = init ?? {};
+    const result = await safeFetch(parsed.toString(), {
+      policy: this.policy,
+      init: rest,
+      fetchImpl: this.testSeam.fetchImpl,
+      resolveHost: this.testSeam.resolveHost,
+    });
+    if (!result.ok) {
+      throw new Error(`HOST_NOT_ALLOWED: ${result.reason}`);
+    }
+    return result.response;
   }
 
   private isHostAllowed(hostname: string): boolean {

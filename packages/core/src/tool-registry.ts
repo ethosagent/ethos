@@ -59,9 +59,19 @@ export class DefaultToolRegistry implements ToolRegistry {
     this.tools.set(tool.name, { tool, pluginId: opts?.pluginId });
   }
 
+  /**
+   * Validate every tool reachable for this personality (per
+   * `toolNamesForPersonality`) against the personality's policy. Only
+   * the tools the personality could actually call are checked — a
+   * personality that doesn't list `web_search` in its toolset does not
+   * fail because `web_search` declared `api.exa.ai` that's missing from
+   * `network.allow`.
+   */
   validateToolsForPersonality(personality: PersonalityConfig): CapabilityValidationError[] {
+    const reach = this.toolNamesForPersonality(personality);
     const errors: CapabilityValidationError[] = [];
     for (const entry of this.tools.values()) {
+      if (!reach.has(entry.tool.name)) continue;
       errors.push(...validateRegistration(entry.tool, personality));
     }
     return errors;

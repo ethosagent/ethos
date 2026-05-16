@@ -915,12 +915,16 @@ importers:
 
   extensions/tools-file:
     dependencies:
-      '@ethosagent/storage-fs':
-        specifier: workspace:*
-        version: link:../../packages/storage-fs
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
 
   extensions/tools-image:
     dependencies:
@@ -1048,6 +1052,9 @@ importers:
       '@ethosagent/safety-injection':
         specifier: workspace:*
         version: link:../safety/injection
+      '@ethosagent/safety-network':
+        specifier: workspace:*
+        version: link:../safety/network
       '@ethosagent/safety-watcher':
         specifier: workspace:*
         version: link:../safety/watcher

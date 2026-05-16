@@ -1,3 +1,4 @@
+import type { NetworkPolicy } from '@ethosagent/safety-network';
 import type {
   KeyValueStore,
   SecretRef,
@@ -15,7 +16,13 @@ export interface CapabilityBackends {
   secretsBackend?: (ref: SecretRef) => Promise<string>;
   storage?: Storage;
   personalityFsReach?: { read: string[]; write: string[] };
-  personalityNetworkAllow?: string[];
+  /**
+   * Full personality network policy. The `allow` list is intersected
+   * with each tool's declared `allowedHosts`; `deny` and
+   * `allow_private_urls` plus the always-on safety floor (cloud-metadata,
+   * private-network, scheme, DNS-rebinding) flow through `safeFetch`.
+   */
+  personalityNetworkPolicy?: NetworkPolicy;
 }
 
 type ResolvedFields = Partial<
@@ -39,7 +46,8 @@ export function resolveCapabilities(
 
   if (capabilities.network) {
     const declaredHosts = capabilities.network.allowedHosts;
-    const personalityAllow = backends.personalityNetworkAllow;
+    const policy = backends.personalityNetworkPolicy ?? {};
+    const personalityAllow = policy.allow;
     let resolvedHosts: Set<string>;
     if (declaredHosts.includes('*')) {
       resolvedHosts = new Set(personalityAllow ?? []);
@@ -60,7 +68,7 @@ export function resolveCapabilities(
     } else {
       resolvedHosts = new Set(declaredHosts);
     }
-    result.scopedFetch = new ScopedFetchImpl(resolvedHosts);
+    result.scopedFetch = new ScopedFetchImpl(resolvedHosts, policy);
   }
 
   if (capabilities.secrets && backends.secretsBackend) {

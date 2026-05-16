@@ -10,7 +10,7 @@ import {
   shortPatternCheck,
   wrapUntrusted,
 } from '@ethosagent/safety-injection';
-import { ScopedStorage } from '@ethosagent/storage-fs';
+import { defaultAlwaysDeny, ScopedStorage } from '@ethosagent/storage-fs';
 import type {
   CompletionChunk,
   ContextEngineRegistry,
@@ -1675,35 +1675,9 @@ export class AgentLoop {
   }
 }
 
-// Ch.5 — universal always-deny floor. These prefixes are non-overridable —
-// even a personality config that explicitly allows `~/` cannot read them.
-// Lives in code, not config; user can extend via runtime API but cannot
-// remove. The list mirrors the plan's deny floor: SSH keys, AWS / GPG /
-// netrc credentials, shell history, system auth files, macOS keychains.
-function defaultAlwaysDeny(): string[] {
-  const home = homedir();
-  return [
-    `${home}/.ssh`,
-    `${home}/.aws/credentials`,
-    `${home}/.aws/config`,
-    `${home}/.gnupg`,
-    `${home}/.netrc`,
-    `${home}/.bash_history`,
-    `${home}/.zsh_history`,
-    `${home}/.psql_history`,
-    `${home}/.mysql_history`,
-    `${home}/.npmrc`,
-    `${home}/Library/Keychains`,
-    '/etc/passwd',
-    '/etc/shadow',
-    '/etc/sudoers',
-    '/etc/sudoers.d',
-    '/root',
-    '/boot',
-    '/sys',
-    '/proc/sys',
-  ];
-}
+// `defaultAlwaysDeny` lives in `@ethosagent/storage-fs` — imported above
+// so both ScopedStorage (this layer) and ScopedFsImpl (capability layer)
+// consume one source of truth.
 
 function substitute(
   template: string,

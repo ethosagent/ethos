@@ -80,6 +80,13 @@ class FakeScopedFs implements ScopedFs {
   async list(): Promise<string[]> {
     return [];
   }
+  async mtime(): Promise<number | null> {
+    return null;
+  }
+  async mkdir(): Promise<void> {}
+  async listEntries(): Promise<Array<{ name: string; isDir: boolean }>> {
+    return [];
+  }
 }
 
 /** ScopedFs that always rejects with PATH_NOT_REACHABLE. */
@@ -92,6 +99,13 @@ class BoundaryScopedFs implements ScopedFs {
     return false;
   }
   async list(): Promise<string[]> {
+    return [];
+  }
+  async mtime(): Promise<number | null> {
+    return null;
+  }
+  async mkdir(): Promise<void> {}
+  async listEntries(): Promise<Array<{ name: string; isDir: boolean }>> {
     return [];
   }
 }
@@ -131,6 +145,13 @@ function realScopedFs(allowedPrefixes: string[]): ScopedFs {
       }
     },
     async list(): Promise<string[]> {
+      return [];
+    },
+    async mtime(): Promise<number | null> {
+      return null;
+    },
+    async mkdir(): Promise<void> {},
+    async listEntries(): Promise<Array<{ name: string; isDir: boolean }>> {
       return [];
     },
   };

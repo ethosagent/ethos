@@ -1,60 +1,106 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NetworkPolicy } from '@ethosagent/safety-network';
+import { describe, expect, it, vi } from 'vitest';
 import { ScopedFetchImpl } from '../scoped/scoped-fetch';
 import { ScopedFsImpl } from '../scoped/scoped-fs';
 import { ScopedProcessImpl } from '../scoped/scoped-process';
 import { ScopedSecretsImpl } from '../scoped/scoped-secrets';
 
 describe('ScopedFetchImpl', () => {
-  const originalFetch = globalThis.fetch;
-  const mockFetch = vi.fn().mockResolvedValue(new Response('ok'));
-
-  beforeEach(() => {
-    globalThis.fetch = mockFetch;
-    mockFetch.mockClear();
+  const makeSeam = (responseBody = 'ok', resolved = ['1.1.1.1']) => ({
+    fetchImpl: vi.fn().mockResolvedValue(new Response(responseBody)) as unknown as typeof fetch,
+    resolveHost: vi.fn().mockResolvedValue(resolved),
   });
 
-  afterAll(() => {
-    globalThis.fetch = originalFetch;
-  });
+  // Open personality policy — empty `allow` means no allowlist mode
+  // (deny rules + private/cloud-metadata floor still apply). Lets test
+  // failures isolate to the declared-allowlist layer; the
+  // non-overridable safety floor stays in force regardless.
+  const PERMISSIVE: NetworkPolicy = { allow: [], allow_private_urls: true };
 
   it('allows exact host match', async () => {
-    const sf = new ScopedFetchImpl(new Set(['api.example.com']));
+    const seam = makeSeam();
+    const sf = new ScopedFetchImpl(new Set(['api.example.com']), PERMISSIVE, seam);
     await sf.fetch('https://api.example.com/v1/data');
-    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(seam.fetchImpl).toHaveBeenCalledOnce();
   });
 
   it('rejects undeclared host', async () => {
-    const sf = new ScopedFetchImpl(new Set(['api.example.com']));
+    const seam = makeSeam();
+    const sf = new ScopedFetchImpl(new Set(['api.example.com']), PERMISSIVE, seam);
     await expect(sf.fetch('https://evil.com/steal')).rejects.toThrow('HOST_NOT_ALLOWED');
+    expect(seam.fetchImpl).not.toHaveBeenCalled();
   });
 
   it('wildcard * allows any host', async () => {
-    const sf = new ScopedFetchImpl(new Set(['*']));
+    const seam = makeSeam();
+    const sf = new ScopedFetchImpl(new Set(['*']), PERMISSIVE, seam);
     await sf.fetch('https://anything.anywhere.net/path');
-    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(seam.fetchImpl).toHaveBeenCalledOnce();
   });
 
   it('subdomain wildcard *.github.com matches api.github.com', async () => {
-    const sf = new ScopedFetchImpl(new Set(['*.github.com']));
+    const seam = makeSeam();
+    const sf = new ScopedFetchImpl(new Set(['*.github.com']), PERMISSIVE, seam);
     await sf.fetch('https://api.github.com/repos');
-    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(seam.fetchImpl).toHaveBeenCalledOnce();
   });
 
   it('subdomain wildcard *.github.com does not match github.com itself', async () => {
-    const sf = new ScopedFetchImpl(new Set(['*.github.com']));
+    const seam = makeSeam();
+    const sf = new ScopedFetchImpl(new Set(['*.github.com']), PERMISSIVE, seam);
     await expect(sf.fetch('https://github.com/repos')).rejects.toThrow('HOST_NOT_ALLOWED');
   });
 
   it('subdomain wildcard does not match unrelated host', async () => {
-    const sf = new ScopedFetchImpl(new Set(['*.github.com']));
+    const seam = makeSeam();
+    const sf = new ScopedFetchImpl(new Set(['*.github.com']), PERMISSIVE, seam);
     await expect(sf.fetch('https://evil-github.com')).rejects.toThrow('HOST_NOT_ALLOWED');
   });
 
-  it('passes RequestInit through to globalThis.fetch', async () => {
-    const sf = new ScopedFetchImpl(new Set(['api.example.com']));
+  it('passes RequestInit through to the underlying fetch', async () => {
+    const seam = makeSeam();
+    const sf = new ScopedFetchImpl(new Set(['api.example.com']), PERMISSIVE, seam);
     const init: RequestInit = { method: 'POST', body: '{}' };
     await sf.fetch('https://api.example.com/v1', init);
-    expect(mockFetch).toHaveBeenCalledWith(expect.any(URL), init);
+    // safeFetch forces redirect: 'manual'; the rest of init passes through.
+    expect(seam.fetchImpl).toHaveBeenCalledWith(
+      'https://api.example.com/v1',
+      expect.objectContaining({ method: 'POST', body: '{}', redirect: 'manual' }),
+    );
+  });
+
+  // Gap-1 floor checks: a tool declaring '*' against a permissive personality
+  // STILL hits the non-overridable safety floor for cloud-metadata IPs and
+  // bad schemes. The fetch must never be issued.
+  it('floor blocks cloud-metadata IP literal even with allowedHosts=[*]', async () => {
+    const seam = makeSeam();
+    const sf = new ScopedFetchImpl(new Set(['*']), PERMISSIVE, seam);
+    await expect(sf.fetch('http://169.254.169.254/latest/meta-data/')).rejects.toThrow(
+      'HOST_NOT_ALLOWED',
+    );
+    expect(seam.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('floor blocks DNS-resolves-to-cloud-metadata even with allowedHosts=[*]', async () => {
+    const seam = makeSeam('ok', ['169.254.169.254']);
+    const sf = new ScopedFetchImpl(new Set(['*']), PERMISSIVE, seam);
+    await expect(sf.fetch('http://attacker.example.com/')).rejects.toThrow('HOST_NOT_ALLOWED');
+    expect(seam.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('floor blocks file:// scheme even with allowedHosts=[*]', async () => {
+    const seam = makeSeam();
+    const sf = new ScopedFetchImpl(new Set(['*']), PERMISSIVE, seam);
+    await expect(sf.fetch('file:///etc/passwd')).rejects.toThrow('HOST_NOT_ALLOWED');
+    expect(seam.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('floor blocks private-network resolution when allow_private_urls is false', async () => {
+    const seam = makeSeam('ok', ['10.0.0.5']);
+    const strict: NetworkPolicy = { allow: [], allow_private_urls: false };
+    const sf = new ScopedFetchImpl(new Set(['*']), strict, seam);
+    await expect(sf.fetch('http://internal.example.com/')).rejects.toThrow('HOST_NOT_ALLOWED');
+    expect(seam.fetchImpl).not.toHaveBeenCalled();
   });
 });
 
@@ -152,6 +198,54 @@ describe('ScopedFsImpl', () => {
     const fs = new ScopedFsImpl(storage, new Set(['/data/specific.txt']), new Set([]));
     const result = await fs.read('/data/specific.txt');
     expect(result).toBe('content');
+  });
+
+  it('mtime returns the storage value within read reach', async () => {
+    const storage = makeStorage();
+    storage.mtime.mockResolvedValue(1234);
+    const fs = new ScopedFsImpl(storage, new Set(['/data']), new Set([]));
+    expect(await fs.mtime('/data/file.txt')).toBe(1234);
+  });
+
+  it('mtime returns null forwarded from storage', async () => {
+    const storage = makeStorage();
+    storage.mtime.mockResolvedValue(null);
+    const fs = new ScopedFsImpl(storage, new Set(['/data']), new Set([]));
+    expect(await fs.mtime('/data/missing.txt')).toBeNull();
+  });
+
+  it('mtime throws PATH_NOT_REACHABLE outside read reach', async () => {
+    const storage = makeStorage();
+    const fs = new ScopedFsImpl(storage, new Set(['/data']), new Set([]));
+    await expect(fs.mtime('/etc/shadow')).rejects.toThrow('PATH_NOT_REACHABLE');
+  });
+
+  it('mkdir succeeds within write reach', async () => {
+    const storage = makeStorage();
+    storage.mkdir.mockResolvedValue(undefined);
+    const fs = new ScopedFsImpl(storage, new Set([]), new Set(['/out']));
+    await fs.mkdir('/out/sub');
+    expect(storage.mkdir).toHaveBeenCalledWith('/out/sub');
+  });
+
+  it('mkdir throws PATH_NOT_REACHABLE outside write reach', async () => {
+    const storage = makeStorage();
+    const fs = new ScopedFsImpl(storage, new Set([]), new Set(['/out']));
+    await expect(fs.mkdir('/etc')).rejects.toThrow('PATH_NOT_REACHABLE');
+  });
+
+  it('listEntries succeeds within read reach', async () => {
+    const storage = makeStorage();
+    storage.listEntries.mockResolvedValue([{ name: 'a.txt', isDir: false }]);
+    const fs = new ScopedFsImpl(storage, new Set(['/data']), new Set([]));
+    const entries = await fs.listEntries('/data');
+    expect(entries).toEqual([{ name: 'a.txt', isDir: false }]);
+  });
+
+  it('listEntries throws PATH_NOT_REACHABLE outside read reach', async () => {
+    const storage = makeStorage();
+    const fs = new ScopedFsImpl(storage, new Set(['/data']), new Set([]));
+    await expect(fs.listEntries('/tmp')).rejects.toThrow('PATH_NOT_REACHABLE');
   });
 });
 

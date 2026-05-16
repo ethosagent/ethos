@@ -36,11 +36,32 @@ export interface ScopedFetch {
   fetch(url: string | URL, init?: RequestInit): Promise<Response>;
 }
 
+/** Direct shape match for `Storage.listEntries` entries — duplicated here
+ *  rather than imported to keep `tool-capabilities.ts` free of cross-file
+ *  imports. The duplication is one struct; the alternative is a cycle. */
+export interface ScopedFsEntry {
+  name: string;
+  isDir: boolean;
+}
+
 export interface ScopedFs {
   read(path: string): Promise<string>;
-  write(path: string, content: string | Buffer): Promise<void>;
+  write(path: string, content: string | Uint8Array): Promise<void>;
   exists(path: string): Promise<boolean>;
   list(path: string): Promise<string[]>;
+
+  /** Modification time in epoch-ms; null when the path does not exist.
+   *  Required for the stale-write guard used by tools that write files
+   *  read earlier in the same turn. */
+  mtime(path: string): Promise<number | null>;
+
+  /** Create a directory and parents. No-op when already a directory.
+   *  Reach-checked against the write allowlist. */
+  mkdir(dir: string): Promise<void>;
+
+  /** List immediate children with type info; empty array when the
+   *  directory does not exist. Reach-checked against the read allowlist. */
+  listEntries(dir: string): Promise<ScopedFsEntry[]>;
 }
 
 export interface SpawnOpts {

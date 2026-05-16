@@ -1,6 +1,7 @@
 import { mkdir, rm, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { CompletionChunk, LLMProvider, Message } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
@@ -59,20 +60,12 @@ function makeScriptedLLM(script: ScriptStep[]): LLMProvider {
 // The tools use direct imports, not ctx.*, so these just pass the guard.
 // ---------------------------------------------------------------------------
 
+// tools-file consumes ctx.scopedFs (capability-resolved); the capability
+// resolver builds ScopedFsImpl from `storage`, so the stale-write tests
+// need a real FsStorage to see files on disk that the test fixtures
+// mutate via node:fs.
 const testBackends: CapabilityBackends = {
-  storage: {
-    read: async () => null,
-    write: async () => {},
-    exists: async () => false,
-    list: async () => [],
-    mtime: async () => null,
-    listEntries: async () => [],
-    append: async () => {},
-    writeAtomic: async () => {},
-    mkdir: async () => {},
-    remove: async () => {},
-    rename: async () => {},
-  },
+  storage: new FsStorage(),
   personalityFsReach: { read: ['/'], write: ['/'] },
 };
 

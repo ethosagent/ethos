@@ -394,7 +394,7 @@ export async function createAgentLoop(
       read: activePerson.fs_reach?.read ?? [],
       write: activePerson.fs_reach?.write ?? [],
     },
-    personalityNetworkAllow: activePerson.safety?.network?.allow,
+    personalityNetworkPolicy: activePerson.safety?.network ?? {},
   };
   const tools = new DefaultToolRegistry(capabilityBackends);
   for (const tool of createFileTools()) tools.register(tool);
@@ -677,6 +677,23 @@ export async function createAgentLoop(
   // The registry is shared by reference, so the loop sees them on next turn.
   // meshRegistryPath scopes routing to the caller's mesh (CC — mesh isolation).
   for (const tool of createDelegationTools(loop, opts.meshRegistryPath)) tools.register(tool);
+
+  // Phase tool-cap P1 — fail-loud-at-boot validation. Every tool reachable
+  // for the active personality has its declared capabilities intersected
+  // with the personality's policy (network.allow, fs_reach). A mismatch
+  // here means a tool would silently surface HOST_NOT_ALLOWED /
+  // PATH_NOT_REACHABLE at first call — fix the personality config or drop
+  // the tool from its toolset.
+  const validationErrors = tools.validateToolsForPersonality(activePerson);
+  if (validationErrors.length > 0) {
+    const summary = validationErrors
+      .map((e) => `  ${e.tool} [${e.capability}]: ${e.message}`)
+      .join('\n');
+    throw new Error(
+      `Tool capability validation failed for personality "${activePerson.id}":\n${summary}\n` +
+        `Adjust the personality's safety.network.allow / fs_reach, or remove the tool from toolset.yaml.`,
+    );
+  }
 
   return loop;
 }

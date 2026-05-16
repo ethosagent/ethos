@@ -150,6 +150,13 @@ function makeScopedFs(allowedPrefixes: string[]): ScopedFs {
     async list(): Promise<string[]> {
       return [];
     },
+    async mtime(): Promise<number | null> {
+      return null;
+    },
+    async mkdir(): Promise<void> {},
+    async listEntries(): Promise<Array<{ name: string; isDir: boolean }>> {
+      return [];
+    },
   };
 }
 

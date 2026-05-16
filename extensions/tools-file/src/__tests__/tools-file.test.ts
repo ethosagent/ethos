@@ -1,6 +1,9 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ScopedFsImpl } from '@ethosagent/core';
+import { FsStorage } from '@ethosagent/storage-fs';
+import type { ToolContext } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createFileTools,
@@ -10,17 +13,21 @@ import {
   writeFileTool,
 } from '../index';
 
-const makeCtx = (workingDir: string) => ({
-  sessionId: 'test',
-  sessionKey: 'cli:test',
-  platform: 'cli',
-  workingDir,
-  currentTurn: 1,
-  messageCount: 1,
-  abortSignal: new AbortController().signal,
-  emit: () => {},
-  resultBudgetChars: 80_000,
-});
+const makeCtx = (workingDir: string): ToolContext => {
+  const allowed = new Set([workingDir]);
+  return {
+    sessionId: 'test',
+    sessionKey: 'cli:test',
+    platform: 'cli',
+    workingDir,
+    currentTurn: 1,
+    messageCount: 1,
+    abortSignal: new AbortController().signal,
+    emit: () => {},
+    resultBudgetChars: 80_000,
+    scopedFs: new ScopedFsImpl(new FsStorage(), allowed, allowed),
+  };
+};
 
 let testDir: string;
 

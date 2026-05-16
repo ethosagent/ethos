@@ -27,7 +27,7 @@ import { createDelegateTaskTool } from '../index';
 // ---------------------------------------------------------------------------
 
 const testBackends: CapabilityBackends = {
-  personalityNetworkAllow: ['*'],
+  personalityNetworkPolicy: { allow: ['*'] },
 };
 
 const MARKER = 'PINEAPPLE-MARKER-30-1';

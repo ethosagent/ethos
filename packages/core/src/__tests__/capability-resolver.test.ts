@@ -35,9 +35,9 @@ describe('resolveCapabilities', () => {
     expect(Object.keys(result)).toEqual(['scopedFetch']);
   });
 
-  it('network * sentinel resolves to personalityNetworkAllow', () => {
+  it('network * sentinel resolves to personality policy allow list', () => {
     const backends: CapabilityBackends = {
-      personalityNetworkAllow: ['api.github.com', 'api.openai.com'],
+      personalityNetworkPolicy: { allow: ['api.github.com', 'api.openai.com'] },
     };
     const result = resolveCapabilities(
       'tool-a',
@@ -48,7 +48,7 @@ describe('resolveCapabilities', () => {
     expect(result.scopedFetch).toBeInstanceOf(ScopedFetchImpl);
   });
 
-  it('network * sentinel without personalityNetworkAllow yields empty set', () => {
+  it('network * sentinel without personality policy yields empty set', () => {
     const result = resolveCapabilities(
       'tool-a',
       { network: { allowedHosts: ['*'] } },
@@ -226,7 +226,7 @@ describe('resolveCapabilities', () => {
       secretsBackend: vi.fn().mockResolvedValue('val'),
       storage,
       personalityFsReach: { read: ['/data'], write: ['/out'] },
-      personalityNetworkAllow: ['api.example.com'],
+      personalityNetworkPolicy: { allow: ['api.example.com'] },
     };
     const result = resolveCapabilities(
       'tool-all',

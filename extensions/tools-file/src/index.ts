@@ -1,13 +1,6 @@
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
-import {
-  BoundaryError,
-  type Storage,
-  type Tool,
-  type ToolContext,
-  type ToolResult,
-} from '@ethosagent/types';
+import type { ScopedFs, Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -50,21 +43,21 @@ function isWriteBlocked(abs: string): boolean {
  * - `readMtimes` is absent (backward-compat: old callers without the map)
  * - the path was never read in this session (new-file creation, no false positive)
  *
- * Uses Storage.mtime() so the check routes through ScopedStorage and respects
- * personality-boundary enforcement rather than bypassing it with raw stat().
- * A file that was previously read but has since been deleted is treated as
- * stale to prevent silent clobber of a disappearance.
+ * Uses ScopedFs.mtime() so the check is reach-validated by the same
+ * capability surface as the surrounding read/write, rather than bypassing
+ * it with raw stat(). A file that was previously read but has since been
+ * deleted is treated as stale to prevent silent clobber of a disappearance.
  */
 async function checkStaleWrite(
   abs: string,
   readMtimes: Map<string, { mtimeMs: number; readAtTurn: number }> | undefined,
-  storage: Storage,
+  fs: ScopedFs,
 ): Promise<ToolResult | null> {
   if (!readMtimes) return null;
   const record = readMtimes.get(abs);
   if (!record) return null;
 
-  const currentMtimeMs = await storage.mtime(abs);
+  const currentMtimeMs = await fs.mtime(abs);
 
   if (currentMtimeMs === null) {
     const readAt = new Date(record.mtimeMs).toISOString();
@@ -89,24 +82,34 @@ async function checkStaleWrite(
 }
 
 /**
- * Resolve the Storage to use for this call. AgentLoop hands ScopedStorage
- * via ctx.storage when fs_reach is configured; legacy callers (CLI tests,
- * tools instantiated outside the loop) fall back to an unrestricted
- * FsStorage so existing behaviour is preserved.
+ * Resolve the ScopedFs to use for this call, or return a `not_available`
+ * tool result when the capability backend isn't configured. AgentLoop
+ * wires `ctx.scopedFs` from the tool's declared `fs_reach` capability
+ * intersected with the personality's `fs_reach`; tests that construct a
+ * ToolContext directly must wire it explicitly.
  */
-let fallbackStorage: FsStorage | undefined;
-function storageOf(ctx: ToolContext): Storage {
-  if (ctx.storage) return ctx.storage;
-  if (!fallbackStorage) fallbackStorage = new FsStorage();
-  return fallbackStorage;
+function fsOf(ctx: ToolContext): ScopedFs | ToolResult {
+  if (!ctx.scopedFs) {
+    return {
+      ok: false,
+      error: 'Filesystem capability not configured for this personality.',
+      code: 'not_available',
+    };
+  }
+  return ctx.scopedFs;
 }
 
-/** Translate a BoundaryError into a tool-shaped failure so the LLM gets
- *  an actionable message instead of an unhandled rejection. */
-function boundaryFailure(err: BoundaryError): ToolResult {
+/** Detect the structured PATH_NOT_REACHABLE shape thrown by ScopedFsImpl
+ *  so tools can return a deterministic failure instead of an unhandled
+ *  exception. Match the prefix; ScopedFs is the only caller throwing it. */
+function isReachError(err: unknown): err is Error {
+  return err instanceof Error && err.message.startsWith('PATH_NOT_REACHABLE:');
+}
+
+function reachFailure(kind: 'read' | 'write', path: string): ToolResult {
   return {
     ok: false,
-    error: `Filesystem boundary: ${err.kind} of "${err.path}" is outside this personality's fs_reach allowlist.`,
+    error: `Filesystem boundary: ${kind} of "${path}" is outside this personality's fs_reach allowlist.`,
     code: 'execution_failed',
   };
 }
@@ -199,26 +202,31 @@ export const readFileTool: Tool = {
     if (!path) return { ok: false, error: 'path is required', code: 'input_invalid' };
 
     const expanded = expandPath(path, ctx.workingDir);
-    // Ch.5 — resolve symlinks so a symlink to ~/.ssh inside an allowed dir
-    // gets rejected by the always-deny floor. Falls back to the lexical
-    // path when the file doesn't exist (then the allow-list check still
-    // runs and gives a sensible "not found" downstream).
     const abs = canonicalizeForRead(expanded);
-    const storage = storageOf(ctx);
+    const fs = fsOf(ctx);
+    if (!('mtime' in fs)) return fs;
 
     // FW-28 — snapshot mtime before reading. Stat again after; if the file
     // changed while we read it the content is ambiguous, so we surface an error
     // rather than silently recording the wrong baseline for the stale-write guard.
     let mtimeBefore: number | null = null;
     if (ctx.readMtimes) {
-      mtimeBefore = await storage.mtime(abs);
+      try {
+        mtimeBefore = await fs.mtime(abs);
+      } catch (err) {
+        if (isReachError(err)) return reachFailure('read', abs);
+        throw err;
+      }
     }
 
-    let content: string | null;
+    let content: string;
     try {
-      content = await storage.read(abs);
+      content = await fs.read(abs);
     } catch (err) {
-      if (err instanceof BoundaryError) return boundaryFailure(err);
+      if (isReachError(err)) return reachFailure('read', abs);
+      if (err instanceof Error && err.message.startsWith('File not found:')) {
+        return { ok: false, error: `Cannot read ${abs}: file not found`, code: 'execution_failed' };
+      }
       return {
         ok: false,
         error: `Cannot read ${abs}: ${err instanceof Error ? err.message : String(err)}`,
@@ -226,16 +234,8 @@ export const readFileTool: Tool = {
       };
     }
 
-    if (content === null) {
-      return {
-        ok: false,
-        error: `Cannot read ${abs}: file not found`,
-        code: 'execution_failed',
-      };
-    }
-
     if (ctx.readMtimes && mtimeBefore !== null) {
-      const mtimeAfter = await storage.mtime(abs);
+      const mtimeAfter = await fs.mtime(abs);
       if (mtimeAfter === null || mtimeAfter !== mtimeBefore) {
         return {
           ok: false,
@@ -292,7 +292,8 @@ export const writeFileTool: Tool = {
       return { ok: false, error: 'content is required', code: 'input_invalid' };
 
     const abs = expandPath(path, ctx.workingDir);
-    const storage = storageOf(ctx);
+    const fs = fsOf(ctx);
+    if (!('mtime' in fs)) return fs;
 
     if (isWriteBlocked(abs)) {
       return {
@@ -302,16 +303,16 @@ export const writeFileTool: Tool = {
       };
     }
 
-    const stale = await checkStaleWrite(abs, ctx.readMtimes, storage);
-    if (stale) return stale;
-
     try {
-      await storage.mkdir(dirname(abs));
-      await storage.write(abs, content);
+      const stale = await checkStaleWrite(abs, ctx.readMtimes, fs);
+      if (stale) return stale;
+
+      await fs.mkdir(dirname(abs));
+      await fs.write(abs, content);
       // FW-28 — update the recorded mtime after a successful write so subsequent
       // writes in the same session don't false-positive against the pre-write record.
       if (ctx.readMtimes) {
-        const writtenMtime = await storage.mtime(abs);
+        const writtenMtime = await fs.mtime(abs);
         if (writtenMtime !== null) {
           ctx.readMtimes.set(abs, { mtimeMs: writtenMtime, readAtTurn: ctx.currentTurn });
         } else {
@@ -320,7 +321,7 @@ export const writeFileTool: Tool = {
       }
       return { ok: true, value: `Written ${content.length} bytes to ${abs}` };
     } catch (err) {
-      if (err instanceof BoundaryError) return boundaryFailure(err);
+      if (isReachError(err)) return reachFailure('write', abs);
       return {
         ok: false,
         error: `Cannot write ${abs}: ${err instanceof Error ? err.message : String(err)}`,
@@ -362,69 +363,69 @@ export const patchFileTool: Tool = {
     if (!old_text) return { ok: false, error: 'old_text is required', code: 'input_invalid' };
 
     const abs = expandPath(path, ctx.workingDir);
-    const storage = storageOf(ctx);
+    const fs = fsOf(ctx);
+    if (!('mtime' in fs)) return fs;
 
     if (isWriteBlocked(abs)) {
       return { ok: false, error: `Writing to ${abs} is blocked.`, code: 'execution_failed' };
     }
 
-    const stale = await checkStaleWrite(abs, ctx.readMtimes, storage);
-    if (stale) return stale;
-
-    let content: string | null;
     try {
-      content = await storage.read(abs);
+      const stale = await checkStaleWrite(abs, ctx.readMtimes, fs);
+      if (stale) return stale;
+
+      let content: string;
+      try {
+        content = await fs.read(abs);
+      } catch (err) {
+        if (isReachError(err)) return reachFailure('read', abs);
+        if (err instanceof Error && err.message.startsWith('File not found:')) {
+          return {
+            ok: false,
+            error: `Cannot read ${abs}: file not found`,
+            code: 'execution_failed',
+          };
+        }
+        return {
+          ok: false,
+          error: `Cannot read ${abs}: ${err instanceof Error ? err.message : String(err)}`,
+          code: 'execution_failed',
+        };
+      }
+
+      const occurrences = countOccurrences(content, old_text);
+      if (occurrences === 0) {
+        return {
+          ok: false,
+          error: `old_text not found in ${abs}. Use read_file to verify the exact content.`,
+          code: 'execution_failed',
+        };
+      }
+      if (occurrences > 1) {
+        return {
+          ok: false,
+          error: `old_text matches ${occurrences} locations in ${abs}. Add surrounding context to make the match unique, or call patch_file once per location.`,
+          code: 'execution_failed',
+        };
+      }
+
+      const patched = content.replace(old_text, new_text);
+      await fs.write(abs, patched);
+
+      // FW-28 — update the recorded mtime after a successful patch.
+      if (ctx.readMtimes) {
+        const patchedMtime = await fs.mtime(abs);
+        if (patchedMtime !== null) {
+          ctx.readMtimes.set(abs, { mtimeMs: patchedMtime, readAtTurn: ctx.currentTurn });
+        } else {
+          ctx.readMtimes.delete(abs);
+        }
+      }
+      return { ok: true, value: `Patched ${abs}` };
     } catch (err) {
-      if (err instanceof BoundaryError) return boundaryFailure(err);
-      return {
-        ok: false,
-        error: `Cannot read ${abs}: ${err instanceof Error ? err.message : String(err)}`,
-        code: 'execution_failed',
-      };
-    }
-
-    if (content === null) {
-      return {
-        ok: false,
-        error: `Cannot read ${abs}: file not found`,
-        code: 'execution_failed',
-      };
-    }
-
-    const occurrences = countOccurrences(content, old_text);
-    if (occurrences === 0) {
-      return {
-        ok: false,
-        error: `old_text not found in ${abs}. Use read_file to verify the exact content.`,
-        code: 'execution_failed',
-      };
-    }
-    if (occurrences > 1) {
-      return {
-        ok: false,
-        error: `old_text matches ${occurrences} locations in ${abs}. Add surrounding context to make the match unique, or call patch_file once per location.`,
-        code: 'execution_failed',
-      };
-    }
-
-    const patched = content.replace(old_text, new_text);
-    try {
-      await storage.write(abs, patched);
-    } catch (err) {
-      if (err instanceof BoundaryError) return boundaryFailure(err);
+      if (isReachError(err)) return reachFailure('write', abs);
       throw err;
     }
-    // FW-28 — update the recorded mtime after a successful patch.
-    // FW-28 — update the recorded mtime after a successful patch.
-    if (ctx.readMtimes) {
-      const patchedMtime = await storage.mtime(abs);
-      if (patchedMtime !== null) {
-        ctx.readMtimes.set(abs, { mtimeMs: patchedMtime, readAtTurn: ctx.currentTurn });
-      } else {
-        ctx.readMtimes.delete(abs);
-      }
-    }
-    return { ok: true, value: `Patched ${abs}` };
   },
 };
 
@@ -444,7 +445,7 @@ interface SearchMatch {
 }
 
 async function walkAndSearch(
-  storage: Storage,
+  fs: ScopedFs,
   dir: string,
   pattern: string,
   glob: string | undefined,
@@ -456,9 +457,10 @@ async function walkAndSearch(
 
   let entries: Array<{ name: string; isDir: boolean }>;
   try {
-    entries = await storage.listEntries(dir);
-  } catch (err) {
-    if (err instanceof BoundaryError) return; // out of allowlist — skip silently
+    entries = await fs.listEntries(dir);
+  } catch {
+    // Any error in listing (reach failure, missing dir) skips the branch
+    // silently — search is best-effort and continues at the next branch.
     return;
   }
 
@@ -470,20 +472,19 @@ async function walkAndSearch(
     const fullPath = join(dir, entry.name);
 
     if (entry.isDir) {
-      await walkAndSearch(storage, fullPath, pattern, glob, matches, maxMatches, depth + 1);
+      await walkAndSearch(fs, fullPath, pattern, glob, matches, maxMatches, depth + 1);
       continue;
     }
 
     if (glob && !matchGlob(entry.name, glob)) continue;
     if (!isTextFile(fullPath)) continue;
 
-    let text: string | null;
+    let text: string;
     try {
-      text = await storage.read(fullPath);
+      text = await fs.read(fullPath);
     } catch {
       continue;
     }
-    if (text === null) continue;
     if (text.length > 2 * 1024 * 1024) continue; // skip files > 2MB
 
     const lines = text.split('\n');
@@ -538,12 +539,13 @@ export const searchFilesTool: Tool = {
     const searchDir = path ? expandPath(path, ctx.workingDir) : ctx.workingDir;
     const maxMatches = Math.min(max_results ?? 50, 200);
     const matches: SearchMatch[] = [];
-    const storage = storageOf(ctx);
+    const fs = fsOf(ctx);
+    if (!('mtime' in fs)) return fs;
 
     try {
-      await walkAndSearch(storage, searchDir, pattern, glob, matches, maxMatches, 0);
+      await walkAndSearch(fs, searchDir, pattern, glob, matches, maxMatches, 0);
     } catch (err) {
-      if (err instanceof BoundaryError) return boundaryFailure(err);
+      if (isReachError(err)) return reachFailure('read', searchDir);
       throw err;
     }
 

@@ -14,7 +14,9 @@ import type { ImageGenProvider } from '../providers/types';
 // ---------------------------------------------------------------------------
 
 const testBackends: CapabilityBackends = {
-  personalityNetworkAllow: ['api.openai.com', 'api.replicate.com', '*.replicate.delivery'],
+  personalityNetworkPolicy: {
+    allow: ['api.openai.com', 'api.replicate.com', '*.replicate.delivery'],
+  },
 };
 
 // ---------------------------------------------------------------------------

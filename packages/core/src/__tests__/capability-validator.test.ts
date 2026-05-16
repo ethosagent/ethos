@@ -89,18 +89,29 @@ describe('validateRegistration', () => {
     expect(validateRegistration(tool, personality)).toEqual([]);
   });
 
-  it('network with no personality allow list → error', () => {
+  it('network with no personality allow list → open mode, no error', () => {
+    // Mirrors resolveCapabilities: a personality without an explicit
+    // `safety.network.allow` is in open mode. The validator must not
+    // false-positive here — existing personalities that don't bother
+    // setting an allow list would otherwise refuse to boot when they
+    // include any tool that declares specific hosts.
     const tool = makeTool({
       name: 'net-tool',
       capabilities: { network: { allowedHosts: ['api.github.com'] } },
     });
     const personality = makePersonality();
-    const errors = validateRegistration(tool, personality);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatchObject({
-      tool: 'net-tool',
-      capability: 'network',
+    expect(validateRegistration(tool, personality)).toEqual([]);
+  });
+
+  it('network with empty personality allow list → open mode, no error', () => {
+    const tool = makeTool({
+      name: 'net-tool',
+      capabilities: { network: { allowedHosts: ['api.github.com'] } },
     });
+    const personality = makePersonality({
+      safety: { network: { allow: [] } },
+    });
+    expect(validateRegistration(tool, personality)).toEqual([]);
   });
 
   it('fs_reach read "from-personality" always passes', () => {
@@ -189,7 +200,32 @@ describe('validateRegistration', () => {
 });
 
 describe('DefaultToolRegistry.validateToolsForPersonality', () => {
-  it('collects errors from all tools', () => {
+  it('collects errors from all tools reachable for the personality', () => {
+    const registry = new DefaultToolRegistry();
+    registry.register(
+      makeTool({
+        name: 'tool-a',
+        capabilities: { network: { allowedHosts: ['bad-a.com'] } },
+      }),
+    );
+    registry.register(
+      makeTool({
+        name: 'tool-b',
+        capabilities: { fs_reach: { read: ['/etc'] } },
+      }),
+    );
+    // Non-empty allow list = restricted mode; bad-a.com is not covered.
+    const personality = makePersonality({
+      safety: { network: { allow: ['good.com'] } },
+      fs_reach: { read: ['/data'] },
+    });
+    const errors = registry.validateToolsForPersonality(personality);
+    expect(errors).toHaveLength(2);
+    const toolNames = errors.map((e) => e.tool).sort();
+    expect(toolNames).toEqual(['tool-a', 'tool-b']);
+  });
+
+  it('skips tools not reachable for the personality (toolset filter)', () => {
     const registry = new DefaultToolRegistry();
     registry.register(
       makeTool({
@@ -204,12 +240,12 @@ describe('DefaultToolRegistry.validateToolsForPersonality', () => {
       }),
     );
     const personality = makePersonality({
-      safety: { network: { allow: [] } },
+      toolset: ['tool-b'],
+      safety: { network: { allow: ['good.com'] } },
       fs_reach: { read: ['/data'] },
     });
     const errors = registry.validateToolsForPersonality(personality);
-    expect(errors).toHaveLength(2);
-    const toolNames = errors.map((e) => e.tool).sort();
-    expect(toolNames).toEqual(['tool-a', 'tool-b']);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.tool).toBe('tool-b');
   });
 });
