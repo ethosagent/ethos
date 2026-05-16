@@ -7,7 +7,7 @@ import {
   type EthosConfig,
   ethosDir,
   loadConfigStrict,
-  readConfig,
+  readRawConfig,
   validateBotBindings,
   writeConfig,
 } from '../config';
@@ -18,8 +18,8 @@ async function load(yaml: string): Promise<EthosConfig> {
   const storage = new InMemoryStorage();
   await storage.mkdir(ethosDir());
   await storage.write(join(ethosDir(), 'config.yaml'), yaml);
-  const cfg = await readConfig(storage);
-  if (!cfg) throw new Error('readConfig returned null');
+  const cfg = await readRawConfig(storage);
+  if (!cfg) throw new Error('readRawConfig returned null');
   return cfg;
 }
 
@@ -484,7 +484,7 @@ describe('writeConfig round-trips the new list shapes', () => {
     };
     await writeConfig(storage, original);
 
-    const roundTripped = await readConfig(storage);
+    const roundTripped = await readRawConfig(storage);
     expect(roundTripped?.telegram).toEqual(original.telegram);
     expect(roundTripped?.slack).toEqual(original.slack);
     expect(roundTripped?.teams).toEqual(original.teams);

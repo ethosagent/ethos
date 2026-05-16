@@ -8,9 +8,15 @@ import {
   SQLiteObservabilityStore,
   startPruneCron,
 } from '@ethosagent/observability-sqlite';
-import { FsStorage } from '@ethosagent/storage-fs';
+import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
 import { parseTeamManifest, teamsDir } from '@ethosagent/team-supervisor';
-import type { LLMProvider, RetentionConfig, Storage, TeamManifest } from '@ethosagent/types';
+import type {
+  LLMProvider,
+  RetentionConfig,
+  SecretsResolver,
+  Storage,
+  TeamManifest,
+} from '@ethosagent/types';
 import {
   EthosObservability,
   createAgentLoop as packageCreateAgentLoop,
@@ -37,6 +43,18 @@ let storageSingleton: Storage | undefined;
 export function getStorage(): Storage {
   if (!storageSingleton) storageSingleton = new FsStorage();
   return storageSingleton;
+}
+
+let secretsSingleton: SecretsResolver | undefined;
+
+export function getSecretsResolver(): SecretsResolver {
+  if (!secretsSingleton) {
+    secretsSingleton = new FileSecretsResolver({
+      dir: join(ethosDir(), 'secrets'),
+      storage: getStorage(),
+    });
+  }
+  return secretsSingleton;
 }
 
 let obsSingleton: ObservabilityService | undefined;
@@ -141,7 +159,8 @@ export function stopEvolverCron(): void {
 }
 
 async function withRotation(config: EthosConfig) {
-  const rotationKeys = config.provider === 'anthropic' ? await readKeys(getStorage()) : [];
+  const rotationKeys =
+    config.provider === 'anthropic' ? await readKeys(getStorage(), getSecretsResolver()) : [];
   return { ...config, rotationKeys };
 }
 
@@ -162,6 +181,7 @@ export async function createAgentLoop(
       ? { auxiliaryCompression: config.auxiliary.compression }
       : {}),
     ...(config.auxiliary?.vision ? { auxiliaryVision: config.auxiliary.vision } : {}),
+    secretsResolver: getSecretsResolver(),
   };
   return packageCreateAgentLoop(wiringConfig, {
     dataDir: ethosDir(),

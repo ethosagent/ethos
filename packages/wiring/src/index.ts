@@ -53,6 +53,7 @@ import type {
   MemoryEntryRef,
   MemoryProvider,
   PromptContext,
+  SecretsResolver,
   SessionStore,
 } from '@ethosagent/types';
 import { resolveKanbanDbPath } from './kanban-path';
@@ -141,6 +142,9 @@ export interface WiringConfig {
     apiKey?: string;
     baseUrl?: string;
   };
+  /** File-backed secrets resolver. When provided, the capability backend
+   *  resolves secrets from ~/.ethos/secrets/ before falling back to env vars. */
+  secretsResolver?: SecretsResolver;
 }
 
 export type WiringProfile = 'cli' | 'tui' | 'web' | 'acp';
@@ -380,14 +384,20 @@ export async function createAgentLoop(
     'providers/openai/apiKey': 'OPENAI_API_KEY',
     'providers/replicate/apiToken': 'REPLICATE_API_TOKEN',
   };
+  const resolver = config.secretsResolver;
   const capabilityBackends: CapabilityBackends = {
     kvStoreFactory: createKvStoreFactory(join(dataDir, 'sessions.db')),
     secretsBackend: async (ref) => {
+      if (resolver) {
+        const val = await resolver.get(ref);
+        if (val !== null) return val;
+      }
       const envVar = secretsEnvMap[ref];
-      if (!envVar) throw new Error(`Unknown secret ref: ${ref}`);
-      const value = process.env[envVar];
-      if (!value) throw new Error(`Secret ${ref} not set (env ${envVar})`);
-      return value;
+      if (envVar) {
+        const value = process.env[envVar];
+        if (value) return value;
+      }
+      throw new Error(`Secret ${ref} not found (checked secrets store + env)`);
     },
     storage: new FsStorage(),
     personalityFsReach: {

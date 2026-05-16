@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
-import { ethosDir, readConfig, writeConfig } from '../config';
+import { ethosDir, readRawConfig, writeConfig } from '../config';
 import { grantQuickCommandConsent, hasQuickCommandConsent } from '../lib/onboarding';
 import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
 
@@ -83,7 +83,7 @@ describe('quick_commands config parsing', () => {
     const storage = new InMemoryStorage();
     await storage.mkdir(ethosDir());
     await storage.write(join(ethosDir(), 'config.yaml'), yaml);
-    return readConfig(storage);
+    return readRawConfig(storage);
   }
 
   it('parses quick_commands from config.yaml', async () => {
@@ -141,7 +141,7 @@ describe('quick_commands config parsing', () => {
       },
     };
     await writeConfig(storage, original);
-    const roundTripped = await readConfig(storage);
+    const roundTripped = await readRawConfig(storage);
     expect(roundTripped?.quick_commands).toEqual(original.quick_commands);
   });
 });

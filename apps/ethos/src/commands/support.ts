@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { createTarGz, readTarGz, SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import type { ObsEvent, Span, Trace } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
-import { ethosDir, readConfig } from '../config';
+import { ethosDir, readRawConfig } from '../config';
 import { getStorage } from '../wiring';
 
 // ---------------------------------------------------------------------------
@@ -183,7 +183,7 @@ export async function runBundle(argv: string[]): Promise<void> {
 
     // Load personality configs (secrets stripped)
     const storage = getStorage();
-    const config = await readConfig(storage);
+    const config = await readRawConfig(storage);
     const safeConfig = config ? stripSecrets({ ...config }) : null;
 
     // Memory files (opt-in only)

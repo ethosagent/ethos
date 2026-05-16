@@ -1,5 +1,5 @@
 import { readKeys, writeKeys } from '../config';
-import { getStorage } from '../wiring';
+import { getSecretsResolver, getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -53,7 +53,14 @@ export async function runKeys(args: string[]): Promise<void> {
       const priority = prioIdx >= 0 ? Number(args[prioIdx + 1]) : 50;
 
       const keys = await readKeys(storage);
-      keys.push({ apiKey, priority, ...(label ? { label } : {}) });
+      const id = `key-${Date.now()}`;
+      const secretRef = `rotation/${id}`;
+      await getSecretsResolver().set(secretRef, apiKey);
+      keys.push({
+        apiKey: `\${secrets:${secretRef}}`,
+        priority,
+        ...(label ? { label } : {}),
+      });
       await writeKeys(storage, keys);
       console.log(
         `${c.green}✓ Key added${c.reset}  ${maskKey(apiKey)}  ${c.dim}priority ${priority}${c.reset}`,

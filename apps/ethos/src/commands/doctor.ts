@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { UniversalScanner } from '@ethosagent/skills';
 import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
 import type { Skill } from '@ethosagent/types';
-import { type EthosConfig, ethosDir, readConfig } from '../config';
+import { type EthosConfig, ethosDir, readRawConfig } from '../config';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { getStorage } from '../wiring';
 
@@ -155,7 +155,7 @@ export async function runDoctor(args: string[] = []): Promise<void> {
 
   console.log(`${c.bold}Config${c.reset}`);
   const storage = getStorage();
-  const config = await readConfig(storage);
+  const config = await readRawConfig(storage);
   const cfgPath = join(ethosDir(), 'config.yaml');
   if (!config) {
     console.log(`  ${c.yellow}⚠${c.reset}  No config at ${c.dim}${cfgPath}${c.reset}`);
@@ -315,7 +315,7 @@ async function runDoctorFix(): Promise<void> {
   }
 
   // 4. Validate provider in config
-  const config = await readConfig(storage);
+  const config = await readRawConfig(storage);
   if (config) {
     const { PROVIDER_CATALOG } = await import('@ethosagent/wiring/provider-catalog');
     const knownIds = PROVIDER_CATALOG.map((p) => p.id);

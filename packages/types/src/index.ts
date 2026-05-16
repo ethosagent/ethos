@@ -15,6 +15,7 @@ export * from './platform';
 export * from './plugin';
 export * from './retention';
 export * from './sandbox';
+export { SecretNotFoundError, type SecretRef, type SecretsResolver } from './secrets';
 export * from './session';
 export * from './skill';
 export * from './steer';
