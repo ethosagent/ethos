@@ -13,7 +13,14 @@ import type { CapabilityValidationError } from './capability-validator';
 import { validateRegistration } from './capability-validator';
 
 function needsBackends(caps: ToolCapabilities): boolean {
-  return !!(caps.network || caps.secrets || caps.storage || caps.fs_reach || caps.process);
+  return !!(
+    caps.network ||
+    caps.secrets ||
+    caps.storage ||
+    caps.fs_reach ||
+    caps.process ||
+    caps.attachments
+  );
 }
 
 interface ToolEntry {
@@ -176,6 +183,7 @@ export class DefaultToolRegistry implements ToolRegistry {
     ctx: ToolContext,
     allowedTools?: string[],
     filterOpts?: ToolFilterOpts,
+    turnAttachments?: import('@ethosagent/types').Attachment[],
   ): Promise<Array<{ toolCallId: string; name: string; result: ToolResult }>> {
     const perCallBudget = Math.floor(ctx.resultBudgetChars / Math.max(calls.length, 1));
 
@@ -262,7 +270,7 @@ export class DefaultToolRegistry implements ToolRegistry {
               entry.tool.name,
               entry.tool.capabilities,
               { sessionId: ctx.sessionId, personalityId: ctx.personalityId },
-              this.backends,
+              { ...this.backends, inboundAttachments: turnAttachments },
             );
             Object.assign(toolCtx, resolved);
           }

@@ -243,13 +243,27 @@ export async function runGatewayStart(): Promise<void> {
   // routing table.
   const systemLoop = await createAgentLoop(config);
 
+  // Shared attachment cache for all platform adapters. Hoisted here so the
+  // same instance flows into both `buildAdapters` (Telegram, Slack) and the
+  // `Gateway` (cleanup on /new and lane eviction).
+  const { FsAttachmentCache } = await import('@ethosagent/storage-fs');
+  const attachmentCache = new FsAttachmentCache(storage, join(ethosDir(), 'cache', 'attachments'));
+  // TTL sweep — prune cached attachments older than 24 h every hour.
+  const pruneTimer = setInterval(
+    () => {
+      void attachmentCache.pruneOlderThan(24 * 60 * 60 * 1000).catch(() => {});
+    },
+    60 * 60 * 1000,
+  );
+  pruneTimer.unref?.();
+
   // Build and register all configured adapters early so we can wire the
   // clarify surfaces *before* constructing the Gateway. The surfaces' combined
   // `correlateMessage` is passed in as `clarifyMessageCorrelator`. The
   // surface's `getSessionRouting` closes over a mutable holder filled in
   // right after Gateway construction — necessary because the surface and the
   // Gateway each need a reference to the other.
-  const adapters = await buildAdapters(config, loadAdapterModule);
+  const adapters = await buildAdapters(config, loadAdapterModule, attachmentCache);
 
   let gatewayRef: Gateway | null = null;
   const telegramClarifySurfaces = await buildTelegramClarifySurfaces(
@@ -317,6 +331,7 @@ export async function runGatewayStart(): Promise<void> {
         new Gateway({ loop: systemLoop, defaultPersonality: config.personality })
       : new Gateway({
           bots,
+          attachmentCache,
           ...(clarifyMessageCorrelator ? { clarifyMessageCorrelator } : {}),
           ...(telegramCardReader ? { personalityCardReader: telegramCardReader } : {}),
           ...(telegramGreetingProvider ? { greetingProvider: telegramGreetingProvider } : {}),
@@ -400,6 +415,7 @@ export async function runGatewayStart(): Promise<void> {
   // never comes. See plan/IMPROVEMENT.md P1-1.
   const shutdown = async () => {
     console.log(`\n${c.dim}Shutting down...${c.reset}`);
+    clearInterval(pruneTimer);
     scheduler.stop();
     await gateway.shutdown({
       notify:
@@ -845,6 +861,7 @@ async function createTelegramGreetingProvider() {
 export async function buildAdapters(
   config: EthosConfig,
   loadAdapter: AdapterModuleLoader,
+  attachmentCache?: import('@ethosagent/types').AttachmentCache,
 ): Promise<PlatformAdapter[]> {
   config = applyPlatformShim(config).config;
   const adapters: PlatformAdapter[] = [];
@@ -864,6 +881,15 @@ export async function buildAdapters(
       });
       await registry.loadFromDirectory(personalitiesDir);
 
+      // Telegram adapter requires a cache. When the caller provides one
+      // (production gateway path), use it; otherwise create one on the fly
+      // (test / standalone path).
+      let telegramCache = attachmentCache;
+      if (!telegramCache) {
+        const { FsAttachmentCache } = await import('@ethosagent/storage-fs');
+        telegramCache = new FsAttachmentCache(storage, join(ethosDir(), 'cache', 'attachments'));
+      }
+
       for (const botCfg of config.telegram?.bots ?? []) {
         let identity: { name: string; shortDescription: string; description: string } | undefined;
         if (botCfg.bind.type === 'personality') {
@@ -881,6 +907,7 @@ export async function buildAdapters(
         adapters.push(
           new mod.TelegramAdapter({
             token: botCfg.token,
+            cache: telegramCache,
             botKey: deriveBotKey(botCfg),
             dropPendingUpdates: true,
             ...(identity ? { identity } : {}),
@@ -924,6 +951,7 @@ export async function buildAdapters(
             binding: { type: appCfg.bind.type, name: appCfg.bind.name },
             storage: slackStorage,
             personalityCard,
+            ...(attachmentCache ? { cache: attachmentCache } : {}),
             ...(memory ? { memory } : {}),
           }),
         );

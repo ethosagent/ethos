@@ -1,4 +1,5 @@
 import type { ApprovalDecisionEvent } from '@ethosagent/types';
+import { InMemoryAttachmentCache } from '@ethosagent/storage-fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -61,7 +62,10 @@ vi.mock('grammy', () => {
 
 import { TelegramAdapter } from '../index';
 
+let cache: InMemoryAttachmentCache;
+
 function resetMocks() {
+  cache = new InMemoryAttachmentCache();
   for (const key of Object.keys(mockApi) as (keyof typeof mockApi)[]) {
     mockApi[key].mockReset();
   }
@@ -179,7 +183,7 @@ describe('4.1 — HTML mode send()', () => {
   beforeEach(resetMocks);
 
   it('sends with parse_mode HTML by default', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     await adapter.send('100', { text: '**hello**' });
@@ -192,7 +196,7 @@ describe('4.1 — HTML mode send()', () => {
   });
 
   it('skips HTML translation when parseMode is plain', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', parseMode: 'plain' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache, parseMode: 'plain' });
     await adapter.start();
 
     await adapter.send('100', { text: '**hello**' });
@@ -211,7 +215,7 @@ describe('4.1 — HTML mode send()', () => {
       .mockRejectedValueOnce(new Error("can't parse entities"))
       .mockResolvedValueOnce({ message_id: 99 });
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const result = await adapter.send('100', { text: 'bad **markup' });
@@ -229,7 +233,7 @@ describe('4.1 — HTML mode send()', () => {
   it('returns error on non-parse send failure', async () => {
     mockApi.sendMessage.mockRejectedValueOnce(new Error('network error'));
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const result = await adapter.send('100', { text: 'hi' });
@@ -246,7 +250,7 @@ describe('4.1 — HTML mode editMessage()', () => {
   beforeEach(resetMocks);
 
   it('edits with HTML translation', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     // Seed a chunk mapping via send
@@ -264,7 +268,7 @@ describe('4.1 — HTML mode editMessage()', () => {
   });
 
   it('edits without HTML when parseMode is plain', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', parseMode: 'plain' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache, parseMode: 'plain' });
     await adapter.start();
 
     mockApi.sendMessage.mockResolvedValueOnce({ message_id: 50 });
@@ -340,7 +344,7 @@ describe('4.2 — postApprovalCard', () => {
 
   it('sends inline keyboard with correct callback_data', async () => {
     mockApi.sendMessage.mockResolvedValueOnce({ message_id: 100 });
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const result = await adapter.postApprovalCard({
@@ -363,7 +367,7 @@ describe('4.2 — postApprovalCard', () => {
 
   it('callback_data fits within 64 bytes', async () => {
     mockApi.sendMessage.mockResolvedValueOnce({ message_id: 100 });
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     // approvalId is typically a short UUID-like string
@@ -385,7 +389,7 @@ describe('4.2 — postApprovalCard', () => {
 
   it('returns error when send fails', async () => {
     mockApi.sendMessage.mockRejectedValueOnce(new Error('bot blocked'));
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const result = await adapter.postApprovalCard({
@@ -401,7 +405,7 @@ describe('4.2 — postApprovalCard', () => {
 
   it('includes threadId when provided', async () => {
     mockApi.sendMessage.mockResolvedValueOnce({ message_id: 100 });
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     await adapter.postApprovalCard({
@@ -426,7 +430,7 @@ describe('4.2 — updateApprovalCard', () => {
   beforeEach(resetMocks);
 
   it('edits message to plain text with decision', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const result = await adapter.updateApprovalCard({
@@ -447,7 +451,7 @@ describe('4.2 — updateApprovalCard', () => {
   });
 
   it('shows Denied for deny decision', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     await adapter.updateApprovalCard({
@@ -472,7 +476,7 @@ describe('4.2 — onApprovalDecision callback routing', () => {
   beforeEach(resetMocks);
 
   it('routes approve: callbacks to approval handler', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const decisions: ApprovalDecisionEvent[] = [];
@@ -507,7 +511,7 @@ describe('4.2 — onApprovalDecision callback routing', () => {
   });
 
   it('routes deny: callbacks to approval handler', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const decisions: ApprovalDecisionEvent[] = [];
@@ -535,7 +539,7 @@ describe('4.2 — onApprovalDecision callback routing', () => {
   });
 
   it('routes clr: callbacks to clarify handler (not approval)', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     type CbEvent = import('../index').CallbackQueryEvent;
@@ -569,7 +573,7 @@ describe('4.2 — onApprovalDecision callback routing', () => {
   });
 
   it('coexists: clarify and approval callbacks in the same adapter', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     type CbEvent = import('../index').CallbackQueryEvent;

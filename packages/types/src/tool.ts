@@ -98,6 +98,7 @@ export interface ToolContext {
   scopedFetch?: import('./tool-capabilities').ScopedFetch;
   scopedFs?: import('./tool-capabilities').ScopedFs;
   scopedProcess?: import('./tool-capabilities').ScopedProcess;
+  attachments?: import('./tool-capabilities').ScopedAttachments;
 }
 
 export interface Tool<TArgs = unknown> {
@@ -156,6 +157,7 @@ export interface ToolRegistry {
     ctx: ToolContext,
     allowedTools?: string[],
     filterOpts?: ToolFilterOpts,
+    turnAttachments?: import('./platform').Attachment[],
   ): Promise<Array<{ toolCallId: string; name: string; result: ToolResult }>>;
   toDefinitions(
     allowedTools?: string[],

@@ -127,6 +127,31 @@ If something looks wrong after Step 4, work top-to-bottom — earlier rows block
 
 ---
 
+## File Attachments
+
+The adapter ingests photos and documents from Telegram messages automatically. No special configuration is needed.
+
+### Supported types
+
+| Telegram media | Attachment type | Notes |
+|---|---|---|
+| `photo` | `image` | Highest-resolution variant selected. Always `image/jpeg`. |
+| `document` | `file` | PDFs, text files, images sent as documents. MIME from Telegram. |
+
+### Cache location
+
+Downloaded files are written to `~/.ethos/cache/attachments/` via the `AttachmentCache`. The cache is keyed by session, so different chats do not share cached files.
+
+### Size cap
+
+25 MB per file. Files exceeding this limit are skipped and the message text is appended with "(File too large -- 25 MB limit)". The Telegram Bot API caps `getFile` downloads at 20 MB, so files between 20-25 MB may fail at the API level.
+
+### Deferred
+
+Voice messages, audio files, video, animations (GIFs), and stickers are intentionally dropped. The inbound caption still reaches the agent, but no attachment is created. These types are deferred until transcription and media analysis tools ship.
+
+---
+
 ## Internals
 
 ### Connection model

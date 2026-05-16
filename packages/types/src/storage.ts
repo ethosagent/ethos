@@ -109,6 +109,16 @@ export interface Storage {
   chmod(path: string, mode: number): Promise<void>;
 }
 
+export interface AttachmentCache {
+  write(
+    bytes: Uint8Array,
+    meta: { sessionKey: string; messageId: string; filename: string; mime: string },
+  ): Promise<string>;
+  clear(sessionKey: string): Promise<void>;
+  pruneOlderThan(olderThanMs: number): Promise<{ removedCount: number }>;
+  resolveLocalPath(url: string): string;
+}
+
 /**
  * Thrown by ScopedStorage when a read or write targets a path outside the
  * configured allowlist. Consumers (e.g. tools-file) should translate this

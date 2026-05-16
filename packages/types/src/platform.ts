@@ -1,9 +1,10 @@
 export interface Attachment {
-  type: 'image' | 'file' | 'audio' | 'video';
-  url?: string;
-  data?: Buffer;
+  type: 'image' | 'file';
+  ref: string;
+  url: string;
   mimeType: string;
   filename?: string;
+  sizeBytes?: number;
 }
 
 export interface InboundMessage {

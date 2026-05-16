@@ -182,26 +182,42 @@ export const readFileTool: Tool = {
   outputIsUntrusted: true,
   capabilities: {
     fs_reach: { read: 'from-personality' },
+    attachments: { kinds: ['file', 'image'] },
   },
   schema: {
     type: 'object',
     properties: {
+      ref: {
+        type: 'string',
+        description: 'Opaque attachment reference (e.g. att-0) to read an attached file.',
+      },
       path: { type: 'string', description: 'File path to read (absolute or relative to cwd)' },
       start_line: { type: 'number', description: 'First line to return (1-indexed, inclusive)' },
       end_line: { type: 'number', description: 'Last line to return (1-indexed, inclusive)' },
     },
-    required: ['path'],
+    required: [],
   },
   async execute(args, ctx): Promise<ToolResult> {
-    const { path, start_line, end_line } = args as {
-      path: string;
+    const { ref, path, start_line, end_line } = args as {
+      ref?: string;
+      path?: string;
       start_line?: number;
       end_line?: number;
     };
 
-    if (!path) return { ok: false, error: 'path is required', code: 'input_invalid' };
+    // Resolve attachment ref → path when present.
+    let resolvedPath = path;
+    if (ref) {
+      if (!ctx.attachments) {
+        return { ok: false, error: 'No attachments available for this turn.', code: 'not_available' };
+      }
+      const att = await ctx.attachments.openByRef(ref);
+      resolvedPath = att.path;
+    }
 
-    const expanded = expandPath(path, ctx.workingDir);
+    if (!resolvedPath) return { ok: false, error: 'path is required', code: 'input_invalid' };
+
+    const expanded = expandPath(resolvedPath, ctx.workingDir);
     const abs = canonicalizeForRead(expanded);
     const fs = fsOf(ctx);
     if (!('mtime' in fs)) return fs;

@@ -16,7 +16,15 @@ export interface TriageContext {
   threadState?: ThreadStateStore;
 }
 
-/** Subset of the Slack `message` event we actually consume. */
+/** Subset of a Slack file object attached to a `file_share` message. */
+export interface RawSlackFile {
+  name?: string;
+  filetype?: string;
+  mimetype?: string;
+  size?: number;
+  url_private_download?: string;
+}
+
 export interface RawSlackMessage {
   channel: string;
   user?: string;
@@ -25,6 +33,7 @@ export interface RawSlackMessage {
   thread_ts?: string;
   channel_type?: string;
   subtype?: string;
+  files?: RawSlackFile[];
 }
 
 /** Subset of the Slack `app_mention` event we actually consume. */
@@ -51,9 +60,11 @@ export async function triageMessage(
 ): Promise<TriageResult> {
   const channelMode = resolveChannelMode(msg.channel, ctx);
 
-  if (msg.subtype) return { drop: 'subtype', effectiveMode: channelMode };
+  if (msg.subtype && msg.subtype !== 'file_share')
+    return { drop: 'subtype', effectiveMode: channelMode };
   const text = msg.text?.trim() ?? '';
-  if (!text) return { drop: 'no_text', effectiveMode: channelMode };
+  const hasFiles = msg.subtype === 'file_share' && Array.isArray(msg.files) && msg.files.length > 0;
+  if (!text && !hasFiles) return { drop: 'no_text', effectiveMode: channelMode };
 
   const isDm = msg.channel_type === 'im';
   const threadTs = msg.thread_ts;
@@ -76,7 +87,7 @@ export async function triageMessage(
       botKey: ctx.botKey,
       channel: msg.channel,
       userId: msg.user,
-      text,
+      text: text || (hasFiles ? '(file attachment)' : ''),
       ts: msg.ts,
       threadTs,
       isDm,

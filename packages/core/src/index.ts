@@ -1,5 +1,6 @@
 export type { AgentEvent, AgentLoopConfig, RunOptions } from './agent-loop';
 export { AgentLoop } from './agent-loop';
+export { buildAttachmentAnnotation } from './attachment-annotation';
 export type { CapabilityBackends, CapabilityScopeIds } from './capability-resolver';
 export { resolveCapabilities } from './capability-resolver';
 export type { CapabilityValidationError } from './capability-validator';

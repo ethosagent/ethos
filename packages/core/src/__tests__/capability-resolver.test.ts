@@ -250,6 +250,154 @@ describe('resolveCapabilities', () => {
     expect(result.scopedProcess).toBeInstanceOf(ScopedProcessImpl);
   });
 
+  it('attachments with fs_reach extends ScopedFs read paths with attachment cache dirs', async () => {
+    const storage = {
+      read: vi.fn().mockResolvedValue('content'),
+      write: vi.fn(),
+      exists: vi.fn(),
+      list: vi.fn(),
+      mtime: vi.fn(),
+      listEntries: vi.fn(),
+      append: vi.fn(),
+      writeAtomic: vi.fn(),
+      mkdir: vi.fn(),
+      remove: vi.fn(),
+      rename: vi.fn(),
+    };
+    const attachmentCache = {
+      write: vi.fn(),
+      clear: vi.fn(),
+      pruneOlderThan: vi.fn(),
+      resolveLocalPath: (url: string) => url.replace('file://', ''),
+    };
+    const inboundAttachments = [
+      {
+        type: 'image' as const,
+        ref: 'att-1',
+        url: 'file:///tmp/ethos-cache/sess1/photo.jpg',
+        mimeType: 'image/jpeg',
+      },
+    ];
+    const backends: CapabilityBackends = {
+      storage,
+      personalityFsReach: { read: ['/data'], write: [] },
+      attachmentCache,
+      inboundAttachments,
+    };
+    const result = resolveCapabilities(
+      'vision_analyze',
+      {
+        attachments: { kinds: ['image'] },
+        fs_reach: { read: 'from-personality' },
+      },
+      { sessionId: 'scope-1' },
+      backends,
+    );
+    expect(result.scopedFs).toBeInstanceOf(ScopedFsImpl);
+    expect(result.attachments).toBeDefined();
+    // The ScopedFs should allow reading from the attachment cache directory
+    await expect(
+      result.scopedFs!.read('/tmp/ethos-cache/sess1/photo.jpg'),
+    ).resolves.toBe('content');
+    // The original personality read path should still work
+    await expect(result.scopedFs!.read('/data/file.txt')).resolves.toBe('content');
+  });
+
+  it('attachments without fs_reach creates read-only ScopedFs for attachment dirs', async () => {
+    const storage = {
+      read: vi.fn().mockResolvedValue('content'),
+      write: vi.fn(),
+      exists: vi.fn(),
+      list: vi.fn(),
+      mtime: vi.fn(),
+      listEntries: vi.fn(),
+      append: vi.fn(),
+      writeAtomic: vi.fn(),
+      mkdir: vi.fn(),
+      remove: vi.fn(),
+      rename: vi.fn(),
+    };
+    const attachmentCache = {
+      write: vi.fn(),
+      clear: vi.fn(),
+      pruneOlderThan: vi.fn(),
+      resolveLocalPath: (url: string) => url.replace('file://', ''),
+    };
+    const inboundAttachments = [
+      {
+        type: 'image' as const,
+        ref: 'att-1',
+        url: 'file:///tmp/ethos-cache/sess1/photo.jpg',
+        mimeType: 'image/jpeg',
+      },
+    ];
+    const backends: CapabilityBackends = {
+      storage,
+      attachmentCache,
+      inboundAttachments,
+    };
+    const result = resolveCapabilities(
+      'vision_analyze',
+      { attachments: { kinds: ['image'] } },
+      { sessionId: 'scope-1' },
+      backends,
+    );
+    expect(result.scopedFs).toBeInstanceOf(ScopedFsImpl);
+    expect(result.attachments).toBeDefined();
+    // Can read from the attachment cache directory
+    await expect(
+      result.scopedFs!.read('/tmp/ethos-cache/sess1/photo.jpg'),
+    ).resolves.toBe('content');
+    // Cannot write (read-only)
+    await expect(
+      result.scopedFs!.write('/tmp/ethos-cache/sess1/other.jpg', 'x'),
+    ).rejects.toThrow('PATH_NOT_REACHABLE');
+  });
+
+  it('attachments with non-file URLs do not extend ScopedFs reach', () => {
+    const storage = {
+      read: vi.fn(),
+      write: vi.fn(),
+      exists: vi.fn(),
+      list: vi.fn(),
+      mtime: vi.fn(),
+      listEntries: vi.fn(),
+      append: vi.fn(),
+      writeAtomic: vi.fn(),
+      mkdir: vi.fn(),
+      remove: vi.fn(),
+      rename: vi.fn(),
+    };
+    const attachmentCache = {
+      write: vi.fn(),
+      clear: vi.fn(),
+      pruneOlderThan: vi.fn(),
+      resolveLocalPath: vi.fn(),
+    };
+    const inboundAttachments = [
+      {
+        type: 'image' as const,
+        ref: 'att-1',
+        url: 'https://example.com/photo.jpg',
+        mimeType: 'image/jpeg',
+      },
+    ];
+    const backends: CapabilityBackends = {
+      storage,
+      attachmentCache,
+      inboundAttachments,
+    };
+    const result = resolveCapabilities(
+      'vision_analyze',
+      { attachments: { kinds: ['image'] } },
+      { sessionId: 'scope-1' },
+      backends,
+    );
+    // No ScopedFs because no fs_reach declared and no file:// attachments
+    expect(result.scopedFs).toBeUndefined();
+    expect(result.attachments).toBeDefined();
+  });
+
   it('partial capabilities only populates declared fields', () => {
     const backends: CapabilityBackends = {
       secretsBackend: vi.fn().mockResolvedValue('val'),

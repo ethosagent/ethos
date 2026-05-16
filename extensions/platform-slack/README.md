@@ -227,6 +227,35 @@ When in doubt, the live manifest is the source of truth — open the app's **App
 
 ---
 
+## File Attachments
+
+The adapter ingests files from Slack `file_share` messages. Files are downloaded using the bot token and cached locally.
+
+### Required scope
+
+`files:read` -- the bot token must have this scope to download files from `url_private_download`. The app manifest in [Step 1](#step-1--create-the-slack-app) does not include it by default. Add the scope under **OAuth & Permissions > Bot Token Scopes** and reinstall to the workspace.
+
+### Supported types
+
+| Category | Attachment type | Extensions |
+|---|---|---|
+| Images | `image` | jpg, jpeg, png, gif, webp, heic, bmp, svg, tiff |
+| Documents | `file` | pdf, txt, csv, json, yaml, md, and all other non-skipped extensions |
+
+### Size cap
+
+25 MB per file. Files exceeding this limit are silently skipped.
+
+### Cache location
+
+Downloaded files are written to `~/.ethos/cache/attachments/` via the `AttachmentCache`. The cache is keyed by session, so different channels and threads do not share cached files.
+
+### Deferred
+
+Audio (mp3, wav, ogg, flac, aac, m4a) and video (mp4, mov, webm, avi, mkv) files are intentionally skipped. These types are deferred until transcription and media analysis tools ship.
+
+---
+
 ## Internals
 
 ### Directory layout

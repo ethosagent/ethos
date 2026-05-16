@@ -4,12 +4,16 @@ Filesystem tools for reading, writing, patching, and grep-style searching from a
 
 ## Capabilities
 
-| Tool | network | secrets | storage | fs_reach | process |
-|------|---------|---------|---------|----------|---------|
-| `read_file` | — | — | — | `{ read: 'from-personality' }` | — |
-| `write_file` | — | — | — | `{ read: 'from-personality', write: 'from-personality' }` | — |
-| `patch_file` | — | — | — | `{ read: 'from-personality', write: 'from-personality' }` | — |
-| `search_files` | — | — | — | `{ read: 'from-personality' }` | — |
+| Tool | network | secrets | storage | fs_reach | process | attachments |
+|------|---------|---------|---------|----------|---------|-------------|
+| `read_file` | — | — | — | `{ read: 'from-personality' }` | — | `{ kinds: ['file', 'image'] }` |
+| `write_file` | — | — | — | `{ read: 'from-personality', write: 'from-personality' }` | — | — |
+| `patch_file` | — | — | — | `{ read: 'from-personality', write: 'from-personality' }` | — | — |
+| `search_files` | — | — | — | `{ read: 'from-personality' }` | — | — |
+
+### Attachment support
+
+`read_file` declares `capabilities.attachments: { kinds: ['file', 'image'] }`. When the user sends a file via a platform adapter (Telegram, Slack), the LLM sees an `<attachments>` block and can pass the opaque `ref` (e.g. `att-0`) as the `ref` argument instead of `path`. The tool resolves the ref via `ctx.attachments.openByRef(ref)` to get a local file path, then proceeds with the normal read flow. The `ref` and `path` arguments are mutually exclusive -- provide one or the other.
 
 ## Why this exists
 

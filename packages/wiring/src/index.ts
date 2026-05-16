@@ -24,7 +24,7 @@ import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { createKvStoreFactory, SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { createInjectors, UniversalScanner } from '@ethosagent/skills';
 import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
-import { FsStorage } from '@ethosagent/storage-fs';
+import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
 import { createBrowserTools } from '@ethosagent/tools-browser';
 import { createCodeTools } from '@ethosagent/tools-code';
 import { createDelegationTools } from '@ethosagent/tools-delegation';
@@ -410,6 +410,7 @@ export async function createAgentLoop(
       write: activePerson.fs_reach?.write ?? [],
     },
     personalityNetworkPolicy: activePerson.safety?.network ?? {},
+    attachmentCache: new FsAttachmentCache(new FsStorage(), join(dataDir, 'cache', 'attachments')),
   };
   const tools = new DefaultToolRegistry(capabilityBackends);
   for (const tool of createFileTools()) tools.register(tool);

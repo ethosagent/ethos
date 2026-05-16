@@ -1,4 +1,5 @@
 import type { InboundMessage } from '@ethosagent/types';
+import { InMemoryAttachmentCache } from '@ethosagent/storage-fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -59,7 +60,10 @@ vi.mock('grammy', () => {
 
 import { TelegramAdapter } from '../index';
 
+let cache: InMemoryAttachmentCache;
+
 function resetMocks() {
+  cache = new InMemoryAttachmentCache();
   for (const key of Object.keys(mockApi) as (keyof typeof mockApi)[]) {
     mockApi[key].mockReset();
   }
@@ -127,7 +131,7 @@ describe('3.1 — Inbound file support', () => {
       }),
     );
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -157,8 +161,12 @@ describe('3.1 — Inbound file support', () => {
     const msg = captured[0];
     expect(msg.text).toBe('my photo');
     expect(msg.attachments).toHaveLength(1);
-    expect(msg.attachments?.[0].type).toBe('image');
-    expect(msg.attachments?.[0].mimeType).toBe('image/jpeg');
+    const att = msg.attachments?.[0];
+    expect(att?.type).toBe('image');
+    expect(att?.mimeType).toBe('image/jpeg');
+    expect(att?.url).toMatch(/^file:\/\//);
+    expect(att?.ref).toBe('att-0');
+    expect(att).not.toHaveProperty('data');
     // Should use the largest photo (last element)
     expect(mockApi.getFile).toHaveBeenCalledWith('large');
   });
@@ -177,7 +185,7 @@ describe('3.1 — Inbound file support', () => {
       }),
     );
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -217,7 +225,7 @@ describe('3.1 — Inbound file support', () => {
       }),
     );
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -250,23 +258,43 @@ describe('3.1 — Inbound file support', () => {
     expect(att?.type).toBe('file');
     expect(att?.mimeType).toBe('application/pdf');
     expect(att?.filename).toBe('report.pdf');
+    expect(att?.url).toMatch(/^file:\/\//);
+    expect(att?.ref).toBe('att-0');
+    expect(att).not.toHaveProperty('data');
   });
 
-  it('attaches voice as audio type', async () => {
-    const fakeBuffer = Buffer.from('ogg-bytes');
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        arrayBuffer: async () =>
-          fakeBuffer.buffer.slice(
-            fakeBuffer.byteOffset,
-            fakeBuffer.byteOffset + fakeBuffer.byteLength,
-          ),
-      }),
-    );
+  it('voice message with caption produces no attachments but preserves caption', async () => {
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    await adapter.start();
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const captured: InboundMessage[] = [];
+    adapter.onMessage((msg) => captured.push(msg));
+
+    fireMessage({
+      chat: { id: 100, type: 'private' },
+      from: { id: 200 },
+      message: {
+        text: undefined,
+        caption: 'voice note caption',
+        message_id: 4,
+        reply_to_message: null,
+        voice: {
+          file_id: 'v1',
+          file_unique_id: 'vu1',
+          duration: 10,
+          mime_type: 'audio/ogg',
+        },
+      },
+      me: { username: 'testbot' },
+    });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0].text).toBe('voice note caption');
+    expect(captured[0].attachments).toBeUndefined();
+  });
+
+  it('voice message without caption is silently dropped (no text, no media)', async () => {
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -290,30 +318,11 @@ describe('3.1 — Inbound file support', () => {
       me: { username: 'testbot' },
     });
 
-    await vi.waitFor(() => {
-      expect(captured).toHaveLength(1);
-    });
-
-    expect(captured[0].text).toBe('(attached audio)');
-    expect(captured[0].attachments?.[0].type).toBe('audio');
-    expect(captured[0].attachments?.[0].mimeType).toBe('audio/ogg');
+    expect(captured).toHaveLength(0);
   });
 
-  it('attaches video with correct type', async () => {
-    const fakeBuffer = Buffer.from('mp4-bytes');
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        arrayBuffer: async () =>
-          fakeBuffer.buffer.slice(
-            fakeBuffer.byteOffset,
-            fakeBuffer.byteOffset + fakeBuffer.byteLength,
-          ),
-      }),
-    );
-
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+  it('video message with caption produces no attachments but preserves caption', async () => {
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -339,29 +348,13 @@ describe('3.1 — Inbound file support', () => {
       me: { username: 'testbot' },
     });
 
-    await vi.waitFor(() => {
-      expect(captured).toHaveLength(1);
-    });
-
+    expect(captured).toHaveLength(1);
     expect(captured[0].text).toBe('cool video');
-    expect(captured[0].attachments?.[0].type).toBe('video');
+    expect(captured[0].attachments).toBeUndefined();
   });
 
-  it('attaches sticker as image type', async () => {
-    const fakeBuffer = Buffer.from('webp-bytes');
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        arrayBuffer: async () =>
-          fakeBuffer.buffer.slice(
-            fakeBuffer.byteOffset,
-            fakeBuffer.byteOffset + fakeBuffer.byteLength,
-          ),
-      }),
-    );
-
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+  it('sticker is dropped (no text, no supported media)', async () => {
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -388,12 +381,7 @@ describe('3.1 — Inbound file support', () => {
       me: { username: 'testbot' },
     });
 
-    await vi.waitFor(() => {
-      expect(captured).toHaveLength(1);
-    });
-
-    expect(captured[0].text).toBe('(attached image)');
-    expect(captured[0].attachments?.[0].type).toBe('image');
+    expect(captured).toHaveLength(0);
   });
 
   it('skips download when file exceeds 25 MB and appends size note', async () => {
@@ -404,7 +392,7 @@ describe('3.1 — Inbound file support', () => {
       file_size: 30 * 1024 * 1024, // 30 MB
     });
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -442,7 +430,7 @@ describe('3.1 — Inbound file support', () => {
   it('still forwards message with caption when download fails', async () => {
     mockApi.getFile.mockRejectedValueOnce(new Error('network error'));
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -470,21 +458,8 @@ describe('3.1 — Inbound file support', () => {
     expect(captured[0].attachments ?? []).toHaveLength(0);
   });
 
-  it('processes animation (GIF) as video type', async () => {
-    const fakeBuffer = Buffer.from('gif-bytes');
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        arrayBuffer: async () =>
-          fakeBuffer.buffer.slice(
-            fakeBuffer.byteOffset,
-            fakeBuffer.byteOffset + fakeBuffer.byteLength,
-          ),
-      }),
-    );
-
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+  it('animation (GIF) is dropped when no caption (no supported media)', async () => {
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -510,29 +485,11 @@ describe('3.1 — Inbound file support', () => {
       me: { username: 'testbot' },
     });
 
-    await vi.waitFor(() => {
-      expect(captured).toHaveLength(1);
-    });
-
-    expect(captured[0].text).toBe('(attached video)');
-    expect(captured[0].attachments?.[0].type).toBe('video');
+    expect(captured).toHaveLength(0);
   });
 
-  it('processes audio message', async () => {
-    const fakeBuffer = Buffer.from('mp3-bytes');
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        arrayBuffer: async () =>
-          fakeBuffer.buffer.slice(
-            fakeBuffer.byteOffset,
-            fakeBuffer.byteOffset + fakeBuffer.byteLength,
-          ),
-      }),
-    );
-
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+  it('audio message is dropped when no caption (no supported media)', async () => {
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -557,14 +514,7 @@ describe('3.1 — Inbound file support', () => {
       me: { username: 'testbot' },
     });
 
-    await vi.waitFor(() => {
-      expect(captured).toHaveLength(1);
-    });
-
-    expect(captured[0].text).toBe('(attached audio)');
-    expect(captured[0].attachments?.[0].type).toBe('audio');
-    expect(captured[0].attachments?.[0].mimeType).toBe('audio/mpeg');
-    expect(captured[0].attachments?.[0].filename).toBe('song.mp3');
+    expect(captured).toHaveLength(0);
   });
 });
 
@@ -576,7 +526,7 @@ describe('3.2 — Forum-mode topic isolation', () => {
   beforeEach(resetMocks);
 
   it('sets threadId from message_thread_id when not General topic', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -600,7 +550,7 @@ describe('3.2 — Forum-mode topic isolation', () => {
   });
 
   it('leaves threadId undefined for General topic (id 1)', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -624,7 +574,7 @@ describe('3.2 — Forum-mode topic isolation', () => {
   });
 
   it('leaves threadId undefined for non-forum chats', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -647,7 +597,7 @@ describe('3.2 — Forum-mode topic isolation', () => {
   });
 
   it('passes message_thread_id on send() when threadId is set', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     await adapter.send('100', {
@@ -665,7 +615,7 @@ describe('3.2 — Forum-mode topic isolation', () => {
   });
 
   it('does not pass message_thread_id on send() when threadId is undefined', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     await adapter.send('100', { text: 'no topic' });
@@ -675,7 +625,7 @@ describe('3.2 — Forum-mode topic isolation', () => {
   });
 
   it('passes message_thread_id on editMessage when threadId is set', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     // First send so we have a chunk mapping
@@ -695,7 +645,7 @@ describe('3.3 — edited_message handling', () => {
   beforeEach(resetMocks);
 
   it('registers an edited_message handler on start()', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     expect(registeredHandlers.edited_message).toBeDefined();
@@ -703,7 +653,7 @@ describe('3.3 — edited_message handling', () => {
   });
 
   it('forwards edited message with isEdit: true', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -739,6 +689,7 @@ describe('3.3 — edited_message handling', () => {
   it('ignores edits outside the edit window', async () => {
     const adapter = new TelegramAdapter({
       token: '1:fake-token',
+      cache,
       editWindowMs: 30_000, // 30 seconds
     });
     await adapter.start();
@@ -766,7 +717,7 @@ describe('3.3 — edited_message handling', () => {
   });
 
   it('coalesces rapid edits with debounce (only last edit fires)', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -831,7 +782,7 @@ describe('3.3 — edited_message handling', () => {
   });
 
   it('uses default 60s edit window when editWindowMs is not configured', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -864,7 +815,7 @@ describe('3.3 — edited_message handling', () => {
   });
 
   it('includes threadId on edited messages from forum topics', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token' });
+    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
