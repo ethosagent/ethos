@@ -16,6 +16,7 @@ const srcAliases = {
   '@ethosagent/memory-vector': resolve('./extensions/memory-vector/src'),
   '@ethosagent/safety-scanner': resolve('./packages/safety/scanner/src'),
   '@ethosagent/tools-file': resolve('./extensions/tools-file/src'),
+  '@ethosagent/tools-mcp': resolve('./extensions/tools-mcp/src'),
   '@ethosagent/agent-bridge': resolve('./packages/agent-bridge/src'),
 };
 

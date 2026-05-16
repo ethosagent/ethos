@@ -59,16 +59,16 @@ async function createTestServer(opts?: { onCallTool?: () => void }) {
  * McpClient that bypasses real transport creation and uses the provided in-memory transport.
  */
 class TestMcpClient extends McpClient {
-  private _transport: InstanceType<typeof InMemoryTransport>;
+  private _inMemoryTransport: InstanceType<typeof InMemoryTransport>;
 
   constructor(transport: InstanceType<typeof InMemoryTransport>, name = 'test') {
-    super({ name, transport: 'stdio', command: 'unused' });
-    this._transport = transport;
+    super({ name, transport: 'stdio', command: 'unused', keepaliveSeconds: 0 });
+    this._inMemoryTransport = transport;
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: override for test
   protected override async _createTransport(): Promise<any> {
-    return this._transport;
+    return this._inMemoryTransport;
   }
 }
 

@@ -7,6 +7,7 @@ import {
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import type { AgentMesh, MeshEntry } from '@ethosagent/agent-mesh';
+import type { McpServerConfig, McpSessionView } from '@ethosagent/tools-mcp';
 import type { SessionStore } from '@ethosagent/types';
 import { type WebSocket, WebSocketServer } from 'ws';
 
@@ -25,6 +26,21 @@ interface RunOptions {
 export interface AgentRunner {
   run(text: string, opts?: RunOptions): AsyncGenerator<AgentEvent>;
 }
+
+/**
+ * Resolves the MCP allowlist for a given personality. Returns `undefined`
+ * when in open mode (no filtering). Returns `string[]` patterns when the
+ * personality has an explicit mcp_servers list.
+ */
+export type PersonalityAllowlistResolver = (
+  personalityId: string | undefined,
+) => string[] | undefined;
+
+/**
+ * Factory function to create a session-scoped McpSessionView.
+ * Injected at construction time to avoid hard-coupling to tools-mcp internals.
+ */
+export type SessionViewFactory = () => McpSessionView;
 
 // ---------------------------------------------------------------------------
 // JSON-RPC 2.0 types
@@ -65,18 +81,29 @@ export class AcpServer {
   private readonly startedAt = Date.now();
   private lastTurnAt: number | null = null;
 
+  // Phase 5 — client-provided MCP servers
+  private readonly _resolveAllowlist: PersonalityAllowlistResolver | undefined;
+  private readonly _createSessionView: SessionViewFactory | undefined;
+  private readonly _sessionViews = new Map<string, McpSessionView>();
+
   constructor(config: {
     runner: AgentRunner;
     session: SessionStore;
     input?: Readable;
     output?: Writable;
     mesh?: AgentMesh;
+    /** Phase 5: resolves personality MCP allowlist given a personalityId. */
+    resolveAllowlist?: PersonalityAllowlistResolver;
+    /** Phase 5: factory to create McpSessionView instances. */
+    createSessionView?: SessionViewFactory;
   }) {
     this.runner = config.runner;
     this.session = config.session;
     this.input = config.input ?? process.stdin;
     this.output = config.output ?? process.stdout;
     this.mesh = config.mesh;
+    this._resolveAllowlist = config.resolveAllowlist;
+    this._createSessionView = config.createSessionView;
   }
 
   get activeSessionCount(): number {
@@ -215,6 +242,22 @@ export class AcpServer {
           } finally {
             this.busySessions.delete(p.sessionKey);
           }
+        }
+
+        case 'session/registerMcpServers': {
+          const p = req.params as {
+            servers: McpServerConfig[];
+            personalityId?: string;
+            sessionKey?: string;
+          };
+          const result = await this.handleRegisterMcpServers(p);
+          return { jsonrpc: '2.0', id, result };
+        }
+
+        case 'session/end': {
+          const p = req.params as { sessionKey: string };
+          await this.handleSessionEnd(p.sessionKey);
+          return { jsonrpc: '2.0', id, result: { ok: true } };
         }
 
         case 'mesh.register': {
@@ -356,6 +399,24 @@ export class AcpServer {
           await this.handleResumeSession(id, req.params as { sessionKey: string }, send);
           break;
 
+        case 'session/registerMcpServers': {
+          const p = req.params as {
+            servers: McpServerConfig[];
+            personalityId?: string;
+            sessionKey?: string;
+          };
+          const result = await this.handleRegisterMcpServers(p);
+          sendResult(result);
+          break;
+        }
+
+        case 'session/end': {
+          const p = req.params as { sessionKey: string };
+          await this.handleSessionEnd(p.sessionKey);
+          sendResult({ ok: true });
+          break;
+        }
+
         case 'mesh.register': {
           const p = req.params as Omit<MeshEntry, 'registeredAt' | 'lastHeartbeatAt'>;
           if (!this.mesh) {
@@ -376,6 +437,45 @@ export class AcpServer {
       }
     } catch (err) {
       sendError(-32000, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 5 — session/registerMcpServers handler
+  // ---------------------------------------------------------------------------
+
+  private async handleRegisterMcpServers(params: {
+    servers: McpServerConfig[];
+    personalityId?: string;
+    sessionKey?: string;
+  }): Promise<{ registered: string[]; rejected: { name: string; reason: string }[] }> {
+    if (!this._createSessionView) {
+      return {
+        registered: [],
+        rejected: params.servers.map((s) => ({
+          name: s.name,
+          reason: 'MCP session views not configured on this server',
+        })),
+      };
+    }
+
+    const sessionKey = params.sessionKey ?? `acp:ephemeral:${randomUUID()}`;
+    const allowlist = this._resolveAllowlist?.(params.personalityId);
+
+    let view = this._sessionViews.get(sessionKey);
+    if (!view) {
+      view = this._createSessionView();
+      this._sessionViews.set(sessionKey, view);
+    }
+
+    return view.registerSessionServers(params.servers, allowlist);
+  }
+
+  private async handleSessionEnd(sessionKey: string): Promise<void> {
+    const view = this._sessionViews.get(sessionKey);
+    if (view) {
+      await view.teardown();
+      this._sessionViews.delete(sessionKey);
     }
   }
 
