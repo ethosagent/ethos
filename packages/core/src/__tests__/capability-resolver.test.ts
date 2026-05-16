@@ -263,6 +263,7 @@ describe('resolveCapabilities', () => {
       mkdir: vi.fn(),
       remove: vi.fn(),
       rename: vi.fn(),
+      chmod: vi.fn(),
     };
     const attachmentCache = {
       write: vi.fn(),
@@ -296,9 +297,9 @@ describe('resolveCapabilities', () => {
     expect(result.scopedFs).toBeInstanceOf(ScopedFsImpl);
     expect(result.attachments).toBeDefined();
     // The ScopedFs should allow reading from the attachment cache directory
-    await expect(
-      result.scopedFs!.read('/tmp/ethos-cache/sess1/photo.jpg'),
-    ).resolves.toBe('content');
+    await expect(result.scopedFs!.read('/tmp/ethos-cache/sess1/photo.jpg')).resolves.toBe(
+      'content',
+    );
     // The original personality read path should still work
     await expect(result.scopedFs!.read('/data/file.txt')).resolves.toBe('content');
   });
@@ -316,6 +317,7 @@ describe('resolveCapabilities', () => {
       mkdir: vi.fn(),
       remove: vi.fn(),
       rename: vi.fn(),
+      chmod: vi.fn(),
     };
     const attachmentCache = {
       write: vi.fn(),
@@ -345,13 +347,13 @@ describe('resolveCapabilities', () => {
     expect(result.scopedFs).toBeInstanceOf(ScopedFsImpl);
     expect(result.attachments).toBeDefined();
     // Can read from the attachment cache directory
-    await expect(
-      result.scopedFs!.read('/tmp/ethos-cache/sess1/photo.jpg'),
-    ).resolves.toBe('content');
+    await expect(result.scopedFs!.read('/tmp/ethos-cache/sess1/photo.jpg')).resolves.toBe(
+      'content',
+    );
     // Cannot write (read-only)
-    await expect(
-      result.scopedFs!.write('/tmp/ethos-cache/sess1/other.jpg', 'x'),
-    ).rejects.toThrow('PATH_NOT_REACHABLE');
+    await expect(result.scopedFs!.write('/tmp/ethos-cache/sess1/other.jpg', 'x')).rejects.toThrow(
+      'PATH_NOT_REACHABLE',
+    );
   });
 
   it('attachments with non-file URLs do not extend ScopedFs reach', () => {
@@ -367,6 +369,7 @@ describe('resolveCapabilities', () => {
       mkdir: vi.fn(),
       remove: vi.fn(),
       rename: vi.fn(),
+      chmod: vi.fn(),
     };
     const attachmentCache = {
       write: vi.fn(),
