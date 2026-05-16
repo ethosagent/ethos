@@ -45,6 +45,8 @@ export const ETHOS_EVENT_CATEGORIES = [
   'channel.deny',
   'install.scan',
   'install.event',
+  'tier.escalation',
+  'tier.override',
 ] as const;
 export type EthosEventCategory = (typeof ETHOS_EVENT_CATEGORIES)[number];
 
@@ -296,6 +298,36 @@ export class EthosObservability {
 
   recordInstallEvent(opts: EventBase & { severity?: EventSeverity }): void {
     this.emit('install.event', 'info', opts);
+  }
+
+  recordTierEscalation(
+    opts: EventBase & {
+      from: string;
+      to: string;
+      reason: string;
+      personalityId: string;
+    },
+  ): void {
+    this.emit('tier.escalation', 'info', opts, {
+      from: opts.from,
+      to: opts.to,
+      reason: opts.reason,
+      personalityId: opts.personalityId,
+    });
+  }
+
+  recordTierOverride(
+    opts: EventBase & {
+      actor: 'user' | 'framework';
+      tier: string;
+      personalityId: string;
+    },
+  ): void {
+    this.emit('tier.override', 'info', opts, {
+      actor: opts.actor,
+      tier: opts.tier,
+      personalityId: opts.personalityId,
+    });
   }
 
   // ── Escape hatch ────────────────────────────────────────────────────────

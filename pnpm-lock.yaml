@@ -1007,6 +1007,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/tools-tier:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/tools-todo:
     dependencies:
       '@ethosagent/types':
@@ -1250,6 +1256,9 @@ importers:
       '@ethosagent/tools-terminal':
         specifier: workspace:*
         version: link:../../extensions/tools-terminal
+      '@ethosagent/tools-tier':
+        specifier: workspace:*
+        version: link:../../extensions/tools-tier
       '@ethosagent/tools-todo':
         specifier: workspace:*
         version: link:../../extensions/tools-todo

@@ -131,6 +131,8 @@ export interface ApprovalDecisionEvent {
  * Interactive tool-approval surface. Adapters that can post inline approve/deny
  * cards implement this so the gateway's approval coordinator can drive them.
  */
+export type PlatformAdapterFactory = (config: Record<string, unknown>) => PlatformAdapter;
+
 export interface ApprovalCapableAdapter {
   /** Stable per-bot identifier — matches a gateway `botKey`. */
   readonly botKey: string;

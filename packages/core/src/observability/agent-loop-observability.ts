@@ -38,5 +38,20 @@ export interface AgentLoopObservability {
   ): void;
   recordSafetyBlock(opts: RecordEventOpts): void;
   recordCompaction(opts: RecordEventOpts): void;
+  recordTierEscalation(
+    opts: RecordEventOpts & {
+      from: string;
+      to: string;
+      reason: string;
+      personalityId: string;
+    },
+  ): void;
+  recordTierOverride(
+    opts: RecordEventOpts & {
+      actor: 'user' | 'framework';
+      tier: string;
+      personalityId: string;
+    },
+  ): void;
   flush(): void;
 }

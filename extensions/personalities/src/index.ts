@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
 import {
   EthosError,
+  type ModelTierConfig,
   type PersonalityConfig,
   type PersonalityObservabilityConfig,
   type PersonalityRegistry,
@@ -315,11 +316,12 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       patch.plugins !== undefined
     ) {
       const config = existing.config;
+      const existingModel = typeof config.model === 'object' ? config.model.default : config.model;
       const merged = {
         id: config.id,
         name: patch.name ?? config.name,
         description: patch.description ?? config.description,
-        model: patch.model ?? config.model,
+        model: patch.model ?? existingModel,
         toolset: patch.toolset ?? config.toolset ?? [],
         ethosMd: '',
         memoryScope: patch.memoryScope ?? config.memoryScope,
@@ -562,12 +564,17 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
 
     // E3 — skill_evolution.* dotted keys.
     const skillEvolution = buildSkillEvolution(cfg);
+    const memoryConfig = buildMemoryConfig(cfg);
+    const mcpExport = buildMcpExportConfig(cfg);
+    const outboundPolicy = buildOutboundPolicy(cfg);
+
+    const model = buildModelConfig(cfg);
 
     const config: PersonalityConfig = {
       id,
       name: cfg.name ?? titleCase(id),
       description: cfg.description,
-      model: cfg.model,
+      model,
       provider: cfg.provider,
       platform: cfg.platform,
       memoryScope: (cfg.memoryScope as PersonalityConfig['memoryScope']) ?? 'global',
@@ -587,6 +594,9 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         ? { context_engine_options: contextEngineOptions }
         : {}),
       ...(skillEvolution !== undefined ? { skill_evolution: skillEvolution } : {}),
+      ...(memoryConfig !== undefined ? { memory: memoryConfig } : {}),
+      ...(mcpExport !== undefined ? { mcp_export: mcpExport } : {}),
+      ...(outboundPolicy !== undefined ? { outbound_policy: outboundPolicy } : {}),
     };
 
     validateUnsafeCombinations(id, config);
@@ -688,6 +698,71 @@ function buildSkillEvolution(
   if (cooldown && /^\d+$/.test(cooldown)) {
     out.cooldown_minutes = Number.parseInt(cooldown, 10);
   }
+  return out;
+}
+
+function buildMemoryConfig(
+  cfg: Record<string, string>,
+): import('@ethosagent/types').PersonalityMemoryConfig | undefined {
+  const provider = cfg['memory.provider'];
+  if (!provider) return undefined;
+  const options: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(cfg)) {
+    if (!key.startsWith('memory.options.')) continue;
+    const subKey = key.slice('memory.options.'.length);
+    if (subKey.length === 0) continue;
+    if (/^-?\d+$/.test(value)) options[subKey] = Number.parseInt(value, 10);
+    else if (value === 'true') options[subKey] = true;
+    else if (value === 'false') options[subKey] = false;
+    else options[subKey] = value;
+  }
+  return { provider, ...(Object.keys(options).length > 0 ? { options } : {}) };
+}
+
+function buildOutboundPolicy(
+  cfg: Record<string, string>,
+): import('@ethosagent/types').OutboundPolicyConfig | undefined {
+  const approve = cfg['outbound_policy.approve_before_send'];
+  if (!approve) return undefined;
+  const out: import('@ethosagent/types').OutboundPolicyConfig = {
+    approve_before_send: approve === 'true',
+  };
+  const channels = cfg['outbound_policy.channels'];
+  if (channels) out.channels = channels.split(/\s+/).filter(Boolean);
+  const approver = cfg['outbound_policy.approver_personality'];
+  if (approver) out.approver_personality = approver;
+  return out;
+}
+
+function buildMcpExportConfig(
+  cfg: Record<string, string>,
+): import('@ethosagent/types').PersonalityMcpExportConfig | undefined {
+  const enabled = cfg['mcp_export.enabled'];
+  if (!enabled) return undefined;
+  const out: import('@ethosagent/types').PersonalityMcpExportConfig = {
+    enabled: enabled === 'true',
+  };
+  const tools = cfg['mcp_export.expose_tools'];
+  if (tools === 'all' || tools === 'none') out.expose_tools = tools;
+  else if (tools) out.expose_tools = tools.split(/\s+/).filter(Boolean);
+  const memory = cfg['mcp_export.expose_memory'];
+  if (memory === 'scoped' || memory === 'none' || memory === 'full') out.expose_memory = memory;
+  if (cfg['mcp_export.expose_sessions'] === 'true') out.expose_sessions = true;
+  if (cfg['mcp_export.expose_sessions'] === 'false') out.expose_sessions = false;
+  const auth = cfg['mcp_export.auth'];
+  if (auth === 'localhost' || auth === 'bearer') out.auth = auth;
+  return out;
+}
+
+function buildModelConfig(cfg: Record<string, string>): string | ModelTierConfig | undefined {
+  const trivial = cfg['model.trivial'];
+  const defaultModel = cfg['model.default'];
+  const deep = cfg['model.deep'];
+  if (!trivial && !defaultModel && !deep) return cfg.model || undefined;
+  const out: ModelTierConfig = {};
+  if (trivial) out.trivial = trivial;
+  if (defaultModel) out.default = defaultModel;
+  if (deep) out.deep = deep;
   return out;
 }
 

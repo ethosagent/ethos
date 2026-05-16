@@ -41,6 +41,7 @@ import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
 import { createMemoryTools, createTeamMemoryTools, isSafeTopicKey } from '@ethosagent/tools-memory';
 import { createProcessTools } from '@ethosagent/tools-process';
 import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-terminal';
+import { createThinkDeeperTool } from '@ethosagent/tools-tier';
 import { createTodoTools, InMemoryTodoStore } from '@ethosagent/tools-todo';
 import { createVisionTools } from '@ethosagent/tools-vision';
 import { createWebTools } from '@ethosagent/tools-web';
@@ -421,6 +422,7 @@ export async function createAgentLoop(
   // five todo_* tools share the same Map, keyed by ToolContext.sessionKey.
   const todoStore = new InMemoryTodoStore();
   for (const tool of createTodoTools(todoStore)) tools.register(tool);
+  tools.register(createThinkDeeperTool());
 
   // Clarify bridge — backs the `clarify` tool (ask the user mid-turn, wait).
   // The store persists pending requests so surfaces survive a restart. A
@@ -646,12 +648,18 @@ export async function createAgentLoop(
     : undefined;
   const contextEngines = new DefaultContextEngineRegistry(summarize ? { summarize } : {});
 
+  // Per-personality memory provider registry. Built-in providers are always
+  // available; plugins can add more via registerMemoryProvider.
+  const memoryProviders = new Map<string, (options?: Record<string, unknown>) => MemoryProvider>();
+  memoryProviders.set('markdown', () => new MarkdownFileMemoryProvider({ dir: dataDir }));
+  memoryProviders.set('vector', () => new VectorMemoryProvider({ dir: dataDir }));
+
   // Discover and activate installed plugins. Plugins register tools/hooks/
   // injectors into the same registries the AgentLoop uses; the personality
   // gate (allowedPlugins) decides which actually fire per turn.
   const injectorPluginIds = new Map<ContextInjector, string>();
   const pluginLoader = new PluginLoader(
-    { tools, hooks, injectors, injectorPluginIds, personalities, contextEngines },
+    { tools, hooks, injectors, injectorPluginIds, personalities, contextEngines, memoryProviders },
     { storage: new FsStorage(), logger: log },
   );
   await pluginLoader.loadAll();
@@ -694,6 +702,7 @@ export async function createAgentLoop(
     storage: new FsStorage(),
     dataDir,
     modelRouting: config.modelRouting,
+    memoryProviders,
     watcher,
     injectionClassifier,
     contextEngines,

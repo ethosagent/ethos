@@ -367,4 +367,81 @@ describe('FilePersonalityRegistry', () => {
       await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(/Invalid approvalMode/);
     });
   });
+
+  describe('model tier config', () => {
+    it('parses dotted model keys into ModelTierConfig', async () => {
+      const personalityDir = join(testDir, 'tiered');
+      await mkdir(personalityDir, { recursive: true });
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        'name: Tiered\nmodel.trivial: haiku\nmodel.default: sonnet\nmodel.deep: opus\n',
+      );
+      await writeFile(join(personalityDir, 'ETHOS.md'), '# Tiered');
+
+      const registry = new FilePersonalityRegistry();
+      await registry.loadFromDirectory(testDir);
+      const config = registry.get('tiered');
+      expect(config).toBeDefined();
+      expect(config?.model).toEqual({ trivial: 'haiku', default: 'sonnet', deep: 'opus' });
+    });
+
+    it('keeps plain model string for backward compatibility', async () => {
+      const personalityDir = join(testDir, 'plain');
+      await mkdir(personalityDir, { recursive: true });
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        'name: Plain\nmodel: claude-sonnet-4-6\n',
+      );
+      await writeFile(join(personalityDir, 'ETHOS.md'), '# Plain');
+
+      const registry = new FilePersonalityRegistry();
+      await registry.loadFromDirectory(testDir);
+      const config = registry.get('plain');
+      expect(config).toBeDefined();
+      expect(config?.model).toBe('claude-sonnet-4-6');
+    });
+
+    it('engineer built-in has tier config with think_deeper in toolset', async () => {
+      const registry = await createPersonalityRegistry();
+      const engineer = registry.get('engineer');
+      expect(engineer).toBeDefined();
+      expect(typeof engineer?.model).toBe('object');
+      const tiers = engineer?.model as { trivial?: string; default?: string; deep?: string };
+      expect(tiers.default).toBe('claude-sonnet-4-6');
+      expect(tiers.deep).toBe('claude-opus-4-7');
+      expect(engineer?.toolset).toContain('think_deeper');
+    });
+  });
+
+  describe('memory config', () => {
+    it('parses memory.provider from config.yaml', async () => {
+      const personalityDir = join(testDir, 'mem-custom');
+      await mkdir(personalityDir, { recursive: true });
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        'name: MemCustom\nmemory.provider: vector\nmemory.options.embedding_model: text-3-large\n',
+      );
+      await writeFile(join(personalityDir, 'ETHOS.md'), '# MemCustom');
+
+      const registry = new FilePersonalityRegistry();
+      await registry.loadFromDirectory(testDir);
+      const config = registry.get('mem-custom');
+      expect(config?.memory).toEqual({
+        provider: 'vector',
+        options: { embedding_model: 'text-3-large' },
+      });
+    });
+
+    it('omits memory when no memory.provider is declared', async () => {
+      const personalityDir = join(testDir, 'no-mem');
+      await mkdir(personalityDir, { recursive: true });
+      await writeFile(join(personalityDir, 'config.yaml'), 'name: NoMem\n');
+      await writeFile(join(personalityDir, 'ETHOS.md'), '# NoMem');
+
+      const registry = new FilePersonalityRegistry();
+      await registry.loadFromDirectory(testDir);
+      const config = registry.get('no-mem');
+      expect(config?.memory).toBeUndefined();
+    });
+  });
 });

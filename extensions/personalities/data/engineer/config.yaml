@@ -1,6 +1,9 @@
 name: Engineer
 description: Terse, code-first agent that writes working code immediately and explains only what isn't obvious.
-model: claude-sonnet-4-6
+provider: anthropic
+model.trivial: claude-haiku-4-5
+model.default: claude-sonnet-4-6
+model.deep: claude-opus-4-7
 memoryScope: global
 capabilities: code, file, terminal
 context_layering.mode: progressive

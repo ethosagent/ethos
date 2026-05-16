@@ -101,6 +101,26 @@ export interface ObservabilityStore {
 }
 
 /**
+ * Model tier observability event categories.
+ * Emitted when the LLM tier changes mid-turn via tool escalation or user override.
+ */
+export const TIER_ESCALATION_CATEGORY = 'tier.escalation' as EventCategory;
+export const TIER_OVERRIDE_CATEGORY = 'tier.override' as EventCategory;
+
+export interface TierEscalationDetails {
+  from: string;
+  to: string;
+  reason: string;
+  personalityId: string;
+}
+
+export interface TierOverrideDetails {
+  actor: 'user' | 'framework';
+  tier: string;
+  personalityId: string;
+}
+
+/**
  * Minimal write-side interface that AgentLoop and other core components
  * use to record observability data. Defined here so @ethosagent/core does
  * not need to depend on the concrete @ethosagent/observability-sqlite package.

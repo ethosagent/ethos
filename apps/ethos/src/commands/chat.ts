@@ -130,6 +130,8 @@ interface ChatState {
   awaitingClarify: boolean;
   /** Attachments queued via /attach, drained on the next turn. */
   pendingAttachments: Attachment[];
+  /** Pending tier override for the next turn (from /tier command). Consumed once. */
+  pendingTierOverride?: 'trivial' | 'default' | 'deep';
 }
 
 interface RunChatOptions {
@@ -598,12 +600,15 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
     state.pendingAttachments.length > 0 ? state.pendingAttachments.splice(0) : undefined;
 
   try {
+    const tierOverride = state.pendingTierOverride;
+    state.pendingTierOverride = undefined;
     for await (const event of loop.run(input, {
       sessionKey: state.sessionKey,
       personalityId: state.personalityId,
       abortSignal: state.abort.signal,
       ...(state.busyMode === 'steer' ? { steerSink: state.steerSink } : {}),
       ...(turnAttachments ? { attachments: turnAttachments } : {}),
+      ...(tierOverride ? { tierOverride } : {}),
     })) {
       // Track iteration count — proxy by counting `run_start`+tool_start sequences.
       // Per AgentLoop, an iteration starts on before_llm_call hook. We don't get
@@ -853,6 +858,7 @@ async function handleSlashCommand(
           `  /personality list     list all personalities\n` +
           `  /personality <id>     switch personality\n` +
           `  /model <name>         switch model for this session\n` +
+          `  /tier <name>          override tier for next turn (trivial|default|deep)\n` +
           `  /memory               show ~/.ethos/MEMORY.md and USER.md\n` +
           `  /usage                show token and cost stats\n` +
           `  /budget               show session spend against cap\n` +
@@ -908,6 +914,23 @@ async function handleSlashCommand(
       out(
         `${c.yellow}Model switching takes effect on next restart. Edit ~/.ethos/config.yaml to persist.${c.reset}\n`,
       );
+      break;
+    }
+
+    case 'tier': {
+      const validTiers = ['trivial', 'default', 'deep'];
+      if (!arg || arg === 'status') {
+        out(
+          `${c.dim}Tier override: use /tier [trivial|default|deep] to set for next turn.${c.reset}\n`,
+        );
+        break;
+      }
+      if (!validTiers.includes(arg)) {
+        out(`${c.yellow}Invalid tier '${arg}'. Valid: ${validTiers.join(' | ')}${c.reset}\n`);
+        break;
+      }
+      state.pendingTierOverride = arg as 'trivial' | 'default' | 'deep';
+      out(`${c.dim}[next turn will use tier: ${arg}]${c.reset}\n`);
       break;
     }
 

@@ -47,6 +47,7 @@
       "@ethosagent/tools-web": ["./extensions/tools-web/src"],
       "@ethosagent/tools-delegation": ["./extensions/tools-delegation/src"],
       "@ethosagent/tools-memory": ["./extensions/tools-memory/src"],
+      "@ethosagent/tools-tier": ["./extensions/tools-tier/src"],
       "@ethosagent/tools-todo": ["./extensions/tools-todo/src"],
       "@ethosagent/tools-interactive": ["./extensions/tools-interactive/src"],
       "@ethosagent/plugin-sdk": ["./packages/plugin-sdk/src"],

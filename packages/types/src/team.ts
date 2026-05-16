@@ -70,6 +70,17 @@ export interface TeamManifest {
   postmortems?: boolean;
   /** Reputation-aware autonomy tiers. When mode is 'tiered', agents earn higher retry budgets and can skip optional gates based on their success ratio. */
   trust_policy?: TrustPolicy;
+  /**
+   * Team-bound channel declarations. Each entry names a platform adapter
+   * (built-in or plugin-provided) and its configuration. The adapter must be
+   * registered via `registerPlatformAdapter` or be a built-in (slack, discord,
+   * telegram, email).
+   */
+  channels?: Array<{
+    platform: string;
+    botKey: string;
+    config?: Record<string, unknown>;
+  }>;
   /** Plan B — kanban dispatcher tuning. Optional; all fields have sane defaults. */
   kanban?: {
     /**
