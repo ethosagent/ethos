@@ -96,6 +96,8 @@ const sidebars: SidebarsConfig = {
           collapsed: true,
           items: [
             'building/how-to/publish-a-plugin',
+            'building/how-to/write-an-llm-provider-plugin',
+            'building/how-to/write-a-memory-backend-plugin',
             'building/how-to/add-a-memory-provider',
             'building/how-to/add-a-hook',
             'building/how-to/add-a-skill',

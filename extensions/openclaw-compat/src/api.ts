@@ -1,5 +1,5 @@
 import type { EthosPluginApi } from '@ethosagent/plugin-sdk';
-import type { MemoryProvider, PlatformAdapter } from '@ethosagent/types';
+import type { PlatformAdapter } from '@ethosagent/types';
 import { translateChannelPlugin, unwrapChannelRegistration } from './channel-translator';
 import {
   translateBeforePromptBuildHook,
@@ -99,7 +99,6 @@ const UNSUPPORTED_METHODS = new Set([
 // ---------------------------------------------------------------------------
 
 export interface OpenClawCompatCallbacks {
-  onMemoryProvider?: (pluginId: string, provider: MemoryProvider) => void;
   onPlatformAdapter?: (pluginId: string, adapter: PlatformAdapter) => void;
 }
 
@@ -141,17 +140,17 @@ export class OpenClawPluginApiShim {
   }
 
   // -------------------------------------------------------------------------
-  // Memory registration
+  // Memory registration — routes through native registerMemoryProvider
   // -------------------------------------------------------------------------
 
   registerMemoryCapability(cap: MemoryPluginCapability): void {
     const provider = translateMemoryCapability(cap);
-    this.callbacks.onMemoryProvider?.(this.id, provider);
+    this.ethosApi.registerMemoryProvider(`${this.id}/memory`, (_ctx) => provider);
   }
 
   registerMemoryRuntime(runtime: MemoryPluginRuntime): void {
     const provider = translateMemoryRuntime(runtime);
-    this.callbacks.onMemoryProvider?.(this.id, provider);
+    this.ethosApi.registerMemoryProvider(`${this.id}/memory`, (_ctx) => provider);
   }
 
   registerMemoryPromptSection(builder: MemoryPromptSectionBuilder): void {

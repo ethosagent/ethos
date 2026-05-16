@@ -68,6 +68,27 @@ export interface MemoryProvider {
   list(ctx: MemoryContext, opts?: ListOpts): Promise<MemoryEntryRef[]>;
 }
 
+// ---------------------------------------------------------------------------
+// Memory Provider Registry — pluggable memory backend factories
+// ---------------------------------------------------------------------------
+
+export interface MemoryProviderFactoryContext {
+  config: Record<string, unknown>;
+  dataDir: string;
+  secrets: import('./secrets').SecretsResolver;
+  logger: import('./logger').Logger;
+}
+
+export type MemoryProviderFactory = (
+  ctx: MemoryProviderFactoryContext,
+) => MemoryProvider | Promise<MemoryProvider>;
+
+export interface MemoryProviderRegistry {
+  register(name: string, factory: MemoryProviderFactory): void;
+  get(name: string): MemoryProviderFactory | undefined;
+  list(): string[];
+}
+
 /**
  * Direct-access capability for the global memory stores (`memory` and
  * `user`). Surfaces that ship a memory editor (the web-api Memory tab)

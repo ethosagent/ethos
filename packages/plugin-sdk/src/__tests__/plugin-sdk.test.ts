@@ -1,5 +1,7 @@
 import {
   DefaultHookRegistry,
+  DefaultLLMProviderRegistry,
+  DefaultMemoryProviderRegistry,
   DefaultPersonalityRegistry,
   DefaultToolRegistry,
 } from '@ethosagent/core';
@@ -16,6 +18,8 @@ function makeRegistries() {
     injectors,
     injectorPluginIds: new Map<import('@ethosagent/types').ContextInjector, string>(),
     personalities: new DefaultPersonalityRegistry(),
+    llmProviders: new DefaultLLMProviderRegistry(),
+    memoryProviders: new DefaultMemoryProviderRegistry(),
   };
 }
 
@@ -271,5 +275,54 @@ describe('createTestRuntime', () => {
 
     expect(events).toContain('text_delta');
     expect(events).toContain('done');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Provider registration (Phase 3 — plugin providers)
+// ---------------------------------------------------------------------------
+
+describe('PluginApiImpl.registerLLMProvider', () => {
+  it('registers a factory into the LLM registry with plugin-id prefix', () => {
+    const registries = makeRegistries();
+    const api = new PluginApiImpl('my-plugin', registries);
+    const factory = () => mockLLM(['test']);
+    api.registerLLMProvider('custom-model', factory);
+    expect(registries.llmProviders.get('my-plugin/custom-model')).toBe(factory);
+  });
+
+  it('accepts pre-qualified name with matching prefix', () => {
+    const registries = makeRegistries();
+    const api = new PluginApiImpl('my-plugin', registries);
+    const factory = () => mockLLM(['test']);
+    api.registerLLMProvider('my-plugin/custom-model', factory);
+    expect(registries.llmProviders.get('my-plugin/custom-model')).toBe(factory);
+  });
+
+  it('rejects pre-qualified name with wrong prefix', () => {
+    const registries = makeRegistries();
+    const api = new PluginApiImpl('my-plugin', registries);
+    expect(() => api.registerLLMProvider('other-plugin/model', () => mockLLM(['x']))).toThrow(
+      /cannot register LLM provider/,
+    );
+  });
+});
+
+describe('PluginApiImpl.registerMemoryProvider', () => {
+  it('registers a factory into the memory registry with plugin-id prefix', () => {
+    const registries = makeRegistries();
+    const api = new PluginApiImpl('mem-plugin', registries);
+    const factory = () => ({}) as unknown as import('@ethosagent/types').MemoryProvider;
+    api.registerMemoryProvider('custom-backend', factory);
+    expect(registries.memoryProviders.get('mem-plugin/custom-backend')).toBe(factory);
+  });
+
+  it('rejects pre-qualified name with wrong prefix', () => {
+    const registries = makeRegistries();
+    const api = new PluginApiImpl('mem-plugin', registries);
+    const factory = () => ({}) as unknown as import('@ethosagent/types').MemoryProvider;
+    expect(() => api.registerMemoryProvider('other/backend', factory)).toThrow(
+      /cannot register memory provider/,
+    );
   });
 });

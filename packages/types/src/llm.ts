@@ -93,3 +93,23 @@ export type FailoverReason =
   | 'model_not_found'
   | 'content_filter'
   | 'unknown';
+
+// ---------------------------------------------------------------------------
+// LLM Provider Registry — pluggable provider factories
+// ---------------------------------------------------------------------------
+
+export interface LLMProviderFactoryContext {
+  config: Record<string, unknown>;
+  secrets: import('./secrets').SecretsResolver;
+  logger: import('./logger').Logger;
+}
+
+export type LLMProviderFactory = (
+  ctx: LLMProviderFactoryContext,
+) => LLMProvider | Promise<LLMProvider>;
+
+export interface LLMProviderRegistry {
+  register(name: string, factory: LLMProviderFactory): void;
+  get(name: string): LLMProviderFactory | undefined;
+  list(): string[];
+}
