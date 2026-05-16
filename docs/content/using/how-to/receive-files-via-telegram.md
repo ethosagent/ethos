@@ -2,7 +2,7 @@
 title: "Receive files via Telegram"
 description: "Configure your Telegram bot to ingest photos and documents from users."
 kind: how-to
-audience: operator
+audience: user
 slug: receive-files-via-telegram
 time: "5 min"
 updated: 2026-05-14
@@ -47,6 +47,12 @@ Without these tools (or custom tools declaring `capabilities.attachments`), the 
 4. The agent sees the attachment metadata and calls the appropriate tool.
 
 When no text accompanies the file, the adapter surfaces `(attached image)` or `(attached file)` as the message text so the agent has context.
+
+## Verify
+
+- The bot replies referencing the file's contents (not just the filename or caption).
+- The agent's response includes output from the attachment-aware tool (`vision_analyze` for photos, `read_file` for documents).
+- No "File too large" suffix appears in the inbound message (indicates the file exceeded the 25 MB cap — see Limits).
 
 ## Supported types
 

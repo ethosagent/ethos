@@ -1,5 +1,5 @@
 ---
-title: "Why attachments are a capability"
+title: "Why are attachments a capability?"
 description: "The architectural insight behind treating user-attached files as a declared capability rather than a per-adapter feature."
 kind: explanation
 audience: developer

@@ -2,7 +2,7 @@
 title: "Receive files via Slack"
 description: "Configure your Slack bot to ingest files from messages and threads."
 kind: how-to
-audience: operator
+audience: user
 slug: receive-files-via-slack
 time: "5 min"
 updated: 2026-05-16
@@ -56,6 +56,12 @@ Without these tools (or custom tools declaring `capabilities.attachments`), the 
 5. The agent sees the attachment metadata and calls the appropriate tool.
 
 When no text accompanies the file, the adapter surfaces `(file attachment)` as the message text so the agent has context.
+
+## Verify
+
+- The bot replies referencing the file's contents (not just the filename).
+- The agent's response includes output from the attachment-aware tool (`vision_analyze` for images, `read_file` for documents).
+- No "file format" error appears in the reply (a format error indicates the `files:read` scope is missing — see Troubleshoot).
 
 ## Supported types
 
