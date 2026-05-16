@@ -85,6 +85,7 @@
       "@ethosagent/tools-image": ["./extensions/tools-image/src"],
       "@ethosagent/tools-process": ["./extensions/tools-process/src"],
       "@ethosagent/tools-vision": ["./extensions/tools-vision/src"],
+      "@ethosagent/tools-personality-design": ["./extensions/tools-personality-design/src"],
       "@ethosagent/observability-sqlite": ["./extensions/observability-sqlite/src"],
       "@ethosagent/request-dump": ["./extensions/request-dump/src"],
       "@ethosagent/safety-channel": ["./packages/safety/channel/src"],

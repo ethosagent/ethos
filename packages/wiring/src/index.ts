@@ -42,6 +42,10 @@ import {
 } from '@ethosagent/tools-kanban';
 import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
 import { createMemoryTools, createTeamMemoryTools, isSafeTopicKey } from '@ethosagent/tools-memory';
+import {
+  createPersonalityDesignTools,
+  createTeamDesignTools,
+} from '@ethosagent/tools-personality-design';
 import { createProcessTools } from '@ethosagent/tools-process';
 import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-terminal';
 import { createThinkDeeperTool } from '@ethosagent/tools-tier';
@@ -64,6 +68,7 @@ import type {
   SessionStore,
 } from '@ethosagent/types';
 import { resolveKanbanDbPath } from './kanban-path';
+import { MODEL_CATALOG } from './model-catalog';
 import type { EthosObservability } from './observability/ethos-observability';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
 import { capSummary, renderMiddleForSummary, SUMMARIZER_SYSTEM_PROMPT } from './summarizer-prompt';
@@ -744,6 +749,22 @@ export async function createAgentLoop(
           `Configured: ${names}`,
       );
     }
+  }
+
+  const designStorage = capabilityBackends.storage ?? new FsStorage();
+  for (const tool of createPersonalityDesignTools({
+    toolRegistry: tools,
+    storage: designStorage,
+    modelCatalog: MODEL_CATALOG,
+    skills: [...skillPool.values()],
+  })) {
+    tools.register(tool);
+  }
+  for (const tool of createTeamDesignTools({
+    personalityRegistry: personalities,
+    storage: designStorage,
+  })) {
+    tools.register(tool);
   }
 
   const { injectors, tools: skillTools } = createInjectors(personalities, {
