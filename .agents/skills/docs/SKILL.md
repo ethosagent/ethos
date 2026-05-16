@@ -122,17 +122,39 @@ updated: <YYYY-MM-DD, the last meaningful content change>
 
 ## Voice
 
-Inherits DESIGN.md voice rules verbatim. Honest, terminal-adjacent, dense-but-readable. The reader is a competent developer in a hurry — write for them.
+The reader is a competent developer in a hurry — *and* a human deciding whether to invest the next five minutes. **Lead with value, then precision.** The mix shifts by page kind (see [Voice mode by page kind](#voice-mode-by-page-kind) below), but every page earns its first paragraph by answering one question: *why should I keep reading?*
 
-- **Imperative second person.** "Run `ethos chat`." Not "We run `ethos chat`" or "You can run `ethos chat`."
-- **No marketing copy.** No "Welcome to Ethos!", no "Unlock the power of agents," no "Get Started" buttons. Buttons are verbs: "Install", "Run", "Configure".
+This is a deliberate posture for the current product stage. Marketing voice is the key aspect now — readers must see the value before they invest in the mechanics. As Ethos matures and the user base grows, the balance may shift back toward precision-first; until then, value-first is the discipline. The skill itself is the place to rebalance — not individual pages.
+
+Inherits DESIGN.md voice rules where they don't conflict with the rules below.
+
+- **Imperative second person, when giving instructions.** "Run `ethos chat`." Not "We run `ethos chat`" or "You can run `ethos chat`." Landing-page or explanation openings can use other voices ("You wouldn't hire one person to be your engineer and your researcher…") — switch to imperative the moment the page turns procedural.
+- **Marketing voice is allowed where it earns its place.** Concrete value claims, light-touch analogies, "you wouldn't X — why pretend Y?" structures, and CTA-shaped paragraph endings are welcome on landing pages, tutorial openers, explanation pages, and READMEs. The rule is *not* "no marketing" — it is "no hollow marketing." `A team of AI specialists that remember you across Slack and Telegram` earns its place. `Unleash the power of next-generation AI` does not. **The test:** replace the marketing word with a concrete fact; if nothing substitutes, the sentence carried no information.
+- **Hollow advocacy is still slop.** Banned regardless of page kind: "unleash," "harness the power of," "supercharge," "revolutionary," "world-class," "next-generation," "10x," "AI-powered" as a header by itself, "Welcome to X!", "Get started" as a verb-less header. Buttons are verbs: "Install", "Run", "Configure".
 - **No emoji as decoration.** Status indicators (✓ / ✗ / ⏳) only, and only where they convey state. Never in headings.
 - **Concrete over abstract.** "API key invalid — re-enter to continue." Not "Authentication failed."
-- **Specific identifiers.** Reference real file paths, real function names, real config keys. Avoid "the foo system" when "[tool-registry.ts](../../../packages/core/src/tool-registry.ts)" is what you mean.
-- **No throat-clearing.** Drop "In this guide, we will…", "Note that…", "It's important to remember that…" Start with the goal.
+- **Specific identifiers.** In technical sections, reference real file paths, real function names, real config keys. Avoid "the foo system" when "[tool-registry.ts](../../../packages/core/src/tool-registry.ts)" is what you mean. (Landing/value paragraphs may stay abstract — but the body must get specific.)
+- **No throat-clearing.** Drop "In this guide, we will…", "Note that…", "It's important to remember that…" Start with the value (landing/tutorial openers) or the goal (how-to/reference).
 - **One thought per paragraph.** Paragraphs over six lines get split. The reader is scanning.
 - **Active over passive.** "AgentLoop emits events." Not "Events are emitted by AgentLoop."
 - **Sentence-case headings.** "Add a new LLM provider," not "Add A New LLM Provider."
+
+## Voice mode by page kind
+
+The right voice depends on what the reader needs from the page. Choose by `kind` and surface:
+
+| Surface or page kind | Lead (~first paragraph) | Body |
+|---|---|---|
+| Landing pages — `intro.md`, both quickstart entries | **Marketing.** Value-first, analogy-friendly, CTA-shaped. | Marketing tone preserved, with concrete specifics. |
+| `tutorial` | **Goal + value.** "In five minutes you'll have a Telegram bot that remembers you." | Precise step-by-step. Imperative. |
+| `how-to` | **Task + outcome.** "Add a new LLM provider and verify it streams." | Precise, no narrative. Imperative. |
+| `reference` | **Synopsis.** One sentence of *what the thing is*. No advocacy. | **Precision throughout. Marketing voice fails here.** Lookup pages need scannable accuracy, not pitch. |
+| `explanation` | **Question + value.** Restate why this matters to the reader before answering the why. | Argumentative, precise. |
+| Repo `README.md`, per-package READMEs | **Marketing.** Standalone-readable; assume the reader may never click through to docs. | Marketing tone preserved, with concrete specifics. See [Cross-surface rendering](#cross-surface-rendering). |
+| Personality `ETHOS.md` | **First-person identity statement.** A reader should be able to predict the personality's behaviour from the opening line. | Imperative, specific. |
+| Front-matter `description` field | **Always informative, never advocacy.** This field surfaces in Google snippets and AI answer cards — marketing voice reads as spam there regardless of how the page body opens. |
+
+The shift between lead and body is a *real* transition. A tutorial's first paragraph can read like landing copy — paragraph two is `npm i -g @ethosagent/cli`. Both belong on the same page.
 
 ## Cross-page rules
 
@@ -208,7 +230,8 @@ These patterns are slop. Code review checks for them, and so does CI grep where 
 | Stub pages (under-length, "TODO," placeholders) | Damages trust more than absence | Delete or fold until the page can be complete |
 | "Click here" / "Read more" link text | Unscannable; screen-reader hostile | Linkify the noun phrase: "the [Tool reference](#)" |
 | Marketing-template hero (3-column grid of icons in colored circles) | Indistinguishable from every AI SaaS | Stacked rows with real sample content |
-| Generic hero copy ("Build powerful agents") | No information density | Specific in-product language ("Personality is architecture") |
+| Hollow hero copy ("Build powerful agents," "Unleash AI," "World-class platform") | No information density; reader can't tell what the product does or who it's for | Specific value claim with a concrete artifact ("A team of AI specialists that remember you across Slack and Telegram") |
+| Page opens with mechanics before value | Reader bounces before reaching the why | Lead with what the reader gets; mechanics in paragraph two. The lead → body transition is *the* shape of a well-written page. |
 | Sidebar as primary discovery (no landing card grid) | Long sidebars defeat scanning | Card-grid landing + sidebar as secondary |
 | Two parallel doc trees (`/docs` + `/kb`) | Reader searches twice | One canonical tree, types declared in front-matter |
 | Auto-generated "See also" link dumps | Untrusted, noisy | Curated, ≤5 links, each one chosen |
@@ -228,6 +251,8 @@ A docs PR is not merge-ready until every changed page passes this list. Reviewer
 - [ ] Page matches the template for its `kind` (required sections present, prohibited sections absent).
 - [ ] Passes the tutorial-vs-how-to test (or the why-question test for explanation).
 - [ ] Answers at least one of the four customer-first questions and the answer is visible above the fold.
+- [ ] **Opens with user-readable value.** Paragraph 1 is understandable to a reader who hasn't installed Ethos yet. Mechanics come no earlier than paragraph 2 (landing, tutorial, explanation) or after the synopsis (reference / how-to).
+- [ ] **Voice mode matches the page's `kind`** per the [Voice mode by page kind](#voice-mode-by-page-kind) table. No marketing voice on reference pages; no mechanics-first opening on landing or tutorial pages; `description` front-matter is always informative, never advocacy.
 - [ ] First occurrence of every domain term links to [glossary.md](../../../docs/content/getting-started/glossary.md).
 - [ ] Reference pages link to source-of-truth code path.
 - [ ] "See also" footer present on reference and explanation pages (≥1, ≤5 links).
@@ -243,10 +268,10 @@ Same content, different surfaces. Single source of truth is the markdown under [
 | Surface | What it shows | Render rule |
 |---|---|---|
 | **Docusaurus site** (primary) | Full tree, all kinds, full styling | The canonical surface. Other surfaces link back here. |
-| **Repo [README.md](../../../README.md)** | One-sentence pitch · install · quickstart link · two doors | Mirrors landing intent; never duplicates content. Links to the site. |
+| **Repo [README.md](../../../README.md)** | Standalone-readable surface for users who may never click through. Marketing voice welcome; value-first opening required. Includes install, getting started, surface comparison, migration. | Treat as its own artifact, not as a docs index. Sections that overlap docs (Getting started, CLI vs chat, migration walkthroughs) are intentional — duplication is the feature here, not a bug. The reader of `README.md` may never see the docs site; they should still understand most of the product. |
 | **In-package READMEs** | One-sentence purpose · install · link to package's reference page | One paragraph max. Package metadata, not docs. |
 | **`docs/static/llms.txt`** | Glossary · CLI reference · interface reference · explanation pages | Generated at build time from pages with `agent: true` front-matter flag (or by kind: reference + explanation). Single text file, no nav. |
-| **Personality `ETHOS.md`** | First-person identity for the personality itself | Not user docs — runtime config. Subject to this skill's voice rules anyway: imperative, terminal-adjacent, no marketing copy. |
+| **Personality `ETHOS.md`** | First-person identity for the personality itself | Not user docs — runtime config the agent reads. First-person, imperative, terminal-adjacent. **Not a marketing surface** (the LLM reads this at runtime; advocacy doesn't help there). See the ETHOS.md row in [Voice mode by page kind](#voice-mode-by-page-kind). |
 | **`apps/web` in-app help** | Glossary tooltips, command-palette descriptions | Reads from canonical glossary entries. Sentence-length cap: 140 chars. |
 
 ## SEO and AEO
