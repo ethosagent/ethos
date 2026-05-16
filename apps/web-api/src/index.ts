@@ -5,8 +5,8 @@ import type { AgentLoop } from '@ethosagent/core';
 import type { CronScheduler } from '@ethosagent/cron';
 import type { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { SkillsLibrary } from '@ethosagent/skills';
-import { FsStorage } from '@ethosagent/storage-fs';
-import type { GlobalMemoryStore, SessionStore, Storage } from '@ethosagent/types';
+import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
+import type { GlobalMemoryStore, SecretsResolver, SessionStore, Storage } from '@ethosagent/types';
 import type { SseEvent } from '@ethosagent/web-contracts';
 import type { Hono } from 'hono';
 import type { ApiKeyAdminStore } from './middleware/bearer-auth';
@@ -96,6 +96,15 @@ export interface CreateWebApiOptions {
    */
   storage?: Storage;
   /**
+   * Secret-backed file resolver under `<dataDir>/secrets/`. Used by the
+   * Communications tab to write Telegram / Slack / Discord / email
+   * tokens through `${secrets:<ref>}` indirection — so secrets land in
+   * `~/.ethos/secrets/` (the canonical location the CLI's setup wizard
+   * also uses), not as plaintext inside `~/.ethos/config.yaml`.
+   * Defaults to a FileSecretsResolver rooted at `<dataDir>/secrets`.
+   */
+  secrets?: SecretsResolver;
+  /**
    * Bearer-token store backing the OpenAI-compat `/v1/*` surface and the
    * `/rpc/*` dual-auth path (cookie OR bearer). When omitted, `/v1/*` is
    * not mounted and `/rpc/*` uses cookie-only auth. Boot code typically
@@ -138,8 +147,10 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // mapping lives in the service.
   const mesh = new AgentMesh(join(opts.dataDir, 'mesh-registry.json'));
   const memoryProvider = opts.memoryProvider;
-  const platformsRepo = new PlatformsRepository({ config: configRepo });
   const storage: Storage = opts.storage ?? new FsStorage();
+  const secrets: SecretsResolver =
+    opts.secrets ?? new FileSecretsResolver({ dir: join(opts.dataDir, 'secrets'), storage });
+  const platformsRepo = new PlatformsRepository({ config: configRepo, secrets });
 
   // --- Services (business logic) ---
   const sessionsService = new SessionsService({ sessions: sessionsRepo });
