@@ -98,7 +98,11 @@ export function KeyRotationStep() {
       <Box marginTop={1}>
         <Text color={DESIGN.textTertiary}>{'  a — add key   Enter done   Esc back'}</Text>
       </Box>
-      <Text color={DESIGN.textTertiary}>{'  Rotation keys are saved to ~/.ethos/keys.json'}</Text>
+      <Text color={DESIGN.textTertiary}>
+        {
+          '  Key material is stored in ~/.ethos/secrets/ (chmod 0600); rotation order in ~/.ethos/keys.json'
+        }
+      </Text>
     </Box>
   );
 }

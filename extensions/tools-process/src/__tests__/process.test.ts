@@ -86,6 +86,7 @@ function boundaryStorage(allowed: string[]): Storage {
       denyWrite(from);
       denyWrite(to);
     },
+    async chmod() {},
   };
 }
 

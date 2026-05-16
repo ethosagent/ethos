@@ -34,7 +34,10 @@ function validateRef(ref: string): void {
 /**
  * File-backed SecretsResolver. Stores each secret as a plain-text file under
  * `opts.dir`, using the injected Storage for all I/O. File permissions are
- * set to 0o600 (owner-only read/write) via writeAtomic.
+ * set to 0o600 (owner-only read/write) via writeAtomic; the `opts.dir`
+ * directory itself is tightened to 0o700 on every `set` so directory
+ * listing (which refs are configured) doesn't leak on shared systems
+ * regardless of the operator's umask.
  */
 export class FileSecretsResolver implements SecretsResolver {
   constructor(private readonly opts: FileSecretsResolverOptions) {}
@@ -51,6 +54,11 @@ export class FileSecretsResolver implements SecretsResolver {
     const path = join(this.opts.dir, ref);
     await this.opts.storage.mkdir(dirname(path));
     await this.opts.storage.writeAtomic(path, `${value}\n`, { mode: 0o600 });
+    // Idempotent dir-mode lockdown — applied on every set so first-write
+    // and rotation both end with 0o700 on `opts.dir`. Tolerated to fail
+    // silently on backends without POSIX permissions (in-memory tests
+    // record the mode; real filesystems enforce it).
+    await this.opts.storage.chmod(this.opts.dir, 0o700).catch(() => {});
   }
 
   async delete(ref: SecretRef): Promise<void> {

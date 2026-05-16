@@ -1,5 +1,6 @@
 import {
   appendFile,
+  chmod,
   mkdir,
   readdir,
   readFile,
@@ -130,5 +131,9 @@ export class FsStorage implements Storage {
 
   async rename(from: string, to: string): Promise<void> {
     await rename(from, to);
+  }
+
+  async chmod(path: string, mode: number): Promise<void> {
+    await chmod(path, mode);
   }
 }

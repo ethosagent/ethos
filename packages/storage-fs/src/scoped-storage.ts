@@ -121,6 +121,11 @@ export class ScopedStorage implements Storage {
     this.check(to, 'write');
     return this.inner.rename(from, to);
   }
+
+  async chmod(path: string, mode: number): Promise<void> {
+    this.check(path, 'write');
+    return this.inner.chmod(path, mode);
+  }
 }
 
 function normalizePrefix(prefix: string): string {

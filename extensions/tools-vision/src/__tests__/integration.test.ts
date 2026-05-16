@@ -82,6 +82,7 @@ const latin1Storage: Storage = {
   async mkdir() {},
   async remove() {},
   async rename() {},
+  async chmod() {},
 };
 
 const testBackends: CapabilityBackends = {

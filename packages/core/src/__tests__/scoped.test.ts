@@ -117,6 +117,7 @@ describe('ScopedFsImpl', () => {
     mkdir: vi.fn(),
     remove: vi.fn(),
     rename: vi.fn(),
+    chmod: vi.fn(),
   });
 
   it('read succeeds within allowed path', async () => {

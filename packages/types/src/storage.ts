@@ -94,6 +94,19 @@ export interface Storage {
 
   /** Rename / move a file or directory. */
   rename(from: string, to: string): Promise<void>;
+
+  /**
+   * POSIX file/directory permissions on an existing path. Used by callers
+   * that need to *tighten* an existing path's mode (the common case: a
+   * secrets directory inherits umask 022 on creation, then needs to be
+   * locked down to 0o700 so directory listing doesn't leak which refs are
+   * configured). Distinct from `writeAtomic`'s `mode` option because that
+   * one applies during write; `chmod` operates on existing paths.
+   *
+   * Backends without a POSIX permission concept (in-memory, remote) are
+   * no-ops. POSIX-only backends throw if the path does not exist.
+   */
+  chmod(path: string, mode: number): Promise<void>;
 }
 
 /**

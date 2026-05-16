@@ -51,6 +51,7 @@ function memStorage(): Storage {
         files.delete(from);
       }
     },
+    async chmod() {},
   };
 }
 

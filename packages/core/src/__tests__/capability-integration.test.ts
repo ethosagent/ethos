@@ -41,6 +41,7 @@ const makeBackends = (): CapabilityBackends => ({
     mkdir: vi.fn(),
     remove: vi.fn(),
     rename: vi.fn(),
+    chmod: vi.fn(),
   },
   personalityFsReach: { read: ['/data'], write: ['/out'] },
 });

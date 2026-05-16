@@ -40,6 +40,9 @@ type Node = FileNode | DirNode;
 export class InMemoryStorage implements Storage {
   // Absolute path → node
   private readonly nodes = new Map<string, Node>();
+  // Recorded directory modes (chmod against a directory). Tracked
+  // separately because directory entries are implicit in the Map.
+  private readonly dirModes = new Map<string, number>();
   private clock = 0;
 
   // Treat the filesystem root as always existing so consumers don't need to
@@ -279,11 +282,32 @@ export class InMemoryStorage implements Storage {
     }
   }
 
+  async chmod(path: string, mode: number): Promise<void> {
+    const node = this.nodes.get(path);
+    if (!node) {
+      const err = new Error(`ENOENT: no such file or directory, chmod '${path}'`);
+      (err as NodeJS.ErrnoException).code = 'ENOENT';
+      throw err;
+    }
+    if (node.type === 'file') {
+      this.nodes.set(path, { ...node, mode });
+    } else {
+      // Track directory mode in a side-channel so tests can assert it.
+      this.dirModes.set(path, mode);
+    }
+  }
+
   // --- Test helpers -----------------------------------------------------
+
+  /** Return the recorded mode for a directory (undefined if no mode was set). */
+  getDirMode(path: string): number | undefined {
+    return this.dirModes.get(path);
+  }
 
   /** Drop all state. Useful for `beforeEach` resets without re-instantiating. */
   reset(): void {
     this.nodes.clear();
+    this.dirModes.clear();
     this.clock = 0;
   }
 

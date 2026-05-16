@@ -146,6 +146,7 @@ describe('resolveCapabilities', () => {
       mkdir: vi.fn(),
       remove: vi.fn(),
       rename: vi.fn(),
+      chmod: vi.fn(),
     };
     const backends: CapabilityBackends = { storage };
     const result = resolveCapabilities(
@@ -171,6 +172,7 @@ describe('resolveCapabilities', () => {
       mkdir: vi.fn(),
       remove: vi.fn(),
       rename: vi.fn(),
+      chmod: vi.fn(),
     };
     const backends: CapabilityBackends = {
       storage,
@@ -220,6 +222,7 @@ describe('resolveCapabilities', () => {
       mkdir: vi.fn(),
       remove: vi.fn(),
       rename: vi.fn(),
+      chmod: vi.fn(),
     };
     const backends: CapabilityBackends = {
       kvStoreFactory: vi.fn().mockReturnValue({ get: vi.fn() }),
