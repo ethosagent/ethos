@@ -471,7 +471,7 @@ async function runTeamCreateAiAssisted(name: string | undefined): Promise<void> 
   const { runChat } = await import('./chat');
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
 
-  const config = await readConfig(getStorage(), getSecretsResolver());
+  const config = await readConfig(getStorage(), await getSecretsResolver());
   if (!config) {
     console.error('Run `ethos setup` first.');
     process.exit(1);

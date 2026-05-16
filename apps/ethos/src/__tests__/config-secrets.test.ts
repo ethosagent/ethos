@@ -6,7 +6,14 @@ import {
   MergedSecretsResolver,
 } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ethosDir, readConfig, readKeys, readRawConfig } from '../config';
+import {
+  type EthosConfig,
+  ethosDir,
+  readConfig,
+  readKeys,
+  readRawConfig,
+  writeConfig,
+} from '../config';
 
 function secretRef(path: string): string {
   return ['${', 'secrets:', path, '}'].join('');
@@ -181,7 +188,10 @@ describe('env-only resolution via MergedSecretsResolver', () => {
     await storage.mkdir(ethosDir());
     await storage.write(join(ethosDir(), 'config.yaml'), yaml);
     const file = new InMemorySecretsResolver();
-    const merged = new MergedSecretsResolver(new EnvSecretsResolver(), file);
+    const merged = new MergedSecretsResolver({
+      readers: [new EnvSecretsResolver(), file],
+      writer: file,
+    });
     return readConfig(storage, merged);
   }
 
@@ -205,7 +215,10 @@ describe('env-only resolution via MergedSecretsResolver', () => {
     await storage.write(join(ethosDir(), 'config.yaml'), baseYaml);
     const file = new InMemorySecretsResolver();
     await file.set('providers/anthropic/apiKey', 'file-fallback');
-    const merged = new MergedSecretsResolver(new EnvSecretsResolver(), file);
+    const merged = new MergedSecretsResolver({
+      readers: [new EnvSecretsResolver(), file],
+      writer: file,
+    });
     const cfg = await readConfig(storage, merged);
     expect(cfg?.apiKey).toBe('env-priority');
   });
@@ -226,5 +239,44 @@ describe('env-only resolution via MergedSecretsResolver', () => {
     expect(err?.message).toContain('~/.ethos/.env');
     expect(err?.message).toContain('environment variable ANTHROPIC_API_KEY');
     expect(err?.message).toContain('ethos secrets set');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AWS secrets config round-trip
+// ---------------------------------------------------------------------------
+
+describe('aws.secrets config round-trip', () => {
+  it('aws.secrets config round-trips through write/parse', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    const config: EthosConfig = {
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      apiKey: 'sk-ant-test',
+      personality: 'researcher',
+      aws: {
+        secrets: {
+          enabled: true,
+          region: 'us-west-2',
+          prefix: 'ethos/prod',
+          endpoint: 'http://localhost:4566',
+        },
+      },
+    };
+
+    await writeConfig(storage, config);
+    const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+    expect(raw).toContain('aws.secrets.enabled: true');
+    expect(raw).toContain('aws.secrets.region: us-west-2');
+    expect(raw).toContain('aws.secrets.prefix: ethos/prod');
+    expect(raw).toContain('aws.secrets.endpoint: http://localhost:4566');
+
+    // Re-parse
+    const reparsed = await readRawConfig(storage);
+    expect(reparsed?.aws?.secrets?.enabled).toBe(true);
+    expect(reparsed?.aws?.secrets?.region).toBe('us-west-2');
+    expect(reparsed?.aws?.secrets?.prefix).toBe('ethos/prod');
+    expect(reparsed?.aws?.secrets?.endpoint).toBe('http://localhost:4566');
   });
 });

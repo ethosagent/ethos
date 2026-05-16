@@ -192,7 +192,7 @@ A short list of zero- and low-cost wins, all baked into the steps above:
 
 What this deployment shape deliberately *doesn't* solve, and what to add if you need them:
 
-- **Secrets at rest while the instance is running** — encrypted volume protects against snapshot theft, not a logged-in root user. If you need that, move tokens to AWS Secrets Manager and have a small wrapper fetch them into env at start (separate page, not v1).
+- **Secrets at rest while the instance is running** — encrypted volume protects against snapshot theft, not a logged-in root user. See [Configure AWS Secrets Manager](configure-aws-secrets.md) to fetch tokens from AWS at runtime instead of storing them on the EBS volume.
 - **Public dashboard with auth** — out of scope. The tunnel approach above is the right answer until you have a reason to expose the dashboard, at which point you want a reverse proxy + a real auth story, not just port-opening.
 
 ## Operate

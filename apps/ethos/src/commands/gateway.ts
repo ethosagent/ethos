@@ -183,7 +183,8 @@ export async function runGatewayStart(): Promise<void> {
   // list-shape shim and returns the deprecation messages we should
   // surface before any other work.
   const storage = getStorage();
-  const loaded = await loadConfigStrict(storage, getSecretsResolver());
+  const secrets = await getSecretsResolver();
+  const loaded = await loadConfigStrict(storage, secrets);
   if (!loaded) {
     console.error('Run ethos setup first.');
     process.exit(1);

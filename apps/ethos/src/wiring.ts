@@ -31,7 +31,7 @@ import {
   type WiringConfig,
   type WiringProfile,
 } from '@ethosagent/wiring';
-import { type EthosConfig, ethosDir, readKeys } from './config';
+import { type EthosConfig, ethosDir, readKeys, readRawConfig } from './config';
 import { setObservabilityService } from './error-log';
 import { logger } from './logger';
 
@@ -52,25 +52,40 @@ export function getStorage(): Storage {
   return storageSingleton;
 }
 
-let secretsSingleton: SecretsResolver | undefined;
-let dotEnvLoaded = false;
+let secretsInitPromise: Promise<SecretsResolver> | undefined;
 
-export function getSecretsResolver(): SecretsResolver {
-  if (!secretsSingleton) {
-    // Load .env once, lazily, before constructing the resolver
-    if (!dotEnvLoaded) {
-      const envFilePath = process.env.ETHOS_ENV_FILE ?? join(ethosDir(), '.env');
-      loadDotEnv(envFilePath);
-      dotEnvLoaded = true;
-    }
-    const file = new FileSecretsResolver({
-      dir: join(ethosDir(), 'secrets'),
-      storage: getStorage(),
-    });
-    const env = new EnvSecretsResolver();
-    secretsSingleton = new MergedSecretsResolver(env, file);
+export function getSecretsResolver(): Promise<SecretsResolver> {
+  if (!secretsInitPromise) {
+    secretsInitPromise = initSecrets();
   }
-  return secretsSingleton;
+  return secretsInitPromise;
+}
+
+async function initSecrets(): Promise<SecretsResolver> {
+  const envFilePath = process.env.ETHOS_ENV_FILE ?? join(ethosDir(), '.env');
+  loadDotEnv(envFilePath);
+
+  const file = new FileSecretsResolver({
+    dir: join(ethosDir(), 'secrets'),
+    storage: getStorage(),
+  });
+  const env = new EnvSecretsResolver();
+
+  const rawConfig = await readRawConfig(getStorage());
+  if (rawConfig?.aws?.secrets?.enabled) {
+    const { AwsSecretsManagerResolver } = await import('@ethosagent/secrets-aws');
+    const awsResolver = new AwsSecretsManagerResolver({
+      region: rawConfig.aws.secrets.region ?? 'us-east-1',
+      prefix: rawConfig.aws.secrets.prefix ?? 'ethos',
+      endpoint: rawConfig.aws.secrets.endpoint,
+    });
+    return new MergedSecretsResolver({
+      readers: [env, awsResolver, file],
+      writer: file,
+    });
+  }
+
+  return new MergedSecretsResolver({ readers: [env, file], writer: file });
 }
 
 let obsSingleton: ObservabilityService | undefined;
@@ -176,7 +191,7 @@ export function stopEvolverCron(): void {
 
 async function withRotation(config: EthosConfig) {
   const rotationKeys =
-    config.provider === 'anthropic' ? await readKeys(getStorage(), getSecretsResolver()) : [];
+    config.provider === 'anthropic' ? await readKeys(getStorage(), await getSecretsResolver()) : [];
   return { ...config, rotationKeys };
 }
 
@@ -214,7 +229,7 @@ export async function createAgentLoop(
     ...(config.postmortems !== undefined ? { postmortems: config.postmortems } : {}),
     ...(config.trustPolicy !== undefined ? { trustPolicy: config.trustPolicy } : {}),
     ...(config.modelCatalog ? { modelCatalogConfig: config.modelCatalog } : {}),
-    secretsResolver: getSecretsResolver(),
+    secretsResolver: await getSecretsResolver(),
   };
   return packageCreateAgentLoop(wiringConfig, {
     dataDir: ethosDir(),

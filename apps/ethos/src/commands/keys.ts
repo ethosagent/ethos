@@ -57,7 +57,7 @@ export async function runKeys(args: string[]): Promise<void> {
       const keys = await readKeys(storage);
       const id = `key-${Date.now()}`;
       const secretRef = `rotation/${id}`;
-      await getSecretsResolver().set(secretRef, apiKey);
+      await (await getSecretsResolver()).set(secretRef, apiKey);
       keys.push({
         apiKey: `\${secrets:${secretRef}}`,
         priority,

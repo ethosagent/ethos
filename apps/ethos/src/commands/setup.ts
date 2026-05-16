@@ -61,7 +61,7 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult 
     if (!result) return null;
 
     const { answers } = result;
-    const secrets = getSecretsResolver();
+    const secrets = await getSecretsResolver();
     const provider = answers.provider ?? 'anthropic';
 
     let apiKeyRef = '';
@@ -206,7 +206,7 @@ async function runReadlineFallback({
 
   let apiKeyRef = '';
   if (apiKey) {
-    const secrets = getSecretsResolver();
+    const secrets = await getSecretsResolver();
     const ref = `providers/${provider}/apiKey`;
     await secrets.set(ref, apiKey);
     apiKeyRef = `\${secrets:${ref}}`;

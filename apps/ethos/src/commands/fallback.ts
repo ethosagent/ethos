@@ -129,7 +129,7 @@ async function addEntry(config: EthosConfig): Promise<void> {
     const idx = chain.length;
 
     // Store the API key through the resolver; config gets the ref.
-    const secrets = getSecretsResolver();
+    const secrets = await getSecretsResolver();
     const ref = `providers/${idx}/${provider}/apiKey`;
     await secrets.set(ref, apiKey);
 
@@ -176,7 +176,7 @@ async function removeEntry(config: EthosConfig, idx: number): Promise<void> {
   // ref strings in other entries would mis-resolve otherwise.
   const ref = extractSecretRef(removed.apiKey);
   if (ref) {
-    await getSecretsResolver().delete(ref);
+    await (await getSecretsResolver()).delete(ref);
   }
 
   const next: EthosConfig = { ...config, providers: chain.length > 0 ? chain : undefined };
@@ -193,7 +193,7 @@ async function clearChain(config: EthosConfig): Promise<void> {
   }
 
   // Delete all underlying secrets we wrote.
-  const secrets = getSecretsResolver();
+  const secrets = await getSecretsResolver();
   for (const entry of chain) {
     const ref = extractSecretRef(entry.apiKey);
     if (ref) {
