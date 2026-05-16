@@ -26,6 +26,21 @@ const TeamManifestSchema: z.ZodType<TeamManifest> = z
     personality_models: z.record(z.string(), z.string()).optional(),
     mesh: z.string().optional(),
     dispatch_prefer_reliable: z.boolean().optional(),
+    postmortems: z.boolean().optional(),
+    trust_policy: z
+      .object({
+        mode: z.enum(['flat', 'tiered']),
+        demotion: z.enum(['gradual', 'strict']).optional(),
+        thresholds: z
+          .object({
+            standard_min_completed: z.number().int().nonnegative().optional(),
+            standard_min_ratio: z.number().min(0).max(1).optional(),
+            trusted_min_completed: z.number().int().nonnegative().optional(),
+            trusted_min_ratio: z.number().min(0).max(1).optional(),
+          })
+          .optional(),
+      })
+      .optional(),
     members: z.array(TeamMemberSchema),
     kanban: z
       .object({

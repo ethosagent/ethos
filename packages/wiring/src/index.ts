@@ -12,7 +12,7 @@ import {
   LazyOnDemandPolicy,
   type SummarizerFn,
 } from '@ethosagent/core';
-import { KanbanStore } from '@ethosagent/kanban-store';
+import { autonomyTier, KanbanStore, type TrustPolicy } from '@ethosagent/kanban-store';
 import { AnthropicProvider, AuthRotatingProvider } from '@ethosagent/llm-anthropic';
 import { OpenAICompatProvider } from '@ethosagent/llm-openai-compat';
 import { noopLogger } from '@ethosagent/logger';
@@ -34,6 +34,7 @@ import { createInteractiveTools } from '@ethosagent/tools-interactive';
 import {
   createKanbanRoleGateHook,
   createKanbanTools,
+  registerPostmortemHandler,
   type TeamRole,
 } from '@ethosagent/tools-kanban';
 import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
@@ -111,6 +112,10 @@ export interface WiringConfig {
    * Only honored when `teamName` is also set.
    */
   role?: TeamRole;
+  /** Enable postmortem entries in team memory on ticket revision. */
+  postmortems?: boolean;
+  /** Reputation-aware autonomy tiers for team members. */
+  trustPolicy?: TrustPolicy;
   /**
    * Fallback provider chain. When 2+ entries are provided, `createLLM` wraps
    * them in a `ChainedProvider` with cooldown-based automatic failover.
@@ -434,7 +439,18 @@ export async function createAgentLoop(
   if (personalityWantsKanban(activePerson)) {
     const kanbanDbPath = resolveKanbanDbPath(config, dataDir, activePerson.id);
     kanbanStore = new KanbanStore(kanbanDbPath);
-    for (const tool of createKanbanTools({ store: kanbanStore, hooks })) tools.register(tool);
+    const store = kanbanStore;
+    const kanbanOpts: Parameters<typeof createKanbanTools>[0] = { store, hooks };
+    if (config.trustPolicy?.mode === 'tiered') {
+      const policy = config.trustPolicy;
+      kanbanOpts.autonomyTierOf = (assignee) => {
+        const stats = store.getMemberStats();
+        const s = stats.get(assignee);
+        if (!s) return undefined;
+        return autonomyTier(s, policy);
+      };
+    }
+    for (const tool of createKanbanTools(kanbanOpts)) tools.register(tool);
   }
   for (const tool of createProcessTools(dataDir)) tools.register(tool);
   for (const tool of createImageTools({
@@ -606,6 +622,10 @@ export async function createAgentLoop(
     await seedTeamMemory(teamMemory, config.teamName);
 
     for (const tool of createTeamMemoryTools(teamMemory)) tools.register(tool);
+
+    if (config.postmortems !== false) {
+      registerPostmortemHandler({ teamName: config.teamName, memory: teamMemory, hooks });
+    }
 
     // Lazy index injector: injects a short list of available team memory
     // topics into the system prompt instead of loading all content upfront.

@@ -138,6 +138,8 @@ export interface BeforeTicketCompletePayload {
   summary: string;
   /** The ticket's acceptance criteria, if set. */
   acceptanceCriteria?: string;
+  /** The assignee's reputation tier, if a trust_policy is configured. */
+  autonomyTier?: 'probationary' | 'standard' | 'trusted';
 }
 
 export interface BeforeTicketCompleteResult {
@@ -180,6 +182,14 @@ export interface SubagentEndedPayload {
   result: string;
 }
 
+export interface AfterTicketRevisionPayload {
+  taskId: string;
+  summary: string;
+  acceptanceCriteria?: string;
+  reason: string;
+  assignee: string;
+}
+
 // ---------------------------------------------------------------------------
 // Hook map — groups by execution model
 // ---------------------------------------------------------------------------
@@ -195,6 +205,7 @@ export interface VoidHooks {
   message_sent: MessageSentPayload;
   subagent_spawned: SubagentSpawnedPayload;
   subagent_ended: SubagentEndedPayload;
+  after_ticket_revision: AfterTicketRevisionPayload;
 }
 
 export interface ModifyingHooks {

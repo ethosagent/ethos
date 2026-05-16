@@ -3,6 +3,13 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 
+export {
+  type AutonomyTier,
+  autonomyTier,
+  type TrustPolicy,
+  tierMaxRetries,
+} from './autonomy-tier';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -885,6 +892,13 @@ export class KanbanStore {
       .prepare('SELECT * FROM task_comments WHERE task_id = ? ORDER BY created_at ASC, rowid ASC')
       .all(taskId) as TaskCommentRow[];
     return rows.map(rowToComment);
+  }
+
+  setMaxRetries(taskId: string, maxRetries: number): void {
+    const result = this.db
+      .prepare('UPDATE tasks SET max_retries = ?, updated_at = ? WHERE id = ?')
+      .run(maxRetries, Date.now(), taskId);
+    if (result.changes === 0) throw new Error(`setMaxRetries: task ${taskId} not found`);
   }
 
   assign(taskId: string, assignee: string | null, actor = 'system'): Task {

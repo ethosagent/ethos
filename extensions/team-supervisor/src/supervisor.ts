@@ -378,6 +378,7 @@ export async function runSupervisor(
     ...(manifest.dispatch_prefer_reliable !== undefined
       ? { preferReliable: manifest.dispatch_prefer_reliable }
       : {}),
+    ...(manifest.trust_policy !== undefined ? { trustPolicy: manifest.trust_policy } : {}),
     onError: (err, taskId) => {
       logSupervisorEvent({
         ts: new Date().toISOString(),
