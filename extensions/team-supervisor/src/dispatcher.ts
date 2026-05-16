@@ -207,6 +207,8 @@ export class Dispatcher {
     //    assignees dispatch first. It is never an exclusion: every task in the
     //    list is still dispatched, just possibly in a different order.
     const readyToDispatch = this.orderForDispatch(this.board.findReadyToDispatch());
+    const memberStats =
+      this.trustPolicy?.mode === 'tiered' ? this.board.getMemberStats() : undefined;
     for (const task of readyToDispatch) {
       if (this.inflight.has(task.id)) continue; // already in-flight from a prior tick
       const assignee = task.assignee;
@@ -215,14 +217,15 @@ export class Dispatcher {
       const status = this.supervisor.statusOf(assignee);
       if (port === null || status !== 'running') continue;
 
-      // Tier-based max_retries: when a task has no explicit max_retries and a
-      // trust_policy is configured, set it from the assignee's autonomy tier.
-      if (task.maxRetries === null && this.trustPolicy?.mode === 'tiered') {
-        const stats = this.board.getMemberStats();
-        const memberStats = stats.get(assignee);
-        if (memberStats) {
-          const tier = autonomyTier(memberStats, this.trustPolicy);
-          this.board.setMaxRetries(task.id, tierMaxRetries(tier));
+      // Tier-based retry budget: when no explicit max_retries is set and a
+      // trust_policy is configured, compute effective budget from the assignee's
+      // tier. Check locally instead of persisting — the stored max_retries stays
+      // null so reassignment or policy changes take effect on the next attempt.
+      if (task.maxRetries === null && this.trustPolicy?.mode === 'tiered' && memberStats) {
+        const stats = memberStats.get(assignee);
+        if (stats) {
+          const budget = tierMaxRetries(autonomyTier(stats, this.trustPolicy));
+          if (task.retryCount > budget) continue;
         }
       }
 

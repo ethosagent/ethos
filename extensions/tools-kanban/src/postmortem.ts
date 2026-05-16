@@ -19,8 +19,8 @@ export function registerPostmortemHandler(opts: PostmortemHandlerOptions): () =>
   return hooks.registerVoid(
     'after_ticket_revision',
     async (payload: AfterTicketRevisionPayload) => {
+      const key = `postmortems/${payload.taskId}.md`;
       const shortId = payload.taskId.slice(0, 8);
-      const key = `postmortems/${shortId}.md`;
       const content = [
         `# ${shortId} — needs revision`,
         '',

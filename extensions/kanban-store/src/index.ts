@@ -894,13 +894,6 @@ export class KanbanStore {
     return rows.map(rowToComment);
   }
 
-  setMaxRetries(taskId: string, maxRetries: number): void {
-    const result = this.db
-      .prepare('UPDATE tasks SET max_retries = ?, updated_at = ? WHERE id = ?')
-      .run(maxRetries, Date.now(), taskId);
-    if (result.changes === 0) throw new Error(`setMaxRetries: task ${taskId} not found`);
-  }
-
   assign(taskId: string, assignee: string | null, actor = 'system'): Task {
     const now = Date.now();
     const tx = this.db.transaction((): Task => {

@@ -1,17 +1,7 @@
+import type { AutonomyTier, TrustPolicy } from '@ethosagent/types';
 import type { TeamMemberStats } from './index';
 
-export type AutonomyTier = 'probationary' | 'standard' | 'trusted';
-
-export interface TrustPolicy {
-  mode: 'flat' | 'tiered';
-  demotion?: 'gradual' | 'strict';
-  thresholds?: {
-    standard_min_completed?: number;
-    standard_min_ratio?: number;
-    trusted_min_completed?: number;
-    trusted_min_ratio?: number;
-  };
-}
+export type { AutonomyTier, TrustPolicy };
 
 const DEFAULTS = {
   standard_min_completed: 10,
