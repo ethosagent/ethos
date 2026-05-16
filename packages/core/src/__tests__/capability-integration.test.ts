@@ -31,6 +31,7 @@ const makeBackends = (): CapabilityBackends => ({
   secretsBackend: vi.fn().mockResolvedValue('secret-value'),
   storage: {
     read: vi.fn(),
+    readBytes: vi.fn(),
     write: vi.fn(),
     exists: vi.fn(),
     list: vi.fn(),

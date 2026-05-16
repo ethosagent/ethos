@@ -149,7 +149,7 @@ export class PlatformsRepository {
   }
 
   private entryToBotKey(fields: Record<string, string>, seed: string): string {
-    return fields['id'] ?? this.deriveBotKey(seed);
+    return fields.id ?? this.deriveBotKey(seed);
   }
 
   // ---------------------------------------------------------------------------
@@ -164,7 +164,7 @@ export class PlatformsRepository {
       const bindType = fields['bind.type'];
       const bindName = fields['bind.name'];
       if (!bindName || (bindType !== 'personality' && bindType !== 'team')) continue;
-      const token = fields['token'] ?? '';
+      const token = fields.token ?? '';
       const botKey = this.entryToBotKey(fields, token);
       result.push({
         botKey,
@@ -195,7 +195,7 @@ export class PlatformsRepository {
     const byIndex = this.parseTelegramIndices(passthrough);
     let targetIndex: number | undefined;
     for (const [idx, fields] of byIndex.entries()) {
-      const token = fields['token'] ?? '';
+      const token = fields.token ?? '';
       if (this.entryToBotKey(fields, token) === botKey) {
         targetIndex = idx;
         break;
@@ -238,13 +238,13 @@ export class PlatformsRepository {
       const bindType = fields['bind.type'];
       const bindName = fields['bind.name'];
       if (!bindName || (bindType !== 'personality' && bindType !== 'team')) continue;
-      const botToken = fields['botToken'] ?? '';
+      const botToken = fields.botToken ?? '';
       const botKey = this.entryToBotKey(fields, botToken);
       result.push({
         botKey,
         botTokenConfigured: botToken.length > 0,
-        appTokenConfigured: (fields['appToken'] ?? '').length > 0,
-        signingSecretConfigured: (fields['signingSecret'] ?? '').length > 0,
+        appTokenConfigured: (fields.appToken ?? '').length > 0,
+        signingSecretConfigured: (fields.signingSecret ?? '').length > 0,
         bind: { type: bindType, name: bindName },
       });
     }
@@ -282,7 +282,7 @@ export class PlatformsRepository {
     const byIndex = this.parseSlackIndices(passthrough);
     let targetIndex: number | undefined;
     for (const [idx, fields] of byIndex.entries()) {
-      const botToken = fields['botToken'] ?? '';
+      const botToken = fields.botToken ?? '';
       if (this.entryToBotKey(fields, botToken) === botKey) {
         targetIndex = idx;
         break;

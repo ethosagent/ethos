@@ -38,6 +38,13 @@ export class ScopedFsImpl implements ScopedFs {
     return content;
   }
 
+  async readBytes(path: string): Promise<Uint8Array> {
+    this.checkReach(path, this.readPaths, 'read');
+    const bytes = await this.storage.readBytes(path);
+    if (bytes === null) throw new Error(`File not found: ${path}`);
+    return bytes;
+  }
+
   async write(path: string, content: string | Uint8Array): Promise<void> {
     this.checkReach(path, this.writePaths, 'write');
     await this.storage.write(path, content);

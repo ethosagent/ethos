@@ -23,6 +23,9 @@ export interface WizardAnswers {
   model?: string;
   apiKey?: string;
   baseUrl?: string;
+  /** Azure-only: REST API version. Defaults applied downstream; this field
+   *  only carries an override entered during setup. */
+  apiVersion?: string;
   personality?: string;
   memory?: 'markdown' | 'vector';
   telegramToken?: string;

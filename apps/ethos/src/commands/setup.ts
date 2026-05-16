@@ -35,6 +35,7 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult 
           model: existingConfig.model,
           apiKey: existingConfig.apiKey,
           baseUrl: existingConfig.baseUrl,
+          apiVersion: existingConfig.apiVersion,
           personality: existingConfig.personality,
           memory: existingConfig.memory,
           telegramToken: existingConfig.telegramToken,
@@ -77,6 +78,7 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult 
       personality: answers.personality ?? 'researcher',
       memory: answers.memory,
       baseUrl: answers.baseUrl,
+      apiVersion: answers.apiVersion,
       providers: answers.providers
         ? await storeProviderSecrets(answers.providers, secrets)
         : undefined,
@@ -154,12 +156,21 @@ async function runReadlineFallback({
   console.log(`\n${c.cyan}${c.bold}ethos setup${c.reset}\n`);
 
   console.log(
-    `${c.dim}Supported providers: anthropic, openai-compat (OpenRouter / Ollama / Gemini)${c.reset}`,
+    `${c.dim}Supported providers: anthropic, openai-compat (OpenRouter / Ollama / Gemini), azure${c.reset}`,
   );
   const provider = (await ask(rl, 'Provider (anthropic): ')).trim() || 'anthropic';
 
-  const defaultModel = provider === 'anthropic' ? 'claude-opus-4-7' : 'openai/gpt-4o';
-  const model = (await ask(rl, `Model (${defaultModel}): `)).trim() || defaultModel;
+  const defaultModel =
+    provider === 'anthropic'
+      ? 'claude-opus-4-7'
+      : provider === 'azure'
+        ? 'gpt-5.4'
+        : 'openai/gpt-4o';
+  const modelPrompt =
+    provider === 'azure'
+      ? `Azure deployment name (${defaultModel}): `
+      : `Model (${defaultModel}): `;
+  const model = (await ask(rl, modelPrompt)).trim() || defaultModel;
 
   const apiKey = (await ask(rl, 'API key: ')).trim();
   if (!apiKey) {
@@ -169,7 +180,18 @@ async function runReadlineFallback({
   }
 
   let baseUrl: string | undefined;
-  if (provider !== 'anthropic') {
+  let apiVersion: string | undefined;
+  if (provider === 'azure') {
+    baseUrl = (
+      await ask(rl, 'Azure endpoint (e.g. https://my-resource.openai.azure.com): ')
+    ).trim();
+    if (!baseUrl) {
+      console.log(
+        `${c.yellow}Warning: no Azure endpoint entered. Edit ~/.ethos/config.yaml to add one.${c.reset}`,
+      );
+    }
+    apiVersion = (await ask(rl, 'API version (2024-10-21): ')).trim() || undefined;
+  } else if (provider !== 'anthropic') {
     baseUrl =
       (await ask(rl, 'Base URL (https://openrouter.ai/api/v1): ')).trim() ||
       'https://openrouter.ai/api/v1';
@@ -190,7 +212,14 @@ async function runReadlineFallback({
     apiKeyRef = `\${secrets:${ref}}`;
   }
 
-  const config: EthosConfig = { provider, model, apiKey: apiKeyRef, personality, baseUrl };
+  const config: EthosConfig = {
+    provider,
+    model,
+    apiKey: apiKeyRef,
+    personality,
+    baseUrl,
+    apiVersion,
+  };
   await writeConfig(storage, config);
   await scaffoldEthosDir(storage);
 

@@ -115,6 +115,9 @@ export interface ProviderConfig {
   apiKey: string;
   model?: string;
   baseUrl?: string;
+  /** Azure-only: REST API version (e.g. `2024-10-21`). Required when
+   *  `provider === 'azure'`; ignored otherwise. */
+  apiVersion?: string;
 }
 
 export interface QuickCommandConfig {
@@ -158,6 +161,9 @@ export interface EthosConfig {
   /** Memory backend: 'markdown' (default) or 'vector' (semantic retrieval) */
   memory?: 'markdown' | 'vector';
   baseUrl?: string;
+  /** Azure-only: REST API version (e.g. `2024-10-21`). Required when
+   *  `provider === 'azure'`; ignored otherwise. */
+  apiVersion?: string;
   // Per-personality model overrides: maps personality ID → model ID string
   modelRouting?: Record<string, string>;
   /**
@@ -351,6 +357,7 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   ];
   if (config.memory) lines.push(`memory: ${config.memory}`);
   if (config.baseUrl) lines.push(`baseUrl: ${config.baseUrl}`);
+  if (config.apiVersion) lines.push(`apiVersion: ${config.apiVersion}`);
   if (config.modelRouting) {
     for (const [id, model] of Object.entries(config.modelRouting)) {
       lines.push(`modelRouting.${id}: ${model}`);
@@ -662,6 +669,7 @@ function parseConfigYaml(src: string): EthosConfig {
         apiKey: p.apiKey ?? '',
         model: p.model,
         baseUrl: p.baseUrl,
+        apiVersion: p.apiVersion,
       };
     })
     .filter((p): p is ProviderConfig => p !== null);
@@ -697,6 +705,7 @@ function parseConfigYaml(src: string): EthosConfig {
     personality: kv.personality ?? 'researcher',
     memory: kv.memory === 'vector' ? 'vector' : kv.memory === 'markdown' ? 'markdown' : undefined,
     baseUrl: kv.baseUrl,
+    apiVersion: kv.apiVersion,
     modelRouting: Object.keys(modelRouting).length > 0 ? modelRouting : undefined,
     activeContext,
     providers: providers.length > 0 ? providers : undefined,

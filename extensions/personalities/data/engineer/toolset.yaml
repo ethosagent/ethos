@@ -5,6 +5,8 @@
 - search_files
 - web_search
 - web_extract
+- vision_analyze
+- image_generate
 - execute_code
 - run_tests
 - lint

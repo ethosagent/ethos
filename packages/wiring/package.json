@@ -24,6 +24,7 @@
   "dependencies": {
     "@ethosagent/core": "workspace:*",
     "@ethosagent/llm-anthropic": "workspace:*",
+    "@ethosagent/llm-azure": "workspace:*",
     "@ethosagent/observability-sqlite": "workspace:*",
     "@ethosagent/llm-openai-compat": "workspace:*",
     "@ethosagent/memory-markdown": "workspace:*",

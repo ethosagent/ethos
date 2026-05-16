@@ -51,6 +51,10 @@ function boundaryStorage(allowed: string[]): Storage {
       denyRead(p);
       return null;
     },
+    async readBytes(p) {
+      denyRead(p);
+      return null;
+    },
     async exists(p) {
       denyRead(p);
       return false;

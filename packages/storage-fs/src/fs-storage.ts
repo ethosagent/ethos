@@ -26,6 +26,16 @@ export class FsStorage implements Storage {
     }
   }
 
+  async readBytes(path: string): Promise<Uint8Array | null> {
+    try {
+      // No encoding → readFile returns a Buffer (which is a Uint8Array).
+      return await readFile(path);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw err;
+    }
+  }
+
   async exists(path: string): Promise<boolean> {
     try {
       await stat(path);

@@ -623,6 +623,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/llm-azure:
+    dependencies:
+      '@ethosagent/llm-openai-compat':
+        specifier: workspace:*
+        version: link:../llm-openai-compat
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      openai:
+        specifier: ^6.37.0
+        version: 6.37.0(ws@8.20.0)(zod@4.4.3)
+
   extensions/llm-openai-compat:
     dependencies:
       '@ethosagent/types':
@@ -1178,6 +1190,9 @@ importers:
       '@ethosagent/llm-anthropic':
         specifier: workspace:*
         version: link:../../extensions/llm-anthropic
+      '@ethosagent/llm-azure':
+        specifier: workspace:*
+        version: link:../../extensions/llm-azure
       '@ethosagent/llm-openai-compat':
         specifier: workspace:*
         version: link:../../extensions/llm-openai-compat

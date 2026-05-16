@@ -17,12 +17,20 @@ interface ModelCapability {
 // each model id explicitly to keep the gate deterministic.
 const CAPABILITIES: Record<string, ModelCapability> = {
   // Anthropic
+  'claude-opus-4-6': { vision: true, pdf: true },
   'claude-opus-4-7': { vision: true, pdf: true },
   'claude-sonnet-4-6': { vision: true, pdf: true },
 
-  // OpenAI
+  // OpenAI / Azure OpenAI / Azure AI Foundry
+  // Azure deployment names follow the base-model id by convention; these
+  // entries cover both direct OpenAI and Azure-Foundry-served deployments
+  // that match the canonical name. PDF support pairs with vision for the
+  // 5.x family (Microsoft Foundry docs).
   'gpt-5': { vision: true, pdf: true },
   'gpt-5-mini': { vision: true, pdf: true },
+  'gpt-5.4': { vision: true, pdf: true },
+  'gpt-5.4-pro': { vision: true, pdf: true },
+  'gpt-5.4-mini': { vision: true, pdf: true },
 
   // Google
   'gemini-2.5-pro': { vision: true, pdf: true },

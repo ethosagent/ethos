@@ -41,6 +41,16 @@ export interface Storage {
   /** Read a file as utf-8 text. Returns null if the file doesn't exist. */
   read(path: string): Promise<string | null>;
 
+  /**
+   * Read a file as raw bytes. Returns null if the file doesn't exist.
+   * Distinct from `read` because UTF-8 decoding mangles binary payloads
+   * (JPEG / PNG / PDF magic bytes are not valid UTF-8 — Node replaces them
+   * with U+FFFD). Consumers reading attachments, images, or any non-text
+   * blob MUST use this method. The reach / boundary semantics are the same
+   * as `read`.
+   */
+  readBytes(path: string): Promise<Uint8Array | null>;
+
   /** True if the path exists (file or directory). */
   exists(path: string): Promise<boolean>;
 

@@ -15,6 +15,10 @@ function memStorage(): Storage {
     async read(p) {
       return files.has(p) ? (files.get(p) ?? null) : null;
     },
+    async readBytes(p) {
+      const s = files.get(p);
+      return s === undefined ? null : new TextEncoder().encode(s);
+    },
     async exists(p) {
       return files.has(p) || dirs.has(p);
     },

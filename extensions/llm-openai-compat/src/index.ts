@@ -188,7 +188,11 @@ const OPENAI_PRICING: Array<{ prefix: string; input: number; output: number }> =
   { prefix: 'mistral-small', input: 0.1, output: 0.3 },
 ];
 
-function estimateCostOpenAI(model: string, inputTokens: number, outputTokens: number): number {
+export function estimateCostOpenAI(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+): number {
   const p = OPENAI_PRICING.find((r) => model.toLowerCase().includes(r.prefix));
   if (!p) return 0; // unknown model — local/Ollama or unrecognised
   return (inputTokens * p.input + outputTokens * p.output) / 1_000_000;

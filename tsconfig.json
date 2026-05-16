@@ -9,6 +9,7 @@
       "@ethosagent/logger": ["./packages/logger/src"],
       "@ethosagent/core": ["./packages/core/src"],
       "@ethosagent/llm-anthropic": ["./extensions/llm-anthropic/src"],
+      "@ethosagent/llm-azure": ["./extensions/llm-azure/src"],
       "@ethosagent/llm-openai-compat": ["./extensions/llm-openai-compat/src"],
       "@ethosagent/memory-markdown": ["./extensions/memory-markdown/src"],
       "@ethosagent/personalities": ["./extensions/personalities/src"],

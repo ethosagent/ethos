@@ -14,6 +14,7 @@ import {
 } from '@ethosagent/core';
 import { autonomyTier, KanbanStore, type TrustPolicy } from '@ethosagent/kanban-store';
 import { AnthropicProvider, AuthRotatingProvider } from '@ethosagent/llm-anthropic';
+import { AzureOpenAIProvider } from '@ethosagent/llm-azure';
 import { OpenAICompatProvider } from '@ethosagent/llm-openai-compat';
 import { noopLogger } from '@ethosagent/logger';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
@@ -78,6 +79,9 @@ export interface WiringProviderConfig {
   apiKey: string;
   model?: string;
   baseUrl?: string;
+  /** Azure-only: REST API version (e.g. `2024-10-21`). Required when
+   *  `provider === 'azure'`; ignored otherwise. */
+  apiVersion?: string;
 }
 
 export interface WiringConfig {
@@ -87,6 +91,9 @@ export interface WiringConfig {
   personality?: string;
   memory?: 'markdown' | 'vector';
   baseUrl?: string;
+  /** Azure-only: REST API version (e.g. `2024-10-21`). Required when
+   *  `provider === 'azure'`; ignored otherwise. */
+  apiVersion?: string;
   /** Maps personality ID → model ID for per-personality model overrides. */
   modelRouting?: Record<string, string>;
   /** Anthropic key rotation pool. Empty / absent = single-key provider. */
@@ -197,14 +204,33 @@ function personalityWantsKanban(p: { toolset?: readonly string[] }): boolean {
 
 export { resolveKanbanDbPath } from './kanban-path';
 
+// Default Azure REST API version. Bump when the next stable GA version lands;
+// users override per-deployment via `apiVersion` in config.
+const AZURE_DEFAULT_API_VERSION = '2024-10-21';
+
 function createSingleProvider(cfg: {
   provider: string;
   model: string;
   apiKey: string;
   baseUrl?: string;
+  apiVersion?: string;
 }): LLMProvider {
   if (cfg.provider === 'anthropic') {
     return new AnthropicProvider({ apiKey: cfg.apiKey, model: cfg.model });
+  }
+  if (cfg.provider === 'azure') {
+    if (!cfg.baseUrl) {
+      throw new Error(
+        'Azure provider requires `baseUrl` set to the resource endpoint (e.g. https://my-resource.openai.azure.com).',
+      );
+    }
+    return new AzureOpenAIProvider({
+      name: cfg.provider,
+      model: cfg.model,
+      apiKey: cfg.apiKey,
+      endpoint: cfg.baseUrl,
+      apiVersion: cfg.apiVersion ?? AZURE_DEFAULT_API_VERSION,
+    });
   }
   return new OpenAICompatProvider({
     name: cfg.provider,
@@ -237,6 +263,9 @@ function buildCompressionSummarizer(
     model: aux?.model ?? config.model,
     apiKey: aux?.apiKey ?? config.apiKey,
     ...((aux?.baseUrl ?? config.baseUrl) ? { baseUrl: aux?.baseUrl ?? config.baseUrl } : {}),
+    // Aux block inherits apiVersion from the primary; per-aux override is not
+    // wired yet (add a field on `auxiliaryCompression` when a user needs it).
+    ...(config.apiVersion ? { apiVersion: config.apiVersion } : {}),
   });
   return async (middle, targetTokens) => {
     const startedAt = Date.now();
@@ -298,13 +327,17 @@ export async function createLLM(config: WiringConfig): Promise<LLMProvider> {
         provider: p.provider,
         model: p.model ?? config.model,
         apiKey: p.apiKey,
-        baseUrl: p.baseUrl,
+        ...(p.baseUrl !== undefined ? { baseUrl: p.baseUrl } : {}),
+        ...(p.apiVersion !== undefined ? { apiVersion: p.apiVersion } : {}),
       }),
     );
     return new ChainedProvider(instances);
   }
 
-  // Single provider (legacy path + rotation keys).
+  // Anthropic rotation pool is provider-specific (rotates across API keys for
+  // the same model). Handled inline; everything else goes through
+  // `createSingleProvider` so Azure / OpenAI-compat / future providers share
+  // one construction path.
   if (config.provider === 'anthropic') {
     const rotation = config.rotationKeys ?? [];
     if (rotation.length > 0) {
@@ -320,13 +353,13 @@ export async function createLLM(config: WiringConfig): Promise<LLMProvider> {
         config.model,
       );
     }
-    return new AnthropicProvider({ apiKey: config.apiKey, model: config.model });
   }
-  return new OpenAICompatProvider({
-    name: config.provider,
+  return createSingleProvider({
+    provider: config.provider,
     model: config.model,
     apiKey: config.apiKey,
-    baseUrl: config.baseUrl ?? 'https://openrouter.ai/api/v1',
+    ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
+    ...(config.apiVersion !== undefined ? { apiVersion: config.apiVersion } : {}),
   });
 }
 
@@ -505,6 +538,8 @@ export async function createAgentLoop(
           ...((auxVisionConfig.baseUrl ?? config.baseUrl)
             ? { baseUrl: auxVisionConfig.baseUrl ?? config.baseUrl }
             : {}),
+          // Aux vision inherits apiVersion from the primary; see auxiliaryCompression.
+          ...(config.apiVersion ? { apiVersion: config.apiVersion } : {}),
         })
       : null;
   for (const tool of createVisionTools({

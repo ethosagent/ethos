@@ -162,17 +162,15 @@ async function readFromPath(filePath: string, ctx: ResolveContext): Promise<Buff
   // too, but we resolve relative paths against workingDir here.
   const absolutePath = normalizeAbsolute(filePath, ctx.workingDir);
 
-  // ScopedFs.read() does boundary checking AND reading in one call:
-  // - throws PATH_NOT_REACHABLE if outside the personality allowlist
-  // - throws "File not found" if the file doesn't exist on disk
-  //
-  // The returned string is decoded back to binary via latin1 — ScopedFs
-  // returns a string, but for binary payloads (images, PDFs) the underlying
-  // implementation must use latin1 encoding so the 1:1 byte mapping round-
-  // trips without loss. UTF-8 would replace non-UTF-8 sequences with U+FFFD.
+  // Binary read via ScopedFs.readBytes — gates against the personality
+  // read-reach allowlist AND returns raw bytes (no UTF-8 decode). The
+  // legacy `read()` path returned a decoded string + `Buffer.from(..., 'latin1')`
+  // round-trip; that broke for any file whose bytes aren't valid UTF-8
+  // (every JPEG/PNG/PDF), because Node replaced bad sequences with U+FFFD
+  // before the tool ever saw them.
   try {
-    const content = await ctx.scopedFs.read(absolutePath);
-    return Buffer.from(content, 'latin1');
+    const bytes = await ctx.scopedFs.readBytes(absolutePath);
+    return Buffer.from(bytes);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('PATH_NOT_REACHABLE') || msg.includes('File not found')) {

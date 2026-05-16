@@ -51,6 +51,13 @@ export interface ScopedFsEntry {
 
 export interface ScopedFs {
   read(path: string): Promise<string>;
+  /**
+   * Read a file as raw bytes. Throws when the path is outside the personality
+   * read allowlist or the file does not exist. Distinct from `read` because
+   * UTF-8 decoding mangles binary payloads (JPEG / PNG / PDF magic bytes are
+   * not valid UTF-8). Use for attachments and any non-text blob.
+   */
+  readBytes(path: string): Promise<Uint8Array>;
   write(path: string, content: string | Uint8Array): Promise<void>;
   exists(path: string): Promise<boolean>;
   list(path: string): Promise<string[]>;

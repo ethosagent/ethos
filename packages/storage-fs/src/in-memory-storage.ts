@@ -90,6 +90,19 @@ export class InMemoryStorage implements Storage {
       : new TextDecoder('utf-8').decode(node.content);
   }
 
+  async readBytes(path: string): Promise<Uint8Array | null> {
+    const node = this.getNode(path);
+    if (!node) return null;
+    if (node.type === 'dir') {
+      const err = new Error(`EISDIR: illegal operation on a directory, read '${path}'`);
+      (err as NodeJS.ErrnoException).code = 'EISDIR';
+      throw err;
+    }
+    // String-stored content round-trips through utf-8; binary-stored content
+    // is returned verbatim. Mirrors the asymmetry in `write`.
+    return typeof node.content === 'string' ? new TextEncoder().encode(node.content) : node.content;
+  }
+
   async exists(path: string): Promise<boolean> {
     return this.nodes.has(path);
   }

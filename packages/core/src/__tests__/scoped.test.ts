@@ -107,6 +107,7 @@ describe('ScopedFetchImpl', () => {
 describe('ScopedFsImpl', () => {
   const makeStorage = () => ({
     read: vi.fn(),
+    readBytes: vi.fn(),
     write: vi.fn(),
     exists: vi.fn(),
     list: vi.fn(),

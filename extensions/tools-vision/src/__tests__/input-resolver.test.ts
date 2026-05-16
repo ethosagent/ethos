@@ -73,6 +73,11 @@ class FakeScopedFs implements ScopedFs {
     if (!buf) throw new Error(`File not found: ${path}`);
     return buf.toString('latin1');
   }
+  async readBytes(path: string): Promise<Uint8Array> {
+    const buf = this.files.get(path);
+    if (!buf) throw new Error(`File not found: ${path}`);
+    return buf;
+  }
   async write(): Promise<void> {}
   async exists(path: string): Promise<boolean> {
     return this.files.has(path);
@@ -92,6 +97,9 @@ class FakeScopedFs implements ScopedFs {
 /** ScopedFs that always rejects with PATH_NOT_REACHABLE. */
 class BoundaryScopedFs implements ScopedFs {
   async read(path: string): Promise<string> {
+    throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
+  }
+  async readBytes(path: string): Promise<Uint8Array> {
     throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
   }
   async write(): Promise<void> {}
@@ -125,6 +133,19 @@ function realScopedFs(allowedPrefixes: string[]): ScopedFs {
       if (!allowed) throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
       try {
         return readFileSync(path, 'latin1');
+      } catch {
+        throw new Error(`File not found: ${path}`);
+      }
+    },
+    async readBytes(path: string): Promise<Uint8Array> {
+      const { normalize, resolve } = await import('node:path');
+      const canonical = normalize(resolve(path));
+      const allowed = prefixes.some(
+        (pfx) => canonical === pfx.slice(0, -1) || canonical.startsWith(pfx),
+      );
+      if (!allowed) throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
+      try {
+        return readFileSync(path);
       } catch {
         throw new Error(`File not found: ${path}`);
       }

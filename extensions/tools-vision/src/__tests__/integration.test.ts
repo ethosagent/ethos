@@ -60,6 +60,13 @@ const latin1Storage: Storage = {
       return null;
     }
   },
+  async readBytes(path: string) {
+    try {
+      return readFileSync(path);
+    } catch {
+      return null;
+    }
+  },
   async write() {},
   async exists(path: string) {
     return existsSync(path);
@@ -266,6 +273,77 @@ describe('vision_analyze — P3 wiring integration', () => {
       { type: 'text', text: 'what?' },
     ]);
     expect(calls[0]?.options.modelOverride).toBe('claude-opus-4-7');
+  });
+
+  // Regression: a real JPEG (non-UTF-8 magic bytes) read via file_path through
+  // the REAL FsStorage. Previously vision_analyze read attachments via
+  // Storage.read() which decodes as UTF-8 — every JPEG/PNG/PDF byte sequence
+  // hit the U+FFFD replacement and the tool reported UNSUPPORTED_FILE_TYPE.
+  // This test would have failed against the old code path; the latin1Storage
+  // mock in other tests papered over the bug.
+  it('reads a real JPEG via file_path through FsStorage (binary round-trip)', async () => {
+    const { FsStorage } = await import('@ethosagent/storage-fs');
+    const personalityToolset = ['vision_analyze'];
+
+    // Minimal valid JFIF JPEG: SOI + APP0(JFIF) + EOI. The 0xFF bytes are
+    // not valid UTF-8, so the old utf-8 decode would have replaced them
+    // with U+FFFD and the magic-byte sniff would have failed.
+    const realJpeg = Buffer.from([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00,
+      0x60, 0x00, 0x60, 0x00, 0x00, 0xff, 0xd9,
+    ]);
+    const path = join(tmpDir, 'photo.jpg');
+    writeFileSync(path, realJpeg);
+
+    const calls: StubCall[] = [];
+    const provider = makeStubProvider(
+      [
+        { type: 'text_delta', text: 'a tiny JFIF stub' },
+        usageChunk(50, 4, 0.0001),
+        { type: 'done', finishReason: 'end_turn' },
+      ],
+      calls,
+    );
+
+    // Build a registry rooted on the REAL FsStorage — exercises the path the
+    // gateway uses in production. The previous tests in this file use a
+    // hand-rolled latin1Storage mock that papered over the encoding bug.
+    const registry = new DefaultToolRegistry({
+      storage: new FsStorage(),
+      personalityFsReach: { read: ['/'], write: ['/'] },
+    });
+    const tools = createVisionTools({
+      resolveProvider: (model) => (model === 'claude-opus-4-7' ? provider : null),
+      defaultModel: 'claude-opus-4-7',
+    });
+    for (const t of tools) registry.register(t);
+
+    const results = await registry.executeParallel(
+      [
+        {
+          toolCallId: 'tc-jpg',
+          name: 'vision_analyze',
+          args: { file_path: path, prompt: 'describe' },
+        },
+      ],
+      makeCtx(tmpDir),
+      personalityToolset,
+    );
+
+    const r = results[0]?.result;
+    if (!r?.ok) throw new Error(`expected ok result, got ${JSON.stringify(r)}`);
+
+    // The provider received the image block with the unmangled JPEG bytes
+    // base64-encoded. Any UTF-8 decode in the read path would have replaced
+    // 0xFF/0xD8/0xE0/0xD9 with the U+FFFD bytes (EF BF BD) and the base64
+    // would not match the original.
+    const content = calls[0]?.messages[0]?.content;
+    if (!Array.isArray(content)) throw new Error('expected content array');
+    expect(content[0]).toEqual({
+      type: 'image',
+      mediaType: 'image/jpeg',
+      data: realJpeg.toString('base64'),
+    });
   });
 
   it('rejects vision_analyze when the personality toolset omits it', async () => {

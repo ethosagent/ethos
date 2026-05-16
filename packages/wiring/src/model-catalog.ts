@@ -66,6 +66,54 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     label: 'Kimi K2',
     contextWindow: 131_072,
   },
+  // Azure AI Foundry — source: https://ai.azure.com/catalog/models
+  // The `modelId` is the deployment name in Azure. By convention Azure admins
+  // name a deployment after the base model. If yours uses a custom name
+  // (e.g. `prod-chat-v2`), pick any entry here and edit `model:` in
+  // ~/.ethos/config.yaml. Context windows are nominal; verify per-deployment.
+  {
+    providerId: 'azure',
+    modelId: 'gpt-5.4',
+    label: 'frontier, complex work',
+    contextWindow: 200_000,
+    default: true,
+  },
+  {
+    providerId: 'azure',
+    modelId: 'gpt-5.4-pro',
+    label: 'most capable frontier',
+    contextWindow: 200_000,
+  },
+  {
+    providerId: 'azure',
+    modelId: 'gpt-5.4-mini',
+    label: 'compact, cost-efficient',
+    contextWindow: 128_000,
+  },
+  {
+    providerId: 'azure',
+    modelId: 'gpt-5.4-nano',
+    label: 'ultra-efficient at scale',
+    contextWindow: 128_000,
+  },
+  {
+    providerId: 'azure',
+    modelId: 'claude-opus-4-6',
+    label: 'Claude Opus on Azure',
+    contextWindow: 1_000_000,
+  },
+  {
+    providerId: 'azure',
+    modelId: 'claude-sonnet-4-6',
+    label: 'Claude Sonnet on Azure',
+    contextWindow: 1_000_000,
+  },
+  {
+    providerId: 'azure',
+    modelId: 'DeepSeek-V4-Pro',
+    label: 'reasoning MoE',
+    contextWindow: 1_000_000,
+  },
   // Gemini
   {
     providerId: 'gemini',

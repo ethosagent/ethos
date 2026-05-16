@@ -40,6 +40,14 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     signupUrl: 'https://openrouter.ai',
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
   },
+  {
+    id: 'azure',
+    label: 'Azure OpenAI',
+    description: 'OpenAI models via your Azure resource — deployment name = model',
+    authType: 'api-key',
+    costType: 'api-billing',
+    signupUrl: 'https://portal.azure.com',
+  },
   // Coming soon
   {
     id: 'gemini',

@@ -63,6 +63,11 @@ export class ScopedStorage implements Storage {
     return this.inner.read(path);
   }
 
+  async readBytes(path: string): Promise<Uint8Array | null> {
+    this.check(path, 'read');
+    return this.inner.readBytes(path);
+  }
+
   async exists(path: string): Promise<boolean> {
     this.check(path, 'read');
     return this.inner.exists(path);

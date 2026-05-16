@@ -136,6 +136,7 @@ describe('resolveCapabilities', () => {
   it('fs_reach with explicit paths creates ScopedFsImpl', () => {
     const storage = {
       read: vi.fn(),
+      readBytes: vi.fn(),
       write: vi.fn(),
       exists: vi.fn(),
       list: vi.fn(),
@@ -162,6 +163,7 @@ describe('resolveCapabilities', () => {
   it('fs_reach with from-personality uses personalityFsReach paths', () => {
     const storage = {
       read: vi.fn(),
+      readBytes: vi.fn(),
       write: vi.fn(),
       exists: vi.fn(),
       list: vi.fn(),
@@ -212,6 +214,7 @@ describe('resolveCapabilities', () => {
   it('all capabilities together populates all fields', () => {
     const storage = {
       read: vi.fn(),
+      readBytes: vi.fn(),
       write: vi.fn(),
       exists: vi.fn(),
       list: vi.fn(),
@@ -253,6 +256,7 @@ describe('resolveCapabilities', () => {
   it('attachments with fs_reach extends ScopedFs read paths with attachment cache dirs', async () => {
     const storage = {
       read: vi.fn().mockResolvedValue('content'),
+      readBytes: vi.fn(),
       write: vi.fn(),
       exists: vi.fn(),
       list: vi.fn(),
@@ -297,16 +301,17 @@ describe('resolveCapabilities', () => {
     expect(result.scopedFs).toBeInstanceOf(ScopedFsImpl);
     expect(result.attachments).toBeDefined();
     // The ScopedFs should allow reading from the attachment cache directory
-    await expect(result.scopedFs!.read('/tmp/ethos-cache/sess1/photo.jpg')).resolves.toBe(
+    await expect(result.scopedFs?.read('/tmp/ethos-cache/sess1/photo.jpg')).resolves.toBe(
       'content',
     );
     // The original personality read path should still work
-    await expect(result.scopedFs!.read('/data/file.txt')).resolves.toBe('content');
+    await expect(result.scopedFs?.read('/data/file.txt')).resolves.toBe('content');
   });
 
   it('attachments without fs_reach creates read-only ScopedFs for attachment dirs', async () => {
     const storage = {
       read: vi.fn().mockResolvedValue('content'),
+      readBytes: vi.fn(),
       write: vi.fn(),
       exists: vi.fn(),
       list: vi.fn(),
@@ -347,11 +352,11 @@ describe('resolveCapabilities', () => {
     expect(result.scopedFs).toBeInstanceOf(ScopedFsImpl);
     expect(result.attachments).toBeDefined();
     // Can read from the attachment cache directory
-    await expect(result.scopedFs!.read('/tmp/ethos-cache/sess1/photo.jpg')).resolves.toBe(
+    await expect(result.scopedFs?.read('/tmp/ethos-cache/sess1/photo.jpg')).resolves.toBe(
       'content',
     );
     // Cannot write (read-only)
-    await expect(result.scopedFs!.write('/tmp/ethos-cache/sess1/other.jpg', 'x')).rejects.toThrow(
+    await expect(result.scopedFs?.write('/tmp/ethos-cache/sess1/other.jpg', 'x')).rejects.toThrow(
       'PATH_NOT_REACHABLE',
     );
   });
@@ -359,6 +364,7 @@ describe('resolveCapabilities', () => {
   it('attachments with non-file URLs do not extend ScopedFs reach', () => {
     const storage = {
       read: vi.fn(),
+      readBytes: vi.fn(),
       write: vi.fn(),
       exists: vi.fn(),
       list: vi.fn(),
