@@ -19,8 +19,8 @@ import {
   opencode,
   zed,
 } from '@ethosagent/mcp-server';
-import { ethosDir, readRawConfig } from '../config';
-import { createAgentLoop, getStorage } from '../wiring';
+import { ethosDir, readConfig } from '../config';
+import { createAgentLoop, getSecretsResolver, getStorage } from '../wiring';
 
 const CLIENTS: ClientAdapter[] = [claudeDesktop, cursor, opencode, continueClient, zed];
 
@@ -60,7 +60,7 @@ export async function runMcp(argv: string[]): Promise<void> {
 
 async function runServe(): Promise<void> {
   const storage = getStorage();
-  const config = await readRawConfig(storage);
+  const config = await readConfig(storage, getSecretsResolver());
   if (!config) {
     // Must go to stderr — stdout must remain pure JSON-RPC
     process.stderr.write(

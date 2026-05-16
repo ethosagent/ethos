@@ -89,7 +89,11 @@ describe('FileSecretsResolver', () => {
     });
 
     it('rejects Windows absolute path', async () => {
-      await expect(resolver.get('C:\\secrets')).rejects.toThrow('absolute');
+      await expect(resolver.get('C:\\secrets')).rejects.toThrow('backslash');
+    });
+
+    it('rejects backslash traversal', async () => {
+      await expect(resolver.get('..\\outside')).rejects.toThrow('backslash');
     });
   });
 });

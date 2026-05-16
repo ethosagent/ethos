@@ -27,7 +27,7 @@ async function resolveSecretValue(value: string, secrets: SecretsResolver): Prom
         `Secret not found: ${ref}. Run 'ethos secrets set ${ref} <value>' to store it.`,
       );
     }
-    resolved = resolved.replace(m[0], secret);
+    resolved = resolved.replace(m[0], () => secret);
   }
   return resolved;
 }
