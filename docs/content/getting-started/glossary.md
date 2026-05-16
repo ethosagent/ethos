@@ -31,6 +31,10 @@ The streaming event type. Eight variants: `text_delta`, `thinking_delta`, `tool_
 
 One user message in, one streamed response out. A turn may include multiple [tool](#tool) calls executed in parallel, multiple [hook](#hook) invocations, and one or more LLM completions. A session is a sequence of turns.
 
+### LLM provider {#llm-provider}
+
+The abstraction the [AgentLoop](#agent-loop) calls to perform inference. Implements `LLMProvider` from `@ethosagent/types`: a `name`, a `model` id, and a streaming `complete()` method that returns `AsyncIterable<CompletionChunk>`. Built-ins cover Anthropic, OpenAI-compatible endpoints (OpenRouter, Ollama, Gemini), and Azure OpenAI; custom providers ship via plugin and register through `registerLLMProvider`. Personalities select a provider via the `provider:` field in `config.yaml` and route specific tiers via `model: { trivial, default, deep }`. See [Write an LLM provider plugin](../building/how-to/write-an-llm-provider-plugin.md).
+
 ## Personality {#personality}
 
 ### Personality {#personality}
