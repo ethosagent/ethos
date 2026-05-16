@@ -17,6 +17,9 @@ function validateRef(ref: string): void {
   if (ref.includes('\0')) {
     throw new Error('Secret ref must not contain NUL bytes');
   }
+  if (ref.includes('\\')) {
+    throw new Error(`Secret ref must not contain backslashes: ${ref}`);
+  }
   if (ref.startsWith('/') || /^[A-Za-z]:/.test(ref)) {
     throw new Error(`Secret ref must not be an absolute path: ${ref}`);
   }
@@ -52,7 +55,9 @@ export class FileSecretsResolver implements SecretsResolver {
 
   async delete(ref: SecretRef): Promise<void> {
     validateRef(ref);
-    await this.opts.storage.remove(join(this.opts.dir, ref)).catch(() => {});
+    await this.opts.storage.remove(join(this.opts.dir, ref)).catch((err: NodeJS.ErrnoException) => {
+      if (err.code !== 'ENOENT') throw err;
+    });
   }
 
   async list(prefix?: string): Promise<SecretRef[]> {
