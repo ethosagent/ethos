@@ -93,6 +93,9 @@ const TEST_SKILLS: Skill[] = [
     body: 'Review code for quality and correctness.',
     tags: ['code'],
     required_tools: ['read_file', 'terminal'],
+    rawFrontmatter: {},
+    dialect: 'agentskills',
+    mtimeMs: 0,
   },
 ];
 
@@ -244,7 +247,7 @@ describe('scaffold_personality', () => {
     );
 
     expect(result?.ok).toBe(false);
-    if (!result?.ok) {
+    if (result && !result.ok) {
       expect(result.error).toContain('kebab-case');
     }
   });
@@ -271,7 +274,7 @@ describe('scaffold_personality', () => {
     );
 
     expect(result?.ok).toBe(false);
-    if (!result?.ok) {
+    if (result && !result.ok) {
       expect(result.error).toContain('nonexistent_tool');
     }
   });
@@ -298,7 +301,7 @@ describe('scaffold_personality', () => {
     );
 
     expect(result?.ok).toBe(false);
-    if (!result?.ok) {
+    if (result && !result.ok) {
       expect(result.error).toContain('non-empty');
     }
   });
@@ -409,7 +412,7 @@ describe('scaffold_team', () => {
     );
 
     expect(result?.ok).toBe(false);
-    if (!result?.ok) {
+    if (result && !result.ok) {
       expect(result.error).toContain('Invalid team name');
     }
   });
@@ -432,7 +435,7 @@ describe('scaffold_team', () => {
     );
 
     expect(result?.ok).toBe(false);
-    if (!result?.ok) {
+    if (result && !result.ok) {
       expect(result.error).toContain('non-empty');
     }
   });
