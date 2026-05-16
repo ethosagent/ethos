@@ -5,6 +5,8 @@ import {
   ChainedProvider,
   ClarifyBridge,
   DefaultHookRegistry,
+  DefaultLLMProviderRegistry,
+  DefaultMemoryProviderRegistry,
   DefaultToolRegistry,
   EagerPrefetchPolicy,
   FileClarifyStore,
@@ -51,6 +53,7 @@ import type {
   GlobalMemoryStore,
   InjectionResult,
   LLMProvider,
+  LLMProviderFactoryContext,
   Logger,
   MemoryContext,
   MemoryEntryRef,
@@ -269,21 +272,46 @@ const SUMMARIZER_TIMEOUT_MS = 30_000;
 // throw here is caught by the engine's caller (`maybeCompact`), which ships
 // the un-compacted history and records a degradation event.
 function buildCompressionSummarizer(
+  registry: import('@ethosagent/types').LLMProviderRegistry,
   config: WiringConfig,
   observability: EthosObservability | undefined,
   log: Logger,
 ): SummarizerFn {
   const aux = config.auxiliaryCompression;
-  const provider = createSingleProvider({
-    provider: aux?.provider ?? config.provider,
-    model: aux?.model ?? config.model,
-    apiKey: aux?.apiKey ?? config.apiKey,
-    ...((aux?.baseUrl ?? config.baseUrl) ? { baseUrl: aux?.baseUrl ?? config.baseUrl } : {}),
-    // Aux block inherits apiVersion from the primary; per-aux override is not
-    // wired yet (add a field on `auxiliaryCompression` when a user needs it).
-    ...(config.apiVersion ? { apiVersion: config.apiVersion } : {}),
-  });
+  const providerName = aux?.provider ?? config.provider;
+  let cachedProvider: LLMProvider | undefined;
+
+  const getProvider = async (): Promise<LLMProvider> => {
+    if (cachedProvider) return cachedProvider;
+    const factory = registry.get(providerName);
+    if (!factory) {
+      throw new Error(
+        `LLM provider "${providerName}" is not registered (compression summarizer). ` +
+          `Available: ${registry.list().join(', ')}`,
+      );
+    }
+    const NOOP: import('@ethosagent/types').SecretsResolver = {
+      get: async () => null,
+      set: async () => {},
+      delete: async () => {},
+      list: async () => [],
+    };
+    cachedProvider = await factory({
+      config: {
+        provider: providerName,
+        model: aux?.model ?? config.model,
+        apiKey: aux?.apiKey ?? config.apiKey,
+        ...((aux?.baseUrl ?? config.baseUrl) ? { baseUrl: aux?.baseUrl ?? config.baseUrl } : {}),
+        ...(config.apiVersion ? { apiVersion: config.apiVersion } : {}),
+      },
+      secrets: config.secretsResolver ?? NOOP,
+      logger: log,
+    });
+    return cachedProvider;
+  };
+
   return async (middle, targetTokens) => {
+    const provider = await getProvider();
     const startedAt = Date.now();
     let text = '';
     let costUsd = 0;
@@ -379,6 +407,104 @@ export async function createLLM(config: WiringConfig): Promise<LLMProvider> {
   });
 }
 
+/**
+ * Registry-aware LLM creation — used internally by `createAgentLoop` after
+ * plugins have loaded. Falls through to the registry for each provider name,
+ * so plugin-contributed providers participate in chained failover.
+ */
+async function createLLMFromRegistry(
+  registry: import('@ethosagent/types').LLMProviderRegistry,
+  config: WiringConfig,
+  log: Logger,
+): Promise<LLMProvider> {
+  const secrets: import('@ethosagent/types').SecretsResolver = {
+    get: async () => null,
+    set: async () => {},
+    delete: async () => {},
+    list: async () => [],
+  };
+
+  const resolveOne = async (cfg: {
+    provider: string;
+    model: string;
+    apiKey: string;
+    baseUrl?: string;
+    apiVersion?: string;
+  }): Promise<LLMProvider> => {
+    const factory = registry.get(cfg.provider);
+    if (!factory) {
+      throw new Error(
+        `LLM provider "${cfg.provider}" is not registered. ` +
+          `Available: ${registry.list().join(', ')}`,
+      );
+    }
+    const provider = await factory({
+      config: cfg as unknown as Record<string, unknown>,
+      secrets: config.secretsResolver ?? secrets,
+      logger: log,
+    });
+    // Capability validation: LLMProvider requires supportsCaching,
+    // supportsThinking, and maxContextTokens. TypeScript enforces this for
+    // typed plugins. For JS plugins, a missing field would surface as
+    // undefined reads in the agent loop — fail-loud at resolution time.
+    if (
+      typeof provider.supportsCaching !== 'boolean' ||
+      typeof provider.supportsThinking !== 'boolean' ||
+      typeof provider.maxContextTokens !== 'number'
+    ) {
+      throw new Error(
+        `LLM provider "${cfg.provider}" is missing required capability declarations ` +
+          `(supportsCaching, supportsThinking, maxContextTokens). ` +
+          `These must be declared on the provider instance.`,
+      );
+    }
+    return provider;
+  };
+
+  if (config.providers && config.providers.length >= 2) {
+    const instances = await Promise.all(
+      config.providers.map((p) =>
+        resolveOne({
+          provider: p.provider,
+          model: p.model ?? config.model,
+          apiKey: p.apiKey,
+          ...(p.baseUrl !== undefined ? { baseUrl: p.baseUrl } : {}),
+          ...(p.apiVersion !== undefined ? { apiVersion: p.apiVersion } : {}),
+        }),
+      ),
+    );
+    return new ChainedProvider(instances);
+  }
+
+  // Anthropic rotation pool is provider-specific (rotates across API keys for
+  // the same model). Handled inline — rotation is an Anthropic concern, not a
+  // registry concern.
+  if (config.provider === 'anthropic') {
+    const rotation = config.rotationKeys ?? [];
+    if (rotation.length > 0) {
+      return new AuthRotatingProvider(
+        [
+          { id: 'primary', apiKey: config.apiKey, priority: 100 },
+          ...rotation.map((k, i) => ({
+            id: k.label ?? `key-${i + 1}`,
+            apiKey: k.apiKey,
+            priority: k.priority,
+          })),
+        ],
+        config.model,
+      );
+    }
+  }
+
+  return resolveOne({
+    provider: config.provider,
+    model: config.model,
+    apiKey: config.apiKey,
+    ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
+    ...(config.apiVersion !== undefined ? { apiVersion: config.apiVersion } : {}),
+  });
+}
+
 // Skill passthrough helpers live in a separate file so tests can import them
 // without pulling in the heavy plugin-loader / docker / mcp dependency chain.
 export { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
@@ -396,16 +522,72 @@ export async function createAgentLoop(
   const profile: WiringProfile = opts.profile ?? 'cli';
   const log: Logger = opts.logger ?? noopLogger;
 
-  const llm = await createLLM(config);
+  const NOOP_SECRETS: SecretsResolver = {
+    get: async () => null,
+    set: async () => {},
+    delete: async () => {},
+    list: async () => [],
+  };
 
-  const session = new SQLiteSessionStore(join(dataDir, 'sessions.db'));
-  // Personality memory uses eager prefetch: all content is injected at session
-  // start.  EagerPrefetchPolicy is a pass-through that makes the intent explicit.
-  const memory = new EagerPrefetchPolicy(
-    config.memory === 'vector'
-      ? new VectorMemoryProvider({ dir: dataDir })
-      : new MarkdownFileMemoryProvider({ dir: dataDir }),
-  );
+  // -------------------------------------------------------------------------
+  // Provider registries — created first so plugins can register into them.
+  // -------------------------------------------------------------------------
+
+  // LLM provider registry — built-ins registered here; plugins add more via
+  // registerLLMProvider. Built-in factories resolve the API key through
+  // SecretsResolver first (ref: `providers/<name>/apiKey`), falling back to
+  // the raw config value for backward compatibility.
+  const llmProviders = new DefaultLLMProviderRegistry();
+  llmProviders.register('anthropic', async ({ config: cfg, secrets }) => {
+    const apiKey = (await secrets.get('providers/anthropic/apiKey')) ?? (cfg.apiKey as string);
+    return new AnthropicProvider({ apiKey, model: cfg.model as string });
+  });
+  llmProviders.register('azure', async ({ config: cfg, secrets }) => {
+    if (!cfg.baseUrl) {
+      throw new Error(
+        'Azure provider requires `baseUrl` set to the resource endpoint ' +
+          '(e.g. https://my-resource.openai.azure.com).',
+      );
+    }
+    const apiKey = (await secrets.get('providers/azure/apiKey')) ?? (cfg.apiKey as string);
+    return new AzureOpenAIProvider({
+      name: 'azure',
+      model: cfg.model as string,
+      apiKey,
+      endpoint: cfg.baseUrl as string,
+      apiVersion: (cfg.apiVersion as string) ?? AZURE_DEFAULT_API_VERSION,
+    });
+  });
+  const openaiCompatFactory = async ({ config: cfg, secrets }: LLMProviderFactoryContext) => {
+    const providerName = (cfg.provider as string) ?? 'openai-compat';
+    const apiKey =
+      (await secrets.get(`providers/${providerName}/apiKey`)) ?? (cfg.apiKey as string);
+    return new OpenAICompatProvider({
+      name: providerName,
+      model: cfg.model as string,
+      apiKey,
+      baseUrl: (cfg.baseUrl as string) ?? 'https://openrouter.ai/api/v1',
+    });
+  };
+  llmProviders.register('openai-compat', openaiCompatFactory);
+  for (const id of ['openai', 'openrouter', 'gemini', 'groq', 'deepseek', 'ollama']) {
+    llmProviders.register(id, openaiCompatFactory);
+  }
+
+  // Memory provider registry — built-ins registered here; plugins add more via
+  // registerMemoryProvider.
+  const memoryProviders = new DefaultMemoryProviderRegistry();
+  memoryProviders.register('markdown', ({ dataDir: dir }) => {
+    return new MarkdownFileMemoryProvider({ dir });
+  });
+  memoryProviders.register('vector', ({ dataDir: dir }) => {
+    return new VectorMemoryProvider({ dir });
+  });
+
+  // -------------------------------------------------------------------------
+  // Personality + hooks + tools (infrastructure needed before plugin loading)
+  // -------------------------------------------------------------------------
+
   const personalities = await createPersonalityRegistry();
   await personalities.loadFromDirectory(join(dataDir, 'personalities'));
 
@@ -466,7 +648,7 @@ export async function createAgentLoop(
   for (const tool of createFileTools()) tools.register(tool);
   for (const tool of createTerminalTools()) tools.register(tool);
   for (const tool of createWebTools()) tools.register(tool);
-  for (const tool of createMemoryTools(memory, session)) tools.register(tool);
+  // Memory tools are registered after plugin loading (they need `memory`).
   // One InMemoryTodoStore per process — lifetime tied to the AgentLoop; all
   // five todo_* tools share the same Map, keyed by ToolContext.sessionKey.
   const todoStore = new InMemoryTodoStore();
@@ -512,71 +694,7 @@ export async function createAgentLoop(
   }))
     tools.register(tool);
 
-  // tools-vision P3 — register `vision_analyze`. The capability table
-  // (`@ethosagent/tools-vision`'s pricing.ts) gates per-model support; the
-  // `resolveProvider` callback maps the resolved model id back to a concrete
-  // LLMProvider. v1 routes two models: the personality's main model
-  // (`config.model`) goes to the primary `llm`, and `auxiliary.vision.model`
-  // (when set) goes to a freshly built aux provider that mirrors the
-  // compression pattern — `provider`/`apiKey`/`baseUrl` default to the
-  // primary's values. Other models resolve to null, which the tool maps to
-  // VISION_NOT_SUPPORTED. The toolset gate filters out `vision_analyze`
-  // entirely for personalities that don't list it.
-  const auxVisionConfig = config.auxiliaryVision;
-  // Honesty gate: the resolver routes by model id. If auxiliary.vision.model
-  // matches the primary model but the user also set provider / apiKey /
-  // baseUrl overrides, the primary-branch always wins and those overrides
-  // silently never fire. Warn at boot so the misconfiguration surfaces
-  // instead of wasting the user's debug session — and skip building the
-  // dead auxiliary provider entirely, so its credentials are never even
-  // exercised (no cost, no surprise auth side-effects).
-  const auxVisionCollidesWithPrimary =
-    auxVisionConfig !== undefined && auxVisionConfig.model === config.model;
-  if (
-    auxVisionConfig &&
-    auxVisionCollidesWithPrimary &&
-    (auxVisionConfig.provider !== undefined ||
-      auxVisionConfig.apiKey !== undefined ||
-      auxVisionConfig.baseUrl !== undefined)
-  ) {
-    log.warn(
-      `auxiliary.vision.model ("${auxVisionConfig.model}") matches the primary model; ` +
-        'auxiliary.vision.provider/apiKey/baseUrl overrides will be ignored. ' +
-        'Either change the model id or drop the overrides.',
-    );
-  }
-  const auxVisionProvider: LLMProvider | null =
-    auxVisionConfig && !auxVisionCollidesWithPrimary
-      ? createSingleProvider({
-          provider: auxVisionConfig.provider ?? config.provider,
-          model: auxVisionConfig.model,
-          apiKey: auxVisionConfig.apiKey ?? config.apiKey,
-          ...((auxVisionConfig.baseUrl ?? config.baseUrl)
-            ? { baseUrl: auxVisionConfig.baseUrl ?? config.baseUrl }
-            : {}),
-          // Aux vision inherits apiVersion from the primary; see auxiliaryCompression.
-          ...(config.apiVersion ? { apiVersion: config.apiVersion } : {}),
-        })
-      : null;
-  for (const tool of createVisionTools({
-    resolveProvider: (model) => {
-      if (model === config.model) return llm;
-      if (auxVisionProvider && auxVisionConfig && model === auxVisionConfig.model) {
-        return auxVisionProvider;
-      }
-      return null;
-    },
-    defaultModel: config.model,
-    // Skip threading the aux model when it collides with the primary: the
-    // fallback chain already collapses (both right operands resolve to
-    // `defaultModel`), so the spread would be dead. Keep the call honest about
-    // whether an auxiliary model is actually in effect.
-    ...(auxVisionConfig && !auxVisionCollidesWithPrimary
-      ? { auxiliaryVisionModel: auxVisionConfig.model }
-      : {}),
-  })) {
-    tools.register(tool);
-  }
+  // Vision tools are registered after plugin loading (they need `llm`).
 
   if (!opts.disableDocker) {
     for (const tool of createCodeTools(sandbox)) tools.register(tool);
@@ -695,25 +813,113 @@ export async function createAgentLoop(
   // LLM summarizer instead of the placeholder.
   const { DefaultContextEngineRegistry } = await import('@ethosagent/core');
   const summarize = config.auxiliaryCompression?.model
-    ? buildCompressionSummarizer(config, opts.observability, log)
+    ? buildCompressionSummarizer(llmProviders, config, opts.observability, log)
     : undefined;
   const contextEngines = new DefaultContextEngineRegistry(summarize ? { summarize } : {});
-
-  // Per-personality memory provider registry. Built-in providers are always
-  // available; plugins can add more via registerMemoryProvider.
-  const memoryProviders = new Map<string, (options?: Record<string, unknown>) => MemoryProvider>();
-  memoryProviders.set('markdown', () => new MarkdownFileMemoryProvider({ dir: dataDir }));
-  memoryProviders.set('vector', () => new VectorMemoryProvider({ dir: dataDir }));
 
   // Discover and activate installed plugins. Plugins register tools/hooks/
   // injectors into the same registries the AgentLoop uses; the personality
   // gate (allowedPlugins) decides which actually fire per turn.
   const injectorPluginIds = new Map<ContextInjector, string>();
   const pluginLoader = new PluginLoader(
-    { tools, hooks, injectors, injectorPluginIds, personalities, contextEngines, memoryProviders },
+    {
+      tools,
+      hooks,
+      injectors,
+      injectorPluginIds,
+      personalities,
+      contextEngines,
+      llmProviders,
+      memoryProviders,
+    },
     { storage: new FsStorage(), logger: log },
   );
   await pluginLoader.loadAll();
+
+  // -------------------------------------------------------------------------
+  // Resolve LLM and memory AFTER plugin loading so plugin-contributed
+  // providers are available for config-level selection.
+  // -------------------------------------------------------------------------
+
+  const llm = await createLLMFromRegistry(llmProviders, config, log);
+
+  const session = new SQLiteSessionStore(join(dataDir, 'sessions.db'));
+  const memoryName = config.memory ?? 'markdown';
+  const memoryFactory = memoryProviders.get(memoryName);
+  if (!memoryFactory) {
+    throw new Error(
+      `Memory provider "${memoryName}" is not registered. ` +
+        `Available: ${memoryProviders.list().join(', ')}`,
+    );
+  }
+  const memory = new EagerPrefetchPolicy(
+    await memoryFactory({
+      config: {},
+      dataDir,
+      secrets: config.secretsResolver ?? NOOP_SECRETS,
+      logger: log,
+    }),
+  );
+  for (const tool of createMemoryTools(memory, session)) tools.register(tool);
+
+  // tools-vision P3 — register `vision_analyze`. The resolveProvider callback
+  // maps model id to a concrete LLMProvider.
+  const auxVisionConfig = config.auxiliaryVision;
+  const auxVisionCollidesWithPrimary =
+    auxVisionConfig !== undefined && auxVisionConfig.model === config.model;
+  if (
+    auxVisionConfig &&
+    auxVisionCollidesWithPrimary &&
+    (auxVisionConfig.provider !== undefined ||
+      auxVisionConfig.apiKey !== undefined ||
+      auxVisionConfig.baseUrl !== undefined)
+  ) {
+    log.warn(
+      `auxiliary.vision.model ("${auxVisionConfig.model}") matches the primary model; ` +
+        'auxiliary.vision.provider/apiKey/baseUrl overrides will be ignored. ' +
+        'Either change the model id or drop the overrides.',
+    );
+  }
+  let auxVisionProvider: LLMProvider | null = null;
+  if (auxVisionConfig && !auxVisionCollidesWithPrimary) {
+    const auxProviderName = auxVisionConfig.provider ?? config.provider;
+    const auxFactory = llmProviders.get(auxProviderName);
+    if (auxFactory) {
+      auxVisionProvider = await auxFactory({
+        config: {
+          provider: auxProviderName,
+          model: auxVisionConfig.model,
+          apiKey: auxVisionConfig.apiKey ?? config.apiKey,
+          ...((auxVisionConfig.baseUrl ?? config.baseUrl)
+            ? { baseUrl: auxVisionConfig.baseUrl ?? config.baseUrl }
+            : {}),
+          ...(config.apiVersion ? { apiVersion: config.apiVersion } : {}),
+        },
+        secrets: config.secretsResolver ?? NOOP_SECRETS,
+        logger: log,
+      });
+    } else {
+      log.warn(
+        `auxiliary.vision provider "${auxProviderName}" not registered; ` +
+          `vision_analyze won't use auxiliary model`,
+      );
+    }
+  }
+  for (const tool of createVisionTools({
+    resolveProvider: (model) => {
+      if (model === config.model) return llm;
+      if (auxVisionProvider && auxVisionConfig && model === auxVisionConfig.model) {
+        return auxVisionProvider;
+      }
+      return null;
+    },
+    defaultModel: config.model,
+    ...(auxVisionConfig && !auxVisionCollidesWithPrimary
+      ? { auxiliaryVisionModel: auxVisionConfig.model }
+      : {}),
+  })) {
+    tools.register(tool);
+  }
 
   // E3 — auto-trigger for skill evolution. Only fires when the active
   // personality opts in via `skill_evolution.enabled`. Built-ins
@@ -753,6 +959,26 @@ export async function createAgentLoop(
     });
   }
 
+  // Adapt the registry into the Map shape AgentLoop expects for per-personality
+  // memory resolution. Each factory gets the shared wiring context pre-bound.
+  const memoryProviderMap = new Map<
+    string,
+    (options?: Record<string, unknown>) => MemoryProvider | Promise<MemoryProvider>
+  >();
+  for (const name of memoryProviders.list()) {
+    const factory = memoryProviders.get(name);
+    if (factory) {
+      memoryProviderMap.set(name, (options) =>
+        factory({
+          config: options ?? {},
+          dataDir,
+          secrets: config.secretsResolver ?? NOOP_SECRETS,
+          logger: log,
+        }),
+      );
+    }
+  }
+
   const loop = new AgentLoop({
     llm,
     tools,
@@ -765,7 +991,7 @@ export async function createAgentLoop(
     storage: new FsStorage(),
     dataDir,
     modelRouting: config.modelRouting,
-    memoryProviders,
+    memoryProviders: memoryProviderMap,
     watcher,
     injectionClassifier,
     contextEngines,

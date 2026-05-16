@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   DefaultHookRegistry,
+  DefaultLLMProviderRegistry,
+  DefaultMemoryProviderRegistry,
   DefaultPersonalityRegistry,
   DefaultToolRegistry,
 } from '@ethosagent/core';
@@ -18,6 +20,8 @@ function makeRegistries() {
     injectors,
     injectorPluginIds: new Map<ContextInjector, string>(),
     personalities: new DefaultPersonalityRegistry(),
+    llmProviders: new DefaultLLMProviderRegistry(),
+    memoryProviders: new DefaultMemoryProviderRegistry(),
   };
 }
 

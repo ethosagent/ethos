@@ -220,7 +220,10 @@ export interface AgentLoopConfig {
    * 'vector', plugin-registered names) to factory functions. When a personality
    * declares `memory.provider`, AgentLoop resolves from this map.
    */
-  memoryProviders?: Map<string, (options?: Record<string, unknown>) => MemoryProvider>;
+  memoryProviders?: Map<
+    string,
+    (options?: Record<string, unknown>) => MemoryProvider | Promise<MemoryProvider>
+  >;
   /**
    * E4 — Pluggable context-engine registry. When unset, AgentLoop builds
    * a `DefaultContextEngineRegistry` (drop_oldest + semantic_summary
@@ -328,7 +331,7 @@ export class AgentLoop {
   private readonly modelRouting: Record<string, string>;
   private readonly memoryProviders: Map<
     string,
-    (options?: Record<string, unknown>) => MemoryProvider
+    (options?: Record<string, unknown>) => MemoryProvider | Promise<MemoryProvider>
   >;
   private readonly storage?: Storage;
   private readonly dataDir?: string;
@@ -582,8 +585,9 @@ export class AgentLoop {
     // Per-personality memory backend: if the personality declares a `memory.provider`,
     // resolve it from the registry. Otherwise fall back to the global provider.
     const activeMemory = personality.memory?.provider
-      ? (this.memoryProviders.get(personality.memory.provider)?.(personality.memory.options) ??
-        this.memory)
+      ? ((await this.memoryProviders.get(personality.memory.provider)?.(
+          personality.memory.options,
+        )) ?? this.memory)
       : this.memory;
 
     const memScopeId =
@@ -865,7 +869,9 @@ export class AgentLoop {
           model: this.llm.model,
           turnNumber: turnCount,
           requestId,
-          ...(includeContent ? { system: systemPrompt, tools: toolDefs, messages: llmMessages } : {}),
+          ...(includeContent
+            ? { system: systemPrompt, tools: toolDefs, messages: llmMessages }
+            : {}),
         },
         allowedPlugins,
       );
@@ -927,17 +933,13 @@ export class AgentLoop {
 
       try {
         armWatchdog();
-        const stream = this.llm.complete(
-          llmMessages,
-          toolDefs,
-          {
-            system: systemPrompt,
-            cacheSystemPrompt: true,
-            abortSignal: combinedSignal,
-            ...(iterModelOverride ? { modelOverride: iterModelOverride } : {}),
-            ...(cacheBreakpoints ? { cacheBreakpoints } : {}),
-          },
-        );
+        const stream = this.llm.complete(llmMessages, toolDefs, {
+          system: systemPrompt,
+          cacheSystemPrompt: true,
+          abortSignal: combinedSignal,
+          ...(iterModelOverride ? { modelOverride: iterModelOverride } : {}),
+          ...(cacheBreakpoints ? { cacheBreakpoints } : {}),
+        });
 
         for await (const chunk of stream) {
           if (abortSignal.aborted) break;
@@ -1049,7 +1051,9 @@ export class AgentLoop {
           requestId,
           finishReason: llmFinishReason,
           durationMs: llmDurationMs,
-          ...(includeContent ? { system: systemPrompt, tools: toolDefs, messages: llmMessages } : {}),
+          ...(includeContent
+            ? { system: systemPrompt, tools: toolDefs, messages: llmMessages }
+            : {}),
         },
         allowedPlugins,
       );
@@ -1071,12 +1075,14 @@ export class AgentLoop {
           cacheCreationTokens: llmCacheCreationTokens || undefined,
           estimatedCostUsd: llmEstimatedCostUsd || undefined,
           finishReason: llmFinishReason,
-          ...(includeContent ? {
-            system: systemPrompt,
-            tools: toolDefs,
-            messages: llmMessages,
-            responseText: chunkText,
-          } : {}),
+          ...(includeContent
+            ? {
+                system: systemPrompt,
+                tools: toolDefs,
+                messages: llmMessages,
+                responseText: chunkText,
+              }
+            : {}),
         });
       }
 

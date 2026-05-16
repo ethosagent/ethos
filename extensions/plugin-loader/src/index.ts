@@ -22,7 +22,7 @@ import {
   scanPluginCode,
 } from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
-import type { Logger, MemoryProvider, PlatformAdapter, Storage } from '@ethosagent/types';
+import type { Logger, PlatformAdapter, Storage } from '@ethosagent/types';
 
 export interface InstalledPluginManifest {
   /** The plugin's id — `ethos.id` if declared, else `name`. */
@@ -50,11 +50,6 @@ export interface PluginLoaderOptions {
   /** Logger for load-time failures. Defaults to a silent NoopLogger. */
   logger?: Logger;
   /**
-   * Called when an OpenClaw memory plugin registers a MemoryProvider.
-   * The wiring layer uses this to slot the provider into the memory pipeline.
-   */
-  onMemoryProviderRegistered?: (pluginId: string, provider: MemoryProvider) => void;
-  /**
    * Called when an OpenClaw channel plugin registers a PlatformAdapter.
    * The wiring layer uses this to register the adapter with the Gateway.
    */
@@ -74,7 +69,6 @@ export class PluginLoader {
     this.storage = opts.storage ?? new FsStorage();
     this.logger = opts.logger ?? noopLogger;
     this.compatCallbacks = {
-      onMemoryProvider: opts.onMemoryProviderRegistered,
       onPlatformAdapter: opts.onPlatformAdapterRegistered,
     };
   }
