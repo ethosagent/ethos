@@ -73,21 +73,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.96.0
         version: 0.96.0(zod@4.3.6)
-      '@ethosagent/agent-bridge':
-        specifier: workspace:*
-        version: link:../../packages/agent-bridge
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@ethosagent/logger':
-        specifier: workspace:*
-        version: link:../../packages/logger
-      '@ethosagent/safety-channel':
-        specifier: workspace:*
-        version: link:../../packages/safety/channel
-      '@ethosagent/safety-scanner':
-        specifier: workspace:*
-        version: link:../../packages/safety/scanner
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -137,6 +125,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@ethosagent/agent-bridge':
+        specifier: workspace:*
+        version: link:../../packages/agent-bridge
       '@ethosagent/agent-mesh':
         specifier: workspace:*
         version: link:../../extensions/agent-mesh
@@ -146,6 +137,9 @@ importers:
       '@ethosagent/gateway':
         specifier: workspace:*
         version: link:../../extensions/gateway
+      '@ethosagent/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
       '@ethosagent/mcp-server':
         specifier: workspace:*
         version: link:../mcp-server
@@ -158,6 +152,12 @@ importers:
       '@ethosagent/request-dump':
         specifier: workspace:*
         version: link:../../extensions/request-dump
+      '@ethosagent/safety-channel':
+        specifier: workspace:*
+        version: link:../../packages/safety/channel
+      '@ethosagent/safety-scanner':
+        specifier: workspace:*
+        version: link:../../packages/safety/scanner
       '@ethosagent/session-sqlite':
         specifier: workspace:*
         version: link:../../extensions/session-sqlite
