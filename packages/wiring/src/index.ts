@@ -73,6 +73,7 @@ import type {
 } from '@ethosagent/types';
 import { resolveKanbanDbPath } from './kanban-path';
 import { MODEL_CATALOG } from './model-catalog';
+import { fetchManifest, loadModelCatalog, manifestToEntries } from './model-catalog-loader';
 import type { EthosObservability } from './observability/ethos-observability';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
 import { capSummary, renderMiddleForSummary, SUMMARIZER_SYSTEM_PROMPT } from './summarizer-prompt';
@@ -187,6 +188,17 @@ export interface WiringConfig {
   /** File-backed secrets resolver. When provided, the capability backend
    *  resolves secrets from ~/.ethos/secrets/ before falling back to env vars. */
   secretsResolver?: SecretsResolver;
+  /**
+   * Remote model catalog configuration. When provided with `enabled !== false`,
+   * the wiring loads the remote catalog (with cache/fallback) and uses it
+   * instead of the static bundled MODEL_CATALOG.
+   */
+  modelCatalogConfig?: {
+    enabled?: boolean;
+    url?: string;
+    ttlHours?: number;
+    providers?: Record<string, { url: string }>;
+  };
 }
 
 export type WiringProfile = 'cli' | 'tui' | 'web' | 'acp';
@@ -836,10 +848,49 @@ export async function createAgentLoop(
   }
 
   const designStorage = capabilityBackends.storage ?? new FsStorage();
+
+  // Remote model catalog: load from network/cache when configured, else fall back
+  // to the bundled static array.
+  let resolvedModelCatalog = MODEL_CATALOG;
+  if (config.modelCatalogConfig && config.modelCatalogConfig.enabled !== false) {
+    try {
+      const catalogUrl =
+        config.modelCatalogConfig.url ?? 'https://ethos-agent.ai/api/model-catalog.json';
+      const ttlMs = (config.modelCatalogConfig.ttlHours ?? 24) * 3_600_000;
+      const cachePath = join(dataDir, 'cache', 'model-catalog.json');
+      const manifest = await loadModelCatalog({
+        url: catalogUrl,
+        ttlMs,
+        storage: designStorage,
+        cachePath,
+        logger: log,
+      });
+      if (config.modelCatalogConfig.providers) {
+        for (const [providerId, providerCfg] of Object.entries(
+          config.modelCatalogConfig.providers,
+        )) {
+          try {
+            const providerManifest = await fetchManifest(providerCfg.url);
+            if (providerManifest.providers[providerId]) {
+              manifest.providers[providerId] = providerManifest.providers[providerId];
+            }
+          } catch {
+            log.warn(
+              `model catalog: per-provider override for '${providerId}' failed; using main catalog`,
+            );
+          }
+        }
+      }
+      resolvedModelCatalog = manifestToEntries(manifest);
+    } catch {
+      log.warn('model catalog: remote load failed during wiring; using bundled snapshot');
+    }
+  }
+
   for (const tool of createPersonalityDesignTools({
     toolRegistry: tools,
     storage: designStorage,
-    modelCatalog: MODEL_CATALOG,
+    modelCatalog: resolvedModelCatalog,
     skills: [...skillPool.values()],
   })) {
     tools.register(tool);

@@ -9,6 +9,7 @@
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "build": "pnpm -r --filter='./packages/*' --filter='./extensions/*' --filter='./apps/*' run build",
+    "build:model-catalog": "tsx packages/wiring/scripts/build-model-catalog.ts",
     "build:web": "pnpm --filter @ethosagent/web build",
     "dev": "tsx apps/ethos/src/index.ts",
     "dev:web": "pnpm --filter @ethosagent/web dev",
@@ -23,7 +24,8 @@
     "clean": "find . -name 'dist' -not -path '*/node_modules/*' -exec rm -rf {} + 2>/dev/null; true",
     "docs": "pnpm --filter docs run start",
     "docs:build": "pnpm --filter docs run build",
-    "docs:check": "pnpm --filter docs run check"
+    "docs:check": "pnpm --filter docs run check",
+    "test:catalog-smoke": "bash scripts/smoke-test-catalog.sh"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.13",

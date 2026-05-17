@@ -10,6 +10,7 @@ export * from './injector';
 export * from './llm';
 export * from './logger';
 export * from './memory';
+export * from './model-catalog';
 export * from './observability';
 export * from './personality';
 export * from './platform';

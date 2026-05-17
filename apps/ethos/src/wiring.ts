@@ -184,6 +184,7 @@ export async function createAgentLoop(
     ...(config.auxiliary?.vision ? { auxiliaryVision: config.auxiliary.vision } : {}),
     ...(config.postmortems !== undefined ? { postmortems: config.postmortems } : {}),
     ...(config.trustPolicy !== undefined ? { trustPolicy: config.trustPolicy } : {}),
+    ...(config.modelCatalog ? { modelCatalogConfig: config.modelCatalog } : {}),
     secretsResolver: getSecretsResolver(),
   };
   return packageCreateAgentLoop(wiringConfig, {
