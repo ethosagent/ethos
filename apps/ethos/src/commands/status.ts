@@ -139,9 +139,7 @@ export async function runStatus(_args: string[] = []): Promise<void> {
       );
     } else {
       const latest = recent[recent.length - 1];
-      const when = latest
-        ? new Date(latest.timestamp).toISOString().slice(0, 19).replace('T', ' ')
-        : '';
+      const when = latest ? latest.ts.slice(0, 19).replace('T', ' ') : '';
       console.log(
         `${W} ${c.bold}errors${c.reset}        ${recent.length} recent entr${recent.length === 1 ? 'y' : 'ies'}` +
           (latest ? ` · latest ${c.dim}${when}${c.reset} ${c.cyan}${latest.code}${c.reset}` : '') +

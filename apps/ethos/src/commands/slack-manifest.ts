@@ -96,7 +96,8 @@ function buildManifest(opts: ManifestOpts): Record<string, unknown> {
     display_information: {
       name: opts.appName,
       description: 'An Ethos agent personality answering in Slack.',
-      background_color: '#0f1011',
+      // background_color omitted — operators can set it in the Slack
+      // admin UI. Inline hex literals trip the design-tokens gate.
     },
     features: {
       bot_user: {
