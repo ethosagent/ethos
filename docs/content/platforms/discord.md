@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-discord
 time: "15 min"
-updated: 2026-05-12
+updated: 2026-05-17
 ---
 
 ## Task
@@ -15,10 +15,39 @@ Run the Ethos [gateway](../getting-started/glossary.md#gateway) against a Discor
 ## Result
 
 - A Discord bot uses `Guilds`, `GuildMessages`, `MessageContent`, and `DirectMessages` intents and replies only to `@mentions` and DMs by default.
-- Channels, DMs, and threads each get their own session keyed `discord:<channel-id>` / `discord:<thread-id>` / `discord:<user-id>`.
+- Channels and DMs each get their own session keyed `discord:<channel-id>` / `discord:<user-id>`. Thread routing collapses to the parent channel today — see [What's shipped vs in flight](#whats-shipped-vs-in-flight).
 - Allowlisted senders reach the agent; the gateway emits audit events when others are blocked or context-stripped.
 - Outbound text is split into 2,000-character chunks, deduped over a 30-second window, and edited in place when the agent streams.
 - A second guild's bot runs from a sibling `~/.ethos/` without interfering with the first.
+
+## What's shipped vs in flight
+
+The Discord adapter lags Slack and Telegram on several gateway-contract features. The matrix below is the operational truth; the full parity roadmap lives at [`plan/completed/discord-parity.md`](https://github.com/ethosagent/ethos/blob/main/plan/completed/discord-parity.md).
+
+**Shipped today**
+
+- Token validation via `users/@me` (`extensions/platform-discord/src/validate.ts`).
+- `Guilds` / `GuildMessages` / `MessageContent` / `DirectMessages` intent setup.
+- Mention gate in guild channels (`mentionOnly: true` is the constructor default; pass `mentionOnly: false` to opt every message in — rarely what you want).
+- DM routing.
+- Outbound chunking to Discord's 2,000-char cap with edit-in-place streaming.
+- Clarify questions surface as buttons + modals, with the handler split across two modules — `extensions/platform-discord/src/clarify-blocks.ts` (component builders) and `extensions/platform-discord/src/clarify-interactions.ts` (button + modal callback handlers).
+- Outbound dedup via the shared `MessageDedupCache` (30s TTL).
+
+**Tracked on the parity plan, not yet shipped**
+
+| Feature | What Slack and Telegram have | What Discord does today |
+|---|---|---|
+| `botKey` on `InboundMessage` | Stamped by the adapter; gateway routes by `${platform}:${botKey}:${chatId}`. | Not populated. Multi-bot Discord deployments collapse to one lane. See [Run multiple bots](../using/how-to/run-multiple-bots.md). |
+| Thread routing | Slack uses `thread_ts`; Telegram uses forum topics. Each gets a distinct `threadId`. | Discord threads are flattened into the parent channel; replies land in the parent, not the thread. |
+| Inbound files / images | Slack and Telegram cache attachments and surface them as `InboundAttachment[]`. | Not implemented — vision and code-review personalities can't receive Discord attachments. |
+| Receipt reaction | Slack sets 👀 on inbound and clears it on first response; Telegram does the same with 👀. | Not implemented — users have no visual ack until the first streamed chunk lands. |
+| Slash commands | Slack registers a full command set (`/ethos ask`, `/help`, `/new`, etc.). | None registered — typing `/ethos` in a Discord server shows nothing. |
+| Channel modes | Slack supports `mention_only` / `thread_follow` / `all` per channel with persisted overrides. | Single static `mentionOnly` flag at adapter-construction time. |
+| Persistent store | Slack persists thread participation and per-channel mode overrides under `~/.ethos/slack/<botKey>/`. | No persistence — gateway restart loses every thread-follow decision. |
+| Approval surface | Slack renders the `before_ticket_complete` hook as an approval card. | Not implemented — Discord users can't participate in `kanban_complete` approvals. |
+
+The parity plan is shipping in nine independent moves; expect this matrix to shrink rather than grow. If you are operating a Discord-only deployment and one of the gaps blocks you, that's the gap to file against next.
 
 ## Prereqs
 
@@ -76,13 +105,13 @@ If `✓ Discord online` prints but the bot ignores every mention, **Message Cont
 | Source | `chatId` | `isDm` | `isGroupMention` | Effective session key |
 |---|---|---|---|---|
 | Server channel, bot is `@mentioned` | channel id | `false` | `true` | `discord:<channel-id>` |
-| Server thread, bot is `@mentioned` | thread id | `false` | `true` | `discord:<thread-id>` |
+| Server thread, bot is `@mentioned` | parent channel id | `false` | `true` | `discord:<channel-id>` (collapses with the parent channel — `threadId` routing is on the [parity plan](#whats-shipped-vs-in-flight)) |
 | Server channel, no mention | channel id | `false` | `false` | dropped when `mentionOnly: true` (the default) |
 | DM | DM channel id | `true` | `false` | `discord:<channel-id>` |
 
 The adapter strips the `<@botId>` prefix before passing text to the agent, so `@Ethos summarise the channel` arrives as `summarise the channel`.
 
-To respond to every message a server channel produces, construct the adapter with `mentionOnly: false`. This is rarely what you want — Discord rate limits scale per channel, and Ethos has no per-[personality](../getting-started/glossary.md#personality) cost cap that limits guild-wide replies.
+The `mentionOnly` flag is set at adapter-construction time in `apps/ethos/src/commands/gateway.ts` and defaults to `true`. To respond to every message a server channel produces, construct the adapter with `mentionOnly: false`. This is rarely what you want — Discord rate limits scale per channel, and Ethos has no per-[personality](../getting-started/glossary.md#personality) cost cap that limits guild-wide replies. There is no per-channel override today; that's the `channel modes` row on the [parity matrix](#whats-shipped-vs-in-flight).
 
 ### 5. Restrict who can talk to the bot
 
@@ -134,7 +163,9 @@ Skip `Administrator`. The gateway has no need for moderation or member-managemen
 
 Discord allows one gateway connection per bot token. To run several bots from one host:
 
-- Run several gateways with separate `~/.ethos/` directories:
+- **One bot across many guilds (`Guilds` intent supports any number) with one gateway.** This is the path Discord supports natively. The same `MessageDedupCache` (30s TTL, keyed by `(sessionId, sha256(content))`) covers every guild and DM the bot serves.
+
+- **Two or more Discord bots — run them under separate `~/.ethos/` roots, not in one process.**
 
 ```bash
 HOME=/srv/ethos-guild-a ethos gateway start &
@@ -143,9 +174,7 @@ HOME=/srv/ethos-guild-b ethos gateway start &
 
 Each `HOME` gets its own `config.yaml`, SQLite store, logs, and pairing database. The bots stay isolated; sessions never cross.
 
-- Or run one bot across many guilds (`Guilds` intent supports any number) with one gateway. The same `MessageDedupCache` (30s TTL, keyed by `(sessionId, sha256(content))`) covers every guild and DM the bot serves.
-
-A single gateway cannot proxy two Discord bots under the same token. Use distinct tokens or distinct `HOME` roots.
+The multi-bot-in-one-process pattern that [Telegram and Slack support](../using/how-to/run-multiple-bots.md) does not work for Discord yet — the adapter doesn't stamp `botKey` on inbound messages (see the [parity matrix](#whats-shipped-vs-in-flight)). Two Discord bots in one Ethos process today collapse onto a single lane key and route to whichever loop was constructed first. Until that ships, separate `HOME` roots are the only safe way to run multiple Discord bots from one host.
 
 ## Verify
 
@@ -220,5 +249,6 @@ Role mentions are not the same as user mentions; the adapter only checks `messag
 
 - [Telegram adapter](telegram.md) — same gateway surface, different ingress.
 - [Slack adapter](slack.md) — socket mode, bot scopes, signing secret.
+- [Run multiple bots from one Ethos process](../using/how-to/run-multiple-bots.md) — multi-bot wiring on Telegram and Slack; Discord caveats called out.
 - [Run Ethos as a daemon](../using/how-to/run-as-daemon.md) — `launchd`, `systemd`, `pm2`.
 - [Glossary](../getting-started/glossary.md) — [`gateway`](../getting-started/glossary.md#gateway), [`session`](../getting-started/glossary.md#session), [`audience boundary`](../getting-started/glossary.md#audience-boundary).

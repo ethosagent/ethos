@@ -137,7 +137,7 @@ These are advertised, not enforced. The capabilities field tells a [mesh](../../
 
 `operator` is the personality where Ethos's safety machinery shows most clearly. The toolset has the same write-shaped tools as the engineer — `terminal`, `write_file`, `patch_file`, `execute_code` — but the layered defaults around it are different.
 
-The personality's `safety.approvalMode` defaults to `manual`. Every classification that the safety scanner labels `dangerous` surfaces an approval prompt; `blocked` operations error out unconditionally. The user signs off on each destructive step rather than discovering after the fact that the agent ran `rm -rf` because a web page told it to.
+The personality's `safety.approvalMode` defaults to `manual` so destructive steps wait for human sign-off — see [Set up approval gates](../how-to/set-up-approval-gates.md) for the three modes and how each surface renders the prompt.
 
 There is no `web_search`, `web_extract`, or `web_crawl` in the operator toolset. The reasoning is structural: a class of prompt-injection vector reads through web content. Removing that surface narrows the attack surface to inputs the user typed in. It does not remove the entire prompt-injection class — a teammate's commit message could still carry an injected payload — but it removes the easiest one.
 

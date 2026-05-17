@@ -171,7 +171,21 @@ export async function createLLM(config: EthosConfig): Promise<LLMProvider> {
 
 export async function createAgentLoop(
   config: EthosConfig & Pick<WiringConfig, 'teamName' | 'role' | 'postmortems' | 'trustPolicy'>,
-  opts: { profile?: WiringProfile; meshRegistryPath?: string } = {},
+  opts: {
+    profile?: WiringProfile;
+    meshRegistryPath?: string;
+    /**
+     * Shared CronScheduler so agent-callable cron tools (`create_cron_job`,
+     * `list_cron_jobs`, `pause_cron_job`, `resume_cron_job`,
+     * `delete_cron_job`, `run_cron_job_now`) land in the same store the
+     * operator-driven `ethos cron` CLI uses. Pass the gateway's /
+     * serve's scheduler instance here; the wiring layer registers the
+     * tools on this loop's tool registry only when the personality opts
+     * in via `toolset.yaml`. Omit for ephemeral CLI chat sessions where
+     * scheduled work can't persist past process exit.
+     */
+    cronScheduler?: import('@ethosagent/cron').CronScheduler;
+  } = {},
 ): Promise<CreateAgentLoopResult> {
   const rotated = await withRotation(config);
   const wiringConfig: WiringConfig = {
@@ -194,6 +208,7 @@ export async function createAgentLoop(
     logger,
     meshRegistryPath: opts.meshRegistryPath,
     observability: getEthosObservability(),
+    ...(opts.cronScheduler ? { cronScheduler: opts.cronScheduler } : {}),
   });
 }
 

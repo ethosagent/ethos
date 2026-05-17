@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-05-15T06:57:28.778Z",
+  "updatedAt": "2026-05-17T09:40:10.826Z",
   "providers": {
     "anthropic": {
       "models": [
@@ -25,20 +25,65 @@
     "openai-compat": {
       "models": [
         {
-          "id": "gpt-4o",
-          "label": "most capable",
-          "contextWindow": 128000,
+          "id": "gpt-5.4",
+          "label": "frontier, complex work",
+          "contextWindow": 200000,
           "default": true
+        },
+        {
+          "id": "gpt-5.4-pro",
+          "label": "most capable frontier",
+          "contextWindow": 200000
+        },
+        {
+          "id": "gpt-5.4-mini",
+          "label": "compact, cost-efficient",
+          "contextWindow": 200000
+        },
+        {
+          "id": "gpt-5.4-nano",
+          "label": "ultra-efficient at scale",
+          "contextWindow": 200000
+        },
+        {
+          "id": "o3",
+          "label": "reasoning",
+          "contextWindow": 200000
+        },
+        {
+          "id": "o3-pro",
+          "label": "reasoning, most capable",
+          "contextWindow": 200000
+        },
+        {
+          "id": "o3-mini",
+          "label": "reasoning, fast",
+          "contextWindow": 200000
+        },
+        {
+          "id": "o1",
+          "label": "reasoning, prior gen",
+          "contextWindow": 200000
+        },
+        {
+          "id": "o1-mini",
+          "label": "reasoning, prior gen mini",
+          "contextWindow": 200000
+        },
+        {
+          "id": "o1-preview",
+          "label": "reasoning, preview",
+          "contextWindow": 200000
+        },
+        {
+          "id": "gpt-4o",
+          "label": "GPT-4o",
+          "contextWindow": 128000
         },
         {
           "id": "gpt-4o-mini",
           "label": "fast, cheap",
           "contextWindow": 128000
-        },
-        {
-          "id": "o1",
-          "label": "reasoning",
-          "contextWindow": 200000
         },
         {
           "id": "anthropic/claude-sonnet-4-6",

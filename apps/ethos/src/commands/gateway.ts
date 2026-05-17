@@ -16,6 +16,7 @@ import { readRuntime, removeRuntime } from '@ethosagent/team-supervisor';
 // them must not crash the CLI for users who don't run that platform.
 import {
   type ClarifyResponse,
+  EthosError,
   type InboundMessage,
   type MemoryContext,
   type PlatformAdapter,
@@ -218,9 +219,43 @@ export async function runGatewayStart(): Promise<void> {
     `${c.dim}Runs in the foreground. For always-on production, see https://ethosagent.ai/docs/guides/run-as-daemon (launchd / systemd / pm2). For interactive use, run ${c.reset}${c.bold}ethos chat${c.reset}${c.dim}.${c.reset}`,
   );
 
+  // Cron scheduler — hoisted ABOVE every loop construction so the same
+  // instance can be threaded into every createAgentLoop call (which
+  // registers the agent-callable cron tools against it) AND used as the
+  // firing engine below. The `runJob` closure captures `systemLoop` via
+  // a forward-referenced `let`; the scheduler doesn't fire until
+  // `.start()` later, by which point `systemLoop` is assigned. This
+  // lets any personality with `create_cron_job` in its toolset register
+  // jobs that land in the same store as operator-created jobs.
+  let systemLoop: import('@ethosagent/core').AgentLoop | null = null;
+  const scheduler = new CronScheduler({
+    logger: new ConsoleLogger(),
+    runJob: async (job) => {
+      if (!systemLoop) {
+        throw new EthosError({
+          code: 'INTERNAL',
+          cause: 'System loop not yet initialised at cron firing time',
+          action:
+            'This is a wiring bug — the scheduler started before the agent loop was assigned. File an issue.',
+        });
+      }
+      const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
+      let output = '';
+      for await (const event of systemLoop.run(job.prompt, {
+        sessionKey,
+        personalityId: job.personality ?? config.personality,
+      })) {
+        if (event.type === 'text_delta') output += event.text;
+      }
+      return { jobId: job.id, ranAt: new Date().toISOString(), output, sessionKey };
+    },
+  });
+
   // Build one AgentLoop per configured bot. Personality bots use
-  // `createAgentLoop`; team bots use `createTeamAgentLoop`.
-  const { bots, messagingSetters: botMessagingSetters } = await buildGatewayBots(config);
+  // `createAgentLoop`; team bots use `createTeamAgentLoop`. Each loop
+  // receives the shared `scheduler` so its `create_cron_job` etc. land
+  // in the same scheduler store as everything else.
+  const { bots, messagingSetters: botMessagingSetters } = await buildGatewayBots(config, scheduler);
 
   // Phase 3: for each team-bound bot, ensure the supervisor is running.
   const supervisorDeps: TeamSupervisorDeps = {
@@ -247,9 +282,13 @@ export async function runGatewayStart(): Promise<void> {
   }
   // System loop used by cron — not bot-bound. Cron jobs route through
   // their own `job.personality` field, not through the platform bot
-  // routing table.
-  const { loop: systemLoop, setMessagingSend: setSystemMessagingSend } =
-    await createAgentLoop(config);
+  // routing table. The scheduler is passed in so agent-callable cron
+  // tools register against the same instance the firing engine uses.
+  const { loop: systemLoopReady, setMessagingSend: setSystemMessagingSend } = await createAgentLoop(
+    config,
+    { cronScheduler: scheduler },
+  );
+  systemLoop = systemLoopReady;
 
   // Shared attachment cache for all platform adapters. Hoisted here so the
   // same instance flows into both `buildAdapters` (Telegram, Slack) and the
@@ -443,21 +482,10 @@ export async function runGatewayStart(): Promise<void> {
   // No-op for deployments without an approval-capable adapter.
   wireApprovalFlow(gateway, bots, adapters);
 
-  // Start cron scheduler — runs inside the gateway process
-  const scheduler = new CronScheduler({
-    logger: new ConsoleLogger(),
-    runJob: async (job) => {
-      const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
-      let output = '';
-      for await (const event of systemLoop.run(job.prompt, {
-        sessionKey,
-        personalityId: job.personality ?? config.personality,
-      })) {
-        if (event.type === 'text_delta') output += event.text;
-      }
-      return { jobId: job.id, ranAt: new Date().toISOString(), output, sessionKey };
-    },
-  });
+  // Start the cron scheduler that was hoisted above (so agent-callable
+  // cron tools register against the same instance the firing engine
+  // uses). At this point `systemLoop` is assigned, so the deferred
+  // `runJob` closure can safely run.
   scheduler.start();
   console.log(`${c.dim}Cron scheduler running (checks every 60s)${c.reset}`);
 
@@ -524,7 +552,10 @@ interface BuildGatewayBotsResult {
   messagingSetters: Array<(fn: MessagingSendFn) => void>;
 }
 
-async function buildGatewayBots(config: EthosConfig): Promise<BuildGatewayBotsResult> {
+async function buildGatewayBots(
+  config: EthosConfig,
+  scheduler: CronScheduler,
+): Promise<BuildGatewayBotsResult> {
   const out: GatewayBotConfig[] = [];
   const setters: Array<(fn: MessagingSendFn) => void> = [];
   const buildOne = async (bot: TelegramBotConfig | SlackAppConfig): Promise<GatewayBotConfig> => {
@@ -534,7 +565,13 @@ async function buildGatewayBots(config: EthosConfig): Promise<BuildGatewayBotsRe
       const team = await createTeamAgentLoop(config, bot.bind.name);
       loop = team.loop;
     } else {
-      const result = await createAgentLoop({ ...config, personality: bot.bind.name });
+      // Per-bot personality loop. Threads the shared scheduler so
+      // `create_cron_job` etc. lands in the same store as the
+      // system-loop's jobs.
+      const result = await createAgentLoop(
+        { ...config, personality: bot.bind.name },
+        { cronScheduler: scheduler },
+      );
       loop = result.loop;
       setters.push(result.setMessagingSend);
     }

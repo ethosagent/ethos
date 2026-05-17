@@ -4,7 +4,7 @@ description: "HookRegistry interface, DefaultHookRegistry implementation, and ev
 kind: reference
 audience: developer
 slug: hook-registry
-updated: 2026-05-12
+updated: 2026-05-17
 ---
 
 A [hook](../../getting-started/glossary.md#hook) is a handler that fires at a named extension point inside [`AgentLoop`](./agent-event.md) or the channel gateway. The `HookRegistry` is the lookup table mapping hook names to handlers; `DefaultHookRegistry` is the in-memory implementation `AgentLoop` ships with.
@@ -115,6 +115,7 @@ Payload + result types live in [`packages/types/src/hooks.ts`](https://github.co
 | `message_sent` | `MessageSentPayload` | When the gateway has dispatched an outbound message. |
 | `subagent_spawned` | `SubagentSpawnedPayload` | After `tools-delegation` spawns a subagent session. |
 | `subagent_ended` | `SubagentEndedPayload` | When a subagent session ends. |
+| `after_ticket_revision` | `AfterTicketRevisionPayload` | After `kanban_complete` was rejected by a `before_ticket_complete` verifier and the ticket was moved to `needs_revision`. |
 
 ### Modifying hooks {#modifying-hooks}
 
@@ -132,6 +133,7 @@ Payload + result types live in [`packages/types/src/hooks.ts`](https://github.co
 |---|---|---|
 | `inbound_claim` | `InboundClaimPayload` → `InboundClaimResult` | Gateway dispatch: which adapter owns this inbound message? |
 | `before_dispatch` | `BeforeDispatchPayload` → `BeforeDispatchResult` | Outbound dispatch: short-circuit handlers (e.g. dedup) can mark a message as handled to suppress send. |
+| `before_ticket_complete` | `BeforeTicketCompletePayload` → `BeforeTicketCompleteResult` | Fired by `kanban_complete` before the `running → done` transition. A handler returning `{ handled: true, reason }` rejects the completion; the ticket moves to `needs_revision` instead, then `after_ticket_revision` fires. Opt-in — with no handler registered, `fireClaiming` returns `{ handled: false }` and completion proceeds. |
 
 ### Hook point payload reference {#hook-point-payloads}
 
@@ -153,6 +155,8 @@ Key payload fields — see [`packages/types/src/hooks.ts`](https://github.com/Mi
 | `BeforeDispatchPayload` | `chatId`, `platform`, `text` |
 | `PersonalitySwitchedPayload` | `sessionId`, `from?`, `to` |
 | `SubagentSpawningPayload` | `parentSessionId`, `prompt`, `personalityId?` |
+| `BeforeTicketCompletePayload` | `taskId`, `summary`, `acceptanceCriteria?`, `autonomyTier?` |
+| `AfterTicketRevisionPayload` | `taskId`, `summary`, `acceptanceCriteria?`, `reason`, `assignee`, `autonomyTier?`, `successRatio?` |
 
 Result types follow the same naming (`BeforeToolCallResult`, etc.) and only carry the fields a handler may override.
 

@@ -4,20 +4,20 @@ description: "Remote model catalog — how the CLI discovers available models wi
 kind: reference
 audience: developer
 slug: model-catalog
-updated: 2026-05-15
+updated: 2026-05-17
 ---
 
 # Model Catalog
 
 Ethos ships a **remote model catalog** so new models become available without upgrading the CLI. The catalog is a static JSON file published alongside the documentation site.
 
-## Published URL
+## Published URL {#published-url}
 
 ```
 https://ethos-agent.ai/api/model-catalog.json
 ```
 
-## JSON Schema
+## JSON Schema {#json-schema}
 
 ```typescript
 interface ModelCatalogManifest {
@@ -38,7 +38,7 @@ interface ModelCatalogManifest {
 
 The catalog ships exactly three provider keys: `anthropic`, `openai-compat`, `azure`.
 
-## Three-level Fallback
+## Three-level Fallback {#three-level-fallback}
 
 The CLI resolves models in order:
 
@@ -48,7 +48,7 @@ The CLI resolves models in order:
 
 A fresh install with no internet still works (bundled fallback). Network failures are silent — one log line at `warn` level.
 
-## Configuration
+## Configuration {#configuration}
 
 In `~/.ethos/config.yaml`:
 
@@ -66,14 +66,14 @@ modelCatalog.providers.anthropic.url: https://internal.example.com/anthropic.jso
 | `modelCatalog.ttlHours` | `24` | Cache time-to-live in hours |
 | `modelCatalog.providers.<id>.url` | — | Per-provider URL override |
 
-## Adding a New Model
+## Adding a New Model {#adding-a-new-model}
 
 1. Edit `packages/wiring/src/model-catalog.ts` — add the entry to `MODEL_CATALOG`
 2. Open a PR to `main`
 3. On merge, CI runs `pnpm build:model-catalog`, Docusaurus deploys, and the JSON is live
 4. Existing CLIs pick it up within 24 hours (or on next cache expiry)
 
-## Private Catalog for Operators
+## Private Catalog for Operators {#private-catalog-for-operators}
 
 Organizations can host their own catalog JSON at an internal URL:
 
@@ -87,6 +87,11 @@ The JSON must conform to the same schema. Per-provider overrides let you mix sou
 modelCatalog.providers.anthropic.url: https://internal.corp.example.com/anthropic-only.json
 ```
 
-## Cache Location
+## Cache Location {#cache-location}
 
 `~/.ethos/cache/model-catalog.json` — managed via the Storage abstraction. Delete it to force a re-fetch on next CLI start.
+
+## Source {#source}
+
+- [`packages/wiring/src/model-catalog.ts`](https://github.com/MiteshSharma/ethos/blob/main/packages/wiring/src/model-catalog.ts) — the in-memory `MODEL_CATALOG` const that ships bundled with the CLI.
+- [`packages/wiring/scripts/build-model-catalog.ts`](https://github.com/MiteshSharma/ethos/blob/main/packages/wiring/scripts/build-model-catalog.ts) — build script that emits the published JSON from that const.

@@ -73,6 +73,12 @@ The trade-offs add up to a specific kind of agent:
 - **Yours to read.** Memory is plain markdown. Config is plain YAML. Skills are plain markdown with frontmatter. You can grep, diff, and commit any of it.
 - **Yours to extend.** Every extension point — provider, tool, adapter, memory backend, personality source — is a typed interface in `@ethosagent/types`. Implement, inject, ship.
 
+## Sessions and teams travel with you
+
+**Sessions are platform-agnostic.** A [session](glossary.md#session) is keyed by working context, not by the surface you're talking through. Start a conversation in Telegram, keep going from the CLI on your laptop, switch from `researcher` to `engineer` mid-thread — the same memory, the same history, the same scratchpad follow you across personalities and platforms. The channel is just the door.
+
+**Teams coordinate across specialties.** One personality is an agent; a [team](glossary.md#team) is a roster. You ask the team coordinator for something multi-part — "research the migration, draft the plan, review it" — and it decomposes the request into typed tasks on a durable kanban board. Specialist personalities claim work, post status updates, hand off, and surface blockers. The board, the audit trail, and the assignments survive restarts. See [Run a team with a shared kanban board](../using/how-to/run-a-team-with-kanban.md).
+
 ## See also
 
 - [Why Ethos?](why-ethos.md) — honest comparison to LangChain, CrewAI, AutoGen, OpenClaw, Hermes

@@ -5,7 +5,7 @@ kind: tutorial
 audience: developer
 slug: first-mission-control
 time: "15 min"
-updated: 2026-05-13
+updated: 2026-05-17
 ---
 
 Start with the example Mission Control — a three-panel Next.js dashboard that talks to a running Ethos server over RPC and SSE. By minute fifteen you have sessions listing, live chat streaming, personality switching, and memory inspection all working in the browser.
@@ -60,7 +60,7 @@ A JSON response (even an error shape) means the server is up.
 The Mission Control authenticates with a bearer token, not browser cookies. Mint a key from the Ethos CLI:
 
 ```bash
-ethos apikey create \
+ethos api-key create \
   --name "mission-control-dev" \
   --scopes sessions:read,sessions:write,chat:send,personalities:read,memory:read,memory:write,events:subscribe \
   --allowed-origins http://localhost:3001

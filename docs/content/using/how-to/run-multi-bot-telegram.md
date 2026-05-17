@@ -4,12 +4,14 @@ description: "Configure two or more Telegram bots in one Ethos gateway, each bou
 kind: how-to
 audience: user
 time: "10 min"
-updated: 2026-05-13
+updated: 2026-05-17
 ---
 
 ## Task
 
 Configure two or more Telegram bots in a single Ethos gateway process, with each bot bound to a distinct [personality](../../getting-started/glossary.md#personality).
+
+For the cross-platform overview (Telegram + Slack in one process), see [Run multiple bots from one Ethos process](run-multiple-bots.md). This page is the Telegram-specific deep dive — BotFather setup, group routing, the `/personality` rejection message, and the legacy scalar migration.
 
 ## Result
 
@@ -161,6 +163,7 @@ You have both `telegramToken` and `telegram.bots` set. Remove `telegramToken` �
 
 ## See also
 
+- [Run multiple bots from one Ethos process](run-multiple-bots.md) — cross-platform overview covering Telegram and Slack together.
 - [Telegram adapter](../../platforms/telegram.md) — full routing, allowlist, dedup, and error catalog.
 - [Connect a Telegram bot to a team](connect-telegram-to-team.md) — bind a bot to a team coordinator instead of a single personality.
 - [config.yaml reference](../reference/config-yaml.md#telegram-bots) — `telegram.bots.*` field definitions.

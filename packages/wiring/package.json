@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@ethosagent/core": "workspace:*",
+    "@ethosagent/cron": "workspace:*",
     "@ethosagent/llm-anthropic": "workspace:*",
     "@ethosagent/llm-azure": "workspace:*",
     "@ethosagent/observability-sqlite": "workspace:*",
@@ -42,6 +43,7 @@
     "@ethosagent/skills-coding": "workspace:*",
     "@ethosagent/tools-browser": "workspace:*",
     "@ethosagent/tools-code": "workspace:*",
+    "@ethosagent/tools-cron": "workspace:*",
     "@ethosagent/tools-delegation": "workspace:*",
     "@ethosagent/tools-messaging": "workspace:*",
     "@ethosagent/tools-skills": "workspace:*",

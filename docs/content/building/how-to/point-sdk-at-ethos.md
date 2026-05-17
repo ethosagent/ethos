@@ -5,7 +5,7 @@ kind: how-to
 audience: developer
 slug: point-sdk-at-ethos
 time: "5 min"
-updated: 2026-05-13
+updated: 2026-05-17
 ---
 
 ## Task
@@ -68,7 +68,7 @@ There is no built-in env var auto-read. The client takes explicit values; your c
 From the Ethos CLI:
 
 ```bash
-ethos apikey create \
+ethos api-key create \
   --name "my-dashboard" \
   --scopes sessions:read,sessions:write,chat:send,personalities:read,memory:read,events:subscribe \
   --allowed-origins http://localhost:3001
@@ -157,7 +157,7 @@ Runs without throwing. With a deliberately wrong `apiKey`, the call fails with `
 
 **`ECONNREFUSED` on `localhost:3000`** — Ethos is not running. Start it with `ethos serve` or `pnpm dev` in the monorepo. If Ethos runs on a different port, update `baseUrl`.
 
-**`401 Unauthorized`** — The API key is invalid, expired, or revoked. List active keys with `ethos apikey list`.
+**`401 Unauthorized`** — The API key is invalid, expired, or revoked. List active keys with `ethos api-key list`.
 
 **`403 Forbidden`** — Origin mismatch. The request's `Origin` header is not in the key's `allowedOrigins`. Re-mint the key with the correct origin.
 

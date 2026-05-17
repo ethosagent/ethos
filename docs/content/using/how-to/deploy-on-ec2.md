@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: deploy-on-ec2
 time: "15 min"
-updated: 2026-05-15
+updated: 2026-05-17
 ---
 
 ## Task
@@ -160,7 +160,7 @@ sudo systemctl daemon-reload
 sudo systemctl restart ethos
 ```
 
-Now `ethos run-all` is supervising both `gateway start` and `serve --web-experimental`. The dashboard binds to `localhost:3000` on the instance. Reach it from your laptop without ever opening the port to the internet:
+Now `ethos run-all` is supervising both `gateway start` and `serve`. The dashboard binds to `localhost:3000` on the instance. Reach it from your laptop without ever opening the port to the internet:
 
 **Via SSH tunnel:**
 

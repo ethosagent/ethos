@@ -5,7 +5,7 @@ description: A durable SQLite-backed task substrate any personality can opt into
 kind: reference
 audience: developer
 slug: kanban-tools
-updated: 2026-05-11
+updated: 2026-05-17
 ---
 
 # Kanban — Durable Task Substrate
@@ -30,6 +30,7 @@ Add the tools you want to a personality's `toolset.yaml`:
 
 ```yaml
 - kanban_create
+- kanban_create_goal
 - kanban_list
 - kanban_show
 - kanban_update_status
@@ -47,7 +48,7 @@ The wiring layer constructs a `KanbanStore` lazily — it only runs when at leas
 
 The DB path defaults to `~/.ethos/personalities/<personality-id>/kanban.db` — one board per personality. Plan B's team manifests override this with `kanbanDbPath` to point at a shared team board.
 
-The built-in `task-tracker` personality has all 12 tools enabled and is the simplest way to try it out:
+The built-in `task-tracker` personality has all 13 tools enabled and is the simplest way to try it out:
 
 ```bash
 ethos chat --personality task-tracker
@@ -94,6 +95,7 @@ All tools live in the `kanban` toolset and cap output at 20 000 chars.
 | Tool | Args | Returns |
 |---|---|---|
 | `kanban_create` | `title, body?, assignee?, priority?, parents?, workspace_mode?, scheduled_for?, idempotency_key?` | `{ task_id, status }` |
+| `kanban_create_goal` | `title, description?, priority?, idempotency_key?` | `{ task_id, status }` — creates a top-level GOAL (assignee=null). Sugar around `kanban_create`; child sub-tasks are created via `kanban_create` with `parents=[goal_id]`. |
 | `kanban_list` | `assignee?, status?, parent_id?, q?, limit?` | array of task summaries (default 100, max 1000). `q` is an FTS5 query over title + body + comments. |
 | `kanban_show` | `task_id` | task + comments + last 10 runs + last 20 events |
 | `kanban_update_status` | `task_id, status, reason?` | updated task (auto-opens/cancels runs on `running` transitions) |
@@ -120,5 +122,5 @@ None of those require schema changes — the columns `workspace_mode`, `workspac
 ## Source {#source}
 
 - [`extensions/kanban-store`](https://github.com/MiteshSharma/ethos/tree/main/extensions/kanban-store) — schema, migrations, repository. Pure data layer.
-- [`extensions/tools-kanban`](https://github.com/MiteshSharma/ethos/tree/main/extensions/tools-kanban) — the 12 tool wrappers + `createKanbanTools` factory.
-- [`extensions/personalities/data/task-tracker/`](https://github.com/MiteshSharma/ethos/tree/main/extensions/personalities/data/task-tracker) — built-in personality with all 12 tools enabled.
+- [`extensions/tools-kanban`](https://github.com/MiteshSharma/ethos/tree/main/extensions/tools-kanban) — the 13 tool wrappers + `createKanbanTools` factory.
+- [`extensions/personalities/data/task-tracker/`](https://github.com/MiteshSharma/ethos/tree/main/extensions/personalities/data/task-tracker) — built-in personality with all 13 tools enabled.

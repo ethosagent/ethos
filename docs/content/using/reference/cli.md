@@ -151,7 +151,7 @@ Synopsis: `ethos acp`
 
 ## ethos serve {#ethos-serve}
 
-Start the Ethos web UI + API on a local port. In development. Long-running.
+Start the Ethos web UI and HTTP API on a local port. Long-running.
 
 Synopsis: `ethos serve [--port <n>] [--bind <addr>] [--team <name>] [--mesh <name>]`
 

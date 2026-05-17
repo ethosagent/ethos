@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: deploy-in-production
 time: "10 min"
-updated: 2026-05-15
+updated: 2026-05-17
 ---
 
 ## Task
@@ -34,7 +34,7 @@ The official mental model: you don't need a beefy server. A 4 GB Pi or a $5 VPS 
 Ethos is not one process running everything — it's a few small processes that share `~/.ethos/`. The two long-running ones for production are:
 
 - **`ethos gateway start`** — every channel adapter (Telegram, Slack, Discord, Email).
-- **`ethos serve --web-experimental`** — web dashboard (`:3000`) and ACP server (`:3001`).
+- **`ethos serve`** — web dashboard (`:3000`) and ACP server (`:3001`).
 
 `ethos run-all` is the supervisor that brings both up with one command. It spawns them as child processes, watches them, and restarts the one that crashed (with exponential backoff). PM2 (or systemd, or launchd) wraps `ethos run-all` so it survives reboots.
 

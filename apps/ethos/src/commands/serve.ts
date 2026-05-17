@@ -8,6 +8,7 @@ import { CronScheduler } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
+import { EthosError } from '@ethosagent/types';
 import { type ChatService, createWebApi, WebTokenRepository } from '@ethosagent/web-api';
 import {
   createDangerPredicate,
@@ -65,6 +66,53 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   let activeMeshName: string;
   let activePersonality: string;
 
+  // Cron scheduler — hoisted ABOVE the agent-loop construction when web
+  // is enabled, so the same scheduler instance can be threaded into
+  // createAgentLoop (registers agent-callable cron tools against it)
+  // AND drive the web Cron tab's firing engine below. The `runJob`
+  // closure forward-references `loop`; the scheduler doesn't fire until
+  // `.start()` later, by which point `loop` is assigned. When web mode
+  // is off (`--web-experimental` not set), `cronScheduler` stays null
+  // and the cron tools simply don't register on the loop.
+  let cronScheduler: CronScheduler | null = null;
+  // chatService is bound after createWebApi; the scheduler's `runJob`
+  // closes over a holder so any cron firing before the web surface is
+  // ready is a silent no-op for the SSE push.
+  let chatService: ChatService | null = null;
+  if (webEnabled) {
+    cronScheduler = new CronScheduler({
+      logger: new ConsoleLogger(),
+      runJob: async (job) => {
+        if (!loop) {
+          throw new EthosError({
+            code: 'INTERNAL',
+            cause: 'Agent loop not yet initialised at cron firing time',
+            action:
+              'This is a wiring bug — the scheduler started before the agent loop was assigned. File an issue.',
+          });
+        }
+        const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
+        const ranAt = new Date().toISOString();
+        let output = '';
+        for await (const event of loop.run(job.prompt, {
+          sessionKey,
+          ...(job.personality ? { personalityId: job.personality } : {}),
+        })) {
+          if (event.type === 'text_delta') output += event.text;
+        }
+        if (chatService) {
+          chatService.broadcastAll({
+            type: 'cron.fired',
+            jobId: job.id,
+            ranAt,
+            outputPath: null,
+          });
+        }
+        return { jobId: job.id, ranAt, output, sessionKey };
+      },
+    });
+  }
+
   if (teamFlag && personalityOverride) {
     // Plan B member spawn — supervisor spawns each member with
     //   ethos serve --personality <member> --team <name> --role <role>
@@ -74,7 +122,11 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     activePersonality = personalityOverride;
     const result = await createAgentLoop(
       { ...config, teamName: teamFlag, ...(roleFlag ? { role: roleFlag } : {}) },
-      { profile: loopProfile, meshRegistryPath: meshRegistryPath(activeMeshName) },
+      {
+        profile: loopProfile,
+        meshRegistryPath: meshRegistryPath(activeMeshName),
+        ...(cronScheduler ? { cronScheduler } : {}),
+      },
     );
     loop = result.loop;
   } else if (teamFlag) {
@@ -96,6 +148,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     const result = await createAgentLoop(config, {
       profile: loopProfile,
       meshRegistryPath: meshRegistryPath(activeMeshName),
+      ...(cronScheduler ? { cronScheduler } : {}),
     });
     loop = result.loop;
   }
@@ -133,51 +186,17 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
 
   // Web API (Phase 26). Additive — only mounts when --web-experimental is set.
   let webShutdown: (() => Promise<void>) | null = null;
-  let cronScheduler: CronScheduler | null = null;
   if (webEnabled) {
     const webDist = locateWebDist(parseFlagValue(args, ['--web-dist']));
 
-    // Bound after createWebApi so the runJob closure below can call
-    // chatService.broadcastAll once a cron job finishes. Declared up
-    // here because cronScheduler is constructed before createWebApi
-    // (it's an option of createWebApi). The closure is null-safe so
-    // any pre-web run before the chatService binds simply skips the
-    // broadcast — there's no surface to render it for yet.
-    let chatService: ChatService | null = null;
-
-    // Cron tab needs an actually-running scheduler so jobs created via
-    // the web tick on time. Mirrors the gateway's runJob — accumulate
-    // text_delta from the same agent loop, write the rest to the
-    // canonical output dir under ~/.ethos/cron/output/.
-    cronScheduler = new CronScheduler({
-      logger: new ConsoleLogger(),
-      runJob: async (job) => {
-        const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
-        const ranAt = new Date().toISOString();
-        let output = '';
-        for await (const event of loop.run(job.prompt, {
-          sessionKey,
-          ...(job.personality ? { personalityId: job.personality } : {}),
-        })) {
-          if (event.type === 'text_delta') output += event.text;
-        }
-        // Fire the SSE push event to every active web session so the
-        // right drawer's notification panel surfaces it. Web tab
-        // doesn't render outputPath directly — `null` here matches the
-        // CronFired schema's contract (output lands on disk via the
-        // scheduler; the UI deep-links to /cron to find it).
-        if (chatService) {
-          chatService.broadcastAll({
-            type: 'cron.fired',
-            jobId: job.id,
-            ranAt,
-            outputPath: null,
-          });
-        }
-        return { jobId: job.id, ranAt, output, sessionKey };
-      },
-    });
-    cronScheduler.start();
+    // The cronScheduler + chatService holder were hoisted above the
+    // agent-loop construction so the scheduler instance threads into
+    // createAgentLoop (agent-callable cron tools register against it)
+    // and the runJob closure forward-references both `loop` and
+    // `chatService`. Start the scheduler now — `loop` is assigned, and
+    // we'll bind `chatService` to the value returned by createWebApi
+    // below.
+    if (cronScheduler) cronScheduler.start();
 
     // OpenAI-compat surface (F1+F2). Shares sessions.db so `ethos api-key`
     // and `ethos serve` see the same rows.
@@ -198,7 +217,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
       // Same `checkCommand` rules the CLI guard uses; surfacing them via
       // the approval modal instead of a hard block.
       dangerPredicate: createDangerPredicate(),
-      cronScheduler,
+      ...(cronScheduler ? { cronScheduler } : {}),
       apiKeys,
       listTeams: async () => listRegisteredTeams(dir),
       ...(webDist ? { webDist } : {}),

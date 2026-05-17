@@ -15,6 +15,7 @@ import {
   type SummarizerFn,
   validateUrl,
 } from '@ethosagent/core';
+import type { CronScheduler } from '@ethosagent/cron';
 import { autonomyTier, KanbanStore, type TrustPolicy } from '@ethosagent/kanban-store';
 import { AnthropicProvider, AuthRotatingProvider } from '@ethosagent/llm-anthropic';
 import { AzureOpenAIProvider } from '@ethosagent/llm-azure';
@@ -31,6 +32,7 @@ import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
 import { createBrowserTools } from '@ethosagent/tools-browser';
 import { createCodeTools } from '@ethosagent/tools-code';
+import { createCronTools } from '@ethosagent/tools-cron';
 import { createDelegationTools } from '@ethosagent/tools-delegation';
 import { createFileTools } from '@ethosagent/tools-file';
 import { createImageTools } from '@ethosagent/tools-image';
@@ -233,6 +235,21 @@ export interface CreateAgentLoopOptions {
    * service stays vocabulary-agnostic.
    */
   observability?: import('./observability/ethos-observability').EthosObservability;
+  /**
+   * Shared CronScheduler for agent-callable cron tools. When provided, the
+   * 6 tools from `@ethosagent/tools-cron` (`create_cron_job`,
+   * `list_cron_jobs`, `delete_cron_job`, `pause_cron_job`,
+   * `resume_cron_job`, `run_cron_job_now`) are registered on this
+   * AgentLoop's tool registry. Personalities opt in by listing the tool
+   * names in their `toolset.yaml` — the same scheduler instance that fires
+   * operator-created jobs also accepts agent-created ones.
+   *
+   * When unset, the cron tools are not registered, and personalities that
+   * list them get an "unknown tool" error at call time. CLI / standalone
+   * `ethos chat` profiles typically leave this unset; `ethos gateway` and
+   * `ethos serve` pass their scheduler instance through.
+   */
+  cronScheduler?: CronScheduler;
 }
 
 // ---------------------------------------------------------------------------
@@ -778,6 +795,21 @@ export async function createAgentLoop(
     },
   }))
     tools.register(tool);
+
+  // Cron tools — agent-callable create / list / pause / resume / delete /
+  // run-now for recurring jobs. Registered only when a CronScheduler was
+  // threaded through (typically by `ethos gateway` or `ethos serve` — both
+  // construct one for operator-driven cron, then share the same instance
+  // here so agent-created jobs and operator-created jobs land in the same
+  // store and fire through the same firing path).
+  //
+  // Personalities opt in by listing `create_cron_job` / `list_cron_jobs` /
+  // etc. in their `toolset.yaml`. When no scheduler is wired, the tools
+  // are not registered and a personality that lists them gets a clear
+  // "unknown tool" error at call time.
+  if (opts.cronScheduler) {
+    for (const tool of createCronTools(opts.cronScheduler)) tools.register(tool);
+  }
 
   // TTS tool — text_to_speech. Provider is wired from config.auxiliary?.tts.
   // Registers as unavailable when provider is null (no TTS configured).

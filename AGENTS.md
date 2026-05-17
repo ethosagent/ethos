@@ -259,10 +259,12 @@ Six tools ship in `@ethosagent/tools-memory`. They are registered at wiring time
 
 **Team memory** (toolset: `team_memory`, requires `ctx.teamId`)
 
+On first team boot, wiring auto-seeds two empty bootstrap topics — `onboarding.md` and `decisions.md` — so the team memory directory is never empty when an agent first looks at it (see `seedTeamMemory` in `packages/wiring/src/index.ts`). At session start, a lazy index injector (`createTeamMemoryIndexInjector`, same file) injects just the topic names (not content) into the system prompt; agents load each topic on demand via `team_memory_read`.
+
 | Tool | Required params | Optional params | Behaviour |
 |---|---|---|---|
 | `team_memory_read` | `key` | — | Reads one topic file (`key` + `.md` suffix appended automatically). Keys must be alphanumeric, hyphens, underscores. |
-| `team_memory_write` | `action: 'add' \| 'replace' \| 'remove' \| 'delete'`, `key` | `content`, `substring_match` | Writes to a team topic file. `add`/`replace` require `content`; `remove` requires `substring_match`; `delete` removes the file entirely. |
+| `team_memory_write` | `action: 'add' \| 'replace' \| 'remove' \| 'delete'`, `key` | `content`, `substring_match` | Writes to a team topic file. `add`/`replace` require `content`; `remove` strictly requires `substring_match` (returns `input_invalid` if absent — unlike personality `memory_write`, which falls back to `content`); `delete` removes the file entirely. |
 | `team_memory_search` | `query` | `limit` (default 5, max 20), `mode: 'keyword' \| 'semantic' \| 'hybrid'` | Keyword search over team memory topics. Returns matching topic files. |
 
 Adding a new memory backend

@@ -14,11 +14,13 @@ import { runBatch } from './commands/batch';
 import { runChat } from './commands/chat';
 import { runClaw } from './commands/claw';
 import { runCronCommand } from './commands/cron';
+import { runDashboard } from './commands/dashboard';
 import { runData } from './commands/data';
 import { runDoctor } from './commands/doctor';
 import { runErrors } from './commands/errors';
 import { runEval } from './commands/eval';
 import { runEvolve } from './commands/evolve';
+import { runFallback } from './commands/fallback';
 import { runGatewayStart } from './commands/gateway';
 import { runKeys } from './commands/keys';
 import { runLogs } from './commands/logs';
@@ -37,6 +39,8 @@ import { runSessionsCommand } from './commands/sessions';
 import { runSet } from './commands/set';
 import { runSetup } from './commands/setup';
 import { runSkills } from './commands/skills';
+import { runSlackManifest } from './commands/slack-manifest';
+import { runStatus } from './commands/status';
 import { runSupport } from './commands/support';
 import { runTail } from './commands/tail';
 import { runTeamCommand } from './commands/team';
@@ -52,7 +56,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [setup | chat | sessions | serve | run-all | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | secrets | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
+  'Usage: ethos [setup | chat | sessions | serve | dashboard | status | run-all | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -493,6 +497,33 @@ try {
 
     case 'doctor': {
       await runDoctor(args.slice(1));
+      break;
+    }
+
+    case 'status': {
+      await runStatus(args.slice(1));
+      break;
+    }
+
+    case 'dashboard': {
+      const config = await readConfig(getStorage(), getSecretsResolver());
+      if (!config) {
+        console.error('Run ethos setup first.');
+        process.exit(1);
+      }
+      await runDashboard(args.slice(1), config);
+      break;
+    }
+
+    case 'fallback': {
+      await runFallback(args.slice(1));
+      break;
+    }
+
+    case 'slack': {
+      // Today: only `slack manifest` (mirrors hermes slack). Future
+      // subcommands (e.g. `slack post`) extend through this dispatch.
+      await runSlackManifest(args.slice(1));
       break;
     }
 

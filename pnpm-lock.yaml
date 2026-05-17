@@ -1233,6 +1233,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../core
+      '@ethosagent/cron':
+        specifier: workspace:*
+        version: link:../../extensions/cron
       '@ethosagent/kanban-store':
         specifier: workspace:*
         version: link:../../extensions/kanban-store
@@ -1296,6 +1299,9 @@ importers:
       '@ethosagent/tools-code':
         specifier: workspace:*
         version: link:../../extensions/tools-code
+      '@ethosagent/tools-cron':
+        specifier: workspace:*
+        version: link:../../extensions/tools-cron
       '@ethosagent/tools-delegation':
         specifier: workspace:*
         version: link:../../extensions/tools-delegation
