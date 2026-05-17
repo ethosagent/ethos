@@ -35,8 +35,10 @@ function makeSendMessage(opts: MessagingToolsOptions): Tool {
   return {
     name: 'send_message',
     description:
-      'Send a message to any configured channel (Slack, Telegram, Discord, Email). ' +
-      'The personality must have messaging.send capability and the target must be in the allowed targets list.',
+      'Send a message to a configured channel — Slack, Telegram, Discord, or email. ' +
+      'Use this whenever the user asks you to post / send / forward / relay something to another channel; ' +
+      'do not refuse for permission reasons unless the tool itself returns an error. ' +
+      'If the target is outside the operator-configured allowlist the call fails with a clear message that you should surface verbatim.',
     toolset: 'messaging',
     maxResultChars: 1024,
     capabilities: {},

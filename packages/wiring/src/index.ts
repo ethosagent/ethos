@@ -747,9 +747,23 @@ export async function createAgentLoop(
     error: 'Gateway not active — send_message requires gateway mode',
   });
 
+  // Per-personality outbound allowlist. Read once from `<dataDir>/messaging.json`
+  // (operator-level, sibling of mcp.json). Shape: `{ "<personality-id>": [<targets>] }`
+  // where each target is `<platform>:<id>` (e.g. `slack:C0123ABC`,
+  // `telegram:-100123`) or the wildcard `*`. Personalities absent from the
+  // file deny every send — same default-deny posture as before this hook
+  // existed. Per-channel adapter config is explicitly NOT part of
+  // PersonalityConfig (see CLAUDE.md §"What does NOT belong on
+  // PersonalityConfig"), so this lives alongside the personality but outside
+  // its frozen schema.
+  const messagingAllowlist = await loadMessagingAllowlist(dataDir);
+
   for (const tool of createMessagingTools({
     send: async (platform, target, body, botKey) => gatewaySendFn(platform, target, body, botKey),
-    getAllowedTargets: () => [], // deny all by default until personality explicitly configures targets
+    getAllowedTargets: (personalityId) => {
+      if (!personalityId) return [];
+      return messagingAllowlist.get(personalityId) ?? [];
+    },
   }))
     tools.register(tool);
 
@@ -1130,6 +1144,41 @@ export async function createAgentLoop(
       gatewaySendFn = fn;
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Messaging allowlist loader (used by createAgentLoop)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read `<dataDir>/messaging.json` and return a `Map<personalityId, targets[]>`.
+ * Missing file or parse failure → empty map (everything stays default-deny).
+ * Shape on disk:
+ *   {
+ *     "engineer": ["slack:C0123ABC", "telegram:-100123"],
+ *     "researcher": ["*"]
+ *   }
+ * Each target is `<platform>:<id>` or the literal `*` wildcard. Mirrors the
+ * `mcp.json` pattern — a flat JSON file, operator-edited, read at AgentLoop
+ * boot, no schema bump on PersonalityConfig required.
+ */
+async function loadMessagingAllowlist(dataDir: string): Promise<Map<string, string[]>> {
+  const storage = new FsStorage();
+  const path = join(dataDir, 'messaging.json');
+  const raw = await storage.read(path);
+  if (!raw) return new Map();
+  try {
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    const out = new Map<string, string[]>();
+    for (const [personalityId, value] of Object.entries(data)) {
+      if (!Array.isArray(value)) continue;
+      const targets = value.filter((t): t is string => typeof t === 'string');
+      out.set(personalityId, targets);
+    }
+    return out;
+  } catch {
+    return new Map();
+  }
 }
 
 // ---------------------------------------------------------------------------
