@@ -8,6 +8,7 @@
   },
   "packageManager": "pnpm@10.33.0",
   "scripts": {
+    "prepare": "bash scripts/install-hooks.sh",
     "build": "pnpm -r --filter='./packages/*' --filter='./extensions/*' --filter='./apps/*' run build",
     "build:model-catalog": "tsx packages/wiring/scripts/build-model-catalog.ts",
     "build:web": "pnpm --filter @ethosagent/web build",

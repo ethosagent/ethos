@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Reads VERSION and syncs the version field in the five public package.json files.
+// Reads VERSION and syncs the version field in the seven public package.json files.
 // Idempotent — files already at the correct version are left untouched.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

@@ -1,6 +1,6 @@
 {
   "name": "@ethosagent/cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Ethos — TypeScript AI agent framework where personality is architecture. Curated toolsets, first-person identities, scoped memory.",
   "keywords": [
     "agent",
@@ -43,11 +43,7 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@ethosagent/agent-bridge": "workspace:*",
     "@ethosagent/core": "workspace:*",
-    "@ethosagent/logger": "workspace:*",
-    "@ethosagent/safety-channel": "workspace:*",
-    "@ethosagent/safety-scanner": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@anthropic-ai/sdk": "^0.96.0",
     "@hono/node-server": "^2.0.0",
@@ -67,13 +63,17 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@ethosagent/agent-bridge": "workspace:*",
     "@ethosagent/agent-mesh": "workspace:*",
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/gateway": "workspace:*",
+    "@ethosagent/logger": "workspace:*",
     "@ethosagent/mcp-server": "workspace:*",
     "@ethosagent/observability-sqlite": "workspace:*",
     "@ethosagent/request-dump": "workspace:*",
     "@ethosagent/personalities": "workspace:*",
+    "@ethosagent/safety-channel": "workspace:*",
+    "@ethosagent/safety-scanner": "workspace:*",
     "@ethosagent/skills": "workspace:*",
     "@ethosagent/skills-coding": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",

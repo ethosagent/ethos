@@ -16,6 +16,39 @@ pnpm check          # typecheck + lint + test (run before pushing)
 - Keep changes surgical. One PR, one concern. Don't refactor adjacent code.
 - Run `pnpm typecheck && pnpm lint && pnpm test` locally before pushing.
 
+## Pre-push hook
+
+This repo ships a `pre-push` hook that mirrors CI for the gates that fail most
+often: typecheck, lint, tool-imports, version-sync, and (when `docs/` changes)
+docs:check + the Docusaurus build for broken-anchor detection. Tests are NOT
+run locally — they stay in CI.
+
+The hook is wired automatically: `pnpm install` runs a `prepare` script that
+points `core.hooksPath` at [`.githooks/`](.githooks/) via
+[`scripts/install-hooks.sh`](scripts/install-hooks.sh). Fresh clones pick it
+up on first install. Manual wire-up if you skipped install:
+
+```bash
+bash scripts/install-hooks.sh
+```
+
+Wall-clock cost on a green push:
+
+- No docs changes: ~7s
+- Docs changes: ~45–60s (the Docusaurus build dominates)
+
+Bypass — use sparingly, CI still runs remotely:
+
+```bash
+git push --no-verify              # skip the entire hook
+SKIP_PUSH_HOOK=1 git push         # same, useful where --no-verify isn't reachable
+SKIP_DOCS_HOOK=1 git push         # run code gates, skip the docs build
+```
+
+[CLAUDE.md](./CLAUDE.md) calls out the broader expectation: never skip hooks
+unless the user explicitly requests it. Treat the bypass as an emergency
+escape, not a default.
+
 ## Frozen schemas
 
 A few interfaces are frozen — adding a field requires special review.
