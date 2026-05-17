@@ -32,6 +32,11 @@ export const BUNDLED_CODING_SKILL_IDS = [
   'github-code-review',
   'coding-agent',
   'subagent-driven-development',
+  'github-auth',
+  'codebase-inspection',
+  'requesting-code-review',
+  'native-mcp',
+  'ethos-skill-authoring',
 ] as const;
 
 export type BundledCodingSkillId = (typeof BUNDLED_CODING_SKILL_IDS)[number];

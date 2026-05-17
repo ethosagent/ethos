@@ -28,7 +28,7 @@ import { IdentityPanel } from './IdentityPanel';
 import { InputBox } from './InputBox';
 import { KeymapOverlay } from './KeymapOverlay';
 import { ModelPickerModal } from './ModelPickerModal';
-import { SafetyLane, type SafetyTag } from './SafetyLane';
+import { SafetyLane } from './SafetyLane';
 import { SessionPickerModal } from './SessionPickerModal';
 import { Splash, type SplashInventory } from './Splash';
 import { type AgentStatus, type BudgetState, StatusBar } from './StatusBar';
@@ -221,6 +221,39 @@ export function App({
   const idRef = useRef(0);
   const nextId = () => String(++idRef.current);
 
+  // ---------------------------------------------------------------------------
+  // HUD snapshot history (Ink overflow workaround)
+  //
+  // The chrome — ConsoleHeader + side-panel row — is too tall to fit in a
+  // typical terminal viewport once stacked alongside even a few messages.
+  // When Ink's dynamic frame exceeds viewport height, it can no longer
+  // erase the previous frame cleanly (the bottom rows have scrolled off
+  // screen), so each re-render appends a fresh full frame to scrollback
+  // — the symptom users see as the HUD repeating after every turn.
+  //
+  // Fix: render the chrome inside `<Static>` as a snapshot. Each entry in
+  // `hudSnapshots` prints exactly once and never re-renders. We append a
+  // new snapshot only on major identity changes (personality / model /
+  // session), so the chrome doesn't accumulate during normal chatting.
+  // Live counters and turn state move into the bottom StatusBar.
+  // ---------------------------------------------------------------------------
+  interface HudSnap {
+    id: string;
+    personality: string;
+    model: string;
+    sessionKey: string;
+    accentColor: string;
+  }
+  const [hudSnapshots, setHudSnapshots] = useState<HudSnap[]>(() => [
+    {
+      id: 'hud-initial',
+      personality: initialPersonality,
+      model,
+      sessionKey: initialSessionKey,
+      accentColor: personalityAccent(initialPersonality),
+    },
+  ]);
+
   const completionMatches = useMemo(() => getMatches(input), [input]);
   const completionVisible = completionMatches.length > 0 && input.startsWith('/');
 
@@ -235,17 +268,14 @@ export function App({
     activeTools.length > 0 ? activeTools[activeTools.length - 1]?.toolName : undefined;
   const accentColor = useMemo(() => personalityAccent(personality), [personality]);
   const showIdentityPane = columns >= 90;
-  const showTimelinePane = columns >= 125;
   const showSplash = messages.length === 0 && !running && !streamingText;
 
-  const focusOrder = useMemo(() => {
-    const panes: FocusPane[] = [];
-    if (showIdentityPane) panes.push('identity');
-    panes.push('context', 'safety', 'files');
-    if (showTimelinePane) panes.push('timeline');
-    panes.push('input');
-    return panes;
-  }, [showIdentityPane, showTimelinePane]);
+  // Focus order: side panels live in <Static> scrollback (the HUD snapshot)
+  // and aren't part of the live Ink frame anymore, so only the input pane
+  // is focusable. The 'files' pane stays in the list because patch approval
+  // (a/d hotkeys) still operates on pendingPatchEntries from state — the
+  // FileActivityPanel snapshot just shows the moment it was taken.
+  const focusOrder = useMemo<FocusPane[]>(() => ['files', 'input'], []);
 
   const pushTimeline = (level: TimelineEvent['level'], text: string) => {
     const at = new Date().toISOString().slice(11, 19);
@@ -272,31 +302,6 @@ export function App({
     [fileActivity],
   );
   const selectedPatchEntry = pendingPatchEntries[selectedPatchIndex] ?? null;
-
-  const safetyTags = useMemo(() => {
-    const tags: SafetyTag[] = [];
-    const mark = (toolName: string) => {
-      if (toolName === 'read_file') {
-        tags.push('READ_ONLY');
-        return;
-      }
-      if (toolName === 'write_file' || toolName.includes('patch')) {
-        tags.push('APPROVAL_REQUIRED');
-        return;
-      }
-      if (toolName === 'terminal') {
-        tags.push('DESTRUCTIVE');
-        return;
-      }
-      tags.push('SUGGESTED');
-    };
-    for (const tool of activeTools) mark(tool.toolName);
-    for (const tool of completedTools.slice(-20)) mark(tool.toolName);
-    for (const patch of pendingPatchEntries) {
-      if (patch.status === 'approval_required') tags.push('APPROVAL_REQUIRED');
-    }
-    return tags;
-  }, [activeTools, completedTools, pendingPatchEntries]);
 
   const appendFileActivity = (
     action: FileActivity['action'],
@@ -368,6 +373,35 @@ export function App({
         .catch(() => null);
     }
   }, [version]);
+
+  // Append a fresh HUD snapshot whenever the personality, model, or session
+  // changes — these are the rare events that warrant re-showing the chrome.
+  // Within a single conversation the snapshot stays put in scrollback above
+  // the message log; the bottom StatusBar carries live turn state.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nextId closes over a stable ref; intentionally react only to identity changes
+  useEffect(() => {
+    setHudSnapshots((prev) => {
+      const last = prev[prev.length - 1];
+      if (!last) return prev;
+      if (
+        last.personality === personality &&
+        last.model === currentModel &&
+        last.sessionKey === sessionKey
+      ) {
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          id: `hud-${nextId()}`,
+          personality,
+          model: currentModel,
+          sessionKey,
+          accentColor,
+        },
+      ];
+    });
+  }, [personality, currentModel, sessionKey, accentColor]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on match count change
   useEffect(() => {
@@ -1002,109 +1036,107 @@ export function App({
   return (
     <SkinContext.Provider value={tokens}>
       {/*
-        Committed chat history prints once via Ink's <Static>. Each settled
-        message lands in terminal scrollback and never re-renders, so the
-        dynamic Ink frame below stays small enough to fit the viewport even
-        across long sessions. Without this the entire chrome would re-print
-        on every state change once total height exceeded the terminal rows —
-        see the duplicated-header symptom we fixed.
+        HUD snapshot. The chrome prints once per personality/model/session via
+        Ink's <Static> — see hudSnapshots state above for the rationale. The
+        panels show whatever state was live when the snapshot was rendered;
+        live turn-state (active tools, queue depth, pending patches) is
+        carried by the bottom StatusBar.
+      */}
+      <Static items={hudSnapshots}>
+        {(snap) => (
+          <Box key={snap.id} flexDirection="column">
+            <ConsoleHeader
+              model={snap.model}
+              personality={snap.personality}
+              sessionKey={snap.sessionKey}
+              accentColor={snap.accentColor}
+            />
+            <Box flexDirection="row" marginBottom={1}>
+              {showIdentityPane && (
+                <Box width={28}>
+                  <IdentityPanel
+                    personality={snap.personality}
+                    status="idle"
+                    delegationCount={0}
+                    accentColor={snap.accentColor}
+                  />
+                </Box>
+              )}
+              <Box flexGrow={1} flexDirection="column">
+                <ContextPanel
+                  activeTools={[]}
+                  completedTools={[]}
+                  queueDepth={0}
+                  messageCount={0}
+                  pendingPatchCount={0}
+                />
+                <SafetyLane readonlyMode={false} tags={[]} />
+                <FileActivityPanel entries={[]} />
+              </Box>
+            </Box>
+          </Box>
+        )}
+      </Static>
+
+      {/*
+        Settled chat messages. Each ChatRow prints once via <Static>, landing
+        in scrollback above the dynamic frame. Long conversations therefore
+        never grow the in-place Ink output.
       */}
       <Static items={messages}>
         {(msg) => <ChatRow key={msg.id} message={msg} accentColor={accentColor} />}
       </Static>
+
       <Box flexDirection="column">
-        <ConsoleHeader
-          model={currentModel}
-          personality={personality}
-          sessionKey={sessionKey}
-          accentColor={accentColor}
-        />
-        <Box flexDirection="row" marginBottom={1}>
-          {showIdentityPane && (
-            <Box width={28}>
-              <IdentityPanel
-                personality={personality}
-                status={agentStatus}
-                delegationCount={delegations.length}
-                accentColor={accentColor}
-                focused={focusPane === 'identity'}
-              />
-            </Box>
-          )}
-          <Box flexGrow={1} flexDirection="column">
-            <ContextPanel
-              activeTools={activeTools}
-              completedTools={completedTools}
-              queueDepth={bridge.queueDepth}
-              messageCount={messages.length}
-              pendingPatchCount={pendingPatchEntries.length}
-              focused={focusPane === 'context'}
-            />
-            <SafetyLane
-              readonlyMode={readonlyMode}
-              tags={safetyTags}
-              focused={focusPane === 'safety'}
-            />
-            <FileActivityPanel
-              entries={fileActivity}
-              focused={focusPane === 'files'}
-              selectedId={selectedPatchEntry?.id}
-            />
-            {showSplash && inventory ? (
-              <Splash
-                model={currentModel}
-                personality={personality}
-                sessionKey={sessionKey}
-                accentColor={accentColor}
-                inventory={inventory}
-              />
-            ) : (
-              <StreamingRow text={streamingText} accentColor={accentColor} />
-            )}
-            {thinkingText && (
-              <AccordionSection
-                title="thinking"
-                mode={resolveMode(details.thinking, details.global)}
-              >
-                <ThinkingPane text={thinkingText} />
-              </AccordionSection>
-            )}
-            {(activeTools.length > 0 || completedTools.length > 0) && (
-              <AccordionSection
-                title="tools"
-                mode={resolveMode(details.tools, details.global)}
-                count={activeTools.length + completedTools.length}
-              >
-                <ToolSpinner activeTools={activeTools} completedTools={completedTools} />
-              </AccordionSection>
-            )}
-            {!showTimelinePane &&
-              resolveMode(details.activity, details.global) !== 'hidden' &&
-              timelineEvents.length > 0 && (
-                <AccordionSection
-                  title="activity"
-                  mode={resolveMode(details.activity, details.global)}
-                  count={timelineEvents.length}
-                >
-                  <ExecutionTimeline events={timelineEvents} focused={focusPane === 'timeline'} />
-                </AccordionSection>
-              )}
-            {delegations.length > 0 && (
-              <AccordionSection
-                title="subagents"
-                mode={resolveMode(details.subagents, details.global)}
-                count={delegations.length}
-              >
-                <SubagentsPane delegations={delegations} />
-              </AccordionSection>
-            )}
-          </Box>
-          {showTimelinePane && (
-            <Box width={46}>
+        {/*
+          Dynamic frame: short by design so it always fits the viewport and
+          can be redrawn in place. Holds the in-flight assistant response,
+          accordion details, transient status, input box, and live status bar.
+        */}
+        {showSplash && inventory ? (
+          <Splash
+            model={currentModel}
+            personality={personality}
+            sessionKey={sessionKey}
+            accentColor={accentColor}
+            inventory={inventory}
+          />
+        ) : (
+          <StreamingRow text={streamingText} accentColor={accentColor} />
+        )}
+        {thinkingText && (
+          <AccordionSection title="thinking" mode={resolveMode(details.thinking, details.global)}>
+            <ThinkingPane text={thinkingText} />
+          </AccordionSection>
+        )}
+        {(activeTools.length > 0 || completedTools.length > 0) && (
+          <AccordionSection
+            title="tools"
+            mode={resolveMode(details.tools, details.global)}
+            count={activeTools.length + completedTools.length}
+          >
+            <ToolSpinner activeTools={activeTools} completedTools={completedTools} />
+          </AccordionSection>
+        )}
+        {resolveMode(details.activity, details.global) !== 'hidden' &&
+          timelineEvents.length > 0 && (
+            <AccordionSection
+              title="activity"
+              mode={resolveMode(details.activity, details.global)}
+              count={timelineEvents.length}
+            >
               <ExecutionTimeline events={timelineEvents} focused={focusPane === 'timeline'} />
-            </Box>
+            </AccordionSection>
           )}
-        </Box>
+        {delegations.length > 0 && (
+          <AccordionSection
+            title="subagents"
+            mode={resolveMode(details.subagents, details.global)}
+            count={delegations.length}
+          >
+            <SubagentsPane delegations={delegations} />
+          </AccordionSection>
+        )}
         {showKeymap && (
           <Box marginBottom={1}>
             <KeymapOverlay focusPane={focusPane} running={running} />

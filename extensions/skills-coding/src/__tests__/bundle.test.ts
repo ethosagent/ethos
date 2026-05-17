@@ -40,6 +40,11 @@ describe('@ethosagent/skills-coding bundle', () => {
       'quality-and-testing',
       'github-workflow',
       'delegation-and-orchestration',
+      // framework-usage covers meta-skills (`native-mcp`, `ethos-skill-authoring`)
+      // — guidance for using or extending Ethos itself rather than executing a
+      // coding workflow. Added in lockstep with the first-party skills that
+      // depend on it.
+      'framework-usage',
     ]);
     for (const id of BUNDLED_CODING_SKILL_IDS) {
       const raw = readFileSync(join(SOURCE.dir, id, 'SKILL.md'), 'utf8');

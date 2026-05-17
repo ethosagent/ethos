@@ -743,7 +743,12 @@ export async function createAgentLoop(
     const attached = activePerson.mcp_servers ?? [];
     if (attached.length === 0) {
       const names = mcpConfig.map((s) => s.name).join(', ');
-      log.warn(
+      // Demoted from warn: not having MCP servers attached to a given
+      // personality is a common, deliberate state (the operator chose which
+      // personalities should see which servers). Surface the actionable
+      // hint at info so it stays auditable without spamming the chat
+      // console at every boot.
+      log.info(
         `MCP: 0 of ${mcpConfig.length} server(s) attached to "${activePerson.id}". ` +
           `Run 'ethos personality mcp ${activePerson.id} --attach <name>' to enable. ` +
           `Configured: ${names}`,
@@ -768,7 +773,13 @@ export async function createAgentLoop(
   }
 
   const { injectors, tools: skillTools } = createInjectors(personalities, {
-    onSkillSkip: (skillId, reason) => log.warn(`skill ${skillId} skipped: ${reason}`),
+    // Skipped at info level: a personality whose toolset lacks tools a
+    // bundled skill requires is the common, expected case (e.g. the
+    // personality-architect interviewer doesn't have read_file/terminal,
+    // so coding skills filter out). Demoted from warn so the operator's
+    // chat console isn't spammed at boot. Audit trail still flows via the
+    // logger sink for anyone investigating "why didn't <skill> load?".
+    onSkillSkip: (skillId, reason) => log.info(`skill ${skillId} skipped: ${reason}`),
     trustedFirstPartySources: [codingBundleSource],
     hooks,
   });
