@@ -103,6 +103,9 @@ importers:
       croner:
         specifier: ^9.0.0
         version: 9.1.0
+      gray-matter:
+        specifier: ^4.0.3
+        version: 4.0.3
       hono:
         specifier: ^4.12.15
         version: 4.12.15
@@ -121,6 +124,9 @@ importers:
       ws:
         specifier: ^8.20.0
         version: 8.20.0
+      yaml:
+        specifier: ^2.7.1
+        version: 2.8.3
       zod:
         specifier: ^4.3.6
         version: 4.3.6
