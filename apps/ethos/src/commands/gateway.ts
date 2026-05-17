@@ -53,9 +53,49 @@ import { isPidAlive } from './team-runtime';
 // Best-effort dynamic import. Returns null and logs a clear warning if the
 // module can't be loaded — typically because its underlying SDK isn't
 // installed. Callers downgrade gracefully.
+// Each branch uses a LITERAL-STRING dynamic import so tsup follows it
+// statically and inlines the workspace package (`@ethosagent/platform-*`)
+// into the published cli bundle. Earlier this function did
+// `await import(modulePath)` where `modulePath` was a parameter — tsup
+// can't statically resolve that, so the published dist tried to resolve
+// the workspace packages from npm at runtime and 404'd ("Cannot find
+// package '@ethosagent/platform-telegram' imported from
+// node_modules/@ethosagent/cli/dist/index.js"). Keep additions here in
+// lockstep with new platform modules.
 async function loadAdapterModule<T>(modulePath: string, label: string): Promise<T | null> {
   try {
-    return (await import(modulePath)) as T;
+    let mod: unknown;
+    switch (modulePath) {
+      case '@ethosagent/platform-telegram':
+        mod = await import('@ethosagent/platform-telegram');
+        break;
+      case '@ethosagent/platform-slack':
+        mod = await import('@ethosagent/platform-slack');
+        break;
+      case '@ethosagent/platform-discord':
+        mod = await import('@ethosagent/platform-discord');
+        break;
+      case '@ethosagent/platform-email':
+        mod = await import('@ethosagent/platform-email');
+        break;
+      case '@ethosagent/platform-telegram/clarify-surface':
+        mod = await import('@ethosagent/platform-telegram/clarify-surface');
+        break;
+      case '@ethosagent/platform-slack/clarify-surface':
+        mod = await import('@ethosagent/platform-slack/clarify-surface');
+        break;
+      case '@ethosagent/platform-discord/clarify-surface':
+        mod = await import('@ethosagent/platform-discord/clarify-surface');
+        break;
+      default:
+        throw new EthosError({
+          code: 'INTERNAL',
+          cause: `loadAdapterModule: unknown module '${modulePath}'`,
+          action:
+            'Add a literal-string switch arm in apps/ethos/src/commands/gateway.ts so the bundler can inline this module.',
+        });
+    }
+    return mod as T;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.warn(
