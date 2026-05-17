@@ -22,12 +22,12 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@ethosagent/safety-injection": "workspace:*",
-    "@ethosagent/safety-network": "workspace:*",
-    "@ethosagent/safety-watcher": "workspace:*",
     "@ethosagent/types": "workspace:*"
   },
   "devDependencies": {
+    "@ethosagent/safety-injection": "workspace:*",
+    "@ethosagent/safety-network": "workspace:*",
+    "@ethosagent/safety-watcher": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*"
   }
 }

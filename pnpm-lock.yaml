@@ -1116,6 +1116,10 @@ importers:
 
   packages/core:
     dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../types
+    devDependencies:
       '@ethosagent/safety-injection':
         specifier: workspace:*
         version: link:../safety/injection
@@ -1125,10 +1129,6 @@ importers:
       '@ethosagent/safety-watcher':
         specifier: workspace:*
         version: link:../safety/watcher
-      '@ethosagent/types':
-        specifier: workspace:*
-        version: link:../types
-    devDependencies:
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../storage-fs
