@@ -88,6 +88,36 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     comingSoon: true,
     defaultBaseUrl: 'http://localhost:11434/v1',
   },
+  {
+    id: 'mistral',
+    label: 'Mistral',
+    description: 'Mistral models via OpenAI-compatible API',
+    authType: 'api-key',
+    costType: 'api-billing',
+    comingSoon: true,
+    signupUrl: 'https://console.mistral.ai',
+    defaultBaseUrl: 'https://api.mistral.ai/v1',
+  },
+  {
+    id: 'together',
+    label: 'Together AI',
+    description: 'Open-source models on fast hosted inference',
+    authType: 'api-key',
+    costType: 'api-billing',
+    comingSoon: true,
+    signupUrl: 'https://api.together.ai',
+    defaultBaseUrl: 'https://api.together.xyz/v1',
+  },
+  {
+    id: 'fireworks',
+    label: 'Fireworks AI',
+    description: 'Fast hosted inference for Llama, Qwen, DeepSeek, and more',
+    authType: 'api-key',
+    costType: 'api-billing',
+    comingSoon: true,
+    signupUrl: 'https://fireworks.ai',
+    defaultBaseUrl: 'https://api.fireworks.ai/inference/v1',
+  },
 ];
 
 export function getProvider(id: string): ProviderCatalogEntry | undefined {

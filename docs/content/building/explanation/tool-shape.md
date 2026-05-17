@@ -1,10 +1,13 @@
 ---
-title: Tool Shape Philosophy
-description: When to split tools vs. unify them into a single multiplexed tool.
-sidebar_position: 50
+title: "Why split tools per action instead of one multiplexed tool?"
+description: "When to split a domain into N tools (kanban_create, kanban_list, ...) vs. unify behind one tool with an action arg (mcp). The heuristic and why."
+kind: explanation
+audience: developer
+slug: tool-shape
+updated: 2026-05-17
 ---
 
-# Tool Shape: Split vs. Unified
+# Why split tools per action instead of one multiplexed tool?
 
 Ethos uses two patterns for tools with multiple actions:
 

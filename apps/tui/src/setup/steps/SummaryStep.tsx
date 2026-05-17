@@ -93,6 +93,9 @@ function providerDisplayName(id: string): string {
     groq: 'Groq',
     deepseek: 'DeepSeek',
     ollama: 'Local (Ollama)',
+    mistral: 'Mistral',
+    together: 'Together AI',
+    fireworks: 'Fireworks AI',
   };
   return names[id] ?? id;
 }
