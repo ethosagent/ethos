@@ -54,6 +54,7 @@ const sidebars: SidebarsConfig = {
           items: [
             'using/reference/cli',
             'using/reference/config-yaml',
+            'using/reference/mcp-config',
             'using/reference/personality-yaml',
             'using/reference/slash-commands',
           ],

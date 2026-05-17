@@ -84,9 +84,7 @@ export function TeamCreate() {
                 <Button type="primary" onClick={() => navigate('/teams')}>
                   Start Team
                 </Button>
-                <Button onClick={() => navigate('/teams')}>
-                  Back to Teams
-                </Button>
+                <Button onClick={() => navigate('/teams')}>Back to Teams</Button>
               </Space>
             }
           />
