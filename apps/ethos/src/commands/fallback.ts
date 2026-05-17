@@ -216,21 +216,13 @@ function ask(rl: Interface, prompt: string): Promise<string> {
 }
 
 function maskRef(value: string | undefined): string {
-  if (!value) return c.dim + '(unset)' + c.reset;
+  if (!value) return `${c.dim}(unset)${c.reset}`;
   if (value.startsWith('${secrets:')) {
-    return c.dim + value + c.reset;
+    return `${c.dim}${value}${c.reset}`;
   }
   // Raw value — show only the last 4 chars.
-  if (value.length <= 8) return c.yellow + '****' + c.reset + ' (plaintext)';
-  return (
-    c.yellow +
-    '****' +
-    value.slice(-4) +
-    c.reset +
-    c.dim +
-    ' (plaintext — migrate to secrets resolver)' +
-    c.reset
-  );
+  if (value.length <= 8) return `${c.yellow}****${c.reset} (plaintext)`;
+  return `${c.yellow}****${value.slice(-4)}${c.reset}${c.dim} (plaintext — migrate to secrets resolver)${c.reset}`;
 }
 
 function extractSecretRef(value: string): string | null {
