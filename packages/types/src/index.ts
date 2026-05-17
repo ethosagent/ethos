@@ -5,6 +5,7 @@ export * from './clarify';
 export * from './context-engine';
 export * from './errors';
 export * from './hooks';
+export * from './id-validation';
 export * from './injector';
 export * from './llm';
 export * from './logger';

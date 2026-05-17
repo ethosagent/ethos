@@ -123,7 +123,6 @@ export class DefaultToolRegistry implements ToolRegistry {
         !isMcpOrPluginTool &&
         !e.tool.alwaysInclude &&
         allowedTools &&
-        allowedTools.length > 0 &&
         !allowedTools.includes(e.tool.name)
       )
         return false;
@@ -155,7 +154,7 @@ export class DefaultToolRegistry implements ToolRegistry {
       if (!isMcp && !isPlugin) {
         // Built-in tool — include if in personality.toolset (or if toolset is unrestricted)
         const toolset = personality.toolset;
-        if (!toolset || toolset.length === 0 || toolset.includes(name)) {
+        if (!toolset || toolset.includes(name)) {
           reach.add(name);
         }
       } else if (isMcp) {
@@ -205,12 +204,7 @@ export class DefaultToolRegistry implements ToolRegistry {
         // Toolset (allowedTools) only gates built-in tools — see toDefinitions
         // for the rationale. MCP and plugin tools are gated by passesFilter().
         const isMcpOrPluginTool = call.name.startsWith('mcp__') || entry.pluginId !== undefined;
-        if (
-          !isMcpOrPluginTool &&
-          allowedTools &&
-          allowedTools.length > 0 &&
-          !allowedTools.includes(call.name)
-        ) {
+        if (!isMcpOrPluginTool && allowedTools && !allowedTools.includes(call.name)) {
           return {
             toolCallId: call.toolCallId,
             name: call.name,

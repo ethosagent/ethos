@@ -7,7 +7,7 @@ import { findActiveSession, isPlaywrightInstalled } from './sessions';
 
 export const browserScreenshotTool: Tool = {
   name: 'browser_screenshot',
-  description: 'Take a screenshot of the current browser page. Returns base64-encoded PNG.',
+  description: 'Take a screenshot of the current browser page. Returns base64-encoded JPEG.',
   toolset: 'browser',
   maxResultChars: 500_000,
   capabilities: {
@@ -28,8 +28,15 @@ export const browserScreenshotTool: Tool = {
     }
 
     try {
-      const screenshot = await session.page.screenshot({ type: 'png' });
+      const screenshot = await session.page.screenshot({ type: 'jpeg', quality: 60 });
       const b64 = screenshot.toString('base64');
+      if (b64.length > 450_000) {
+        return {
+          ok: false,
+          error: `Screenshot too large (${Math.round(b64.length / 1024)}KB base64). Try reducing the viewport or page complexity.`,
+          code: 'execution_failed',
+        };
+      }
       const viewport = session.page.viewportSize() ?? { width: 1280, height: 720 };
       return {
         ok: true,

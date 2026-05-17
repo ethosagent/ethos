@@ -112,7 +112,7 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     app.use('/rpc/*', dual);
     app.use('/sse/*', dual);
     // apiKeys namespace rejects bearer auth — cookie only.
-    app.use('/rpc/apiKeys.*', cookieOnlyGuard());
+    app.use('/rpc/apiKeys/*', cookieOnlyGuard());
   } else {
     app.use('/rpc/*', authMiddleware({ tokens: opts.tokens }));
     app.use('/sse/*', authMiddleware({ tokens: opts.tokens }));

@@ -13,9 +13,10 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip, createGzip } from 'node:zlib';
+import { EthosError } from '@ethosagent/types';
 import { ethosDir } from '../config';
 
 const BACKUP_FILES = ['config.yaml', 'keys.json', 'MEMORY.md', 'USER.md'];
@@ -53,9 +54,18 @@ export async function runImport(argv: string[]): Promise<void> {
   const dataDir = ethosDir();
   mkdirSync(dataDir, { recursive: true });
 
+  const resolvedBase = resolve(dataDir) + sep;
   const entries = await readTarGz(srcPath);
   for (const [relPath, content] of entries) {
     const dest = join(dataDir, relPath);
+    const resolvedDest = resolve(dest);
+    if (!resolvedDest.startsWith(resolvedBase)) {
+      throw new EthosError({
+        code: 'IMPORT_BLOCKED',
+        cause: `Path traversal blocked: "${relPath}" escapes ${dataDir}`,
+        action: 'Check the archive contents — it may be corrupted or malicious.',
+      });
+    }
     mkdirSync(join(dataDir, relPath, '..'), { recursive: true });
     writeFileSync(dest, content);
   }
@@ -71,7 +81,7 @@ function timestamp(): string {
   return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 }
 
-interface Entry {
+export interface Entry {
   relPath: string;
   content: Buffer;
 }
@@ -102,7 +112,7 @@ function collectEntries(dataDir: string): Entry[] {
 }
 
 // Minimal tar format (POSIX ustar) — no external deps
-function buildTar(entries: Entry[]): Buffer {
+export function buildTar(entries: Entry[]): Buffer {
   const blocks: Buffer[] = [];
 
   for (const entry of entries) {
@@ -172,7 +182,7 @@ async function readTarGz(srcPath: string): Promise<Array<[string, Buffer]>> {
   return parseTar(raw);
 }
 
-function parseTar(buf: Buffer): Array<[string, Buffer]> {
+export function parseTar(buf: Buffer): Array<[string, Buffer]> {
   const results: Array<[string, Buffer]> = [];
   let offset = 0;
 
@@ -180,6 +190,25 @@ function parseTar(buf: Buffer): Array<[string, Buffer]> {
     const header = buf.slice(offset, offset + 512);
     const name = header.slice(0, 100).toString('utf8').replace(/\0.*/, '');
     if (!name) break;
+
+    // Reject path traversal and absolute paths at parse time
+    if (name.includes('..') || name.startsWith('/')) {
+      throw new EthosError({
+        code: 'IMPORT_BLOCKED',
+        cause: `Malicious tar entry rejected: "${name}"`,
+        action: 'Check the archive contents — it may be corrupted or malicious.',
+      });
+    }
+
+    // Only allow regular files (type '0' or null byte)
+    const typeFlag = header[156];
+    if (typeFlag !== 0x30 && typeFlag !== 0x00) {
+      throw new EthosError({
+        code: 'IMPORT_BLOCKED',
+        cause: `Unsupported tar entry type ${typeFlag} for "${name}"`,
+        action: 'Check the archive contents — it may be corrupted or malicious.',
+      });
+    }
 
     const sizeStr = header.slice(124, 135).toString('utf8').trim().replace(/\0.*/, '');
     const size = Number.parseInt(sizeStr, 8);

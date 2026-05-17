@@ -122,3 +122,21 @@ jobs:
                 body,
               });
             }
+
+  security-scan:
+    name: security-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: Run security audit
+        run: pnpm audit --audit-level=high || true
+      - name: Check for hardcoded secrets
+        run: |
+          # Simple grep-based secret detection
+          if grep -rn "sk-[a-zA-Z0-9]\{20,\}" --include="*.ts" --include="*.js" --exclude-dir=node_modules --exclude-dir=dist . 2>/dev/null | grep -v "test" | grep -v "__tests__" | grep -v "example" | grep -v "\.md"; then
+            echo "::error::Potential hardcoded API key detected"
+            exit 1
+          fi

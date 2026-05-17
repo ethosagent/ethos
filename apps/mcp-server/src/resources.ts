@@ -1,5 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { assertWithinBase } from '@ethosagent/core';
+import { assertSafeId } from '@ethosagent/types';
 
 export interface McpResource {
   uri: string;
@@ -77,12 +79,14 @@ export function readResource(uri: string, dataDir: string): string {
   const personalityMatch = uri.match(/^ethos:\/\/personalities\/([^/]+)\/(.+)$/);
   if (personalityMatch) {
     const [, id, file] = personalityMatch;
+    assertSafeId(id ?? '', 'personalityId');
     const dirs = [
       join(new URL('../../..', import.meta.url).pathname, 'extensions', 'personalities', 'data'),
       join(dataDir, 'personalities'),
     ];
     for (const dir of dirs) {
       const p = join(dir, id ?? '', file ?? '');
+      assertWithinBase(dir, p);
       if (existsSync(p)) return readFileSync(p, 'utf8');
     }
   }

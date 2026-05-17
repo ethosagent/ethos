@@ -533,7 +533,7 @@ export class AgentLoop {
     };
 
     // Allowed tool names for this personality (undefined = no restriction)
-    const allowedTools = personality.toolset?.length ? personality.toolset : undefined;
+    const allowedTools = personality.toolset ?? undefined;
     // Per-personality plugin + MCP gate (default-deny: missing field = no access)
     const allowedPlugins = personality.plugins ?? [];
     const filterOpts: ToolFilterOpts = {

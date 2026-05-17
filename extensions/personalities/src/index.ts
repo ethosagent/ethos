@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
 import {
+  assertSafeId,
   EthosError,
   type ModelTierConfig,
   type PersonalityConfig,
@@ -256,6 +257,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         'FilePersonalityRegistry: userPathFor() requires a userPersonalitiesDir at construction time.',
       );
     }
+    assertSafeId(id, 'personalityId');
     return join(this.userDir, id);
   }
 
@@ -280,6 +282,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
   }
 
   async create(input: CreatePersonalityInput): Promise<DescribedPersonality> {
+    assertSafeId(input.id, 'personalityId');
     if (this.personalities.get(input.id)) {
       throw new EthosError({
         code: 'PERSONALITY_EXISTS',
@@ -365,6 +368,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
    * ready to be edited.
    */
   async duplicate(id: string, newId: string): Promise<DescribedPersonality> {
+    assertSafeId(newId, 'personalityId');
     if (this.personalities.get(newId)) {
       throw new EthosError({
         code: 'PERSONALITY_EXISTS',
@@ -874,15 +878,22 @@ function validateUnsafeCombinations(id: string, config: PersonalityConfig): void
   }
 }
 
+function yamlScalar(value: string): string {
+  if (/[:\n\r#[\]{}&*!|>'"%@`]/.test(value) || value.trim() !== value) {
+    return JSON.stringify(value);
+  }
+  return value;
+}
+
 function renderConfigYaml(
   input: CreatePersonalityInput & {
     mcp_servers?: string[];
     plugins?: string[];
   },
 ): string {
-  const lines: string[] = [`name: ${input.name}`];
-  if (input.description) lines.push(`description: ${input.description}`);
-  if (input.model) lines.push(`model: ${input.model}`);
+  const lines: string[] = [`name: ${yamlScalar(input.name)}`];
+  if (input.description) lines.push(`description: ${yamlScalar(input.description)}`);
+  if (input.model) lines.push(`model: ${yamlScalar(input.model)}`);
   if (input.memoryScope) lines.push(`memoryScope: ${input.memoryScope}`);
   if (input.mcp_servers !== undefined) lines.push(`mcp_servers: ${input.mcp_servers.join(' ')}`);
   if (input.plugins !== undefined) lines.push(`plugins: ${input.plugins.join(' ')}`);

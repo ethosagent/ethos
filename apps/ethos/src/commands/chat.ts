@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { BackgroundRunner, InMemorySteerSink } from '@ethosagent/agent-bridge';
-import type { AgentEvent, AgentLoop } from '@ethosagent/core';
+import { type AgentEvent, type AgentLoop, stripAnsiEscapes } from '@ethosagent/core';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
 import type { SplashInventory } from '@ethosagent/tui';
 import type { Attachment, SteerSink, Storage } from '@ethosagent/types';
@@ -710,7 +710,7 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
 
   switch (event.type) {
     case 'text_delta':
-      out(event.text);
+      out(stripAnsiEscapes(event.text));
       break;
 
     case 'tool_start':
@@ -723,9 +723,9 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
     case 'tool_progress':
       if (state.verbosity === 'default' && event.audience !== 'user') break;
       if (event.toolName === '_watcher') {
-        out(`${c.yellow}  ${event.message}${c.reset}\n`);
+        out(`${c.yellow}  ${stripAnsiEscapes(event.message)}${c.reset}\n`);
       } else {
-        out(`${c.dim}  · ${event.toolName}: ${event.message}${c.reset}\n`);
+        out(`${c.dim}  · ${event.toolName}: ${stripAnsiEscapes(event.message)}${c.reset}\n`);
       }
       break;
 

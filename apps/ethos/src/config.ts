@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { ChannelFilterConfig, ChannelPlatformConfig } from '@ethosagent/safety-channel';
 import type {
   RetentionConfig,
   RetentionEventsConfig,
@@ -313,6 +314,14 @@ export interface EthosConfig {
    */
   personalitiesConfig?: Record<string, { retention?: RetentionConfig }>;
   /**
+   * Chapter 1 safety: per-platform sender allowlist + pairing config.
+   * Parsed from `channel_filter.<platform>.<field>: <value>` keys in config.yaml.
+   * When absent, the gateway allows all inbound messages (backward compat).
+   * When present, the gateway enforces sender allowlists, DM pairing codes,
+   * mention gating, and context-visibility stripping per platform.
+   */
+  channelFilter?: ChannelFilterConfig;
+  /**
    * FW-29 — skill evolver cron registration.
    *   `evolverCronEnabled` — when true, registers an in-process cron job that
    *     runs `ethos evolve run --quiet` on the configured schedule.
@@ -409,12 +418,22 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   if (config.slackBotToken) lines.push(`slackBotToken: ${config.slackBotToken}`);
   if (config.slackAppToken) lines.push(`slackAppToken: ${config.slackAppToken}`);
   if (config.slackSigningSecret) lines.push(`slackSigningSecret: ${config.slackSigningSecret}`);
+  if (config.emailImapHost) lines.push(`emailImapHost: ${config.emailImapHost}`);
+  if (config.emailImapPort) lines.push(`emailImapPort: ${config.emailImapPort}`);
+  if (config.emailUser) lines.push(`emailUser: ${config.emailUser}`);
+  if (config.emailPassword) lines.push(`emailPassword: ${config.emailPassword}`);
+  if (config.emailSmtpHost) lines.push(`emailSmtpHost: ${config.emailSmtpHost}`);
+  if (config.emailSmtpPort) lines.push(`emailSmtpPort: ${config.emailSmtpPort}`);
   if (config.verbose) lines.push('verbose: true');
   if (config.displayVerbosity) lines.push(`display.verbosity: ${config.displayVerbosity}`);
   if (config.displayBusyInputMode)
     lines.push(`display.busy_input_mode: ${config.displayBusyInputMode}`);
   if (config.displayToolPreviewLength !== undefined)
     lines.push(`display.tool_preview_length: ${config.displayToolPreviewLength}`);
+  if (config.displayResumeHint === false) lines.push('display.resume_hint: false');
+  if (config.displayResumeRecapTurns !== undefined)
+    lines.push(`display.resume_recap_turns: ${config.displayResumeRecapTurns}`);
+  if (config.displayBellOnComplete) lines.push('display.bell_on_complete: true');
   if (config.skin) lines.push(`skin: ${config.skin}`);
   if (config.retention) {
     for (const [key, val] of retentionToLines(config.retention)) {
@@ -430,6 +449,10 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       }
     }
   }
+  if (config.evolverCronEnabled) lines.push('evolver.cron_enabled: true');
+  if (config.evolverSchedule) lines.push(`evolver.schedule: ${config.evolverSchedule}`);
+  if (config.backgroundMaxConcurrent !== undefined)
+    lines.push(`background.max_concurrent: ${config.backgroundMaxConcurrent}`);
   if (config.telegram?.bots.length) {
     for (const [i, bot] of config.telegram.bots.entries()) {
       if (bot.id) lines.push(`telegram.bots.${i}.id: ${bot.id}`);
@@ -463,6 +486,28 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
     for (const [name, qc] of Object.entries(config.quick_commands)) {
       lines.push(`quick_commands.${name}.type: ${qc.type}`);
       lines.push(`quick_commands.${name}.command: ${qc.command}`);
+    }
+  }
+  if (config.channelFilter) {
+    for (const [platform, cfg] of Object.entries(config.channelFilter)) {
+      if (cfg.ownerUserId) lines.push(`channel_filter.${platform}.ownerUserId: ${cfg.ownerUserId}`);
+      if (cfg.recipientAllowlist && cfg.recipientAllowlist.length > 0) {
+        lines.push(
+          `channel_filter.${platform}.recipientAllowlist: ${cfg.recipientAllowlist.join(',')}`,
+        );
+      }
+      if (cfg.dmPolicy) lines.push(`channel_filter.${platform}.dmPolicy: ${cfg.dmPolicy}`);
+      if (cfg.contextVisibility)
+        lines.push(`channel_filter.${platform}.contextVisibility: ${cfg.contextVisibility}`);
+    }
+  }
+  if (config.providers && config.providers.length > 0) {
+    for (const [i, p] of config.providers.entries()) {
+      lines.push(`providers.${i}.provider: ${p.provider}`);
+      lines.push(`providers.${i}.apiKey: ${p.apiKey}`);
+      if (p.model) lines.push(`providers.${i}.model: ${p.model}`);
+      if (p.baseUrl) lines.push(`providers.${i}.baseUrl: ${p.baseUrl}`);
+      if (p.apiVersion) lines.push(`providers.${i}.apiVersion: ${p.apiVersion}`);
     }
   }
   if (config.auxiliary?.compression) {
@@ -568,6 +613,8 @@ function parseConfigYaml(src: string): EthosConfig {
   const teamsKv: Record<string, Record<string, string>> = {};
   // FW-16 — quick_commands.<name>.<field>: <value>
   const qcKv: Record<string, Record<string, string>> = {};
+  // Chapter 1 safety: channel_filter.<platform>.<field>: <value>
+  const channelFilterKv: Record<string, Record<string, string>> = {};
   for (const line of src.split('\n')) {
     // telegram.bots.<index>.bind.<field>: <value>
     const tbind = line.match(/^telegram\.bots\.(\d+)\.bind\.(\S+):\s*(.+)$/);
@@ -675,6 +722,16 @@ function parseConfigYaml(src: string): EthosConfig {
       activeContextKv[ac[1].trim()] = ac[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // channel_filter.<platform>.<field>: <value>
+    const cf = line.match(/^channel_filter\.([^.]+)\.(\S+):\s*(.+)$/);
+    if (cf) {
+      const platform = cf[1];
+      channelFilterKv[platform] ??= {};
+      (channelFilterKv[platform] as Record<string, string>)[cf[2]] = cf[3]
+        .trim()
+        .replace(/^["']|["']$/g, '');
+      continue;
+    }
     // quick_commands.<name>.<field>: <value>
     const qc = line.match(/^quick_commands\.([^.]+)\.(\S+):\s*(.+)$/);
     if (qc) {
@@ -733,6 +790,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const slackResult = buildSlackApps(slackAppsKv);
   const teams = buildTeamsConfig(teamsKv);
   const quick_commands = buildQuickCommands(qcKv);
+  const channelFilter = buildChannelFilter(channelFilterKv);
   const parseErrors = [...telegramResult.errors, ...slackResult.errors];
 
   const parsedSchemaVersion = kv.schemaVersion ? Number(kv.schemaVersion) : undefined;
@@ -782,6 +840,7 @@ function parseConfigYaml(src: string): EthosConfig {
       : undefined,
     displayBellOnComplete: displayKv.bell_on_complete === 'true' ? true : undefined,
     quick_commands,
+    channelFilter,
     auxiliary:
       auxiliaryCompression || auxiliaryVision
         ? {
@@ -1126,6 +1185,44 @@ function buildQuickCommands(
     }
   }
   return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function buildChannelFilter(
+  kv: Record<string, Record<string, string>>,
+): ChannelFilterConfig | undefined {
+  const platforms = Object.keys(kv);
+  if (platforms.length === 0) return undefined;
+  const out: ChannelFilterConfig = {};
+  for (const platform of platforms) {
+    const entry = kv[platform];
+    if (!entry) continue;
+    const cfg: ChannelPlatformConfig = {};
+    if (entry.ownerUserId) cfg.ownerUserId = entry.ownerUserId;
+    if (entry.recipientAllowlist) {
+      cfg.recipientAllowlist = entry.recipientAllowlist
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+    if (
+      entry.dmPolicy === 'pairing' ||
+      entry.dmPolicy === 'allowlist' ||
+      entry.dmPolicy === 'queue' ||
+      entry.dmPolicy === 'reject' ||
+      entry.dmPolicy === 'silent-drop'
+    ) {
+      cfg.dmPolicy = entry.dmPolicy;
+    }
+    if (
+      entry.contextVisibility === 'all' ||
+      entry.contextVisibility === 'allowlist' ||
+      entry.contextVisibility === 'allowlist_quote'
+    ) {
+      cfg.contextVisibility = entry.contextVisibility;
+    }
+    out[platform] = cfg;
+  }
+  return out;
 }
 
 function buildPersonalitiesConfig(

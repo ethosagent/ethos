@@ -45,6 +45,7 @@ export {
   MemoryConflictError,
 } from './memory-policies';
 export type { AgentLoopObservability } from './observability/agent-loop-observability';
+export { assertWithinBase, BoundaryEscapeError } from './path-boundary';
 export type { PluginFactory } from './plugin-registry';
 export { PluginRegistry } from './plugin-registry';
 export type { ChainedProviderOptions } from './providers/chained-provider';
@@ -52,6 +53,8 @@ export { ChainedProvider } from './providers/chained-provider';
 export { DefaultLLMProviderRegistry } from './providers/llm-registry';
 export { DefaultMemoryProviderRegistry } from './providers/memory-registry';
 export { InMemoryRequestDumpStore } from './request-dump-store';
+export { stripAnsiEscapes } from './sanitize-output';
 export type { SecretsBackend } from './scoped';
 export { ScopedFetchImpl, ScopedFsImpl, ScopedProcessImpl, ScopedSecretsImpl } from './scoped';
 export { DefaultToolRegistry } from './tool-registry';
+export { SsrfError, type ValidateUrlOptions, validateUrl } from './url-validator';

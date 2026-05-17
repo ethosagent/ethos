@@ -39,6 +39,7 @@ export interface RawConfig {
 export class ConfigRepository {
   private readonly storage: Storage;
   private readonly path: string;
+  private writeChain: Promise<void> = Promise.resolve();
 
   constructor(opts: ConfigRepositoryOptions) {
     this.storage = opts.storage ?? new FsStorage();
@@ -121,14 +122,21 @@ export class ConfigRepository {
    * deletion (e.g. clearing a platform's tokens).
    */
   async update(patch: Partial<RawConfig>): Promise<RawConfig> {
-    const current: RawConfig = (await this.read()) ?? { modelRouting: {}, passthrough: {} };
-    const next: RawConfig = {
-      ...current,
-      ...patch,
-      modelRouting: { ...current.modelRouting, ...(patch.modelRouting ?? {}) },
-      passthrough: { ...current.passthrough, ...(patch.passthrough ?? {}) },
-    };
-    await this.write(next);
+    let next!: RawConfig;
+    const op = this.writeChain
+      .catch(() => {})
+      .then(async () => {
+        const current: RawConfig = (await this.read()) ?? { modelRouting: {}, passthrough: {} };
+        next = {
+          ...current,
+          ...patch,
+          modelRouting: { ...current.modelRouting, ...(patch.modelRouting ?? {}) },
+          passthrough: { ...current.passthrough, ...(patch.passthrough ?? {}) },
+        };
+        await this.write(next);
+      });
+    this.writeChain = op.catch(() => {});
+    await op;
     return next;
   }
 
@@ -139,9 +147,16 @@ export class ConfigRepository {
    * delete keys, so this is the dedicated path.
    */
   async deletePassthroughKeys(keys: string[]): Promise<RawConfig> {
-    const current: RawConfig = (await this.read()) ?? { modelRouting: {}, passthrough: {} };
-    for (const key of keys) delete current.passthrough[key];
-    await this.write(current);
+    let current!: RawConfig;
+    const op = this.writeChain
+      .catch(() => {})
+      .then(async () => {
+        current = (await this.read()) ?? { modelRouting: {}, passthrough: {} };
+        for (const key of keys) delete current.passthrough[key];
+        await this.write(current);
+      });
+    this.writeChain = op.catch(() => {});
+    await op;
     return current;
   }
 
@@ -164,7 +179,7 @@ export class ConfigRepository {
     for (const key of Object.keys(config.passthrough).sort()) {
       lines.push(`${key}: ${config.passthrough[key]}`);
     }
-    await this.storage.write(this.path, `${lines.join('\n')}\n`);
+    await this.storage.writeAtomic(this.path, `${lines.join('\n')}\n`);
   }
 }
 

@@ -1,3 +1,4 @@
+import { stripAnsiEscapes } from '@ethosagent/core';
 import type { DockerSandbox } from '@ethosagent/sandbox-docker';
 import type { Tool, ToolResult } from '@ethosagent/types';
 
@@ -78,7 +79,9 @@ function createRunCodeTool(sandbox: DockerSandbox): Tool {
 
       const result = await sandbox.run(image, [...cmd], { stdin: code, timeoutMs: timeout });
 
-      const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+      const output = stripAnsiEscapes(
+        [result.stdout, result.stderr].filter(Boolean).join('\n').trim(),
+      );
 
       if (result.exitCode !== 0) {
         return {
@@ -105,7 +108,7 @@ const runTestsTool: Tool = {
   maxResultChars: 20_000,
   outputIsUntrusted: true,
   capabilities: {
-    process: { allowedBinaries: ['docker'] },
+    process: { allowedBinaries: ['bash'] },
   },
   schema: {
     type: 'object',
@@ -138,7 +141,7 @@ const runTestsTool: Tool = {
         cwd: workDir,
         timeout: 120_000,
       });
-      const out = [stdout, stderr].filter(Boolean).join('\n').trim();
+      const out = stripAnsiEscapes([stdout, stderr].filter(Boolean).join('\n').trim());
 
       if (exitCode !== 0) {
         return {
@@ -171,7 +174,7 @@ const lintTool: Tool = {
   maxResultChars: 10_000,
   outputIsUntrusted: true,
   capabilities: {
-    process: { allowedBinaries: ['docker'] },
+    process: { allowedBinaries: ['bash'] },
   },
   schema: {
     type: 'object',
@@ -204,7 +207,7 @@ const lintTool: Tool = {
         cwd: workDir,
         timeout: 60_000,
       });
-      const out = [stdout, stderr].filter(Boolean).join('\n').trim();
+      const out = stripAnsiEscapes([stdout, stderr].filter(Boolean).join('\n').trim());
 
       if (exitCode !== 0) {
         return {

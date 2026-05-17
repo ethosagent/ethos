@@ -21,6 +21,9 @@ import Database from 'better-sqlite3';
 const TOP_K = 5;
 const EMBED_DIM = 384;
 
+/** Maximum size in bytes for any single memory key's content. */
+const MAX_MEMORY_BYTES = 512 * 1024; // 512KB per key
+
 // ---------------------------------------------------------------------------
 // Lazy singleton embedding pipeline
 // ---------------------------------------------------------------------------
@@ -111,6 +114,28 @@ export class VectorMemoryProvider implements MemoryProvider {
   private readonly topK: number;
   private readonly embedFn: ((text: string) => Promise<Float32Array>) | undefined;
   private readonly storage: Storage;
+
+  // Per-key mutex to prevent concurrent read-modify-write races in sync().
+  // Two concurrent sync() calls for the same scope+key could both read the same
+  // content, each append their own addition, then the second upsert overwrites
+  // the first's append. The promise-chain mutex serializes per-key operations.
+  private locks = new Map<string, Promise<void>>();
+
+  private async withLock(key: string, fn: () => Promise<void>): Promise<void> {
+    const prev = this.locks.get(key) ?? Promise.resolve();
+    let resolve: (() => void) | undefined;
+    const next = new Promise<void>((r) => {
+      resolve = r;
+    });
+    this.locks.set(key, next);
+    await prev;
+    try {
+      await fn();
+    } finally {
+      if (resolve) resolve();
+      if (this.locks.get(key) === next) this.locks.delete(key);
+    }
+  }
 
   constructor(config: VectorMemoryConfig = {}) {
     this.dir = config.dir ?? join(homedir(), '.ethos');
@@ -229,38 +254,61 @@ export class VectorMemoryProvider implements MemoryProvider {
   async sync(updates: MemoryUpdate[], ctx: MemoryContext): Promise<void> {
     if (updates.length === 0) return;
     for (const update of updates) {
-      switch (update.action) {
-        case 'add': {
-          await this.upsert(ctx.scopeId, update.key, update.content);
-          break;
-        }
-        case 'replace': {
-          if (!update.content.trim()) {
+      const lockKey = `${ctx.scopeId}:${update.key}`;
+      await this.withLock(lockKey, async () => {
+        switch (update.action) {
+          case 'add': {
+            // Read existing content, append new, then upsert
+            const existing = this.db
+              .prepare('SELECT content FROM memory_entries WHERE scope_id = ? AND key = ?')
+              .get(ctx.scopeId, update.key) as { content: string } | undefined;
+            let combined = existing ? `${existing.content}\n${update.content}` : update.content;
+            if (combined.length > MAX_MEMORY_BYTES) {
+              const trimmed = combined.slice(combined.length - MAX_MEMORY_BYTES);
+              const firstNewline = trimmed.indexOf('\n');
+              combined = firstNewline > 0 ? trimmed.slice(firstNewline + 1) : trimmed;
+            }
+            await this.upsert(ctx.scopeId, update.key, combined);
+            break;
+          }
+          case 'replace': {
+            if (!update.content.trim()) {
+              this.db
+                .prepare('DELETE FROM memory_entries WHERE scope_id = ? AND key = ?')
+                .run(ctx.scopeId, update.key);
+            } else {
+              await this.upsert(ctx.scopeId, update.key, update.content);
+            }
+            break;
+          }
+          case 'remove': {
+            const match = update.substringMatch;
+            if (!match) break;
+            const existing = this.db
+              .prepare('SELECT content FROM memory_entries WHERE scope_id = ? AND key = ?')
+              .get(ctx.scopeId, update.key) as { content: string } | undefined;
+            if (!existing) break;
+            const filtered = existing.content
+              .split('\n')
+              .filter((line) => !line.includes(match))
+              .join('\n');
+            if (!filtered.trim()) {
+              this.db
+                .prepare('DELETE FROM memory_entries WHERE scope_id = ? AND key = ?')
+                .run(ctx.scopeId, update.key);
+            } else {
+              await this.upsert(ctx.scopeId, update.key, filtered);
+            }
+            break;
+          }
+          case 'delete': {
             this.db
               .prepare('DELETE FROM memory_entries WHERE scope_id = ? AND key = ?')
               .run(ctx.scopeId, update.key);
-          } else {
-            await this.upsert(ctx.scopeId, update.key, update.content);
+            break;
           }
-          break;
         }
-        case 'remove': {
-          const match = update.substringMatch;
-          if (!match) break;
-          this.db
-            .prepare(
-              "DELETE FROM memory_entries WHERE scope_id = ? AND key = ? AND content LIKE '%' || ? || '%'",
-            )
-            .run(ctx.scopeId, update.key, match);
-          break;
-        }
-        case 'delete': {
-          this.db
-            .prepare('DELETE FROM memory_entries WHERE scope_id = ? AND key = ?')
-            .run(ctx.scopeId, update.key);
-          break;
-        }
-      }
+      });
     }
   }
 

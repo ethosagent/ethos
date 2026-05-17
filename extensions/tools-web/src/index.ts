@@ -126,7 +126,10 @@ export const webExtractTool: Tool = {
   toolset: 'web',
   maxResultChars: 20_000,
   capabilities: {
-    network: { allowedHosts: ['api.exa.ai'] },
+    // Tool fetches arbitrary user-supplied URLs; SSRF protection is enforced
+    // by ScopedFetch → safeFetch, not by this allowlist. The personality-level
+    // network policy provides the outer gate.
+    network: { allowedHosts: ['*'] },
     secrets: ['providers/exa/apiKey'],
   },
   outputIsUntrusted: true,

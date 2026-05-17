@@ -148,6 +148,14 @@ describe('VectorMemoryProvider', () => {
       expect(provider.count()).toBe(1);
     });
 
+    it('add appends to existing content', async () => {
+      await provider.sync([{ action: 'add', key: 'k1', content: 'line one' }], ctx);
+      await provider.sync([{ action: 'add', key: 'k1', content: 'line two' }], ctx);
+      const entry = await provider.read('k1', ctx);
+      expect(entry?.content).toBe('line one\nline two');
+      expect(provider.count()).toBe(1);
+    });
+
     it('replace upserts the existing row', async () => {
       await provider.sync([{ action: 'add', key: 'k1', content: 'first' }], ctx);
       await provider.sync([{ action: 'replace', key: 'k1', content: 'replaced' }], ctx);
@@ -158,11 +166,18 @@ describe('VectorMemoryProvider', () => {
   });
 
   describe('sync — remove', () => {
-    it('removes the row when substringMatch hits the content', async () => {
+    it('removes matching lines but keeps the rest', async () => {
       await provider.sync(
-        [{ action: 'add', key: 'k1', content: 'remove this specific chunk' }],
+        [{ action: 'add', key: 'k1', content: 'keep this\nremove specific line\nalso keep' }],
         ctx,
       );
+      await provider.sync([{ action: 'remove', key: 'k1', substringMatch: 'specific' }], ctx);
+      const entry = await provider.read('k1', ctx);
+      expect(entry?.content).toBe('keep this\nalso keep');
+    });
+
+    it('deletes the entry when all lines match', async () => {
+      await provider.sync([{ action: 'add', key: 'k1', content: 'remove specific chunk' }], ctx);
       await provider.sync([{ action: 'remove', key: 'k1', substringMatch: 'specific' }], ctx);
       expect(await provider.read('k1', ctx)).toBeNull();
     });

@@ -58,6 +58,8 @@ export type EthosErrorCode =
   | 'PLUGIN_CONTRACT_INCOMPATIBLE'
   // Team manifest (Teamwork Core)
   | 'TEAM_MANIFEST_INVALID'
+  // Backup / import
+  | 'IMPORT_BLOCKED'
   // Memory
   | 'MEMORY_CONFLICT'
   // Web API (Phase 26)

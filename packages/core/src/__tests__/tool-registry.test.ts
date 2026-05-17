@@ -95,6 +95,33 @@ describe('DefaultToolRegistry', () => {
     expect(reg.toDefinitions(['nonexistent'])).toHaveLength(0);
   });
 
+  it('toDefinitions: empty allowedTools [] denies all built-in tools', () => {
+    const reg = new DefaultToolRegistry();
+    reg.register(echoTool);
+    reg.register(failTool);
+    const defs = reg.toDefinitions([]);
+    expect(defs.filter((d) => d.name === 'echo')).toEqual([]);
+    expect(defs.filter((d) => d.name === 'fail')).toEqual([]);
+    expect(defs).toHaveLength(0);
+  });
+
+  it('executeParallel: empty allowedTools [] denies all built-in tools at execution', async () => {
+    const execFn = vi.fn(async (): Promise<ToolResult> => ({ ok: true, value: 'ran' }));
+    const reg = new DefaultToolRegistry();
+    reg.register({ ...echoTool, execute: execFn });
+
+    const results = await reg.executeParallel(
+      [{ toolCallId: 'c1', name: 'echo', args: { text: 'hi' } }],
+      makeCtx(),
+      [],
+    );
+
+    expect(execFn).not.toHaveBeenCalled();
+    const r = results[0]?.result as Extract<ToolResult, { ok: false }>;
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe('not_available');
+  });
+
   it('executeParallel: blocked tool returns not_available when not in allowedTools', async () => {
     const reg = new DefaultToolRegistry();
     reg.register(echoTool);
@@ -385,15 +412,12 @@ describe('DefaultToolRegistry', () => {
         return { toolCallId: `c${i}`, name: pick, args: {} };
       });
 
-      await reg.executeParallel(calls, makeCtx(), allowed.length > 0 ? allowed : undefined);
+      await reg.executeParallel(calls, makeCtx(), allowed);
 
       for (const name of allToolNames) {
-        const expectedCalls =
-          allowed.length === 0
-            ? calls.filter((c) => c.name === name).length
-            : allowed.includes(name)
-              ? calls.filter((c) => c.name === name).length
-              : 0;
+        const expectedCalls = allowed.includes(name)
+          ? calls.filter((c) => c.name === name).length
+          : 0;
         const exec = counters.get(name);
         expect(exec).toBeDefined();
         if (exec) {
@@ -497,7 +521,7 @@ describe('Phase 4.3 — cross-plan: MCP server gate catches skill+MCP mismatch',
       expect(names.has('run_shell')).toBe(false);
     });
 
-    it('includes all built-in tools when toolset is empty/absent', () => {
+    it('includes all built-in tools when toolset is absent (undefined)', () => {
       const reg = new DefaultToolRegistry();
       reg.register({
         name: 'read_file',
@@ -517,6 +541,29 @@ describe('Phase 4.3 — cross-plan: MCP server gate catches skill+MCP mismatch',
       const names = reg.toolNamesForPersonality({ id: 'r', name: 'R' });
       expect(names.has('read_file')).toBe(true);
       expect(names.has('run_shell')).toBe(true);
+    });
+
+    it('denies all built-in tools when toolset is empty array', () => {
+      const reg = new DefaultToolRegistry();
+      reg.register({
+        name: 'read_file',
+        description: '',
+        schema: {},
+        capabilities: {},
+        execute: async () => ({ ok: true, value: '' }),
+      });
+      reg.register({
+        name: 'run_shell',
+        description: '',
+        schema: {},
+        capabilities: {},
+        execute: async () => ({ ok: true, value: '' }),
+      });
+
+      const names = reg.toolNamesForPersonality({ id: 'r', name: 'R', toolset: [] });
+      expect(names.has('read_file')).toBe(false);
+      expect(names.has('run_shell')).toBe(false);
+      expect(names.size).toBe(0);
     });
 
     it('includes MCP tools whose server is in personality.mcp_servers', () => {

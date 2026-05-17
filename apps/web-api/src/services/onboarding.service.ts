@@ -1,3 +1,4 @@
+import { validateUrl } from '@ethosagent/core';
 import type { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { EthosError } from '@ethosagent/types';
 import type { OnboardingStep, ProviderId } from '@ethosagent/web-contracts';
@@ -105,6 +106,11 @@ export class OnboardingService {
   // ---------------------------------------------------------------------------
 
   private async fetchModels(input: ValidateProviderInput): Promise<string[]> {
+    if (input.baseUrl) {
+      validateUrl(input.baseUrl, {
+        allowLocalhost: input.provider === 'ollama',
+      });
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), VALIDATE_TIMEOUT_MS);
     try {
@@ -156,6 +162,7 @@ export class OnboardingService {
     signal: AbortSignal,
   ): Promise<string[]> {
     const url = `${baseUrl.replace(/\/$/, '')}/models`;
+    validateUrl(url);
     const res = await this.fetchFn(url, {
       headers: { authorization: `Bearer ${apiKey}` },
       signal,
@@ -167,6 +174,7 @@ export class OnboardingService {
 
   private async ollamaModels(baseUrl: string, signal: AbortSignal): Promise<string[]> {
     const url = `${baseUrl.replace(/\/$/, '')}/api/tags`;
+    validateUrl(url, { allowLocalhost: true });
     const res = await this.fetchFn(url, { signal });
     if (!res.ok) throw new Error(`ollama returned ${res.status}`);
     const body = (await res.json()) as { models?: Array<{ name?: string }> };
