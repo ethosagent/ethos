@@ -39,9 +39,9 @@ export async function runSlackManifest(args: string[]): Promise<void> {
   const asYaml = sliced.includes('--yaml');
   const outIdx = sliced.findIndex((a) => a === '-o' || a === '--output');
   const outPath = outIdx >= 0 ? sliced[outIdx + 1] : undefined;
-  const nameIdx = sliced.findIndex((a) => a === '--name');
+  const nameIdx = sliced.indexOf('--name');
   const appName = nameIdx >= 0 ? sliced[nameIdx + 1] : 'Ethos Agent';
-  const reqUrlIdx = sliced.findIndex((a) => a === '--request-url');
+  const reqUrlIdx = sliced.indexOf('--request-url');
   const requestUrl = reqUrlIdx >= 0 ? sliced[reqUrlIdx + 1] : undefined;
 
   const manifest = buildManifest({ appName: appName ?? 'Ethos Agent', requestUrl });
