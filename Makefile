@@ -2,9 +2,15 @@ NVM_INSTALLED := $(shell test -f "$(HOME)/.nvm/nvm.sh"; echo $$?)
 NODE_VERSION  := $(shell cat .nvmrc 2>/dev/null || echo 22)
 PNPM_VERSION  := 10.33.0
 
-# Every target that runs node/pnpm sources nvm and selects the project's node
-# version, so you never have to remember `nvm use` yourself.
-NVM_EXEC = . $(HOME)/.nvm/nvm.sh && nvm use >/dev/null &&
+# Source nvm and select the project's node version automatically. Every
+# target that runs node/pnpm prefixes its command with $(NVM_EXEC), so
+# devs never have to remember `nvm use`. Short-circuits to a no-op in
+# two cases:
+#   - $(CI) is set (GitHub Actions, CircleCI, etc. — Node is already on
+#     PATH via actions/setup-node or equivalent).
+#   - nvm.sh isn't present locally (assume Node is already on PATH some
+#     other way; trust the user's setup).
+NVM_EXEC = $(if $(CI),,$(if $(wildcard $(HOME)/.nvm/nvm.sh),. $(HOME)/.nvm/nvm.sh && nvm use >/dev/null &&,))
 
 # Single source of truth for the release version.
 # Never edit package.json versions directly — use make version-set or make version-bump-*.
