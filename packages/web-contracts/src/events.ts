@@ -144,6 +144,18 @@ export const EvolveSkillPendingEventSchema = z.object({
   proposedAt: z.string(), // ISO-8601
 });
 
+export const DryRunToolPlanSchema = z.object({
+  toolCallId: z.string(),
+  toolName: z.string(),
+  args: z.unknown(),
+});
+
+export const DryRunSummaryEventSchema = z.object({
+  type: z.literal('dry_run_summary'),
+  plan: z.array(DryRunToolPlanSchema),
+  capped: z.number().int().nonnegative(),
+});
+
 export const ProtocolUpgradeRequiredEventSchema = z.object({
   type: z.literal('protocol.upgrade_required'),
   serverVersion: z.string(),
@@ -172,6 +184,7 @@ export const SseEventSchema = z.discriminatedUnion('type', [
   CronFiredEventSchema,
   MeshChangedEventSchema,
   EvolveSkillPendingEventSchema,
+  DryRunSummaryEventSchema,
   ProtocolUpgradeRequiredEventSchema,
 ]);
 export type SseEvent = z.infer<typeof SseEventSchema>;

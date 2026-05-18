@@ -292,6 +292,7 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
     case 'cron.fired':
     case 'mesh.changed':
     case 'evolve.skill_pending':
+    case 'dry_run_summary':
     case 'protocol.upgrade_required':
       return state;
   }

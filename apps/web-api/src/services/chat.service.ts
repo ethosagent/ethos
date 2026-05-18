@@ -55,6 +55,7 @@ export interface ChatSendInput {
   clientId: string;
   text: string;
   personalityId?: string;
+  dryRun?: boolean;
 }
 
 export interface ChatSendOutput {
@@ -102,6 +103,7 @@ export class ChatService {
       .send(input.text, {
         sessionKey: session.key,
         ...(input.personalityId ? { personalityId: input.personalityId } : {}),
+        ...(input.dryRun ? { dryRun: true } : {}),
       })
       .catch((err) => {
         // bridge.send doesn't reject for in-flight failures (those land as
@@ -263,6 +265,9 @@ export class ChatService {
         outputTokens,
         estimatedCostUsd,
       }),
+    );
+    bridge.on('dry_run_summary', (plan, capped) =>
+      this.append(sessionId, { type: 'dry_run_summary', plan, capped }),
     );
     bridge.on('error', (error, code) => this.append(sessionId, { type: 'error', error, code }));
     bridge.on('done', (text, turnCount) =>

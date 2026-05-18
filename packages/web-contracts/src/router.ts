@@ -243,6 +243,10 @@ const ChatSendInput = z.object({
   clientId: z.string().min(1),
   text: z.string().min(1),
   personalityId: z.string().optional(),
+  /** When true, the agent plans tool calls without executing them. The SSE
+   *  stream emits a `dry_run_summary` event with the tool plan instead of
+   *  running the tools. */
+  dryRun: z.boolean().optional(),
 });
 const ChatSendOutput = z.object({
   sessionId: z.string(),

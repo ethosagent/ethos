@@ -10,6 +10,7 @@ import type {
   AgentLoop,
   ClarifyPresenter,
   ClarifyResolvedListener,
+  DryRunToolPlan,
   RunOptions,
 } from '@ethosagent/core';
 
@@ -45,6 +46,8 @@ interface BridgeEventMap {
     model: string,
     source: 'team-coordinator' | 'team-personality' | 'personality' | 'global',
   ];
+  /** Emitted when dryRun is active — carries the planned tool calls. */
+  dry_run_summary: [plan: DryRunToolPlan[], capped: number];
 }
 
 interface QueuedSend {
@@ -226,6 +229,9 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
             break;
           case 'run_start':
             this.emit('run_start', event.provider, event.model, event.source);
+            break;
+          case 'dry_run_summary':
+            this.emit('dry_run_summary', event.plan, event.capped);
             break;
         }
       }

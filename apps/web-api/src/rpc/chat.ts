@@ -10,6 +10,7 @@ export const chatRouter = {
       clientId: input.clientId,
       text: input.text,
       ...(input.personalityId ? { personalityId: input.personalityId } : {}),
+      ...(input.dryRun ? { dryRun: true } : {}),
     }),
   ),
 
