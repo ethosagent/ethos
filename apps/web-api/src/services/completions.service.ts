@@ -273,7 +273,7 @@ function priorTextMessages(
   return out;
 }
 
-function stringContent(content: string | null | undefined): string | null {
+function stringContent(content: ChatMessage['content']): string | null {
   if (typeof content !== 'string') return null;
   if (content.length === 0) return null;
   return content;

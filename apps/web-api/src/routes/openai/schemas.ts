@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
 // Wire schemas for `POST /v1/chat/completions` — request, non-streaming
-// response, and streaming chunk. Scoped to F3+F4 (server-tools mode + native
-// chat completions). Client-tools mode (`tools`, `role: 'tool'`, assistant
-// tool_calls) is accepted into the schema for forward-compat but the route
-// layer rejects them until C1 lands so the failure path is loud, not lossy.
+// response, and streaming chunk. Client-tools mode (`tools`, `role: 'tool'`,
+// assistant tool_calls) is accepted into the schema for forward-compat but
+// the route layer rejects them until C1 lands so the failure path is loud,
+// not lossy.
 
 // ---------------------------------------------------------------------------
 // Request
@@ -21,14 +21,27 @@ const ToolCallSchema = z.object({
   }),
 });
 
+const TextContentPartSchema = z.object({
+  type: z.literal('text'),
+  text: z.string(),
+});
+
+const ImageUrlContentPartSchema = z.object({
+  type: z.literal('image_url'),
+  image_url: z.object({
+    url: z.string(),
+    detail: z.enum(['auto', 'low', 'high']).optional(),
+  }),
+});
+
+const ContentPartSchema = z.discriminatedUnion('type', [
+  TextContentPartSchema,
+  ImageUrlContentPartSchema,
+]);
+
 export const ChatMessageSchema = z.object({
   role: RoleSchema,
-  // F3 accepts string content only. OpenAI also permits an array of content
-  // parts (vision / refusal / multi-part) — those are deferred; the schema
-  // rejects them outright rather than silently dropping. When a future PR
-  // wires real array-content handling, broaden the union AND surface the
-  // drop via `x-ethos-warning` so callers see what was lossy.
-  content: z.string().nullable().optional(),
+  content: z.union([z.string(), z.array(ContentPartSchema)]).nullable().optional(),
   name: z.string().optional(),
   tool_call_id: z.string().optional(),
   tool_calls: z.array(ToolCallSchema).optional(),
@@ -55,6 +68,8 @@ export const ChatCompletionRequestSchema = z
     stream_options: StreamOptionsSchema.optional(),
     max_tokens: z.number().int().positive().optional(),
     temperature: z.number().min(0).max(2).optional(),
+    top_p: z.number().min(0).max(1).optional(),
+    seed: z.number().int().optional(),
     tools: z.array(ChatToolSchema).optional(),
     user: z.string().optional(),
   })
@@ -63,6 +78,7 @@ export const ChatCompletionRequestSchema = z
 
 export type ChatCompletionRequest = z.infer<typeof ChatCompletionRequestSchema>;
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+export type ContentPart = z.infer<typeof ContentPartSchema>;
 
 // ---------------------------------------------------------------------------
 // Response (non-streaming)
