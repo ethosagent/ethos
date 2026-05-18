@@ -755,3 +755,4 @@ export async function loadMcpConfig(
 
 // Re-export schema rewrite helper for external use / testing
 export { rewriteDefinitionsToRefs } from './schema-rewrite';
+export { probeTokenScopes } from './scope-probe';
