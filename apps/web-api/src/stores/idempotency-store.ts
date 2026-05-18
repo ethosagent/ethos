@@ -7,9 +7,11 @@ export interface CachedResponse {
 }
 
 const TTL_SECONDS = 86_400; // 24 hours
+const SWEEP_INTERVAL_MS = 60_000 * 15; // sweep at most every 15 minutes
 
 export class IdempotencyStore {
   private readonly db: Database.Database;
+  private lastSweepAt = 0;
 
   constructor(dbPathOrDb: string | Database.Database) {
     this.db = typeof dbPathOrDb === 'string' ? new Database(dbPathOrDb) : dbPathOrDb;
@@ -22,6 +24,7 @@ export class IdempotencyStore {
       CREATE TABLE IF NOT EXISTS idempotency_cache (
         api_key_hash TEXT NOT NULL,
         idempotency_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
         status INTEGER NOT NULL,
         headers_json TEXT NOT NULL,
         body TEXT NOT NULL,
@@ -31,40 +34,55 @@ export class IdempotencyStore {
     `);
   }
 
-  get(apiKeyHash: string, key: string): CachedResponse | null {
+  get(apiKeyHash: string, key: string): (CachedResponse & { requestHash: string }) | null {
     const now = Math.floor(Date.now() / 1000);
     const row = this.db
       .prepare(
-        `SELECT status, headers_json, body FROM idempotency_cache
+        `SELECT request_hash, status, headers_json, body FROM idempotency_cache
          WHERE api_key_hash = ? AND idempotency_key = ? AND created_at > ?`,
       )
       .get(apiKeyHash, key, now - TTL_SECONDS) as
-      | { status: number; headers_json: string; body: string }
+      | { request_hash: string; status: number; headers_json: string; body: string }
       | undefined;
     if (!row) return null;
     return {
+      requestHash: row.request_hash,
       status: row.status,
       headers: JSON.parse(row.headers_json) as Record<string, string>,
       body: row.body,
     };
   }
 
-  set(apiKeyHash: string, key: string, response: CachedResponse): void {
+  set(apiKeyHash: string, key: string, requestHash: string, response: CachedResponse): void {
     const now = Math.floor(Date.now() / 1000);
     this.db
       .prepare(
         `INSERT OR REPLACE INTO idempotency_cache
-         (api_key_hash, idempotency_key, status, headers_json, body, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         (api_key_hash, idempotency_key, request_hash, status, headers_json, body, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(apiKeyHash, key, response.status, JSON.stringify(response.headers), response.body, now);
+      .run(
+        apiKeyHash,
+        key,
+        requestHash,
+        response.status,
+        JSON.stringify(response.headers),
+        response.body,
+        now,
+      );
+    this.maybeSweep();
+  }
+
+  private maybeSweep(): void {
+    const now = Date.now();
+    if (now - this.lastSweepAt < SWEEP_INTERVAL_MS) return;
+    this.lastSweepAt = now;
+    this.sweep();
   }
 
   sweep(): void {
     const now = Math.floor(Date.now() / 1000);
-    this.db
-      .prepare('DELETE FROM idempotency_cache WHERE created_at <= ?')
-      .run(now - TTL_SECONDS);
+    this.db.prepare('DELETE FROM idempotency_cache WHERE created_at <= ?').run(now - TTL_SECONDS);
   }
 
   close(): void {

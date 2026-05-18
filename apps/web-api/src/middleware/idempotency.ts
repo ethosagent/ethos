@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { MiddlewareHandler } from 'hono';
 import type { CachedResponse, IdempotencyStore } from '../stores/idempotency-store';
 
@@ -15,12 +16,40 @@ export function idempotencyMiddleware(opts: IdempotencyMiddlewareOptions): Middl
       return;
     }
 
+    // Read body once for streaming check + request fingerprint.
+    let bodyText = '';
+    try {
+      bodyText = await c.req.raw.clone().text();
+      const parsed = JSON.parse(bodyText);
+      if (parsed && typeof parsed === 'object' && parsed.stream === true) {
+        await next();
+        return;
+      }
+    } catch {
+      // Not JSON — proceed; downstream will 400
+    }
+
+    const requestHash = createHash('sha256').update(bodyText).digest('hex').slice(0, 16);
+
     const apiKey = c.get('apiKey');
     const apiKeyId = apiKey.id;
     const compositeKey = `${apiKeyId}:${idempotencyKey}`;
 
     const cached = opts.store.get(apiKeyId, idempotencyKey);
     if (cached) {
+      if (cached.requestHash !== requestHash) {
+        return c.json(
+          {
+            error: {
+              message: 'Idempotency-Key reused with a different request body.',
+              type: 'invalid_request_error',
+              code: 'idempotency_key_reused',
+              param: null,
+            },
+          },
+          422,
+        );
+      }
       return cachedToResponse(cached);
     }
 
@@ -49,7 +78,7 @@ export function idempotencyMiddleware(opts: IdempotencyMiddlewareOptions): Middl
       const body = await c.res.text();
 
       const entry: CachedResponse = { status, headers, body };
-      opts.store.set(apiKeyId, idempotencyKey, entry);
+      opts.store.set(apiKeyId, idempotencyKey, requestHash, entry);
       if (resolvePending) resolvePending(entry);
 
       c.res = cachedToResponse(entry);
