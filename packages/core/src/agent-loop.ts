@@ -41,6 +41,7 @@ import { estimateMessagesTokens, estimateTokens } from './context-engines/token-
 import { InMemorySessionStore } from './defaults/in-memory-session';
 import { NoopMemoryProvider } from './defaults/noop-memory';
 import { DefaultPersonalityRegistry } from './defaults/noop-personality';
+import { redactArgs } from './dry-run';
 import { DefaultHookRegistry } from './hook-registry';
 import type { AgentLoopObservability } from './observability/agent-loop-observability';
 import { DefaultToolRegistry } from './tool-registry';
@@ -740,6 +741,15 @@ export class AgentLoop {
       if (buildResult.appendSystem) systemParts.push(buildResult.appendSystem);
     }
 
+    if (opts.dryRun) {
+      systemParts.push(
+        'IMPORTANT: You are in DRY-RUN mode. Every tool call will be intercepted and return a stub ' +
+          'result — no tool actually executes. Plan your tool calls as normal but do NOT retry or ' +
+          'loop when you see "[dry-run]" in the result. After your first batch of tool calls, ' +
+          'summarize what you would have done and stop.',
+      );
+    }
+
     const systemPrompt = systemParts.join('\n\n').trim() || undefined;
 
     // Step 8: Agentic loop — LLM call → tool use → LLM call → ...
@@ -781,6 +791,12 @@ export class AgentLoop {
     let totalToolCalls = 0;
     let successfulToolCalls = 0;
     const toolNameCounts = new Map<string, number>();
+
+    // Dry-run tracking — accumulates across all iterations of a turn.
+    const dryRunCap = opts.dryRun ? (opts.dryRunMaxToolCalls ?? 5) : Infinity;
+    let dryRunCallCount = 0;
+    let dryRunCapped = 0;
+    const dryRunPlan: DryRunToolPlan[] = [];
 
     // Ch.3d — post-untrusted-read downgrade. After any `outputIsUntrusted`
     // tool returns, dangerous tools are blocked for the next N iterations.
@@ -1164,6 +1180,7 @@ export class AgentLoop {
         memoryScope: personality.memoryScope,
         memoryScopeId: memScopeId,
         ...(this.teamId !== undefined && { teamId: this.teamId }),
+        ...(opts.dryRun ? { dryRun: true as const } : {}),
         currentTurn: turnCount,
         messageCount: allMessages.length + turnCount,
         abortSignal,
@@ -1307,6 +1324,24 @@ export class AgentLoop {
             )
           : [];
       const execResultMap = new Map(execResults.map((r) => [r.toolCallId, r]));
+
+      // Dry-run plan collection — record every executed tool call and track the cap.
+      if (opts.dryRun) {
+        for (const input of execInputs) {
+          dryRunPlan.push({
+            toolCallId: input.toolCallId,
+            toolName: input.name,
+            args: redactArgs(input.args),
+          });
+          dryRunCallCount++;
+          if (dryRunCallCount >= dryRunCap) {
+            // Count remaining tool calls in this batch that will be capped
+            const remaining = execInputs.length - execInputs.indexOf(input) - 1;
+            dryRunCapped += remaining;
+            break;
+          }
+        }
+      }
 
       // Detect think_deeper tool success → set run-local tier escalation for next LLM call.
       // Only fires when: (1) the personality declares a tier object, (2) its provider matches
@@ -1527,6 +1562,14 @@ export class AgentLoop {
     this.observability?.flush();
 
     yield { type: 'done', text: fullText, turnCount };
+
+    if (opts.dryRun && dryRunPlan.length > 0) {
+      yield {
+        type: 'dry_run_summary' as const,
+        plan: dryRunPlan,
+        capped: dryRunCapped,
+      };
+    }
   }
 
   private *handleChunk(
