@@ -28,7 +28,10 @@ export function openAiCors(opts?: OpenAiCorsOptions): MiddlewareHandler {
   }
 
   const allowed = new Set(
-    trimmed.split(',').map((o) => o.trim()).filter(Boolean),
+    trimmed
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
   );
 
   return cors({

@@ -169,6 +169,24 @@ describe('POST /v1/chat/completions', () => {
       });
       expect(res.status).toBe(401);
     });
+
+    it('returns 400 when messages include role: "system"', async () => {
+      const { app, bearer } = await withSetup();
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { ...bearer, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'engineer',
+          messages: [
+            { role: 'system', content: 'you are X' },
+            { role: 'user', content: 'hi' },
+          ],
+        }),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('system_messages_not_supported');
+    });
   });
 
   describe('non-streaming success', () => {
@@ -219,21 +237,91 @@ describe('POST /v1/chat/completions', () => {
       expect(o?.personalityId).toBeUndefined();
     });
 
-    it('sets x-ethos-warning when system messages are dropped', async () => {
-      const { app, bearer } = await withSetup();
+    it('accepts array content parts with text-only content', async () => {
+      let capturedInput: string | null = null;
+      const { app, bearer } = await withSetup({
+        events: [
+          { type: 'text_delta', text: 'hi' },
+          { type: 'done', text: 'hi', turnCount: 1 },
+        ],
+        onRun: (input) => {
+          capturedInput = input;
+        },
+      });
       const res = await app.request('/chat/completions', {
         method: 'POST',
         headers: { ...bearer, 'content-type': 'application/json' },
         body: JSON.stringify({
           model: 'engineer',
           messages: [
-            { role: 'system', content: 'you are X' },
-            { role: 'user', content: 'hi' },
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'hello' },
+                { type: 'text', text: 'world' },
+              ],
+            },
           ],
         }),
       });
       expect(res.status).toBe(200);
-      expect(res.headers.get('x-ethos-warning')).toMatch(/system messages ignored/i);
+      expect(capturedInput).toBe('hello\nworld');
+    });
+
+    it('sets x-ethos-warning for image_url content parts', async () => {
+      const { app, bearer } = await withSetup({
+        events: [
+          { type: 'text_delta', text: 'ok' },
+          { type: 'done', text: 'ok', turnCount: 1 },
+        ],
+      });
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { ...bearer, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'engineer',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'describe this' },
+                { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+              ],
+            },
+          ],
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('x-ethos-warning')).toMatch(/image_url/i);
+    });
+
+    it('forwards temperature, top_p, max_tokens, and seed to the loop', async () => {
+      let capturedOpts: Record<string, unknown> | null = null;
+      const { app, bearer } = await withSetup({
+        events: [{ type: 'done', text: '', turnCount: 1 }],
+        onRun: (_i, o) => {
+          capturedOpts = o as Record<string, unknown>;
+        },
+      });
+      const res = await app.request('/chat/completions', {
+        method: 'POST',
+        headers: { ...bearer, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'engineer',
+          messages: [{ role: 'user', content: 'hi' }],
+          temperature: 0.7,
+          top_p: 0.9,
+          max_tokens: 100,
+          seed: 42,
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(capturedOpts).toMatchObject({
+        temperature: 0.7,
+        topP: 0.9,
+        maxCompletionTokens: 100,
+        seed: 42,
+      });
     });
 
     it('threads X-Ethos-Session into the loop session key (with `openai:` prefix)', async () => {

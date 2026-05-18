@@ -41,7 +41,10 @@ const ContentPartSchema = z.discriminatedUnion('type', [
 
 export const ChatMessageSchema = z.object({
   role: RoleSchema,
-  content: z.union([z.string(), z.array(ContentPartSchema)]).nullable().optional(),
+  content: z
+    .union([z.string(), z.array(ContentPartSchema)])
+    .nullable()
+    .optional(),
   name: z.string().optional(),
   tool_call_id: z.string().optional(),
   tool_calls: z.array(ToolCallSchema).optional(),
