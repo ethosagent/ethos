@@ -65,6 +65,10 @@ export interface ServiceContainer {
 export function createRoutes(opts: CreateRoutesOptions): Hono {
   const app = new Hono();
 
+  // Unauthenticated health-check for container probes (liveness / readiness).
+  // Registered before any middleware so it never requires auth or CORS.
+  app.get('/healthz', (c) => c.json({ status: 'ok', uptime: process.uptime() }));
+
   // Last-resort error catcher. Routes that throw EthosError land here.
   app.onError(errorHandler);
 
