@@ -268,6 +268,7 @@ export class AnthropicProvider implements LLMProvider {
       ...(systemBlocks ? { system: systemBlocks } : {}),
       ...(anthropicTools.length > 0 ? { tools: anthropicTools } : {}),
       ...(options.stopSequences ? { stop_sequences: options.stopSequences } : {}),
+      ...(options.topP !== undefined ? { top_p: options.topP } : {}),
     };
 
     if (isThinkingModel(effectiveModel) && options.thinkingBudget && options.thinkingBudget > 0) {

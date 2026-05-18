@@ -262,6 +262,8 @@ export class OpenAICompatProvider implements LLMProvider {
       stream_options: { include_usage: true },
       ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+      ...(options.topP !== undefined ? { top_p: options.topP } : {}),
+      ...(options.seed !== undefined ? { seed: options.seed } : {}),
       ...(options.stopSequences ? { stop: options.stopSequences } : {}),
       ...(oaiTools.length > 0 ? { tools: oaiTools } : {}),
     };

@@ -41,6 +41,8 @@ export interface CompletionOptions {
   system?: string;
   maxTokens?: number;
   temperature?: number;
+  topP?: number;
+  seed?: number;
   thinkingBudget?: number;
   cacheSystemPrompt?: boolean;
   abortSignal?: AbortSignal;
