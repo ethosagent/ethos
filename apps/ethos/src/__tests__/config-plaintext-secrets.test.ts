@@ -38,68 +38,88 @@ describe('validateNoPlaintextSecrets', () => {
     expect(() => validateNoPlaintextSecrets(config)).not.toThrow();
   });
 
-  it('rejects Anthropic API key in apiKey field', () => {
+  it('rejects Anthropic API key in apiKey field (field-aware)', () => {
     const config = makeConfig({ apiKey: `sk-ant-${'A'.repeat(93)}` });
     expect(() => validateNoPlaintextSecrets(config)).toThrow(/plaintext secret.*detected/);
-    expect(() => validateNoPlaintextSecrets(config)).toThrow(/field 'apiKey'.*Anthropic API key/);
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(
+      /field 'apiKey'.*field requires \$\{secrets:ref\}/,
+    );
     expect(() => validateNoPlaintextSecrets(config)).toThrow(/\$\{secrets:<ref>\} substitution/);
   });
 
-  it('rejects OpenAI API key (sk-proj- prefix)', () => {
+  it('rejects OpenAI API key (sk-proj- prefix) via field check', () => {
     const longKey = `sk-proj-${'a'.repeat(50)}`;
     const config = makeConfig({ apiKey: longKey });
-    expect(() => validateNoPlaintextSecrets(config)).toThrow(/OpenAI API key/);
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(/field requires \$\{secrets:ref\}/);
   });
 
-  it('rejects bare sk- key with 40+ chars', () => {
+  it('rejects bare sk- key with 40+ chars via field check', () => {
     const longKey = `sk-${'A'.repeat(42)}`;
     const config = makeConfig({ apiKey: longKey });
-    expect(() => validateNoPlaintextSecrets(config)).toThrow(/OpenAI API key/);
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(/field requires \$\{secrets:ref\}/);
   });
 
-  it('rejects Slack bot token', () => {
+  it('rejects Slack bot token in secret field', () => {
     const config = makeConfig({
       apiKey: secretRef('providers/anthropic/apiKey'),
       slackBotToken: `xoxb-1234567890-1234567890-${'A'.repeat(24)}`,
     });
-    expect(() => validateNoPlaintextSecrets(config)).toThrow(/Slack token/);
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(/field requires \$\{secrets:ref\}/);
     expect(() => validateNoPlaintextSecrets(config)).toThrow(/field 'slackBotToken'/);
   });
 
-  it('rejects Slack app token (xapp-)', () => {
+  it('rejects Slack app token in secret field', () => {
     const config = makeConfig({
       apiKey: secretRef('providers/anthropic/apiKey'),
       slackAppToken: 'xapp-1-A1B2C3D4E5-F6G7H8I9J0',
     });
-    expect(() => validateNoPlaintextSecrets(config)).toThrow(/Slack app token/);
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(/field requires \$\{secrets:ref\}/);
   });
 
-  it('rejects GitHub PAT (ghp_ prefix)', () => {
+  it('rejects GitHub PAT via regex (ghp_ prefix in non-secret field)', () => {
+    // Use baseUrl (not a secret field) so the regex catch-all fires
+    const config = makeConfig({
+      apiKey: secretRef('providers/anthropic/apiKey'),
+      baseUrl: `ghp_${'A'.repeat(36)}`,
+    });
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(/GitHub PAT/);
+  });
+
+  it('rejects GitHub PAT via field check (ghp_ prefix in apiKey)', () => {
     const config = makeConfig({ apiKey: `ghp_${'A'.repeat(36)}` });
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(/field requires \$\{secrets:ref\}/);
+  });
+
+  it('rejects GitHub PAT (github_pat_ prefix in non-secret field)', () => {
+    const config = makeConfig({
+      apiKey: secretRef('providers/anthropic/apiKey'),
+      baseUrl: `github_pat_${'A'.repeat(82)}`,
+    });
     expect(() => validateNoPlaintextSecrets(config)).toThrow(/GitHub PAT/);
   });
 
-  it('rejects GitHub PAT (github_pat_ prefix)', () => {
-    const config = makeConfig({ apiKey: `github_pat_${'A'.repeat(82)}` });
-    expect(() => validateNoPlaintextSecrets(config)).toThrow(/GitHub PAT/);
-  });
-
-  it('rejects AWS access key', () => {
-    const config = makeConfig({ apiKey: 'AKIAIOSFODNN7EXAMPLE' });
+  it('rejects AWS access key via regex in non-secret field', () => {
+    const config = makeConfig({
+      apiKey: secretRef('providers/anthropic/apiKey'),
+      baseUrl: 'AKIAIOSFODNN7EXAMPLE',
+    });
     expect(() => validateNoPlaintextSecrets(config)).toThrow(/AWS access key/);
   });
 
-  it('rejects Groq API key', () => {
+  it('rejects Groq API key via field check in apiKey', () => {
     const config = makeConfig({ apiKey: `gsk_${'a'.repeat(20)}` });
-    expect(() => validateNoPlaintextSecrets(config)).toThrow(/Groq API key/);
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(/field requires \$\{secrets:ref\}/);
   });
 
-  it('rejects Stripe live key', () => {
-    const config = makeConfig({ apiKey: `sk_live_${'a'.repeat(24)}` });
+  it('rejects Stripe live key via regex in non-secret field', () => {
+    const config = makeConfig({
+      apiKey: secretRef('providers/anthropic/apiKey'),
+      baseUrl: `sk_live_${'a'.repeat(24)}`,
+    });
     expect(() => validateNoPlaintextSecrets(config)).toThrow(/Stripe key/);
   });
 
-  it('detects secrets in nested provider config', () => {
+  it('detects secrets in nested provider config (field-aware)', () => {
     const config = makeConfig({
       apiKey: secretRef('providers/anthropic/apiKey'),
       providers: [
@@ -111,11 +131,11 @@ describe('validateNoPlaintextSecrets', () => {
       ],
     });
     expect(() => validateNoPlaintextSecrets(config)).toThrow(
-      /field 'providers\[0\]\.apiKey'.*Anthropic API key/,
+      /field 'providers\[0\]\.apiKey'.*field requires \$\{secrets:ref\}/,
     );
   });
 
-  it('detects secrets in slack apps config', () => {
+  it('detects secrets in slack apps config (field-aware)', () => {
     const config = makeConfig({
       apiKey: secretRef('providers/anthropic/apiKey'),
       slack: {
@@ -130,11 +150,11 @@ describe('validateNoPlaintextSecrets', () => {
       },
     });
     expect(() => validateNoPlaintextSecrets(config)).toThrow(
-      /field 'slack\.apps\[0\]\.botToken'.*Slack token/,
+      /field 'slack\.apps\[0\]\.botToken'.*field requires \$\{secrets:ref\}/,
     );
   });
 
-  it('detects secrets in telegram bots config', () => {
+  it('detects secrets in telegram bots config (field-aware)', () => {
     const config = makeConfig({
       apiKey: secretRef('providers/anthropic/apiKey'),
       telegram: {
@@ -146,10 +166,10 @@ describe('validateNoPlaintextSecrets', () => {
         ],
       },
     });
-    expect(() => validateNoPlaintextSecrets(config)).toThrow(/Anthropic API key/);
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(/field requires \$\{secrets:ref\}/);
   });
 
-  it('detects secrets in auxiliary compression apiKey', () => {
+  it('detects secrets in auxiliary compression apiKey (field-aware)', () => {
     const config = makeConfig({
       apiKey: secretRef('providers/anthropic/apiKey'),
       auxiliary: {
@@ -160,13 +180,45 @@ describe('validateNoPlaintextSecrets', () => {
       },
     });
     expect(() => validateNoPlaintextSecrets(config)).toThrow(
-      /field 'auxiliary\.compression\.apiKey'.*Anthropic API key/,
+      /field 'auxiliary\.compression\.apiKey'.*field requires \$\{secrets:ref\}/,
     );
   });
 
-  it('does not reject short sk- prefixed values', () => {
-    // "sk-short" is only 8 chars after "sk-", not 40+ — should pass
+  it('rejects short non-secret-looking string in a secret field', () => {
+    // "sk-short" is only 8 chars — too short for regex detection, but
+    // apiKey is in SECRET_FIELD_NAMES so it must be a secrets ref
     const config = makeConfig({ apiKey: 'sk-short' });
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(
+      /field 'apiKey'.*field requires \$\{secrets:ref\}/,
+    );
+  });
+
+  it('does not reject short sk- prefixed values in a non-secret field', () => {
+    // "sk-short" in a non-secret field (baseUrl) — too short for regex, passes
+    const config = makeConfig({
+      apiKey: secretRef('providers/anthropic/apiKey'),
+      baseUrl: 'sk-short',
+    });
+    expect(() => validateNoPlaintextSecrets(config)).not.toThrow();
+  });
+
+  it('rejects an opaque Telegram token in a secret field', () => {
+    // '123456:ABC-DEF' does not match any regex pattern, but telegramToken
+    // is in SECRET_FIELD_NAMES so it must be a secrets reference
+    const config = makeConfig({
+      apiKey: secretRef('providers/anthropic/apiKey'),
+      telegramToken: '123456:ABC-DEF',
+    });
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(
+      /field 'telegramToken'.*field requires \$\{secrets:ref\}/,
+    );
+  });
+
+  it('accepts a secrets ref in a known secret field', () => {
+    const config = makeConfig({
+      apiKey: secretRef('providers/anthropic/apiKey'),
+      telegramToken: secretRef('telegram/token'),
+    });
     expect(() => validateNoPlaintextSecrets(config)).not.toThrow();
   });
 
@@ -175,19 +227,28 @@ describe('validateNoPlaintextSecrets', () => {
     expect(() => validateNoPlaintextSecrets(config)).not.toThrow();
   });
 
-  it('catches plaintext secret mixed with a secrets reference', () => {
+  it('catches plaintext secret mixed with a secrets reference (field-aware)', () => {
+    // apiKey is a secret field — non-ref remainder triggers field check
     const config = makeConfig({
       apiKey: `${secretRef('prod')} sk_live_${'a'.repeat(24)}`,
     });
     expect(() => validateNoPlaintextSecrets(config)).toThrow(/plaintext secret.*detected/);
-    expect(() => validateNoPlaintextSecrets(config)).toThrow(/Stripe key/);
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(/field requires \$\{secrets:ref\}/);
   });
 
-  it('catches Anthropic key appended after a secrets reference', () => {
+  it('catches Anthropic key appended after a secrets reference (field-aware)', () => {
     const config = makeConfig({
       apiKey: `${secretRef('providers/anthropic/apiKey')} sk-ant-${'D'.repeat(93)}`,
     });
-    expect(() => validateNoPlaintextSecrets(config)).toThrow(/Anthropic API key/);
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(/field requires \$\{secrets:ref\}/);
+  });
+
+  it('catches Stripe key via regex in non-secret field mixed with ref', () => {
+    const config = makeConfig({
+      apiKey: secretRef('providers/anthropic/apiKey'),
+      baseUrl: `${secretRef('prod')} sk_live_${'a'.repeat(24)}`,
+    });
+    expect(() => validateNoPlaintextSecrets(config)).toThrow(/Stripe key/);
   });
 
   it('reports multiple violations in one error', () => {
@@ -204,6 +265,8 @@ describe('validateNoPlaintextSecrets', () => {
     expect(err).toBeDefined();
     expect(err?.message).toContain("field 'apiKey'");
     expect(err?.message).toContain("field 'slackBotToken'");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal match, not a template
+    expect(err?.message).toContain('field requires ${secrets:ref}');
   });
 });
 
@@ -231,6 +294,9 @@ describe('loadConfigStrict rejects plaintext secrets when resolver is present', 
     );
     const secrets = new InMemorySecretsResolver();
     await expect(loadConfigStrict(storage, secrets)).rejects.toThrow(/plaintext secret.*detected/);
+    await expect(loadConfigStrict(storage, secrets)).rejects.toThrow(
+      /field requires \$\{secrets:ref\}/,
+    );
   });
 
   it('passes when secrets resolver is configured and config uses refs', async () => {

@@ -1073,10 +1073,35 @@ export async function loadConfigStrict(
 // ---------------------------------------------------------------------------
 
 /**
+ * Fields whose values MUST be entirely `${secrets:ref}` references when a
+ * SecretsResolver is configured. These are known credential-bearing fields
+ * regardless of whether the value matches a regex pattern.
+ */
+const SECRET_FIELD_NAMES = new Set([
+  'apiKey',
+  'token',
+  'botToken',
+  'appToken',
+  'signingSecret',
+  'password',
+  'emailPassword',
+  'discordToken',
+  'slackBotToken',
+  'slackAppToken',
+  'slackSigningSecret',
+  'telegramToken',
+]);
+
+/**
  * Walk every string value in `config` (including nested objects and arrays)
  * and throw if any value looks like a plaintext secret. Called from
  * `loadConfigStrict` *before* secrets resolution, so legitimate
  * `${secrets:ref}` references are still present and are explicitly skipped.
+ *
+ * Two-pass check:
+ * 1. **Field-name check** — if the leaf field name is in SECRET_FIELD_NAMES,
+ *    the ENTIRE value must be a secrets reference.
+ * 2. **Regex catch-all** — for all other fields, run `detectSecrets`.
  *
  * Skips validation entirely when no SecretsResolver is configured (local dev
  * without secrets infrastructure).
@@ -1086,6 +1111,20 @@ export function validateNoPlaintextSecrets(config: EthosConfig): void {
   walkStringValues(config, '', (field, value) => {
     const stripped = value.replace(SECRETS_REF_RE, '');
     if (stripped.length === 0) return;
+
+    // Extract the leaf field name, stripping trailing array indices
+    const raw = field.includes('.') ? field.slice(field.lastIndexOf('.') + 1) : field;
+    const leaf = raw.replace(/\[\d+\]$/, '');
+
+    if (SECRET_FIELD_NAMES.has(leaf)) {
+      // Known secret field — entire value must be a secrets reference
+      if (stripped.trim().length > 0) {
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: literal label, not a template
+        violations.push({ field, label: 'secret (field requires ${secrets:ref})' });
+      }
+      return;
+    }
+
     const detections = detectSecrets(stripped);
     if (detections.length > 0) {
       violations.push({ field, label: detections[0].label });

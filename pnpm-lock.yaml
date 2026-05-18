@@ -707,6 +707,9 @@ importers:
 
   extensions/observability-sqlite:
     dependencies:
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../../packages/safety/redact
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1233,7 +1236,11 @@ importers:
         specifier: workspace:*
         version: link:../../types
 
-  packages/safety/redact: {}
+  packages/safety/redact:
+    devDependencies:
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(@swc/core@1.15.30)(jiti@2.7.0)(postcss@8.5.10)(tsx@4.21.0)(typescript@6.0.3)(yaml@2.8.3)
 
   packages/safety/scanner:
     dependencies:

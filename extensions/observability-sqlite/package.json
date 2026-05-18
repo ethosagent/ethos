@@ -15,6 +15,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ethosagent/safety-redact": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "better-sqlite3": "^12.9.0",
     "croner": "^9.0.0"
