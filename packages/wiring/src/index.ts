@@ -851,7 +851,10 @@ export async function createAgentLoop(
     skillPassthrough,
     attachedServers,
   ) as Awaited<ReturnType<typeof loadMcpConfig>>;
-  const mcpManager = new McpManager(mcpConfig, { logger: log });
+  const mcpManager = new McpManager(mcpConfig, {
+    logger: log,
+    enableScopeProbe: process.env.ETHOS_MCP_SCOPE_PROBE === '1',
+  });
   await mcpManager.connect();
   for (const tool of mcpManager.getTools()) tools.register(tool);
 

@@ -102,6 +102,8 @@ export interface McpManagerConfig {
       details?: Record<string, unknown>;
     }) => void;
   };
+  /** Enable OAuth scope introspection probe on connect. Default: false. */
+  enableScopeProbe?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,8 +134,11 @@ export class McpClient {
   /** Callback invoked when the server sends `notifications/tools/list_changed`. */
   onToolsChanged?: (tools: McpToolDef[]) => void;
 
-  /** Callback invoked with scope-probe results (fire-and-forget, gated by env var). */
+  /** Callback invoked with scope-probe results (fire-and-forget, gated by config flag). */
   onScopeProbe?: (result: ScopeProbeResult) => void;
+
+  /** Whether to run the OAuth scope introspection probe on connect. */
+  enableScopeProbe?: boolean;
 
   constructor(config: McpServerConfig, opts?: { logger?: Logger; secrets?: SecretsResolver }) {
     this._config = config;
@@ -164,7 +169,7 @@ export class McpClient {
 
     // Scope-introspection probe — fire-and-forget, never blocks startup
     if (
-      process.env.ETHOS_MCP_SCOPE_PROBE === '1' &&
+      this.enableScopeProbe &&
       this._config.auth?.type === 'oauth2' &&
       this._config.auth.introspection_endpoint &&
       this._secrets
@@ -580,6 +585,7 @@ export class McpManager {
     this._collisionPolicy = opts.collisionPolicy ?? 'warn';
     this._clients = configs.map((c) => {
       const client = new McpClient(c, { logger: this.logger, secrets: opts.secrets });
+      client.enableScopeProbe = opts.enableScopeProbe ?? false;
       // Phase 2.3 — wire dynamic tool discovery callback
       client.onToolsChanged = (newTools) => {
         const prefix = `mcp__${client.name}__`;
