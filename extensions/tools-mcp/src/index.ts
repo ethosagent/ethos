@@ -93,6 +93,15 @@ export interface McpManagerConfig {
   collisionPolicy?: 'warn' | 'error';
   /** Secrets resolver for OAuth token storage. Required for servers with auth config. */
   secrets?: SecretsResolver;
+  /** Observability writer for recording scope-probe and other diagnostic events. */
+  obs?: {
+    recordEvent: (event: {
+      category: string;
+      severity?: string;
+      code?: string;
+      details?: Record<string, unknown>;
+    }) => void;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -579,6 +588,23 @@ export class McpManager {
           this._tools.push(adaptMcpTool(t, client.name, client));
         }
       };
+      // Wire scope-probe results to observability
+      if (opts.obs) {
+        const obs = opts.obs;
+        client.onScopeProbe = (result) => {
+          obs.recordEvent({
+            category: 'mcp.scope_probe',
+            severity: result.outcome === 'match' ? 'info' : 'warn',
+            code: result.outcome,
+            details: {
+              server: result.server,
+              declaredScopes: result.declaredScopes,
+              actualScopes: result.actualScopes,
+              ...(result.error ? { error: result.error } : {}),
+            },
+          });
+        };
+      }
       return client;
     });
   }
