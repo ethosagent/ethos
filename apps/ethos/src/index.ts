@@ -172,6 +172,8 @@ try {
       const resumeQuery = resumeFlagIdx !== -1 ? chatArgs[resumeFlagIdx + 1] : undefined;
       // FW-5 — --no-resume-hint suppresses the exit hint for this session
       const noResumeHintFlag = chatArgs.includes('--no-resume-hint');
+      // --dry-run enables dry-run mode (tools are planned but not executed)
+      const dryRunFlag = chatArgs.includes('--dry-run');
 
       const { query, queryFlagUsed } = extractSingleQuery(chatArgs);
       if (queryFlagUsed && (!query || query.trim().length === 0)) {
@@ -233,6 +235,7 @@ try {
             ...(query ? { singleQuery: query } : {}),
             ...(resumeSessionKey ? { resumeSessionKey, resumeSessionId } : {}),
             ...(noResumeHintFlag ? { noResumeHint: true } : {}),
+            ...(dryRunFlag ? { dryRun: true } : {}),
           });
           if (query) process.exit(0);
         }
@@ -251,6 +254,7 @@ try {
           ...(query ? { singleQuery: query } : {}),
           ...(resumeSessionKey ? { resumeSessionKey, resumeSessionId } : {}),
           ...(noResumeHintFlag ? { noResumeHint: true } : {}),
+          ...(dryRunFlag ? { dryRun: true } : {}),
         });
         if (query) process.exit(0);
       }

@@ -132,6 +132,8 @@ interface ChatState {
   pendingAttachments: Attachment[];
   /** Pending tier override for the next turn (from /tier command). Consumed once. */
   pendingTierOverride?: 'trivial' | 'default' | 'deep';
+  /** Dry-run mode — tools are planned but not executed. */
+  dryRun: boolean;
 }
 
 interface RunChatOptions {
@@ -142,6 +144,8 @@ interface RunChatOptions {
   resumeSessionId?: string;
   /** FW-5 — suppress the resume hint on exit regardless of config. */
   noResumeHint?: boolean;
+  /** Dry-run mode — tools are planned but not executed. */
+  dryRun?: boolean;
 }
 
 function renderStatusBarLine(state: ChatState): void {
@@ -257,6 +261,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     awaitingConsent: false,
     awaitingClarify: false,
     pendingAttachments: [],
+    dryRun: opts.dryRun ?? false,
   };
 
   // Clarify surface — when the agent calls the `clarify` tool, pause the
@@ -609,6 +614,7 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       ...(state.busyMode === 'steer' ? { steerSink: state.steerSink } : {}),
       ...(turnAttachments ? { attachments: turnAttachments } : {}),
       ...(tierOverride ? { tierOverride } : {}),
+      ...(state.dryRun ? { dryRun: true } : {}),
     })) {
       // Track iteration count — proxy by counting `run_start`+tool_start sequences.
       // Per AgentLoop, an iteration starts on before_llm_call hook. We don't get
@@ -763,6 +769,17 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
       }
       break;
 
+    case 'dry_run_summary': {
+      const label = `Dry-run plan (${event.plan.length} tool call${event.plan.length === 1 ? '' : 's'}${event.capped > 0 ? `, ${event.capped} capped` : ''}):`;
+      out(`\n${c.cyan}${c.bold}${label}${c.reset}\n`);
+      for (const step of event.plan) {
+        const argsPreview = JSON.stringify(step.args).slice(0, 120);
+        out(`  ${c.dim}${step.toolName}${c.reset} ${argsPreview}\n`);
+      }
+      out('\n');
+      break;
+    }
+
     case 'thinking_delta':
     case 'done':
     case 'context_meta':
@@ -880,6 +897,7 @@ async function handleSlashCommand(
           `  /verbose status       show current level\n` +
           `  /busy <mode|status>   busy-input mode (interrupt/queue/steer)\n` +
           `  /attach <path>        attach a file to the next message\n` +
+          `  /dry-run on|off      toggle dry-run mode (plan tools without executing)\n` +
           `  /steer <text>         inject [USER STEER] mid-turn\n` +
           `  /allow <code>         approve a pending channel sender by pairing code\n` +
           `  /deny <platform> <id> revoke an approved channel sender\n` +
@@ -1117,6 +1135,19 @@ async function handleSlashCommand(
         out(
           `${c.red}Failed to attach: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`,
         );
+      }
+      break;
+    }
+
+    case 'dry-run': {
+      if (arg === 'on') {
+        state.dryRun = true;
+        out(`${c.dim}[dry-run mode ON — tools will not execute]${c.reset}\n`);
+      } else if (arg === 'off') {
+        state.dryRun = false;
+        out(`${c.dim}[dry-run mode OFF — tools execute normally]${c.reset}\n`);
+      } else {
+        out(`${c.dim}Dry-run: ${state.dryRun ? 'ON' : 'OFF'}. Usage: /dry-run on|off${c.reset}\n`);
       }
       break;
     }
