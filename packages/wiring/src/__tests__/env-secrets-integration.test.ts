@@ -34,7 +34,10 @@ describe('env-secrets integration', () => {
   it('ANTHROPIC_API_KEY in process.env resolves via MergedSecretsResolver', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-integration-test';
     const file = new InMemorySecretsResolver();
-    const merged = new MergedSecretsResolver(new EnvSecretsResolver(), file);
+    const merged = new MergedSecretsResolver({
+      readers: [new EnvSecretsResolver(), file],
+      writer: file,
+    });
     const val = await merged.get('providers/anthropic/apiKey');
     expect(val).toBe('sk-ant-integration-test');
   });
@@ -43,7 +46,10 @@ describe('env-secrets integration', () => {
     process.env.ANTHROPIC_API_KEY = 'env-wins';
     const file = new InMemorySecretsResolver();
     await file.set('providers/anthropic/apiKey', 'file-fallback');
-    const merged = new MergedSecretsResolver(new EnvSecretsResolver(), file);
+    const merged = new MergedSecretsResolver({
+      readers: [new EnvSecretsResolver(), file],
+      writer: file,
+    });
     const val = await merged.get('providers/anthropic/apiKey');
     expect(val).toBe('env-wins');
   });
@@ -51,21 +57,30 @@ describe('env-secrets integration', () => {
   it('falls back to file resolver when env var is absent', async () => {
     const file = new InMemorySecretsResolver();
     await file.set('providers/anthropic/apiKey', 'file-only');
-    const merged = new MergedSecretsResolver(new EnvSecretsResolver(), file);
+    const merged = new MergedSecretsResolver({
+      readers: [new EnvSecretsResolver(), file],
+      writer: file,
+    });
     const val = await merged.get('providers/anthropic/apiKey');
     expect(val).toBe('file-only');
   });
 
   it('returns null when neither env nor file has the ref', async () => {
     const file = new InMemorySecretsResolver();
-    const merged = new MergedSecretsResolver(new EnvSecretsResolver(), file);
+    const merged = new MergedSecretsResolver({
+      readers: [new EnvSecretsResolver(), file],
+      writer: file,
+    });
     const val = await merged.get('providers/anthropic/apiKey');
     expect(val).toBeNull();
   });
 
   it('simulates secretsBackend: throws when ref not found', async () => {
     const file = new InMemorySecretsResolver();
-    const merged = new MergedSecretsResolver(new EnvSecretsResolver(), file);
+    const merged = new MergedSecretsResolver({
+      readers: [new EnvSecretsResolver(), file],
+      writer: file,
+    });
 
     // This mirrors the secretsBackend logic in packages/wiring/src/index.ts
     const secretsBackend = async (ref: string): Promise<string> => {
@@ -82,7 +97,10 @@ describe('env-secrets integration', () => {
   it('simulates secretsBackend: resolves when ANTHROPIC_API_KEY is set', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-123';
     const file = new InMemorySecretsResolver();
-    const merged = new MergedSecretsResolver(new EnvSecretsResolver(), file);
+    const merged = new MergedSecretsResolver({
+      readers: [new EnvSecretsResolver(), file],
+      writer: file,
+    });
 
     const secretsBackend = async (ref: string): Promise<string> => {
       const val = await merged.get(ref);

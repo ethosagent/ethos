@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Mock wiring so getStorage/getSecretsResolver don't hit the filesystem.
 vi.mock('../wiring', () => ({
   getStorage: () => ({}),
-  getSecretsResolver: () => ({}),
+  getSecretsResolver: async () => ({}),
 }));
 
 // Mock config module — only readConfig needs to be swappable.

@@ -109,6 +109,16 @@ The filesystem-access interface from `@ethosagent/types`. All reads and writes u
 
 The per-personality read/write boundary enforced by `ScopedStorage`. Paths outside the personality's allowlist raise `BoundaryError`; surfaces translate this into a user-facing tool error. Distinct from [fs_reach](#fs-reach) — Storage scope is enforced for framework I/O, fs_reach for the agent's own file tools.
 
+## Secrets {#secrets}
+
+### Secret {#secret}
+
+Sensitive material Ethos needs at runtime — provider API keys, channel bot tokens, integration credentials. Referenced in `config.yaml` as `${secrets:<ref>}` placeholders and resolved at startup against a precedence chain of backends (`.env`, process env, AWS Secrets Manager, on-disk files). See [Secrets resolver reference](../using/reference/secrets-resolver.md).
+
+### Secret ref {#secret-ref}
+
+The forward-slash-delimited path that identifies a secret, e.g. `providers/anthropic/apiKey` or `channels/telegram/default/botToken`. The resolver passes the ref to each backend in order; the first non-null value wins. Backend-specific naming (env-style uppercase keys, AWS prefixed secret names) is derived from the ref.
+
 ## Multi-agent {#multi-agent}
 
 ### Mesh {#mesh}

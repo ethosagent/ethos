@@ -4,7 +4,8 @@ import { setRotationConfig } from './error-log';
 import { getSecretsResolver, getStorage } from './wiring';
 
 export async function loadRequiredConfig(): Promise<EthosConfig> {
-  const config = await readConfig(getStorage(), getSecretsResolver());
+  const secrets = await getSecretsResolver();
+  const config = await readConfig(getStorage(), secrets);
   if (config) {
     if (config.logs?.rotation) {
       setRotationConfig(config.logs.rotation);

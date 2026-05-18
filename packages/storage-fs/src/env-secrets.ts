@@ -156,28 +156,33 @@ export class EnvSecretsResolver implements SecretsResolver {
 // ---------------------------------------------------------------------------
 
 export class MergedSecretsResolver implements SecretsResolver {
-  constructor(
-    private readonly env: SecretsResolver,
-    private readonly file: SecretsResolver,
-  ) {}
+  private readonly readers: SecretsResolver[];
+  private readonly writer: SecretsResolver;
+
+  constructor(opts: { readers: SecretsResolver[]; writer: SecretsResolver }) {
+    this.readers = opts.readers;
+    this.writer = opts.writer;
+  }
 
   async get(ref: SecretRef): Promise<string | null> {
-    const envVal = await this.env.get(ref);
-    if (envVal !== null) return envVal;
-    return this.file.get(ref);
+    for (const resolver of this.readers) {
+      const val = await resolver.get(ref);
+      if (val !== null) return val;
+    }
+    return null;
   }
 
   async set(ref: SecretRef, value: string): Promise<void> {
-    return this.file.set(ref, value);
+    return this.writer.set(ref, value);
   }
 
   async delete(ref: SecretRef): Promise<void> {
-    return this.file.delete(ref);
+    return this.writer.delete(ref);
   }
 
   async list(prefix?: string): Promise<SecretRef[]> {
-    const [envRefs, fileRefs] = await Promise.all([this.env.list(prefix), this.file.list(prefix)]);
-    return [...new Set([...envRefs, ...fileRefs])];
+    const results = await Promise.all(this.readers.map((r) => r.list(prefix)));
+    return [...new Set(results.flat())];
   }
 }
 

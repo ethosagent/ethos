@@ -111,7 +111,7 @@ async function runServe(argv: string[]): Promise<void> {
   }
 
   const storage = getStorage();
-  const config = await readConfig(storage, getSecretsResolver());
+  const config = await readConfig(storage, await getSecretsResolver());
   if (!config) {
     // Must go to stderr — stdout must remain pure JSON-RPC
     process.stderr.write(
@@ -586,7 +586,7 @@ async function runLogin(argv: string[]): Promise<void> {
     return;
   }
 
-  const secrets = getSecretsResolver();
+  const secrets = await getSecretsResolver();
   const oauthConfig: OAuthConfig = config.auth;
 
   try {
@@ -619,7 +619,7 @@ async function runLogout(argv: string[]): Promise<void> {
     return;
   }
 
-  const secrets = getSecretsResolver();
+  const secrets = await getSecretsResolver();
   const oauthConfig: OAuthConfig | undefined =
     config.auth?.type === 'oauth2' ? config.auth : undefined;
 

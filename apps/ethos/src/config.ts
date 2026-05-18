@@ -181,6 +181,17 @@ export interface ModelCatalogConfig {
   providers?: Record<string, { url: string }>;
 }
 
+export interface AwsSecretsConfig {
+  enabled?: boolean;
+  region?: string;
+  prefix?: string;
+  endpoint?: string;
+}
+
+export interface AwsConfig {
+  secrets?: AwsSecretsConfig;
+}
+
 /**
  * On-disk schema version for `~/.ethos/config.yaml`. Bump on a breaking
  * field rename, type change, or required-field addition; do NOT bump on
@@ -406,6 +417,15 @@ export interface EthosConfig {
       enabled?: boolean;
     };
   };
+  /**
+   * AWS integration configuration. Currently supports Secrets Manager
+   * as a secrets backend. Config keys:
+   *   aws.secrets.enabled: true
+   *   aws.secrets.region: us-east-1
+   *   aws.secrets.prefix: ethos/engineer
+   *   aws.secrets.endpoint: http://localhost:4566
+   */
+  aws?: AwsConfig;
 }
 
 export function ethosDir(): string {
@@ -592,6 +612,13 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
     if (r.maxFiles !== undefined) lines.push(`logs.rotation.maxFiles: ${r.maxFiles}`);
     if (r.enabled === false) lines.push('logs.rotation.enabled: false');
   }
+  if (config.aws?.secrets) {
+    const s = config.aws.secrets;
+    if (s.enabled !== undefined) lines.push(`aws.secrets.enabled: ${s.enabled}`);
+    if (s.region) lines.push(`aws.secrets.region: ${s.region}`);
+    if (s.prefix) lines.push(`aws.secrets.prefix: ${s.prefix}`);
+    if (s.endpoint) lines.push(`aws.secrets.endpoint: ${s.endpoint}`);
+  }
   await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`);
 }
 
@@ -677,6 +704,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const modelCatalogKv: Record<string, string> = {};
   const modelCatalogProvidersKv: Record<string, Record<string, string>> = {};
   const logsRotationKv: Record<string, string> = {};
+  const awsSecretsKv: Record<string, string> = {};
   // Indexed list shapes: telegram.bots.<n>.<field> and slack.apps.<n>.<field>,
   // plus their nested `.bind.<field>` sub-keys. Per-team config keyed by name.
   const telegramBotsKv: Record<number, Record<string, string>> = {};
@@ -785,6 +813,12 @@ function parseConfigYaml(src: string): EthosConfig {
     const lr = line.match(/^logs\.rotation\.(\w+):\s*(.+)$/);
     if (lr) {
       logsRotationKv[lr[1]] = lr[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // aws.secrets.<field>: <value>
+    const awss = line.match(/^aws\.secrets\.(\w+):\s*(.+)$/);
+    if (awss) {
+      awsSecretsKv[awss[1]] = awss[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // modelCatalog.providers.<id>.url: <value>
@@ -916,6 +950,20 @@ function parseConfigYaml(src: string): EthosConfig {
             : {}),
         }
       : undefined;
+  const awsSecrets: AwsSecretsConfig | undefined =
+    Object.keys(awsSecretsKv).length > 0
+      ? {
+          ...(awsSecretsKv.enabled === 'true'
+            ? { enabled: true }
+            : awsSecretsKv.enabled === 'false'
+              ? { enabled: false }
+              : {}),
+          ...(awsSecretsKv.region ? { region: awsSecretsKv.region } : {}),
+          ...(awsSecretsKv.prefix ? { prefix: awsSecretsKv.prefix } : {}),
+          ...(awsSecretsKv.endpoint ? { endpoint: awsSecretsKv.endpoint } : {}),
+        }
+      : undefined;
+  const awsConfig: AwsConfig | undefined = awsSecrets ? { secrets: awsSecrets } : undefined;
   const telegramResult = buildTelegramBots(telegramBotsKv);
   const slackResult = buildSlackApps(slackAppsKv);
   const teams = buildTeamsConfig(teamsKv);
@@ -980,6 +1028,7 @@ function parseConfigYaml(src: string): EthosConfig {
         : undefined,
     modelCatalog,
     logs: logsRotation ? { rotation: logsRotation } : undefined,
+    aws: awsConfig,
   };
   // Stash parse errors so the strict loader can surface them at boot.
   // readRawConfig (used by CLI commands that don't gateway-boot) ignores them

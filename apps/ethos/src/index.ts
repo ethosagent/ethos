@@ -206,7 +206,7 @@ try {
         }
       }
 
-      const config = await readConfig(getStorage(), getSecretsResolver());
+      const config = await readConfig(getStorage(), await getSecretsResolver());
       if (!config) {
         if (process.env.ETHOS_MANAGED === '1') {
           console.error(
@@ -308,7 +308,7 @@ try {
 
     case 'memory': {
       const sub = args[1] ?? 'show';
-      const config = await readConfig(getStorage(), getSecretsResolver());
+      const config = await readConfig(getStorage(), await getSecretsResolver());
 
       if (config?.memory === 'vector') {
         const { VectorMemoryProvider } = await import('@ethosagent/memory-vector');

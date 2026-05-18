@@ -19,7 +19,7 @@ function maskValue(value: string): string {
 
 export async function runSecrets(args: string[]): Promise<void> {
   const sub = args[0] ?? 'list';
-  const resolver = getSecretsResolver();
+  const resolver = await getSecretsResolver();
 
   switch (sub) {
     case 'list': {

@@ -125,6 +125,31 @@ function printRow(r: RowResult): void {
   console.log(`  ${tag}  ${label} ${module}${note}`);
 }
 
+async function checkAwsSecrets(
+  config: EthosConfig | null,
+): Promise<{ enabled: boolean; reachable?: boolean; secretCount?: number; error?: string }> {
+  if (!config?.aws?.secrets?.enabled) return { enabled: false };
+  let resolver: { list(): Promise<string[]>; dispose(): void } | undefined;
+  try {
+    const { AwsSecretsManagerResolver } = await import('@ethosagent/secrets-aws');
+    resolver = new AwsSecretsManagerResolver({
+      region: config.aws.secrets.region ?? 'us-east-1',
+      prefix: config.aws.secrets.prefix ?? 'ethos',
+      endpoint: config.aws.secrets.endpoint,
+    });
+    const refs = await resolver.list();
+    return { enabled: true, reachable: true, secretCount: refs.length };
+  } catch (err) {
+    return {
+      enabled: true,
+      reachable: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    resolver?.dispose();
+  }
+}
+
 export async function runDoctor(args: string[] = []): Promise<void> {
   if (args.includes('--recent-errors')) {
     runRecentErrorsReport();
@@ -171,7 +196,10 @@ export async function runDoctor(args: string[] = []): Promise<void> {
 
     const coreFailures = sdks.filter((s) => s.required && !s.loadable);
     const configuredMissing = sdks.filter((s) => !s.required && s.configured && !s.loadable);
-    const exitCode = coreFailures.length > 0 || configuredMissing.length > 0 ? 1 : 0;
+
+    const awsSecretsStatus = await checkAwsSecrets(config);
+    const awsFailed = awsSecretsStatus.enabled && awsSecretsStatus.reachable === false;
+    const exitCode = coreFailures.length > 0 || configuredMissing.length > 0 || awsFailed ? 1 : 0;
 
     const result = {
       version: buildVersionInfo(),
@@ -179,6 +207,7 @@ export async function runDoctor(args: string[] = []): Promise<void> {
       config: config ? { present: true, path: cfgPath } : { present: false, path: cfgPath },
       personalities: { dir: userPersonalitiesDir, loadable: personalitiesLoadable },
       skillCliIssues: await buildSkillsCliJson(),
+      awsSecrets: awsSecretsStatus,
       exit: exitCode,
     };
     process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -223,6 +252,33 @@ export async function runDoctor(args: string[] = []): Promise<void> {
     console.log(`     personality: ${config.personality ?? '(default)'}`);
   }
   console.log('');
+
+  // -------------------------------------------------------------------------
+  // AWS Secrets Manager
+  // -------------------------------------------------------------------------
+
+  if (config?.aws?.secrets?.enabled) {
+    console.log(`${c.bold}AWS Secrets Manager${c.reset}`);
+    let awsResolver: { list(): Promise<string[]>; dispose(): void } | undefined;
+    try {
+      const { AwsSecretsManagerResolver } = await import('@ethosagent/secrets-aws');
+      awsResolver = new AwsSecretsManagerResolver({
+        region: config.aws.secrets.region ?? 'us-east-1',
+        prefix: config.aws.secrets.prefix ?? 'ethos',
+        endpoint: config.aws.secrets.endpoint,
+      });
+      const refs = await awsResolver.list();
+      console.log(
+        `  ${c.green}✓${c.reset}  Reachable, ${refs.length} secret${refs.length === 1 ? '' : 's'} visible under ${c.dim}${config.aws.secrets.prefix ?? 'ethos'}/${c.reset}`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`  ${c.red}✗${c.reset}  Not reachable: ${c.dim}${msg}${c.reset}`);
+    } finally {
+      awsResolver?.dispose();
+    }
+    console.log('');
+  }
 
   // -------------------------------------------------------------------------
   // Personality data directory
