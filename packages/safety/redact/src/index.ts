@@ -34,17 +34,15 @@ const PATTERNS: ReadonlyArray<{ label: string; tag: string; regex: RegExp }> = [
 
 export interface SecretDetection {
   label: string;
-  match: string;
 }
 
 export function detectSecrets(value: string): SecretDetection[] {
   const detections: SecretDetection[] = [];
   for (const p of PATTERNS) {
     p.regex.lastIndex = 0;
-    let m = p.regex.exec(value);
-    while (m !== null) {
-      detections.push({ label: p.label, match: m[0] });
-      m = p.regex.exec(value);
+    if (p.regex.test(value)) {
+      detections.push({ label: p.label });
+      p.regex.lastIndex = 0;
     }
   }
   return detections;

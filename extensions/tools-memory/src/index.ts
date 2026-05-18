@@ -174,7 +174,9 @@ export function createSessionSearchTool(session: SessionStore): Tool {
 
       return {
         ok: true,
-        value: `${results.length} result${results.length === 1 ? '' : 's'} for "${query}":\n\n${formatted}`,
+        value: redactString(
+          `${results.length} result${results.length === 1 ? '' : 's'} for "${query}":\n\n${formatted}`,
+        ),
       };
     },
   };

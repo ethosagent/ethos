@@ -5,9 +5,9 @@
 
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
-import type { ToolContext } from '@ethosagent/types';
+import type { SessionStore, ToolContext } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import { createMemoryReadTool } from '../index';
+import { createMemoryReadTool, createSessionSearchTool } from '../index';
 
 function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
@@ -37,6 +37,28 @@ describe('redaction boundary — tools-memory', () => {
     const ctx = makeCtx({ memoryScopeId: 'global' });
 
     const result = await tool.execute({ store: 'memory' }, ctx);
+    expect(result.ok).toBe(true);
+    expect('value' in result && result.value).toContain('[REDACTED:anthropic-key]');
+    expect('value' in result && result.value).not.toContain(key);
+  });
+
+  it('session_search redacts secrets in search results', async () => {
+    const key = `sk-ant-${'X'.repeat(93)}`;
+    const mockSession = {
+      search: async () => [
+        {
+          sessionId: 'test-session',
+          messageId: 'msg-1',
+          snippet: `Found key: ${key} in logs`,
+          score: 1,
+          timestamp: new Date(),
+        },
+      ],
+    } as unknown as SessionStore;
+
+    const tool = createSessionSearchTool(mockSession);
+    const ctx = makeCtx();
+    const result = await tool.execute({ query: 'key' }, ctx);
     expect(result.ok).toBe(true);
     expect('value' in result && result.value).toContain('[REDACTED:anthropic-key]');
     expect('value' in result && result.value).not.toContain(key);
