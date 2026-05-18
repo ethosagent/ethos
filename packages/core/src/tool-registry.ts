@@ -255,6 +255,17 @@ export class DefaultToolRegistry implements ToolRegistry {
           };
         }
 
+        // Dry-run mode: return a synthetic result without executing the tool.
+        // Dynamic import keeps the non-dry-run path lean.
+        if (ctx.dryRun) {
+          const { synthesizeDryRunResult } = await import('./dry-run');
+          return {
+            toolCallId: call.toolCallId,
+            name: call.name,
+            result: synthesizeDryRunResult(call.name, call.args),
+          };
+        }
+
         const budget = Math.min(perCallBudget, entry.tool.maxResultChars ?? perCallBudget);
         const toolCtx: ToolContext = { ...ctx, resultBudgetChars: budget };
 

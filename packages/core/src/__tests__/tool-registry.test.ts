@@ -387,6 +387,38 @@ describe('DefaultToolRegistry', () => {
     });
   });
 
+  it('executeParallel: dryRun=true skips execute(), returns stub', async () => {
+    const spy = vi.fn();
+    const explodingTool: Tool = {
+      name: 'explode',
+      description: 'Must not run',
+      schema: { type: 'object' },
+      capabilities: {},
+      execute: async () => {
+        spy();
+        throw new Error('execute() should never be called in dry-run');
+      },
+    };
+
+    const reg = new DefaultToolRegistry();
+    reg.register(explodingTool);
+
+    const ctx = { ...makeCtx(), dryRun: true };
+    const results = await reg.executeParallel(
+      [{ toolCallId: 'c1', name: 'explode', args: { path: '/etc/passwd' } }],
+      ctx,
+    );
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(results).toHaveLength(1);
+    const r = results[0]!;
+    expect(r.result.ok).toBe(true);
+    if (r.result.ok) {
+      expect(r.result.value).toContain('[dry-run]');
+      expect(r.result.value).toContain('explode');
+    }
+  });
+
   it('executeParallel: property — across random allowlists, blocked tools never execute', async () => {
     const allToolNames = ['alpha', 'beta', 'gamma', 'delta', 'epsilon'];
     const reg = new DefaultToolRegistry();
