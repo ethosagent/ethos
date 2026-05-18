@@ -145,7 +145,15 @@ Environment=NODE_ENV=production
 WantedBy=default.target
 ```
 
-Replace `/usr/bin/ethos` with the output of `which ethos`. Enable, start, and inspect:
+Alternatively, generate the unit file automatically:
+
+```bash
+ethos systemd-unit ethos-gateway > ~/.config/systemd/user/ethos-gateway.service
+```
+
+This generates a production-ready unit with managed mode (`ETHOS_MANAGED=1`) and `EnvironmentFile` for secrets. See [CLI reference: systemd-unit](../reference/cli.md#ethos-systemd-unit) for placeholders and customisation.
+
+Replace `/usr/bin/ethos` with the output of `which ethos` if writing the unit manually. Enable, start, and inspect:
 
 ```bash
 systemctl --user daemon-reload
