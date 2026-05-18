@@ -368,6 +368,12 @@ importers:
       '@orpc/server':
         specifier: ^1.14.0
         version: 1.14.0(ws@8.20.0)
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
+      better-sqlite3:
+        specifier: ^12.9.0
+        version: 12.9.0
       hono:
         specifier: ^4.12.15
         version: 4.12.15
