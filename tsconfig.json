@@ -94,6 +94,7 @@
       "@ethosagent/safety-injection": ["./packages/safety/injection/src"],
       "@ethosagent/safety-network": ["./packages/safety/network/src"],
       "@ethosagent/safety-scanner": ["./packages/safety/scanner/src"],
+      "@ethosagent/safety-redact": ["./packages/safety/redact/src"],
       "@ethosagent/safety-watcher": ["./packages/safety/watcher/src"],
       "@ethosagent/tools-skills": ["./extensions/tools-skills/src"],
       "@ethosagent/tools-tts": ["./extensions/tools-tts/src"],

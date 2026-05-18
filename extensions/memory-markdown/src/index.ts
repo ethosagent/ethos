@@ -238,17 +238,19 @@ export class MarkdownFileMemoryProvider implements MemoryProvider {
 
     for (const update of updates) {
       switch (update.action) {
-        case 'add':
+        case 'add': {
           content = content
             ? `${content.trimEnd()}\n\n${update.content.trim()}\n`
             : `${update.content.trim()}\n`;
           deleted = false;
           break;
+        }
 
-        case 'replace':
+        case 'replace': {
           content = `${update.content.trim()}\n`;
           deleted = false;
           break;
+        }
 
         case 'remove': {
           const match = update.substringMatch;

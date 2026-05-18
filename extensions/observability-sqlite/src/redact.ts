@@ -8,8 +8,13 @@ const PATTERNS: Array<[RegExp, string]> = [
   [/sk-(?:proj-)?[A-Za-z0-9_-]{40,}/g, '[REDACTED:openai-key]'],
   [/AKIA[0-9A-Z]{16}/g, '[REDACTED:aws-key]'],
   [/xox[bpoa]-[0-9]{10,}-[0-9]{10,}-[A-Za-z0-9]{24,}/g, '[REDACTED:slack-token]'],
+  [/xapp-[0-9]+-[A-Za-z0-9]+-[A-Za-z0-9]+/g, '[REDACTED:slack-token]'],
   [/sk_live_[A-Za-z0-9]{24,}/g, '[REDACTED:stripe-key]'],
-  [/(?:key|token|password|secret)=["']?[A-Za-z0-9+/=_-]{20,}["']?/gi, '[REDACTED:generic-secret]'],
+  [/gsk_[A-Za-z0-9]{20,}/g, '[REDACTED:groq-key]'],
+  [
+    /(?<=^|[\s,{;(])(?:key|token|password|secret)=["']?[A-Za-z0-9+/=_-]{20,}["']?/gi,
+    '[REDACTED:generic-secret]',
+  ],
 ];
 
 /** Redact known credential patterns from a string. */

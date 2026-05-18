@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { deriveBotKey } from '@ethosagent/core';
 import type {
   ApprovalCapableAdapter,
   ApprovalDecisionEvent,
@@ -59,10 +59,6 @@ interface DiscordAdapterConfig {
   approvalPolicy?: 'role_gate' | 'allow_any';
 }
 
-function deriveDefaultBotKey(token: string): string {
-  return createHash('sha256').update(token).digest('hex').slice(0, 24);
-}
-
 export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   readonly id: string;
   readonly displayName = 'Discord';
@@ -104,7 +100,7 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     this.token = config.token;
     this.mentionOnly = config.mentionOnly ?? true;
     this.receiptReaction = config.receiptReaction ?? '👀';
-    this.botKey = config.botKey ?? deriveDefaultBotKey(config.token);
+    this.botKey = config.botKey ?? deriveBotKey(config.token);
     this.id = `discord:${this.botKey}`;
     this.cache = config.cache;
     this.applicationId = config.applicationId;

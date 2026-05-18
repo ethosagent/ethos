@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { deriveBotKey } from '@ethosagent/core';
 import type {
   ApprovalCapableAdapter,
   ApprovalDecisionEvent,
@@ -38,16 +38,6 @@ export interface CallbackQueryEvent {
   username: string | undefined;
   /** Dismiss the loading spinner on the button. Idempotent best-effort. */
   answer: (text?: string) => Promise<void>;
-}
-
-// First 24 hex chars of sha256(token). Matches the derivation in
-// `apps/ethos/src/config.ts:deriveBotKey` so an adapter constructed
-// directly (without going through the gateway boot path) ends up with
-// the same routing identity it would have if the operator had wired
-// it through `telegram.bots[]`. 96 bits is wide enough that collision
-// is cosmologically unlikely.
-function deriveDefaultBotKey(token: string): string {
-  return createHash('sha256').update(token).digest('hex').slice(0, 24);
 }
 
 // grammy's ReactionTypeEmoji.emoji is a strict union of specific emoji
@@ -299,7 +289,7 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
     this.bot = new Bot(config.token);
     this.cache = config.cache;
     this.dropPendingUpdates = config.dropPendingUpdates ?? true;
-    this.botKey = config.botKey ?? deriveDefaultBotKey(config.token);
+    this.botKey = config.botKey ?? deriveBotKey(config.token);
     this.identity = config.identity;
     this.receiptReaction = config.receiptReaction ?? '👀';
     this.editWindowMs = config.editWindowMs ?? 60_000;

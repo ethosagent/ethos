@@ -16,6 +16,7 @@
     "@ethosagent/core": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@ethosagent/safety-channel": "workspace:*",
+    "@ethosagent/safety-injection": "workspace:*",
     "@types/better-sqlite3": "^7.6.12",
     "better-sqlite3": "^12.9.0"
   }

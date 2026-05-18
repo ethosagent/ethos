@@ -201,6 +201,27 @@ describe('McpManager', () => {
     await manager.disconnect();
   });
 
+  it('adapted tools set outputIsUntrusted: true', async () => {
+    const { clientTransport } = await createTestServer();
+
+    class TestManager extends McpManager {
+      constructor() {
+        super([{ name: 'test', transport: 'stdio', command: 'unused' }]);
+        // biome-ignore lint/suspicious/noExplicitAny: access private for test
+        (this as any)._clients = [new TestMcpClient(clientTransport)];
+      }
+    }
+
+    const manager = new TestManager();
+    await manager.connect();
+
+    for (const tool of manager.getTools()) {
+      expect(tool.outputIsUntrusted).toBe(true);
+    }
+
+    await manager.disconnect();
+  });
+
   it('Tool adapter execute calls through to McpClient', async () => {
     const { clientTransport } = await createTestServer();
 

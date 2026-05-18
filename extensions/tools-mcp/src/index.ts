@@ -507,6 +507,7 @@ function adaptMcpTool(mcpTool: McpToolDef, serverName: string, client: McpClient
     description: mcpTool.description ?? mcpTool.name,
     schema: mcpTool.inputSchema,
     toolset: 'mcp',
+    outputIsUntrusted: true,
     maxResultChars: 50_000,
     capabilities: {
       network: { allowedHosts: ['*'] }, // MCP server may access arbitrary hosts

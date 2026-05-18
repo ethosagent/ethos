@@ -6,6 +6,7 @@ export type {
 } from './agent-loop';
 export { AgentLoop, isKnownAgentEvent, KNOWN_AGENT_EVENT_TYPES } from './agent-loop';
 export { buildAttachmentAnnotation } from './attachment-annotation';
+export { deriveBotKey } from './bot-key';
 export type { CapabilityBackends, CapabilityScopeIds } from './capability-resolver';
 export { resolveCapabilities } from './capability-resolver';
 export type { CapabilityValidationError } from './capability-validator';

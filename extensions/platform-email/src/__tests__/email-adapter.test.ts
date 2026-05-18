@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import type { InboundMessage } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import type { EmailAdapterConfig } from '../index';
 import { EmailAdapter } from '../index';
@@ -247,5 +249,145 @@ describe('EmailAdapter lifecycle', () => {
     // If timer was cleared, no further polls should fire after stop
     // (tested implicitly — the test completes without hanging)
     expect(imap.connect).toHaveBeenCalledTimes(1); // only the initial poll
+  });
+});
+
+// ---------------------------------------------------------------------------
+// botKey — multi-bot routing identity
+// ---------------------------------------------------------------------------
+
+describe('EmailAdapter botKey', () => {
+  it('derives botKey from IMAP credentials when not configured', () => {
+    const adapter = new EmailAdapter(BASE_CONFIG, {
+      createImapClient: () => makeImapMock() as never,
+      createTransporter: () => makeTransportMock() as never,
+    });
+    const expected = createHash('sha256')
+      .update(`${BASE_CONFIG.user}@${BASE_CONFIG.imapHost}`)
+      .digest('hex')
+      .slice(0, 24);
+    expect(adapter.botKey).toBe(expected);
+  });
+
+  it('uses explicit botKey from config when provided', () => {
+    const adapter = new EmailAdapter(
+      { ...BASE_CONFIG, botKey: 'my-email-bot' },
+      {
+        createImapClient: () => makeImapMock() as never,
+        createTransporter: () => makeTransportMock() as never,
+      },
+    );
+    expect(adapter.botKey).toBe('my-email-bot');
+  });
+
+  it('derivation is stable — same credentials produce same botKey', () => {
+    const a = new EmailAdapter(BASE_CONFIG, {
+      createImapClient: () => makeImapMock() as never,
+      createTransporter: () => makeTransportMock() as never,
+    });
+    const b = new EmailAdapter(BASE_CONFIG, {
+      createImapClient: () => makeImapMock() as never,
+      createTransporter: () => makeTransportMock() as never,
+    });
+    expect(a.botKey).toBe(b.botKey);
+  });
+
+  it('sets botKey on every emitted InboundMessage', async () => {
+    const raw = buildRawEmail({
+      from: 'alice@example.com',
+      subject: 'Test',
+      text: 'Hello',
+      messageId: '<msg-001@mail>',
+    });
+    const imap = makeImapMock([{ uid: 1, raw }]);
+    const adapter = new EmailAdapter(BASE_CONFIG, {
+      createImapClient: () => imap as never,
+      createTransporter: () => makeTransportMock() as never,
+    });
+
+    const received: InboundMessage[] = [];
+    adapter.onMessage((msg) => received.push(msg));
+    await adapter.poll();
+
+    expect(received).toHaveLength(1);
+    expect(received[0].botKey).toBe(adapter.botKey);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// messageId — inbound dedup identity
+// ---------------------------------------------------------------------------
+
+describe('EmailAdapter messageId', () => {
+  it('uses Message-ID header as messageId', async () => {
+    const raw = buildRawEmail({
+      from: 'alice@example.com',
+      subject: 'Dedup test',
+      text: 'Content',
+      messageId: '<unique-123@example.com>',
+    });
+    const imap = makeImapMock([{ uid: 7, raw }]);
+    const adapter = new EmailAdapter(BASE_CONFIG, {
+      createImapClient: () => imap as never,
+      createTransporter: () => makeTransportMock() as never,
+    });
+
+    const received: InboundMessage[] = [];
+    adapter.onMessage((msg) => received.push(msg));
+    await adapter.poll();
+
+    expect(received).toHaveLength(1);
+    expect(received[0].messageId).toBe('<unique-123@example.com>');
+  });
+
+  it('falls back to uid:INBOX when Message-ID header is absent', async () => {
+    const raw = buildRawEmail({
+      from: 'bob@example.com',
+      subject: 'No MID',
+      text: 'No message id header',
+    });
+    const imap = makeImapMock([{ uid: 42, raw }]);
+    const adapter = new EmailAdapter(BASE_CONFIG, {
+      createImapClient: () => imap as never,
+      createTransporter: () => makeTransportMock() as never,
+    });
+
+    const received: InboundMessage[] = [];
+    adapter.onMessage((msg) => received.push(msg));
+    await adapter.poll();
+
+    expect(received).toHaveLength(1);
+    expect(received[0].messageId).toBe('uid:42:INBOX');
+  });
+
+  it('sets messageId on every emitted InboundMessage', async () => {
+    const messages = [
+      {
+        uid: 1,
+        raw: buildRawEmail({
+          from: 'a@example.com',
+          subject: 'A',
+          text: 'First',
+          messageId: '<a@mail>',
+        }),
+      },
+      {
+        uid: 2,
+        raw: buildRawEmail({ from: 'b@example.com', subject: 'B', text: 'Second' }),
+      },
+    ];
+    const imap = makeImapMock(messages);
+    const adapter = new EmailAdapter(BASE_CONFIG, {
+      createImapClient: () => imap as never,
+      createTransporter: () => makeTransportMock() as never,
+    });
+
+    const received: InboundMessage[] = [];
+    adapter.onMessage((msg) => received.push(msg));
+    await adapter.poll();
+
+    expect(received).toHaveLength(2);
+    expect(received[0].messageId).toBe('<a@mail>');
+    expect(received[1].messageId).toBe('uid:2:INBOX');
   });
 });

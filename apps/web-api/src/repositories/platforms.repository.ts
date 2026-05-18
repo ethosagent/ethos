@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { deriveBotKey } from '@ethosagent/core';
 import type { SecretsResolver } from '@ethosagent/types';
 import type {
   BotBinding,
@@ -169,11 +169,6 @@ export class PlatformsRepository {
     return this.opts.config.read();
   }
 
-  /** Derive a stable botKey — same algorithm as apps/ethos/src/config.ts deriveBotKey. */
-  private deriveBotKey(seed: string): string {
-    return createHash('sha256').update(seed).digest('hex').slice(0, 24);
-  }
-
   /** Parse all `telegram.bots.N.*` passthrough keys into grouped entries. */
   private parseTelegramIndices(
     passthrough: Record<string, string>,
@@ -209,7 +204,7 @@ export class PlatformsRepository {
   }
 
   private entryToBotKey(fields: Record<string, string>, seed: string): string {
-    return fields.id ?? this.deriveBotKey(seed);
+    return fields.id ?? deriveBotKey(seed);
   }
 
   // ---------------------------------------------------------------------------
@@ -255,7 +250,7 @@ export class PlatformsRepository {
     const passthrough = await this.passthrough();
     const byIndex = this.parseTelegramIndices(passthrough);
     const nextIndex = byIndex.size > 0 ? Math.max(...byIndex.keys()) + 1 : 0;
-    const botKey = this.deriveBotKey(token);
+    const botKey = deriveBotKey(token);
     const secretRef = `telegram/bots/${botKey}/token`;
     await this.opts.secrets.set(secretRef, token);
     await this.opts.config.update({
@@ -365,7 +360,7 @@ export class PlatformsRepository {
     const passthrough = await this.passthrough();
     const byIndex = this.parseSlackIndices(passthrough);
     const nextIndex = byIndex.size > 0 ? Math.max(...byIndex.keys()) + 1 : 0;
-    const botKey = this.deriveBotKey(tokens.botToken);
+    const botKey = deriveBotKey(tokens.botToken);
     const botTokenRef = `slack/apps/${botKey}/botToken`;
     const appTokenRef = `slack/apps/${botKey}/appToken`;
     const signingSecretRef = `slack/apps/${botKey}/signingSecret`;

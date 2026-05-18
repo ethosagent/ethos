@@ -76,6 +76,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../../packages/safety/redact
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -618,6 +621,9 @@ importers:
       '@ethosagent/safety-channel':
         specifier: workspace:*
         version: link:../../packages/safety/channel
+      '@ethosagent/safety-injection':
+        specifier: workspace:*
+        version: link:../../packages/safety/injection
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -753,6 +759,9 @@ importers:
 
   extensions/platform-email:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -775,6 +784,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1049,6 +1061,9 @@ importers:
       '@ethosagent/memory-markdown':
         specifier: workspace:*
         version: link:../memory-markdown
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../../packages/safety/redact
       '@ethosagent/session-sqlite':
         specifier: workspace:*
         version: link:../session-sqlite
@@ -1144,6 +1159,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../safety/redact
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../types
@@ -1214,6 +1232,8 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../types
+
+  packages/safety/redact: {}
 
   packages/safety/scanner:
     dependencies:

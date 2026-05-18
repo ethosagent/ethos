@@ -22,6 +22,7 @@
     "build": "tsup"
   },
   "dependencies": {
+    "@ethosagent/safety-redact": "workspace:*",
     "@ethosagent/types": "workspace:*"
   },
   "devDependencies": {

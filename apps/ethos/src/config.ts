@@ -1,7 +1,8 @@
-import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { deriveBotKey as deriveBotKeyFromSeed } from '@ethosagent/core';
 import type { ChannelFilterConfig, ChannelPlatformConfig } from '@ethosagent/safety-channel';
+import { detectSecrets } from '@ethosagent/safety-redact';
 import { REF_TO_ENV } from '@ethosagent/storage-fs';
 import type {
   RetentionConfig,
@@ -1060,10 +1061,68 @@ export async function loadConfigStrict(
 ): Promise<LoadedConfig | null> {
   const parsed = await readRawConfig(storage);
   if (!parsed) return null;
+  if (secrets) validateNoPlaintextSecrets(parsed);
   const parseErrors = parseErrorsByConfig.get(parsed) ?? [];
   const resolved = secrets ? await resolveConfigSecrets(parsed, secrets) : parsed;
   const { config, deprecations } = applyPlatformShim(resolved);
   return { config, parseErrors, deprecations };
+}
+
+// ---------------------------------------------------------------------------
+// Plaintext secret detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk every string value in `config` (including nested objects and arrays)
+ * and throw if any value looks like a plaintext secret. Called from
+ * `loadConfigStrict` *before* secrets resolution, so legitimate
+ * `${secrets:ref}` references are still present and are explicitly skipped.
+ *
+ * Skips validation entirely when no SecretsResolver is configured (local dev
+ * without secrets infrastructure).
+ */
+export function validateNoPlaintextSecrets(config: EthosConfig): void {
+  const violations: Array<{ field: string; label: string }> = [];
+  walkStringValues(config, '', (field, value) => {
+    const stripped = value.replace(SECRETS_REF_RE, '');
+    if (stripped.length === 0) return;
+    const detections = detectSecrets(stripped);
+    if (detections.length > 0) {
+      violations.push({ field, label: detections[0].label });
+    }
+  });
+  if (violations.length > 0) {
+    const details = violations
+      .map(
+        (v) =>
+          `  - field '${v.field}' appears to contain a plaintext ${v.label}. ` +
+          `Use \${secrets:<ref>} substitution instead.`,
+      )
+      .join('\n');
+    throw new Error(`Config validation failed: plaintext secret(s) detected.\n${details}`);
+  }
+}
+
+function walkStringValues(
+  obj: unknown,
+  prefix: string,
+  cb: (field: string, value: string) => void,
+): void {
+  if (typeof obj === 'string') {
+    cb(prefix, obj);
+    return;
+  }
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      walkStringValues(obj[i], `${prefix}[${i}]`, cb);
+    }
+    return;
+  }
+  if (obj !== null && typeof obj === 'object') {
+    for (const [key, value] of Object.entries(obj)) {
+      walkStringValues(value, prefix ? `${prefix}.${key}` : key, cb);
+    }
+  }
 }
 
 function parseVerbosity(v: string | undefined): EthosConfig['displayVerbosity'] {
@@ -1205,20 +1264,18 @@ function buildTeamsConfig(
 
 /**
  * Derive a stable `botKey` for a bot config. Explicit `id` wins; otherwise
- * the first 24 hex chars of sha256(token). Stable across boots; safe to log.
+ * delegates to `deriveBotKey` from `@ethosagent/core` with the token as
+ * seed. Stable across boots; safe to log.
  *
- * 24 hex chars (96 bits) is wide enough that birthday collisions are
- * cosmologically unlikely — relevant because the value is used both as a
- * routing/lane key and as the duplicate-detection key in
- * `validateBotBindings`. Operators who want a readable identifier should
- * set an explicit `id:` in the config.
+ * Operators who want a readable identifier should set an explicit `id:`
+ * in the config.
  */
 export function deriveBotKey(
   bot: { id?: string } & ({ token: string } | { botToken: string }),
 ): string {
   if (bot.id) return bot.id;
   const seed = 'token' in bot ? bot.token : bot.botToken;
-  return createHash('sha256').update(seed).digest('hex').slice(0, 24);
+  return deriveBotKeyFromSeed(seed);
 }
 
 /**

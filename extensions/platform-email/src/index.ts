@@ -1,3 +1,4 @@
+import { deriveBotKey } from '@ethosagent/core';
 import type {
   DeliveryResult,
   InboundMessage,
@@ -23,6 +24,8 @@ export interface EmailAdapterConfig {
   smtpSecure?: boolean;
   /** Polling interval in ms. Default 60_000. */
   pollIntervalMs?: number;
+  /** Explicit bot identity for multi-bot routing. When omitted, derived from IMAP credentials. */
+  botKey?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -69,6 +72,7 @@ export class EmailAdapter implements PlatformAdapter {
 
   private readonly config: EmailAdapterConfig;
   private readonly pollIntervalMs: number;
+  readonly botKey: string;
   private messageHandler?: (msg: InboundMessage) => void;
   private pollTimer?: ReturnType<typeof setInterval>;
 
@@ -88,6 +92,7 @@ export class EmailAdapter implements PlatformAdapter {
   ) {
     this.config = config;
     this.pollIntervalMs = config.pollIntervalMs ?? 60_000;
+    this.botKey = config.botKey ?? deriveBotKey(`${config.user}@${config.imapHost}`);
     this.createImapClient = overrides?.createImapClient ?? defaultImapClient;
     this.createTransporter = overrides?.createTransporter ?? defaultTransporter;
   }
@@ -222,12 +227,14 @@ export class EmailAdapter implements PlatformAdapter {
 
     this.messageHandler?.({
       platform: 'email',
+      botKey: this.botKey,
       chatId,
       userId: from,
       username: parsed.from?.value?.[0]?.name ?? from,
       text,
       isDm: true,
       isGroupMention: false,
+      messageId: parsed.messageId ?? `uid:${uid}:INBOX`,
       raw: parsed,
     });
 

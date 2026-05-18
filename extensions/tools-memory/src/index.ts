@@ -1,3 +1,4 @@
+import { redactString } from '@ethosagent/safety-redact';
 import type {
   MemoryContext,
   MemoryProvider,
@@ -43,11 +44,11 @@ export function createMemoryReadTool(memory: MemoryProvider): Tool {
 
       if (store === 'memory') {
         const content = byKey.get('MEMORY.md');
-        return { ok: true, value: content?.trim() || 'MEMORY.md is empty.' };
+        return { ok: true, value: redactString(content?.trim() ?? '') || 'MEMORY.md is empty.' };
       }
       if (store === 'user') {
         const content = byKey.get('USER.md');
-        return { ok: true, value: content?.trim() || 'USER.md is empty.' };
+        return { ok: true, value: redactString(content?.trim() ?? '') || 'USER.md is empty.' };
       }
 
       const parts: string[] = [];
@@ -55,7 +56,7 @@ export function createMemoryReadTool(memory: MemoryProvider): Tool {
       if (user) parts.push(`## About You\n\n${user.trim()}`);
       const mem = byKey.get('MEMORY.md');
       if (mem) parts.push(`## Memory\n\n${mem.trim()}`);
-      return { ok: true, value: parts.join('\n\n') };
+      return { ok: true, value: redactString(parts.join('\n\n')) };
     },
   };
 }
@@ -216,7 +217,7 @@ export function createTeamMemoryReadTool(teamMemory: MemoryProvider): Tool {
       const memCtx = buildTeamMemoryContext(ctx, ctx.teamId);
       const entry = await teamMemory.read(key.endsWith('.md') ? key : `${key}.md`, memCtx);
       if (!entry) return { ok: true, value: `No team memory entry for "${key}".` };
-      return { ok: true, value: entry.content.trim() || `"${key}" is empty.` };
+      return { ok: true, value: redactString(entry.content.trim()) || `"${key}" is empty.` };
     },
   };
 }
@@ -362,7 +363,7 @@ export function createTeamMemorySearchTool(teamMemory: MemoryProvider): Tool {
       if (results.length === 0) return { ok: true, value: `No team memory matches "${query}"` };
 
       const formatted = results
-        .map((r) => `### ${r.key}\n\n${r.content.trim()}`)
+        .map((r) => `### ${r.key}\n\n${redactString(r.content.trim())}`)
         .join('\n\n---\n\n');
       return {
         ok: true,

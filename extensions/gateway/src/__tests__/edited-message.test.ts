@@ -76,13 +76,13 @@ describe('Gateway — edited_message (isEdit) handling', () => {
 
     await gw.handleMessage(msg, adapter);
 
-    // The loop should have been called with the edited text
+    // The loop should have been called with the edited text (wrapped as untrusted)
+    expect(loop.run).toHaveBeenCalledTimes(1);
     expect(loop.run).toHaveBeenCalledWith(
-      'corrected',
-      expect.objectContaining({
-        sessionKey: expect.any(String),
-      }),
+      expect.stringContaining('<untrusted'),
+      expect.objectContaining({ sessionKey: expect.any(String) }),
     );
+    expect(loop.run).toHaveBeenCalledWith(expect.stringContaining('corrected'), expect.anything());
   });
 
   it('does not deduplicate an isEdit message sharing the same messageId as a prior message', async () => {

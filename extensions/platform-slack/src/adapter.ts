@@ -4,8 +4,9 @@
 // Triage, channel-mode, slash commands, and Block Kit rendering live in
 // sibling modules.
 
-import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { deriveBotKey } from '@ethosagent/core';
+import { noopLogger } from '@ethosagent/logger';
 import type {
   ApprovalCapableAdapter,
   ApprovalDecisionEvent,
@@ -13,6 +14,7 @@ import type {
   AttachmentCache,
   DeliveryResult,
   InboundMessage,
+  Logger,
   OutboundMessage,
   PlatformAdapter,
   Storage,
@@ -65,16 +67,6 @@ import { ThreadStateStore } from './store/thread-state';
 
 const { App } = boltPkg;
 type App = InstanceType<typeof App>;
-
-/**
- * First 24 hex chars of sha256(botToken). Matches `deriveBotKey` in
- * `apps/ethos/src/config.ts` so an adapter constructed without an
- * explicit `botKey` round-trips the same identity the boot path
- * would have produced.
- */
-function deriveDefaultBotKey(botToken: string): string {
-  return createHash('sha256').update(botToken).digest('hex').slice(0, 24);
-}
 
 /**
  * Normalize a configured `webUiBaseUrl`. The value is interpolated directly
@@ -173,6 +165,8 @@ export interface SlackAdapterConfig {
    * scope is swallowed silently so the bot still works without it.
    */
   receiptReaction?: string;
+  /** Logger for startup diagnostics. Defaults to a silent NoopLogger. */
+  logger?: Logger;
 }
 
 export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
@@ -224,6 +218,8 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   private readonly chunkMap = new Map<string, string[]>();
   private readonly chunkMapMaxEntries = 1024;
 
+  private readonly logger: Logger;
+
   /** Emoji name (no colons) for the inbound-receipt reaction. */
   private readonly receiptReaction: string;
   /**
@@ -243,7 +239,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       socketMode: true,
     });
     this.client = this.app.client;
-    this.botKey = config.botKey ?? deriveDefaultBotKey(config.botToken);
+    this.botKey = config.botKey ?? deriveBotKey(config.botToken);
     this.id = `slack:${this.botKey}`;
     this.binding = config.binding;
     this.defaultChannelMode = config.defaultChannelMode ?? DEFAULT_CHANNEL_MODE;
@@ -259,6 +255,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     this.cache = config.cache;
     this.botToken = config.botToken;
     this.receiptReaction = config.receiptReaction ?? 'eyes';
+    this.logger = (config.logger ?? noopLogger).child({ component: 'slack' });
 
     if (config.storage) {
       const slackDir = config.slackDir ?? join(homeEthosDir(), 'slack');
@@ -285,6 +282,9 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       const { user_id: userId, user: userName } = auth as { user_id?: string; user?: string };
       this.selfUserId = userId ?? null;
       this.selfDisplayName = userName ?? null;
+
+      const botName = userName ?? userId ?? 'unknown';
+      this.logger.info(`Slack bot authenticated as @${botName}`);
     } catch {
       this.selfUserId = null;
       this.selfDisplayName = null;
@@ -905,11 +905,17 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     };
   }
 
-  async health(): Promise<{ ok: boolean; latencyMs?: number }> {
+  async health(): Promise<{
+    ok: boolean;
+    latencyMs?: number;
+  }> {
     try {
       const start = Date.now();
       await this.client.auth.test();
-      return { ok: true, latencyMs: Date.now() - start };
+      return {
+        ok: true,
+        latencyMs: Date.now() - start,
+      };
     } catch {
       return { ok: false };
     }

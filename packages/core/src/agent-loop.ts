@@ -10,6 +10,7 @@ import {
   shortPatternCheck,
   wrapUntrusted,
 } from '@ethosagent/safety-injection';
+import { redactString } from '@ethosagent/safety-redact';
 import { defaultAlwaysDeny, ScopedStorage } from '@ethosagent/storage-fs';
 import type {
   CompletionChunk,
@@ -692,7 +693,7 @@ export class AgentLoop {
       });
       for (const e of sorted) {
         const heading = orderHints[e.key] ?? e.key;
-        blocks.push(`## ${heading}\n\n${e.content.trim()}`);
+        blocks.push(`## ${heading}\n\n${redactString(e.content.trim())}`);
       }
       if (blocks.length > 0) {
         let rendered = `## Memory\n\n${blocks.join('\n\n')}`;

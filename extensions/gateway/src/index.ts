@@ -8,6 +8,7 @@ import {
   isSenderAllowed,
   revokeApproval,
 } from '@ethosagent/safety-channel';
+import { shortPatternCheck, wrapUntrusted } from '@ethosagent/safety-injection';
 import type {
   AttachmentCache,
   ClarifyResponse,
@@ -27,6 +28,11 @@ export { MessageDedupCache } from './dedup';
  */
 export interface GatewayObservability {
   recordSafetyBlock(opts: {
+    code?: string;
+    cause?: string;
+    details?: Record<string, unknown>;
+  }): void;
+  recordInjectionFlag?(opts: {
     code?: string;
     cause?: string;
     details?: Record<string, unknown>;
@@ -961,7 +967,32 @@ export class Gateway {
         let responseText = '';
         let errored: { error: string; code: string } | null = null;
 
-        for await (const event of bot.loop.run(text, {
+        // All channel messages are untrusted — deterministic trust boundary.
+        // Every message from an external channel is wrapped unconditionally;
+        // the pattern check below is telemetry-only (monitoring/alerting),
+        // not a gate for wrapping.
+        const wrapped = wrapUntrusted({ content: text, toolName: 'channel_message' });
+        const loopText = wrapped.content;
+
+        // Telemetry: record when known injection patterns or template tokens
+        // are detected, for monitoring/alerting. Not a trust gate.
+        const tier1 = shortPatternCheck(text);
+        if (tier1.containsInstructions || wrapped.strippedTokens > 0) {
+          this.observability?.recordInjectionFlag?.({
+            code: 'channel.injection_detected',
+            cause: tier1.containsInstructions
+              ? (tier1.hits[0]?.rule ?? 'pattern-hit')
+              : `stripped ${wrapped.strippedTokens} template token${wrapped.strippedTokens === 1 ? '' : 's'}`,
+            details: {
+              platform: message.platform,
+              chatId: message.chatId,
+              userId: message.userId,
+              ...(tier1.containsInstructions ? { hits: tier1.hits } : {}),
+            },
+          });
+        }
+
+        for await (const event of bot.loop.run(loopText, {
           sessionKey,
           personalityId,
           abortSignal: signal,
