@@ -49,6 +49,7 @@ const sidebars: SidebarsConfig = {
             'using/how-to/receive-files-via-telegram',
             'using/how-to/receive-files-via-slack',
             'using/how-to/send-cross-channel-messages',
+            'using/how-to/use-chatgpt-subscription-via-codex',
           ],
         },
         {
