@@ -1,45 +1,80 @@
-# Adapter: Pi (Inflection)
+# Adapter: Pi (earendil-works)
 
-Spawn the `pi` CLI as a delegated coding agent. Pi optimizes for natural conversation flow — useful when the work involves a lot of back-and-forth clarification.
+Minimal terminal coding harness from earendil-works. Multi-provider (Anthropic, OpenAI, others via the model/provider flags), MIT licensed, open source. Useful when the user wants a specific provider the other CLIs don't expose, wants tight per-call tool allowlists, or wants OAuth-bound subscription billing without committing to one vendor's full CLI.
+
+Source: `https://pi.dev/` · `github.com/earendil-works/pi` · package `@earendil-works/pi-coding-agent`
 
 ## Detection
 
+Probe before spawning:
+
 ```bash
-which pi
-pi --version
+which pi && pi --version
 ```
 
-If either fails, refuse delegation and print:
+If `pi` is missing, refuse with:
 
-> Pi CLI is not installed. Install per Inflection's documentation and authenticate with `pi login`.
+> Pi CLI not installed. Install with `npm install -g @earendil-works/pi-coding-agent` or `curl -fsSL https://pi.dev/install.sh | sh`, then retry.
 
 ## Authentication
 
-```bash
-pi auth status
-```
+Three auth paths. Any one works:
 
-If unauthenticated:
+1. **Env var** — export `ANTHROPIC_API_KEY` (or the equivalent for the target provider) before `process_start`.
+2. **OAuth** — user runs `pi /login` once interactively; pi stores credentials and reuses them. Providers: Anthropic, OpenAI, GitHub. Ties to upstream subscriptions where applicable (e.g. Claude.ai).
+3. **Inline flag** — pass `--api-key <key>` to a single invocation. Avoid in shared sessions; the key lands in process args.
 
-> Pi CLI is installed but no auth is configured. Run `pi login` and complete the browser flow.
+**Gap:** pi has no documented `pi auth status` command. To probe auth without running the real task, either:
+
+- Check the env var directly (`ANTHROPIC_API_KEY` non-empty), or
+- Invoke `pi -p ""` and grep stderr for an auth error before sending the real prompt.
+
+Neither is great. Pick env-var probing in scripted contexts.
 
 ## Invocation
 
-The exact invocation depends on the Pi CLI version installed. The skill should:
+Canonical one-shot form:
 
-1. Run `pi --help` once and parse the supported subcommands.
-2. Prefer a `pi exec` / `pi run` / `pi chat --print` style depending on what the version exposes.
-3. If no one-shot mode is available, fall back to driving Pi via stdin and capture output.
+```bash
+pi -p "<task description>"
+```
+
+`-p` is short for `--print` — direct analog to `claude --print` and `codex exec`. Pi reads `AGENTS.md` from cwd, so spawn it via `process_start({ cwd: <repo-root> })`. Pi has no documented `--cwd` flag.
+
+File input is supported:
+
+```bash
+pi -p @path/to/file.ts "Review this file"
+cat README.md | pi -p "Summarize this"
+```
+
+### Flags
+
+| Flag | Purpose |
+|---|---|
+| `-p`, `--print` | One-shot mode. Prints final output, exits. |
+| `--mode <text\|json\|rpc>` | Output mode. `text` (default), `json` (event stream), `rpc` (subprocess integration — see deferred). |
+| `--model <pattern>` | Model selector (e.g. `claude-sonnet-4-6`). Pattern syntax; check `pi --help`. |
+| `--provider <name>` | Provider override (e.g. `anthropic`, `openai`). |
+| `--thinking <off\|minimal\|low\|medium\|high\|xhigh>` | Reasoning budget. |
+| `--tools <list>` | Comma-separated tool allowlist (`read,bash,edit,write,...`). Tight allowlists are pi's main differentiator. |
+| `--no-session` | Ephemeral run. Don't persist session state. |
+| `--system-prompt <text>` | Override system prompt. |
+| `--session <path\|id>` | Resume a saved session. |
+| `--fork <path\|id>` | Fork an existing session. |
+| `--api-key <key>` | Inline auth (see Authentication). |
+| `-v`, `--version` | Version. |
+| `-h`, `--help` | Help. |
 
 ## Best for
 
-- Tasks that benefit from natural-language clarification mid-flight.
-- Lighter-touch code work (small features, refactor explanations).
+- Multi-provider work where the user wants a specific model not exposed by claude-code or codex CLIs.
+- Fine-grained tool allowlists per call (`--tools read,bash` for a read-only sweep).
+- Ephemeral runs (`--no-session`) where session pollution is unwanted.
+- OAuth-bound subscription billing without committing to a single vendor's CLI.
 
 ## Avoid for
 
-- Headless CI use cases where the CLI must be 100% non-interactive — verify a one-shot flag exists in the installed version first.
-
-## Note
-
-Pi's CLI surface evolves faster than the others'. If this adapter's flags do not match what your installed version exposes, run `pi --help` and update the invocation. Adapter PRs welcome.
+- Environments without npm-global install rights (no system package equivalent yet).
+- Tasks that need a clean `pi auth status` preflight — the probe workaround is brittle.
+- Workflows already standardized on `claude-code` or `codex` — switching costs outweigh the multi-provider benefit unless the user explicitly asks.

@@ -67,6 +67,11 @@ describe('@ethosagent/skills-coding bundle', () => {
     }
   });
 
+  it('pi adapter documents the canonical one-shot invocation', () => {
+    const piMd = readFileSync(join(SOURCE.dir, 'coding-agent', 'adapters', 'pi.md'), 'utf8');
+    expect(piMd).toContain('pi -p');
+  });
+
   it('universal scanner discovers all bundled skills via trustedFirstPartySources', async () => {
     const pool = await new UniversalScanner({
       // disable default community sources so we don't scan the real ~/.ethos

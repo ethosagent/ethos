@@ -47,7 +47,7 @@ When the change is small (one file, a few lines), do not delegate — execute it
 | `claude` (Claude Code) | Large refactors, multi-file edits, deep codebase reasoning | [adapters/claude-code.md](./adapters/claude-code.md) |
 | `codex` (OpenAI Codex CLI) | Fast iteration loops, smaller scoped changes | [adapters/codex.md](./adapters/codex.md) |
 | `opencode` (OpenCode) | Provider-flexible — when the user wants a specific non-Anthropic, non-OpenAI model | [adapters/opencode.md](./adapters/opencode.md) |
-| `pi` (Inflection) | Natural conversation flow, lighter touch on code | [adapters/pi.md](./adapters/pi.md) |
+| `pi` (earendil-works) | Multi-provider, minimal coding harness — specific models, tight tool allowlists | [adapters/pi.md](./adapters/pi.md) |
 
 If the user did not specify, ask. Do not silently pick one.
 
