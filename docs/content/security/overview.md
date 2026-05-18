@@ -196,5 +196,7 @@ The pages in this section answer different questions. Read in the order that mat
 - [Security controls](./controls.md) — the catalogue, with source paths and per-personality knobs.
 - [Pre-launch hardening pass](./security-fixes.md) — the sixteen issues a pre-launch review surfaced.
 - [Responsible disclosure](./responsible-disclosure.md) — how to report a security issue.
+- [Why should agents never hold database credentials?](./api-mediated-access.md) — reference architecture for API-mediated data access.
+- [Why run one process per personality in production?](./process-isolation.md) — when to split from shared-process to one-pod-per-personality.
 - [Personality config reference](../using/reference/personality-yaml.md) — the `safety:` nested block, where per-personality knobs live.
 - [What is a personality?](../using/explanation/what-is-a-personality.md) — why scoping safety per personality matters.

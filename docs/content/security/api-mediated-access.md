@@ -1,5 +1,5 @@
 ---
-title: Why agents should never hold database credentials
+title: Why should agents never hold database credentials?
 description: Reference architecture for API-mediated data access — agents call internal services that hold credentials and enforce row-level authorization.
 kind: explanation
 audience: shared

@@ -8,7 +8,11 @@ time: "30 min"
 updated: 2026-05-18
 ---
 
+## Task
+
 Harden an Ethos deployment so every security control documented in [Security controls](./controls.md) is active and verified before the first production message reaches the agent.
+
+## Result
 
 After completing this checklist you will have: secrets out of plaintext config, platform tokens scoped to least privilege, filesystem and network boundaries declared per personality, channel filtering active, injection defenses confirmed, observability writing and redacting, and (if containerised) a locked-down runtime.
 
@@ -246,6 +250,23 @@ For a step-by-step rotation procedure, see [Bot token rotation playbook](./bot-t
 
 **Verify:** Perform a dry-run rotation of one non-critical token. Confirm the gateway reconnects with the new token and the old token is revoked.
 
+## Verify
+
+Run the config strict loader to confirm no warnings remain:
+
+```bash
+ethos config validate --strict
+```
+
+Then run a quick end-to-end smoke test: send a message from a non-allowlisted account and confirm it is dropped. Send a message from an allowlisted account and confirm `observability.db` records the expected `channel.allow`, `audit.tool_call`, and redaction events. Check that no plaintext secrets appear in the audit output:
+
+```bash
+sqlite3 ~/.ethos/observability.db \
+  "SELECT category, COUNT(*) FROM events GROUP BY category;"
+```
+
+If every step above passes, the deployment is hardened.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -265,3 +286,5 @@ For a step-by-step rotation procedure, see [Bot token rotation playbook](./bot-t
 - [Pre-launch hardening pass](./security-fixes.md) -- sixteen issues surfaced and fixed before shipping.
 - [Least-privilege tokens](./least-privilege-tokens.md) -- per-platform scope tables.
 - [Bot token rotation playbook](./bot-token-rotation-playbook.md) -- step-by-step rotation procedure.
+- [Why should agents never hold database credentials?](./api-mediated-access.md) -- reference architecture for API-mediated data access.
+- [Why run one process per personality in production?](./process-isolation.md) -- when to split from shared-process to one-pod-per-personality.

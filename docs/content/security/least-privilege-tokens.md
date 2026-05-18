@@ -248,4 +248,10 @@ LIMIT 50;
 
 6. **Review after each personality change.** When a personality gains new tools or a wider `fs_reach`, re-check whether the backing tokens still match the minimum needed.
 
+## Verify
+
+Run `ethos personality show <id>` for each personality. The character sheet surfaces the configured MCP servers and their declared scopes. Cross-reference against the minimum scopes listed above.
+
+Check `observability.db` for `audit.tool_call` events -- any scope-error responses from external APIs indicate a token that is too narrow. Widen only the specific scope that failed.
+
 For the full pre-launch hardening process, see the [production hardening checklist](./production-hardening-checklist.md). For the complete catalogue of channel-layer and tool-layer controls, see [security controls](./controls.md).
