@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
 import type { SessionStore } from '@ethosagent/types';
-import { EthosError } from '@ethosagent/types';
+import { type Attachment, EthosError } from '@ethosagent/types';
 import type {
   ChatCompletionChunk,
   ChatCompletionRequest,
   ChatCompletionResponse,
   ChatMessage,
+  ContentPart,
 } from '../routes/openai/schemas';
 import type { ChatDefaults } from './chat.service';
 
@@ -53,7 +54,7 @@ export class CompletionsService {
   constructor(private readonly opts: CompletionsServiceOptions) {}
 
   async complete(input: CompletionsInput): Promise<ChatCompletionResponse> {
-    const { sessionKey, lastUserText } = await this.prepareSession(input);
+    const { sessionKey, lastUserText, attachments } = await this.prepareSession(input);
     let text = '';
     let promptTokens = 0;
     let completionTokens = 0;
@@ -64,6 +65,11 @@ export class CompletionsService {
       lastUserText,
       personalityId: input.personalityId,
       ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+      ...(input.req.temperature !== undefined ? { temperature: input.req.temperature } : {}),
+      ...(input.req.top_p !== undefined ? { topP: input.req.top_p } : {}),
+      ...(input.req.max_tokens !== undefined ? { maxCompletionTokens: input.req.max_tokens } : {}),
+      ...(input.req.seed !== undefined ? { seed: input.req.seed } : {}),
+      ...(attachments?.length ? { attachments } : {}),
     })) {
       if (event.type === 'text_delta') text += event.text;
       else if (event.type === 'usage') {
@@ -95,7 +101,7 @@ export class CompletionsService {
   }
 
   async *stream(input: CompletionsInput): AsyncGenerator<ChatCompletionChunk> {
-    const { sessionKey, lastUserText } = await this.prepareSession(input);
+    const { sessionKey, lastUserText, attachments } = await this.prepareSession(input);
     const id = `chatcmpl-${this.id()}`;
     const created = this.unixNow();
     const model = input.req.model;
@@ -109,6 +115,11 @@ export class CompletionsService {
       lastUserText,
       personalityId: input.personalityId,
       ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+      ...(input.req.temperature !== undefined ? { temperature: input.req.temperature } : {}),
+      ...(input.req.top_p !== undefined ? { topP: input.req.top_p } : {}),
+      ...(input.req.max_tokens !== undefined ? { maxCompletionTokens: input.req.max_tokens } : {}),
+      ...(input.req.seed !== undefined ? { seed: input.req.seed } : {}),
+      ...(attachments?.length ? { attachments } : {}),
     })) {
       if (event.type === 'text_delta') {
         const delta: ChatCompletionChunk['choices'][0]['delta'] = yieldedRole
@@ -168,7 +179,7 @@ export class CompletionsService {
 
   private async prepareSession(
     input: CompletionsInput,
-  ): Promise<{ sessionKey: string; lastUserText: string }> {
+  ): Promise<{ sessionKey: string; lastUserText: string; attachments?: Attachment[] }> {
     const lastUser = finalUserMessage(input.req.messages);
     if (!lastUser) {
       throw new EthosError({
@@ -178,6 +189,8 @@ export class CompletionsService {
       });
     }
 
+    const attachments = lastUser.attachments;
+
     // Stateful mode — opt-in via `X-Ethos-Session`. Server-side history wins;
     // we only feed in the latest user text. Prior messages from the request
     // are ignored. (Per-message verification is a future enhancement.)
@@ -185,6 +198,7 @@ export class CompletionsService {
       return {
         sessionKey: `openai:${input.sessionKeyOverride}`,
         lastUserText: lastUser.text,
+        ...(attachments?.length ? { attachments } : {}),
       };
     }
 
@@ -195,7 +209,11 @@ export class CompletionsService {
     if (prior.length === 0) {
       // No history to inject — AgentLoop will create the session lazily
       // on its first `getSessionByKey ?? createSession`.
-      return { sessionKey, lastUserText: lastUser.text };
+      return {
+        sessionKey,
+        lastUserText: lastUser.text,
+        ...(attachments?.length ? { attachments } : {}),
+      };
     }
     const created = await this.opts.sessions.createSession({
       key: sessionKey,
@@ -211,7 +229,11 @@ export class CompletionsService {
         content: msg.text,
       });
     }
-    return { sessionKey, lastUserText: lastUser.text };
+    return {
+      sessionKey,
+      lastUserText: lastUser.text,
+      ...(attachments?.length ? { attachments } : {}),
+    };
   }
 
   private driveLoop(input: {
@@ -219,11 +241,23 @@ export class CompletionsService {
     lastUserText: string;
     personalityId: string | undefined;
     abortSignal?: AbortSignal;
+    temperature?: number;
+    topP?: number;
+    maxCompletionTokens?: number;
+    seed?: number;
+    attachments?: Attachment[];
   }): AsyncGenerator<AgentEvent> {
     const opts: Parameters<AgentLoop['run']>[1] = {
       sessionKey: input.sessionKey,
       ...(input.personalityId ? { personalityId: input.personalityId } : {}),
       ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+      ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
+      ...(input.topP !== undefined ? { topP: input.topP } : {}),
+      ...(input.maxCompletionTokens !== undefined
+        ? { maxCompletionTokens: input.maxCompletionTokens }
+        : {}),
+      ...(input.seed !== undefined ? { seed: input.seed } : {}),
+      ...(input.attachments?.length ? { attachments: input.attachments } : {}),
     };
     return this.opts.loop.run(input.lastUserText, opts);
   }
@@ -247,14 +281,44 @@ export class CompletionsService {
  * mode, so the trailing message must be `user` with string content; trailing
  * `assistant` / `tool` lands in C1. Anything else is malformed — silently
  * rerunning an earlier user prompt would corrupt conversation semantics.
+ *
+ * Handles both plain string and array (multimodal) content. When the content
+ * is an array, text parts are joined and image_url parts are translated into
+ * Attachment refs so they can flow through the AgentLoop attachment pipeline.
  */
-function finalUserMessage(messages: ChatMessage[]): { index: number; text: string } | null {
+function finalUserMessage(
+  messages: ChatMessage[],
+): { index: number; text: string; attachments?: Attachment[] } | null {
   const lastIndex = messages.length - 1;
   const last = messages[lastIndex];
   if (!last || last.role !== 'user') return null;
-  const text = stringContent(last.content);
-  if (text === null) return null;
-  return { index: lastIndex, text };
+
+  if (typeof last.content === 'string') {
+    if (last.content.length === 0) return null;
+    return { index: lastIndex, text: last.content };
+  }
+
+  if (Array.isArray(last.content)) {
+    const textParts = last.content
+      .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+      .map((p) => p.text);
+    const text = textParts.join('\n');
+    if (text.length === 0) return null;
+
+    const imageParts = last.content.filter(
+      (p): p is Extract<ContentPart, { type: 'image_url' }> => p.type === 'image_url',
+    );
+    const attachments: Attachment[] = imageParts.map((p) => ({
+      type: 'image' as const,
+      ref: p.image_url.url,
+      url: p.image_url.url,
+      mimeType: 'image/png', // default; actual type determined at fetch time
+    }));
+
+    return { index: lastIndex, text, ...(attachments.length ? { attachments } : {}) };
+  }
+
+  return null;
 }
 
 function priorTextMessages(
@@ -266,17 +330,23 @@ function priorTextMessages(
     const msg = messages[i];
     if (!msg) continue;
     if (msg.role !== 'user' && msg.role !== 'assistant') continue; // skip system / tool
-    const text = stringContent(msg.content);
+    const text = extractText(msg.content);
     if (text === null) continue;
     out.push({ role: msg.role, text });
   }
   return out;
 }
 
-function stringContent(content: string | null | undefined): string | null {
-  if (typeof content !== 'string') return null;
-  if (content.length === 0) return null;
-  return content;
+function extractText(content: ChatMessage['content']): string | null {
+  if (typeof content === 'string') return content.length === 0 ? null : content;
+  if (Array.isArray(content)) {
+    const text = content
+      .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+      .map((p) => p.text)
+      .join('\n');
+    return text.length === 0 ? null : text;
+  }
+  return null;
 }
 
 function zeroUsage() {

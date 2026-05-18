@@ -78,7 +78,7 @@ export function openAiChatRoutes(opts: OpenAiChatRouteOptions): Hono {
       );
     }
 
-    // 4. Collect any best-effort warnings (system messages dropped, etc.).
+    // 4. Collect best-effort warnings (e.g. vision content without capability check).
     const warnings = collectWarnings(req);
     if (warnings.length > 0) c.header('x-ethos-warning', warnings.join('; '));
 
@@ -184,7 +184,28 @@ interface Rejection {
   param?: string;
 }
 
+function hasImageContent(req: ChatCompletionRequest): boolean {
+  return req.messages.some(
+    (msg) =>
+      Array.isArray(msg.content) &&
+      msg.content.some(
+        (part) => typeof part === 'object' && 'type' in part && part.type === 'image_url',
+      ),
+  );
+}
+
 function rejectUnsupported(req: ChatCompletionRequest): Rejection | null {
+  for (const msg of req.messages) {
+    if (msg.role === 'system') {
+      return {
+        message:
+          'System messages are not supported. The personality owns the system prompt. ' +
+          'Configure the personality (ETHOS.md, config.yaml) instead of overriding per-request.',
+        code: 'system_messages_not_supported',
+        param: 'messages',
+      };
+    }
+  }
   if (req.tools && req.tools.length > 0) {
     return {
       message:
@@ -214,15 +235,8 @@ function rejectUnsupported(req: ChatCompletionRequest): Rejection | null {
 
 function collectWarnings(req: ChatCompletionRequest): string[] {
   const out: string[] = [];
-  // HTTP header values are ASCII-only in practice; keep these strings strictly
-  // ASCII so Hono passes them through Node's outgoing-header validator without
-  // escaping.
-  const hasSystem = req.messages.some((m) => m.role === 'system');
-  if (hasSystem) out.push('system messages ignored - personality prompt prevails');
-  // Surface sampling fields the agent loop does not consume yet. The plan
-  // keeps these as opt-in passthrough; clients should know the request is
-  // best-effort, not literal.
-  if (req.temperature !== undefined) out.push('temperature not yet forwarded to the upstream LLM');
-  if (req.max_tokens !== undefined) out.push('max_tokens not yet forwarded to the upstream LLM');
+  if (hasImageContent(req)) {
+    out.push('image_url content parts accepted but vision support depends on the personality');
+  }
   return out;
 }

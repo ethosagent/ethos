@@ -275,6 +275,14 @@ export interface RunOptions {
   sessionKey?: string;
   personalityId?: string;
   abortSignal?: AbortSignal;
+  /** Sampling temperature forwarded to the LLM provider. */
+  temperature?: number;
+  /** Top-P (nucleus sampling) forwarded to the LLM provider. */
+  topP?: number;
+  /** Maps to CompletionOptions.maxTokens — separate name to avoid collision with AgentLoop's own maxTokens semantics. */
+  maxCompletionTokens?: number;
+  /** RNG seed forwarded to providers that support it (e.g. OpenAI-compat). */
+  seed?: number;
   /**
    * Identifier surfaced to tools as `ToolContext.agentId`. Delegation tools
    * use this to thread spawn depth (`depth:N`) into child loops so
@@ -939,6 +947,12 @@ export class AgentLoop {
           abortSignal: combinedSignal,
           ...(iterModelOverride ? { modelOverride: iterModelOverride } : {}),
           ...(cacheBreakpoints ? { cacheBreakpoints } : {}),
+          ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+          ...(opts.topP !== undefined ? { topP: opts.topP } : {}),
+          ...(opts.maxCompletionTokens !== undefined
+            ? { maxTokens: opts.maxCompletionTokens }
+            : {}),
+          ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
         });
 
         for await (const chunk of stream) {
