@@ -74,7 +74,16 @@ export interface McpServerConfig {
     client_id: string;
     scopes?: string[];
     revocation_endpoint?: string;
+    introspection_endpoint?: string;
   };
+}
+
+export interface ScopeProbeResult {
+  server: string;
+  outcome: 'match' | 'mismatch' | 'inactive' | 'no-introspection' | 'error';
+  declaredScopes: string[];
+  actualScopes: string[];
+  error?: string;
 }
 
 export interface McpManagerConfig {

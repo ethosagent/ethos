@@ -2,6 +2,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Server } from '@modelcontextprotocol/sdk/server';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it } from 'vitest';
+import type { McpServerConfig } from '../index';
 import { McpClient, McpManager } from '../index';
 
 // ---------------------------------------------------------------------------
@@ -285,5 +286,28 @@ describe('McpManager', () => {
     await manager.connect();
     expect(manager.getTools()).toHaveLength(0);
     await manager.disconnect();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// McpServerConfig type tests
+// ---------------------------------------------------------------------------
+
+describe('McpServerConfig', () => {
+  it('accepts introspection_endpoint in auth block', () => {
+    const config: McpServerConfig = {
+      name: 'test',
+      transport: 'streamable-http',
+      url: 'http://localhost:3000',
+      auth: {
+        type: 'oauth2',
+        authorization_endpoint: 'http://auth/authorize',
+        token_endpoint: 'http://auth/token',
+        client_id: 'test-client',
+        scopes: ['read', 'write'],
+        introspection_endpoint: 'http://auth/introspect',
+      },
+    };
+    expect(config.auth?.introspection_endpoint).toBe('http://auth/introspect');
   });
 });
