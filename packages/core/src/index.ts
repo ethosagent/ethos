@@ -39,6 +39,7 @@ export type { InMemoryToolContextOptions } from './defaults/in-memory-tool-conte
 export { makeTestToolContext } from './defaults/in-memory-tool-context';
 export { NoopMemoryProvider } from './defaults/noop-memory';
 export { DefaultPersonalityRegistry } from './defaults/noop-personality';
+export { redactArgs, synthesizeDryRunCapResult, synthesizeDryRunResult } from './dry-run';
 export { DefaultHookRegistry } from './hook-registry';
 export {
   EagerPrefetchPolicy,
