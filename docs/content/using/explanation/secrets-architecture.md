@@ -1,5 +1,5 @@
 ---
-title: "Secrets architecture"
+title: "Why is Ethos's secrets architecture shaped this way?"
 description: "Why Ethos uses per-ref secrets, lazy fetching, and SIGHUP cache invalidation — the design decisions behind the secrets resolver."
 kind: explanation
 audience: shared
