@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ChannelFilterConfig, ChannelPlatformConfig } from '@ethosagent/safety-channel';
+import { REF_TO_ENV } from '@ethosagent/storage-fs';
 import type {
   RetentionConfig,
   RetentionEventsConfig,
@@ -24,6 +25,17 @@ async function resolveSecretValue(value: string, secrets: SecretsResolver): Prom
     if (!ref) continue;
     const secret = await secrets.get(ref);
     if (secret === null) {
+      const envKey = REF_TO_ENV.get(ref);
+      if (envKey) {
+        throw new Error(
+          `Secret not found: ${ref}\n\n` +
+            `This secret can be provided by ANY of (highest precedence first):\n` +
+            `  1. ~/.ethos/.env file with ${envKey}=<value>\n` +
+            `  2. environment variable ${envKey}  (e.g. set by systemd EnvironmentFile, docker -e, or your shell)\n` +
+            `  3. ~/.ethos/secrets/${ref}  (file mode 0600 — lowest-precedence fallback)\n\n` +
+            `Run \`ethos secrets set ${ref} <value>\` to store it as the on-disk fallback.`,
+        );
+      }
       throw new Error(
         `Secret not found: ${ref}. Run 'ethos secrets set ${ref} <value>' to store it.`,
       );
@@ -380,6 +392,20 @@ export interface EthosConfig {
    *   modelCatalog.providers.<id>.url: https://internal.example.com/anthropic.json
    */
   modelCatalog?: ModelCatalogConfig;
+  /**
+   * Log rotation settings. Controls when `~/.ethos/logs/errors.jsonl` is
+   * rotated. Config keys:
+   *   logs.rotation.maxBytes: 10485760
+   *   logs.rotation.maxFiles: 5
+   *   logs.rotation.enabled: false
+   */
+  logs?: {
+    rotation?: {
+      maxBytes?: number;
+      maxFiles?: number;
+      enabled?: boolean;
+    };
+  };
 }
 
 export function ethosDir(): string {
@@ -560,6 +586,12 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       }
     }
   }
+  if (config.logs?.rotation) {
+    const r = config.logs.rotation;
+    if (r.maxBytes !== undefined) lines.push(`logs.rotation.maxBytes: ${r.maxBytes}`);
+    if (r.maxFiles !== undefined) lines.push(`logs.rotation.maxFiles: ${r.maxFiles}`);
+    if (r.enabled === false) lines.push('logs.rotation.enabled: false');
+  }
   await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`);
 }
 
@@ -644,6 +676,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const auxiliaryVisionKv: Record<string, string> = {};
   const modelCatalogKv: Record<string, string> = {};
   const modelCatalogProvidersKv: Record<string, Record<string, string>> = {};
+  const logsRotationKv: Record<string, string> = {};
   // Indexed list shapes: telegram.bots.<n>.<field> and slack.apps.<n>.<field>,
   // plus their nested `.bind.<field>` sub-keys. Per-team config keyed by name.
   const telegramBotsKv: Record<number, Record<string, string>> = {};
@@ -746,6 +779,12 @@ function parseConfigYaml(src: string): EthosConfig {
     const auxv = line.match(/^auxiliary\.vision\.(\w+):\s*(.+)$/);
     if (auxv) {
       auxiliaryVisionKv[auxv[1]] = auxv[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // logs.rotation.<field>: <value>
+    const lr = line.match(/^logs\.rotation\.(\w+):\s*(.+)$/);
+    if (lr) {
+      logsRotationKv[lr[1]] = lr[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // modelCatalog.providers.<id>.url: <value>
@@ -861,6 +900,22 @@ function parseConfigYaml(src: string): EthosConfig {
           ...(modelCatalogProviders ? { providers: modelCatalogProviders } : {}),
         }
       : undefined;
+  const parsedMaxBytes = logsRotationKv.maxBytes ? Number(logsRotationKv.maxBytes) : undefined;
+  const parsedMaxFiles = logsRotationKv.maxFiles ? Number(logsRotationKv.maxFiles) : undefined;
+  const logsRotation =
+    Object.keys(logsRotationKv).length > 0
+      ? {
+          ...(parsedMaxBytes && Number.isFinite(parsedMaxBytes) && parsedMaxBytes > 0
+            ? { maxBytes: Math.floor(parsedMaxBytes) }
+            : {}),
+          ...(parsedMaxFiles && Number.isFinite(parsedMaxFiles) && parsedMaxFiles > 0
+            ? { maxFiles: Math.floor(parsedMaxFiles) }
+            : {}),
+          ...(logsRotationKv.enabled !== undefined
+            ? { enabled: logsRotationKv.enabled !== 'false' }
+            : {}),
+        }
+      : undefined;
   const telegramResult = buildTelegramBots(telegramBotsKv);
   const slackResult = buildSlackApps(slackAppsKv);
   const teams = buildTeamsConfig(teamsKv);
@@ -924,6 +979,7 @@ function parseConfigYaml(src: string): EthosConfig {
           }
         : undefined,
     modelCatalog,
+    logs: logsRotation ? { rotation: logsRotation } : undefined,
   };
   // Stash parse errors so the strict loader can surface them at boot.
   // readRawConfig (used by CLI commands that don't gateway-boot) ignores them

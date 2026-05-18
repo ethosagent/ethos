@@ -30,6 +30,7 @@
     "dist",
     "data",
     "web",
+    "templates",
     "scripts/postinstall.mjs",
     "README.md",
     "LICENSE"

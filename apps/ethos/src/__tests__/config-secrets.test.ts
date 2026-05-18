@@ -1,6 +1,11 @@
 import { join } from 'node:path';
-import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
-import { describe, expect, it } from 'vitest';
+import {
+  EnvSecretsResolver,
+  InMemorySecretsResolver,
+  InMemoryStorage,
+  MergedSecretsResolver,
+} from '@ethosagent/storage-fs';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ethosDir, readConfig, readKeys, readRawConfig } from '../config';
 
 function secretRef(path: string): string {
@@ -147,5 +152,79 @@ describe('readKeys with secrets resolution', () => {
     );
     const keys = await readKeys(storage);
     expect(keys[0]?.apiKey).toBe('sk-plain');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New tests: env-based resolution via MergedSecretsResolver
+// ---------------------------------------------------------------------------
+
+describe('env-only resolution via MergedSecretsResolver', () => {
+  let savedEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    savedEnv = { ...process.env };
+    delete process.env.ANTHROPIC_API_KEY;
+  });
+
+  afterEach(() => {
+    for (const key of Object.keys(process.env)) {
+      if (!(key in savedEnv)) {
+        delete process.env[key];
+      }
+    }
+    Object.assign(process.env, savedEnv);
+  });
+
+  async function loadWithMerged(yaml: string) {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(join(ethosDir(), 'config.yaml'), yaml);
+    const file = new InMemorySecretsResolver();
+    const merged = new MergedSecretsResolver(new EnvSecretsResolver(), file);
+    return readConfig(storage, merged);
+  }
+
+  const baseYaml = [
+    'provider: anthropic',
+    'model: claude-opus-4-7',
+    `apiKey: ${['${', 'secrets:providers/anthropic/apiKey}'].join('')}`,
+    'personality: researcher',
+  ].join('\n');
+
+  it('resolves apiKey from process.env via MergedSecretsResolver', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-from-env';
+    const cfg = await loadWithMerged(baseYaml);
+    expect(cfg?.apiKey).toBe('sk-ant-from-env');
+  });
+
+  it('env overrides on-disk file value', async () => {
+    process.env.ANTHROPIC_API_KEY = 'env-priority';
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(join(ethosDir(), 'config.yaml'), baseYaml);
+    const file = new InMemorySecretsResolver();
+    await file.set('providers/anthropic/apiKey', 'file-fallback');
+    const merged = new MergedSecretsResolver(new EnvSecretsResolver(), file);
+    const cfg = await readConfig(storage, merged);
+    expect(cfg?.apiKey).toBe('env-priority');
+  });
+
+  it('boot failure message for known ref contains env var name', async () => {
+    // No env var set, no file secret → should throw with env var hint
+    await expect(loadWithMerged(baseYaml)).rejects.toThrow('ANTHROPIC_API_KEY');
+  });
+
+  it('boot failure message for known ref contains all 3 resolution paths', async () => {
+    let err: Error | undefined;
+    try {
+      await loadWithMerged(baseYaml);
+    } catch (e) {
+      err = e as Error;
+    }
+    expect(err).toBeDefined();
+    expect(err?.message).toContain('~/.ethos/.env');
+    expect(err?.message).toContain('environment variable ANTHROPIC_API_KEY');
+    expect(err?.message).toContain('ethos secrets set');
   });
 });

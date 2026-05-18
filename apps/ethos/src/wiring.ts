@@ -8,7 +8,13 @@ import {
   SQLiteObservabilityStore,
   startPruneCron,
 } from '@ethosagent/observability-sqlite';
-import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
+import {
+  EnvSecretsResolver,
+  FileSecretsResolver,
+  FsStorage,
+  loadDotEnv,
+  MergedSecretsResolver,
+} from '@ethosagent/storage-fs';
 import { parseTeamManifest, teamsDir } from '@ethosagent/team-supervisor';
 import type {
   LLMProvider,
@@ -47,13 +53,22 @@ export function getStorage(): Storage {
 }
 
 let secretsSingleton: SecretsResolver | undefined;
+let dotEnvLoaded = false;
 
 export function getSecretsResolver(): SecretsResolver {
   if (!secretsSingleton) {
-    secretsSingleton = new FileSecretsResolver({
+    // Load .env once, lazily, before constructing the resolver
+    if (!dotEnvLoaded) {
+      const envFilePath = process.env.ETHOS_ENV_FILE ?? join(ethosDir(), '.env');
+      loadDotEnv(envFilePath);
+      dotEnvLoaded = true;
+    }
+    const file = new FileSecretsResolver({
       dir: join(ethosDir(), 'secrets'),
       storage: getStorage(),
     });
+    const env = new EnvSecretsResolver();
+    secretsSingleton = new MergedSecretsResolver(env, file);
   }
   return secretsSingleton;
 }

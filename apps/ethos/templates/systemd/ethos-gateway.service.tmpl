@@ -1,0 +1,19 @@
+[Unit]
+Description=Ethos Gateway (Telegram + Slack + Discord + Email adapters)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ETHOS_USER}}
+Environment=HOME={{ETHOS_HOME}}
+Environment=ETHOS_MANAGED=1
+EnvironmentFile=-{{ETHOS_HOME}}/.ethos/.env
+ExecStart={{ETHOS_BINARY}} gateway start
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

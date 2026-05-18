@@ -48,6 +48,7 @@ import { runTrace } from './commands/trace';
 import { runUpgrade } from './commands/upgrade';
 import { ethosDir, readConfig } from './config';
 import { appendErrorLog } from './error-log';
+import { loadRequiredConfig } from './managed-mode';
 import { getSecretsResolver, getStorage } from './wiring';
 
 // Compile-time injected by tsup via define (or read from env at runtime in dev).
@@ -56,7 +57,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [setup | chat | sessions | serve | dashboard | status | run-all | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive] [--version | --help]';
+  'Usage: ethos [setup | chat | sessions | serve | dashboard | status | run-all | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive | systemd-unit | usage] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -114,7 +115,13 @@ try {
   switch (effectiveCommand) {
     case '--version':
     case '-v': {
-      console.log(`@ethosagent/cli ${ETHOS_VERSION}`);
+      if (args.includes('--json')) {
+        const { buildVersionInfo } = await import('./version-info');
+        process.stdout.write(`${JSON.stringify(buildVersionInfo())}
+`);
+      } else {
+        console.log(`@ethosagent/cli ${ETHOS_VERSION}`);
+      }
       break;
     }
 
@@ -201,10 +208,21 @@ try {
 
       const config = await readConfig(getStorage(), getSecretsResolver());
       if (!config) {
+        if (process.env.ETHOS_MANAGED === '1') {
+          console.error(
+            'ethos: managed mode (ETHOS_MANAGED=1); no ~/.ethos/config.yaml found.\n' +
+              '       Bootstrap the config externally (e.g. Clawrium playbook) and retry.',
+          );
+          process.exit(2);
+        }
         console.log('No config found. Running setup first...\n');
         const setupResult = await runSetup();
         if (setupResult) {
           const { config: fresh } = setupResult;
+          if (fresh.logs?.rotation) {
+            const { setRotationConfig } = await import('./error-log');
+            setRotationConfig(fresh.logs.rotation);
+          }
           let withFlags = { ...fresh };
           if (verboseFlag) withFlags.verbose = true;
           if (skinFlag) withFlags.skin = skinFlag;
@@ -219,6 +237,10 @@ try {
           if (query) process.exit(0);
         }
       } else {
+        if (config.logs?.rotation) {
+          const { setRotationConfig } = await import('./error-log');
+          setRotationConfig(config.logs.rotation);
+        }
         let withFlags = { ...config };
         if (verboseFlag) withFlags.verbose = true;
         if (skinFlag) withFlags.skin = skinFlag;
@@ -392,31 +414,19 @@ try {
     }
 
     case 'cron': {
-      const config = await readConfig(getStorage(), getSecretsResolver());
-      if (!config) {
-        console.error('Run ethos setup first.');
-        process.exit(1);
-      }
+      const config = await loadRequiredConfig();
       await runCronCommand(args[1] ?? 'list', args.slice(2), config);
       break;
     }
 
     case 'acp': {
-      const config = await readConfig(getStorage(), getSecretsResolver());
-      if (!config) {
-        console.error('Run ethos setup first.');
-        process.exit(1);
-      }
+      const config = await loadRequiredConfig();
       await runAcp(config);
       break;
     }
 
     case 'serve': {
-      const config = await readConfig(getStorage(), getSecretsResolver());
-      if (!config) {
-        console.error('Run ethos setup first.');
-        process.exit(1);
-      }
+      const config = await loadRequiredConfig();
       await runServe(args.slice(1), config);
       break;
     }
@@ -426,41 +436,25 @@ try {
     // One command for the full production surface; wrap it in PM2/systemd for
     // reboot survival. See docs/content/using/how-to/deploy-in-production.md.
     case 'run-all': {
-      const config = await readConfig(getStorage(), getSecretsResolver());
-      if (!config) {
-        console.error('Run ethos setup first.');
-        process.exit(1);
-      }
+      await loadRequiredConfig();
       await runAll();
       break;
     }
 
     case 'batch': {
-      const config = await readConfig(getStorage(), getSecretsResolver());
-      if (!config) {
-        console.error('Run ethos setup first.');
-        process.exit(1);
-      }
+      const config = await loadRequiredConfig();
       await runBatch(args.slice(1), config);
       break;
     }
 
     case 'eval': {
-      const config = await readConfig(getStorage(), getSecretsResolver());
-      if (!config) {
-        console.error('Run ethos setup first.');
-        process.exit(1);
-      }
+      const config = await loadRequiredConfig();
       await runEval(args.slice(1), config);
       break;
     }
 
     case 'evolve': {
-      const config = await readConfig(getStorage(), getSecretsResolver());
-      if (!config) {
-        console.error('Run ethos setup first.');
-        process.exit(1);
-      }
+      const config = await loadRequiredConfig();
       await runEvolve(args.slice(1), config);
       break;
     }
@@ -506,11 +500,7 @@ try {
     }
 
     case 'dashboard': {
-      const config = await readConfig(getStorage(), getSecretsResolver());
-      if (!config) {
-        console.error('Run ethos setup first.');
-        process.exit(1);
-      }
+      const config = await loadRequiredConfig();
       await runDashboard(args.slice(1), config);
       break;
     }
@@ -624,6 +614,18 @@ try {
 
     case 'archive': {
       await runArchive(args[1] ?? 'list', args.slice(2));
+      break;
+    }
+
+    case 'systemd-unit': {
+      const { runSystemdUnit } = await import('./commands/systemd-unit');
+      runSystemdUnit(args.slice(1));
+      break;
+    }
+
+    case 'usage': {
+      const { runUsage } = await import('./commands/usage');
+      await runUsage(args.slice(1));
       break;
     }
 
