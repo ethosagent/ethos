@@ -7,8 +7,9 @@ import type { Logger, SecretsResolver, Storage, Tool, ToolResult } from '@ethosa
 import { Client } from '@modelcontextprotocol/sdk/client';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
-import { ensureValidToken, refreshToken } from './oauth';
+import { ensureValidToken, loadAccessToken, refreshToken } from './oauth';
 import { rewriteDefinitionsToRefs } from './schema-rewrite';
+import { probeTokenScopes } from './scope-probe';
 
 export type { CallbackResult, OAuthConfig, TokenSet } from './oauth';
 export {
@@ -122,6 +123,9 @@ export class McpClient {
   /** Callback invoked when the server sends `notifications/tools/list_changed`. */
   onToolsChanged?: (tools: McpToolDef[]) => void;
 
+  /** Callback invoked with scope-probe results (fire-and-forget, gated by env var). */
+  onScopeProbe?: (result: ScopeProbeResult) => void;
+
   constructor(config: McpServerConfig, opts?: { logger?: Logger; secrets?: SecretsResolver }) {
     this._config = config;
     this._sdk = new Client({ name: 'ethos', version: '1.0.0' }, { capabilities: {} });
@@ -148,6 +152,29 @@ export class McpClient {
 
     await this._sdk.connect(transport);
     this._connected = true;
+
+    // Scope-introspection probe — fire-and-forget, never blocks startup
+    if (
+      process.env.ETHOS_MCP_SCOPE_PROBE === '1' &&
+      this._config.auth?.type === 'oauth2' &&
+      this._config.auth.introspection_endpoint &&
+      this._secrets
+    ) {
+      const endpoint = this._config.auth.introspection_endpoint;
+      const scopes = this._config.auth.scopes ?? [];
+      const secrets = this._secrets;
+      const name = this._config.name;
+      loadAccessToken(name, secrets)
+        .then((token) => {
+          if (!token) return;
+          probeTokenScopes(name, endpoint, scopes, token, this._logger)
+            .then((result) => {
+              this.onScopeProbe?.(result);
+            })
+            .catch(() => {});
+        })
+        .catch(() => {});
+    }
 
     // Phase 2.3 — dynamic tool discovery via notifications/tools/list_changed
     this._sdk.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
