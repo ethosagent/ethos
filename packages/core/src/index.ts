@@ -1,6 +1,7 @@
 export type {
   AgentEvent,
   AgentLoopConfig,
+  DryRunToolPlan,
   KnownAgentEventType,
   RunOptions,
 } from './agent-loop';

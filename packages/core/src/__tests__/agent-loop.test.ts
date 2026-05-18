@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { CompletionChunk, CompletionOptions, LLMProvider, Message } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
-import { AgentLoop } from '../agent-loop';
+import { AgentLoop, KNOWN_AGENT_EVENT_TYPES } from '../agent-loop';
 
 function makeMockLLM(
   responses: string[],
@@ -823,6 +823,10 @@ describe('AgentLoop', () => {
     // Run as personality B — plugin hook must NOT fire (count stays at 1)
     await collect(loop.run('hello', { personalityId: 'personality-b', sessionKey: 'session-b' }));
     expect(hookFireCount).toBe(1);
+  });
+
+  it('KNOWN_AGENT_EVENT_TYPES includes dry_run_summary', () => {
+    expect(KNOWN_AGENT_EVENT_TYPES).toContain('dry_run_summary');
   });
 
   describe('budget cap (budgetCapUsd)', () => {

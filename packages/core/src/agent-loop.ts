@@ -72,6 +72,7 @@ export const KNOWN_AGENT_EVENT_TYPES = [
   'done',
   'context_meta',
   'run_start',
+  'dry_run_summary',
 ] as const;
 
 export type KnownAgentEventType = (typeof KNOWN_AGENT_EVENT_TYPES)[number];
@@ -93,6 +94,12 @@ export type KnownAgentEventType = (typeof KNOWN_AGENT_EVENT_TYPES)[number];
  */
 export function isKnownAgentEvent(event: { type: string }): event is AgentEvent {
   return (KNOWN_AGENT_EVENT_TYPES as readonly string[]).includes(event.type);
+}
+
+export interface DryRunToolPlan {
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
 }
 
 export type AgentEvent =
@@ -143,6 +150,11 @@ export type AgentEvent =
       provider: string;
       model: string;
       source: 'team-coordinator' | 'team-personality' | 'personality' | 'global';
+    }
+  | {
+      type: 'dry_run_summary';
+      plan: DryRunToolPlan[];
+      capped: number;
     };
 
 // ---------------------------------------------------------------------------
@@ -310,6 +322,8 @@ export interface RunOptions {
    * Consumed once; does not persist across runs.
    */
   tierOverride?: import('@ethosagent/types').ModelTierName;
+  dryRun?: boolean;
+  dryRunMaxToolCalls?: number;
 }
 
 // ---------------------------------------------------------------------------

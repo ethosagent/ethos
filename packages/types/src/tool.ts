@@ -122,6 +122,7 @@ export interface ToolContext {
   scopedFs?: import('./tool-capabilities').ScopedFs;
   scopedProcess?: import('./tool-capabilities').ScopedProcess;
   attachments?: import('./tool-capabilities').ScopedAttachments;
+  dryRun?: boolean;
 }
 
 export interface Tool<TArgs = unknown> {
