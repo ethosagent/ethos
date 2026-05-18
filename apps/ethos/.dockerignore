@@ -1,0 +1,9 @@
+.git
+node_modules
+plan/
+sandbox/
+docs/
+*.md
+**/*.test.ts
+**/__tests__/
+dist/
