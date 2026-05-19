@@ -73,6 +73,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.96.0
         version: 0.96.0(zod@4.3.6)
+      '@aws-sdk/client-secrets-manager':
+        specifier: ^3.800.0
+        version: 3.1048.0
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
