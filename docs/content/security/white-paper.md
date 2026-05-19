@@ -1,7 +1,10 @@
 ---
-title: Security White Paper
+title: Why is Ethos's security model built on shared responsibility?
 description: Ethos's customer-facing security narrative — shared responsibility, the personality boundary, request lifecycle, and deployment shapes.
-sidebar_position: 2
+kind: explanation
+audience: shared
+slug: white-paper
+updated: 2026-05-19
 ---
 
 # Ethos Security White Paper
