@@ -76,9 +76,6 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@ethosagent/safety-redact':
-        specifier: workspace:*
-        version: link:../../packages/safety/redact
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -192,9 +189,6 @@ importers:
         specifier: workspace:*
         version: link:../../packages/wiring
     optionalDependencies:
-      '@ethosagent/secrets-aws':
-        specifier: workspace:*
-        version: link:../../extensions/secrets-aws
       '@slack/bolt':
         specifier: ^3.21.0
         version: 3.22.0
