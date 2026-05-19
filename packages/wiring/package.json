@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@ethosagent/core": "workspace:*",
+    "@ethosagent/safety-network": "workspace:*",
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/llm-anthropic": "workspace:*",
     "@ethosagent/llm-azure": "workspace:*",

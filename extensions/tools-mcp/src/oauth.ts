@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { validateUrl as validateSsrfUrl } from '@ethosagent/core';
+import { safeFetch } from '@ethosagent/safety-network';
 import type { SecretsResolver } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -376,11 +377,16 @@ export async function exchangeCode(
     code_verifier: codeVerifier,
   });
 
-  const resp = await fetch(config.token_endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
+  const fetchResult = await safeFetch(config.token_endpoint, {
+    policy: {},
+    init: {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    },
   });
+  if (!fetchResult.ok) throw new Error(`Token exchange blocked: ${fetchResult.reason}`);
+  const resp = fetchResult.response;
 
   if (!resp.ok) {
     const text = await resp.text();
@@ -425,11 +431,17 @@ export async function refreshToken(
     client_id: config.client_id,
   });
 
-  const resp = await fetch(config.token_endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
+  const refreshFetchResult = await safeFetch(config.token_endpoint, {
+    policy: {},
+    init: {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    },
   });
+  if (!refreshFetchResult.ok)
+    throw new Error(`Token refresh blocked: ${refreshFetchResult.reason}`);
+  const resp = refreshFetchResult.response;
 
   if (!resp.ok) {
     const text = await resp.text();
@@ -475,11 +487,14 @@ export async function revokeToken(
         token,
         client_id: config.client_id,
       });
-      // Best-effort revocation — don't fail if endpoint is down
-      await fetch(config.revocation_endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body.toString(),
+      // Best-effort revocation — don't fail if endpoint is down or blocked
+      await safeFetch(config.revocation_endpoint, {
+        policy: {},
+        init: {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString(),
+        },
       }).catch(() => {});
     }
   }
@@ -502,14 +517,19 @@ export async function discoverOAuthMetadata(mcpUrl: string): Promise<DiscoveredO
   let issuer = new URL(mcpUrl).origin;
   const protectedResourceUrl = buildWellKnownUrl(mcpUrl, 'oauth-protected-resource');
   try {
-    const prResp = await fetch(protectedResourceUrl);
-    attemptedUrls.push({ url: protectedResourceUrl, status: prResp.status });
-    if (prResp.ok) {
-      const prData = (await prResp.json()) as { authorization_servers?: string[] };
-      const firstServer = prData.authorization_servers?.[0];
-      if (firstServer) {
-        issuer = firstServer;
+    const prFetchResult = await safeFetch(protectedResourceUrl, { policy: {} });
+    if (prFetchResult.ok) {
+      const prResp = prFetchResult.response;
+      attemptedUrls.push({ url: protectedResourceUrl, status: prResp.status });
+      if (prResp.ok) {
+        const prData = (await prResp.json()) as { authorization_servers?: string[] };
+        const firstServer = prData.authorization_servers?.[0];
+        if (firstServer) {
+          issuer = firstServer;
+        }
       }
+    } else {
+      attemptedUrls.push({ url: protectedResourceUrl, status: null });
     }
   } catch {
     attemptedUrls.push({ url: protectedResourceUrl, status: null });
@@ -517,7 +537,12 @@ export async function discoverOAuthMetadata(mcpUrl: string): Promise<DiscoveredO
 
   const asMeta = buildWellKnownUrl(issuer, 'oauth-authorization-server');
   try {
-    const asResp = await fetch(asMeta);
+    const asFetchResult = await safeFetch(asMeta, { policy: {} });
+    if (!asFetchResult.ok) {
+      attemptedUrls.push({ url: asMeta, status: null });
+      throw new OAuthDiscoveryError(attemptedUrls);
+    }
+    const asResp = asFetchResult.response;
     attemptedUrls.push({ url: asMeta, status: asResp.status });
     if (!asResp.ok) {
       throw new OAuthDiscoveryError(attemptedUrls);
@@ -580,11 +605,17 @@ export async function registerOAuthClient(
   registrationEndpoint: string,
   request: DcrRequest,
 ): Promise<DcrResponse> {
-  const resp = await fetch(registrationEndpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
+  const dcrFetchResult = await safeFetch(registrationEndpoint, {
+    policy: {},
+    init: {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    },
   });
+  if (!dcrFetchResult.ok)
+    throw new Error(`Dynamic client registration blocked: ${dcrFetchResult.reason}`);
+  const resp = dcrFetchResult.response;
 
   if (!resp.ok) {
     const text = await resp.text();

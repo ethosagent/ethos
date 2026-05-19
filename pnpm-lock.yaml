@@ -1049,6 +1049,9 @@ importers:
       '@ethosagent/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@ethosagent/safety-network':
+        specifier: workspace:*
+        version: link:../../packages/safety/network
       '@ethosagent/safety-scanner':
         specifier: workspace:*
         version: link:../../packages/safety/scanner
@@ -1334,6 +1337,9 @@ importers:
       '@ethosagent/safety-injection':
         specifier: workspace:*
         version: link:../safety/injection
+      '@ethosagent/safety-network':
+        specifier: workspace:*
+        version: link:../safety/network
       '@ethosagent/safety-watcher':
         specifier: workspace:*
         version: link:../safety/watcher

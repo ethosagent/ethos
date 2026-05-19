@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@ethosagent/logger": "workspace:*",
+    "@ethosagent/safety-network": "workspace:*",
     "@ethosagent/safety-scanner": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/types": "workspace:*",

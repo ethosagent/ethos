@@ -139,9 +139,16 @@ async function downloadAttachments(
       }
       if (!DISCORD_CDN_HOSTS.has(attachmentHost)) continue;
 
-      const resp = await fetch(attachment.url);
-      if (!resp.ok) continue;
-      const buffer = Buffer.from(await resp.arrayBuffer());
+      // Use redirect: 'error' — Discord CDN responses should not redirect;
+      // refusing redirects eliminates the SSRF-via-redirect vector.
+      let attachResp: Response;
+      try {
+        attachResp = await fetch(attachment.url, { redirect: 'error' });
+      } catch {
+        continue;
+      }
+      if (!attachResp.ok) continue;
+      const buffer = Buffer.from(await attachResp.arrayBuffer());
       const filename = attachment.name ?? 'attachment';
       const url = await cache.write(buffer, {
         sessionKey: '',
