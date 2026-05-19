@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: configure-aws-secrets
 time: "10 min"
-updated: 2026-05-16
+updated: 2026-05-19
 ---
 
 ## Task

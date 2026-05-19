@@ -4,7 +4,7 @@ description: "Why Ethos uses per-ref secrets, lazy fetching, and SIGHUP cache in
 kind: explanation
 audience: shared
 slug: secrets-architecture
-updated: 2026-05-16
+updated: 2026-05-19
 ---
 
 ## Context

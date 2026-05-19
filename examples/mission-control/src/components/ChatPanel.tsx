@@ -2,6 +2,7 @@
 
 import type { SseEvent } from '@ethosagent/web-contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { sendMessage } from '@/lib/send-message';
 
 interface ChatPanelProps {
   sessionId: string | null;
@@ -117,18 +118,12 @@ export function ChatPanel({ sessionId, personalityId, onSessionCreated }: ChatPa
     setMessages((prev) => [...prev, { id: nextId++, role: 'user', content: text, done: true }]);
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: sessionId ?? undefined,
-          clientId: 'mission-control',
-          text,
-          personalityId: personalityId ?? undefined,
-        }),
+      const data = await sendMessage({
+        sessionId: sessionId ?? undefined,
+        clientId: 'mission-control',
+        text,
+        personalityId: personalityId ?? undefined,
       });
-      if (!res.ok) throw new Error(`Send failed: ${res.status}`);
-      const data = (await res.json()) as { sessionId: string };
 
       if (!sessionId) {
         onSessionCreated(data.sessionId);

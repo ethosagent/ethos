@@ -4,7 +4,7 @@ description: "Copy-paste IAM policy templates for Ethos on AWS — read-only ins
 kind: reference
 audience: user
 slug: aws-iam-policies
-updated: 2026-05-16
+updated: 2026-05-19
 ---
 
 ## Synopsis {#synopsis}
