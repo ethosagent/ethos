@@ -4,6 +4,7 @@ import {
   GetSecretValueCommand,
   ListSecretsCommand,
   PutSecretValueCommand,
+  RestoreSecretCommand,
   SecretsManagerClient,
 } from '@aws-sdk/client-secrets-manager';
 import type { SecretRef, SecretsResolver } from '@ethosagent/types';
@@ -99,6 +100,9 @@ export class AwsSecretsManagerResolver implements SecretsResolver {
               throw createErr;
             }
           }
+        } else if (isAwsError(err, 'InvalidRequestException')) {
+          await client.send(new RestoreSecretCommand({ SecretId: key }));
+          await client.send(new PutSecretValueCommand({ SecretId: key, SecretString: value }));
         } else {
           throw err;
         }
@@ -126,9 +130,7 @@ export class AwsSecretsManagerResolver implements SecretsResolver {
     const client = this.getClient();
 
     try {
-      await client.send(
-        new DeleteSecretCommand({ SecretId: key, ForceDeleteWithoutRecovery: true }),
-      );
+      await client.send(new DeleteSecretCommand({ SecretId: key }));
       this.cache.delete(key);
       this.credentialVerified = true;
     } catch (err: unknown) {

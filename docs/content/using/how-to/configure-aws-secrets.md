@@ -113,13 +113,14 @@ Add a second statement to your IAM policy:
   "Action": [
     "secretsmanager:CreateSecret",
     "secretsmanager:PutSecretValue",
-    "secretsmanager:DeleteSecret"
+    "secretsmanager:DeleteSecret",
+    "secretsmanager:RestoreSecret"
   ],
   "Resource": "arn:aws:secretsmanager:<region>:<account>:secret:ethos/<deployment>/*"
 }
 ```
 
-Add this as a second `Statement` entry alongside the existing `EthosReadOwnSecrets` statement. `UpdateSecret` is deliberately omitted -- `PutSecretValue` covers value rotation, and `UpdateSecret` would allow changing metadata, KMS key, and tags that Ethos never needs.
+Add this as a second `Statement` entry alongside the existing `EthosReadOwnSecrets` statement. `RestoreSecret` is required because `delete()` uses the default recovery window (reversible); when `set()` targets a secret that is still in scheduled-deletion state, it restores it first. `UpdateSecret` is deliberately omitted -- `PutSecretValue` covers value rotation, and `UpdateSecret` would allow changing metadata, KMS key, and tags that Ethos never needs.
 
 See the [instance write role](../reference/aws-iam-policies.md#instance-write-role) reference for the combined read+write policy.
 

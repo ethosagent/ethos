@@ -4,6 +4,7 @@ import {
   GetSecretValueCommand,
   ListSecretsCommand,
   PutSecretValueCommand,
+  RestoreSecretCommand,
   SecretsManagerClient,
 } from '@aws-sdk/client-secrets-manager';
 import { mockClient } from 'aws-sdk-client-mock';
@@ -149,6 +150,26 @@ describe('set', () => {
     expect(await resolver.get('mcp/foo/access_token')).toBe('xyz');
   });
 
+  it('restores a scheduled-for-deletion secret and writes the new value', async () => {
+    const invalidReq = new Error('secret scheduled for deletion');
+    invalidReq.name = 'InvalidRequestException';
+
+    smMock.on(PutSecretValueCommand).rejectsOnce(invalidReq).resolves({});
+    smMock.on(RestoreSecretCommand).resolves({});
+
+    await resolver.set('mcp/foo/access_token', 'new-token');
+
+    expect(smMock.commandCalls(RestoreSecretCommand)).toHaveLength(1);
+    expect(smMock.commandCalls(RestoreSecretCommand)[0].args[0].input).toEqual({
+      SecretId: 'ethos/engineer/mcp/foo/access_token',
+    });
+    expect(smMock.commandCalls(PutSecretValueCommand)).toHaveLength(2);
+
+    // Cache updated
+    smMock.on(GetSecretValueCommand).rejects(new Error('should not be called'));
+    expect(await resolver.get('mcp/foo/access_token')).toBe('new-token');
+  });
+
   it('throws on AccessDeniedException with IAM remediation pointer', async () => {
     const err = new Error('access denied');
     err.name = 'AccessDeniedException';
@@ -197,7 +218,6 @@ describe('delete', () => {
     expect(smMock.commandCalls(DeleteSecretCommand)).toHaveLength(1);
     expect(smMock.commandCalls(DeleteSecretCommand)[0].args[0].input).toEqual({
       SecretId: 'ethos/engineer/some/ref',
-      ForceDeleteWithoutRecovery: true,
     });
 
     // Cache cleared — get should re-fetch

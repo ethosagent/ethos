@@ -80,14 +80,15 @@ When `aws.secrets.enabled: true`, the instance role needs write permissions in a
     "Action": [
       "secretsmanager:CreateSecret",
       "secretsmanager:PutSecretValue",
-      "secretsmanager:DeleteSecret"
+      "secretsmanager:DeleteSecret",
+      "secretsmanager:RestoreSecret"
     ],
     "Resource": "arn:aws:secretsmanager:<region>:<account>:secret:ethos/<deployment>/*"
   }]
 }
 ```
 
-`UpdateSecret` is deliberately omitted -- `PutSecretValue` covers value rotation, and `UpdateSecret` would allow changing metadata, KMS key, and tags that Ethos never needs.
+`RestoreSecret` is required because `delete()` uses the default recovery window (reversible); when `set()` targets a secret that is still in scheduled-deletion state, it restores it first. `UpdateSecret` is deliberately omitted -- `PutSecretValue` covers value rotation, and `UpdateSecret` would allow changing metadata, KMS key, and tags that Ethos never needs.
 
 ## Placeholders {#placeholders}
 
