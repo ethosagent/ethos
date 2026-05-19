@@ -624,7 +624,7 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
     if (s.endpoint) lines.push(`aws.secrets.endpoint: ${s.endpoint}`);
   }
   if (config.webBaseUrl) lines.push(`webBaseUrl: ${config.webBaseUrl}`);
-  await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`);
+  await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`, { mode: 0o600 });
 }
 
 export async function resolveConfigSecrets(

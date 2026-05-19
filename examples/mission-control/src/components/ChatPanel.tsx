@@ -1,9 +1,8 @@
 'use client';
 
-import { EventStream } from '@ethosagent/sdk';
 import type { SseEvent } from '@ethosagent/web-contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { baseUrl, ethos } from '@/lib/ethos';
+import { ethos } from '@/lib/ethos';
 
 interface ChatPanelProps {
   sessionId: string | null;
@@ -25,7 +24,7 @@ export function ChatPanel({ sessionId, personalityId, onSessionCreated }: ChatPa
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const subscriptionRef = useRef<ReturnType<typeof EventStream> | null>(null);
+  const subscriptionRef = useRef<{ close: () => void } | null>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on every message change
   useEffect(() => {
@@ -94,18 +93,19 @@ export function ChatPanel({ sessionId, personalityId, onSessionCreated }: ChatPa
       }
     };
 
-    const sub = EventStream({
-      baseUrl,
-      apiKey: process.env.NEXT_PUBLIC_ETHOS_API_KEY ?? '',
-      sessionId,
-      onEvent: handleEvent,
-      onError: (err) => console.error('SSE error:', err),
-    });
-
-    subscriptionRef.current = sub;
-
+    const sse = new EventSource(`/api/sse?sessionId=${encodeURIComponent(sessionId)}`);
+    sse.onmessage = (e) => {
+      try {
+        const event = JSON.parse(e.data) as SseEvent;
+        handleEvent(event);
+      } catch {
+        // ignore parse errors
+      }
+    };
+    sse.onerror = (err) => console.error('SSE error:', err);
+    subscriptionRef.current = { close: () => sse.close() };
     return () => {
-      sub.close();
+      sse.close();
     };
   }, [sessionId]);
 

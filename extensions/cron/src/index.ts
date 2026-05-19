@@ -204,6 +204,9 @@ export class CronScheduler {
    * markdown.
    */
   async listRuns(jobId: string, limit = 20): Promise<CronRunInfo[]> {
+    if (!/^[a-zA-Z0-9_-]+$/.test(jobId)) {
+      return [];
+    }
     const dir = join(this.outputDir, jobId);
     const names = await this.storage.list(dir);
     return names

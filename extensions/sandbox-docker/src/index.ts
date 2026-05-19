@@ -68,7 +68,7 @@ export class DockerSandbox {
     for (const e of env) {
       args.push('-e', e);
     }
-    args.push(image, ...cmd);
+    args.push('--', image, ...cmd);
 
     return this.spawnRaw(args, stdin, timeoutMs, containerName, signal);
   }

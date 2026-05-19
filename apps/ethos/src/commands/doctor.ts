@@ -421,7 +421,19 @@ async function runDoctorFix(): Promise<void> {
     }
   }
 
-  // 4. Validate provider in config
+  // 4. Fix config.yaml permissions (may contain secret refs; restrict to owner)
+  const configPath = join(dir, 'config.yaml');
+  if (existsSync(configPath)) {
+    try {
+      await chmod(configPath, 0o600);
+      console.log(`  ${c.green}✓ Fixed:${c.reset}  Set ${configPath} to 0600`);
+    } catch {
+      console.log(`  ${c.yellow}⚠${c.reset}  Could not chmod ${configPath}`);
+      exitCode = 1;
+    }
+  }
+
+  // 5. Validate provider in config
   const config = await readRawConfig(storage);
   if (config) {
     const { PROVIDER_CATALOG } = await import('@ethosagent/wiring/provider-catalog');

@@ -33,7 +33,9 @@ export function registerMessageHandler(ctx: MessageContext): void {
     if (message.author.bot) return;
 
     const isDm = message.channel.isDMBased();
-    const isMention = ctx.client.user ? message.mentions.has(ctx.client.user) : false;
+    const isMention = ctx.client.user
+      ? message.mentions.has(ctx.client.user) && !message.mentions.everyone
+      : false;
     const isThread = message.channel.isThread();
 
     let text = message.content;

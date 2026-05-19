@@ -187,6 +187,11 @@ export class FileContextInjector implements ContextInjector {
   private async readCached(filePath: string): Promise<string | null> {
     const mtimeMs = await this.storage.mtime(filePath);
     if (mtimeMs === null) return null;
+    // Refuse symlinks — following them would exfiltrate the target into the prompt.
+    // lstat is used here (not Storage) because workingDir is the user's project, not ~/.ethos/.
+    const { lstat } = await import('node:fs/promises');
+    const st = await lstat(filePath).catch(() => null);
+    if (st?.isSymbolicLink()) return null;
     const cached = this.cache.get(filePath);
     if (cached && cached.mtime === mtimeMs) return cached.content;
 

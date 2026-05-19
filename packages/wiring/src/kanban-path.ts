@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { isSafePathSegment } from '@ethosagent/storage-fs';
 
 /**
  * Resolve the kanban DB path from wiring config + dataDir + active personality id.
@@ -18,6 +19,9 @@ export function resolveKanbanDbPath(
 ): string {
   if (config.kanbanDbPath !== undefined) return config.kanbanDbPath;
   if (config.teamName !== undefined) {
+    if (!isSafePathSegment(config.teamName)) {
+      throw new Error(`Invalid team name for kanban path: ${config.teamName}`);
+    }
     return join(dataDir, 'teams', config.teamName, 'board.db');
   }
   return join(dataDir, 'personalities', personalityId, 'kanban.db');

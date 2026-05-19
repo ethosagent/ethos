@@ -3,6 +3,7 @@
 // backup: tar.gz of config.yaml, keys.json, MEMORY.md, USER.md, personalities/
 // import: extract and merge into ~/.ethos/
 
+import { randomBytes } from 'node:crypto';
 import {
   createReadStream,
   createWriteStream,
@@ -25,7 +26,7 @@ const _USAGE_BACKUP = 'Usage: ethos backup [output-path]';
 const USAGE_IMPORT = 'Usage: ethos import <backup-path>';
 
 export async function runBackup(argv: string[]): Promise<void> {
-  const outPath = argv[0] ?? `ethos-backup-${timestamp()}.tar.gz`;
+  const outPath = argv[0] ?? `ethos-backup-${timestamp()}-${randomBytes(4).toString('hex')}.tar.gz`;
   const dataDir = ethosDir();
 
   const entries = collectEntries(dataDir);

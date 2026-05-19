@@ -192,7 +192,10 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
 
       for (const chunk of chunks) {
         // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
-        const sent = await (channel as any).send({ content: chunk });
+        const sent = await (channel as any).send({
+          content: chunk,
+          allowedMentions: { parse: [] },
+        });
         ids.push(String(sent.id));
       }
 
@@ -240,7 +243,10 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
         },
         append: async (chunk) => {
           // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
-          const sent = await (channel as any).send({ content: chunk });
+          const sent = await (channel as any).send({
+            content: chunk,
+            allowedMentions: { parse: [] },
+          });
           return String(sent.id);
         },
         deleteId: async (id) => {
@@ -281,6 +287,7 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       const sent = await (channel as any).send({
         content: input.content,
         components: input.components.map(toActionRowBuilder),
+        allowedMentions: { parse: [] },
       });
       return { messageId: String(sent.id) };
     } catch (err) {

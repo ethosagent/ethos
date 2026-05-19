@@ -7,7 +7,7 @@
 // Reads/writes route through @ethosagent/storage-fs. Raw `copyFile` is kept
 // for binary-safe tree copies — Storage doesn't model byte streams.
 
-import { copyFile } from 'node:fs/promises';
+import { copyFile, lstat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
@@ -444,10 +444,10 @@ async function copyTree(storage: Storage, source: string, dest: string): Promise
     if (entry.isDir) {
       await copyTree(storage, sp, dp);
     } else {
+      const st = await lstat(sp).catch(() => null);
+      if (st?.isSymbolicLink()) continue;
       await copyFile(sp, dp);
     }
-    // Symlinks and other types are deliberately ignored — skill bundles
-    // shouldn't depend on them and following them is a footgun.
   }
 }
 

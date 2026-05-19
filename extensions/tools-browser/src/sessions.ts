@@ -146,10 +146,7 @@ export async function getOrCreateSession(
     );
   }
   const browser = await chromium.launch({
-    args: [
-      ...(noSandbox ? ['--no-sandbox', '--disable-setuid-sandbox'] : []),
-      '--disable-gpu',
-    ],
+    args: [...(noSandbox ? ['--no-sandbox', '--disable-setuid-sandbox'] : []), '--disable-gpu'],
   });
   // serviceWorkers: 'block' — a registered service worker can intercept
   // fetches before page.route() sees them (Playwright documents this
