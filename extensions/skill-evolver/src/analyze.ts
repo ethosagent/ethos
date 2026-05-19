@@ -159,6 +159,8 @@ export async function analyzeEvalOutput(
     if (stats.runs < config.minRunsBeforeEvolve) continue;
     if (stats.avgScore >= config.rewriteThreshold) continue;
 
+    // Validate fileName before using in path join to prevent path traversal
+    if (!/^[a-zA-Z0-9_-]+\.md$/.test(stats.fileName)) continue;
     const currentContent = await storage.read(join(skillsDir, stats.fileName));
     if (currentContent === null) continue;
 

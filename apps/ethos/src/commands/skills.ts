@@ -12,6 +12,7 @@ import {
 } from '@ethosagent/safety-scanner';
 import { UniversalScanner } from '@ethosagent/skills';
 import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
+import { isSafePathSegment } from '@ethosagent/storage-fs';
 import { EthosError, type Skill } from '@ethosagent/types';
 import { ethosDir } from '../config';
 
@@ -158,6 +159,10 @@ async function updateAll(): Promise<void> {
 }
 
 async function removeSkill(slug: string): Promise<void> {
+  if (!isSafePathSegment(slug)) {
+    console.error(`${c.red}Invalid skill slug: ${slug}${c.reset}`);
+    process.exit(1);
+  }
   const target = join(skillsRoot(), slug);
   try {
     const s = await stat(target);
