@@ -81,7 +81,7 @@ async function initSecrets(): Promise<SecretsResolver> {
     });
     return new MergedSecretsResolver({
       readers: [env, awsResolver, file],
-      writer: file,
+      writer: awsResolver,
     });
   }
 
