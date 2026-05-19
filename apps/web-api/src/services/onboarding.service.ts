@@ -137,6 +137,9 @@ export class OnboardingService {
         case 'openai-compat':
           if (!input.baseUrl) throw new Error('baseUrl required for openai-compat');
           return await this.openAiCompatibleModels(input.baseUrl, input.apiKey, controller.signal);
+        case 'azure':
+          if (!input.baseUrl) throw new Error('baseUrl required for azure');
+          return await this.openAiCompatibleModels(input.baseUrl, input.apiKey, controller.signal);
       }
     } finally {
       clearTimeout(timer);

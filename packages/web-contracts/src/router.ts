@@ -160,6 +160,14 @@ const PersonalityUpdateInput = z.object({
   memoryScope: z.enum(['global', 'per-personality']).optional(),
   mcp_servers: z.array(z.string()).optional(),
   plugins: z.array(z.string()).optional(),
+  capabilities: z.array(z.string()).optional(),
+  provider: ProviderIdSchema.or(z.literal('')).optional(),
+  fs_reach: z
+    .object({
+      read: z.array(z.string()).optional(),
+      write: z.array(z.string()).optional(),
+    })
+    .optional(),
 });
 const PersonalityUpdateOutput = z.object({ personality: PersonalitySchema });
 

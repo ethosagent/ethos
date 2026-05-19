@@ -80,6 +80,7 @@ describe('entity schemas', () => {
       streamingTimeoutMs: null,
       mcp_servers: null,
       plugins: null,
+      fs_reach: null,
       builtin: true,
       version: 1,
     };

@@ -53,6 +53,10 @@ export function renderCharacterSheet(config: PersonalityConfig, ethosMd: string)
   lines.push(`- Provider: ${config.provider ?? '(engine default)'}`);
   lines.push('');
 
+  lines.push('## Capabilities');
+  lines.push(...bulletList(config.capabilities ?? [], '(none)'));
+  lines.push('');
+
   lines.push('## Memory');
   lines.push(`- Memory scope: ${config.memoryScope ?? '(engine default)'}`);
   lines.push('');
