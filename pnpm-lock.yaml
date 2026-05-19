@@ -1162,9 +1162,6 @@ importers:
 
   packages/core:
     dependencies:
-      '@ethosagent/safety-redact':
-        specifier: workspace:*
-        version: link:../safety/redact
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../types
@@ -1175,6 +1172,9 @@ importers:
       '@ethosagent/safety-network':
         specifier: workspace:*
         version: link:../safety/network
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../safety/redact
       '@ethosagent/safety-watcher':
         specifier: workspace:*
         version: link:../safety/watcher

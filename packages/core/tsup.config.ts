@@ -24,6 +24,7 @@ export default defineConfig({
     '@ethosagent/storage-fs',
     '@ethosagent/safety-injection',
     '@ethosagent/safety-network',
+    '@ethosagent/safety-redact',
     '@ethosagent/safety-watcher',
   ],
 });

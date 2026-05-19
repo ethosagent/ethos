@@ -5,7 +5,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @ethosagent/cli@0.3.6
+RUN npm install -g @ethosagent/cli@0.3.8
 
 # Stage 2: runtime — clean production image
 FROM node:24-slim AS runtime

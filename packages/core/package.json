@@ -1,6 +1,6 @@
 {
   "name": "@ethosagent/core",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "private": false,
   "type": "module",
   "description": "Core agent loop, tool registry, and hook registry for the Ethos agent framework",
@@ -22,12 +22,12 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@ethosagent/safety-redact": "workspace:*",
     "@ethosagent/types": "workspace:*"
   },
   "devDependencies": {
     "@ethosagent/safety-injection": "workspace:*",
     "@ethosagent/safety-network": "workspace:*",
+    "@ethosagent/safety-redact": "workspace:*",
     "@ethosagent/safety-watcher": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*"
   }
