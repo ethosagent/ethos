@@ -14,7 +14,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m -u 1000 ethos
+RUN userdel -r node && useradd -m -u 1000 ethos
 
 COPY --from=install /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from=install /usr/local/bin/ethos /usr/local/bin/ethos
