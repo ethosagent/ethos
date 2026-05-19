@@ -50,7 +50,7 @@ import {
   createPersonalityDesignTools,
   createTeamDesignTools,
 } from '@ethosagent/tools-personality-design';
-import { createProcessTools } from '@ethosagent/tools-process';
+import { createProcessGuardHook, createProcessTools } from '@ethosagent/tools-process';
 import { createSkillsTools } from '@ethosagent/tools-skills';
 import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-terminal';
 import { createThinkDeeperTool } from '@ethosagent/tools-tier';
@@ -952,6 +952,12 @@ export async function createAgentLoop(
   // `createDangerPredicate` below.
   if (profile !== 'web') {
     hooks.registerModifying('before_tool_call', createTerminalGuardHook());
+    // process_start invokes `spawn(command, [], { shell: true })` with an
+    // LLM-controlled command string — structurally the same exposure as
+    // `terminal`. The process guard mirrors the terminal guard's pattern
+    // list; each hook gates only its own tool by toolName, so they coexist
+    // safely under the modifying hook contract.
+    hooks.registerModifying('before_tool_call', createProcessGuardHook());
   }
 
   // Plan B — kanban role gate: enforce coordinator-only / assignee-only rules

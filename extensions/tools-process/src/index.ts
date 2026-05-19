@@ -406,6 +406,7 @@ export function createProcessTools(dataDir: string, opts?: { capMax?: number }):
   ];
 }
 
+export { checkCommand, createProcessGuardHook } from './guard';
 // Re-export the shared list/logs/stop operations so the `ethos process` CLI
 // can drive the same code path the tools use without constructing a fake
 // ToolContext. Only the surface a real caller consumes is re-exported.
