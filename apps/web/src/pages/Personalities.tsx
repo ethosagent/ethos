@@ -344,9 +344,7 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
           {
             key: 'identity',
             label: 'Identity',
-            children: (
-              <IdentityStep state={state} setState={setState} idCollision={idCollision} />
-            ),
+            children: <IdentityStep state={state} setState={setState} idCollision={idCollision} />,
           },
           {
             key: 'config',
