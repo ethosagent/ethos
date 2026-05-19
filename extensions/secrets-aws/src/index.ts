@@ -1,6 +1,9 @@
 import {
+  CreateSecretCommand,
+  DeleteSecretCommand,
   GetSecretValueCommand,
   ListSecretsCommand,
+  PutSecretValueCommand,
   SecretsManagerClient,
 } from '@aws-sdk/client-secrets-manager';
 import type { SecretRef, SecretsResolver } from '@ethosagent/types';
@@ -78,16 +81,75 @@ export class AwsSecretsManagerResolver implements SecretsResolver {
     }
   }
 
-  async set(ref: SecretRef, _value: string): Promise<void> {
-    throw new Error(
-      `AwsSecretsManagerResolver is read-only — provision secrets via: aws secretsmanager put-secret-value --secret-id ${this.secretId(ref)} --secret-string <value>`,
-    );
+  async set(ref: SecretRef, value: string): Promise<void> {
+    const key = this.secretId(ref);
+    const client = this.getClient();
+
+    try {
+      try {
+        await client.send(new PutSecretValueCommand({ SecretId: key, SecretString: value }));
+      } catch (err: unknown) {
+        if (isAwsError(err, 'ResourceNotFoundException')) {
+          try {
+            await client.send(new CreateSecretCommand({ Name: key, SecretString: value }));
+          } catch (createErr: unknown) {
+            if (isAwsError(createErr, 'ResourceExistsException')) {
+              await client.send(new PutSecretValueCommand({ SecretId: key, SecretString: value }));
+            } else {
+              throw createErr;
+            }
+          }
+        } else {
+          throw err;
+        }
+      }
+      this.cache.set(key, value);
+      this.credentialVerified = true;
+    } catch (err: unknown) {
+      if (isAwsError(err, 'AccessDeniedException')) {
+        this.credentialVerified = true;
+        throw new Error(
+          `AWS Secrets Manager write failed: AccessDeniedException for ${key}. ` +
+            `Confirm the IAM policy allows secretsmanager:PutSecretValue and secretsmanager:CreateSecret on ${this.prefix}/*. ` +
+            `See https://ethosagent.ai/docs/aws-secrets#iam-policy.`,
+        );
+      }
+      if (!this.credentialVerified && isCredentialError(err)) {
+        throw new Error(CREDENTIAL_ERROR);
+      }
+      throw err;
+    }
   }
 
   async delete(ref: SecretRef): Promise<void> {
-    throw new Error(
-      `AwsSecretsManagerResolver is read-only — delete via: aws secretsmanager delete-secret --secret-id ${this.secretId(ref)}`,
-    );
+    const key = this.secretId(ref);
+    const client = this.getClient();
+
+    try {
+      await client.send(
+        new DeleteSecretCommand({ SecretId: key, ForceDeleteWithoutRecovery: true }),
+      );
+      this.cache.delete(key);
+      this.credentialVerified = true;
+    } catch (err: unknown) {
+      if (isAwsError(err, 'ResourceNotFoundException')) {
+        this.credentialVerified = true;
+        this.cache.delete(key);
+        return;
+      }
+      if (isAwsError(err, 'AccessDeniedException')) {
+        this.credentialVerified = true;
+        throw new Error(
+          `AWS Secrets Manager delete failed: AccessDeniedException for ${key}. ` +
+            `Confirm the IAM policy allows secretsmanager:DeleteSecret on ${this.prefix}/*. ` +
+            `See https://ethosagent.ai/docs/aws-secrets#iam-policy.`,
+        );
+      }
+      if (!this.credentialVerified && isCredentialError(err)) {
+        throw new Error(CREDENTIAL_ERROR);
+      }
+      throw err;
+    }
   }
 
   async list(prefix?: string): Promise<SecretRef[]> {

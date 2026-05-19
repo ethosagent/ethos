@@ -4,7 +4,7 @@ description: "Copy-paste IAM policy templates for Ethos on AWS — read-only ins
 kind: reference
 audience: user
 slug: aws-iam-policies
-updated: 2026-05-16
+updated: 2026-05-19
 ---
 
 ## Synopsis {#synopsis}
@@ -56,6 +56,38 @@ Attach this policy to the IAM user or role you use from your laptop (or CI) to c
 ```
 
 The operator can write, list, and delete secrets under the deployment prefix. The operator does **not** need `GetSecretValue` -- you provision secrets, you don't read them back. If you need to verify a value, use the AWS Console's "Retrieve secret value" button under your own login.
+
+## Instance write role {#instance-write-role}
+
+When `aws.secrets.enabled: true`, the instance role needs write permissions in addition to read. Ethos writes MCP OAuth tokens, `ethos secrets set` values, and any other runtime secrets to AWS Secrets Manager. This is **required** for deployments with `aws.secrets.enabled: true`. Without these permissions, every secret write fails at runtime.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "EthosReadOwnSecrets",
+    "Effect": "Allow",
+    "Action": [
+      "secretsmanager:GetSecretValue",
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:ListSecrets"
+    ],
+    "Resource": "arn:aws:secretsmanager:<region>:<account>:secret:ethos/<deployment>/*"
+  },
+  {
+    "Sid": "EthosWriteOwnSecrets",
+    "Effect": "Allow",
+    "Action": [
+      "secretsmanager:CreateSecret",
+      "secretsmanager:PutSecretValue",
+      "secretsmanager:DeleteSecret"
+    ],
+    "Resource": "arn:aws:secretsmanager:<region>:<account>:secret:ethos/<deployment>/*"
+  }]
+}
+```
+
+`UpdateSecret` is deliberately omitted -- `PutSecretValue` covers value rotation, and `UpdateSecret` would allow changing metadata, KMS key, and tags that Ethos never needs.
 
 ## Placeholders {#placeholders}
 

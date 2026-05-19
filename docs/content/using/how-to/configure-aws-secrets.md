@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: configure-aws-secrets
 time: "10 min"
-updated: 2026-05-16
+updated: 2026-05-19
 ---
 
 ## Task
@@ -99,6 +99,43 @@ sudo systemctl restart ethos
 ```
 
 On restart, the [secrets resolver](../reference/secrets-resolver.md) detects `aws.secrets.enabled: true`, initializes the AWS backend, and resolves every `${secrets:ref}` placeholder against Secrets Manager before any provider or channel adapter starts.
+
+### 5. Grant write permissions (required)
+
+When `aws.secrets.enabled: true`, Ethos writes secrets to AWS Secrets Manager at runtime -- MCP OAuth tokens, `ethos secrets set` values, and any other runtime secrets. The instance role needs write permissions in addition to the read permissions from step 1.
+
+Add a second statement to your IAM policy:
+
+```json
+{
+  "Sid": "EthosWriteOwnSecrets",
+  "Effect": "Allow",
+  "Action": [
+    "secretsmanager:CreateSecret",
+    "secretsmanager:PutSecretValue",
+    "secretsmanager:DeleteSecret"
+  ],
+  "Resource": "arn:aws:secretsmanager:<region>:<account>:secret:ethos/<deployment>/*"
+}
+```
+
+Add this as a second `Statement` entry alongside the existing `EthosReadOwnSecrets` statement. `UpdateSecret` is deliberately omitted -- `PutSecretValue` covers value rotation, and `UpdateSecret` would allow changing metadata, KMS key, and tags that Ethos never needs.
+
+See the [instance write role](../reference/aws-iam-policies.md#instance-write-role) reference for the combined read+write policy.
+
+### Migrating existing on-disk secrets to AWS
+
+After enabling AWS writes, existing on-disk secrets under `~/.ethos/secrets/` are still readable -- the file resolver remains in the [reader chain](../reference/secrets-resolver.md#resolver-precedence) as a lowest-precedence fallback. New writes go to AWS; on-disk copies become stale.
+
+To migrate an existing secret to AWS manually:
+
+```bash
+aws secretsmanager create-secret \
+  --name ethos/<deployment>/<ref> \
+  --secret-string "$(cat ~/.ethos/secrets/<ref>)"
+```
+
+Repeat for each ref under `~/.ethos/secrets/`. Ethos does not ship a migration tool in v1.
 
 ## Verify
 

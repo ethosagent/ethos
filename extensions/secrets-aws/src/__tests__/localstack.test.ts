@@ -100,4 +100,76 @@ describe.skipIf(!ENDPOINT)('AwsSecretsManagerResolver (LocalStack)', () => {
     const refs = await resolver.list();
     expect(refs).toContain('providers/test/apiKey');
   });
+
+  it('set() creates a secret and reads it back', async () => {
+    client = new SecretsManagerClient({
+      region,
+      endpoint: ENDPOINT,
+      credentials: { accessKeyId: 'test', secretAccessKey: 'test' },
+    });
+
+    resolver = new AwsSecretsManagerResolver({
+      region,
+      prefix,
+      endpoint: ENDPOINT,
+      client,
+    });
+
+    await resolver.set('providers/test/apiKey', secretValue);
+    const result = await resolver.get('providers/test/apiKey');
+    expect(result).toBe(secretValue);
+  });
+
+  it('set() updates an existing secret', async () => {
+    client = new SecretsManagerClient({
+      region,
+      endpoint: ENDPOINT,
+      credentials: { accessKeyId: 'test', secretAccessKey: 'test' },
+    });
+
+    resolver = new AwsSecretsManagerResolver({
+      region,
+      prefix,
+      endpoint: ENDPOINT,
+      client,
+    });
+
+    await resolver.set('providers/test/apiKey', 'first-value');
+    await resolver.set('providers/test/apiKey', 'second-value');
+    const result = await resolver.get('providers/test/apiKey');
+    expect(result).toBe('second-value');
+  });
+
+  it('delete() removes a secret and allows re-creation', async () => {
+    client = new SecretsManagerClient({
+      region,
+      endpoint: ENDPOINT,
+      credentials: { accessKeyId: 'test', secretAccessKey: 'test' },
+    });
+
+    resolver = new AwsSecretsManagerResolver({
+      region,
+      prefix,
+      endpoint: ENDPOINT,
+      client,
+    });
+
+    await resolver.set('providers/test/apiKey', secretValue);
+    await resolver.delete('providers/test/apiKey');
+
+    // Clear cache by creating a new resolver
+    resolver.dispose();
+    resolver = new AwsSecretsManagerResolver({
+      region,
+      prefix,
+      endpoint: ENDPOINT,
+      client,
+    });
+
+    expect(await resolver.get('providers/test/apiKey')).toBeNull();
+
+    // Re-creation must succeed (not blocked by scheduled deletion)
+    await resolver.set('providers/test/apiKey', 'recreated-value');
+    expect(await resolver.get('providers/test/apiKey')).toBe('recreated-value');
+  });
 });

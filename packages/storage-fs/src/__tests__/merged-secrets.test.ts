@@ -285,4 +285,89 @@ describe('MergedSecretsResolver', () => {
 
     expect(await merged.get('some/ref')).toBe('file-value');
   });
+
+  it('Phase 1 regression: writes go to file writer, not to write-capable AWS reader', async () => {
+    const env = new InMemorySecretsResolver();
+    const aws = new InMemorySecretsResolver();
+    const file = new InMemorySecretsResolver();
+
+    const merged = new MergedSecretsResolver({
+      readers: [env, aws, file],
+      writer: file,
+    });
+    await merged.set('test/key', 'value');
+
+    expect(await file.get('test/key')).toBe('value');
+    expect(await aws.get('test/key')).toBeNull();
+    expect(await env.get('test/key')).toBeNull();
+  });
+
+  it('writer flip: when writer is AWS, set() routes to AWS not file', async () => {
+    const env = new InMemorySecretsResolver();
+    const aws = new InMemorySecretsResolver();
+    const file = new InMemorySecretsResolver();
+
+    const merged = new MergedSecretsResolver({
+      readers: [env, aws, file],
+      writer: aws,
+    });
+    await merged.set('mcp/server/access_token', 'token-value');
+
+    expect(await aws.get('mcp/server/access_token')).toBe('token-value');
+    expect(await file.get('mcp/server/access_token')).toBeNull();
+  });
+
+  it('writer flip: when writer is AWS, delete() routes to AWS not file', async () => {
+    const env = new InMemorySecretsResolver();
+    const aws = new InMemorySecretsResolver();
+    const file = new InMemorySecretsResolver();
+
+    await aws.set('mcp/server/access_token', 'to-delete');
+
+    const merged = new MergedSecretsResolver({
+      readers: [env, aws, file],
+      writer: aws,
+    });
+    await merged.delete('mcp/server/access_token');
+
+    expect(await aws.get('mcp/server/access_token')).toBeNull();
+  });
+
+  it('writer flip: file remains readable as fallback when writer is AWS', async () => {
+    const env = new InMemorySecretsResolver();
+    const aws = new InMemorySecretsResolver();
+    const file = new InMemorySecretsResolver();
+
+    await file.set('some/ref', 'file-value');
+
+    const merged = new MergedSecretsResolver({
+      readers: [env, aws, file],
+      writer: aws,
+    });
+
+    expect(await merged.get('some/ref')).toBe('file-value');
+  });
+
+  it('write failure propagates — no silent fallback to file', async () => {
+    const env = new InMemorySecretsResolver();
+    const file = new InMemorySecretsResolver();
+    const failing: SecretsResolver = {
+      get: async () => null,
+      set: async () => {
+        throw new Error('AccessDeniedException');
+      },
+      delete: async () => {
+        throw new Error('AccessDeniedException');
+      },
+      list: async () => [],
+    };
+
+    const merged = new MergedSecretsResolver({
+      readers: [env, file],
+      writer: failing,
+    });
+
+    await expect(merged.set('test/key', 'val')).rejects.toThrow('AccessDeniedException');
+    expect(await file.get('test/key')).toBeNull();
+  });
 });

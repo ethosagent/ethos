@@ -4,7 +4,7 @@ description: "Why Ethos uses per-ref secrets, lazy fetching, and SIGHUP cache in
 kind: explanation
 audience: shared
 slug: secrets-architecture
-updated: 2026-05-16
+updated: 2026-05-19
 ---
 
 ## Context
@@ -59,6 +59,7 @@ What the AWS Secrets Manager integration protects against, and what it does not.
 | Lost/stolen operator laptop | `.env` or `config.yaml` copy on laptop has keys | Keys are in AWS, not on the laptop. `aws secretsmanager get-secret-value` requires IAM credentials the laptop may or may not have. |
 | "Who accessed key X?" audit | No record | CloudTrail logs every `GetSecretValue` with timestamp, principal, and source IP |
 | Key rotation | Edit file, restart, hope you didn't typo | `put-secret-value` + SIGHUP. The old value is versioned in AWS. Rollback is one API call. |
+| Runtime secret writes | MCP OAuth tokens and `ethos secrets set` values land on disk at `~/.ethos/secrets/` | Runtime secrets go directly to AWS Secrets Manager. No secret material touches the filesystem. |
 
 **Limits:**
 
@@ -76,9 +77,11 @@ The honest summary: AWS Secrets Manager moves the trust boundary from "whoever c
 |---|---|---|
 | **Native (on-disk)** | `~/.ethos/secrets/<ref>` files | Development, single-user laptop, air-gapped environments |
 | **Env-driven** | `~/.ethos/.env` or `process.env` | Container deployments (ECS, EKS) where secrets are injected as env vars by the orchestrator |
-| **AWS-only** | AWS Secrets Manager | EC2 production deployments where audit, rotation, and no-secrets-on-disk are requirements |
+| **AWS-only** | AWS Secrets Manager (reads **and writes**) | EC2 production deployments where audit, rotation, and no-secrets-on-disk are requirements |
 
 You can mix them. The [resolver precedence chain](../reference/secrets-resolver.md#resolver-precedence) means `.env` overrides AWS, which overrides on-disk files. A common pattern during migration: provision secrets in AWS, keep `.env` as a fallback, remove `.env` once you have confirmed AWS resolution works.
+
+When `aws.secrets.enabled: true`, Ethos writes all runtime secrets (MCP OAuth tokens, CLI `ethos secrets set`) to AWS Secrets Manager. On-disk files under `~/.ethos/secrets/` remain in the read chain as a lowest-precedence fallback for pre-existing secrets. New writes never touch the filesystem. Stale on-disk copies are an operator responsibility to clean up.
 
 ## See also
 
