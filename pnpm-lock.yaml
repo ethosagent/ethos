@@ -161,9 +161,15 @@ importers:
       '@ethosagent/safety-channel':
         specifier: workspace:*
         version: link:../../packages/safety/channel
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../../packages/safety/redact
       '@ethosagent/safety-scanner':
         specifier: workspace:*
         version: link:../../packages/safety/scanner
+      '@ethosagent/secrets-aws':
+        specifier: workspace:*
+        version: link:../../extensions/secrets-aws
       '@ethosagent/session-sqlite':
         specifier: workspace:*
         version: link:../../extensions/session-sqlite
