@@ -88,4 +88,19 @@ describe('renderCharacterSheet', () => {
     expect(sheet).toMatch(/^# engineer — Engineer$/m);
     expect(sheet).not.toContain('undefined');
   });
+
+  it('renders capabilities when set', () => {
+    const config = { ...fullConfig, capabilities: ['triage', 'cost-sensitive'] };
+    const sheet = renderCharacterSheet(config, ethosMd);
+    expect(sheet).toContain('## Capabilities');
+    expect(sheet).toContain('- triage');
+    expect(sheet).toContain('- cost-sensitive');
+  });
+
+  it('renders (none) when capabilities are absent', () => {
+    const minimal: PersonalityConfig = { id: 'plain', name: 'Plain' };
+    const sheet = renderCharacterSheet(minimal, '# Plain\n\nA plain personality.\n');
+    expect(sheet).toContain('## Capabilities');
+    expect(sheet).toMatch(/## Capabilities\n- \(none\)/);
+  });
 });

@@ -170,6 +170,9 @@ export interface UpdatePersonalityPatch {
   memoryScope?: 'global' | 'per-personality';
   mcp_servers?: string[];
   plugins?: string[];
+  capabilities?: string[];
+  provider?: string;
+  fs_reach?: { read?: string[]; write?: string[] };
 }
 
 export class FilePersonalityRegistry implements PersonalityRegistry {
@@ -316,9 +319,67 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       patch.model !== undefined ||
       patch.memoryScope !== undefined ||
       patch.mcp_servers !== undefined ||
-      patch.plugins !== undefined
+      patch.plugins !== undefined ||
+      patch.capabilities !== undefined ||
+      patch.provider !== undefined ||
+      patch.fs_reach !== undefined
     ) {
       const config = existing.config;
+      if (patch.provider !== undefined && patch.provider !== '') {
+        const validProviders = [
+          'anthropic',
+          'openai',
+          'openrouter',
+          'openai-compat',
+          'ollama',
+          'azure',
+        ];
+        if (!validProviders.includes(patch.provider)) {
+          throw new EthosError({
+            code: 'INVALID_INPUT',
+            cause: `provider "${patch.provider}" is not a recognized provider. Valid: ${validProviders.join(', ')}.`,
+            action: 'Use one of the recognized provider values, or omit to use the engine default.',
+          });
+        }
+      }
+      if (patch.capabilities !== undefined) {
+        for (const tag of patch.capabilities) {
+          if (!/^[a-zA-Z0-9_-]+$/.test(tag)) {
+            throw new EthosError({
+              code: 'INVALID_INPUT',
+              cause: `capabilities tag "${tag}" must only contain letters, digits, hyphens, and underscores.`,
+              action: 'Fix the tag and retry.',
+            });
+          }
+        }
+      }
+      if (patch.fs_reach !== undefined) {
+        const allPaths = [...(patch.fs_reach.read ?? []), ...(patch.fs_reach.write ?? [])];
+        for (const p of allPaths) {
+          if (/[\n\r,]/.test(p) || p.includes('\0')) {
+            throw new EthosError({
+              code: 'INVALID_INPUT',
+              cause: `fs_reach entry "${p.replace(/[\n\r]/g, '\\n')}" contains invalid characters (newlines, commas, or null bytes are not allowed).`,
+              action: 'Fix the path and retry.',
+            });
+          }
+          const validStart =
+            p.startsWith('/') ||
+            // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config.yaml substitution token
+            p.startsWith('${ETHOS_HOME}') ||
+            // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config.yaml substitution token
+            p.startsWith('${self}') ||
+            // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config.yaml substitution token
+            p.startsWith('${CWD}');
+          if (!validStart || p.includes('..') || p === '/') {
+            throw new EthosError({
+              code: 'INVALID_INPUT',
+              cause: `fs_reach entry "${p}" must start with "/" or a substitution token (\${ETHOS_HOME}, \${self}, \${CWD}), must not contain "..", and must not be "/".`,
+              action: 'Fix the path and retry.',
+            });
+          }
+        }
+      }
       const existingModel = typeof config.model === 'object' ? config.model.default : config.model;
       const merged = {
         id: config.id,
@@ -330,6 +391,9 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         memoryScope: patch.memoryScope ?? config.memoryScope,
         mcp_servers: patch.mcp_servers ?? config.mcp_servers,
         plugins: patch.plugins ?? config.plugins,
+        capabilities: patch.capabilities === undefined ? config.capabilities : patch.capabilities,
+        provider: patch.provider === undefined ? config.provider : patch.provider,
+        fs_reach: patch.fs_reach === undefined ? config.fs_reach : patch.fs_reach,
       };
       await this.storage.write(join(dir, 'config.yaml'), renderConfigYaml(merged));
     }
@@ -889,14 +953,27 @@ function renderConfigYaml(
   input: CreatePersonalityInput & {
     mcp_servers?: string[];
     plugins?: string[];
+    capabilities?: string[];
+    provider?: string;
+    fs_reach?: { read?: string[]; write?: string[] };
   },
 ): string {
   const lines: string[] = [`name: ${yamlScalar(input.name)}`];
   if (input.description) lines.push(`description: ${yamlScalar(input.description)}`);
+  if (input.provider) lines.push(`provider: ${yamlScalar(input.provider)}`);
   if (input.model) lines.push(`model: ${yamlScalar(input.model)}`);
   if (input.memoryScope) lines.push(`memoryScope: ${input.memoryScope}`);
+  if (input.capabilities !== undefined && input.capabilities.length > 0) {
+    lines.push(`capabilities: ${input.capabilities.join(', ')}`);
+  }
   if (input.mcp_servers !== undefined) lines.push(`mcp_servers: ${input.mcp_servers.join(' ')}`);
   if (input.plugins !== undefined) lines.push(`plugins: ${input.plugins.join(' ')}`);
+  if (input.fs_reach?.read !== undefined && input.fs_reach.read.length > 0) {
+    lines.push(`fs_reach.read: ${input.fs_reach.read.join(', ')}`);
+  }
+  if (input.fs_reach?.write !== undefined && input.fs_reach.write.length > 0) {
+    lines.push(`fs_reach.write: ${input.fs_reach.write.join(', ')}`);
+  }
   return `${lines.join('\n')}\n`;
 }
 

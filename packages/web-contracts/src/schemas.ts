@@ -92,6 +92,12 @@ export const PersonalitySchema = z.object({
   mcp_servers: z.array(z.string()).nullable(),
   /** Attached plugin ids. null = not configured (default-deny). */
   plugins: z.array(z.string()).nullable(),
+  fs_reach: z
+    .object({
+      read: z.array(z.string()).nullable(),
+      write: z.array(z.string()).nullable(),
+    })
+    .nullable(),
   /** True when the personality lives in the package's built-in data directory
    *  (read-only). User-created personalities under `~/.ethos/personalities/`
    *  are mutable. */
@@ -142,6 +148,7 @@ export const ProviderIdSchema = z.enum([
   'openrouter',
   'openai-compat',
   'ollama',
+  'azure',
 ]);
 export type ProviderId = z.infer<typeof ProviderIdSchema>;
 

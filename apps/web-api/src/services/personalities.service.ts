@@ -157,6 +157,9 @@ function toWire(d: DescribedPersonality): Personality {
     streamingTimeoutMs: c.streamingTimeoutMs ?? null,
     mcp_servers: c.mcp_servers ?? null,
     plugins: c.plugins ?? null,
+    fs_reach: c.fs_reach
+      ? { read: c.fs_reach.read ?? null, write: c.fs_reach.write ?? null }
+      : null,
     builtin: d.builtin,
     version: 1,
   };

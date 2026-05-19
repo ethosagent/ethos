@@ -1,4 +1,4 @@
-import type { Personality, PersonalitySkill } from '@ethosagent/web-contracts';
+import type { Personality, PersonalitySkill, ProviderId } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
@@ -17,6 +17,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
@@ -205,9 +206,11 @@ function PersonalityRowActions({
           Edit
         </Button>
       )}
-      <Button size="small" onClick={onDuplicate}>
-        Duplicate
-      </Button>
+      <Tooltip title={personality.builtin ? 'Built-in — duplicate to edit.' : undefined}>
+        <Button size="small" onClick={onDuplicate}>
+          Duplicate
+        </Button>
+      </Tooltip>
       {personality.builtin ? null : (
         <Popconfirm
           title={`Delete ${personality.name}?`}
@@ -546,6 +549,26 @@ function EditModal({ id, onClose }: { id: string; onClose: () => void }) {
         <div style={{ display: 'grid', placeItems: 'center', height: 240 }}>
           <Spin />
         </div>
+      ) : data.personality.builtin ? (
+        <>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="This personality is built-in and cannot be edited. Duplicate to make a writable copy."
+            action={
+              <Button
+                size="small"
+                onClick={() => {
+                  onClose();
+                }}
+              >
+                Duplicate
+              </Button>
+            }
+          />
+          <CharacterSheetPanel id={id} />
+        </>
       ) : (
         <Tabs
           defaultActiveKey="characterSheet"
@@ -725,22 +748,33 @@ function ToolsetEditor({ id, initialToolset }: { id: string; initialToolset: str
   );
 }
 
+// biome-ignore lint/suspicious/noTemplateCurlyInString: literal placeholder text for the UI, not a template variable
+const FS_REACH_READ_PLACEHOLDER = 'e.g. /data, ${self}/docs';
+
 function ConfigEditor({ id, personality }: { id: string; personality: Personality }) {
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
   const [form] = Form.useForm<{
     name: string;
     description: string;
+    provider: ProviderId | '';
     model: string;
     memoryScope: 'global' | 'per-personality' | undefined;
+    capabilities: string[];
+    fsReachRead: string[];
+    fsReachWrite: string[];
   }>();
 
   useEffect(() => {
     form.setFieldsValue({
       name: personality.name,
       description: personality.description ?? '',
+      provider: (personality.provider ?? '') as ProviderId | '',
       model: personality.model ?? '',
       memoryScope: personality.memoryScope ?? undefined,
+      capabilities: personality.capabilities ?? [],
+      fsReachRead: personality.fs_reach?.read ?? [],
+      fsReachWrite: personality.fs_reach?.write ?? [],
     });
   }, [personality, form]);
 
@@ -748,8 +782,12 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
     mutationFn: (values: {
       name: string;
       description: string;
+      provider: ProviderId | '';
       model: string;
       memoryScope?: 'global' | 'per-personality';
+      capabilities: string[];
+      fsReachRead: string[];
+      fsReachWrite: string[];
     }) =>
       rpc.personalities.update({
         id,
@@ -757,6 +795,9 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
         description: values.description,
         model: values.model,
         ...(values.memoryScope ? { memoryScope: values.memoryScope } : {}),
+        provider: values.provider || '',
+        capabilities: values.capabilities,
+        fs_reach: { read: values.fsReachRead, write: values.fsReachWrite },
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['personalities', 'get', id] });
@@ -776,8 +817,12 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
         mut.mutate({
           name: values.name,
           description: values.description,
+          provider: values.provider,
           model: values.model,
           ...(values.memoryScope ? { memoryScope: values.memoryScope } : {}),
+          capabilities: values.capabilities ?? [],
+          fsReachRead: values.fsReachRead ?? [],
+          fsReachWrite: values.fsReachWrite ?? [],
         })
       }
     >
@@ -786,6 +831,24 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
       </Form.Item>
       <Form.Item label="Description" name="description">
         <Input />
+      </Form.Item>
+      <Form.Item
+        label="Provider"
+        name="provider"
+        extra="Engine default is set in Settings. Set this only if this personality must route to a specific provider."
+      >
+        <Select
+          allowClear
+          placeholder="engine default"
+          options={[
+            { label: 'Anthropic', value: 'anthropic' },
+            { label: 'OpenAI', value: 'openai' },
+            { label: 'OpenRouter', value: 'openrouter' },
+            { label: 'OpenAI Compatible', value: 'openai-compat' },
+            { label: 'Ollama', value: 'ollama' },
+            { label: 'Azure', value: 'azure' },
+          ]}
+        />
       </Form.Item>
       <Form.Item label="Model" name="model">
         <Input placeholder="optional override" />
@@ -798,6 +861,31 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
             { label: 'per-personality', value: 'per-personality' },
           ]}
         />
+      </Form.Item>
+      <Form.Item
+        label="Capabilities"
+        name="capabilities"
+        extra="Free-form labels used by the mesh router and operator filtering. e.g. triage, release, cost-sensitive."
+      >
+        <Select mode="tags" allowClear placeholder="add capability tags" tokenSeparators={[',']} />
+      </Form.Item>
+      <Alert
+        type="warning"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="Filesystem reach"
+        description="These paths control which directories this personality can read and write. Adding broad paths (e.g. /, /home) lets the personality access anything inside. Edit only if you understand the implications."
+      />
+      <Form.Item label="Read paths" name="fsReachRead">
+        <Select
+          mode="tags"
+          allowClear
+          placeholder={FS_REACH_READ_PLACEHOLDER}
+          tokenSeparators={[',']}
+        />
+      </Form.Item>
+      <Form.Item label="Write paths" name="fsReachWrite">
+        <Select mode="tags" allowClear placeholder="e.g. /data/output" tokenSeparators={[',']} />
       </Form.Item>
       <Form.Item>
         <Button type="primary" htmlType="submit" loading={mut.isPending}>

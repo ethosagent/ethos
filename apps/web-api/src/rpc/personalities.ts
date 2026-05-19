@@ -26,11 +26,14 @@ export const personalitiesRouter = {
   ),
 
   update: os.personalities.update.handler(({ input, context }) => {
-    const { id, mcp_servers, plugins, ...rest } = input;
+    const { id, mcp_servers, plugins, capabilities, provider, fs_reach, ...rest } = input;
     return context.personalities.update(id, {
       ...rest,
       ...(mcp_servers !== undefined ? { mcp_servers } : {}),
       ...(plugins !== undefined ? { plugins } : {}),
+      ...(capabilities !== undefined ? { capabilities } : {}),
+      ...(provider !== undefined ? { provider } : {}),
+      ...(fs_reach !== undefined ? { fs_reach } : {}),
     });
   }),
 
