@@ -40,6 +40,13 @@
 //   src/skill-compat.ts          binaries. Not a ~/.ethos/ operation — explicitly
 //                                 out of scope per the storage abstraction plan.
 //
+//   extensions/skills/           lstat checks for symlinks before reading
+//   src/file-context-injector.ts discovery files (AGENTS.md, CLAUDE.md, SOUL.md)
+//                                 from the user's project directory (ctx.workingDir),
+//                                 not ~/.ethos/. Storage scopes to ~/.ethos/ only;
+//                                 symlink-refusal on an arbitrary project path
+//                                 requires raw lstat (Storage.mtime follows symlinks).
+//
 // If you need to add a new exception, document WHY here and in CLAUDE.md before
 // adding it to ALLOWED_PATHS below. The default answer for code on the
 // personality boundary is "use Storage."
@@ -67,6 +74,7 @@ const ALLOWED_FILES = new Set([
   'extensions/cron/src/index.ts',
   'extensions/claw-migrate/src/index.ts',
   'extensions/skills/src/skill-compat.ts',
+  'extensions/skills/src/file-context-injector.ts',
 ]);
 
 // Matches any static or dynamic import of node:fs or node:fs/promises.

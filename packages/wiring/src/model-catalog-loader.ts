@@ -1,3 +1,4 @@
+import { safeFetch } from '@ethosagent/safety-network';
 import type { ModelCatalogManifest, Storage } from '@ethosagent/types';
 import { MODEL_CATALOG, type ModelCatalogEntry } from './model-catalog';
 
@@ -17,7 +18,9 @@ export async function fetchManifest(url: string): Promise<ModelCatalogManifest> 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8_000);
   try {
-    const res = await fetch(url, { signal: controller.signal });
+    const result = await safeFetch(url, { policy: {}, init: { signal: controller.signal } });
+    if (!result.ok) throw new Error(`model catalog fetch blocked: ${result.reason}`);
+    const res = result.response;
     if (!res.ok) throw new Error(`model catalog fetch failed: HTTP ${res.status}`);
     const json = await res.json();
     if (!isValidManifest(json)) throw new Error('model catalog: invalid manifest shape');

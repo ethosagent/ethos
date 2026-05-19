@@ -57,11 +57,15 @@ describe('registerOAuthClient', () => {
 
     expect(result.client_id).toBe('new-client-abc');
     expect(result.client_secret).toBeUndefined();
-    expect(mockFetch).toHaveBeenCalledWith('https://auth.example.com/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(baseDcrRequest),
-    });
+    // Verify fetch was called with the registration endpoint URL (safeFetch adds redirect:'manual')
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://auth.example.com/register',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(baseDcrRequest),
+      }),
+    );
   });
 
   it('throws ConfidentialClientUnsupported when server returns client_secret', async () => {

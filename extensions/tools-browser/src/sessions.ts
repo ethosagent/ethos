@@ -139,8 +139,14 @@ export async function getOrCreateSession(
   }
 
   const chromium = await getChromium();
+  const noSandbox = process.env.ETHOS_BROWSER_NO_SANDBOX === '1';
+  if (noSandbox) {
+    process.stderr.write(
+      '[ethos] WARNING: browser sandbox disabled via ETHOS_BROWSER_NO_SANDBOX=1 — only use in trusted environments without userns support\n',
+    );
+  }
   const browser = await chromium.launch({
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+    args: [...(noSandbox ? ['--no-sandbox', '--disable-setuid-sandbox'] : []), '--disable-gpu'],
   });
   // serviceWorkers: 'block' — a registered service worker can intercept
   // fetches before page.route() sees them (Playwright documents this

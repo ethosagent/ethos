@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { validateUrl } from '@ethosagent/core';
 import { noopLogger } from '@ethosagent/logger';
 import { buildMcpEnv } from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
@@ -350,6 +351,9 @@ export class McpClient {
         const token = await ensureValidToken(this._config.name, this._config.auth, this._secrets);
         headers.Authorization = `Bearer ${token}`;
       }
+      // SSRF gate: validate before handing to SDK transport (which uses raw fetch internally).
+      // allowLocalhost permits developer-local servers while still blocking cloud metadata.
+      validateUrl(url, { allowLocalhost: true });
       const { StreamableHTTPClientTransport } = await import(
         '@modelcontextprotocol/sdk/client/streamableHttp.js'
       );
@@ -370,6 +374,9 @@ export class McpClient {
         const token = await ensureValidToken(this._config.name, this._config.auth, this._secrets);
         headers.Authorization = `Bearer ${token}`;
       }
+      // SSRF gate: validate before handing to SDK transport (which uses raw fetch internally).
+      // allowLocalhost permits developer-local servers while still blocking cloud metadata.
+      validateUrl(url, { allowLocalhost: true });
       // Lazy import to avoid pulling in eventsource when not needed
       const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
       return new SSEClientTransport(new URL(url), {

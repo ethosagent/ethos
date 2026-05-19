@@ -1,4 +1,5 @@
 import { validateUrl as validateSsrfUrl } from '@ethosagent/core';
+import { safeFetch } from '@ethosagent/safety-network';
 import type { Logger } from '@ethosagent/types';
 import type { ScopeProbeResult } from './index';
 
@@ -21,13 +22,30 @@ export async function probeTokenScopes(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5_000);
 
-    const resp = await fetch(introspectionEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token: bearerToken }),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
+    let resp: Response;
+    try {
+      const result = await safeFetch(introspectionEndpoint, {
+        policy: {},
+        init: {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ token: bearerToken }),
+          signal: controller.signal,
+        },
+      });
+      clearTimeout(timer);
+      if (!result.ok) {
+        logger.warn(`[ethos] Scope probe blocked for '${server}': ${result.reason}`, {
+          component: 'tools-mcp',
+          server,
+        });
+        return { ...base, outcome: 'error', actualScopes: [], error: result.reason };
+      }
+      resp = result.response;
+    } catch (err) {
+      clearTimeout(timer);
+      return { ...base, outcome: 'error', actualScopes: [], error: String(err) };
+    }
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');

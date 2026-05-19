@@ -260,7 +260,8 @@ function renderDefinedTermSet(
 }
 
 function jsonScript(payload: unknown): string {
-  return `<script type="application/ld+json">${JSON.stringify(payload)}</script>`;
+  const json = JSON.stringify(payload).replace(/<\/script>/gi, '<\\/script>');
+  return `<script type="application/ld+json">${json}</script>`;
 }
 
 // ---------------------------------------------------------------------------

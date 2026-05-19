@@ -88,6 +88,12 @@ async function runMeshCreate(name: string | undefined): Promise<void> {
     console.error('Usage: ethos mesh create <name>');
     process.exit(1);
   }
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    console.error(
+      `${c.red}Invalid mesh name: ${name}. Use only letters, numbers, hyphens, and underscores.${c.reset}`,
+    );
+    process.exit(1);
+  }
   const dir = `${meshesDir()}/${name}`;
   mkdirSync(dir, { recursive: true });
   console.log(`Mesh "${name}" created at ${dir}`);
@@ -100,6 +106,12 @@ async function runMeshCreate(name: string | undefined): Promise<void> {
 async function runMeshDestroy(name: string | undefined): Promise<void> {
   if (!name) {
     console.error('Usage: ethos mesh destroy <name>');
+    process.exit(1);
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    console.error(
+      `${c.red}Invalid mesh name: ${name}. Use only letters, numbers, hyphens, and underscores.${c.reset}`,
+    );
     process.exit(1);
   }
 

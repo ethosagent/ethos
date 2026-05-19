@@ -23,6 +23,12 @@ while IFS= read -r file; do
     *tools-process/src/spawn.ts|*tools-process/src/operations.ts|*tools-process/src/registry.ts) continue ;;
   esac
 
+  # tools-browser/src/sessions.ts: browser launcher reads ETHOS_BROWSER_NO_SANDBOX opt-in at launch
+  # time — no ctx is available before chromium.launch(). Same principle as tools-process exclusion.
+  case "$file" in
+    *tools-browser/src/sessions.ts) continue ;;
+  esac
+
   # Exclude isAvailable method bodies — boot-time availability checks
   # legitimately need process.env (no ctx parameter at that point).
   # Uses awk to skip lines between isAvailable and the next closing brace.

@@ -201,8 +201,10 @@ describe('discoverOAuthMetadata', () => {
     const result = await discoverOAuthMetadata('https://mcp.example.com/team/mcp');
     expect(result.authorization_endpoint).toBe('https://auth.example.com/authorize');
 
+    // Verify fetch was called with the correct protected-resource URL (safeFetch adds redirect:'manual')
     expect(mockFetch).toHaveBeenCalledWith(
       'https://mcp.example.com/.well-known/oauth-protected-resource/team/mcp',
+      expect.any(Object),
     );
   });
 
