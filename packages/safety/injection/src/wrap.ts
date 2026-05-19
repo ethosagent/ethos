@@ -36,8 +36,15 @@ export function wrapUntrusted({ content, toolName, source }: WrapInput): WrapRes
   const { content: sanitized, strippedCount } = sanitizeTemplateTokens(content);
   const sourceAttr = encodeAttr(source ?? 'unknown');
   const toolAttr = encodeAttr(toolName);
-  const wrapped = `<untrusted source="${sourceAttr}" tool="${toolAttr}">\n${sanitized}\n</untrusted>`;
+  const escaped = escapeBodyTags(sanitized);
+  const wrapped = `<untrusted source="${sourceAttr}" tool="${toolAttr}">\n${escaped}\n</untrusted>`;
   return { content: wrapped, strippedTokens: strippedCount };
+}
+
+// Escape the opening/closing tags that form the provenance fence so an
+// attacker-controlled body cannot close the fence early or open a nested one.
+function escapeBodyTags(body: string): string {
+  return body.replace(/<(\/?untrusted)/g, '&lt;$1');
 }
 
 // Quote and strip newlines / angle brackets so a malicious source label can't

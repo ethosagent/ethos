@@ -57,7 +57,7 @@ export interface RequestApprovalInput {
 
 /** Decider id used for non-user resolutions (timeout, session cancel). It is
  *  the one value that bypasses the `requesterUserId` binding check. */
-const SYSTEM_DECIDER = 'system';
+const SYSTEM_DECIDER = '__ethos_system__';
 
 interface PendingEntry {
   resolve: (d: ApprovalDecision) => void;

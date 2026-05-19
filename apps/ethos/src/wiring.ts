@@ -256,15 +256,19 @@ export interface TeamLoopInfo {
 
 /** Resolve a team manifest by name (local ./team.yaml or ~/.ethos/teams/<n>.yaml). */
 export function loadTeamManifest(teamName: string): TeamManifest {
-  const local = resolvePath('./team.yaml');
+  // Try trusted location first — ~/.ethos/teams/<teamName>.yaml
+  const trusted = join(teamsDir(), `${teamName}.yaml`);
   try {
-    const src = readFileSync(local, 'utf-8');
-    const m = parseTeamManifest(src);
-    if (m.name === teamName) return m;
+    return parseTeamManifest(readFileSync(trusted, 'utf-8'));
   } catch {
-    // not present or name mismatch
+    // Not found — fall through to CWD fallback
   }
-  return parseTeamManifest(readFileSync(join(teamsDir(), `${teamName}.yaml`), 'utf-8'));
+  // Fallback: ./team.yaml in CWD (developer convenience, lower priority)
+  const local = resolvePath('./team.yaml');
+  const src = readFileSync(local, 'utf-8');
+  const m = parseTeamManifest(src);
+  if (m.name === teamName) return m;
+  throw new Error(`team.yaml in CWD has name "${m.name}", expected "${teamName}"`);
 }
 
 /**
