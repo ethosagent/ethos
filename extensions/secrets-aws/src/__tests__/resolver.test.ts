@@ -1,6 +1,9 @@
 import {
+  CreateSecretCommand,
+  DeleteSecretCommand,
   GetSecretValueCommand,
   ListSecretsCommand,
+  PutSecretValueCommand,
   SecretsManagerClient,
 } from '@aws-sdk/client-secrets-manager';
 import { mockClient } from 'aws-sdk-client-mock';
@@ -86,18 +89,59 @@ describe('get', () => {
 });
 
 describe('set', () => {
-  it('throws read-only error', async () => {
+  it('writes via PutSecretValueCommand', async () => {
+    smMock
+      .on(PutSecretValueCommand, {
+        SecretId: 'ethos/engineer/providers/anthropic/apiKey',
+        SecretString: 'sk-ant-new',
+      })
+      .resolves({});
+
+    await expect(resolver.set('providers/anthropic/apiKey', 'sk-ant-new')).resolves.toBeUndefined();
+  });
+
+  it('creates secret when it does not exist yet', async () => {
+    const notFound = new Error('not found');
+    notFound.name = 'ResourceNotFoundException';
+    smMock.on(PutSecretValueCommand).rejectsOnce(notFound);
+    smMock
+      .on(CreateSecretCommand, {
+        Name: 'ethos/engineer/providers/anthropic/apiKey',
+        SecretString: 'sk-ant-new',
+      })
+      .resolves({});
+
+    await expect(resolver.set('providers/anthropic/apiKey', 'sk-ant-new')).resolves.toBeUndefined();
+  });
+
+  it('throws actionable error on AccessDeniedException', async () => {
+    const err = new Error('access denied');
+    err.name = 'AccessDeniedException';
+    smMock.on(PutSecretValueCommand).rejects(err);
+
     await expect(resolver.set('providers/anthropic/apiKey', 'val')).rejects.toThrow(
-      'AwsSecretsManagerResolver is read-only — provision secrets via: aws secretsmanager put-secret-value --secret-id ethos/engineer/providers/anthropic/apiKey --secret-string <value>',
+      'AccessDeniedException for ethos/engineer/providers/anthropic/apiKey',
     );
   });
 });
 
 describe('delete', () => {
-  it('throws read-only error', async () => {
-    await expect(resolver.delete('providers/anthropic/apiKey')).rejects.toThrow(
-      'AwsSecretsManagerResolver is read-only — delete via: aws secretsmanager delete-secret --secret-id ethos/engineer/providers/anthropic/apiKey',
-    );
+  it('deletes via DeleteSecretCommand', async () => {
+    smMock
+      .on(DeleteSecretCommand, {
+        SecretId: 'ethos/engineer/providers/anthropic/apiKey',
+      })
+      .resolves({});
+
+    await expect(resolver.delete('providers/anthropic/apiKey')).resolves.toBeUndefined();
+  });
+
+  it('ignores ResourceNotFoundException (idempotent delete)', async () => {
+    const notFound = new Error('not found');
+    notFound.name = 'ResourceNotFoundException';
+    smMock.on(DeleteSecretCommand).rejects(notFound);
+
+    await expect(resolver.delete('providers/anthropic/apiKey')).resolves.toBeUndefined();
   });
 });
 
