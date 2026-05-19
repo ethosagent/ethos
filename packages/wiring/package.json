@@ -64,5 +64,8 @@
     "@ethosagent/tools-todo": "workspace:*",
     "@ethosagent/tools-web": "workspace:*",
     "@ethosagent/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
   }
 }

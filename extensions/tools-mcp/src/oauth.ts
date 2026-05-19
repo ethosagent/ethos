@@ -44,6 +44,23 @@ export class ConfidentialClientUnsupported extends Error {
   }
 }
 
+/**
+ * Thrown by the install flow when OAuth discovery succeeds but the server
+ * doesn't advertise a `registration_endpoint`. The UI install flow only
+ * supports dynamic client registration (RFC 7591); servers without DCR
+ * require manual configuration via the CLI's `ethos mcp add` command.
+ */
+export class DcrUnsupported extends Error {
+  constructor(public readonly mcpUrl: string) {
+    super(
+      `MCP server at ${mcpUrl} does not advertise a registration_endpoint.` +
+        ` The UI install flow requires dynamic client registration (RFC 7591).` +
+        ` Use 'ethos mcp add' from the CLI to configure the server manually.`,
+    );
+    this.name = 'DcrUnsupported';
+  }
+}
+
 export class MissingToken extends Error {
   constructor(public readonly serverName: string) {
     super(

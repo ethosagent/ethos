@@ -286,6 +286,18 @@ export interface PersonalityConfig {
   outbound_policy?: OutboundPolicyConfig;
 }
 
+/**
+ * Patch shape consumed by `PersonalityRegistry.update`. Narrow on purpose —
+ * the SDK install flow only ever needs to mutate the `mcp_servers` list,
+ * and consumers in the type layer should not be aware of the broader edit
+ * shape that the file-backed registry supports (name, ETHOS.md, toolset).
+ * Concrete implementations may accept a wider patch via their own type.
+ */
+export interface PersonalityRegistryPatch {
+  mcp_servers?: string[];
+  plugins?: string[];
+}
+
 export interface PersonalityRegistry {
   define(config: PersonalityConfig): void;
   get(id: string): PersonalityConfig | undefined;
@@ -301,4 +313,14 @@ export interface PersonalityRegistry {
    * only mutates the registry's own map. No-op if the id is unknown.
    */
   remove(id: string): void;
+  /**
+   * Apply a patch to a personality. Optional in the interface because not
+   * every backend (e.g. read-only built-in registries used in tests) supports
+   * mutation; the SDK install flow checks for presence before calling. The
+   * file-backed registry implements this with the broader patch shape it
+   * accepts internally, then narrows to the interface here. Return shape
+   * intentionally minimal — surfaces that need the full updated record call
+   * the concrete method directly.
+   */
+  update?(id: string, patch: PersonalityRegistryPatch): Promise<unknown>;
 }

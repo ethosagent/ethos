@@ -9,7 +9,7 @@
 //   ethos mcp add <name>       Add an MCP server to ~/.ethos/mcp.json
 //   ethos mcp presets           List available MCP server presets
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ClientAdapter } from '@ethosagent/mcp-server';
@@ -27,6 +27,7 @@ import type { McpServerConfig, OAuthConfig, TokenSet } from '@ethosagent/tools-m
 import {
   getPreset,
   MCP_PRESETS,
+  McpJsonStore,
   revokeToken,
   runDcrAuthorization,
   runPkceLogin,
@@ -327,10 +328,16 @@ function parseAddArgs(argv: string[]): {
   return { name, preset, url, env, command, args: extraArgs };
 }
 
-function readMcpJson(): McpServerConfig[] | null {
-  const path = join(homedir(), '.ethos', 'mcp.json');
-  if (!existsSync(path)) return [];
-  const raw = readFileSync(path, 'utf8');
+/**
+ * Read ~/.ethos/mcp.json with explicit error reporting for malformed JSON or
+ * a non-array root. Goes through Storage for I/O so tests can swap an
+ * InMemoryStorage in; the parse and validation steps stay here because the
+ * shared `McpJsonStore.list()` silently defaults to `[]` and the CLI wants
+ * to refuse to run on a corrupt file rather than silently overwrite it.
+ */
+async function readMcpJson(): Promise<McpServerConfig[] | null> {
+  const raw = await getStorage().read(mcpJsonPath());
+  if (raw === null) return [];
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -350,14 +357,17 @@ function readMcpJson(): McpServerConfig[] | null {
   return parsed as McpServerConfig[];
 }
 
-function writeMcpJson(configs: McpServerConfig[]): void {
-  const dir = join(homedir(), '.ethos');
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  const tmp = join(dir, `mcp.json.tmp.${process.pid}`);
-  writeFileSync(tmp, `${JSON.stringify(configs, null, 2)}\n`, 'utf8');
-  renameSync(tmp, join(dir, 'mcp.json'));
+function mcpJsonPath(): string {
+  return join(homedir(), '.ethos', 'mcp.json');
+}
+
+/**
+ * Append a new entry. Uses `McpJsonStore.upsert` so concurrent CLI + UI
+ * writers serialize through the same atomic-write path.
+ */
+async function appendMcpEntry(entry: McpServerConfig): Promise<void> {
+  const store = new McpJsonStore(getStorage(), mcpJsonPath());
+  await store.upsert(entry.name, entry);
 }
 
 async function runAdd(argv: string[]): Promise<void> {
@@ -369,7 +379,7 @@ async function runAdd(argv: string[]): Promise<void> {
   }
 
   // Check for duplicate name
-  const existing = readMcpJson();
+  const existing = await readMcpJson();
   if (!existing) {
     process.exitCode = 1;
     return;
@@ -420,8 +430,7 @@ async function runAdd(argv: string[]): Promise<void> {
     if (!urlResult) return;
     entry = urlResult.entry;
 
-    existing.push(entry);
-    writeMcpJson(existing);
+    await appendMcpEntry(entry);
 
     const secrets = await getSecretsResolver();
     await storeTokens(parsed.name, urlResult.tokens, secrets);
@@ -441,8 +450,7 @@ async function runAdd(argv: string[]): Promise<void> {
     return;
   }
 
-  existing.push(entry);
-  writeMcpJson(existing);
+  await appendMcpEntry(entry);
   console.log(`Added MCP server '${parsed.name}' to ~/.ethos/mcp.json`);
 }
 
@@ -638,7 +646,7 @@ async function runRegistryInstall(argv: string[]): Promise<void> {
 
   const name = packageName.replace(/^@[^/]+\//, '').replace(/^server-/, '');
 
-  const existing = readMcpJson();
+  const existing = await readMcpJson();
   if (!existing) {
     process.exitCode = 1;
     return;
@@ -656,8 +664,7 @@ async function runRegistryInstall(argv: string[]): Promise<void> {
     args: ['-y', packageName],
   };
 
-  existing.push(entry);
-  writeMcpJson(existing);
+  await appendMcpEntry(entry);
   console.log(`Installed '${name}' (${packageName}) to ~/.ethos/mcp.json`);
 }
 
@@ -673,7 +680,7 @@ async function runLogin(argv: string[]): Promise<void> {
     return;
   }
 
-  const configs = readMcpJson();
+  const configs = await readMcpJson();
   if (!configs) {
     process.exitCode = 1;
     return;
@@ -712,7 +719,7 @@ async function runLogout(argv: string[]): Promise<void> {
     return;
   }
 
-  const configs = readMcpJson();
+  const configs = await readMcpJson();
   if (!configs) {
     process.exitCode = 1;
     return;

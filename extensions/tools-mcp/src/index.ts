@@ -3,7 +3,20 @@ import { join } from 'node:path';
 import { noopLogger } from '@ethosagent/logger';
 import { buildMcpEnv } from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
-import type { Logger, SecretsResolver, Storage, Tool, ToolResult } from '@ethosagent/types';
+import type {
+  Logger,
+  McpServerInfo,
+  SecretsResolver,
+  Storage,
+  Tool,
+  ToolResult,
+} from '@ethosagent/types';
+import { EthosError } from '@ethosagent/types';
+
+// Re-export wire-contract types lifted into @ethosagent/types so existing
+// consumers that imported them from this package keep working.
+export type { McpAuthStatus, McpCreatedVia, McpServerInfo, McpTransport } from '@ethosagent/types';
+
 import { Client } from '@modelcontextprotocol/sdk/client';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -11,6 +24,18 @@ import { ensureValidToken, loadAccessToken, refreshToken } from './oauth';
 import { rewriteDefinitionsToRefs } from './schema-rewrite';
 import { probeTokenScopes } from './scope-probe';
 
+export type {
+  AttachToPersonalitiesOptions,
+  AttachToPersonalitiesResult,
+  CompleteOptions,
+  CompleteResult,
+  InstallFlowStatus,
+  McpInstallFlowOptions,
+  StartOptions,
+  StartResult,
+} from './install-flow';
+export { McpInstallFlow } from './install-flow';
+export { McpJsonStore } from './mcp-json-store';
 export type {
   CallbackResult,
   DcrAuthorizationResult,
@@ -23,6 +48,7 @@ export type {
 export {
   buildAuthorizationUrl,
   ConfidentialClientUnsupported,
+  DcrUnsupported,
   deleteTokens,
   discoverOAuthMetadata,
   ensureValidToken,
@@ -126,6 +152,13 @@ export interface McpManagerConfig {
   };
   /** Enable OAuth scope introspection probe on connect. Default: false. */
   enableScopeProbe?: boolean;
+  /**
+   * Called by `addServer` and `removeServer` so the consumer can update its
+   * `ToolRegistry`. Boot-time tools are registered by the consumer directly
+   * via `getTools()` — the callback only handles deltas. Invoked exactly once
+   * per successful add/remove. Not invoked on add failures.
+   */
+  onToolsChanged?: (added: Tool[], removedNames: string[]) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +204,11 @@ export class McpClient {
 
   get name(): string {
     return this._config.name;
+  }
+
+  /** Read-only view of the config this client was constructed with. */
+  get config(): Readonly<McpServerConfig> {
+    return this._config;
   }
 
   async connect(): Promise<void> {
@@ -598,43 +636,84 @@ function adaptMcpTool(mcpTool: McpToolDef, serverName: string, client: McpClient
 
 export class McpManager {
   private _clients: McpClient[];
+  /**
+   * Immutable snapshot. Mutators (`connect`, `addServer`, `removeServer`,
+   * and the per-client `tools/list_changed` handler) build a NEW array
+   * under the mutex and atomic-swap it. Readers (`getTools`) return the
+   * current reference without locking — they see either the pre-swap or
+   * post-swap array, never a half-built one.
+   */
   private _tools: Tool[] = [];
   private readonly logger: Logger;
   private readonly _collisionPolicy: 'warn' | 'error';
+  private readonly _secrets?: SecretsResolver;
+  private readonly _enableScopeProbe: boolean;
+  private readonly _obs?: McpManagerConfig['obs'];
+  private readonly _onToolsChanged?: McpManagerConfig['onToolsChanged'];
+  /** Mutex tail. `addServer` / `removeServer` / `listServers` chain onto this. */
+  private _mutationChain: Promise<unknown> = Promise.resolve();
 
   constructor(configs: McpServerConfig[], opts: McpManagerConfig = {}) {
     this.logger = opts.logger ?? noopLogger;
     this._collisionPolicy = opts.collisionPolicy ?? 'warn';
-    this._clients = configs.map((c) => {
-      const client = new McpClient(c, { logger: this.logger, secrets: opts.secrets });
-      client.enableScopeProbe = opts.enableScopeProbe ?? false;
-      // Phase 2.3 — wire dynamic tool discovery callback
-      client.onToolsChanged = (newTools) => {
-        const prefix = `mcp__${client.name}__`;
-        this._tools = this._tools.filter((t) => !t.name.startsWith(prefix));
-        for (const t of newTools) {
-          this._tools.push(adaptMcpTool(t, client.name, client));
-        }
-      };
-      // Wire scope-probe results to observability
-      if (opts.obs) {
-        const obs = opts.obs;
-        client.onScopeProbe = (result) => {
-          obs.recordEvent({
-            category: 'mcp.scope_probe',
-            severity: result.outcome === 'match' ? 'info' : 'warn',
-            code: result.outcome,
-            details: {
-              server: result.server,
-              declaredScopes: result.declaredScopes,
-              actualScopes: result.actualScopes,
-              ...(result.error ? { error: result.error } : {}),
-            },
-          });
-        };
+    this._secrets = opts.secrets;
+    this._enableScopeProbe = opts.enableScopeProbe ?? false;
+    this._obs = opts.obs;
+    this._onToolsChanged = opts.onToolsChanged;
+    this._clients = configs.map((c) => this._buildClient(c));
+  }
+
+  /**
+   * Construct a client with all construction-time options reapplied: logger,
+   * secrets, scope-probe enablement, and observability wiring. Used by both
+   * the constructor and `addServer`.
+   *
+   * `protected` so test subclasses can inject an in-memory transport without
+   * a private-field cast — see `extensions/tools-mcp/src/__tests__/mcp-manager-mutability.test.ts`.
+   */
+  protected _buildClient(config: McpServerConfig): McpClient {
+    const client = new McpClient(config, { logger: this.logger, secrets: this._secrets });
+    client.enableScopeProbe = this._enableScopeProbe;
+    // Phase 2.3 — wire dynamic tool discovery callback. Build an immutable
+    // snapshot so concurrent getTools() readers never see a half-built array.
+    client.onToolsChanged = (newTools) => {
+      const prefix = `mcp__${client.name}__`;
+      const next = this._tools.filter((t) => !t.name.startsWith(prefix));
+      for (const t of newTools) {
+        next.push(adaptMcpTool(t, client.name, client));
       }
-      return client;
-    });
+      this._tools = next;
+    };
+    // Wire scope-probe results to observability
+    if (this._obs) {
+      const obs = this._obs;
+      client.onScopeProbe = (result) => {
+        obs.recordEvent({
+          category: 'mcp.scope_probe',
+          severity: result.outcome === 'match' ? 'info' : 'warn',
+          code: result.outcome,
+          details: {
+            server: result.server,
+            declaredScopes: result.declaredScopes,
+            actualScopes: result.actualScopes,
+            ...(result.error ? { error: result.error } : {}),
+          },
+        });
+      };
+    }
+    return client;
+  }
+
+  /**
+   * Chain `op` onto the mutation mutex. All addServer / removeServer /
+   * listServers calls go through this; concurrent invocations serialize in
+   * arrival order. The chain is repaired (via `.catch(() => {})`) so one
+   * caller's failure does not poison the lane.
+   */
+  private _serialize<T>(op: () => Promise<T>): Promise<T> {
+    const next = this._mutationChain.then(op, op);
+    this._mutationChain = next.catch(() => {});
+    return next;
   }
 
   async connect(): Promise<void> {
@@ -718,6 +797,91 @@ export class McpManager {
   /** Alias for disconnect — intention-revealing name for lifecycle management. */
   async shutdown(): Promise<void> {
     return this.disconnect();
+  }
+
+  /**
+   * Connect a new MCP server at runtime and surface its tools to the
+   * consumer's `ToolRegistry` via the `onToolsChanged` callback.
+   *
+   * All-or-nothing: if `client.connect()` throws, the manager state is
+   * unchanged (no client is appended, no tools are rebuilt, the callback
+   * is NOT invoked) and the error propagates to the caller.
+   */
+  async addServer(config: McpServerConfig): Promise<void> {
+    await this._serialize(async () => {
+      const client = this._buildClient(config);
+      let connected = false;
+      try {
+        await client.connect();
+        connected = true;
+        const mcpTools = await client.listTools();
+        const adapted = mcpTools.map((t) => adaptMcpTool(t, client.name, client));
+        // Atomic swap: build a NEW _tools array and assign in one step. A
+        // racing getTools() either sees the old reference or the new one.
+        this._tools = [...this._tools, ...adapted];
+        this._clients = [...this._clients, client];
+        if (this._onToolsChanged) this._onToolsChanged(adapted, []);
+      } catch (err) {
+        // Best-effort teardown of any partially-established connection.
+        if (connected) {
+          try {
+            await client.disconnect();
+          } catch {
+            /* ignore */
+          }
+        }
+        throw err;
+      }
+    });
+  }
+
+  /**
+   * Disconnect a server by name and remove its tools from the registry via
+   * the `onToolsChanged` callback. Throws `EthosError({ code: 'NOT_FOUND' })`
+   * if no server with that name is registered.
+   */
+  async removeServer(name: string): Promise<void> {
+    await this._serialize(async () => {
+      const client = this._clients.find((c) => c.name === name);
+      if (!client) {
+        throw new EthosError({
+          code: 'NOT_FOUND',
+          cause: `MCP server '${name}' is not registered`,
+          action: 'Call listServers() to see registered names',
+          details: { name },
+        });
+      }
+      const prefix = `mcp__${name}__`;
+      const removedNames = this._tools.filter((t) => t.name.startsWith(prefix)).map((t) => t.name);
+      try {
+        await client.disconnect();
+      } catch {
+        // Disconnect failures shouldn't strand the entry; we still remove it
+        // so the operator can re-add. The underlying transport is best-effort
+        // closed; partial process leaks are surfaced via observability, not
+        // this control path.
+      }
+      this._tools = this._tools.filter((t) => !t.name.startsWith(prefix));
+      this._clients = this._clients.filter((c) => c.name !== name);
+      if (this._onToolsChanged) this._onToolsChanged([], removedNames);
+    });
+  }
+
+  /**
+   * Snapshot of the currently-registered servers. Returns a fresh array each
+   * call — mutating the returned array does not affect internal state. The
+   * `auth_status` field is left unset here; the surface that has token
+   * visibility (web-api / CLI) is responsible for filling it in.
+   */
+  listServers(): McpServerInfo[] {
+    return this._clients.map((c) => {
+      const cfg = c.config;
+      const info: McpServerInfo = { name: cfg.name, transport: cfg.transport };
+      if (cfg.command !== undefined) info.command = cfg.command;
+      if (cfg.url !== undefined) info.url = cfg.url;
+      if (cfg.created_via !== undefined) info.created_via = cfg.created_via;
+      return info;
+    });
   }
 }
 

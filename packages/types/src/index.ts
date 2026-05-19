@@ -9,6 +9,7 @@ export * from './id-validation';
 export * from './injector';
 export * from './llm';
 export * from './logger';
+export * from './mcp';
 export * from './memory';
 export * from './model-catalog';
 export * from './observability';

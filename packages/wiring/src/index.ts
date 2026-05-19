@@ -854,6 +854,12 @@ export async function createAgentLoop(
   const mcpManager = new McpManager(mcpConfig, {
     logger: log,
     enableScopeProbe: process.env.ETHOS_MCP_SCOPE_PROBE === '1',
+    // Phase A.5 — propagate runtime addServer/removeServer to the ToolRegistry
+    // so an in-progress chat session sees new MCP tools on its next turn.
+    onToolsChanged: (added, removedNames) => {
+      for (const t of added) tools.register(t);
+      for (const name of removedNames) tools.unregister(name);
+    },
   });
   await mcpManager.connect();
   for (const tool of mcpManager.getTools()) tools.register(tool);
