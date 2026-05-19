@@ -22,6 +22,11 @@ export const personalitiesRouter = {
       toolset: input.toolset,
       ethosMd: input.ethosMd,
       ...(input.memoryScope !== undefined ? { memoryScope: input.memoryScope } : {}),
+      ...(input.provider !== undefined ? { provider: input.provider } : {}),
+      ...(input.capabilities !== undefined ? { capabilities: input.capabilities } : {}),
+      ...(input.mcp_servers !== undefined ? { mcp_servers: input.mcp_servers } : {}),
+      ...(input.plugins !== undefined ? { plugins: input.plugins } : {}),
+      ...(input.fs_reach !== undefined ? { fs_reach: input.fs_reach } : {}),
     }),
   ),
 

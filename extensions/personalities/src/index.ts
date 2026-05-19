@@ -159,6 +159,11 @@ export interface CreatePersonalityInput {
   toolset: string[];
   ethosMd: string;
   memoryScope?: 'global' | 'per-personality';
+  provider?: string;
+  capabilities?: string[];
+  mcp_servers?: string[];
+  plugins?: string[];
+  fs_reach?: { read?: string[]; write?: string[] };
 }
 
 export interface UpdatePersonalityPatch {
@@ -949,15 +954,7 @@ function yamlScalar(value: string): string {
   return value;
 }
 
-function renderConfigYaml(
-  input: CreatePersonalityInput & {
-    mcp_servers?: string[];
-    plugins?: string[];
-    capabilities?: string[];
-    provider?: string;
-    fs_reach?: { read?: string[]; write?: string[] };
-  },
-): string {
+function renderConfigYaml(input: CreatePersonalityInput): string {
   const lines: string[] = [`name: ${yamlScalar(input.name)}`];
   if (input.description) lines.push(`description: ${yamlScalar(input.description)}`);
   if (input.provider) lines.push(`provider: ${yamlScalar(input.provider)}`);

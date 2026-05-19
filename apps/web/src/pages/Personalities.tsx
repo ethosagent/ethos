@@ -1,4 +1,10 @@
-import type { Personality, PersonalitySkill, ProviderId } from '@ethosagent/web-contracts';
+import type {
+  McpServerInfo,
+  Personality,
+  PersonalitySkill,
+  PluginInfo,
+  ProviderId,
+} from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
@@ -12,7 +18,6 @@ import {
   Popconfirm,
   Select,
   Spin,
-  Steps,
   Switch,
   Table,
   Tabs,
@@ -34,7 +39,7 @@ import { rpc } from '../rpc';
 //                  under a new id, opens the editor on the copy.
 //   • Delete     — only for user-created personalities.
 //
-// Plus a "New personality" button at the top → 4-step create wizard.
+// Plus a "New personality" button at the top → tabbed create wizard.
 //
 // Live preview chat (plan: side-pane disposable session) is deferred
 // to v1.x — the chat plumbing has assumptions about persistent
@@ -237,8 +242,15 @@ interface WizardState {
   name: string;
   description: string;
   model: string;
+  provider: string;
+  memoryScope: string;
+  capabilities: string[];
+  fsReachRead: string[];
+  fsReachWrite: string[];
   toolset: string[];
   ethosMd: string;
+  mcpServers: string[];
+  plugins: string[];
 }
 
 const ETHOS_TEMPLATE = `# About me\n\nI am a {role}. I {what I do}. I {how I work}.\n\n## How I respond\n\n- {tone / shape}\n- {tone / shape}\n- {tone / shape}\n`;
@@ -246,14 +258,25 @@ const ETHOS_TEMPLATE = `# About me\n\nI am a {role}. I {what I do}. I {how I wor
 function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onClose: () => void }) {
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
-  const [step, setStep] = useState(0);
   const [state, setState] = useState<WizardState>({
     id: '',
     name: '',
     description: '',
     model: '',
+    provider: '',
+    memoryScope: '',
+    capabilities: [],
+    fsReachRead: [],
+    fsReachWrite: [],
     toolset: [],
     ethosMd: ETHOS_TEMPLATE,
+    mcpServers: [],
+    plugins: [],
+  });
+
+  const pluginsQuery = useQuery({
+    queryKey: ['plugins', 'list'],
+    queryFn: () => rpc.plugins.list(),
   });
 
   const createMut = useMutation({
@@ -263,6 +286,16 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
         name: state.name,
         ...(state.description ? { description: state.description } : {}),
         ...(state.model ? { model: state.model } : {}),
+        ...(state.provider ? { provider: state.provider as ProviderId } : {}),
+        ...(state.memoryScope
+          ? { memoryScope: state.memoryScope as 'global' | 'per-personality' }
+          : {}),
+        ...(state.capabilities.length > 0 ? { capabilities: state.capabilities } : {}),
+        ...(state.fsReachRead.length > 0 || state.fsReachWrite.length > 0
+          ? { fs_reach: { read: state.fsReachRead, write: state.fsReachWrite } }
+          : {}),
+        ...(state.mcpServers.length > 0 ? { mcp_servers: state.mcpServers } : {}),
+        ...(state.plugins.length > 0 ? { plugins: state.plugins } : {}),
         toolset: state.toolset,
         ethosMd: state.ethosMd,
       }),
@@ -279,14 +312,10 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
   const idValid = /^[a-z0-9_-]+$/.test(state.id);
   const nameValid = state.name.trim().length > 0;
   const idCollision = existingIds.has(state.id);
+  const canCreate = idValid && nameValid && !idCollision && state.ethosMd.length > 0;
 
-  const stepValid = (() => {
-    if (step === 0) return idValid && nameValid && !idCollision;
-    if (step === 1) return true; // model is optional
-    if (step === 2) return true; // toolset can be empty
-    if (step === 3) return state.ethosMd.length > 0;
-    return false;
-  })();
+  const mcpServers = pluginsQuery.data?.mcpServers ?? [];
+  const availablePlugins = pluginsQuery.data?.plugins ?? [];
 
   return (
     <Modal
@@ -294,46 +323,72 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
       title="New personality"
       onCancel={onClose}
       width={720}
+      destroyOnClose
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <Button onClick={onClose}>Cancel</Button>
-          <div style={{ display: 'flex', gap: 8 }}>
-            {step > 0 ? <Button onClick={() => setStep(step - 1)}>Back</Button> : null}
-            {step < 3 ? (
-              <Button type="primary" disabled={!stepValid} onClick={() => setStep(step + 1)}>
-                Next
-              </Button>
-            ) : (
-              <Button
-                type="primary"
-                disabled={!stepValid}
-                loading={createMut.isPending}
-                onClick={() => createMut.mutate()}
-              >
-                Create
-              </Button>
-            )}
-          </div>
+          <Button
+            type="primary"
+            disabled={!canCreate}
+            loading={createMut.isPending}
+            onClick={() => createMut.mutate()}
+          >
+            Create
+          </Button>
         </div>
       }
     >
-      <Steps
-        current={step}
-        size="small"
+      <Tabs
+        defaultActiveKey="identity"
         items={[
-          { title: 'Identity' },
-          { title: 'Model' },
-          { title: 'Toolset' },
-          { title: 'ETHOS.md' },
+          {
+            key: 'identity',
+            label: 'Identity',
+            children: (
+              <IdentityStep state={state} setState={setState} idCollision={idCollision} />
+            ),
+          },
+          {
+            key: 'config',
+            label: 'Config',
+            children: <WizardConfigTab state={state} setState={setState} />,
+          },
+          {
+            key: 'toolset',
+            label: 'Toolset',
+            children: <ToolsetStep state={state} setState={setState} />,
+          },
+          {
+            key: 'ethos',
+            label: 'ETHOS.md',
+            children: <EthosMdStep state={state} setState={setState} />,
+          },
+          {
+            key: 'mcp',
+            label: 'MCP',
+            children: (
+              <WizardMcpTab
+                servers={mcpServers}
+                loading={pluginsQuery.isLoading}
+                selected={state.mcpServers}
+                onChange={(next) => setState((s) => ({ ...s, mcpServers: next }))}
+              />
+            ),
+          },
+          {
+            key: 'plugins',
+            label: 'Plugins',
+            children: (
+              <WizardPluginsTab
+                plugins={availablePlugins}
+                loading={pluginsQuery.isLoading}
+                selected={state.plugins}
+                onChange={(next) => setState((s) => ({ ...s, plugins: next }))}
+              />
+            ),
+          },
         ]}
-        style={{ marginBottom: 24 }}
       />
-      {step === 0 ? (
-        <IdentityStep state={state} setState={setState} idCollision={idCollision} />
-      ) : null}
-      {step === 1 ? <ModelStep state={state} setState={setState} /> : null}
-      {step === 2 ? <ToolsetStep state={state} setState={setState} /> : null}
-      {step === 3 ? <EthosMdStep state={state} setState={setState} /> : null}
     </Modal>
   );
 }
@@ -396,29 +451,6 @@ function slugify(name: string): string {
     .toLowerCase()
     .replace(/\s+/g, '-')
     .replace(/[^a-z0-9_-]/g, '');
-}
-
-function ModelStep({
-  state,
-  setState,
-}: {
-  state: WizardState;
-  setState: React.Dispatch<React.SetStateAction<WizardState>>;
-}) {
-  return (
-    <Form layout="vertical">
-      <Typography.Paragraph type="secondary">
-        Optional. Leave blank to use the global default from Settings.
-      </Typography.Paragraph>
-      <Form.Item label="Model" help="e.g. claude-opus-4-7, gpt-4o, moonshotai/kimi-k2.6">
-        <Input
-          value={state.model}
-          placeholder="claude-opus-4-7"
-          onChange={(e) => setState((s) => ({ ...s, model: e.target.value }))}
-        />
-      </Form.Item>
-    </Form>
-  );
 }
 
 function ToolsetStep({
@@ -530,6 +562,271 @@ function EthosMdStep({
         />
       </Form.Item>
     </Form>
+  );
+}
+
+function WizardConfigTab({
+  state,
+  setState,
+}: {
+  state: WizardState;
+  setState: React.Dispatch<React.SetStateAction<WizardState>>;
+}) {
+  return (
+    <Form layout="vertical">
+      <Typography.Paragraph type="secondary">
+        Optional. Leave blank to use the global default from Settings.
+      </Typography.Paragraph>
+      <Form.Item label="Model" help="e.g. claude-opus-4-7, gpt-4o, moonshotai/kimi-k2.6">
+        <Input
+          value={state.model}
+          placeholder="claude-opus-4-7"
+          onChange={(e) => setState((s) => ({ ...s, model: e.target.value }))}
+        />
+      </Form.Item>
+      <Form.Item
+        label="Provider"
+        extra="Engine default is set in Settings. Set this only if this personality must route to a specific provider."
+      >
+        <Select
+          allowClear
+          placeholder="engine default"
+          value={state.provider || undefined}
+          onChange={(val) => setState((s) => ({ ...s, provider: val ?? '' }))}
+          options={[
+            { label: 'Anthropic', value: 'anthropic' },
+            { label: 'OpenAI', value: 'openai' },
+            { label: 'OpenRouter', value: 'openrouter' },
+            { label: 'OpenAI Compatible', value: 'openai-compat' },
+            { label: 'Ollama', value: 'ollama' },
+            { label: 'Azure', value: 'azure' },
+          ]}
+        />
+      </Form.Item>
+      <Form.Item label="Memory scope">
+        <Select
+          allowClear
+          value={state.memoryScope || undefined}
+          onChange={(val) => setState((s) => ({ ...s, memoryScope: val ?? '' }))}
+          options={[
+            { label: 'global (default)', value: 'global' },
+            { label: 'per-personality', value: 'per-personality' },
+          ]}
+        />
+      </Form.Item>
+      <Form.Item
+        label="Capabilities"
+        extra="Free-form labels used by the mesh router and operator filtering. e.g. triage, release, cost-sensitive."
+      >
+        <Select
+          mode="tags"
+          allowClear
+          placeholder="add capability tags"
+          tokenSeparators={[',']}
+          value={state.capabilities}
+          onChange={(val) => setState((s) => ({ ...s, capabilities: val }))}
+        />
+      </Form.Item>
+      <Alert
+        type="warning"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="Filesystem reach"
+        description="These paths control which directories this personality can read and write. Adding broad paths (e.g. /, /home) lets the personality access anything inside. Edit only if you understand the implications."
+      />
+      <Form.Item label="Read paths">
+        <Select
+          mode="tags"
+          allowClear
+          placeholder={FS_REACH_READ_PLACEHOLDER}
+          tokenSeparators={[',']}
+          value={state.fsReachRead}
+          onChange={(val) => setState((s) => ({ ...s, fsReachRead: val }))}
+        />
+      </Form.Item>
+      <Form.Item label="Write paths">
+        <Select
+          mode="tags"
+          allowClear
+          placeholder="e.g. /data/output"
+          tokenSeparators={[',']}
+          value={state.fsReachWrite}
+          onChange={(val) => setState((s) => ({ ...s, fsReachWrite: val }))}
+        />
+      </Form.Item>
+    </Form>
+  );
+}
+
+function WizardMcpTab({
+  servers,
+  loading,
+  selected,
+  onChange,
+}: {
+  servers: McpServerInfo[];
+  loading: boolean;
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  if (loading) {
+    return (
+      <div style={{ display: 'grid', placeItems: 'center', height: 120 }}>
+        <Spin />
+      </div>
+    );
+  }
+
+  if (servers.length === 0) {
+    return (
+      <Empty
+        image={Empty.PRESENTED_IMAGE_SIMPLE}
+        description={
+          <span>
+            No MCP servers configured. Edit{' '}
+            <Typography.Text code>~/.ethos/mcp.json</Typography.Text>.
+          </span>
+        }
+      />
+    );
+  }
+
+  const selectedSet = new Set(selected);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+        Check each MCP server this personality can reach. Unchecked servers are invisible to this
+        role.
+      </Typography.Text>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {servers.map((s) => (
+          <Checkbox
+            key={s.name}
+            checked={selectedSet.has(s.name)}
+            onChange={(e) => {
+              const next = new Set(selectedSet);
+              if (e.target.checked) next.add(s.name);
+              else next.delete(s.name);
+              onChange([...next]);
+            }}
+            aria-label={`Enable MCP server ${s.name}`}
+          >
+            <span style={{ fontWeight: 500 }}>{s.name}</span>{' '}
+            <Tag bordered={false} style={{ fontSize: 11 }}>
+              {s.transport}
+            </Tag>
+            {s.command ? (
+              <Typography.Text
+                type="secondary"
+                style={{ fontFamily: 'Geist Mono, monospace', fontSize: 11 }}
+              >
+                {s.command}
+              </Typography.Text>
+            ) : s.url ? (
+              <Typography.Text
+                type="secondary"
+                style={{ fontFamily: 'Geist Mono, monospace', fontSize: 11 }}
+              >
+                {s.url}
+              </Typography.Text>
+            ) : null}
+          </Checkbox>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WizardPluginsTab({
+  plugins,
+  loading,
+  selected,
+  onChange,
+}: {
+  plugins: PluginInfo[];
+  loading: boolean;
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  if (loading) {
+    return (
+      <div style={{ display: 'grid', placeItems: 'center', height: 120 }}>
+        <Spin />
+      </div>
+    );
+  }
+
+  if (plugins.length === 0) {
+    return (
+      <Empty
+        image={Empty.PRESENTED_IMAGE_SIMPLE}
+        description={
+          <span>
+            No plugins installed.{' '}
+            <Typography.Text code>ethos plugin install &lt;path&gt;</Typography.Text>
+          </span>
+        }
+      />
+    );
+  }
+
+  const selectedSet = new Set(selected);
+
+  function toggle(pluginId: string, on: boolean) {
+    const next = new Set(selectedSet);
+    if (on) next.add(pluginId);
+    else next.delete(pluginId);
+    onChange([...next]);
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {selectedSet.size === 0 ? (
+        <Alert
+          type="info"
+          showIcon
+          message="0 plugins attached"
+          description="Toggle a plugin below to enable it for this personality."
+          style={{ marginBottom: 4 }}
+        />
+      ) : null}
+      {plugins.map((p) => (
+        <div key={p.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+          <Switch
+            size="small"
+            checked={selectedSet.has(p.id)}
+            onChange={(on) => toggle(p.id, on)}
+            aria-label={`Attach ${p.name}`}
+            style={{ marginTop: 2, flexShrink: 0 }}
+          />
+          <div>
+            <div style={{ fontWeight: 500 }}>{p.name}</div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Typography.Text
+                style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12 }}
+                type="secondary"
+              >
+                {p.id}
+              </Typography.Text>
+              <Tag bordered={false} style={{ fontSize: 11 }}>
+                {p.source}
+              </Tag>
+              {p.pluginContractMajor !== null ? (
+                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                  v{p.pluginContractMajor}
+                </Typography.Text>
+              ) : null}
+            </div>
+            {p.description ? (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {p.description}
+              </Typography.Text>
+            ) : null}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
