@@ -23,8 +23,15 @@ import {
   zed,
 } from '@ethosagent/mcp-server';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import type { McpServerConfig, OAuthConfig } from '@ethosagent/tools-mcp';
-import { getPreset, MCP_PRESETS, revokeToken, runPkceLogin } from '@ethosagent/tools-mcp';
+import type { McpServerConfig, OAuthConfig, TokenSet } from '@ethosagent/tools-mcp';
+import {
+  getPreset,
+  MCP_PRESETS,
+  revokeToken,
+  runDcrAuthorization,
+  runPkceLogin,
+  storeTokens,
+} from '@ethosagent/tools-mcp';
 import { ethosDir, readConfig } from '../config';
 import { createAgentLoop, getSecretsResolver, getStorage } from '../wiring';
 
@@ -42,6 +49,7 @@ Subcommands:
   inspect          List available tools, resources, and prompts
   add <name>       Add an MCP server to ~/.ethos/mcp.json
     --preset <name>  Use a built-in preset (see 'ethos mcp presets')
+    --url <mcpUrl>   Remote MCP server URL (runs OAuth discovery + DCR)
     --env KEY=val    Set environment variable (repeatable)
   presets          List available MCP server presets
   login <name>     Authenticate with an OAuth-configured MCP server
@@ -254,20 +262,23 @@ const ADD_USAGE = `Usage: ethos mcp add <name> [options]
 
 Options:
   --preset <name>  Use a built-in preset (see 'ethos mcp presets')
+  --url <mcpUrl>   Remote MCP server URL (runs OAuth discovery + DCR)
   --env KEY=val    Set environment variable (repeatable)
 
-Without --preset, you must provide --command and optionally --args:
+Without --preset or --url, you must provide --command and optionally --args:
   --command <cmd>  Server command (e.g. 'npx')
   --args <a> ...   Command arguments (consumes remaining positional args)
 
 Examples:
   ethos mcp add fs --preset filesystem --env ALLOWED_PATHS=/data
   ethos mcp add my-git --preset git --env GIT_REPO_PATH=/repos/myapp
-  ethos mcp add custom --command npx --args -y @myorg/mcp-server`;
+  ethos mcp add custom --command npx --args -y @myorg/mcp-server
+  ethos mcp add linear --url https://mcp.linear.app/mcp`;
 
 function parseAddArgs(argv: string[]): {
   name?: string;
   preset?: string;
+  url?: string;
   env: Record<string, string>;
   command?: string;
   args: string[];
@@ -276,6 +287,7 @@ function parseAddArgs(argv: string[]): {
   const extraArgs: string[] = [];
   let name: string | undefined;
   let preset: string | undefined;
+  let url: string | undefined;
   let command: string | undefined;
   let collectingArgs = false;
 
@@ -289,6 +301,9 @@ function parseAddArgs(argv: string[]): {
 
     if (arg === '--preset') {
       preset = argv[i + 1];
+      i++;
+    } else if (arg === '--url') {
+      url = argv[i + 1];
       i++;
     } else if (arg === '--env') {
       const val = argv[i + 1];
@@ -309,7 +324,7 @@ function parseAddArgs(argv: string[]): {
     }
   }
 
-  return { name, preset, env, command, args: extraArgs };
+  return { name, preset, url, env, command, args: extraArgs };
 }
 
 function readMcpJson(): McpServerConfig[] | null {
@@ -345,7 +360,7 @@ function writeMcpJson(configs: McpServerConfig[]): void {
   renameSync(tmp, join(dir, 'mcp.json'));
 }
 
-function runAdd(argv: string[]): void {
+async function runAdd(argv: string[]): Promise<void> {
   const parsed = parseAddArgs(argv);
 
   if (!parsed.name) {
@@ -400,8 +415,27 @@ function runAdd(argv: string[]): void {
       ...(envKeys.length > 0 ? { env: parsed.env } : {}),
       ...(envPassthrough ? { mcpEnvPassthrough: envPassthrough } : {}),
     };
+  } else if (parsed.url) {
+    const urlResult = await runAddUrl(parsed.name, parsed.url);
+    if (!urlResult) return;
+    entry = urlResult.entry;
+
+    existing.push(entry);
+    writeMcpJson(existing);
+
+    const secrets = await getSecretsResolver();
+    await storeTokens(parsed.name, urlResult.tokens, secrets);
+    if (urlResult.registrationAccessToken) {
+      await secrets.set(
+        `mcp/${parsed.name}/registration_access_token`,
+        urlResult.registrationAccessToken,
+      );
+    }
+
+    console.log(`Added MCP server '${parsed.name}' to ~/.ethos/mcp.json`);
+    return;
   } else {
-    console.error('Either --preset or --command is required.\n');
+    console.error('Either --preset, --url, or --command is required.\n');
     console.log(ADD_USAGE);
     process.exitCode = 1;
     return;
@@ -410,6 +444,78 @@ function runAdd(argv: string[]): void {
   existing.push(entry);
   writeMcpJson(existing);
   console.log(`Added MCP server '${parsed.name}' to ~/.ethos/mcp.json`);
+}
+
+interface UrlAddResult {
+  entry: McpServerConfig;
+  tokens: TokenSet;
+  registrationAccessToken?: string;
+}
+
+async function runAddUrl(name: string, mcpUrl: string): Promise<UrlAddResult | null> {
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(mcpUrl);
+  } catch {
+    console.error(`Invalid URL: ${mcpUrl}`);
+    process.exitCode = 1;
+    return null;
+  }
+  if (parsedUrl.protocol !== 'https:') {
+    console.error('Remote MCP server URL must use https://');
+    process.exitCode = 1;
+    return null;
+  }
+
+  process.stderr.write('Discovering OAuth metadata...\n');
+
+  let result: Awaited<ReturnType<typeof runDcrAuthorization>>;
+  try {
+    result = await runDcrAuthorization(mcpUrl, 'Ethos', (url) => {
+      process.stderr.write(`\nOpen this URL to authorize:\n${url}\n\n`);
+    });
+  } catch (err) {
+    console.error(`OAuth setup failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    return null;
+  }
+
+  const { tokens, dcrResult, meta } = result;
+  const registrationEndpoint = meta.registration_endpoint ?? '';
+
+  const entry: McpServerConfig = {
+    name,
+    transport: 'streamable-http',
+    url: mcpUrl,
+    auth: {
+      type: 'oauth2',
+      authorization_endpoint: meta.authorization_endpoint,
+      token_endpoint: meta.token_endpoint,
+      client_id: dcrResult.client_id,
+      ...(meta.revocation_endpoint ? { revocation_endpoint: meta.revocation_endpoint } : {}),
+      ...(meta.introspection_endpoint
+        ? { introspection_endpoint: meta.introspection_endpoint }
+        : {}),
+      dcr: {
+        registration_endpoint: registrationEndpoint,
+        ...(dcrResult.client_id_issued_at != null
+          ? { client_id_issued_at: dcrResult.client_id_issued_at }
+          : {}),
+        ...(dcrResult.registration_client_uri
+          ? { registration_client_uri: dcrResult.registration_client_uri }
+          : {}),
+      },
+    },
+    created_via: 'cli',
+  };
+
+  return {
+    entry,
+    tokens,
+    ...(dcrResult.registration_access_token
+      ? { registrationAccessToken: dcrResult.registration_access_token }
+      : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -11,18 +11,32 @@ import { ensureValidToken, loadAccessToken, refreshToken } from './oauth';
 import { rewriteDefinitionsToRefs } from './schema-rewrite';
 import { probeTokenScopes } from './scope-probe';
 
-export type { CallbackResult, OAuthConfig, TokenSet } from './oauth';
+export type {
+  CallbackResult,
+  DcrAuthorizationResult,
+  DcrRequest,
+  DcrResponse,
+  DiscoveredOAuthMetadata,
+  OAuthConfig,
+  TokenSet,
+} from './oauth';
 export {
   buildAuthorizationUrl,
+  ConfidentialClientUnsupported,
   deleteTokens,
+  discoverOAuthMetadata,
   ensureValidToken,
   exchangeCode,
   generateCodeChallenge,
   generateCodeVerifier,
   isTokenExpired,
   loadAccessToken,
+  MissingToken,
+  OAuthDiscoveryError,
   refreshToken,
+  registerOAuthClient,
   revokeToken,
+  runDcrAuthorization,
   runPkceLogin,
   startCallbackServer,
   storeTokens,
@@ -31,6 +45,8 @@ export type { OsvAdvisory, OsvResult } from './osv-check';
 export { checkOsvVulnerabilities, clearOsvCache } from './osv-check';
 export type { McpPreset } from './presets';
 export { getPreset, MCP_PRESETS } from './presets';
+export type { McpRemotePreset } from './remote-presets';
+export { getRemotePreset, MCP_REMOTE_PRESETS } from './remote-presets';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -76,7 +92,13 @@ export interface McpServerConfig {
     scopes?: string[];
     revocation_endpoint?: string;
     introspection_endpoint?: string;
+    dcr?: {
+      registration_endpoint: string;
+      client_id_issued_at?: number;
+      registration_client_uri?: string;
+    };
   };
+  created_via?: 'cli' | 'ui';
 }
 
 export interface ScopeProbeResult {

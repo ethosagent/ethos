@@ -493,4 +493,43 @@ describe('Wire format conformance (Phases 2.3-2.7)', () => {
       expect(filterRef?.$ref).toBe('#/$defs/Filter');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // McpServerConfig new fields (Phase A — OAuth config shape)
+  // -------------------------------------------------------------------------
+
+  describe('McpServerConfig new fields', () => {
+    it('accepts auth.dcr sub-block', () => {
+      const config: McpServerConfig = {
+        name: 'linear',
+        transport: 'streamable-http',
+        url: 'https://mcp.linear.app/mcp',
+        auth: {
+          type: 'oauth2',
+          authorization_endpoint: 'https://linear.app/oauth/authorize',
+          token_endpoint: 'https://linear.app/api/oauth/token',
+          client_id: 'dcr-client-123',
+          dcr: {
+            registration_endpoint: 'https://linear.app/api/oauth/register',
+            client_id_issued_at: 1716100000,
+            registration_client_uri: 'https://linear.app/api/oauth/register/dcr-client-123',
+          },
+        },
+        created_via: 'ui',
+      };
+
+      expect(config.auth?.dcr?.registration_endpoint).toBe('https://linear.app/api/oauth/register');
+      expect(config.created_via).toBe('ui');
+    });
+
+    it('auth fields are optional for backward compat', () => {
+      const config: McpServerConfig = {
+        name: 'old-server',
+        transport: 'stdio',
+        command: 'node',
+      };
+      expect(config.auth).toBeUndefined();
+      expect(config.created_via).toBeUndefined();
+    });
+  });
 });

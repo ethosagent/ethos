@@ -343,29 +343,30 @@ describe('exchangeCode', () => {
 
 describe('startCallbackServer', () => {
   it('starts on a random port and resolves code from query param', async () => {
-    const { port, codePromise, close } = await startCallbackServer();
+    const { port, resultPromise, close } = await startCallbackServer();
     expect(port).toBeGreaterThan(0);
 
     // Simulate the OAuth callback
     const resp = await fetch(`http://127.0.0.1:${port}/?code=test-code&state=st`);
     expect(resp.status).toBe(200);
 
-    const code = await codePromise;
-    expect(code).toBe('test-code');
+    const result = await resultPromise;
+    expect(result.code).toBe('test-code');
+    expect(result.state).toBe('st');
     close();
   });
 
   it('rejects on error parameter', async () => {
-    const { port, codePromise, close } = await startCallbackServer();
+    const { port, resultPromise, close } = await startCallbackServer();
 
     // Attach rejection handler before triggering the error to prevent unhandled rejection warning
-    const rejection = codePromise.catch((err) => err);
+    const rejection = resultPromise.catch((err: unknown) => err);
 
     await fetch(`http://127.0.0.1:${port}/?error=access_denied`);
 
     const err = await rejection;
     expect(err).toBeInstanceOf(Error);
-    expect(err.message).toContain('OAuth error: access_denied');
+    expect((err as Error).message).toContain('OAuth error: access_denied');
     close();
   });
 });

@@ -21,6 +21,71 @@ export interface TokenSet {
 }
 
 // ---------------------------------------------------------------------------
+// Error classes
+// ---------------------------------------------------------------------------
+
+export class OAuthDiscoveryError extends Error {
+  constructor(
+    public readonly attemptedUrls: { url: string; status: number | null }[],
+    message?: string,
+  ) {
+    super(message ?? `OAuth discovery failed for: ${attemptedUrls.map((u) => u.url).join(', ')}`);
+    this.name = 'OAuthDiscoveryError';
+  }
+}
+
+export class ConfidentialClientUnsupported extends Error {
+  constructor(serverUrl: string) {
+    super(
+      `MCP server at ${serverUrl} returned a client_secret (confidential client).` +
+        ` Use 'ethos mcp add' from the CLI.`,
+    );
+    this.name = 'ConfidentialClientUnsupported';
+  }
+}
+
+export class MissingToken extends Error {
+  constructor(public readonly serverName: string) {
+    super(
+      `No OAuth token available for MCP server '${serverName}'.` +
+        ' Re-authorize from the UI or CLI.',
+    );
+    this.name = 'MissingToken';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Discovery & registration interfaces
+// ---------------------------------------------------------------------------
+
+export interface DiscoveredOAuthMetadata {
+  authorization_endpoint: string;
+  token_endpoint: string;
+  registration_endpoint?: string;
+  revocation_endpoint?: string;
+  introspection_endpoint?: string;
+  scopes_supported?: string[];
+  code_challenge_methods_supported?: string[];
+}
+
+export interface DcrRequest {
+  redirect_uris: string[];
+  client_name: string;
+  token_endpoint_auth_method: 'none';
+  grant_types: ['authorization_code', 'refresh_token'];
+  response_types: ['code'];
+  scope?: string;
+}
+
+export interface DcrResponse {
+  client_id: string;
+  client_secret?: string;
+  client_id_issued_at?: number;
+  registration_access_token?: string;
+  registration_client_uri?: string;
+}
+
+// ---------------------------------------------------------------------------
 // PKCE helpers
 // ---------------------------------------------------------------------------
 
@@ -100,19 +165,19 @@ export async function isTokenExpired(
 
 export interface CallbackResult {
   port: number;
-  codePromise: Promise<string>;
+  resultPromise: Promise<{ code: string; state: string | null }>;
   close: () => void;
 }
 
 export async function startCallbackServer(): Promise<CallbackResult> {
   return new Promise((resolveServer, rejectServer) => {
     let settled = false;
-    let resolveCode: (code: string) => void;
-    let rejectCode: (err: Error) => void;
+    let resolveResult: (result: { code: string; state: string | null }) => void;
+    let rejectResult: (err: Error) => void;
 
-    const codePromise = new Promise<string>((res, rej) => {
-      resolveCode = res;
-      rejectCode = rej;
+    const resultPromise = new Promise<{ code: string; state: string | null }>((res, rej) => {
+      resolveResult = res;
+      rejectResult = rej;
     });
 
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -124,6 +189,7 @@ export async function startCallbackServer(): Promise<CallbackResult> {
 
       const url = new URL(req.url ?? '/', `http://127.0.0.1`);
       const code = url.searchParams.get('code');
+      const callbackState = url.searchParams.get('state');
       const error = url.searchParams.get('error');
 
       if (error) {
@@ -132,7 +198,7 @@ export async function startCallbackServer(): Promise<CallbackResult> {
         res.end(
           '<html><body><h1>Authorization failed</h1><p>You may close this tab.</p></body></html>',
         );
-        rejectCode(new Error(`OAuth error: ${error}`));
+        rejectResult(new Error(`OAuth error: ${error}`));
         closeServer();
         return;
       }
@@ -148,14 +214,14 @@ export async function startCallbackServer(): Promise<CallbackResult> {
       res.end(
         '<html><body><h1>Authorization successful</h1><p>You may close this tab.</p></body></html>',
       );
-      resolveCode(code);
+      resolveResult({ code, state: callbackState });
       closeServer();
     });
 
     const timeout = setTimeout(() => {
       if (!settled) {
         settled = true;
-        rejectCode(new Error('OAuth callback timed out after 120s'));
+        rejectResult(new Error('OAuth callback timed out after 120s'));
         closeServer();
       }
     }, 120_000);
@@ -173,7 +239,7 @@ export async function startCallbackServer(): Promise<CallbackResult> {
       }
       resolveServer({
         port: addr.port,
-        codePromise,
+        resultPromise,
         close: closeServer,
       });
     });
@@ -332,6 +398,195 @@ export async function revokeToken(
 }
 
 // ---------------------------------------------------------------------------
+// OAuth discovery (RFC 8414 + MCP protected-resource)
+// ---------------------------------------------------------------------------
+
+function buildWellKnownUrl(baseUrl: string, suffix: string): string {
+  const parsed = new URL(baseUrl);
+  const path = parsed.pathname === '/' ? '' : parsed.pathname;
+  return `${parsed.origin}/.well-known/${suffix}${path}`;
+}
+
+export async function discoverOAuthMetadata(mcpUrl: string): Promise<DiscoveredOAuthMetadata> {
+  const attemptedUrls: { url: string; status: number | null }[] = [];
+
+  let issuer = new URL(mcpUrl).origin;
+  const protectedResourceUrl = buildWellKnownUrl(mcpUrl, 'oauth-protected-resource');
+  try {
+    const prResp = await fetch(protectedResourceUrl);
+    attemptedUrls.push({ url: protectedResourceUrl, status: prResp.status });
+    if (prResp.ok) {
+      const prData = (await prResp.json()) as { authorization_servers?: string[] };
+      const firstServer = prData.authorization_servers?.[0];
+      if (firstServer) {
+        issuer = firstServer;
+      }
+    }
+  } catch {
+    attemptedUrls.push({ url: protectedResourceUrl, status: null });
+  }
+
+  const asMeta = buildWellKnownUrl(issuer, 'oauth-authorization-server');
+  try {
+    const asResp = await fetch(asMeta);
+    attemptedUrls.push({ url: asMeta, status: asResp.status });
+    if (!asResp.ok) {
+      throw new OAuthDiscoveryError(attemptedUrls);
+    }
+    const data = (await asResp.json()) as DiscoveredOAuthMetadata;
+
+    if (!data.authorization_endpoint || !data.token_endpoint) {
+      throw new OAuthDiscoveryError(
+        attemptedUrls,
+        'OAuth metadata missing required authorization_endpoint or token_endpoint',
+      );
+    }
+
+    if (
+      data.code_challenge_methods_supported &&
+      !data.code_challenge_methods_supported.includes('S256')
+    ) {
+      throw new OAuthDiscoveryError(
+        attemptedUrls,
+        'OAuth server does not support S256 code challenge method',
+      );
+    }
+
+    const endpointsToCheck = [
+      data.authorization_endpoint,
+      data.token_endpoint,
+      data.registration_endpoint,
+      data.revocation_endpoint,
+      data.introspection_endpoint,
+    ].filter(Boolean) as string[];
+
+    for (const ep of endpointsToCheck) {
+      try {
+        const epUrl = new URL(ep);
+        if (epUrl.protocol !== 'https:') {
+          throw new OAuthDiscoveryError(
+            attemptedUrls,
+            `Discovered endpoint ${ep} uses insecure protocol ${epUrl.protocol}`,
+          );
+        }
+      } catch (err) {
+        if (err instanceof OAuthDiscoveryError) throw err;
+        throw new OAuthDiscoveryError(attemptedUrls, `Invalid endpoint URL: ${ep}`);
+      }
+    }
+
+    return data;
+  } catch (err) {
+    if (err instanceof OAuthDiscoveryError) throw err;
+    attemptedUrls.push({ url: asMeta, status: null });
+    throw new OAuthDiscoveryError(attemptedUrls);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic client registration
+// ---------------------------------------------------------------------------
+
+export async function registerOAuthClient(
+  registrationEndpoint: string,
+  request: DcrRequest,
+): Promise<DcrResponse> {
+  const resp = await fetch(registrationEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Dynamic client registration failed (${resp.status}): ${text}`);
+  }
+
+  const data = (await resp.json()) as DcrResponse;
+
+  if (!data.client_id || typeof data.client_id !== 'string') {
+    throw new Error('Dynamic client registration response missing required client_id');
+  }
+
+  if (data.client_secret) {
+    throw new ConfidentialClientUnsupported(registrationEndpoint);
+  }
+
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// DCR + PKCE authorization flow
+// ---------------------------------------------------------------------------
+
+export interface DcrAuthorizationResult {
+  tokens: TokenSet;
+  dcrResult: DcrResponse;
+  meta: DiscoveredOAuthMetadata;
+  oauthConfig: OAuthConfig;
+}
+
+export async function runDcrAuthorization(
+  mcpUrl: string,
+  clientName: string,
+  onAuthUrl?: (url: string) => void,
+): Promise<DcrAuthorizationResult> {
+  const meta = await discoverOAuthMetadata(mcpUrl);
+
+  if (!meta.registration_endpoint) {
+    throw new Error('MCP server does not support dynamic client registration');
+  }
+
+  const callback = await startCallbackServer();
+  const redirectUri = `http://127.0.0.1:${callback.port}`;
+
+  try {
+    const dcrRequest: DcrRequest = {
+      redirect_uris: [redirectUri],
+      client_name: clientName,
+      token_endpoint_auth_method: 'none' as const,
+      grant_types: ['authorization_code', 'refresh_token'] as [
+        'authorization_code',
+        'refresh_token',
+      ],
+      response_types: ['code'] as ['code'],
+    };
+
+    const dcrResult = await registerOAuthClient(meta.registration_endpoint, dcrRequest);
+
+    const oauthConfig: OAuthConfig = {
+      authorization_endpoint: meta.authorization_endpoint,
+      token_endpoint: meta.token_endpoint,
+      client_id: dcrResult.client_id,
+    };
+
+    const verifier = generateCodeVerifier();
+    const challenge = generateCodeChallenge(verifier);
+    const state = randomBytes(16).toString('base64url');
+
+    const authUrl = buildAuthorizationUrl(oauthConfig, redirectUri, state, challenge);
+
+    if (onAuthUrl) {
+      onAuthUrl(authUrl);
+    } else {
+      process.stderr.write(`\nOpen this URL to authorize:\n${authUrl}\n\n`);
+    }
+
+    const result = await callback.resultPromise;
+
+    if (result.state !== state) {
+      throw new Error('OAuth state mismatch — possible CSRF attack');
+    }
+
+    const tokens = await exchangeCode(oauthConfig, result.code, redirectUri, verifier);
+
+    return { tokens, dcrResult, meta, oauthConfig };
+  } finally {
+    callback.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Full PKCE login flow
 // ---------------------------------------------------------------------------
 
@@ -353,8 +608,11 @@ export async function runPkceLogin(
   process.stderr.write(`\nOpen this URL to authorize:\n${authUrl}\n\n`);
 
   try {
-    const code = await callback.codePromise;
-    const tokens = await exchangeCode(config, code, redirectUri, verifier);
+    const result = await callback.resultPromise;
+    if (result.state !== state) {
+      throw new Error('OAuth state mismatch — possible CSRF attack. Aborting.');
+    }
+    const tokens = await exchangeCode(config, result.code, redirectUri, verifier);
     await storeTokens(serverName, tokens, secrets);
     return tokens;
   } finally {
@@ -370,11 +628,14 @@ export async function ensureValidToken(
   serverName: string,
   config: OAuthConfig,
   secrets: SecretsResolver,
+  context: 'cli' | 'ui' = 'cli',
 ): Promise<string> {
-  // Single read — TOCTOU-safe
   const token = await secrets.get(accessTokenRef(serverName));
 
   if (!token) {
+    if (context === 'ui') {
+      throw new MissingToken(serverName);
+    }
     const tokens = await runPkceLogin(serverName, config, secrets);
     return tokens.access_token;
   }
