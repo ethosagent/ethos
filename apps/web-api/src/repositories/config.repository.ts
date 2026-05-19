@@ -164,20 +164,20 @@ export class ConfigRepository {
     await this.storage.mkdir(dirname(this.path));
 
     const lines: string[] = [];
-    if (config.provider) lines.push(`provider: ${config.provider}`);
-    if (config.model) lines.push(`model: ${config.model}`);
-    if (config.apiKey) lines.push(`apiKey: ${config.apiKey}`);
-    if (config.personality) lines.push(`personality: ${config.personality}`);
-    if (config.memory) lines.push(`memory: ${config.memory}`);
-    if (config.baseUrl) lines.push(`baseUrl: ${config.baseUrl}`);
-    if (config.skin) lines.push(`skin: ${config.skin}`);
+    if (config.provider) lines.push(`provider: ${yamlScalar(config.provider)}`);
+    if (config.model) lines.push(`model: ${yamlScalar(config.model)}`);
+    if (config.apiKey) lines.push(`apiKey: ${yamlScalar(config.apiKey)}`);
+    if (config.personality) lines.push(`personality: ${yamlScalar(config.personality)}`);
+    if (config.memory) lines.push(`memory: ${yamlScalar(config.memory)}`);
+    if (config.baseUrl) lines.push(`baseUrl: ${yamlScalar(config.baseUrl)}`);
+    if (config.skin) lines.push(`skin: ${yamlScalar(config.skin)}`);
     for (const [id, model] of Object.entries(config.modelRouting)) {
-      lines.push(`modelRouting.${id}: ${model}`);
+      lines.push(`modelRouting.${yamlScalar(id)}: ${yamlScalar(model)}`);
     }
     // Stable-order passthrough — keep keys the CLI cares about across
     // round-trips even if it adds new ones in the future.
     for (const key of Object.keys(config.passthrough).sort()) {
-      lines.push(`${key}: ${config.passthrough[key]}`);
+      lines.push(`${yamlScalar(key)}: ${yamlScalar(config.passthrough[key] ?? '')}`);
     }
     await this.storage.writeAtomic(this.path, `${lines.join('\n')}\n`);
   }
@@ -185,4 +185,16 @@ export class ConfigRepository {
 
 function stripQuotes(s: string): string {
   return s.replace(/^["']|["']$/g, '');
+}
+
+/** Escape a value for safe YAML scalar emission. If the value contains
+ *  characters that could alter YAML structure (colons, newlines, special
+ *  chars, leading/trailing whitespace), wrap it in JSON-style double
+ *  quotes. This prevents newline injection that could create new
+ *  top-level keys (e.g. injecting `fs_reach` for privilege escalation). */
+function yamlScalar(value: string): string {
+  if (/[:\n\r#[\]{}&*!|>'"%@`]/.test(value) || value.trim() !== value) {
+    return JSON.stringify(value);
+  }
+  return value;
 }

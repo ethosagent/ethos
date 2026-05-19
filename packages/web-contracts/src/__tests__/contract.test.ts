@@ -197,6 +197,7 @@ describe('contract router', () => {
       'eval',
       'evolver',
       'kanban',
+      'mcp',
       'memory',
       'mesh',
       'meta',

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App as AntApp,
+  Button,
   Checkbox,
   Collapse,
   Empty,
@@ -13,7 +14,9 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { AddMcpModal } from '../components/mcp/AddMcpModal';
 import { rpc } from '../rpc';
 
 // Plugins page — global matrix of plugins × personalities.
@@ -42,6 +45,20 @@ export function Plugins() {
   });
 
   const isLoading = pluginsLoading || persLoading;
+  const [activeTab, setActiveTab] = useState('matrix');
+  const [addMcpOpen, setAddMcpOpen] = useState(false);
+
+  const location = useLocation();
+  const mcpConnected = (location.state as { mcpConnected?: string } | null)?.mcpConnected;
+
+  useEffect(() => {
+    if (mcpConnected) {
+      setActiveTab('mcp');
+      setAddMcpOpen(true);
+      // Clear the state to prevent re-triggering on re-renders
+      window.history.replaceState({}, '', location.pathname);
+    }
+  }, [mcpConnected, location.pathname]);
 
   if (pluginsError) {
     return (
@@ -58,7 +75,15 @@ export function Plugins() {
   return (
     <div className="plugins-tab">
       <Tabs
-        defaultActiveKey="matrix"
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        tabBarExtraContent={
+          activeTab === 'mcp' ? (
+            <Button size="small" type="primary" onClick={() => setAddMcpOpen(true)}>
+              Add MCP
+            </Button>
+          ) : undefined
+        }
         items={[
           {
             key: 'matrix',
@@ -74,6 +99,7 @@ export function Plugins() {
           },
         ]}
       />
+      <AddMcpModal open={addMcpOpen} onClose={() => setAddMcpOpen(false)} />
     </div>
   );
 }
@@ -307,9 +333,8 @@ function McpTable({ servers }: { servers: McpServerInfo[] }) {
         image={Empty.PRESENTED_IMAGE_SIMPLE}
         description={
           <span>
-            No MCP servers configured. Edit{' '}
-            <Typography.Text code>~/.ethos/mcp.json</Typography.Text> or run{' '}
-            <Typography.Text code>ethos plugin add-mcp</Typography.Text>.
+            No MCP servers configured. Click <strong>Add MCP</strong> above, or run{' '}
+            <Typography.Text code>ethos mcp add</Typography.Text> from the CLI.
           </span>
         }
       />

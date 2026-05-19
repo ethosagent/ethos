@@ -46,6 +46,7 @@ async function setup(opts: SetupOptions = {}) {
   return {
     app,
     apiKeys,
+    apiKeyId: created.record.id,
     sessions,
     secret: created.secret,
     bearer: { Authorization: `Bearer ${created.secret}` },
@@ -326,7 +327,7 @@ describe('POST /v1/chat/completions', () => {
 
     it('threads X-Ethos-Session into the loop session key (with `openai:` prefix)', async () => {
       let capturedOpts: { sessionKey?: string } | null = null;
-      const { app, bearer } = await withSetup({
+      const { app, bearer, apiKeyId } = await withSetup({
         events: [{ type: 'done', text: '', turnCount: 1 }],
         onRun: (_i, o) => {
           capturedOpts = o as typeof capturedOpts;
@@ -346,7 +347,7 @@ describe('POST /v1/chat/completions', () => {
       });
       expect(res.status).toBe(200);
       const o = capturedOpts as unknown as { sessionKey?: string };
-      expect(o?.sessionKey).toBe('openai:my-app:42');
+      expect(o?.sessionKey).toBe(`openai:${apiKeyId}:my-app:42`);
     });
   });
 

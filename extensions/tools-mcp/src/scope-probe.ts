@@ -1,3 +1,4 @@
+import { validateUrl as validateSsrfUrl } from '@ethosagent/core';
 import type { Logger } from '@ethosagent/types';
 import type { ScopeProbeResult } from './index';
 
@@ -14,6 +15,9 @@ export async function probeTokenScopes(
   };
 
   try {
+    // SSRF gate: validate introspection endpoint before sending bearer token
+    validateSsrfUrl(introspectionEndpoint);
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5_000);
 

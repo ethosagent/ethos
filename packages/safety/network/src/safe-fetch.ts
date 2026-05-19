@@ -224,6 +224,9 @@ function isPrivateIpv6(ip: string): boolean {
     const d = low & 0xff;
     return isPrivateIpv4(`${a}.${b}.${c}.${d}`);
   }
+  // IPv4-compatible IPv6 (deprecated but still parseable): ::a.b.c.d
+  const compat = lower.match(/^::(\d+\.\d+\.\d+\.\d+)$/);
+  if (compat) return isPrivateIpv4(compat[1]);
   return false;
 }
 

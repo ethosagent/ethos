@@ -9,13 +9,18 @@
 //
 // Pass --pr to run only G1 + G2 (pull-request gate in ci.yml).
 // G7 (tests green) is NOT in this script; make verify runs `pnpm check` separately.
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const prOnly = process.argv.includes('--pr');
 const root = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const version = readFileSync(join(root, 'VERSION'), 'utf8').trim();
+// Validate version to prevent command injection — must be a semver-like string
+if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.]+)?$/.test(version)) {
+  console.error(`  ✗ VERSION file contains invalid version string: "${version}"`);
+  process.exit(1);
+}
 let failures = 0;
 
 function fail(gate, msg) {
@@ -100,7 +105,7 @@ if (!prOnly) {
   const tag = `v${version}`;
   let tagExistsLocally = false;
   try {
-    execSync(`git rev-parse ${tag}`, { cwd: root, stdio: 'pipe' });
+    execFileSync('git', ['rev-parse', tag], { cwd: root, stdio: 'pipe' });
     tagExistsLocally = true;
   } catch {
     // expected — tag doesn't exist yet
@@ -109,7 +114,10 @@ if (!prOnly) {
     fail('G5', `tag ${tag} already exists locally — delete with: git tag -d ${tag}`);
   } else {
     try {
-      const remote = exec(`git ls-remote origin "refs/tags/${tag}"`);
+      const remote = execFileSync('git', ['ls-remote', 'origin', `refs/tags/${tag}`], {
+        cwd: root,
+        encoding: 'utf8',
+      }).trim();
       if (remote)
         fail(
           'G5',

@@ -4,7 +4,7 @@ description: "Field-by-field reference for ~/.ethos/mcp.json: transports, OAuth,
 kind: reference
 audience: user
 slug: mcp-config
-updated: 2026-05-17
+updated: 2026-05-19
 ---
 
 ## Synopsis {#synopsis}
@@ -34,6 +34,10 @@ Ethos's MCP client reads servers from `~/.ethos/mcp.json`. The file is a **JSON 
 ```
 
 Reload semantics: configuring a server here makes it **available**; it does not **attach** to any personality. See [Personality scoping](#scoping).
+
+## Adding servers from the UI {#ui-flow}
+
+The web UI offers a guided flow for OAuth-protected MCP servers: **Plugins → MCP Servers tab → Add MCP**. The modal handles OAuth discovery, dynamic client registration, and token storage automatically. Servers added through the UI are written to the same `~/.ethos/mcp.json` and are fully compatible with the CLI commands below.
 
 ## Server entry {#server-entry}
 

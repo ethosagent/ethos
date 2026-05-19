@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { EthosError, type EthosErrorCode, isEthosError } from '@ethosagent/types';
 import type { Context, MiddlewareHandler } from 'hono';
 
@@ -58,13 +59,15 @@ export function errorHandler(err: Error, c: Context): Response {
       statusFor(err.code) as 400 | 401 | 403 | 404 | 409 | 500 | 502 | 504,
     );
   }
-  // Anything else is a bug (uncaught raw Error). Coerce to INTERNAL so the
-  // client sees the standard envelope shape; the original message lands in
-  // `error` for greppable logs.
+  // Anything else is a bug (uncaught raw Error). Log the full error server-side
+  // for debugging but never reflect raw err.message to the client — it may
+  // contain internal paths, stack traces, or database details.
+  const requestId = randomUUID();
+  console.error('[internal_error]', requestId, err);
   const wrapped = new EthosError({
     code: 'INTERNAL',
-    cause: err.message || 'Unknown error',
-    action: 'Re-run the request. If the error repeats, file an issue.',
+    cause: `Internal server error (request_id: ${requestId})`,
+    action: 'Re-run the request. If the error repeats, file an issue with the request_id.',
   });
   return c.json(toEnvelope(wrapped), 500);
 }

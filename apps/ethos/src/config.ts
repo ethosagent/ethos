@@ -427,6 +427,9 @@ export interface EthosConfig {
    *   aws.secrets.endpoint: http://localhost:4566
    */
   aws?: AwsConfig;
+  /** Public-facing URL of the web UI. Used as the OAuth redirect base.
+   *  Resolution: ETHOS_PUBLIC_URL env > config.yaml webBaseUrl > localhost default. */
+  webBaseUrl?: string;
 }
 
 export function ethosDir(): string {
@@ -620,6 +623,7 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
     if (s.prefix) lines.push(`aws.secrets.prefix: ${s.prefix}`);
     if (s.endpoint) lines.push(`aws.secrets.endpoint: ${s.endpoint}`);
   }
+  if (config.webBaseUrl) lines.push(`webBaseUrl: ${config.webBaseUrl}`);
   await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`);
 }
 
@@ -1030,6 +1034,7 @@ function parseConfigYaml(src: string): EthosConfig {
     modelCatalog,
     logs: logsRotation ? { rotation: logsRotation } : undefined,
     aws: awsConfig,
+    webBaseUrl: process.env.ETHOS_PUBLIC_URL ?? kv.webBaseUrl ?? undefined,
   };
   // Stash parse errors so the strict loader can surface them at boot.
   // readRawConfig (used by CLI commands that don't gateway-boot) ignores them

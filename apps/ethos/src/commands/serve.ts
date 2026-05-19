@@ -39,6 +39,9 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   const acpPort = parsePort(parseFlagValue(args, ['--port']), ACP_PORT_DEFAULT);
   const webEnabled = hasFlag(args, ['--web-experimental']);
   const webPort = parsePort(parseFlagValue(args, ['--web-port']), WEB_PORT_DEFAULT);
+  // Default to localhost-only binding. Override with --host or ETHOS_SERVE_HOST
+  // to expose on the network (e.g. --host 0.0.0.0).
+  const serveHost = parseFlagValue(args, ['--host']) ?? process.env.ETHOS_SERVE_HOST ?? '127.0.0.1';
 
   const personalityOverride = parseFlagValue(args, ['--personality']);
   if (personalityOverride) config = { ...config, personality: personalityOverride };
@@ -222,15 +225,22 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
       apiKeys,
       listTeams: async () => listRegisteredTeams(dir),
       ...(webDist ? { webDist } : {}),
+      ...(config.webBaseUrl ? { webBaseUrl: config.webBaseUrl } : {}),
     });
     chatService = created.chatService;
     const webApp = created.app;
     const tokens = new WebTokenRepository({ dataDir: dir });
     const token = await tokens.getOrCreate();
-    const { server, port } = await listenWithFallback(webApp, webPort, WEB_PORT_FALLBACK_ATTEMPTS);
+    const { server, port } = await listenWithFallback(
+      webApp,
+      webPort,
+      WEB_PORT_FALLBACK_ATTEMPTS,
+      serveHost,
+    );
     console.log('');
-    console.log(`ethos web UI listening on http://localhost:${port}`);
-    console.log(`  open: http://localhost:${port}/auth/exchange?t=${token}`);
+    const displayHost = serveHost === '0.0.0.0' ? 'localhost' : serveHost;
+    console.log(`ethos web UI listening on http://${displayHost}:${port}`);
+    console.log(`  open: http://${displayHost}:${port}/auth/exchange?t=${token}`);
     console.log('  (token rotates on first use; cookie remains the steady-state credential)');
     if (webDist) {
       console.log(`  serving SPA from: ${webDist}`);

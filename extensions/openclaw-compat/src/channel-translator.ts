@@ -89,7 +89,11 @@ export function translateChannelPlugin(plugin: ChannelPlugin): PlatformAdapter {
           userId: event.userId,
           username: event.username,
           text: event.text,
-          isDm: event.isDm ?? (caps.chatTypes.includes('dm') && !event.isGroupMention),
+          isDm:
+            event.isDm ??
+            (caps.chatTypes.includes('dm') &&
+              !caps.chatTypes.includes('group') &&
+              !event.isGroupMention),
           isGroupMention: event.isGroupMention ?? false,
           messageId: event.messageId,
           attachments: mapAttachments(event.attachments),

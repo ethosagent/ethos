@@ -57,7 +57,7 @@ function createJobTool(scheduler: CronScheduler): Tool {
       },
       required: ['name', 'schedule', 'prompt'],
     },
-    async execute(args): Promise<ToolResult> {
+    async execute(args, ctx): Promise<ToolResult> {
       const { name, schedule, prompt, personality, deliver, missed_run_policy } = args as {
         name: string;
         schedule: string;
@@ -71,6 +71,20 @@ function createJobTool(scheduler: CronScheduler): Tool {
       if (!schedule) return { ok: false, error: 'schedule is required', code: 'input_invalid' };
       if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
 
+      // Personality privilege escalation guard: cron jobs can only run under
+      // the caller's current personality. Reject cross-personality scheduling.
+      const callerPersonality = ctx.personalityId;
+      if (personality && callerPersonality && personality !== callerPersonality) {
+        return {
+          ok: false,
+          error:
+            `Cannot create cron job under personality "${personality}": ` +
+            `caller is running as "${callerPersonality}". ` +
+            'Cron jobs must run under the same personality that creates them.',
+          code: 'input_invalid',
+        };
+      }
+
       if (!isValidCronExpression(schedule)) {
         return {
           ok: false,
@@ -79,12 +93,17 @@ function createJobTool(scheduler: CronScheduler): Tool {
         };
       }
 
+      // Pin the job to the caller's personality when no explicit personality
+      // was requested, so the job never runs under a different personality
+      // than the one that created it.
+      const effectivePersonality = personality ?? callerPersonality;
+
       try {
         const job = await scheduler.createJob({
           name,
           schedule,
           prompt,
-          personality,
+          personality: effectivePersonality,
           deliver,
           missedRunPolicy: missed_run_policy ?? 'skip',
         });

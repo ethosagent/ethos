@@ -188,6 +188,7 @@ const sidebars: SidebarsConfig = {
       collapsed: true,
       items: [
         'security/overview',
+        'security/white-paper',
         'security/threat-model',
         'security/controls',
         'security/production-hardening-checklist',

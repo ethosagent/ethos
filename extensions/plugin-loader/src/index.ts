@@ -414,7 +414,12 @@ async function collectFindings(
     if (entry.isDir) {
       if (entry.name === 'node_modules') continue; // skip dep trees
       await collectFindings(storage, fullPath, permissions, out);
-    } else if (/\.[jt]s$/.test(entry.name) && !entry.name.endsWith('.d.ts')) {
+    } else if (
+      /\.[jt]sx?$|\.(?:cjs|mjs)$/.test(entry.name) &&
+      !entry.name.endsWith('.d.ts') &&
+      !entry.name.endsWith('.d.cts') &&
+      !entry.name.endsWith('.d.mts')
+    ) {
       const src = await storage.read(fullPath);
       if (src) out.push(...scanPluginCode(src, permissions).findings);
     }
@@ -584,6 +589,16 @@ async function checkContractMajorFromDir(
   return result.ok ? null : (result.reason ?? `Plugin "${id}" rejected`);
 }
 
+/**
+ * Returns true when `candidate` resolves to a path inside `container`.
+ * Prevents path-traversal attacks via entries like `"main": "../../evil.js"`.
+ */
+function isContainedIn(candidate: string, container: string): boolean {
+  const resolved = resolve(candidate);
+  const base = resolve(container);
+  return resolved === base || resolved.startsWith(`${base}/`);
+}
+
 async function resolveEntry(storage: Storage, dir: string): Promise<string | null> {
   for (const name of ['index.ts', 'index.js', 'src/index.ts', 'src/index.js']) {
     const candidate = join(dir, name);
@@ -598,6 +613,7 @@ async function resolveEntry(storage: Storage, dir: string): Promise<string | nul
     const main = raw.main as string | undefined;
     if (main) {
       const candidate = join(dir, main);
+      if (!isContainedIn(candidate, dir)) return null;
       if (await storage.exists(candidate)) return candidate;
     }
   } catch {
@@ -609,15 +625,24 @@ async function resolveEntry(storage: Storage, dir: string): Promise<string | nul
 
 function resolveNpmEntry(pkg: Record<string, unknown>, dir: string): string | null {
   const main = pkg.main as string | undefined;
-  if (main) return join(dir, main);
+  if (main) {
+    const candidate = join(dir, main);
+    return isContainedIn(candidate, dir) ? candidate : null;
+  }
 
   const exports = pkg.exports as Record<string, unknown> | undefined;
   if (exports?.['.']) {
     const exp = exports['.'];
-    if (typeof exp === 'string') return join(dir, exp);
+    if (typeof exp === 'string') {
+      const candidate = join(dir, exp);
+      return isContainedIn(candidate, dir) ? candidate : null;
+    }
     if (typeof exp === 'object' && exp !== null) {
       const sub = exp as Record<string, string>;
-      return join(dir, sub.import ?? sub.default ?? sub.require ?? '');
+      const raw = sub.import ?? sub.default ?? sub.require ?? '';
+      if (!raw) return null;
+      const candidate = join(dir, raw);
+      return isContainedIn(candidate, dir) ? candidate : null;
     }
   }
 

@@ -14,6 +14,7 @@ import { Cron } from './pages/Cron';
 import { Eval } from './pages/Eval';
 import { Memory } from './pages/Memory';
 import { Mesh } from './pages/Mesh';
+import { OAuthCallback } from './pages/OAuthCallback';
 import { Onboarding } from './pages/Onboarding';
 import { Personalities } from './pages/Personalities';
 import { PersonalityCreate } from './pages/PersonalityCreate';
@@ -131,6 +132,7 @@ export function App() {
           <Route path="/setup/personality" element={<Onboarding startAtStep="personality" />} />
           <Route path="/setup/messaging" element={<Onboarding startAtStep="messaging" />} />
           <Route path="/signing-in" element={<SigningIn />} />
+          <Route path="/oauth/callback" element={<OAuthCallback />} />
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
       </main>
@@ -168,7 +170,12 @@ function useOnboardingRedirect(): void {
   useEffect(() => {
     if (isLoading || !data) return;
     if (data.step === 'done') return;
-    if (pathname === '/onboarding' || pathname.startsWith('/setup') || pathname === '/signing-in')
+    if (
+      pathname === '/onboarding' ||
+      pathname.startsWith('/setup') ||
+      pathname === '/signing-in' ||
+      pathname === '/oauth/callback'
+    )
       return;
     navigate('/onboarding', { replace: true });
   }, [data, isLoading, pathname, navigate]);

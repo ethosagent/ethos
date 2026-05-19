@@ -25,6 +25,7 @@ export interface CommandContext {
   memory?: MemoryReader;
   kanban?: KanbanReader;
   personalityCard?: PersonalityCardReader;
+  allowedUsers?: string[];
   submitAgentTurn?: (input: { channel: string; user: string; text: string }) => Promise<void>;
 }
 

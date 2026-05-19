@@ -438,8 +438,95 @@ export const McpServerInfoSchema = z.object({
   command: z.string().nullable(),
   /** SSE: the endpoint. */
   url: z.string().nullable(),
+  auth_status: z.enum(['none', 'authorized', 'expired', 'missing', 'pending']).nullable(),
+  created_via: z.enum(['cli', 'ui']).nullable(),
 });
 export type McpServerInfo = z.infer<typeof McpServerInfoSchema>;
+
+// ---------------------------------------------------------------------------
+// MCP install flow — v1
+// ---------------------------------------------------------------------------
+
+export const McpStartInputSchema = z.object({
+  url: z.string().url(),
+  name: z.string().min(1).max(64).optional(),
+});
+
+export const McpStartOutputSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    state: z.string(),
+    authorizeUrl: z.string(),
+    serverName: z.string(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    code: z.enum([
+      'discovery_failed',
+      'dcr_unsupported',
+      'dcr_failed',
+      'name_taken',
+      'webBaseUrl_missing',
+      'ssrf_blocked',
+    ]),
+    detail: z.string().optional(),
+  }),
+]);
+
+export const McpCompleteInputSchema = z.object({
+  code: z.string().optional(),
+  state: z.string(),
+  error: z.string().optional(),
+});
+
+export const McpCompleteOutputSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), serverName: z.string() }),
+  z.object({
+    ok: z.literal(false),
+    code: z.enum([
+      'missing_pending_cookie',
+      'expired_state',
+      'state_mismatch',
+      'code_exchange_failed',
+      'upstream_error',
+      'name_taken',
+      'addserver_failed',
+    ]),
+    detail: z.string().optional(),
+  }),
+]);
+
+export const McpStatusOutputSchema = z.object({
+  status: z.enum(['pending', 'connected', 'error', 'expired']),
+  serverName: z.string().optional(),
+  error: z.string().optional(),
+});
+
+export const McpCancelInputSchema = z.object({
+  state: z.string(),
+});
+
+export const McpAttachInputSchema = z.object({
+  serverName: z.string(),
+  personalityIds: z.array(z.string()),
+});
+
+export const McpAttachOutputSchema = z.object({
+  updated: z.array(z.string()),
+  failed: z.array(z.object({ id: z.string(), error: z.string() })),
+});
+
+export const McpDeleteInputSchema = z.object({
+  name: z.string(),
+});
+
+export const McpReconnectInputSchema = z.object({
+  name: z.string(),
+});
+
+export const McpListOutputSchema = z.object({
+  servers: z.array(McpServerInfoSchema),
+});
 
 // ---------------------------------------------------------------------------
 // Memory — v1

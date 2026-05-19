@@ -65,10 +65,31 @@ export function markdownToTelegramHtml(text: string): string {
   out = out.replace(/\|\|(.+?)\|\|/g, '<tg-spoiler>$1</tg-spoiler>');
 
   // Step 8: links [label](url) — the URL was already HTML-escaped in step 1,
-  // so &amp; in query strings is correct for HTML attributes.
-  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  // so &amp; in query strings is correct for HTML attributes. Only allow
+  // http(s) schemes; strip links with dangerous schemes (javascript:, data:,
+  // vbscript:, etc.) by rendering them as plain text.
+  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label: string, url: string) => {
+    if (isSafeUrl(url)) return `<a href="${url}">${label}</a>`;
+    return label;
+  });
 
   return out;
+}
+
+/**
+ * Validate that a URL uses a safe scheme (http or https). URLs with other
+ * schemes — javascript:, data:, vbscript:, etc. — are rejected. The check
+ * operates on already-HTML-escaped text, so `https:` appears as-is but
+ * `&amp;` in query strings is fine. Relative URLs (no scheme) and protocol-
+ * relative URLs (`//host/path`) are allowed — Telegram resolves them safely.
+ */
+function isSafeUrl(url: string): boolean {
+  // After HTML-escaping, the colon is unescaped, so scheme detection works
+  // on the raw escaped string. Match the scheme portion before the first `:`.
+  const colonIdx = url.indexOf(':');
+  if (colonIdx === -1) return true; // relative URL — no scheme
+  const scheme = url.slice(0, colonIdx).toLowerCase();
+  return scheme === 'http' || scheme === 'https';
 }
 
 /**

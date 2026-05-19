@@ -6,6 +6,7 @@ import type { CronScheduler } from '@ethosagent/cron';
 import type { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { SkillsLibrary } from '@ethosagent/skills';
 import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
+import { McpJsonStore, type McpManager } from '@ethosagent/tools-mcp';
 import type { GlobalMemoryStore, SecretsResolver, SessionStore, Storage } from '@ethosagent/types';
 import type { SseEvent } from '@ethosagent/web-contracts';
 import type { Hono } from 'hono';
@@ -27,6 +28,7 @@ import { CronService } from './services/cron.service';
 import { EvolverService } from './services/evolver.service';
 import { KanbanService } from './services/kanban.service';
 import { LabService } from './services/lab.service';
+import { McpService } from './services/mcp.service';
 import { MemoryService } from './services/memory.service';
 import { MeshService } from './services/mesh.service';
 import { OnboardingService } from './services/onboarding.service';
@@ -118,6 +120,19 @@ export interface CreateWebApiOptions {
    * models list reports only personalities + `ethos-default`.
    */
   listTeams?: () => Promise<string[]>;
+  /**
+   * McpManager instance for the MCP install flow. Boot code constructs
+   * and `connect()`s it; the web-api delegates to `McpService` which
+   * wraps `McpInstallFlow`. Omit when MCP is not part of this deployment
+   * — `mcp.start` returns `discovery_failed` gracefully.
+   */
+  mcpManager?: McpManager;
+  /**
+   * Base URL of the web UI (e.g. `http://localhost:3000`). Used to build
+   * the OAuth redirect URI for the MCP install flow. Defaults to
+   * `http://localhost:3000` when omitted.
+   */
+  webBaseUrl?: string;
 }
 
 export interface CreateWebApiResult {
@@ -180,6 +195,25 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // for v1; user-level only is the standard install path. Threading
   // `workingDir` from boot would be the next step when we add it.
   const pluginsService = new PluginsService({ storage, dataDir: opts.dataDir });
+  // MCP install flow — the service wraps McpInstallFlow (OAuth DCR dance)
+  // and delegates personality attachment back through PersonalitiesService.
+  // When mcpManager is omitted, a passive stub rejects mutations cleanly.
+  const mcpService = new McpService({
+    mcpManager: opts.mcpManager ?? createPassiveMcpManager(),
+    personalityUpdater: {
+      get: (id) => {
+        const d = opts.personalities.describe(id);
+        if (!d) return undefined;
+        return { id: d.config.id, mcp_servers: d.config.mcp_servers };
+      },
+      update: (id, patch) => personalitiesService.update(id, patch),
+    },
+    secrets,
+    mcpJsonStore: new McpJsonStore(storage),
+    redirectUri: opts.webBaseUrl
+      ? `${opts.webBaseUrl}/oauth/callback`
+      : 'http://localhost:3000/oauth/callback',
+  });
   const platformsService = new PlatformsService({ repo: platformsRepo });
   const labService = new LabService({ dataDir: opts.dataDir, loop: opts.agentLoop });
   // F3+F4 — drives `POST /v1/chat/completions`. Shares the AgentLoop with
@@ -279,6 +313,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       mesh: meshService,
       memory: memoryService,
       plugins: pluginsService,
+      mcp: mcpService,
       platforms: platformsService,
       lab: labService,
       kanban: kanbanService,
@@ -318,6 +353,26 @@ function createPassiveScheduler(): CronScheduler {
     start: () => {},
     stop: () => {},
   } as unknown as CronScheduler;
+}
+
+/**
+ * Stand-in for the McpManager when no real one is wired (e.g. tests,
+ * deployments where MCP isn't configured). addServer and removeServer
+ * throw a clear error; listServers returns empty.
+ */
+function createPassiveMcpManager(): McpManager {
+  const notConfigured = () => {
+    throw new Error('McpManager not configured for this server.');
+  };
+  return {
+    connect: async () => {},
+    disconnect: async () => {},
+    shutdown: async () => {},
+    getTools: () => [],
+    listServers: () => [],
+    addServer: async () => notConfigured(),
+    removeServer: async () => notConfigured(),
+  } as unknown as McpManager;
 }
 
 // Re-exports so boot code can read tokens / inspect contract surfaces directly.

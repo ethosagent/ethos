@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CapabilityBackends } from '@ethosagent/core';
 import { DefaultToolRegistry } from '@ethosagent/core';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { ToolContext, ToolResult } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createImageTools } from '../index';
@@ -64,6 +65,7 @@ function makeCtx(): ToolContext {
     abortSignal: new AbortController().signal,
     emit: vi.fn(),
     resultBudgetChars: 80_000,
+    storage: new FsStorage(),
   };
 }
 

@@ -38,9 +38,9 @@ describe('PlatformsRepository', () => {
 
     // Config holds only the indirection — never the plaintext.
     const yaml = await storage.read(join(DATA, 'config.yaml'));
-    expect(yaml).toContain('slackBotToken: ${secrets:slack/botToken}');
-    expect(yaml).toContain('slackAppToken: ${secrets:slack/appToken}');
-    expect(yaml).toContain('slackSigningSecret: ${secrets:slack/signingSecret}');
+    expect(yaml).toContain('slackBotToken: "${secrets:slack/botToken}"');
+    expect(yaml).toContain('slackAppToken: "${secrets:slack/appToken}"');
+    expect(yaml).toContain('slackSigningSecret: "${secrets:slack/signingSecret}"');
     expect(yaml).not.toContain('xoxb-1');
     expect(yaml).not.toContain('xapp-1');
     expect(yaml).not.toContain('shh');
@@ -82,7 +82,7 @@ describe('PlatformsRepository', () => {
     expect(yaml).not.toContain('slackBotToken');
     expect(yaml).not.toContain('slackAppToken');
     expect(yaml).not.toContain('slackSigningSecret');
-    expect(yaml).toContain('telegramToken: ${secrets:telegram/token}');
+    expect(yaml).toContain('telegramToken: "${secrets:telegram/token}"');
     expect(yaml).toContain('unrelatedKey: keep-me');
 
     expect(await secrets.get('slack/botToken')).toBeNull();
@@ -106,11 +106,11 @@ describe('PlatformsRepository', () => {
     const yaml = await storage.read(join(DATA, 'config.yaml'));
     expect(yaml).toContain('emailImapHost: imap.example.com');
     expect(yaml).toContain('emailImapPort: 993');
-    expect(yaml).toContain('emailUser: alice@example.com');
+    expect(yaml).toContain('emailUser: "alice@example.com"');
     expect(yaml).toContain('emailSmtpHost: smtp.example.com');
     expect(yaml).toContain('emailSmtpPort: 587');
     // Password is the only secret-shaped field.
-    expect(yaml).toContain('emailPassword: ${secrets:email/password}');
+    expect(yaml).toContain('emailPassword: "${secrets:email/password}"');
     expect(yaml).not.toContain('emailPassword: pw');
     expect(await secrets.get('email/password')).toBe('pw');
   });
@@ -153,7 +153,9 @@ describe('PlatformsRepository multi-bot telegram', () => {
 
     const yaml = await storage.read(join(DATA, 'config.yaml'));
     expect(yaml).toContain(`telegram.bots.0.id: ${bot.botKey}`);
-    expect(yaml).toContain(`telegram.bots.0.token: \${secrets:telegram/bots/${bot.botKey}/token}`);
+    expect(yaml).toContain(
+      `telegram.bots.0.token: "\${secrets:telegram/bots/${bot.botKey}/token}"`,
+    );
     expect(yaml).toContain('telegram.bots.0.bind.type: personality');
     expect(yaml).toContain('telegram.bots.0.bind.name: researcher');
     expect(yaml).not.toContain('123:ABC');
@@ -165,10 +167,10 @@ describe('PlatformsRepository multi-bot telegram', () => {
 
     const yaml = await storage.read(join(DATA, 'config.yaml'));
     expect(yaml).toContain(
-      `telegram.bots.0.token: \${secrets:telegram/bots/${first.botKey}/token}`,
+      `telegram.bots.0.token: "\${secrets:telegram/bots/${first.botKey}/token}"`,
     );
     expect(yaml).toContain(
-      `telegram.bots.1.token: \${secrets:telegram/bots/${second.botKey}/token}`,
+      `telegram.bots.1.token: "\${secrets:telegram/bots/${second.botKey}/token}"`,
     );
     expect(yaml).toContain('telegram.bots.1.bind.type: team');
     expect(await secrets.get(`telegram/bots/${first.botKey}/token`)).toBe('111:AAA');
@@ -220,7 +222,9 @@ describe('PlatformsRepository multi-bot telegram', () => {
 
     const yaml = await storage.read(join(DATA, 'config.yaml'));
     expect(yaml).toContain('telegramToken: legacy');
-    expect(yaml).toContain(`telegram.bots.0.token: \${secrets:telegram/bots/${bot.botKey}/token}`);
+    expect(yaml).toContain(
+      `telegram.bots.0.token: "\${secrets:telegram/bots/${bot.botKey}/token}"`,
+    );
   });
 
   it('listTelegramBots synthesizes a legacy entry from telegramToken when no multi-bot rows exist', async () => {
@@ -301,7 +305,9 @@ describe('PlatformsRepository multi-bot slack', () => {
 
     const yaml = await storage.read(join(DATA, 'config.yaml'));
     expect(yaml).toContain(`slack.apps.0.id: ${app.botKey}`);
-    expect(yaml).toContain(`slack.apps.0.botToken: \${secrets:slack/apps/${app.botKey}/botToken}`);
+    expect(yaml).toContain(
+      `slack.apps.0.botToken: "\${secrets:slack/apps/${app.botKey}/botToken}"`,
+    );
     expect(yaml).toContain('slack.apps.0.bind.type: personality');
     expect(yaml).not.toContain('xoxb-1');
     expect(yaml).not.toContain('shh');

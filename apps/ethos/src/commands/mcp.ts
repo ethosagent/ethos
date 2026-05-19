@@ -10,7 +10,6 @@
 //   ethos mcp presets           List available MCP server presets
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ClientAdapter } from '@ethosagent/mcp-server';
 import {
@@ -35,6 +34,8 @@ import {
 } from '@ethosagent/tools-mcp';
 import { ethosDir, readConfig } from '../config';
 import { createAgentLoop, getSecretsResolver, getStorage } from '../wiring';
+
+const mcpStore = new McpJsonStore(getStorage());
 
 const CLIENTS: ClientAdapter[] = [claudeDesktop, cursor, opencode, continueClient, zed];
 
@@ -328,46 +329,8 @@ function parseAddArgs(argv: string[]): {
   return { name, preset, url, env, command, args: extraArgs };
 }
 
-/**
- * Read ~/.ethos/mcp.json with explicit error reporting for malformed JSON or
- * a non-array root. Goes through Storage for I/O so tests can swap an
- * InMemoryStorage in; the parse and validation steps stay here because the
- * shared `McpJsonStore.list()` silently defaults to `[]` and the CLI wants
- * to refuse to run on a corrupt file rather than silently overwrite it.
- */
-async function readMcpJson(): Promise<McpServerConfig[] | null> {
-  const raw = await getStorage().read(mcpJsonPath());
-  if (raw === null) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    console.error(
-      `Error: ~/.ethos/mcp.json contains invalid JSON. Fix it manually before adding servers.`,
-    );
-    console.error(err instanceof Error ? err.message : String(err));
-    return null;
-  }
-  if (!Array.isArray(parsed)) {
-    console.error(
-      'Error: ~/.ethos/mcp.json must be a JSON array. Fix it manually before adding servers.',
-    );
-    return null;
-  }
-  return parsed as McpServerConfig[];
-}
-
-function mcpJsonPath(): string {
-  return join(homedir(), '.ethos', 'mcp.json');
-}
-
-/**
- * Append a new entry. Uses `McpJsonStore.upsert` so concurrent CLI + UI
- * writers serialize through the same atomic-write path.
- */
-async function appendMcpEntry(entry: McpServerConfig): Promise<void> {
-  const store = new McpJsonStore(getStorage(), mcpJsonPath());
-  await store.upsert(entry.name, entry);
+async function readMcpJson(): Promise<McpServerConfig[]> {
+  return mcpStore.read();
 }
 
 async function runAdd(argv: string[]): Promise<void> {
@@ -380,10 +343,6 @@ async function runAdd(argv: string[]): Promise<void> {
 
   // Check for duplicate name
   const existing = await readMcpJson();
-  if (!existing) {
-    process.exitCode = 1;
-    return;
-  }
   if (existing.some((s) => s.name === parsed.name)) {
     console.error(`MCP server '${parsed.name}' already exists in ~/.ethos/mcp.json`);
     console.error('Remove it first or choose a different name.');
@@ -430,7 +389,7 @@ async function runAdd(argv: string[]): Promise<void> {
     if (!urlResult) return;
     entry = urlResult.entry;
 
-    await appendMcpEntry(entry);
+    await mcpStore.upsert(entry.name, entry);
 
     const secrets = await getSecretsResolver();
     await storeTokens(parsed.name, urlResult.tokens, secrets);
@@ -450,7 +409,7 @@ async function runAdd(argv: string[]): Promise<void> {
     return;
   }
 
-  await appendMcpEntry(entry);
+  await mcpStore.upsert(entry.name, entry);
   console.log(`Added MCP server '${parsed.name}' to ~/.ethos/mcp.json`);
 }
 
@@ -647,10 +606,6 @@ async function runRegistryInstall(argv: string[]): Promise<void> {
   const name = packageName.replace(/^@[^/]+\//, '').replace(/^server-/, '');
 
   const existing = await readMcpJson();
-  if (!existing) {
-    process.exitCode = 1;
-    return;
-  }
   if (existing.some((s) => s.name === name)) {
     console.error(`Server '${name}' already exists.`);
     process.exitCode = 1;
@@ -664,7 +619,7 @@ async function runRegistryInstall(argv: string[]): Promise<void> {
     args: ['-y', packageName],
   };
 
-  await appendMcpEntry(entry);
+  await mcpStore.upsert(entry.name, entry);
   console.log(`Installed '${name}' (${packageName}) to ~/.ethos/mcp.json`);
 }
 
@@ -681,10 +636,6 @@ async function runLogin(argv: string[]): Promise<void> {
   }
 
   const configs = await readMcpJson();
-  if (!configs) {
-    process.exitCode = 1;
-    return;
-  }
 
   const config = configs.find((c) => c.name === serverName);
   if (!config) {
@@ -720,10 +671,6 @@ async function runLogout(argv: string[]): Promise<void> {
   }
 
   const configs = await readMcpJson();
-  if (!configs) {
-    process.exitCode = 1;
-    return;
-  }
 
   const config = configs.find((c) => c.name === serverName);
   if (!config) {

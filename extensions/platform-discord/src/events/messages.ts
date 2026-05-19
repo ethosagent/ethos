@@ -8,6 +8,9 @@ import type { ThreadStateStore } from '../store/thread-state';
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 
+/** Known Discord CDN hosts for attachment downloads. */
+const DISCORD_CDN_HOSTS = new Set(['cdn.discordapp.com', 'media.discordapp.net']);
+
 const IMAGE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
 const SKIP_EXTS = new Set(['exe', 'dll', 'so', 'dylib']);
@@ -127,6 +130,15 @@ async function downloadAttachments(
     const type = classifyAttachmentType(attachment.contentType, attachment.name ?? undefined);
 
     try {
+      // SSRF gate: only fetch from known Discord CDN hosts
+      let attachmentHost: string;
+      try {
+        attachmentHost = new URL(attachment.url).hostname.toLowerCase();
+      } catch {
+        continue;
+      }
+      if (!DISCORD_CDN_HOSTS.has(attachmentHost)) continue;
+
       const resp = await fetch(attachment.url);
       if (!resp.ok) continue;
       const buffer = Buffer.from(await resp.arrayBuffer());

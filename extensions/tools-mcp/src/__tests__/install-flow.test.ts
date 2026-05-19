@@ -18,7 +18,6 @@ import type {
   PersonalityConfig,
   PersonalityRegistry,
   PersonalityRegistryPatch,
-  Storage,
 } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { McpInstallFlowOptions, McpServerConfig } from '../index';
@@ -215,10 +214,9 @@ async function makeHarness(overrides: Partial<McpInstallFlowOptions> = {}): Prom
   const flow = new McpInstallFlow({
     mcpManager: manager as unknown as McpManager,
     secrets,
-    storage: storage as Storage,
-    personalityRegistry: registry,
+    personalityUpdater: registry,
     redirectUri: REDIRECT_URI,
-    mcpJsonKey: MCP_JSON_PATH,
+    mcpJsonStore: jsonStore,
     now: () => clock.now,
     ...overrides,
   });
@@ -272,7 +270,7 @@ describe('McpInstallFlow.start', () => {
       },
     });
 
-    expect(await flow.getStatus(result.state)).toBe('pending');
+    expect(flow.getStatus(result.state)).toBe('pending');
   });
 
   it('uses an explicit name argument when supplied', async () => {
@@ -290,7 +288,7 @@ describe('McpInstallFlow.start', () => {
 
     expect(await jsonStore.list()).toEqual([]);
     // Pending map is empty; an unknown state returns 'expired'.
-    expect(await flow.getStatus('anything')).toBe('expired');
+    expect(flow.getStatus('anything')).toBe('expired');
   });
 
   it('DcrUnsupported when registration_endpoint is missing; no placeholder', async () => {
@@ -372,7 +370,7 @@ describe('McpInstallFlow.complete', () => {
     });
     expect(await secrets.get(`mcp/${serverName}/access_token`)).toBe(TOKEN_OK.access_token);
     expect(await secrets.get(`mcp/${serverName}/refresh_token`)).toBe(TOKEN_OK.refresh_token);
-    expect(await flow.getStatus(state)).toBe('connected');
+    expect(flow.getStatus(state)).toBe('connected');
   });
 
   it('NOT_FOUND for an unknown state', async () => {
@@ -397,7 +395,7 @@ describe('McpInstallFlow.complete', () => {
     expect(manager.added).toHaveLength(0);
     expect(await jsonStore.get(serverName)).toBeNull();
     expect(await secrets.get(`mcp/${serverName}/access_token`)).toBeNull();
-    expect(await flow.getStatus(state)).toBe('expired');
+    expect(flow.getStatus(state)).toBe('expired');
   });
 
   it('rolls back placeholder + tokens when secrets.set throws', async () => {
@@ -420,10 +418,9 @@ describe('McpInstallFlow.complete', () => {
     const flow = new McpInstallFlow({
       mcpManager: manager as unknown as McpManager,
       secrets: failingSecrets,
-      storage,
-      personalityRegistry: registry,
+      personalityUpdater: registry,
       redirectUri: REDIRECT_URI,
-      mcpJsonKey: MCP_JSON_PATH,
+      mcpJsonStore: jsonStore,
     });
     const script = makeFetchScript();
     installFetchStub(script);
@@ -485,7 +482,7 @@ describe('McpInstallFlow.cancel', () => {
     await flow.cancel(state);
 
     expect(await jsonStore.get(serverName)).toBeNull();
-    expect(await flow.getStatus(state)).toBe('expired');
+    expect(flow.getStatus(state)).toBe('expired');
   });
 
   it('no-op for an unknown state', async () => {
@@ -514,7 +511,7 @@ describe('McpInstallFlow.cancel', () => {
 describe('McpInstallFlow.getStatus', () => {
   it("returns 'expired' for unknown state", async () => {
     const { flow } = await makeHarness();
-    expect(await flow.getStatus('nope')).toBe('expired');
+    expect(flow.getStatus('nope')).toBe('expired');
   });
 
   it("'pending' immediately after start; 'connected' after complete", async () => {
@@ -522,11 +519,11 @@ describe('McpInstallFlow.getStatus', () => {
     scriptHappyDiscoveryAndDcr(script);
     const { state } = await flow.start({ mcpUrl: MCP_URL });
 
-    expect(await flow.getStatus(state)).toBe('pending');
+    expect(flow.getStatus(state)).toBe('pending');
 
     scriptHappyTokenExchange(script);
     await flow.complete({ code: 'auth', state });
-    expect(await flow.getStatus(state)).toBe('connected');
+    expect(flow.getStatus(state)).toBe('connected');
   });
 
   it("drops a terminal session after terminalRetentionMs elapses → 'expired'", async () => {
@@ -536,10 +533,10 @@ describe('McpInstallFlow.getStatus', () => {
     scriptHappyTokenExchange(script);
     await flow.complete({ code: 'auth', state });
 
-    expect(await flow.getStatus(state)).toBe('connected');
+    expect(flow.getStatus(state)).toBe('connected');
     // Advance the clock past the retention window.
     clock.now = new Date(clock.now.getTime() + 6_000);
-    expect(await flow.getStatus(state)).toBe('expired');
+    expect(flow.getStatus(state)).toBe('expired');
   });
 
   it('eager-on-touch sweep drops expired pending sessions', async () => {
@@ -549,7 +546,7 @@ describe('McpInstallFlow.getStatus', () => {
 
     clock.now = new Date(clock.now.getTime() + 2_000);
     // Any method call triggers the sweep.
-    expect(await flow.getStatus(state)).toBe('expired');
+    expect(flow.getStatus(state)).toBe('expired');
   });
 });
 
@@ -564,7 +561,7 @@ describe('McpInstallFlow.attachToPersonalities', () => {
     reg.define({ id: 'p3', name: 'P3' });
   }
 
-  it('updates all matching personalities and returns them in `attached`', async () => {
+  it('updates all matching personalities and returns them in `updated`', async () => {
     const { flow, registry } = await makeHarness();
     seedPersonalities(registry);
 
@@ -573,7 +570,7 @@ describe('McpInstallFlow.attachToPersonalities', () => {
       personalityIds: ['p1', 'p2', 'p3'],
     });
 
-    expect(result.attached.sort()).toEqual(['p1', 'p2', 'p3']);
+    expect(result.updated.sort()).toEqual(['p1', 'p2', 'p3']);
     expect(result.failed).toEqual([]);
     expect(registry.personalities.get('p1')?.mcp_servers).toEqual(['linear']);
     expect(registry.personalities.get('p2')?.mcp_servers).toEqual(['existing', 'linear']);
@@ -590,8 +587,8 @@ describe('McpInstallFlow.attachToPersonalities', () => {
       personalityIds: ['p1', 'p2', 'p3'],
     });
 
-    expect(result.attached.sort()).toEqual(['p1', 'p3']);
-    expect(result.failed).toEqual([{ id: 'p2', reason: 'disk full' }]);
+    expect(result.updated.sort()).toEqual(['p1', 'p3']);
+    expect(result.failed).toEqual([{ id: 'p2', error: 'disk full' }]);
     expect(registry.personalities.get('p1')?.mcp_servers).toEqual(['linear']);
     expect(registry.personalities.get('p3')?.mcp_servers).toEqual(['linear']);
   });
@@ -605,7 +602,7 @@ describe('McpInstallFlow.attachToPersonalities', () => {
       personalityIds: ['p1'],
     });
 
-    expect(result.attached).toEqual(['p1']);
+    expect(result.updated).toEqual(['p1']);
     expect(result.failed).toEqual([]);
     expect(registry.personalities.get('p1')?.mcp_servers).toEqual(['linear', 'github']);
     // Update was NOT called (idempotent short-circuit).
@@ -620,8 +617,8 @@ describe('McpInstallFlow.attachToPersonalities', () => {
       serverName: 'linear',
       personalityIds: ['p1', 'ghost'],
     });
-    expect(result.attached).toEqual(['p1']);
-    expect(result.failed).toEqual([{ id: 'ghost', reason: "Personality 'ghost' not found" }]);
+    expect(result.updated).toEqual(['p1']);
+    expect(result.failed).toEqual([{ id: 'ghost', error: "Personality 'ghost' not found" }]);
   });
 });
 

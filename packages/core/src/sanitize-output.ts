@@ -30,6 +30,14 @@ const ANSI_RE = new RegExp(
   'g',
 );
 
+const MAX_STRIP_ITERATIONS = 10;
+
 export function stripAnsiEscapes(input: string): string {
-  return input.replace(ANSI_RE, '');
+  let result = input;
+  for (let i = 0; i < MAX_STRIP_ITERATIONS; i++) {
+    const next = result.replace(ANSI_RE, '');
+    if (next === result) return next;
+    result = next;
+  }
+  return result;
 }

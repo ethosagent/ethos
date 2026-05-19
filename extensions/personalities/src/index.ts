@@ -534,12 +534,12 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     let nameSet = false;
     for (let i = 0; i < lines.length; i++) {
       if (/^name:\s*/.test(lines[i] ?? '')) {
-        lines[i] = `name: ${newName}`;
+        lines[i] = `name: ${yamlScalar(newName)}`;
         nameSet = true;
         break;
       }
     }
-    if (!nameSet) lines.unshift(`name: ${newName}`);
+    if (!nameSet) lines.unshift(`name: ${yamlScalar(newName)}`);
     await this.storage.write(path, lines.join('\n'));
   }
 
@@ -959,12 +959,14 @@ function renderConfigYaml(input: CreatePersonalityInput): string {
   if (input.description) lines.push(`description: ${yamlScalar(input.description)}`);
   if (input.provider) lines.push(`provider: ${yamlScalar(input.provider)}`);
   if (input.model) lines.push(`model: ${yamlScalar(input.model)}`);
-  if (input.memoryScope) lines.push(`memoryScope: ${input.memoryScope}`);
+  if (input.memoryScope) lines.push(`memoryScope: ${yamlScalar(input.memoryScope)}`);
   if (input.capabilities !== undefined && input.capabilities.length > 0) {
-    lines.push(`capabilities: ${input.capabilities.join(', ')}`);
+    lines.push(`capabilities: ${input.capabilities.map(yamlScalar).join(', ')}`);
   }
-  if (input.mcp_servers !== undefined) lines.push(`mcp_servers: ${input.mcp_servers.join(' ')}`);
-  if (input.plugins !== undefined) lines.push(`plugins: ${input.plugins.join(' ')}`);
+  if (input.mcp_servers !== undefined)
+    lines.push(`mcp_servers: ${input.mcp_servers.map(yamlScalar).join(' ')}`);
+  if (input.plugins !== undefined)
+    lines.push(`plugins: ${input.plugins.map(yamlScalar).join(' ')}`);
   if (input.fs_reach?.read !== undefined && input.fs_reach.read.length > 0) {
     lines.push(`fs_reach.read: ${input.fs_reach.read.join(', ')}`);
   }

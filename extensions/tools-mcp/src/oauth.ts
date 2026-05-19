@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { validateUrl as validateSsrfUrl } from '@ethosagent/core';
 import type { SecretsResolver } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -177,11 +178,50 @@ export async function isTokenExpired(
 }
 
 // ---------------------------------------------------------------------------
+// OAuth state store (single-use, time-limited)
+// ---------------------------------------------------------------------------
+
+const STATE_TTL_MS = 300_000; // 5 minutes
+
+interface PendingState {
+  createdAt: number;
+}
+
+const pendingStates = new Map<string, PendingState>();
+
+/** Store a state value before redirecting to the auth provider. */
+export function registerOAuthState(state: string): void {
+  pendingStates.set(state, { createdAt: Date.now() });
+}
+
+/** Validate and consume a state value returned by the callback. Returns true if valid. */
+export function consumeOAuthState(state: string): boolean {
+  const entry = pendingStates.get(state);
+  if (!entry) return false;
+  pendingStates.delete(state);
+  if (Date.now() - entry.createdAt > STATE_TTL_MS) return false;
+  return true;
+}
+
+/** Remove expired entries (housekeeping, called on each callback). */
+function pruneExpiredStates(): void {
+  const now = Date.now();
+  for (const [key, entry] of pendingStates) {
+    if (now - entry.createdAt > STATE_TTL_MS) {
+      pendingStates.delete(key);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Local callback listener
 // ---------------------------------------------------------------------------
 
+const CALLBACK_PATH = '/oauth/callback';
+
 export interface CallbackResult {
   port: number;
+  redirectUri: string;
   resultPromise: Promise<{ code: string; state: string | null }>;
   close: () => void;
 }
@@ -204,9 +244,24 @@ export async function startCallbackServer(): Promise<CallbackResult> {
         return;
       }
 
+      // Restrict to GET method only (OAuth callbacks are always GET redirects)
+      if (req.method !== 'GET') {
+        res.writeHead(405);
+        res.end('Method not allowed');
+        return;
+      }
+
       const url = new URL(req.url ?? '/', `http://127.0.0.1`);
+
+      // Restrict to the exact callback path
+      if (url.pathname !== CALLBACK_PATH) {
+        res.writeHead(404);
+        res.end('Not found');
+        return;
+      }
+
       const code = url.searchParams.get('code');
-      const callbackState = url.searchParams.get('state');
+      const state = url.searchParams.get('state');
       const error = url.searchParams.get('error');
 
       if (error) {
@@ -226,12 +281,20 @@ export async function startCallbackServer(): Promise<CallbackResult> {
         return;
       }
 
+      // Validate the state parameter (CSRF protection)
+      pruneExpiredStates();
+      if (!state || !consumeOAuthState(state)) {
+        res.writeHead(400);
+        res.end('Invalid or expired state parameter');
+        return;
+      }
+
       settled = true;
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(
         '<html><body><h1>Authorization successful</h1><p>You may close this tab.</p></body></html>',
       );
-      resolveResult({ code, state: callbackState });
+      resolveResult({ code, state });
       closeServer();
     });
 
@@ -256,6 +319,7 @@ export async function startCallbackServer(): Promise<CallbackResult> {
       }
       resolveServer({
         port: addr.port,
+        redirectUri: `http://127.0.0.1:${addr.port}${CALLBACK_PATH}`,
         resultPromise,
         close: closeServer,
       });
@@ -301,6 +365,9 @@ export async function exchangeCode(
   redirectUri: string,
   codeVerifier: string,
 ): Promise<TokenSet> {
+  // SSRF gate: validate token endpoint before sending credentials
+  validateSsrfUrl(config.token_endpoint);
+
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
@@ -343,6 +410,9 @@ export async function refreshToken(
   config: OAuthConfig,
   secrets: SecretsResolver,
 ): Promise<string> {
+  // SSRF gate: validate token endpoint before sending credentials
+  validateSsrfUrl(config.token_endpoint);
+
   // Single read — no exists() check first (TOCTOU-safe)
   const currentRefreshToken = await secrets.get(refreshTokenRef(serverName));
   if (!currentRefreshToken) {
@@ -397,6 +467,8 @@ export async function revokeToken(
   secrets: SecretsResolver,
 ): Promise<void> {
   if (config.revocation_endpoint) {
+    // SSRF gate: validate revocation endpoint before sending token
+    validateSsrfUrl(config.revocation_endpoint);
     const token = await secrets.get(accessTokenRef(serverName));
     if (token) {
       const body = new URLSearchParams({
@@ -581,6 +653,9 @@ export async function runDcrAuthorization(
     const challenge = generateCodeChallenge(verifier);
     const state = randomBytes(16).toString('base64url');
 
+    // Register state for CSRF validation before redirecting
+    registerOAuthState(state);
+
     const authUrl = buildAuthorizationUrl(oauthConfig, redirectUri, state, challenge);
 
     if (onAuthUrl) {
@@ -617,7 +692,10 @@ export async function runPkceLogin(
   const state = randomBytes(16).toString('base64url');
 
   const callback = await startCallbackServer();
-  const redirectUri = `http://127.0.0.1:${callback.port}`;
+  const redirectUri = callback.redirectUri;
+
+  // Register state for CSRF validation before redirecting
+  registerOAuthState(state);
 
   const authUrl = buildAuthorizationUrl(config, redirectUri, state, challenge);
 

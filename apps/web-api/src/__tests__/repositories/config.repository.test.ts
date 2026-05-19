@@ -38,7 +38,7 @@ describe('ConfigRepository', () => {
     // Update an unrelated field — dotted keys must survive
     await repo.update({ model: 'claude-opus-4-7' });
     const yaml = await storage.read(join(DATA, 'config.yaml'));
-    expect(yaml).toContain('telegram.bots.0.token: 123:ABC');
+    expect(yaml).toContain('telegram.bots.0.token: "123:ABC"');
     expect(yaml).toContain('telegram.bots.1.bind.name: eng');
   });
 

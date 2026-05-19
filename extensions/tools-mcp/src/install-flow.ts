@@ -34,15 +34,10 @@
 // sessions and expired terminal sessions are dropped from the map.
 
 import { randomBytes } from 'node:crypto';
-import type {
-  PersonalityRegistry,
-  PersonalityRegistryPatch,
-  SecretsResolver,
-  Storage,
-} from '@ethosagent/types';
+import type { SecretsResolver } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
-import type { McpServerConfig, McpServerInfo } from './index';
-import { McpJsonStore, type McpManager } from './index';
+import type { McpManager, McpServerConfig, McpServerInfo } from './index';
+import type { McpJsonStore } from './mcp-json-store';
 import {
   buildAuthorizationUrl,
   type DcrResponse,
@@ -86,8 +81,17 @@ export interface AttachToPersonalitiesOptions {
 }
 
 export interface AttachToPersonalitiesResult {
-  attached: string[];
-  failed: { id: string; reason: string }[];
+  /**
+   * Personality ids that now reference this MCP server. Named `updated` (not
+   * `attached`) to match the `web-contracts` `McpAttachOutputSchema` exactly.
+   */
+  updated: string[];
+  /**
+   * Personalities that could not be updated. `error` (not `reason`) matches
+   * the web contract; the payload is a sanitized message safe to surface in
+   * the UI.
+   */
+  failed: { id: string; error: string }[];
 }
 
 interface PendingSession {
@@ -113,15 +117,23 @@ interface PendingSession {
   connectedAt?: Date;
 }
 
+/**
+ * Narrow personality-update interface used by `attachToPersonalities`. Kept
+ * local so the install-flow does not need to depend on the full
+ * `PersonalityRegistry` interface from `@ethosagent/types`. The web-api
+ * (`apps/web-api/src/index.ts`) constructs a literal that satisfies this.
+ */
+export interface PersonalityUpdater {
+  get(id: string): { id: string; mcp_servers?: string[] } | undefined;
+  update(id: string, patch: { mcp_servers?: string[] }): Promise<unknown>;
+}
+
 export interface McpInstallFlowOptions {
   mcpManager: McpManager;
   secrets: SecretsResolver;
-  storage: Storage;
-  personalityRegistry: PersonalityRegistry;
+  personalityUpdater: PersonalityUpdater;
+  mcpJsonStore: McpJsonStore;
   redirectUri: string;
-  /** Storage key for `mcp.json`. Defaults to the platform-standard
-   *  `~/.ethos/mcp.json` path inside `McpJsonStore`. */
-  mcpJsonKey?: string;
   /** Mid-flight TTL for pending sessions. Default 10 min. */
   pendingTtlMs?: number;
   /** Retention window after a session reaches a terminal state
@@ -132,14 +144,16 @@ export interface McpInstallFlowOptions {
   now?: () => Date;
 }
 
+/** @deprecated Retained for backward compatibility with earlier wiring. */
+export type McpInstallFlowDeps = McpInstallFlowOptions;
+
 const DEFAULT_PENDING_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_TERMINAL_RETENTION_MS = 60 * 1000;
 
 export class McpInstallFlow {
   private readonly mcpManager: McpManager;
   private readonly secrets: SecretsResolver;
-  private readonly storage: Storage;
-  private readonly personalityRegistry: PersonalityRegistry;
+  private readonly personalityUpdater: PersonalityUpdater;
   private readonly redirectUri: string;
   private readonly mcpJsonStore: McpJsonStore;
   private readonly pendingTtlMs: number;
@@ -150,13 +164,9 @@ export class McpInstallFlow {
   constructor(opts: McpInstallFlowOptions) {
     this.mcpManager = opts.mcpManager;
     this.secrets = opts.secrets;
-    this.storage = opts.storage;
-    this.personalityRegistry = opts.personalityRegistry;
+    this.personalityUpdater = opts.personalityUpdater;
     this.redirectUri = opts.redirectUri;
-    this.mcpJsonStore =
-      opts.mcpJsonKey === undefined
-        ? new McpJsonStore(opts.storage)
-        : new McpJsonStore(opts.storage, opts.mcpJsonKey);
+    this.mcpJsonStore = opts.mcpJsonStore;
     this.pendingTtlMs =
       opts.pendingTtlMs === undefined ? DEFAULT_PENDING_TTL_MS : opts.pendingTtlMs;
     this.terminalRetentionMs =
@@ -192,7 +202,10 @@ export class McpInstallFlow {
         code: 'INVALID_INPUT',
         cause: `MCP server '${serverName}' already exists in mcp.json`,
         action: 'Pick a different `name`, or remove the existing entry first.',
-        details: { serverName },
+        // `kind: 'name_taken'` is a wire-stable discriminator the web-api
+        // service uses to map this to a UI error code. Kept in `details` so
+        // it does not collide with EthosError's typed `code` field.
+        details: { serverName, kind: 'name_taken' },
       });
     }
     for (const session of this.pending.values()) {
@@ -201,7 +214,7 @@ export class McpInstallFlow {
           code: 'INVALID_INPUT',
           cause: `An install flow for '${serverName}' is already in progress`,
           action: 'Cancel the existing flow or wait for it to complete.',
-          details: { serverName },
+          details: { serverName, kind: 'name_taken' },
         });
       }
     }
@@ -303,7 +316,7 @@ export class McpInstallFlow {
         code: 'NOT_FOUND',
         cause: 'No pending OAuth install flow for the supplied state',
         action: 'Restart the install flow from the UI.',
-        details: { state: redactState(opts.state) },
+        details: { state: redactState(opts.state), kind: 'expired_state' },
       });
     }
 
@@ -312,7 +325,11 @@ export class McpInstallFlow {
         code: 'INVALID_INPUT',
         cause: `Install flow for '${session.serverName}' is not pending (status=${session.status})`,
         action: 'Restart the install flow from the UI.',
-        details: { serverName: session.serverName, status: session.status },
+        details: {
+          serverName: session.serverName,
+          status: session.status,
+          kind: 'already_completed',
+        },
       });
     }
 
@@ -327,7 +344,7 @@ export class McpInstallFlow {
         code: 'INVALID_INPUT',
         cause: `Install flow for '${session.serverName}' has expired`,
         action: 'Restart the install flow from the UI.',
-        details: { serverName: session.serverName },
+        details: { serverName: session.serverName, kind: 'expired_state' },
       });
     }
 
@@ -388,7 +405,7 @@ export class McpInstallFlow {
     return { serverName: session.serverName };
   }
 
-  async getStatus(state: string): Promise<InstallFlowStatus> {
+  getStatus(state: string): InstallFlowStatus {
     this.sweep();
 
     const session = this.pending.get(state);
@@ -426,8 +443,8 @@ export class McpInstallFlow {
   ): Promise<AttachToPersonalitiesResult> {
     this.sweep();
 
-    const attached: string[] = [];
-    const failed: { id: string; reason: string }[] = [];
+    const updated: string[] = [];
+    const failed: { id: string; error: string }[] = [];
 
     // NOT atomic across personalities. Concurrent updates to the same
     // personality from another tab race against this method; last write wins.
@@ -435,39 +452,31 @@ export class McpInstallFlow {
     // is out of scope.
     for (const personalityId of opts.personalityIds) {
       try {
-        const current = this.personalityRegistry.get(personalityId);
+        const current = this.personalityUpdater.get(personalityId);
         if (!current) {
-          failed.push({ id: personalityId, reason: `Personality '${personalityId}' not found` });
+          failed.push({ id: personalityId, error: `Personality '${personalityId}' not found` });
           continue;
         }
 
         const currentServers = current.mcp_servers ?? [];
         if (currentServers.includes(opts.serverName)) {
           // Already attached — idempotent no-op for this personality.
-          attached.push(personalityId);
+          updated.push(personalityId);
           continue;
         }
         const nextServers = [...currentServers, opts.serverName];
 
-        if (!this.personalityRegistry.update) {
-          failed.push({
-            id: personalityId,
-            reason: 'PersonalityRegistry does not support update',
-          });
-          continue;
-        }
-        const patch: PersonalityRegistryPatch = { mcp_servers: nextServers };
-        await this.personalityRegistry.update(personalityId, patch);
-        attached.push(personalityId);
+        await this.personalityUpdater.update(personalityId, { mcp_servers: nextServers });
+        updated.push(personalityId);
       } catch (err) {
         failed.push({
           id: personalityId,
-          reason: err instanceof Error ? err.message : String(err),
+          error: err instanceof Error ? err.message : String(err),
         });
       }
     }
 
-    return { attached, failed };
+    return { updated, failed };
   }
 
   listServers(): McpServerInfo[] {

@@ -412,6 +412,7 @@ describe('DefaultToolRegistry', () => {
     expect(spy).not.toHaveBeenCalled();
     expect(results).toHaveLength(1);
     const r = results[0];
+    expect(r).toBeDefined();
     if (!r) throw new Error('expected results[0]');
     expect(r.result.ok).toBe(true);
     if (r.result.ok) {

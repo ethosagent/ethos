@@ -1,20 +1,25 @@
 import { noopLogger } from '@ethosagent/logger';
-import type { Logger, TeamManifest, TeamMember } from '@ethosagent/types';
+import { isSafePathSegment } from '@ethosagent/storage-fs';
+import type { Logger, TeamManifest } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
-const TeamMemberSchema: z.ZodType<TeamMember> = z.object({
-  personality: z.string().min(1),
+const TeamMemberSchema = z.object({
+  personality: z.string().min(1).refine(isSafePathSegment, {
+    message: 'personality must not contain path separators, "..", or start with "."',
+  }),
   port: z.number().int().positive().optional(),
   capabilities: z.array(z.string()).optional(),
   auto_restart: z.boolean().optional(),
   role: z.enum(['coordinator', 'member']).optional(),
 });
 
-const TeamManifestSchema: z.ZodType<TeamManifest> = z
+const TeamManifestSchema = z
   .object({
-    name: z.string().min(1),
+    name: z.string().min(1).refine(isSafePathSegment, {
+      message: 'team name must not contain path separators, "..", or start with "."',
+    }),
     // Allow empty string so draft manifests (created by `ethos team create`)
     // pass parse; validate non-empty at start time via validateForStart().
     description: z.string(),

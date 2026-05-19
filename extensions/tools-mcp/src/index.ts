@@ -30,7 +30,9 @@ export type {
   CompleteOptions,
   CompleteResult,
   InstallFlowStatus,
+  McpInstallFlowDeps,
   McpInstallFlowOptions,
+  PersonalityUpdater,
   StartOptions,
   StartResult,
 } from './install-flow';
@@ -809,6 +811,9 @@ export class McpManager {
    */
   async addServer(config: McpServerConfig): Promise<void> {
     await this._serialize(async () => {
+      if (this._clients.some((c) => c.name === config.name)) {
+        throw new Error(`MCP server '${config.name}' is already registered`);
+      }
       const client = this._buildClient(config);
       let connected = false;
       try {

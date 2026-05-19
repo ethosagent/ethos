@@ -259,17 +259,21 @@ function scaffoldPersonalityTool(storage: Storage, toolRegistry: ToolRegistry): 
 
       const base = join(homedir(), '.ethos', 'personalities', args.id);
 
-      // Serialize config.yaml
-      const configLines: string[] = [`name: ${args.config.name}`];
-      if (args.config.description) configLines.push(`description: ${args.config.description}`);
-      if (args.config.model) configLines.push(`model: ${args.config.model}`);
-      if (args.config.provider) configLines.push(`provider: ${args.config.provider}`);
-      if (args.config.memoryScope) configLines.push(`memoryScope: ${args.config.memoryScope}`);
-      if (args.config.capabilities) configLines.push(`capabilities: ${args.config.capabilities}`);
+      // Serialize config.yaml — all values go through yamlScalar to
+      // prevent newline injection that could add fs_reach or other keys.
+      const configLines: string[] = [`name: ${yamlScalar(args.config.name)}`];
+      if (args.config.description)
+        configLines.push(`description: ${yamlScalar(args.config.description)}`);
+      if (args.config.model) configLines.push(`model: ${yamlScalar(args.config.model)}`);
+      if (args.config.provider) configLines.push(`provider: ${yamlScalar(args.config.provider)}`);
+      if (args.config.memoryScope)
+        configLines.push(`memoryScope: ${yamlScalar(args.config.memoryScope)}`);
+      if (args.config.capabilities)
+        configLines.push(`capabilities: ${yamlScalar(args.config.capabilities)}`);
       const configYaml = `${configLines.join('\n')}\n`;
 
       // Serialize toolset.yaml
-      const toolsetYaml = `${args.toolset.map((t) => `- ${t}`).join('\n')}\n`;
+      const toolsetYaml = `${args.toolset.map((t) => `- ${yamlScalar(t)}`).join('\n')}\n`;
 
       // Write files atomically
       await storage.mkdir(base);
@@ -416,30 +420,45 @@ interface ScaffoldTeamArgs {
   }>;
 }
 
+/** Escape a value for safe YAML scalar emission. If the value contains
+ *  characters that could alter YAML structure (colons, newlines, special
+ *  chars, leading/trailing whitespace), wrap it in JSON-style double
+ *  quotes. Prevents newline injection that could create new top-level
+ *  keys (e.g. injecting `fs_reach` for privilege escalation). */
+function yamlScalar(value: string): string {
+  if (/[:\n\r#[\]{}&*!|>'"%@`]/.test(value) || value.trim() !== value) {
+    return JSON.stringify(value);
+  }
+  return value;
+}
+
 function serializeTeamYaml(args: ScaffoldTeamArgs): string {
-  const lines: string[] = [`name: ${args.name}`, `description: ${args.description}`];
+  const lines: string[] = [
+    `name: ${yamlScalar(args.name)}`,
+    `description: ${yamlScalar(args.description)}`,
+  ];
 
   const caps = args.domain_capabilities ?? [];
   if (caps.length === 0) {
     lines.push('domain_capabilities: []');
   } else {
     lines.push('domain_capabilities:');
-    for (const cap of caps) lines.push(`  - ${cap}`);
+    for (const cap of caps) lines.push(`  - ${yamlScalar(cap)}`);
   }
 
-  if (args.dispatch_mode) lines.push(`dispatch_mode: ${args.dispatch_mode}`);
-  if (args.coordinator) lines.push(`coordinator: ${args.coordinator}`);
+  if (args.dispatch_mode) lines.push(`dispatch_mode: ${yamlScalar(args.dispatch_mode)}`);
+  if (args.coordinator) lines.push(`coordinator: ${yamlScalar(args.coordinator)}`);
 
   if (args.members.length === 0) {
     lines.push('members: []');
   } else {
     lines.push('members:');
     for (const m of args.members) {
-      lines.push(`  - personality: ${m.personality}`);
-      if (m.role) lines.push(`    role: ${m.role}`);
+      lines.push(`  - personality: ${yamlScalar(m.personality)}`);
+      if (m.role) lines.push(`    role: ${yamlScalar(m.role)}`);
       if (m.capabilities?.length) {
         lines.push('    capabilities:');
-        for (const cap of m.capabilities) lines.push(`      - ${cap}`);
+        for (const cap of m.capabilities) lines.push(`      - ${yamlScalar(cap)}`);
       }
     }
   }

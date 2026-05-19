@@ -4,6 +4,30 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Ethos</title>
+    <script>
+      (() => {
+        if (window.location.pathname !== '/oauth/callback') return;
+        var params = window.location.search;
+        if (!params) return;
+        var sp, payload;
+        try {
+          sp = new URLSearchParams(params);
+          payload = {
+            code: sp.get('code'),
+            state: sp.get('state'),
+            error: sp.get('error'),
+            error_description: sp.get('error_description'),
+          };
+          sessionStorage.setItem('ethos:mcp_oauth_callback', JSON.stringify(payload));
+        } catch (_e) {
+          sessionStorage.setItem(
+            'ethos:mcp_oauth_callback',
+            JSON.stringify({ error: 'bootstrap_parse_failed' }),
+          );
+        }
+        history.replaceState({}, '', window.location.pathname);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

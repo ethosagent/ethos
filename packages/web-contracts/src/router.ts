@@ -16,7 +16,18 @@ import {
   KanbanTaskSchema,
   KanbanTaskStatusSchema,
   KanbanTeamSummarySchema,
+  McpAttachInputSchema,
+  McpAttachOutputSchema,
+  McpCancelInputSchema,
+  McpCompleteInputSchema,
+  McpCompleteOutputSchema,
+  McpDeleteInputSchema,
+  McpListOutputSchema,
+  McpReconnectInputSchema,
   McpServerInfoSchema,
+  McpStartInputSchema,
+  McpStartOutputSchema,
+  McpStatusOutputSchema,
   MemoryFileSchema,
   MemoryStoreSchema,
   MeshAgentSchema,
@@ -614,6 +625,26 @@ const plugins = {
 };
 
 // ---------------------------------------------------------------------------
+// MCP install flow (v1 — OAuth UI)
+//
+// Server-side orchestration for the MCP OAuth dance: discover, register
+// a dynamic client, redirect the user to the upstream authorization
+// endpoint, then exchange the code for tokens and persist the server.
+// ---------------------------------------------------------------------------
+
+/** @experimental */
+const mcp = {
+  start: oc.input(McpStartInputSchema).output(McpStartOutputSchema),
+  complete: oc.input(McpCompleteInputSchema).output(McpCompleteOutputSchema),
+  status: oc.output(McpStatusOutputSchema),
+  cancel: oc.input(McpCancelInputSchema).output(z.object({ ok: z.literal(true) })),
+  attachPersonalities: oc.input(McpAttachInputSchema).output(McpAttachOutputSchema),
+  list: oc.output(McpListOutputSchema),
+  delete: oc.input(McpDeleteInputSchema).output(z.object({ ok: z.literal(true) })),
+  reconnect: oc.input(McpReconnectInputSchema).output(McpStartOutputSchema),
+};
+
+// ---------------------------------------------------------------------------
 // Memory (v1)
 //
 // Two markdown files MarkdownFileMemoryProvider reads at agent-loop
@@ -868,6 +899,7 @@ export const contract = {
   mesh,
   memory,
   plugins,
+  mcp,
   platforms,
   batch,
   eval: evalNs,

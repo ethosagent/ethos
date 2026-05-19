@@ -1,4 +1,4 @@
-import { divider, header, type SlackBlock, section } from './shared';
+import { divider, escapeMrkdwn, header, type SlackBlock, section } from './shared';
 
 /** Minimal kanban-ticket shape consumed by the Slack adapter. The kanban
  *  store extension is a sibling; we deliberately avoid importing it to
@@ -21,8 +21,11 @@ export function kanbanListBlocks(input: { team: string; tickets: KanbanTicket[] 
     divider(),
   ];
   for (const t of input.tickets) {
-    const assignee = t.assignee ? `*Assignee* ${t.assignee}` : '_unassigned_';
-    blocks.push(section(`*${t.title}* · status \`${t.status}\` · ${assignee}\n_id_ \`${t.id}\``));
+    const title = escapeMrkdwn(t.title);
+    const status = escapeMrkdwn(t.status);
+    const id = escapeMrkdwn(t.id);
+    const assignee = t.assignee ? `*Assignee* ${escapeMrkdwn(t.assignee)}` : '_unassigned_';
+    blocks.push(section(`*${title}* · status \`${status}\` · ${assignee}\n_id_ \`${id}\``));
   }
   return blocks;
 }

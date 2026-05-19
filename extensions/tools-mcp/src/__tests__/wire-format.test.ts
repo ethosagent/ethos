@@ -1,3 +1,4 @@
+import { McpServerInfoSchema } from '@ethosagent/web-contracts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { McpServerConfig } from '../index';
 import { McpClient, McpManager, rewriteDefinitionsToRefs } from '../index';
@@ -530,6 +531,52 @@ describe('Wire format conformance (Phases 2.3-2.7)', () => {
       };
       expect(config.auth).toBeUndefined();
       expect(config.created_via).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // McpServerInfoSchema — auth_status / created_via (Phase B.3)
+  // -------------------------------------------------------------------------
+
+  describe('McpServerInfoSchema auth_status and created_via', () => {
+    it('accepts auth_status: null and created_via: null', () => {
+      const result = McpServerInfoSchema.safeParse({
+        name: 'test-srv',
+        transport: 'stdio',
+        command: 'node',
+        url: null,
+        auth_status: null,
+        created_via: null,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts auth_status: "authorized" and created_via: "ui"', () => {
+      const result = McpServerInfoSchema.safeParse({
+        name: 'linear',
+        transport: 'streamable-http',
+        command: null,
+        url: 'https://mcp.linear.app/mcp',
+        auth_status: 'authorized',
+        created_via: 'ui',
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.auth_status).toBe('authorized');
+        expect(result.data.created_via).toBe('ui');
+      }
+    });
+
+    it('rejects invalid auth_status values', () => {
+      const result = McpServerInfoSchema.safeParse({
+        name: 'bad-srv',
+        transport: 'stdio',
+        command: 'node',
+        url: null,
+        auth_status: 'bogus',
+        created_via: null,
+      });
+      expect(result.success).toBe(false);
     });
   });
 });

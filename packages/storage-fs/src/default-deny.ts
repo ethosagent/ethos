@@ -26,6 +26,8 @@ export function defaultAlwaysDeny(): string[] {
     `${home}/.psql_history`,
     `${home}/.mysql_history`,
     `${home}/.npmrc`,
+    `${home}/.ethos/keys.json`,
+    `${home}/.ethos/secrets`,
     `${home}/Library/Keychains`,
     '/etc/passwd',
     '/etc/shadow',
@@ -35,5 +37,7 @@ export function defaultAlwaysDeny(): string[] {
     '/boot',
     '/sys',
     '/proc/sys',
+    '/proc/self/environ',
+    '/proc/self/cmdline',
   ];
 }

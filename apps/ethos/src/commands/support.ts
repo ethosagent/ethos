@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
+import { stripAnsiEscapes } from '@ethosagent/core';
 import { createTarGz, readTarGz, SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import type { ObsEvent, Span, Trace } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
@@ -379,7 +380,7 @@ export function diagnoseBundleLines(traces: Trace[], spans: Span[], events: ObsE
   if (blocks.length > 0) {
     lines.push(`▸ ${blocks.length} tool call(s) blocked by safety layer`);
     for (const b of blocks.slice(0, 3)) {
-      lines.push(`  ${fmtTime(b.ts)}  ${b.code ?? b.cause ?? 'blocked'}`);
+      lines.push(`  ${fmtTime(b.ts)}  ${stripAnsiEscapes(b.code ?? b.cause ?? 'blocked')}`);
     }
   }
 
@@ -390,7 +391,9 @@ export function diagnoseBundleLines(traces: Trace[], spans: Span[], events: ObsE
   if (errors.length > 0) {
     lines.push(`▸ ${errors.length} error event(s) in window`);
     for (const e of errors.slice(0, 3)) {
-      lines.push(`  ${fmtTime(e.ts)}  [${e.code ?? 'error'}] ${e.cause ?? ''}`);
+      const code = stripAnsiEscapes(e.code ?? 'error');
+      const cause = stripAnsiEscapes(e.cause ?? '');
+      lines.push(`  ${fmtTime(e.ts)}  [${code}] ${cause}`);
     }
   }
 
@@ -548,7 +551,7 @@ export async function runInspect(argv: string[]): Promise<void> {
     console.log('EVENTS OF NOTE');
     for (const e of notable.slice(0, 15)) {
       const icon = severityIcon(e.severity);
-      const detail = e.cause ?? e.code ?? '';
+      const detail = stripAnsiEscapes(e.cause ?? e.code ?? '');
       console.log(`  ${fmtTs(e.ts)}  ${icon}  ${e.category.padEnd(20)}  ${detail.slice(0, 60)}`);
     }
     if (notable.length > 15) console.log(`  … ${notable.length - 15} more events`);

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OAuthConfig, TokenSet } from '../oauth';
 import {
   buildAuthorizationUrl,
+  consumeOAuthState,
   deleteTokens,
   exchangeCode,
   generateCodeChallenge,
@@ -10,6 +11,7 @@ import {
   isTokenExpired,
   loadAccessToken,
   refreshToken,
+  registerOAuthState,
   startCallbackServer,
   storeTokens,
 } from '../oauth';
@@ -346,8 +348,11 @@ describe('startCallbackServer', () => {
     const { port, resultPromise, close } = await startCallbackServer();
     expect(port).toBeGreaterThan(0);
 
-    // Simulate the OAuth callback
-    const resp = await fetch(`http://127.0.0.1:${port}/?code=test-code&state=st`);
+    // Register state before simulating callback
+    registerOAuthState('st');
+
+    // Simulate the OAuth callback on the correct path
+    const resp = await fetch(`http://127.0.0.1:${port}/oauth/callback?code=test-code&state=st`);
     expect(resp.status).toBe(200);
 
     const result = await resultPromise;
@@ -362,12 +367,63 @@ describe('startCallbackServer', () => {
     // Attach rejection handler before triggering the error to prevent unhandled rejection warning
     const rejection = resultPromise.catch((err: unknown) => err);
 
-    await fetch(`http://127.0.0.1:${port}/?error=access_denied`);
+    await fetch(`http://127.0.0.1:${port}/oauth/callback?error=access_denied`);
 
     const err = await rejection;
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toContain('OAuth error: access_denied');
     close();
+  });
+
+  it('rejects non-GET methods', async () => {
+    const { port, close } = await startCallbackServer();
+
+    const resp = await fetch(`http://127.0.0.1:${port}/oauth/callback?code=x&state=s`, {
+      method: 'POST',
+    });
+    expect(resp.status).toBe(405);
+    close();
+  });
+
+  it('rejects requests to wrong path', async () => {
+    const { port, close } = await startCallbackServer();
+
+    const resp = await fetch(`http://127.0.0.1:${port}/?code=x&state=s`);
+    expect(resp.status).toBe(404);
+    close();
+  });
+
+  it('rejects requests with invalid state', async () => {
+    const { port, close } = await startCallbackServer();
+
+    const resp = await fetch(
+      `http://127.0.0.1:${port}/oauth/callback?code=test-code&state=bad-state`,
+    );
+    expect(resp.status).toBe(400);
+    close();
+  });
+
+  it('provides redirectUri with callback path', async () => {
+    const { port, redirectUri, close } = await startCallbackServer();
+    expect(redirectUri).toBe(`http://127.0.0.1:${port}/oauth/callback`);
+    close();
+  });
+});
+
+describe('OAuth state management', () => {
+  it('registerOAuthState + consumeOAuthState roundtrip', () => {
+    registerOAuthState('test-state-1');
+    expect(consumeOAuthState('test-state-1')).toBe(true);
+  });
+
+  it('state is single-use', () => {
+    registerOAuthState('test-state-2');
+    expect(consumeOAuthState('test-state-2')).toBe(true);
+    expect(consumeOAuthState('test-state-2')).toBe(false);
+  });
+
+  it('rejects unknown state', () => {
+    expect(consumeOAuthState('never-registered')).toBe(false);
   });
 });
 

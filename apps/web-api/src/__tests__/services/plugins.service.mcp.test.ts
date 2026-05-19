@@ -41,8 +41,22 @@ describe('PluginsService — MCP server listing', () => {
     );
     const { mcpServers } = await service.list();
     expect(mcpServers).toEqual([
-      { name: 'local', transport: 'stdio', command: 'npx my-mcp', url: null },
-      { name: 'remote', transport: 'sse', command: null, url: 'https://mcp.example/server' },
+      {
+        name: 'local',
+        transport: 'stdio',
+        command: 'npx my-mcp',
+        url: null,
+        auth_status: null,
+        created_via: null,
+      },
+      {
+        name: 'remote',
+        transport: 'sse',
+        command: null,
+        url: 'https://mcp.example/server',
+        auth_status: null,
+        created_via: null,
+      },
     ]);
   });
 

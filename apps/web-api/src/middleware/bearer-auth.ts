@@ -62,6 +62,7 @@ export interface OpenAiErrorBody {
     type: OpenAiErrorType;
     code: string;
     param: string | null;
+    request_id?: string;
   };
 }
 
@@ -71,8 +72,9 @@ export function openAiErrorBody(input: {
   type: OpenAiErrorType;
   code: string;
   param?: string | null;
+  request_id?: string;
 }): OpenAiErrorBody {
-  return {
+  const body: OpenAiErrorBody = {
     error: {
       message: input.message,
       type: input.type,
@@ -80,6 +82,8 @@ export function openAiErrorBody(input: {
       param: input.param ?? null,
     },
   };
+  if (input.request_id) body.error.request_id = input.request_id;
+  return body;
 }
 
 const BEARER_PREFIX = 'Bearer ';

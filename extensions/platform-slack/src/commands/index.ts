@@ -5,7 +5,7 @@
 // Slack app.
 
 import type { Storage } from '@ethosagent/types';
-import type { SlackBlock } from '../blocks/shared';
+import { type SlackBlock, section } from '../blocks/shared';
 import type { Binding, ChannelMode } from '../config';
 import type { ChannelOverrideStore } from '../store/channel-overrides';
 import { handleAsk } from './ask';
@@ -36,6 +36,13 @@ export interface SlashContext {
   storage?: Storage;
   /** Hook for `/ethos ask` — the adapter wires this to gateway.handleMessage. */
   submitAgentTurn?: (input: { channel: string; user: string; text: string }) => Promise<void>;
+  /**
+   * Allowlist of Slack user IDs permitted to run slash commands. When set
+   * (non-empty), only these users may invoke `/ethos`; others receive an
+   * ephemeral "not authorized" response. When unset or empty, all workspace
+   * members are allowed (backwards-compatible default).
+   */
+  allowedUsers?: string[];
 }
 
 export interface SlashResponse {
@@ -60,10 +67,26 @@ export function parseSubcommand(text: string): { name: Subcommand | 'unknown'; r
   return { name: known, rest: restParts.join(' ') };
 }
 
+/** Check whether the invoking user is authorized. When `allowedUsers` is
+ *  configured (non-empty), only listed user IDs may proceed. */
+function isUserAuthorized(userId: string, allowedUsers: string[] | undefined): boolean {
+  if (!allowedUsers || allowedUsers.length === 0) return true;
+  return allowedUsers.includes(userId);
+}
+
 export async function dispatch(
   payload: SlashCommandPayload,
   ctx: SlashContext,
 ): Promise<SlashResponse> {
+  if (!isUserAuthorized(payload.user_id, ctx.allowedUsers)) {
+    const blocks = [section('You are not authorized to use this command.')];
+    return {
+      blocks,
+      text: 'You are not authorized to use this command.',
+      responseType: 'ephemeral',
+    };
+  }
+
   const { name, rest } = parseSubcommand(payload.text);
 
   switch (name) {

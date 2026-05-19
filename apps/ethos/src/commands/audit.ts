@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { stripAnsiEscapes } from '@ethosagent/core';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import type { ObsEvent } from '@ethosagent/types';
 import { ethosDir } from '../config';
@@ -52,8 +53,8 @@ function formatEvent(e: ObsEvent): void {
   const ts = new Date(e.ts).toISOString().replace('T', ' ').slice(0, 19);
   const sev = severityColor(e.severity);
   const traceRef = e.traceId ? `${c.dim}[${e.traceId.slice(0, 8)}]${c.reset} ` : '';
-  const codeStr = e.code ? ` ${c.cyan}${e.code}${c.reset}` : '';
-  const causeStr = e.cause ? `  ${c.dim}→ ${e.cause}${c.reset}` : '';
+  const codeStr = e.code ? ` ${c.cyan}${stripAnsiEscapes(e.code)}${c.reset}` : '';
+  const causeStr = e.cause ? `  ${c.dim}→ ${stripAnsiEscapes(e.cause)}${c.reset}` : '';
   console.log(`  ${ts}  ${sev.padEnd(18)} ${e.category}${codeStr}  ${traceRef}${causeStr}`);
 }
 

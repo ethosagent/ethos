@@ -34,6 +34,9 @@ const CLOUD_METADATA_HOSTS: ReadonlySet<string> = new Set([
 ]);
 
 export function isCloudMetadataHost(hostname: string): boolean {
-  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const normalized = hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.$/, '');
   return CLOUD_METADATA_HOSTS.has(normalized);
 }

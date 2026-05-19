@@ -7,6 +7,7 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { stripAnsiEscapes } from '@ethosagent/core';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import { ethosDir } from '../config';
 
@@ -90,9 +91,10 @@ export async function runTail(argv: string[]): Promise<void> {
         process.stdout.write(`${JSON.stringify(event)}\n`);
       } else {
         const time = formatTime(event.ts);
-        const code = event.code ?? '';
-        const cause = event.cause ?? '';
-        process.stdout.write(`${time} [${event.category}] ${event.severity} ${code} ${cause}\n`);
+        const code = stripAnsiEscapes(event.code ?? '');
+        const cause = stripAnsiEscapes(event.cause ?? '');
+        const category = stripAnsiEscapes(event.category);
+        process.stdout.write(`${time} [${category}] ${event.severity} ${code} ${cause}\n`);
       }
     }
   };

@@ -102,12 +102,22 @@ export function dualAuth(opts: DualAuthOptions): MiddlewareHandler {
     }
 
     const origin = c.req.header('origin');
-    if (origin && record.allowedOrigins.length > 0 && !record.allowedOrigins.includes(origin)) {
-      throw new EthosError({
-        code: 'FORBIDDEN',
-        cause: `Origin "${origin}" is not in the allowedOrigins list for this API key.`,
-        action: "Add this origin to the key's allowedOrigins, or use the correct key.",
-      });
+    if (record.allowedOrigins.length > 0) {
+      if (!origin) {
+        throw new EthosError({
+          code: 'FORBIDDEN',
+          cause: 'This API key requires an Origin header but none was provided.',
+          action:
+            'Include the Origin header in your request, or remove allowedOrigins from the key.',
+        });
+      }
+      if (!record.allowedOrigins.includes(origin)) {
+        throw new EthosError({
+          code: 'FORBIDDEN',
+          cause: `Origin "${origin}" is not in the allowedOrigins list for this API key.`,
+          action: "Add this origin to the key's allowedOrigins, or use the correct key.",
+        });
+      }
     }
 
     // oRPC URL paths use `/` (e.g. `/rpc/sessions/list`), but the SCOPE_MAP
@@ -117,7 +127,8 @@ export function dualAuth(opts: DualAuthOptions): MiddlewareHandler {
     const rpcPath = c.req.path
       .replace(/^\/rpc\//, '')
       .replace(/^\/sse\//, '')
-      .replace(/\//g, '.');
+      .replace(/\//g, '.')
+      .replace(/[./]+$/, '');
 
     // Defense-in-depth: apiKeys namespace is always cookie-only
     if (rpcPath.startsWith('apiKeys')) {

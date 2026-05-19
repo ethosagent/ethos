@@ -1,6 +1,5 @@
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
 import {
   BoundaryError,
   type Storage,
@@ -40,11 +39,8 @@ function buildDefaultProviders(opts?: {
   ];
 }
 
-let fallbackStorage: FsStorage | undefined;
-function storageOf(ctx: ToolContext): Storage {
-  if (ctx.storage) return ctx.storage;
-  if (!fallbackStorage) fallbackStorage = new FsStorage();
-  return fallbackStorage;
+function storageOf(ctx: ToolContext): Storage | null {
+  return ctx.storage ?? null;
 }
 
 function buildImageGenerateTool(providers: ImageGenProvider[]): Tool {
@@ -215,6 +211,13 @@ function buildImageGenerateTool(providers: ImageGenProvider[]): Tool {
 
       try {
         const storage = storageOf(ctx);
+        if (!storage) {
+          return {
+            ok: false,
+            error: 'Storage capability not configured for this personality.',
+            code: 'not_available',
+          };
+        }
         await storage.mkdir(dirname(outPath));
         // writeAtomic accepts Uint8Array — a partial write here would leave
         // a corrupt PNG on disk, which is worse than no file at all.

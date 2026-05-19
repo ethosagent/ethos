@@ -44,6 +44,15 @@ const MODIFYING_HOOK_MAP: Partial<Record<string, string>> = {
   subagent_spawning: 'subagent_spawning',
 };
 
+// Security-critical registrations that must NOT silently no-op. If an OpenClaw
+// plugin registers a security control and Ethos cannot honour it, the shim
+// throws rather than letting the plugin believe the control is in place.
+const SECURITY_CRITICAL_METHODS = new Set([
+  'registerTrustedToolPolicy',
+  'registerNodeInvokePolicy',
+  'registerSecurityAuditCollector',
+]);
+
 // Methods whose calls we accept but cannot translate — log + no-op
 const UNSUPPORTED_METHODS = new Set([
   'registerCli',
@@ -264,17 +273,25 @@ export class OpenClawPluginApiShim {
       this.ethosApi.registerModifyingHook(
         modTarget as keyof import('@ethosagent/types').ModifyingHooks,
         async (payload) => {
-          try {
-            const result = await handler(payload, {});
-            if (result && typeof result === 'object') {
-              return result as Partial<
-                import('@ethosagent/types').ModifyingHooks[keyof import('@ethosagent/types').ModifyingHooks][1]
-              >;
-            }
-            return null;
-          } catch {
+          const result = await handler(payload, {});
+          // Validate hook return: must be a non-null object with expected shape.
+          // Malformed returns are treated as denials (fail-closed) rather than
+          // silently passing through (fail-open).
+          if (result === null || result === undefined) {
             return null;
           }
+          if (typeof result !== 'object') {
+            console.warn(
+              `[openclaw-compat] Plugin "${this.id}" hook "${hookName}" returned a non-object ` +
+                `(${typeof result}). Treating as denial (fail-closed).`,
+            );
+            return { error: 'Hook returned invalid type' } as Partial<
+              import('@ethosagent/types').ModifyingHooks[keyof import('@ethosagent/types').ModifyingHooks][1]
+            >;
+          }
+          return result as Partial<
+            import('@ethosagent/types').ModifyingHooks[keyof import('@ethosagent/types').ModifyingHooks][1]
+          >;
         },
       );
       return;
@@ -343,6 +360,14 @@ export function createOpenClawApiShim(
   return new Proxy(shim, {
     get(target, prop) {
       if (prop in target) return (target as unknown as Record<string | symbol, unknown>)[prop];
+      if (typeof prop === 'string' && SECURITY_CRITICAL_METHODS.has(prop)) {
+        return () => {
+          throw new Error(
+            `[openclaw-compat] Plugin "${pluginId}" called api.${prop}() which is a security-critical ` +
+              `registration not supported in Ethos. Failing loudly to prevent silent security bypass.`,
+          );
+        };
+      }
       if (typeof prop === 'string' && UNSUPPORTED_METHODS.has(prop)) {
         return () => {
           console.warn(

@@ -7,6 +7,7 @@ import { cronRouter } from './cron';
 import { evalRouter } from './eval';
 import { evolverRouter } from './evolver';
 import { kanbanRouter } from './kanban';
+import { mcpRouter } from './mcp';
 import { memoryRouter } from './memory';
 import { meshRouter } from './mesh';
 import { metaRouter } from './meta';
@@ -54,6 +55,7 @@ export const apiRouter = {
   mesh: meshRouter,
   memory: memoryRouter,
   plugins: pluginsRouter,
+  mcp: mcpRouter,
   platforms: platformsRouter,
   batch: batchRouter,
   eval: evalRouter,

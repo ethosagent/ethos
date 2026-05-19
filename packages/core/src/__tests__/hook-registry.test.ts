@@ -90,7 +90,7 @@ describe('DefaultHookRegistry', () => {
   describe('allowedPlugins gating', () => {
     const payload = { sessionId: 's1', text: 'hi', turnCount: 1 } as const;
 
-    it('void: undefined → all handlers fire (no filter)', async () => {
+    it('void: undefined → only built-in handlers fire (plugin handlers blocked)', async () => {
       const reg = new DefaultHookRegistry();
       const builtinSpy = vi.fn();
       const pluginSpy = vi.fn();
@@ -100,7 +100,7 @@ describe('DefaultHookRegistry', () => {
 
       await reg.fireVoid('agent_done', payload, undefined);
       expect(builtinSpy).toHaveBeenCalledOnce();
-      expect(pluginSpy).toHaveBeenCalledOnce();
+      expect(pluginSpy).not.toHaveBeenCalled();
     });
 
     it('void: [] → only built-in handlers fire (no plugin access)', async () => {

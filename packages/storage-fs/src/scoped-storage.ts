@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import {
   BoundaryError,
   type Storage,
@@ -48,7 +49,10 @@ export class ScopedStorage implements Storage {
     this.denyPrefixes = (scope.alwaysDeny ?? []).map(normalizePrefix);
   }
 
-  private check(path: string, kind: 'read' | 'write'): void {
+  private check(rawPath: string, kind: 'read' | 'write'): void {
+    // Normalize the path before checking against prefixes so that `..`
+    // segments cannot bypass the prefix-based allowlist.
+    const path = resolve(rawPath);
     if (isPathAllowed(path, this.denyPrefixes)) {
       throw new BoundaryError(kind, path, this.denyPrefixes, 'always-deny floor');
     }

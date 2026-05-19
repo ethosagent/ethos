@@ -46,6 +46,11 @@ const DYNAMIC_CODE_PATTERNS: RegExp[] = [
   /\bnew\s+Function\s*\(/,
   /\bvm\.runInNewContext\s*\(/,
   /\bvm\.runInThisContext\s*\(/,
+  // Function constructor called without `new` — e.g. Function('return this')()
+  /\bFunction\s*\(/,
+  // process.binding / process.dlopen — low-level native module loading
+  /\bprocess\.binding\s*\(/,
+  /\bprocess\.dlopen\s*\(/,
 ];
 
 function checkDynamicCodeExec(lines: string[]): ScanFinding[] {
@@ -59,6 +64,53 @@ function checkDynamicCodeExec(lines: string[]): ScanFinding[] {
           severity: 'red',
           rule: 'dynamic-code-exec',
           message: 'Dynamic code execution: eval/Function/vm',
+          line: i + 1,
+          excerpt: excerptLine(line),
+        });
+        break;
+      }
+    }
+  }
+
+  return findings;
+}
+
+// ---------------------------------------------------------------------------
+// RED: Require aliasing / indirect eval evasion
+// ---------------------------------------------------------------------------
+
+/**
+ * Catches evasion patterns that bypass the direct regex checks above:
+ *  - `const r = require; r('child_process')` (require aliasing)
+ *  - `const e = eval; e(code)` (eval aliasing)
+ *  - `globalThis['eval'](...)` or `global['eval'](...)` (bracket-access eval)
+ *  - `this['eval'](...)` or `this.constructor('...')()` — indirect eval
+ *  - `('ev' + 'al')` — string-concatenation to construct 'eval'
+ */
+const EVASION_PATTERNS: RegExp[] = [
+  // require assigned to another variable: const r = require; / let fn = require;
+  /\b(?:const|let|var)\s+\w+\s*=\s*require\s*[;,]/,
+  // eval assigned to another variable: const e = eval; / let x = eval;
+  /\b(?:const|let|var)\s+\w+\s*=\s*eval\s*[;,]/,
+  // bracket-access eval on globalThis / global / window / self / this
+  /\b(?:globalThis|global|window|self|this)\s*\[\s*['"`]eval['"`]\s*\]/,
+  // string concatenation that produces 'eval' — e.g. 'ev' + 'al' or `ev${'al'}`
+  /['"`]ev['"`]\s*\+\s*['"`]al['"`]/,
+  // this.constructor used to get Function — e.g. this.constructor('return this')()
+  /\bthis\.constructor\s*\(/,
+];
+
+function checkEvasionPatterns(lines: string[]): ScanFinding[] {
+  const findings: ScanFinding[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    for (const pattern of EVASION_PATTERNS) {
+      if (pattern.test(line)) {
+        findings.push({
+          severity: 'red',
+          rule: 'dynamic-code-exec',
+          message: 'Indirect dynamic code execution (aliasing or string evasion)',
           line: i + 1,
           excerpt: excerptLine(line),
         });
@@ -380,6 +432,7 @@ export function scanPluginCode(
 
   const findings: ScanFinding[] = [
     ...checkDynamicCodeExec(lines),
+    ...checkEvasionPatterns(lines),
     ...checkShellExec(lines, permissions),
     ...checkNetworkAccess(lines, permissions),
     ...checkCredentialAccess(lines),

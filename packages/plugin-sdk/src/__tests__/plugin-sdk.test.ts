@@ -98,11 +98,15 @@ describe('PluginApiImpl.registerVoidHook', () => {
       fired = true;
     });
 
-    await registries.hooks.fireVoid('agent_done', {
-      sessionId: 'test',
-      text: 'hello',
-      turnCount: 1,
-    });
+    await registries.hooks.fireVoid(
+      'agent_done',
+      {
+        sessionId: 'test',
+        text: 'hello',
+        turnCount: 1,
+      },
+      ['test-plugin'],
+    );
 
     expect(fired).toBe(true);
   });

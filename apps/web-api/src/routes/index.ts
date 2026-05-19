@@ -5,6 +5,7 @@ import type { ApiKeyAuthStore } from '../middleware/bearer-auth';
 import { csrfMiddleware } from '../middleware/csrf';
 import { cookieOnlyGuard, dualAuth, resolveScope } from '../middleware/dual-auth';
 import { errorHandler } from '../middleware/error-envelope';
+import { rateLimitMiddleware } from '../middleware/rate-limit';
 import type { WebTokenRepository } from '../repositories/web-token.repository';
 import type { ChatService } from '../services/chat.service';
 import type { SessionsService } from '../services/sessions.service';
@@ -55,6 +56,7 @@ export interface ServiceContainer {
   mesh: import('../services/mesh.service').MeshService;
   memory: import('../services/memory.service').MemoryService;
   plugins: import('../services/plugins.service').PluginsService;
+  mcp: import('../services/mcp.service').McpService;
   platforms: import('../services/platforms.service').PlatformsService;
   lab: import('../services/lab.service').LabService;
   kanban: import('../services/kanban.service').KanbanService;
@@ -134,6 +136,10 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     return csrf(c, next);
   });
   app.use('/openapi/*', csrf);
+
+  // Rate-limit mcp.start to prevent DCR registration spam
+  const mcpStartRateLimit = rateLimitMiddleware();
+  app.use('/rpc/mcp.start', mcpStartRateLimit);
 
   app.route('/rpc', rpcRoutes({ services: opts.services }));
   app.route('/sse', sseRoutes({ chat: opts.services.chat }));

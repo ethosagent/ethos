@@ -64,5 +64,7 @@ function toWireMcpServer(entry: McpServerConfig): McpServerInfo {
     transport: entry.transport,
     command: typeof entry.command === 'string' ? entry.command : null,
     url: typeof entry.url === 'string' ? entry.url : null,
+    auth_status: null,
+    created_via: entry.created_via ?? null,
   };
 }

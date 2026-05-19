@@ -9,7 +9,7 @@ export const browserScreenshotTool: Tool = {
   name: 'browser_screenshot',
   description: 'Take a screenshot of the current browser page. Returns base64-encoded JPEG.',
   toolset: 'browser',
-  maxResultChars: 500_000,
+  maxResultChars: 75_000,
   capabilities: {
     network: { allowedHosts: ['*'] }, // browser navigates agent-supplied URLs
     process: { allowedBinaries: ['docker'] },
@@ -30,10 +30,10 @@ export const browserScreenshotTool: Tool = {
     try {
       const screenshot = await session.page.screenshot({ type: 'jpeg', quality: 60 });
       const b64 = screenshot.toString('base64');
-      if (b64.length > 450_000) {
+      if (b64.length > 70_000) {
         return {
           ok: false,
-          error: `Screenshot too large (${Math.round(b64.length / 1024)}KB base64). Try reducing the viewport or page complexity.`,
+          error: `Screenshot too large (${Math.round(b64.length / 1024)}KB base64). The per-call budget is 75KB. Try reducing the viewport or page complexity.`,
           code: 'execution_failed',
         };
       }

@@ -53,4 +53,21 @@ describe('stripAnsiEscapes', () => {
   it('strips clear screen (CSI 2J)', () => {
     expect(stripAnsiEscapes('\x1b[2Jcontent')).toBe('content');
   });
+
+  it('handles residues from multi-pass stripping', () => {
+    // After stripping \x1b[31m, the leading \x1b[ from the first fragment
+    // could combine with subsequent text to form a new escape sequence.
+    // The fixpoint loop catches this.
+    const crafted = '\x1b[\x1b[31m32minjected';
+    const result = stripAnsiEscapes(crafted);
+    expect(result).not.toContain('\x1b');
+    expect(result).toBe('injected');
+  });
+
+  it('converges on pathological input within iteration cap', () => {
+    // Even deeply nested/overlapping fragments should not cause infinite loops
+    const nested = '\x1b[\x1b[\x1b[31m32m0mvisible';
+    const result = stripAnsiEscapes(nested);
+    expect(result).not.toContain('\x1b');
+  });
 });

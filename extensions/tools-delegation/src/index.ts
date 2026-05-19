@@ -25,6 +25,32 @@ function childAgentId(depth: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// Personality delegation guard
+// ---------------------------------------------------------------------------
+
+/**
+ * Checks whether the caller's personality is allowed to delegate to the
+ * target personality. Default policy: same-personality-only. A caller can
+ * always delegate to its own personality (or omit the target, which inherits
+ * the caller's personality). Cross-personality delegation is rejected.
+ */
+function assertCanDelegateTo(
+  callerPersonality: string | undefined,
+  targetPersonality: string | undefined,
+): string | undefined {
+  // No target specified or no caller personality → no restriction.
+  if (!targetPersonality || !callerPersonality) return undefined;
+  // Same personality → allowed.
+  if (targetPersonality === callerPersonality) return undefined;
+  // Cross-personality delegation blocked.
+  return (
+    `Cannot delegate to personality "${targetPersonality}": ` +
+    `caller is running as "${callerPersonality}". ` +
+    'Sub-agents must run under the same personality as the caller.'
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Run a sub-agent and collect its full text output
 // ---------------------------------------------------------------------------
 
@@ -99,6 +125,13 @@ export function createDelegateTaskTool(loop: AgentLoop): Tool {
 
       if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
 
+      // Personality privilege escalation guard: sub-agents can only run
+      // under the caller's current personality.
+      const delegationError = assertCanDelegateTo(ctx.personalityId, personality);
+      if (delegationError) {
+        return { ok: false, error: delegationError, code: 'input_invalid' };
+      }
+
       const depth = getDepth(ctx);
       if (depth >= MAX_SPAWN_DEPTH) {
         return {
@@ -112,7 +145,7 @@ export function createDelegateTaskTool(loop: AgentLoop): Tool {
 
       try {
         const output = await runSubAgent(loop, prompt, {
-          personalityId: personality,
+          personalityId: personality ?? ctx.personalityId,
           sessionKey,
           depth: depth + 1,
           abortSignal: ctx.abortSignal,
@@ -195,6 +228,15 @@ export function createMixtureOfAgentsTool(loop: AgentLoop): Tool {
         };
       }
 
+      // Personality privilege escalation guard: every sub-agent must run
+      // under the caller's current personality.
+      for (const agent of agents) {
+        const delegationError = assertCanDelegateTo(ctx.personalityId, agent.personality);
+        if (delegationError) {
+          return { ok: false, error: delegationError, code: 'input_invalid' };
+        }
+      }
+
       const depth = getDepth(ctx);
       if (depth >= MAX_SPAWN_DEPTH) {
         return {
@@ -210,7 +252,7 @@ export function createMixtureOfAgentsTool(loop: AgentLoop): Tool {
           const label = agent.label ?? `Agent ${i + 1}`;
           const sessionKey = `${ctx.sessionKey}:moa:${label}:${ctx.currentTurn}`;
           const output = await runSubAgent(loop, agent.prompt, {
-            personalityId: agent.personality,
+            personalityId: agent.personality ?? ctx.personalityId,
             sessionKey,
             depth: depth + 1,
             abortSignal: ctx.abortSignal,

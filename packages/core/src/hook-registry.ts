@@ -8,10 +8,12 @@ interface RegisteredHandler {
   failurePolicy: 'fail-open' | 'fail-closed';
 }
 
-/** Returns true when a handler should fire given the allowedPlugins filter. */
+/** Returns true when a handler should fire given the allowedPlugins filter.
+ *  When `allowedPlugins` is omitted, only built-in handlers (no `pluginId`)
+ *  are allowed — plugin-registered handlers are blocked by default. */
 function isAllowed(h: RegisteredHandler, allowedPlugins: string[] | undefined): boolean {
-  if (allowedPlugins === undefined) return true; // no filter — fire all
   if (!h.pluginId) return true; // built-in handler — always fires
+  if (allowedPlugins === undefined) return false; // no allowlist — block plugin handlers
   return allowedPlugins.includes(h.pluginId);
 }
 

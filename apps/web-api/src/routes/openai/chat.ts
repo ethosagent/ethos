@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { EthosError } from '@ethosagent/types';
 import { type Context, Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
@@ -82,7 +83,13 @@ export function openAiChatRoutes(opts: OpenAiChatRouteOptions): Hono {
     const warnings = collectWarnings(req);
     if (warnings.length > 0) c.header('x-ethos-warning', warnings.join('; '));
 
-    const sessionKeyOverride = c.req.header('x-ethos-session') ?? c.req.header('X-Ethos-Session');
+    const rawSessionKey = c.req.header('x-ethos-session') ?? c.req.header('X-Ethos-Session');
+    // Scope the session key to the authenticated API key so sessions cannot
+    // be resumed cross-key. The apiKey record is stamped by bearer-auth
+    // middleware; its `id` is a stable UUID per key.
+    const apiKeyRecord = c.get('apiKey');
+    const sessionKeyOverride =
+      rawSessionKey && apiKeyRecord ? `${apiKeyRecord.id}:${rawSessionKey}` : rawSessionKey;
 
     const input = {
       req,
@@ -121,11 +128,15 @@ function streamCompletion(
       await stream.writeSSE({ data: '[DONE]' });
     } catch (err) {
       // Emit OpenAI-shaped error then close. SDK clients surface this as a
-      // stream error rather than a malformed JSON parse.
+      // stream error rather than a malformed JSON parse. Never reflect raw
+      // error.message — it may contain internal paths or stack traces.
+      const requestId = randomUUID();
+      console.error('[stream_failed]', requestId, err);
       const env = openAiErrorBody({
-        message: err instanceof Error ? err.message : 'Stream failed.',
+        message: 'Internal server error',
         type: 'server_error',
         code: 'stream_failed',
+        request_id: requestId,
       });
       await stream.writeSSE({ data: JSON.stringify(env) });
       await stream.writeSSE({ data: '[DONE]' });
@@ -134,6 +145,7 @@ function streamCompletion(
 }
 
 function jsonError(c: Context, err: unknown): Response {
+  // EthosError with INVALID_INPUT is an intentionally user-facing message.
   if (err instanceof EthosError && err.code === 'INVALID_INPUT') {
     return c.json(
       openAiErrorBody({
@@ -144,12 +156,16 @@ function jsonError(c: Context, err: unknown): Response {
       400,
     );
   }
-  const message = err instanceof Error ? err.message : 'Unknown error';
+  // For unexpected errors, never reflect raw error.message to the client —
+  // it may contain internal paths, stack traces, or database errors.
+  const requestId = randomUUID();
+  console.error('[internal_error]', requestId, err);
   return c.json(
     openAiErrorBody({
-      message,
+      message: 'Internal server error',
       type: 'server_error',
       code: 'internal_error',
+      request_id: requestId,
     }),
     500,
   );

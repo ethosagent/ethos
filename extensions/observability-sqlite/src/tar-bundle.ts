@@ -65,12 +65,16 @@ export function createTarGz(files: Map<string, Buffer>): Buffer {
   return gzipSync(Buffer.concat(parts));
 }
 
+/** Maximum decompressed size to prevent decompression bombs (100 MB). */
+const MAX_DECOMPRESSED_SIZE = 100 * 1024 * 1024;
+
 /**
  * Decompress and unpack a gzipped tar archive.
  * Returns a map of filename → content buffer.
+ * Throws if decompressed size exceeds 100 MB to prevent decompression bombs.
  */
 export function readTarGz(gz: Buffer): Map<string, Buffer> {
-  const tar = gunzipSync(gz);
+  const tar = gunzipSync(gz, { maxOutputLength: MAX_DECOMPRESSED_SIZE });
   const files = new Map<string, Buffer>();
   let offset = 0;
 

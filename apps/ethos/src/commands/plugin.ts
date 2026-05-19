@@ -303,7 +303,12 @@ async function walkAndScan(
     if (e.isDirectory()) {
       if (name === 'node_modules') continue;
       await walkAndScan(join(dir, name), permissions, out);
-    } else if (/\.[jt]s$/.test(name) && !name.endsWith('.d.ts')) {
+    } else if (
+      /\.[jt]sx?$|\.(?:cjs|mjs)$/.test(name) &&
+      !name.endsWith('.d.ts') &&
+      !name.endsWith('.d.cts') &&
+      !name.endsWith('.d.mts')
+    ) {
       const src = await readFile(join(dir, name), 'utf-8').catch(() => null);
       if (src) out.push(...scanPluginCode(src, permissions).findings);
     }

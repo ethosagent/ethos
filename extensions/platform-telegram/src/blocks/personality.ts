@@ -5,6 +5,8 @@
  * MCP servers, and plugins are omitted.
  */
 
+import { escapeHtml } from '../format';
+
 /**
  * The resolved character-sheet data behind `/personality rich`. Structural
  * clone of the Slack `PersonalityCard` — defined locally so the Telegram
@@ -43,20 +45,24 @@ export function personalityRichMessage(card: PersonalityCard, opts?: Personality
   const b = (t: string) => (html ? `<b>${t}</b>` : `*${t}*`);
   const i = (t: string) => (html ? `<i>${t}</i>` : `_${t}_`);
   const code = (t: string) => (html ? `<code>${t}</code>` : `\`${t}\``);
+  /** Escape user-supplied text for the active mode. HTML mode escapes the
+   *  five HTML-special characters; Markdown mode is plain (Telegram's
+   *  MarkdownV2 parsing is opt-in and we don't enable it here). */
+  const esc = (t: string) => (html ? escapeHtml(t) : t);
 
   const lines: string[] = [];
 
   // Header
-  lines.push(b(card.name));
+  lines.push(b(esc(card.name)));
   lines.push('');
 
   // Identity — description plus the personality's own ETHOS.md voice.
-  if (card.description) lines.push(card.description);
-  if (card.prose) lines.push(i(card.prose));
+  if (card.description) lines.push(esc(card.description));
+  if (card.prose) lines.push(i(esc(card.prose)));
   if (card.description || card.prose) lines.push('');
 
   // Routing
-  lines.push(`${b('Runs on:')} ${card.model} via ${card.provider}`);
+  lines.push(`${b('Runs on:')} ${esc(card.model)} via ${esc(card.provider)}`);
   lines.push(`${b('Remembers:')} MEMORY.md, USER.md`);
   lines.push('');
 
@@ -64,7 +70,7 @@ export function personalityRichMessage(card: PersonalityCard, opts?: Personality
   const toolCount = card.toolset.length;
   const toolLabel = `${b('What it can do')} — ${toolCount} tool${toolCount === 1 ? '' : 's'}`;
   if (toolCount > 0) {
-    const toolList = truncate(card.toolset.map((t) => code(t)).join(', '), TOOLS_MAX);
+    const toolList = truncate(card.toolset.map((t) => code(esc(t))).join(', '), TOOLS_MAX);
     lines.push(toolLabel);
     lines.push(toolList);
   } else {
@@ -78,7 +84,7 @@ export function personalityRichMessage(card: PersonalityCard, opts?: Personality
   const skillLabel = `${b('What it knows')} — ${skillCount} skill${skillCount === 1 ? '' : 's'}`;
   if (skillCount > 0) {
     const skillList = truncate(
-      card.skills.map((s) => `${code(s.id)} (${s.source})`).join('\n'),
+      card.skills.map((s) => `${code(esc(s.id))} (${s.source})`).join('\n'),
       SKILLS_MAX,
     );
     lines.push(skillLabel);

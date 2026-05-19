@@ -4,6 +4,7 @@ import { createWriteStream, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { KanbanStore } from '@ethosagent/kanban-store';
 import { noopLogger } from '@ethosagent/logger';
+import { isSafePathSegment } from '@ethosagent/storage-fs';
 import type { Logger, TeamManifest } from '@ethosagent/types';
 import { Dispatcher, type SupervisorState } from './dispatcher';
 import { startHealthProbeLoop } from './health';
@@ -57,6 +58,18 @@ export async function runSupervisor(
 ): Promise<void> {
   const log0 = opts.logger ?? noopLogger;
   const name = manifest.name;
+  if (!isSafePathSegment(name)) {
+    throw new Error(
+      `Invalid team name "${name}": must not contain path separators, "..", or start with "."`,
+    );
+  }
+  for (const member of manifest.members) {
+    if (!isSafePathSegment(member.personality)) {
+      throw new Error(
+        `Invalid personality "${member.personality}": must not contain path separators, "..", or start with "."`,
+      );
+    }
+  }
   const meshName = manifest.mesh ?? manifest.name;
   const pidPath = pidFilePath(name);
 

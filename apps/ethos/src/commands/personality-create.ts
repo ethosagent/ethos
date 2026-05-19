@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { isSafePathSegment } from '@ethosagent/storage-fs';
 import { getStorage } from '../wiring';
 
 const c = {
@@ -62,6 +63,12 @@ async function scaffoldBlank(name: string | undefined): Promise<void> {
   }
 
   const id = name.toLowerCase().replace(/\s+/g, '-');
+  if (!isSafePathSegment(id)) {
+    console.error(
+      `Invalid personality name "${id}": must not contain path separators, "..", or start with "."`,
+    );
+    process.exit(1);
+  }
   const { ethosDir } = await import('../config');
   const dir = join(ethosDir(), 'personalities', id);
 
@@ -75,12 +82,20 @@ async function scaffoldBlank(name: string | undefined): Promise<void> {
   writeFileSync(join(dir, 'ETHOS.md'), `# ${name}\n\nDescribe this personality's identity here.\n`);
   writeFileSync(
     join(dir, 'config.yaml'),
-    `name: ${name}\ndescription: \nmodel: claude-sonnet-4-6\nmemoryScope: global\n`,
+    `name: ${yamlScalar(name)}\ndescription: \nmodel: claude-sonnet-4-6\nmemoryScope: global\n`,
   );
   writeFileSync(join(dir, 'toolset.yaml'), '- read_file\n- write_file\n- terminal\n');
 
   console.log(`\n${c.bold}Created personality "${id}"${c.reset}  ${c.dim}${dir}${c.reset}`);
   console.log(`${c.dim}Edit the files, then test: ethos chat --personality ${id}${c.reset}\n`);
+}
+
+/** Escape a value for safe YAML scalar emission. */
+function yamlScalar(value: string): string {
+  if (/[:\n\r#[\]{}&*!|>'"%@`]/.test(value) || value.trim() !== value) {
+    return JSON.stringify(value);
+  }
+  return value;
 }
 
 async function scaffoldFrom(sourceId: string, targetName: string | undefined): Promise<void> {

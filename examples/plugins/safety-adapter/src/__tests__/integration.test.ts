@@ -65,32 +65,44 @@ describe('safety-adapter — integration', () => {
   });
 
   it('before_tool_call hook blocks rm -rf /', async () => {
-    const result = await registries.hooks.fireModifying('before_tool_call', {
-      sessionId: 'test',
-      toolName: 'terminal',
-      args: { command: 'rm -rf /' },
-    });
+    const result = await registries.hooks.fireModifying(
+      'before_tool_call',
+      {
+        sessionId: 'test',
+        toolName: 'terminal',
+        args: { command: 'rm -rf /' },
+      },
+      ['safety-adapter'],
+    );
 
     expect(result.error).toBeDefined();
     expect(result.error).toContain('safety-adapter');
   });
 
   it('before_tool_call hook passes safe commands', async () => {
-    const result = await registries.hooks.fireModifying('before_tool_call', {
-      sessionId: 'test',
-      toolName: 'terminal',
-      args: { command: 'echo hello' },
-    });
+    const result = await registries.hooks.fireModifying(
+      'before_tool_call',
+      {
+        sessionId: 'test',
+        toolName: 'terminal',
+        args: { command: 'echo hello' },
+      },
+      ['safety-adapter'],
+    );
 
     expect(result.error).toBeUndefined();
   });
 
   it('before_prompt_build hook prepends safety section', async () => {
-    const result = await registries.hooks.fireModifying('before_prompt_build', {
-      sessionId: 'test',
-      personalityId: 'researcher',
-      history: [],
-    });
+    const result = await registries.hooks.fireModifying(
+      'before_prompt_build',
+      {
+        sessionId: 'test',
+        personalityId: 'researcher',
+        history: [],
+      },
+      ['safety-adapter'],
+    );
 
     expect(result.prependSystem).toBeDefined();
     expect(result.prependSystem).toContain('Safety Rules');

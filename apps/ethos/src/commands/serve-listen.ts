@@ -19,12 +19,13 @@ export async function listenWithFallback(
   app: FetchApp,
   basePort: number,
   attempts: number,
+  hostname = '127.0.0.1',
 ): Promise<ListenResult> {
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
     const port = basePort + i;
     try {
-      const result = await tryListen(app, port);
+      const result = await tryListen(app, port, hostname);
       if (i > 0) {
         console.log(
           `[web] port ${basePort} busy, fell forward to ${port} (${i} attempt${i === 1 ? '' : 's'})`,
@@ -45,9 +46,9 @@ export async function listenWithFallback(
   });
 }
 
-function tryListen(app: FetchApp, port: number): Promise<ListenResult> {
+function tryListen(app: FetchApp, port: number, hostname: string): Promise<ListenResult> {
   return new Promise((resolve, reject) => {
-    const server = honoServe({ fetch: app.fetch, port }, () => {
+    const server = honoServe({ fetch: app.fetch, port, hostname }, () => {
       resolve({ server, port });
     });
     // The Node server underlying @hono/node-server emits 'error' for bind

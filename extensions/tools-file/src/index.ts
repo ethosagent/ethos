@@ -6,8 +6,16 @@ import type { ScopedFs, Tool, ToolContext, ToolResult } from '@ethosagent/types'
 // Helpers
 // ---------------------------------------------------------------------------
 
-const BLOCKED_WRITE_PATHS = [join(homedir(), '.ethos', 'config.yaml')];
-const BLOCKED_WRITE_PREFIXES = [join(homedir(), '.ethos', 'sessions')];
+const BLOCKED_WRITE_PATHS = [
+  join(homedir(), '.ethos', 'config.yaml'),
+  join(homedir(), '.ethos', 'keys.json'),
+  join(homedir(), '.ethos', 'web-token'),
+  join(homedir(), '.ethos', 'pairing.db'),
+];
+const BLOCKED_WRITE_PREFIXES = [
+  join(homedir(), '.ethos', 'sessions'),
+  join(homedir(), '.ethos', 'secrets'),
+];
 
 function expandPath(p: string, cwd: string): string {
   // Expand ~/ first, then resolve unconditionally so `..` and `.`
@@ -30,8 +38,12 @@ function canonicalizeForRead(path: string): string {
 }
 
 function isWriteBlocked(abs: string): boolean {
-  if (BLOCKED_WRITE_PATHS.includes(abs)) return true;
-  return BLOCKED_WRITE_PREFIXES.some((prefix) => abs.startsWith(prefix));
+  const normalized = resolve(abs);
+  if (BLOCKED_WRITE_PATHS.some((p) => resolve(p) === normalized)) return true;
+  return BLOCKED_WRITE_PREFIXES.some((prefix) => {
+    const np = resolve(prefix);
+    return normalized === np || normalized.startsWith(`${np}/`);
+  });
 }
 
 /**

@@ -117,6 +117,14 @@ const LOCKOUT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const LOCKOUT_THRESHOLD = 5;
 const LOCKOUT_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+/**
+ * Global (non-owner-keyed) rate limit on failed consume attempts.
+ * Prevents an attacker from locking out a specific user by submitting
+ * attempts under their ownerId. The global limit catches brute-force
+ * attempts regardless of which ownerId is claimed.
+ */
+const GLOBAL_LOCKOUT_THRESHOLD = 20;
+
 /** Record a failed consume attempt for ownerId and trigger lockout if threshold is reached. */
 function recordFailedAttempt(db: Database.Database, ownerId: string, now: number): void {
   db.prepare(
@@ -124,6 +132,25 @@ function recordFailedAttempt(db: Database.Database, ownerId: string, now: number
   ).run(ownerId, now);
 
   const windowStart = now - LOCKOUT_WINDOW_MS;
+
+  // Check global attempt rate first — if the system is under brute-force
+  // attack, pause ALL owners rather than letting the attacker target one.
+  const globalCount = db
+    .prepare(
+      `SELECT COUNT(*) AS cnt FROM pairing_consume_attempts
+       WHERE succeeded = 0 AND attempted_at >= ?`,
+    )
+    .get(windowStart) as { cnt: number };
+
+  if (globalCount.cnt >= GLOBAL_LOCKOUT_THRESHOLD) {
+    // Pause the claimed ownerId; the global threshold means we're under
+    // attack so locking out the claimed identity is acceptable.
+    db.prepare(
+      `INSERT OR REPLACE INTO pairing_owner_pauses (owner_id, paused_until) VALUES (?, ?)`,
+    ).run(ownerId, now + LOCKOUT_DURATION_MS);
+    return;
+  }
+
   const failCount = db
     .prepare(
       `SELECT COUNT(*) AS cnt FROM pairing_consume_attempts

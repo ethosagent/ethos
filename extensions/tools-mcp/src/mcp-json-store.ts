@@ -34,16 +34,27 @@ export class McpJsonStore {
     this.path = path;
   }
 
-  /** Read the current contents. Returns `[]` for missing or unparseable files. */
-  async list(): Promise<McpServerConfig[]> {
+  /**
+   * Read the current contents. Returns `[]` for missing or unparseable files.
+   *
+   * Two names — `read()` and `list()` — are kept as aliases. `read()` is the
+   * mcp.service.ts vocabulary (matches `storage.read()`); `list()` is the
+   * install-flow vocabulary (matches `manager.listServers()`).
+   */
+  async read(): Promise<McpServerConfig[]> {
     const raw = await this.storage.read(this.path);
     if (!raw) return [];
     return parseEntries(raw);
   }
 
+  /** Alias for `read()`. */
+  async list(): Promise<McpServerConfig[]> {
+    return this.read();
+  }
+
   /** Convenience: return one entry by name, or null if absent. */
   async get(name: string): Promise<McpServerConfig | null> {
-    const entries = await this.list();
+    const entries = await this.read();
     return entries.find((e) => e.name === name) ?? null;
   }
 
@@ -54,7 +65,7 @@ export class McpJsonStore {
    */
   async upsert(name: string, config: McpServerConfig): Promise<void> {
     await this.serialize(async () => {
-      const entries = await this.list();
+      const entries = await this.read();
       const idx = entries.findIndex((e) => e.name === name);
       if (idx === -1) {
         entries.push(config);
@@ -68,7 +79,7 @@ export class McpJsonStore {
   /** Remove an entry by name. No-op if absent. */
   async remove(name: string): Promise<void> {
     await this.serialize(async () => {
-      const entries = await this.list();
+      const entries = await this.read();
       const filtered = entries.filter((e) => e.name !== name);
       if (filtered.length === entries.length) return;
       await this.writeAll(filtered);

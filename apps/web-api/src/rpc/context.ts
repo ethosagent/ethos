@@ -9,6 +9,7 @@ import type { CronService } from '../services/cron.service';
 import type { EvolverService } from '../services/evolver.service';
 import type { KanbanService } from '../services/kanban.service';
 import type { LabService } from '../services/lab.service';
+import type { McpService } from '../services/mcp.service';
 import type { MemoryService } from '../services/memory.service';
 import type { MeshService } from '../services/mesh.service';
 import type { OnboardingService } from '../services/onboarding.service';
@@ -41,6 +42,7 @@ export interface RpcContext {
   mesh: MeshService;
   memory: MemoryService;
   plugins: PluginsService;
+  mcp: McpService;
   platforms: PlatformsService;
   lab: LabService;
   kanban: KanbanService;

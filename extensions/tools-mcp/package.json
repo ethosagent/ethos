@@ -19,5 +19,8 @@
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@ethosagent/web-contracts": "workspace:*"
   }
 }

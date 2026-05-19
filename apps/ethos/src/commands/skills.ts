@@ -2,7 +2,14 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, open, readdir, readFile, rename, rm, stat, unlink } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { createInterface } from 'node:readline';
-import { canInstall, deriveTier, scanSkillMd, type TrustTier } from '@ethosagent/safety-scanner';
+import {
+  canInstall,
+  deriveTier,
+  type ScanFinding,
+  scanPluginCode,
+  scanSkillMd,
+  type TrustTier,
+} from '@ethosagent/safety-scanner';
 import { UniversalScanner } from '@ethosagent/skills';
 import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
 import { EthosError, type Skill } from '@ethosagent/types';
@@ -224,15 +231,56 @@ function deriveTierFromSlug(slug: string): TrustTier {
   return deriveTier(`clawhub/${slug}`);
 }
 
-async function scanSkillDir(slug: string, skillDir: string): Promise<void> {
-  let content: string;
+/** Regex matching scannable source file extensions. */
+const SCANNABLE_SOURCE_EXT = /\.[jt]sx?$|\.(?:cjs|mjs)$/;
+
+/** Declaration-file suffixes that should be skipped. */
+function isDeclarationFile(name: string): boolean {
+  return name.endsWith('.d.ts') || name.endsWith('.d.cts') || name.endsWith('.d.mts');
+}
+
+/**
+ * Recursively walk `dir` and scan all source files through `scanPluginCode`.
+ * Skips `node_modules` directories and declaration files.
+ */
+async function walkAndScanSkillSource(dir: string, out: ScanFinding[]): Promise<void> {
+  let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
   try {
-    content = await readFile(join(skillDir, 'SKILL.md'), 'utf8');
+    entries = await readdir(dir, { withFileTypes: true });
   } catch {
-    return; // No SKILL.md — locateSlugSubpath already verified its presence
+    return;
+  }
+  for (const e of entries) {
+    const name = String(e.name);
+    if (e.isDirectory()) {
+      if (name === 'node_modules') continue;
+      await walkAndScanSkillSource(join(dir, name), out);
+    } else if (SCANNABLE_SOURCE_EXT.test(name) && !isDeclarationFile(name)) {
+      const src = await readFile(join(dir, name), 'utf-8').catch(() => null);
+      if (src) out.push(...scanPluginCode(src).findings);
+    }
+  }
+}
+
+async function scanSkillDir(slug: string, skillDir: string): Promise<void> {
+  // Scan SKILL.md for prompt-injection / hidden-unicode / etc.
+  const allFindings: ScanFinding[] = [];
+  try {
+    const content = await readFile(join(skillDir, 'SKILL.md'), 'utf8');
+    allFindings.push(...scanSkillMd(content, join(skillDir, 'SKILL.md')).findings);
+  } catch {
+    // No SKILL.md — locateSlugSubpath already verified its presence
   }
 
-  const result = scanSkillMd(content, join(skillDir, 'SKILL.md'));
+  // Also scan any source files (.ts, .js, .cjs, .mjs, .tsx, .jsx) in the bundle
+  await walkAndScanSkillSource(skillDir, allFindings);
+
+  const result = {
+    findings: allFindings,
+    hasRed: allFindings.some((f) => f.severity === 'red'),
+    hasYellow: allFindings.some((f) => f.severity === 'yellow'),
+  };
+
   if (!result.hasRed && !result.hasYellow) return;
 
   const tier = deriveTierFromSlug(slug);

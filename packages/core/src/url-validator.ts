@@ -53,9 +53,23 @@ function isPrivateIpv6(ip: string): boolean {
   if (lower === '::1' || lower === '::') return true;
   if (lower.startsWith('fe80:') || lower.startsWith('fc') || lower.startsWith('fd')) return true;
   if (lower.startsWith('ff')) return true; // multicast
-  // IPv4-mapped IPv6 ::ffff:x.x.x.x
+  // IPv4-mapped IPv6 ::ffff:x.x.x.x (textual)
   const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
   if (mapped) return isPrivateIpv4(mapped[1]);
+  // IPv4-mapped in normalized hex form ::ffff:c0a8:101
+  const hexMapped = lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hexMapped) {
+    const high = Number.parseInt(hexMapped[1], 16);
+    const low = Number.parseInt(hexMapped[2], 16);
+    const a = (high >> 8) & 0xff;
+    const b = high & 0xff;
+    const c = (low >> 8) & 0xff;
+    const d = low & 0xff;
+    return isPrivateIpv4(`${a}.${b}.${c}.${d}`);
+  }
+  // IPv4-compatible IPv6 (deprecated but still parseable): ::a.b.c.d
+  const compat = lower.match(/^::(\d+\.\d+\.\d+\.\d+)$/);
+  if (compat) return isPrivateIpv4(compat[1]);
   return false;
 }
 

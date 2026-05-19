@@ -33,7 +33,19 @@ export function csrfMiddleware(opts: CsrfMiddlewareOptions = {}): MiddlewareHand
     // Same-origin requests don't always send Origin (older browsers, some
     // fetch contexts). Fall back to Referer when present.
     const referer = c.req.header('referer');
-    const candidate = origin ?? (referer ? new URL(referer).origin : null);
+    let refererOrigin: string | null = null;
+    if (referer) {
+      try {
+        refererOrigin = new URL(referer).origin;
+      } catch {
+        throw new EthosError({
+          code: 'INVALID_INPUT',
+          cause: 'Malformed Referer header',
+          action: 'Send a valid URL in the Referer header.',
+        });
+      }
+    }
+    const candidate = origin ?? refererOrigin;
 
     if (!candidate) {
       throw new EthosError({

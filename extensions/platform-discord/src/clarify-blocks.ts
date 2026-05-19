@@ -232,10 +232,12 @@ function buildActionRows(requestId: string, options: string[] | undefined): APIA
 
 /** Discord markdown escape — neutralizes `*_~|>` plus a backslash so a
  *  question containing those chars renders literally instead of being
- *  parsed as bold/italic/strikethrough/spoiler. The custom_id field is
- *  not markdown-parsed and doesn't need escaping. */
+ *  parsed as bold/italic/strikethrough/spoiler. Also escapes `@` (to
+ *  prevent `@everyone`/`@here`/`@role` mention injection) and `<` (to
+ *  prevent `<@id>`, `<#id>`, `<:emoji:id>` custom mention syntax). The
+ *  custom_id field is not markdown-parsed and doesn't need escaping. */
 export function escapeMd(text: string): string {
-  return text.replace(/([\\*_~|>`])/g, '\\$1');
+  return text.replace(/([\\*_~|>`@<])/g, '\\$1');
 }
 
 /** Truncate to `max` chars with an ellipsis suffix when over. */
