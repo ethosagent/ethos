@@ -146,6 +146,16 @@ const PersonalityCreateInput = z.object({
   /** Markdown body of ETHOS.md. May be empty. */
   ethosMd: z.string(),
   memoryScope: z.enum(['global', 'per-personality']).optional(),
+  provider: ProviderIdSchema.or(z.literal('')).optional(),
+  capabilities: z.array(z.string()).optional(),
+  mcp_servers: z.array(z.string()).optional(),
+  plugins: z.array(z.string()).optional(),
+  fs_reach: z
+    .object({
+      read: z.array(z.string()).optional(),
+      write: z.array(z.string()).optional(),
+    })
+    .optional(),
 });
 const PersonalityCreateOutput = z.object({ personality: PersonalitySchema });
 
