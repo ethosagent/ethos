@@ -1071,6 +1071,9 @@ importers:
 
   extensions/tools-memory:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/memory-markdown':
         specifier: workspace:*
         version: link:../memory-markdown
