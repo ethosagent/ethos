@@ -100,7 +100,14 @@ export interface SessionStore {
     options?: { limit?: number; offset?: number },
   ): Promise<StoredMessage[]>;
   updateUsage(sessionId: string, delta: Partial<SessionUsage>): Promise<void>;
-  search(query: string, options?: { limit?: number; sessionId?: string }): Promise<SearchResult[]>;
+  /**
+   * Search for messages by query text. Bounds are inclusive on `StoredMessage.timestamp`.
+   * Both `since` and `until` are optional; provider behavior is open-ended when only one is supplied.
+   */
+  search(
+    query: string,
+    options?: { limit?: number; sessionId?: string; since?: Date; until?: Date },
+  ): Promise<SearchResult[]>;
   /** Persist a context-compaction event. The original messages are untouched. */
   recordCompression(event: Omit<CompressionEvent, 'id' | 'createdAt'>): Promise<CompressionEvent>;
   /** List a session's compaction events, oldest first. */
