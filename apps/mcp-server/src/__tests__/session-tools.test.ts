@@ -59,8 +59,10 @@ function createMockStore(options?: {
     updateSession: async () => {},
     deleteSession: async () => {},
     listSessions: async (filter) => {
-      const limit = filter?.limit ?? sessions.length;
-      return sessions.slice(0, limit);
+      const since = filter?.since;
+      const result = since ? sessions.filter((s) => s.createdAt >= since) : sessions;
+      const limit = filter?.limit ?? result.length;
+      return result.slice(0, limit);
     },
     appendMessage: async () => messages[0] ?? makeMessage(),
     getMessages: async (sessionId, opts) => {
@@ -71,7 +73,16 @@ function createMockStore(options?: {
     updateUsage: async () => {},
     search: async (_query, opts) => {
       const limit = opts?.limit ?? searchResults.length;
-      return searchResults.slice(0, limit);
+      let filtered = searchResults;
+      const since = opts?.since;
+      if (since) {
+        filtered = filtered.filter((r) => r.timestamp >= since);
+      }
+      const until = opts?.until;
+      if (until) {
+        filtered = filtered.filter((r) => r.timestamp <= until);
+      }
+      return filtered.slice(0, limit);
     },
     recordCompression: async () => ({
       id: 'comp-1',
@@ -117,6 +128,24 @@ describe('list_sessions', () => {
     const store = createMockStore({ sessions });
     const result = await listSessions(store, 2);
     expect(result).toHaveLength(2);
+  });
+
+  it('filters by since date', async () => {
+    const sessions = [
+      makeSession({ id: 'sess-old', createdAt: new Date('2025-01-01T00:00:00Z') }),
+      makeSession({ id: 'sess-new', createdAt: new Date('2025-06-01T00:00:00Z') }),
+    ];
+    const store = createMockStore({ sessions });
+    const result = await listSessions(store, 20, '2025-03-01');
+    expect(result).toHaveLength(1);
+    const first = result[0] as Record<string, unknown>;
+    expect(first.id).toBe('sess-new');
+  });
+
+  it('ignores invalid since value', async () => {
+    const store = createMockStore();
+    const result = await listSessions(store, 20, 'not-a-date');
+    expect(result).toHaveLength(1);
   });
 });
 
@@ -219,5 +248,68 @@ describe('search_sessions', () => {
     const store = createMockStore({ searchResults });
     const result = await searchSessions(store, 'test', 2);
     expect(result).toHaveLength(2);
+  });
+
+  it('filters results by since bound', async () => {
+    const searchResults: SearchResult[] = [
+      {
+        sessionId: 'sess-1',
+        messageId: 'msg-1',
+        snippet: 'old message',
+        score: 0.9,
+        timestamp: new Date('2025-01-01T00:00:00Z'),
+      },
+      {
+        sessionId: 'sess-1',
+        messageId: 'msg-2',
+        snippet: 'new message',
+        score: 0.8,
+        timestamp: new Date('2025-06-01T00:00:00Z'),
+      },
+    ];
+    const store = createMockStore({ searchResults });
+    const result = await searchSessions(store, 'message', 10, '2025-03-01');
+    expect(result).toHaveLength(1);
+    const first = result[0] as Record<string, unknown>;
+    expect(first.snippet).toBe('new message');
+  });
+
+  it('filters results by until bound', async () => {
+    const searchResults: SearchResult[] = [
+      {
+        sessionId: 'sess-1',
+        messageId: 'msg-1',
+        snippet: 'old message',
+        score: 0.9,
+        timestamp: new Date('2025-01-01T00:00:00Z'),
+      },
+      {
+        sessionId: 'sess-1',
+        messageId: 'msg-2',
+        snippet: 'new message',
+        score: 0.8,
+        timestamp: new Date('2025-06-01T00:00:00Z'),
+      },
+    ];
+    const store = createMockStore({ searchResults });
+    const result = await searchSessions(store, 'message', 10, undefined, '2025-03-01');
+    expect(result).toHaveLength(1);
+    const first = result[0] as Record<string, unknown>;
+    expect(first.snippet).toBe('old message');
+  });
+
+  it('ignores invalid date strings', async () => {
+    const searchResults: SearchResult[] = [
+      {
+        sessionId: 'sess-1',
+        messageId: 'msg-1',
+        snippet: 'a result',
+        score: 0.9,
+        timestamp: new Date('2025-01-01T00:00:00Z'),
+      },
+    ];
+    const store = createMockStore({ searchResults });
+    const result = await searchSessions(store, 'result', 10, 'not-a-date', 'also-bad');
+    expect(result).toHaveLength(1);
   });
 });

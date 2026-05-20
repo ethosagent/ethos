@@ -1,3 +1,4 @@
+import { applyTemporalDecay, parseTemporalBound } from '@ethosagent/core';
 import { redactString } from '@ethosagent/safety-redact';
 import type {
   MemoryContext,
@@ -151,18 +152,38 @@ export function createSessionSearchTool(session: SessionStore): Tool {
           type: 'number',
           description: 'Maximum number of results (default 10)',
         },
+        since: {
+          type: 'string',
+          description: 'ISO-8601 date/time lower bound (inclusive), e.g. "2026-05-01"',
+        },
+        until: {
+          type: 'string',
+          description: 'ISO-8601 date/time upper bound (inclusive), e.g. "2026-05-20"',
+        },
       },
       required: ['query'],
     },
     async execute(args, ctx): Promise<ToolResult> {
-      const { query, limit } = args as { query: string; limit?: number };
+      const { query, limit, since, until } = args as {
+        query: string;
+        limit?: number;
+        since?: string;
+        until?: string;
+      };
 
       if (!query) return { ok: false, error: 'query is required', code: 'input_invalid' };
 
-      const results = await session.search(query, {
+      const sinceBound = since ? parseTemporalBound(since) : undefined;
+      const untilBound = until ? parseTemporalBound(until) : undefined;
+
+      const rawResults = await session.search(query, {
         limit: Math.min(limit ?? 10, 50),
         sessionId: ctx.sessionId,
+        since: sinceBound,
+        until: untilBound,
       });
+
+      const results = applyTemporalDecay(rawResults);
 
       if (results.length === 0) {
         return { ok: true, value: `No session history matches "${query}"` };
@@ -176,6 +197,74 @@ export function createSessionSearchTool(session: SessionStore): Tool {
         ok: true,
         value: redactString(
           `${results.length} result${results.length === 1 ? '' : 's'} for "${query}":\n\n${formatted}`,
+        ),
+      };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// session_list_by_date
+// ---------------------------------------------------------------------------
+
+export function createSessionListByDateTool(session: SessionStore): Tool {
+  return {
+    name: 'session_list_by_date',
+    description:
+      'List sessions filtered by date range. Returns session metadata sorted by most recent first.',
+    toolset: 'memory',
+    maxResultChars: 10_000,
+    capabilities: {},
+    schema: {
+      type: 'object',
+      properties: {
+        since: {
+          type: 'string',
+          description: 'ISO-8601 lower bound (inclusive), e.g. "2026-05-01"',
+        },
+        until: {
+          type: 'string',
+          description: 'ISO-8601 upper bound (inclusive), e.g. "2026-05-20"',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum number of sessions to return (default 20)',
+        },
+      },
+    },
+    async execute(args): Promise<ToolResult> {
+      const { since, until, limit } = args as {
+        since?: string;
+        until?: string;
+        limit?: number;
+      };
+
+      const sinceBound = since ? parseTemporalBound(since) : undefined;
+      const untilBound = until ? parseTemporalBound(until) : undefined;
+
+      const sessions = await session.listSessions({
+        since: sinceBound,
+        limit: Math.min(limit ?? 20, 50),
+      });
+
+      // Client-side filter for until (SessionFilter doesn't have until)
+      const filtered = untilBound ? sessions.filter((s) => s.createdAt <= untilBound) : sessions;
+
+      if (filtered.length === 0) {
+        return { ok: true, value: 'No sessions found in the specified date range.' };
+      }
+
+      const formatted = filtered
+        .map(
+          (s, i) =>
+            `${i + 1}. [${s.createdAt.toISOString().slice(0, 16)}] ${s.title ?? s.key} (${s.id})`,
+        )
+        .join('\n');
+
+      return {
+        ok: true,
+        value: redactString(
+          `${filtered.length} session${filtered.length === 1 ? '' : 's'}:\n\n${formatted}`,
         ),
       };
     },
@@ -384,6 +473,7 @@ export function createMemoryTools(memory: MemoryProvider, session: SessionStore)
     createMemoryReadTool(memory),
     createMemoryWriteTool(memory),
     createSessionSearchTool(session),
+    createSessionListByDateTool(session),
   ];
 }
 

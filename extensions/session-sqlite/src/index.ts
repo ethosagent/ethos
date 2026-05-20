@@ -376,34 +376,40 @@ export class SQLiteSessionStore implements SessionStore {
 
   async search(
     query: string,
-    options?: { limit?: number; sessionId?: string },
+    options?: { limit?: number; sessionId?: string; since?: Date; until?: Date },
   ): Promise<SearchResult[]> {
     const limit = options?.limit ?? 20;
     const safeQuery = escapeFtsQuery(query);
 
-    const rows = options?.sessionId
-      ? (this.db
-          .prepare(
-            `SELECT m.id, m.session_id, m.content, m.timestamp,
-                    bm25(messages_fts) AS score
-             FROM messages_fts
-             JOIN messages m ON m.rowid = messages_fts.rowid
-             WHERE messages_fts MATCH ? AND m.session_id = ?
-             ORDER BY bm25(messages_fts)
-             LIMIT ?`,
-          )
-          .all(safeQuery, options.sessionId, limit) as FtsRow[])
-      : (this.db
-          .prepare(
-            `SELECT m.id, m.session_id, m.content, m.timestamp,
-                    bm25(messages_fts) AS score
-             FROM messages_fts
-             JOIN messages m ON m.rowid = messages_fts.rowid
-             WHERE messages_fts MATCH ?
-             ORDER BY bm25(messages_fts)
-             LIMIT ?`,
-          )
-          .all(safeQuery, limit) as FtsRow[]);
+    const conditions: string[] = ['messages_fts MATCH ?'];
+    const values: unknown[] = [safeQuery];
+
+    if (options?.sessionId) {
+      conditions.push('m.session_id = ?');
+      values.push(options.sessionId);
+    }
+    if (options?.since) {
+      conditions.push('m.timestamp >= ?');
+      values.push(options.since.toISOString());
+    }
+    if (options?.until) {
+      conditions.push('m.timestamp <= ?');
+      values.push(options.until.toISOString());
+    }
+
+    // No migration required: the existing idx_messages_session(session_id, timestamp) index covers the new predicate.
+    const where = conditions.join(' AND ');
+    const rows = this.db
+      .prepare(
+        `SELECT m.id, m.session_id, m.content, m.timestamp,
+                bm25(messages_fts) AS score
+         FROM messages_fts
+         JOIN messages m ON m.rowid = messages_fts.rowid
+         WHERE ${where}
+         ORDER BY bm25(messages_fts)
+         LIMIT ?`,
+      )
+      .all(...values, limit) as FtsRow[];
 
     return rows.map((r) => ({
       sessionId: r.session_id,

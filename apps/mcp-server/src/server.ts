@@ -119,7 +119,8 @@ export class EthosMcpServer {
             };
           }
           const limit = Number(safeArgs.limit) || 20;
-          const result = await listSessions(sessionStore, limit);
+          const since = typeof safeArgs.since === 'string' ? safeArgs.since : undefined;
+          const result = await listSessions(sessionStore, limit, since);
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
           };
@@ -170,7 +171,9 @@ export class EthosMcpServer {
           }
           const query = safeArgs.query ?? '';
           const limit = Number(safeArgs.limit) || 10;
-          const result = await searchSessions(sessionStore, query, limit);
+          const since = typeof safeArgs.since === 'string' ? safeArgs.since : undefined;
+          const until = typeof safeArgs.until === 'string' ? safeArgs.until : undefined;
+          const result = await searchSessions(sessionStore, query, limit, since, until);
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
           };

@@ -59,6 +59,7 @@ export { InMemoryRequestDumpStore } from './request-dump-store';
 export { stripAnsiEscapes } from './sanitize-output';
 export type { SecretsBackend } from './scoped';
 export { ScopedFetchImpl, ScopedFsImpl, ScopedProcessImpl, ScopedSecretsImpl } from './scoped';
+export { applyTemporalDecay, parseTemporalBound, toJournalKey } from './temporal';
 export { DefaultToolResultReducerRegistry } from './tool-reducer-registry';
 export { DefaultToolRegistry } from './tool-registry';
 export { SsrfError, type ValidateUrlOptions, validateUrl } from './url-validator';

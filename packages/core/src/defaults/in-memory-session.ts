@@ -103,13 +103,20 @@ export class InMemorySessionStore implements SessionStore {
 
   async search(
     query: string,
-    options?: { limit?: number; sessionId?: string },
+    options?: {
+      limit?: number;
+      sessionId?: string;
+      since?: Date;
+      until?: Date;
+    },
   ): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
     const lower = query.toLowerCase();
     for (const [sessionId, msgs] of this.messages.entries()) {
       if (options?.sessionId && sessionId !== options.sessionId) continue;
       for (const msg of msgs) {
+        if (options?.since && msg.timestamp < options.since) continue;
+        if (options?.until && msg.timestamp > options.until) continue;
         const idx = msg.content.toLowerCase().indexOf(lower);
         if (idx >= 0) {
           results.push({
