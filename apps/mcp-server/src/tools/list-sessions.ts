@@ -1,7 +1,13 @@
 import type { SessionStore } from '@ethosagent/types';
 
-export async function listSessions(sessionStore: SessionStore, limit: number): Promise<unknown[]> {
-  const sessions = await sessionStore.listSessions({ limit });
+export async function listSessions(
+  sessionStore: SessionStore,
+  limit: number,
+  since?: string,
+): Promise<unknown[]> {
+  const sinceBound = since ? new Date(since) : undefined;
+  const sinceDate = sinceBound && !Number.isNaN(sinceBound.getTime()) ? sinceBound : undefined;
+  const sessions = await sessionStore.listSessions({ limit, since: sinceDate });
   return sessions.map((s) => ({
     id: s.id,
     key: s.key,
@@ -25,6 +31,10 @@ export const listSessionsToolDef = {
       limit: {
         type: 'number',
         description: 'Max sessions to return (default 20)',
+      },
+      since: {
+        type: 'string',
+        description: 'ISO-8601 lower bound for session creation date, e.g. "2026-05-01"',
       },
     },
   },

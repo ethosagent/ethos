@@ -4,8 +4,14 @@ export async function searchSessions(
   sessionStore: SessionStore,
   query: string,
   limit: number,
+  since?: string,
+  until?: string,
 ): Promise<unknown[]> {
-  const results = await sessionStore.search(query, { limit });
+  const sinceBound = since ? new Date(since) : undefined;
+  const untilBound = until ? new Date(until) : undefined;
+  const sinceDate = sinceBound && !Number.isNaN(sinceBound.getTime()) ? sinceBound : undefined;
+  const untilDate = untilBound && !Number.isNaN(untilBound.getTime()) ? untilBound : undefined;
+  const results = await sessionStore.search(query, { limit, since: sinceDate, until: untilDate });
   return results.map((r) => ({
     sessionId: r.sessionId,
     messageId: r.messageId,
@@ -28,6 +34,14 @@ export const searchSessionsToolDef = {
       limit: {
         type: 'number',
         description: 'Max results to return (default 10)',
+      },
+      since: {
+        type: 'string',
+        description: 'ISO-8601 lower bound (inclusive), e.g. "2026-05-01"',
+      },
+      until: {
+        type: 'string',
+        description: 'ISO-8601 upper bound (inclusive), e.g. "2026-05-20"',
       },
     },
     required: ['query'],
