@@ -6,7 +6,7 @@
  * or ~/.claude/ dirs are touched.
  */
 import { InMemoryStorage } from '@ethosagent/storage-fs';
-import type { PersonalityConfig } from '@ethosagent/types';
+import type { PersonalityConfig, Storage } from '@ethosagent/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { filterSkill } from '../ingest-filter';
 import { UniversalScanner } from '../universal-scanner';
@@ -441,6 +441,56 @@ describe('Legacy plain-markdown skills (no frontmatter)', () => {
     const result = filterSkill(skill, makePersonality(), new Set());
     expect(result.include).toBe(true);
     expect(result.reason).toContain('pure prose');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Unreadable source — EACCES on one dir must not crash the whole scan
+// ---------------------------------------------------------------------------
+
+describe('Unreadable skill source is skipped, not fatal', () => {
+  const BAD_SKILLS = '/home/locked/skills';
+  const GOOD_SKILLS = '/home/open/skills';
+
+  it('EACCES on one source does not poison the scan and is reported via onSkip', async () => {
+    // Backing store holds the good source; the mock intercepts the bad dir.
+    const backing = makeStorage();
+    await backing.mkdir(GOOD_SKILLS);
+    await backing.write(`${GOOD_SKILLS}/summarize-doc.md`, SUMMARIZE_DOC);
+
+    const storage: Storage = {
+      read: (path) => backing.read(path),
+      mtime: (path) => backing.mtime(path),
+      listEntries: (dir) => {
+        if (dir === BAD_SKILLS) {
+          const err = new Error(`EACCES: permission denied, scandir '${dir}'`);
+          (err as NodeJS.ErrnoException).code = 'EACCES';
+          return Promise.reject(err);
+        }
+        return backing.listEntries(dir);
+      },
+    } as Storage;
+
+    const skipped: Array<{ dir: string; reason: string }> = [];
+    const scanner = new UniversalScanner({
+      storage,
+      sources: [
+        { label: 'locked', dir: BAD_SKILLS },
+        { label: 'open', dir: GOOD_SKILLS },
+      ],
+      onSkip: (dir, reason) => skipped.push({ dir, reason }),
+    });
+
+    const pool = await scanner.scan();
+
+    // Good source still discovered.
+    expect(pool.has('open/summarize-doc')).toBe(true);
+    // Bad source surfaced via onSkip with the directory and a reason.
+    const skip = must(
+      skipped.find((s) => s.dir === BAD_SKILLS),
+      'expected onSkip for the unreadable source',
+    );
+    expect(skip.reason).toContain('EACCES');
   });
 });
 

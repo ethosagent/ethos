@@ -143,7 +143,14 @@ export class UniversalScanner {
   }
 
   private async discoverFiles(dir: string): Promise<string[]> {
-    const entries = await this.storage.listEntries(dir);
+    let entries: Awaited<ReturnType<Storage['listEntries']>>;
+    try {
+      entries = await this.storage.listEntries(dir);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code ?? 'unknown';
+      this.onSkip?.(dir, `skill source not readable (${code}) — skipped`);
+      return [];
+    }
     if (entries.length === 0) return [];
 
     const found: string[] = [];
@@ -157,7 +164,14 @@ export class UniversalScanner {
           continue;
         }
         // Scoped: <dir>/<scope>/<slug>/SKILL.md
-        const inner = await this.storage.listEntries(subPath);
+        let inner: Awaited<ReturnType<Storage['listEntries']>>;
+        try {
+          inner = await this.storage.listEntries(subPath);
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code ?? 'unknown';
+          this.onSkip?.(subPath, `skill source not readable (${code}) — skipped`);
+          continue;
+        }
         for (const child of [...inner].sort((a, b) => a.name.localeCompare(b.name))) {
           if (!child.isDir) continue;
           const nested = join(subPath, child.name, 'SKILL.md');
