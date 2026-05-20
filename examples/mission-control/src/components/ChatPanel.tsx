@@ -2,7 +2,7 @@
 
 import type { SseEvent } from '@ethosagent/web-contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ethos } from '@/lib/ethos';
+import { sendMessage } from '@/lib/send-message';
 
 interface ChatPanelProps {
   sessionId: string | null;
@@ -118,7 +118,7 @@ export function ChatPanel({ sessionId, personalityId, onSessionCreated }: ChatPa
     setMessages((prev) => [...prev, { id: nextId++, role: 'user', content: text, done: true }]);
 
     try {
-      const res = await ethos.rpc.chat.send({
+      const data = await sendMessage({
         sessionId: sessionId ?? undefined,
         clientId: 'mission-control',
         text,
@@ -126,7 +126,7 @@ export function ChatPanel({ sessionId, personalityId, onSessionCreated }: ChatPa
       });
 
       if (!sessionId) {
-        onSessionCreated(res.sessionId);
+        onSessionCreated(data.sessionId);
       }
     } catch (err) {
       console.error('Failed to send:', err);

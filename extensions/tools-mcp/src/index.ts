@@ -351,14 +351,15 @@ export class McpClient {
         const token = await ensureValidToken(this._config.name, this._config.auth, this._secrets);
         headers.Authorization = `Bearer ${token}`;
       }
-      // SSRF gate: validate before handing to SDK transport (which uses raw fetch internally).
+      // SSRF gate: validate initial URL + disable redirect following so the SDK fetch
+      // cannot be redirected to a private/metadata endpoint after passing the initial check.
       // allowLocalhost permits developer-local servers while still blocking cloud metadata.
       validateUrl(url, { allowLocalhost: true });
       const { StreamableHTTPClientTransport } = await import(
         '@modelcontextprotocol/sdk/client/streamableHttp.js'
       );
       return new StreamableHTTPClientTransport(new URL(url), {
-        requestInit: Object.keys(headers).length > 0 ? { headers } : undefined,
+        requestInit: { ...(Object.keys(headers).length > 0 ? { headers } : {}), redirect: 'error' },
       });
     }
 
@@ -374,13 +375,14 @@ export class McpClient {
         const token = await ensureValidToken(this._config.name, this._config.auth, this._secrets);
         headers.Authorization = `Bearer ${token}`;
       }
-      // SSRF gate: validate before handing to SDK transport (which uses raw fetch internally).
+      // SSRF gate: validate initial URL + disable redirect following so the SDK fetch
+      // cannot be redirected to a private/metadata endpoint after passing the initial check.
       // allowLocalhost permits developer-local servers while still blocking cloud metadata.
       validateUrl(url, { allowLocalhost: true });
       // Lazy import to avoid pulling in eventsource when not needed
       const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
       return new SSEClientTransport(new URL(url), {
-        requestInit: Object.keys(headers).length > 0 ? { headers } : undefined,
+        requestInit: { ...(Object.keys(headers).length > 0 ? { headers } : {}), redirect: 'error' },
       });
     }
 
