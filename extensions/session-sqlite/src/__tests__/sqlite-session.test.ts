@@ -194,6 +194,58 @@ describe('SQLiteSessionStore', () => {
     expect(results.every((r) => r.sessionId === s1.id)).toBe(true);
   });
 
+  it('search filters by `since` bound (inclusive)', async () => {
+    const session = await store.createSession(baseSession);
+    await store.appendMessage({ sessionId: session.id, role: 'user', content: 'old quantum note' });
+    const old = await store.appendMessage({
+      sessionId: session.id,
+      role: 'user',
+      content: 'older quantum note',
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: direct DB access for test setup
+    (store as any).db
+      .prepare('UPDATE messages SET timestamp = ? WHERE id = ?')
+      .run('2026-05-01T00:00:00.000Z', old.id);
+
+    const cutoff = new Date('2026-05-10T00:00:00.000Z');
+    const results = await store.search('quantum', { since: cutoff });
+    expect(results.every((r) => r.timestamp >= cutoff)).toBe(true);
+    expect(results.some((r) => r.messageId === old.id)).toBe(false);
+  });
+
+  it('search filters by `until` bound (inclusive)', async () => {
+    const session = await store.createSession(baseSession);
+    await store.appendMessage({ sessionId: session.id, role: 'user', content: 'fresh quantum' });
+    const future = await store.appendMessage({
+      sessionId: session.id,
+      role: 'user',
+      content: 'future quantum',
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: direct DB access for test setup
+    (store as any).db
+      .prepare('UPDATE messages SET timestamp = ? WHERE id = ?')
+      .run('2099-01-01T00:00:00.000Z', future.id);
+
+    const until = new Date('2030-01-01T00:00:00.000Z');
+    const results = await store.search('quantum', { until });
+    expect(results.every((r) => r.timestamp <= until)).toBe(true);
+    expect(results.some((r) => r.messageId === future.id)).toBe(false);
+  });
+
+  it('search composes since + until + sessionId', async () => {
+    const s1 = await store.createSession({ ...baseSession, key: 'k1' });
+    const s2 = await store.createSession({ ...baseSession, key: 'k2' });
+    await store.appendMessage({ sessionId: s1.id, role: 'user', content: 'in-range quantum' });
+    await store.appendMessage({ sessionId: s2.id, role: 'user', content: 'wrong-session quantum' });
+
+    const results = await store.search('quantum', {
+      sessionId: s1.id,
+      since: new Date(Date.now() - 60_000),
+      until: new Date(Date.now() + 60_000),
+    });
+    expect(results.every((r) => r.sessionId === s1.id)).toBe(true);
+  });
+
   // -------------------------------------------------------------------------
   // Pruning
   // -------------------------------------------------------------------------
