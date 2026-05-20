@@ -138,6 +138,10 @@ export function AddMcpModal({ open, onClose }: Props) {
           stopPolling();
           setStep('error');
           setErrorMsg(result.error ?? 'Connection failed');
+        } else if (result.status === 'expired') {
+          stopPolling();
+          setStep('error');
+          setErrorMsg('Authorization session expired. Please retry.');
         }
       } catch {
         // Keep polling

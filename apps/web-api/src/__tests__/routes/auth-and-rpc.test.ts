@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi, WebTokenRepository } from '../../index';
+import { mcpRpcPath } from '../../routes/rpc';
 import {
   makeStubAgentLoop,
   makeStubMemoryProvider,
@@ -125,6 +126,58 @@ describe('createWebApi — auth + rpc happy path', () => {
   it('SSE handler requires the auth cookie', async () => {
     const res = await app.request('/sse/sessions/sess_1');
     expect(res.status).toBe(401);
+  });
+
+  // The MCP install wizard polls `mcp.status`, which derives the flow
+  // `state` from the `ethos_mcp_pending` cookie. Clearing the cookie on
+  // `mcp.complete` would strand every subsequent poll → infinite spinner.
+  // The cookie must survive `mcp.complete` and only be cleared on an
+  // explicit `mcp.cancel`.
+  it('mcp.complete does NOT clear the ethos_mcp_pending cookie', async () => {
+    const exchange = await app.request(`/auth/exchange?t=${token}`, {
+      headers: { origin: 'http://localhost:3000' },
+    });
+    const cookieHeader = parseSetCookieValue(exchange.headers.get('set-cookie'));
+
+    const res = await app.request('/rpc/mcp/complete', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: cookieHeader as string,
+        origin: 'http://localhost:3000',
+      },
+      body: JSON.stringify({ json: { state: 'test-state', code: 'test-code' } }),
+    });
+    const setCookie = res.headers.get('set-cookie') ?? '';
+    expect(setCookie).not.toMatch(/ethos_mcp_pending=;/);
+    expect(setCookie).not.toMatch(/ethos_mcp_pending=[^;]*;.*Max-Age=0/i);
+  });
+
+  it('mcp.cancel still clears the ethos_mcp_pending cookie', async () => {
+    const exchange = await app.request(`/auth/exchange?t=${token}`, {
+      headers: { origin: 'http://localhost:3000' },
+    });
+    const cookieHeader = parseSetCookieValue(exchange.headers.get('set-cookie'));
+
+    const res = await app.request('/rpc/mcp/cancel', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: cookieHeader as string,
+        origin: 'http://localhost:3000',
+      },
+      body: JSON.stringify({ json: { state: 'test-state' } }),
+    });
+    const setCookie = res.headers.get('set-cookie') ?? '';
+    expect(setCookie).toMatch(/ethos_mcp_pending=;/);
+    expect(setCookie).toMatch(/Max-Age=0/i);
+  });
+});
+
+describe('mcpRpcPath', () => {
+  it('builds slash-separated oRPC paths (not dot-separated)', () => {
+    expect(mcpRpcPath('start')).toBe('/rpc/mcp/start');
+    expect(mcpRpcPath('cancel')).toBe('/rpc/mcp/cancel');
   });
 });
 

@@ -30,6 +30,18 @@ import { deriveMcpRequestOrigin } from './rpc-origin';
 const MCP_PENDING_COOKIE = 'ethos_mcp_pending';
 const MCP_COOKIE_MAX_AGE = 600; // 10 minutes
 
+/**
+ * Builds the HTTP path oRPC's RPCHandler routes an `mcp.*` procedure to.
+ * oRPC joins nested procedure segments with `/` under the `/rpc` prefix —
+ * `rpc.mcp.start()` → `POST /rpc/mcp/start`. This was once hardcoded with a
+ * `.` separator, which silently never matched and broke the install wizard.
+ * Centralising the separator here means a regression breaks every MCP path
+ * at once, which the mcp/cancel route test catches.
+ */
+export function mcpRpcPath(procedure: 'start' | 'cancel'): string {
+  return `/rpc/mcp/${procedure}`;
+}
+
 export interface RpcRoutesOptions {
   services: ServiceContainer;
   /**
@@ -103,7 +115,7 @@ export function rpcRoutes(opts: RpcRoutesOptions) {
     const path = new URL(c.req.url).pathname;
 
     // mcp.start — set cookie with the state value returned by the handler.
-    if (path === '/rpc/mcp.start' && response.ok) {
+    if (path === mcpRpcPath('start') && response.ok) {
       try {
         const cloned = response.clone();
         const body = await cloned.json();
@@ -135,8 +147,16 @@ export function rpcRoutes(opts: RpcRoutesOptions) {
       }
     }
 
-    // mcp.complete or mcp.cancel — clear the cookie after the handler runs.
-    if (path === '/rpc/mcp.complete' || path === '/rpc/mcp.cancel') {
+    // mcp.cancel — clear the cookie after the handler runs.
+    //
+    // The cookie is NOT cleared on mcp.complete: the wizard's mcp.status
+    // polling derives the flow `state` from this cookie, and it must keep
+    // observing the terminal `connected` state during the install flow's
+    // terminal-retention window. Only an explicit mcp.cancel (user aborted)
+    // clears it. A stale cookie after a completed flow is harmless — it is
+    // HttpOnly, SameSite=Strict, scoped to Path=/rpc, gets overwritten by
+    // the next mcp.start, and the server-side flow state self-expires.
+    if (path === mcpRpcPath('cancel')) {
       const headers = new Headers(response.headers);
       headers.append(
         'Set-Cookie',

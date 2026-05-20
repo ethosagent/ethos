@@ -12,7 +12,7 @@ import type { SessionsService } from '../services/sessions.service';
 import { authRoutes } from './auth';
 import { openAiRoutes } from './openai';
 import { openapiRoutes } from './openapi';
-import { rpcRoutes } from './rpc';
+import { mcpRpcPath, rpcRoutes } from './rpc';
 import { sseRoutes } from './sse';
 import { staticRoutes } from './static';
 
@@ -144,7 +144,7 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
 
   // Rate-limit mcp.start to prevent DCR registration spam
   const mcpStartRateLimit = rateLimitMiddleware();
-  app.use('/rpc/mcp.start', mcpStartRateLimit);
+  app.use(mcpRpcPath('start'), mcpStartRateLimit);
 
   app.route(
     '/rpc',
