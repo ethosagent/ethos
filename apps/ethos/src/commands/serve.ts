@@ -17,6 +17,7 @@ import {
 } from '@ethosagent/wiring';
 import { type EthosConfig, ethosDir } from '../config';
 import { emitReady } from '../logger';
+import { notifyReady } from '../sd-notify';
 import { createAgentLoop, createTeamAgentLoop } from '../wiring';
 import { hasFlag, parseFlagValue, parsePort } from './serve-helpers';
 import { listenWithFallback } from './serve-listen';
@@ -258,6 +259,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   }
 
   emitReady('serve');
+  notifyReady();
 
   const cleanup = async () => {
     stopHeartbeat();

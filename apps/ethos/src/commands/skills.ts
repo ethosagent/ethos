@@ -35,23 +35,26 @@ export async function runSkills(args: string[]): Promise<void> {
 
   switch (sub) {
     case 'install': {
-      const slug = args[1];
+      const yesFlag = args.includes('--yes');
+      const slug = args.filter((a) => a !== '--yes')[1];
       if (!slug) {
-        console.log('Usage: ethos skills install <slug>');
+        console.log('Usage: ethos skills install <slug> [--yes]');
         console.log('  e.g. ethos skills install steipete/slack');
         console.log('       ethos skills install github:owner/repo/path');
+        console.log('       ethos skills install owner/skill --yes  # accept yellow findings');
         process.exit(1);
       }
-      await installSkill(slug);
+      await installSkill(slug, yesFlag);
       break;
     }
 
     case 'update': {
-      const slug = args[1];
+      const yesFlag = args.includes('--yes');
+      const slug = args.filter((a) => a !== '--yes')[1];
       if (slug) {
-        await updateOne(slug);
+        await updateOne(slug, yesFlag);
       } else {
-        await updateAll();
+        await updateAll(yesFlag);
       }
       break;
     }
@@ -80,7 +83,7 @@ export async function runSkills(args: string[]): Promise<void> {
 // Operations
 // ---------------------------------------------------------------------------
 
-async function installSkill(slug: string): Promise<void> {
+async function installSkill(slug: string, yesFlag = false): Promise<void> {
   const dir = skillsRoot();
   console.log(
     `${c.dim}Installing ${c.reset}${c.bold}${slug}${c.reset}${c.dim} via clawhub to ${dir}...${c.reset}\n`,
@@ -99,7 +102,7 @@ async function installSkill(slug: string): Promise<void> {
           });
         }
       },
-      onBeforeCommit: (skillDir) => scanSkillDir(slug, skillDir),
+      onBeforeCommit: (skillDir) => scanSkillDir(slug, skillDir, yesFlag),
     });
   } catch (err) {
     if (err instanceof EthosError) {
@@ -114,7 +117,7 @@ async function installSkill(slug: string): Promise<void> {
   console.log(`\n${c.green}✓ Installed ${slug}.${c.reset}`);
 }
 
-async function updateOne(slug: string): Promise<void> {
+async function updateOne(slug: string, yesFlag = false): Promise<void> {
   const dir = skillsRoot();
   console.log(`${c.dim}Updating ${c.reset}${c.bold}${slug}${c.reset}${c.dim}...${c.reset}\n`);
   try {
@@ -132,7 +135,7 @@ async function updateOne(slug: string): Promise<void> {
           });
         }
       },
-      onBeforeCommit: (skillDir) => scanSkillDir(slug, skillDir),
+      onBeforeCommit: (skillDir) => scanSkillDir(slug, skillDir, yesFlag),
     });
   } catch (err) {
     if (err instanceof EthosError) {
@@ -147,14 +150,14 @@ async function updateOne(slug: string): Promise<void> {
   console.log(`\n${c.green}✓ Updated ${slug}.${c.reset}`);
 }
 
-async function updateAll(): Promise<void> {
+async function updateAll(yesFlag = false): Promise<void> {
   const slugs = await listInstalledSlugs();
   if (slugs.length === 0) {
     console.log(`${c.dim}No skills installed.${c.reset}`);
     return;
   }
   for (const slug of slugs) {
-    await updateOne(slug);
+    await updateOne(slug, yesFlag);
   }
 }
 
@@ -267,7 +270,7 @@ async function walkAndScanSkillSource(dir: string, out: ScanFinding[]): Promise<
   }
 }
 
-async function scanSkillDir(slug: string, skillDir: string): Promise<void> {
+async function scanSkillDir(slug: string, skillDir: string, yesFlag = false): Promise<void> {
   // Scan SKILL.md for prompt-injection / hidden-unicode / etc.
   const allFindings: ScanFinding[] = [];
   try {
@@ -313,7 +316,19 @@ async function scanSkillDir(slug: string, skillDir: string): Promise<void> {
           'Review the findings above. Remove the flagged content or choose a different skill.',
       });
     }
-    // Yellow-only for community/untrusted: prompt user to acknowledge
+    // Yellow-only for community/untrusted: accept via --yes, fail fast if
+    // non-interactive, or prompt interactively.
+    const yellowAction = resolveYellowFindings({
+      slug,
+      findings: result.findings,
+      yesFlag,
+      isTTY: !!process.stdin.isTTY,
+      managed: process.env.ETHOS_MANAGED === '1',
+    });
+
+    if (yellowAction === 'proceed') return;
+
+    // Interactive TTY path: prompt for confirmation
     const confirmed = await promptConfirm(
       `\n${c.yellow}⚠ Install '${slug}' with the warnings above? [y/N]${c.reset} `,
     );
@@ -328,6 +343,44 @@ async function scanSkillDir(slug: string, skillDir: string): Promise<void> {
   }
 
   console.log(`${c.yellow}⚠ Installed with warnings — review findings above.${c.reset}`);
+}
+
+/**
+ * Resolve a yellow-finding install decision without hanging on stdin.
+ *
+ * Exported for testing — not part of the public CLI surface.
+ *
+ * @returns `'proceed'` to continue installing, or throws EthosError to abort.
+ */
+export function resolveYellowFindings(opts: {
+  slug: string;
+  findings: ScanFinding[];
+  yesFlag: boolean;
+  isTTY: boolean;
+  managed: boolean;
+}): 'proceed' | 'prompt' {
+  const { slug, findings, yesFlag, isTTY, managed } = opts;
+  const yellowFindings = findings.filter((f) => f.severity === 'yellow');
+
+  if (yesFlag) {
+    console.log(`${c.yellow}⚠ Accepted yellow findings for '${slug}' (--yes)${c.reset}`);
+    for (const f of yellowFindings) {
+      console.log(`  ${c.dim}accepted: ${f.rule}${c.reset}`);
+    }
+    return 'proceed';
+  }
+
+  const nonInteractive = !isTTY || managed;
+  if (nonInteractive) {
+    const findingSummary = yellowFindings.map((f) => f.rule).join(', ');
+    throw new EthosError({
+      code: 'SKILL_INSTALL_FAILED',
+      cause: `Skill '${slug}' has yellow safety findings (${findingSummary}) and stdin is not a TTY.`,
+      action: 'Re-run with --yes to accept the findings, or install interactively.',
+    });
+  }
+
+  return 'prompt';
 }
 
 function promptConfirm(question: string): Promise<boolean> {

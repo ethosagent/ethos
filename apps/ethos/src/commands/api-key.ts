@@ -22,18 +22,19 @@ const c = {
 
 const DEFAULT_SCOPES = ['chat'];
 const USAGE =
-  'Usage: ethos api-key [create --name <label> [--scopes <a,b>] | list | revoke <prefix>]';
+  'Usage: ethos api-key [create --name <label> [--scopes <a,b>] [--json] | list [--json] | revoke <prefix>]';
 
 export async function runApiKey(args: string[]): Promise<void> {
   const sub = args[0] ?? 'list';
+  const jsonMode = args.includes('--json');
   const store = openStore();
   try {
     switch (sub) {
       case 'create':
-        await create(store, args.slice(1));
+        await create(store, args.slice(1), jsonMode);
         break;
       case 'list':
-        await list(store);
+        await list(store, jsonMode);
         break;
       case 'revoke':
         await revoke(store, args.slice(1));
@@ -51,7 +52,7 @@ function openStore(): SqliteApiKeyStore {
   return new SqliteApiKeyStore(join(ethosDir(), 'sessions.db'));
 }
 
-async function create(store: SqliteApiKeyStore, args: string[]): Promise<void> {
+async function create(store: SqliteApiKeyStore, args: string[], jsonMode: boolean): Promise<void> {
   const name = parseFlagValue(args, '--name');
   if (!name) {
     console.log('Missing --name. Usage: ethos api-key create --name <label> [--scopes <a,b>]');
@@ -66,6 +67,18 @@ async function create(store: SqliteApiKeyStore, args: string[]): Promise<void> {
     : DEFAULT_SCOPES;
 
   const { secret, record } = await store.create({ name, scopes });
+
+  if (jsonMode) {
+    const payload = {
+      name: record.name,
+      key: secret,
+      prefix: record.prefix,
+      scopes: record.scopes,
+    };
+    process.stdout.write(`${JSON.stringify(payload)}\n`);
+    return;
+  }
+
   console.log();
   console.log(`${c.green}✓ API key created${c.reset}  ${c.dim}name: ${record.name}${c.reset}`);
   console.log();
@@ -78,8 +91,20 @@ async function create(store: SqliteApiKeyStore, args: string[]): Promise<void> {
   console.log();
 }
 
-async function list(store: SqliteApiKeyStore): Promise<void> {
+async function list(store: SqliteApiKeyStore, jsonMode: boolean): Promise<void> {
   const all = await store.list();
+
+  if (jsonMode) {
+    const payload = all.map((k) => ({
+      name: k.name,
+      prefix: k.prefix,
+      scopes: k.scopes,
+      createdAt: k.createdAt.toISOString(),
+    }));
+    process.stdout.write(`${JSON.stringify(payload)}\n`);
+    return;
+  }
+
   if (all.length === 0) {
     console.log(`\n${c.dim}No API keys yet.${c.reset}`);
     console.log(`${c.dim}Create one with: ${c.reset}ethos api-key create --name <label>\n`);
