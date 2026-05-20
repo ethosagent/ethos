@@ -2,7 +2,7 @@ import type { InboundMessage } from '@ethosagent/types';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ChannelPlatformConfig } from '../channel-filter';
-import { checkMessage } from '../channel-filter';
+import { checkMessage, isSenderAllowed } from '../channel-filter';
 import { initPairingDb } from '../pairing-store';
 
 // ---------------------------------------------------------------------------
@@ -225,5 +225,76 @@ describe('checkMessage', () => {
     };
     const result = checkMessage(msg({ userId: 'stranger', isDm: true }), config, db);
     expect(result.action).toBe('drop');
+  });
+
+  it('enabled: false → non-allowlisted sender in group → allow (filter bypassed)', () => {
+    const config: ChannelPlatformConfig = {
+      enabled: false,
+      ownerUserId: 'owner-1',
+      recipientAllowlist: ['user-42'],
+    };
+    const result = checkMessage(
+      msg({ userId: 'stranger', isDm: false, isGroupMention: false }),
+      config,
+      db,
+    );
+    expect(result.action).toBe('allow');
+  });
+
+  it('enabled: false → non-allowlisted sender in DM → allow (filter bypassed)', () => {
+    const config: ChannelPlatformConfig = {
+      enabled: false,
+      ownerUserId: 'owner-1',
+      recipientAllowlist: ['user-42'],
+    };
+    const result = checkMessage(msg({ userId: 'stranger', isDm: true }), config, db);
+    expect(result.action).toBe('allow');
+  });
+
+  it('enabled: true → behaves identically to omitting the key (regression guard)', () => {
+    const config: ChannelPlatformConfig = {
+      enabled: true,
+      ownerUserId: 'owner-1',
+      recipientAllowlist: ['user-42'],
+    };
+    const result = checkMessage(
+      msg({ userId: 'stranger', isDm: false, isGroupMention: true }),
+      config,
+      db,
+    );
+    expect(result.action).toBe('drop');
+  });
+
+  it('enabled omitted → behaves as today (regression guard)', () => {
+    const config: ChannelPlatformConfig = {
+      ownerUserId: 'owner-1',
+      recipientAllowlist: ['user-42'],
+    };
+    const result = checkMessage(
+      msg({ userId: 'stranger', isDm: false, isGroupMention: true }),
+      config,
+      db,
+    );
+    expect(result.action).toBe('drop');
+  });
+});
+
+describe('isSenderAllowed', () => {
+  it('enabled: false → non-allowlisted sender → true (filter bypassed)', () => {
+    const config: ChannelPlatformConfig = {
+      enabled: false,
+      ownerUserId: 'owner-1',
+      recipientAllowlist: ['user-42'],
+    };
+    expect(isSenderAllowed(msg({ userId: 'stranger' }), config)).toBe(true);
+  });
+
+  it('enabled: true → non-allowlisted sender → false', () => {
+    const config: ChannelPlatformConfig = {
+      enabled: true,
+      ownerUserId: 'owner-1',
+      recipientAllowlist: ['user-42'],
+    };
+    expect(isSenderAllowed(msg({ userId: 'stranger' }), config)).toBe(false);
   });
 });

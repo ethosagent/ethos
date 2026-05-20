@@ -7,6 +7,12 @@ import { generateCode } from './pairing-store';
 // ---------------------------------------------------------------------------
 
 export interface ChannelPlatformConfig {
+  /**
+   * Explicit on/off switch for the whole filter on this platform.
+   * When omitted (the default), the filter is enabled and behaves as before.
+   * Set `false` to fully bypass the filter for this platform.
+   */
+  enabled?: boolean;
   /** Owner user ID — always allowed, immutable. */
   ownerUserId?: string;
   /** Additional allowed senders (user IDs or email globs). */
@@ -66,6 +72,7 @@ export function isSenderAllowed(
   config: ChannelPlatformConfig | undefined,
 ): boolean {
   if (!config) return true; // backward-compat: no platform config means no filter
+  if (config.enabled === false) return true; // filter disabled for this platform
   const senderId = message.userId ?? '';
   const allowlist: string[] = [];
   if (config.ownerUserId) allowlist.push(config.ownerUserId);
@@ -82,6 +89,7 @@ export function isSenderAllowed(
  * Evaluate an inbound message against the per-platform config.
  *
  * Logic order:
+ * 0. config.enabled === false → allow (filter explicitly disabled for platform).
  * 1. No platform config → allow (backward compat).
  * 2. Build effective allowlist = [ownerUserId, ...recipientAllowlist].
  * 3. Sender in allowlist → proceed to step 6.
@@ -98,6 +106,9 @@ export function checkMessage(
 ): ChannelFilterResult {
   // Step 1: no platform config → backward compat allow
   if (!config) return { action: 'allow' };
+
+  // Step 0: filter explicitly disabled for this platform → allow everything
+  if (config.enabled === false) return { action: 'allow' };
 
   const senderId = message.userId ?? '';
 

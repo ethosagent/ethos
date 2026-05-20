@@ -565,6 +565,7 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   }
   if (config.channelFilter) {
     for (const [platform, cfg] of Object.entries(config.channelFilter)) {
+      if (cfg.enabled === false) lines.push(`channel_filter.${platform}.enable: false`);
       if (cfg.ownerUserId) lines.push(`channel_filter.${platform}.ownerUserId: ${cfg.ownerUserId}`);
       if (cfg.recipientAllowlist && cfg.recipientAllowlist.length > 0) {
         lines.push(
@@ -1479,6 +1480,8 @@ function buildChannelFilter(
     const entry = kv[platform];
     if (!entry) continue;
     const cfg: ChannelPlatformConfig = {};
+    if (entry.enable === 'false') cfg.enabled = false;
+    else if (entry.enable === 'true') cfg.enabled = true;
     if (entry.ownerUserId) cfg.ownerUserId = entry.ownerUserId;
     if (entry.recipientAllowlist) {
       cfg.recipientAllowlist = entry.recipientAllowlist

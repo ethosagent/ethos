@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-telegram
 time: "15 min"
-updated: 2026-05-13
+updated: 2026-05-20
 ---
 
 ## Task
@@ -114,6 +114,7 @@ Default behaviour is **deny by default in groups, pairing flow in DMs.** Configu
 ```yaml
 channelFilter:
   telegram:
+    enable: false                   # optional escape hatch — bypass the filter, keep the config
     ownerUserId: "1234567"          # numeric Telegram user id — always allowed
     recipientAllowlist:
       - "9876543"
@@ -124,6 +125,7 @@ channelFilter:
 
 Field meanings:
 
+- `enable` — explicit on/off switch for the whole filter on this platform. Omitted (the default) or `true` keeps the filter on. `false` bypasses every gate — allowlist, `dmPolicy`, mention gating, context visibility — so you can disable the filter without deleting the rest of the block.
 - `ownerUserId` — bypasses every gate, including the group mention gate. Required for `/allow`, `/deny`, `/communications` to take effect.
 - `recipientAllowlist` — extra allowed user ids and group ids. Globs are accepted for the email adapter only.
 - `dmPolicy` — what happens when a non-allowlisted user DMs the bot. `pairing` (default) replies with a one-time code; `allowlist` silently drops; `queue` parks the message for owner review; `reject` replies "not authorised"; `silent-drop` is the noisiest legacy mode.
