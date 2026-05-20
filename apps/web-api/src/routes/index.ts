@@ -1,3 +1,6 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import type { Storage } from '@ethosagent/types';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { authMiddleware } from '../middleware/auth';
@@ -44,6 +47,8 @@ export interface CreateRoutesOptions {
    *  requests. Loopback + RFC 1918 origins are always trusted; anything
    *  else must match this. */
   webBaseUrl?: string;
+  /** Storage abstraction for reading ~/.ethos/ files (gateway heartbeat). */
+  storage?: Storage;
 }
 
 export interface ServiceContainer {
@@ -74,7 +79,44 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
 
   // Unauthenticated health-check for container probes (liveness / readiness).
   // Registered before any middleware so it never requires auth or CORS.
-  app.get('/healthz', (c) => c.json({ status: 'ok', uptime: process.uptime() }));
+  // Reads the gateway heartbeat file written by the gateway process to surface
+  // adapter health alongside the serve process's own uptime.
+  app.get('/healthz', async (c) => {
+    const uptime = process.uptime();
+    const healthPath = join(homedir(), '.ethos', 'gateway-health.json');
+
+    let gatewayBlock: {
+      status: 'ok' | 'down' | 'stale';
+      adapters: Array<{ name: string; ok: boolean }>;
+      lastHeartbeatAgeSec: number | null;
+    };
+
+    try {
+      const raw = opts.storage ? await opts.storage.read(healthPath) : null;
+      if (!raw) throw new Error('no storage or file missing');
+      const hb = JSON.parse(raw) as {
+        updatedAt: string;
+        adapters: Array<{ name: string; ok: boolean }>;
+      };
+      const ageSec = (Date.now() - new Date(hb.updatedAt).getTime()) / 1000;
+      const stale = !Number.isFinite(ageSec) || ageSec > 30;
+      gatewayBlock = {
+        status: stale ? 'stale' : 'ok',
+        adapters: hb.adapters,
+        lastHeartbeatAgeSec: Math.round(ageSec),
+      };
+    } catch {
+      // File missing or unparseable — gateway is not running.
+      gatewayBlock = { status: 'down', adapters: [], lastHeartbeatAgeSec: null };
+    }
+
+    const allAdaptersOk =
+      gatewayBlock.adapters.length > 0 && gatewayBlock.adapters.every((a) => a.ok);
+    const healthy = gatewayBlock.status === 'ok' && allAdaptersOk;
+    const status = healthy ? 'ok' : 'degraded';
+
+    return c.json({ status, uptime, gateway: gatewayBlock }, healthy ? 200 : 503);
+  });
 
   // Last-resort error catcher. Routes that throw EthosError land here.
   app.onError(errorHandler);

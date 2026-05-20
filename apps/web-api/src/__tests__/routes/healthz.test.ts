@@ -33,17 +33,22 @@ describe('GET /healthz', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('returns 200 with status ok and positive uptime', async () => {
+  it('returns 503 with status degraded and gateway down when no heartbeat file exists', async () => {
     const res = await app.request('/healthz');
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { status: string; uptime: number };
-    expect(body.status).toBe('ok');
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as {
+      status: string;
+      uptime: number;
+      gateway: { status: string };
+    };
+    expect(body.status).toBe('degraded');
     expect(body.uptime).toBeGreaterThan(0);
+    expect(body.gateway.status).toBe('down');
   });
 
   it('responds without auth headers (unauthenticated)', async () => {
-    // No cookie, no bearer token — should still succeed.
+    // No cookie, no bearer token — should still respond (no auth required).
     const res = await app.request('/healthz');
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(503);
   });
 });

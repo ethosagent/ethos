@@ -13,9 +13,12 @@
 // is `pm2 start "ethos run-all" --name ethos`.
 
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
-import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
+import { createWriteStream, mkdirSync, statSync, type WriteStream } from 'node:fs';
 import { join } from 'node:path';
 import { ethosDir } from '../config';
+import { type LogRotationConfig, rotateIfNeeded } from '../error-log';
+import { emitReady } from '../logger';
+import { notifyReady } from '../sd-notify';
 
 // Tuning constants. Exported via `__testing__` so unit tests can assert on
 // them without re-deriving the values.
@@ -25,6 +28,13 @@ const STABLE_THRESHOLD_MS = 60_000;
 const MAX_RESTARTS_IN_WINDOW = 10;
 const RESTART_WINDOW_MS = 5 * 60_000;
 const SHUTDOWN_GRACE_MS = 5_000;
+const LOG_ROTATION_INTERVAL_MS = 60_000;
+
+const DEFAULT_LOG_ROTATION: LogRotationConfig = {
+  maxBytes: 10 * 1024 * 1024,
+  maxFiles: 5,
+  enabled: true,
+};
 
 const c = {
   reset: '\x1b[0m',
@@ -57,6 +67,8 @@ export interface RunAllOptions {
     log: (msg: string) => void;
     error: (msg: string) => void;
   };
+  /** Log rotation config for child log files. Defaults to 10 MiB / 5 backups. */
+  rotation?: LogRotationConfig;
 }
 
 export function defaultChildSpecs(): ChildSpec[] {
@@ -87,6 +99,29 @@ export function pruneRestarts(timestamps: number[], now: number, windowMs: numbe
   return timestamps.filter((t) => now - t < windowMs);
 }
 
+// Pure: returns true when a chunk line contains a valid ethos.ready event.
+export function isReadyLine(line: string): boolean {
+  return line.includes('"event":"ethos.ready"');
+}
+
+// Pure factory: builds the aggregate-ready tracking callback used by runAll.
+// Exported so unit tests can exercise the "emit exactly once" invariant
+// without spawning real children.
+export function createReadyTracker(
+  childNames: Set<string>,
+  onAllReady: () => void,
+): (name: string) => void {
+  const readyChildren = new Set<string>();
+  let emitted = false;
+  return (name: string): void => {
+    readyChildren.add(name);
+    if (!emitted && readyChildren.size === childNames.size) {
+      onAllReady();
+      emitted = true;
+    }
+  };
+}
+
 interface SupervisedChild {
   spec: ChildSpec;
   process: ChildProcess | null;
@@ -95,6 +130,7 @@ interface SupervisedChild {
   shuttingDown: boolean;
   stableTimer: NodeJS.Timeout | null;
   logStream: WriteStream | null;
+  rotationTimer: NodeJS.Timeout | null;
 }
 
 export async function runAll(opts: RunAllOptions = {}): Promise<void> {
@@ -111,6 +147,7 @@ export async function runAll(opts: RunAllOptions = {}): Promise<void> {
 
   const spawn = opts.spawn ?? nodeSpawn;
   const log = opts.logger ?? console;
+  const rotation = opts.rotation ?? DEFAULT_LOG_ROTATION;
 
   const children: SupervisedChild[] = (opts.children ?? defaultChildSpecs()).map((spec) => ({
     spec,
@@ -120,9 +157,18 @@ export async function runAll(opts: RunAllOptions = {}): Promise<void> {
     shuttingDown: false,
     stableTimer: null,
     logStream: null,
+    rotationTimer: null,
   }));
 
   log.log(`${c.bold}ethos run-all${c.reset} ${c.dim}— ${children.length} children${c.reset}`);
+
+  // Aggregate ready tracking: emit ethos.ready for run-all exactly once,
+  // after every child has signalled ready on its own stderr.
+  const childNames = new Set(children.map((sc) => sc.spec.name));
+  const onChildReady = createReadyTracker(childNames, () => {
+    emitReady('run-all');
+    notifyReady();
+  });
 
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals): void => {
@@ -132,6 +178,7 @@ export async function runAll(opts: RunAllOptions = {}): Promise<void> {
     for (const sc of children) {
       sc.shuttingDown = true;
       if (sc.stableTimer) clearTimeout(sc.stableTimer);
+      if (sc.rotationTimer) clearInterval(sc.rotationTimer);
       const child = sc.process;
       if (child?.pid && !child.killed) {
         try {
@@ -160,7 +207,7 @@ export async function runAll(opts: RunAllOptions = {}): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
   for (const sc of children) {
-    startChild(sc, entryPoint, logsDir, spawn, log);
+    startChild(sc, entryPoint, logsDir, spawn, log, onChildReady, rotation);
   }
 
   // Keep the event loop alive; signals and child exits drive everything.
@@ -173,12 +220,29 @@ function startChild(
   logsDir: string,
   spawn: typeof nodeSpawn,
   log: { log: (msg: string) => void; error: (msg: string) => void },
+  onChildReady: (name: string) => void,
+  rotation: LogRotationConfig,
 ): void {
   if (sc.shuttingDown) return;
 
   const logPath = join(logsDir, `${sc.spec.name}.log`);
-  const logStream = createWriteStream(logPath, { flags: 'a' });
-  sc.logStream = logStream;
+  rotateIfNeeded(logPath, rotation);
+  sc.logStream = createWriteStream(logPath, { flags: 'a' });
+
+  sc.rotationTimer = setInterval(() => {
+    if (!rotation.enabled) return;
+    try {
+      const stat = statSync(logPath);
+      if (stat.size < rotation.maxBytes) return;
+    } catch {
+      return;
+    }
+    // Close current stream, rotate, open new stream
+    sc.logStream?.end();
+    rotateIfNeeded(logPath, rotation);
+    sc.logStream = createWriteStream(logPath, { flags: 'a' });
+  }, LOG_ROTATION_INTERVAL_MS);
+  (sc.rotationTimer as NodeJS.Timeout).unref();
 
   const launchArgs = buildChildLaunchArgs(entryPoint, sc.spec.args);
   const child = spawn(process.execPath, launchArgs, {
@@ -186,8 +250,28 @@ function startChild(
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  child.stdout?.pipe(logStream);
-  child.stderr?.pipe(logStream);
+  // Use data handlers instead of pipe() so that the rotation interval can
+  // swap sc.logStream to a fresh WriteStream after rotating the file.
+  // pipe() binds to a fixed destination — a renamed file's fd never changes.
+  child.stdout?.on('data', (chunk: Buffer) => {
+    sc.logStream?.write(chunk);
+  });
+
+  let stderrBuf = '';
+  child.stderr?.on('data', (chunk: Buffer) => {
+    sc.logStream?.write(chunk);
+    stderrBuf += chunk.toString();
+    const lines = stderrBuf.split('\n');
+    // Last element is either '' (if chunk ended with \n) or an incomplete line
+    stderrBuf = lines.pop() ?? '';
+    for (const line of lines) {
+      if (isReadyLine(line)) {
+        onChildReady(sc.spec.name);
+        stderrBuf = ''; // no need to buffer further
+        break;
+      }
+    }
+  });
 
   sc.process = child;
 
@@ -209,6 +293,10 @@ function startChild(
     if (sc.stableTimer) {
       clearTimeout(sc.stableTimer);
       sc.stableTimer = null;
+    }
+    if (sc.rotationTimer) {
+      clearInterval(sc.rotationTimer);
+      sc.rotationTimer = null;
     }
     sc.process = null;
 
@@ -235,7 +323,10 @@ function startChild(
 
     const delay = sc.backoffMs;
     log.log(`${c.dim}run-all: restarting ${sc.spec.name} in ${delay}ms${c.reset}`);
-    setTimeout(() => startChild(sc, entryPoint, logsDir, spawn, log), delay).unref();
+    setTimeout(
+      () => startChild(sc, entryPoint, logsDir, spawn, log, onChildReady, rotation),
+      delay,
+    ).unref();
     sc.backoffMs = nextBackoff(sc.backoffMs);
   });
 
@@ -252,4 +343,6 @@ export const __testing__ = {
   MAX_RESTARTS_IN_WINDOW,
   RESTART_WINDOW_MS,
   SHUTDOWN_GRACE_MS,
+  LOG_ROTATION_INTERVAL_MS,
+  DEFAULT_LOG_ROTATION,
 };

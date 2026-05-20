@@ -23,7 +23,7 @@ import type { Skill } from '@ethosagent/types';
 import { type EthosConfig, ethosDir, readRawConfig } from '../config';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { buildVersionInfo } from '../version-info';
-import { getStorage } from '../wiring';
+import { createLLM, getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -158,6 +158,12 @@ export async function runDoctor(args: string[] = []): Promise<void> {
 
   if (args.includes('--fix')) {
     await runDoctorFix();
+    return;
+  }
+
+  if (args.includes('--check-provider')) {
+    const jsonMode = args.includes('--json');
+    await runProviderProbe(jsonMode);
     return;
   }
 
@@ -464,6 +470,81 @@ async function runDoctorFix(): Promise<void> {
     );
     process.exit(exitCode);
   }
+}
+
+// ---------------------------------------------------------------------------
+// --check-provider: live connectivity probe against the configured LLM
+// ---------------------------------------------------------------------------
+
+export interface ProviderProbeResult {
+  provider: string;
+  model: string;
+  reachable: boolean;
+  latencyMs: number | null;
+  error: string | null;
+  exit: number;
+}
+
+async function runProviderProbe(jsonMode: boolean): Promise<void> {
+  const storage = getStorage();
+  const config = await readRawConfig(storage);
+
+  if (!config) {
+    const result: ProviderProbeResult = {
+      provider: 'unknown',
+      model: 'unknown',
+      reachable: false,
+      latencyMs: null,
+      error: 'No config found — run ethos setup',
+      exit: 1,
+    };
+    if (jsonMode) {
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    } else {
+      console.log(
+        `Provider connectivity: ${c.red}✗${c.reset} No config found — run ${c.cyan}ethos setup${c.reset}`,
+      );
+    }
+    process.exit(1);
+  }
+
+  const provider = config.provider;
+  const model = config.model;
+
+  let reachable = false;
+  let latencyMs: number | null = null;
+  let error: string | null = null;
+
+  try {
+    const llm = await createLLM(config);
+    const start = performance.now();
+    // Consume the async iterable — we only need to confirm the provider responds.
+    // Using max 1 token keeps the call as cheap as possible.
+    for await (const _chunk of llm.complete([{ role: 'user', content: 'ping' }], [], {
+      maxTokens: 1,
+    })) {
+      // drain
+    }
+    latencyMs = Math.round(performance.now() - start);
+    reachable = true;
+  } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
+  }
+
+  const exit = reachable ? 0 : 1;
+  const result: ProviderProbeResult = { provider, model, reachable, latencyMs, error, exit };
+
+  if (jsonMode) {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else if (reachable) {
+    console.log(
+      `Provider connectivity: ${c.green}✓${c.reset} ${provider} (${model}) — ${latencyMs}ms`,
+    );
+  } else {
+    console.log(`Provider connectivity: ${c.red}✗${c.reset} ${provider} (${model}) — ${error}`);
+  }
+
+  if (exit > 0) process.exit(exit);
 }
 
 // ---------------------------------------------------------------------------

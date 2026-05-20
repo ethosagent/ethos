@@ -43,6 +43,7 @@ import {
 } from '../config';
 import { emitReady } from '../logger';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';
+import { notifyReady } from '../sd-notify';
 import { createAgentLoop, createTeamAgentLoop, getSecretsResolver, getStorage } from '../wiring';
 import {
   ensureTeamSupervisors,
@@ -50,6 +51,53 @@ import {
   type TeamSupervisorDeps,
 } from './supervisor-lifecycle';
 import { isPidAlive } from './team-runtime';
+
+// ---------------------------------------------------------------------------
+// Gateway heartbeat
+// ---------------------------------------------------------------------------
+
+const HEARTBEAT_INTERVAL_MS = 10_000;
+const HEALTH_TIMEOUT_MS = 5_000;
+
+export interface GatewayHeartbeat {
+  pid: number;
+  startedAt: string;
+  updatedAt: string;
+  adapters: Array<{ name: string; ok: boolean }>;
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('health check timeout')), ms).unref(),
+    ),
+  ]);
+}
+
+export async function buildGatewayHeartbeat(
+  adapters: PlatformAdapter[],
+  startedAt: string,
+): Promise<GatewayHeartbeat> {
+  const results = await Promise.allSettled(
+    adapters.map((a) => withTimeout(a.health(), HEALTH_TIMEOUT_MS)),
+  );
+  const adapterStatuses = adapters.map((a, i) => {
+    const result = results[i];
+    const ok = result?.status === 'fulfilled' ? result.value.ok : false;
+    return { name: a.id, ok };
+  });
+  return {
+    pid: process.pid,
+    startedAt,
+    updatedAt: new Date().toISOString(),
+    adapters: adapterStatuses,
+  };
+}
+
+function gatewayHealthPath(): string {
+  return join(ethosDir(), 'gateway-health.json');
+}
 
 // Best-effort dynamic import. Returns null and logs a clear warning if the
 // module can't be loaded — typically because its underlying SDK isn't
@@ -554,7 +602,27 @@ export async function runGatewayStart(): Promise<void> {
   }
 
   emitReady('gateway');
+  notifyReady();
   console.log(`${c.dim}Listening for messages. Press Ctrl+C to stop.${c.reset}\n`);
+
+  const heartbeatStartedAt = new Date().toISOString();
+  let heartbeatInFlight = false;
+  const writeHeartbeat = async () => {
+    if (heartbeatInFlight) return;
+    heartbeatInFlight = true;
+    try {
+      const hb = await buildGatewayHeartbeat(adapters, heartbeatStartedAt);
+      await storage.writeAtomic(gatewayHealthPath(), JSON.stringify(hb));
+    } catch {
+      // Best-effort — a missed tick is harmless; the consumer treats stale
+      // data as degraded.
+    } finally {
+      heartbeatInFlight = false;
+    }
+  };
+  void writeHeartbeat();
+  const heartbeatTimer = setInterval(() => void writeHeartbeat(), HEARTBEAT_INTERVAL_MS);
+  heartbeatTimer.unref?.();
 
   // Graceful shutdown on SIGINT / SIGTERM. Tell every in-flight chat that the
   // gateway was interrupted so they don't sit waiting on a response that
@@ -562,7 +630,9 @@ export async function runGatewayStart(): Promise<void> {
   const shutdown = async () => {
     console.log(`\n${c.dim}Shutting down...${c.reset}`);
     clearInterval(pruneTimer);
+    clearInterval(heartbeatTimer);
     scheduler.stop();
+    await storage.remove(gatewayHealthPath()).catch(() => {});
     await gateway.shutdown({
       notify:
         '⚠ Ethos was interrupted while answering. Please resend your last message — your session history is preserved.',

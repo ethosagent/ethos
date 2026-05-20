@@ -4,7 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
 User={{ETHOS_USER}}
 Environment=HOME={{ETHOS_HOME}}
 Environment=ETHOS_MANAGED=1

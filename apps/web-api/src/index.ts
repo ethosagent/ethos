@@ -326,6 +326,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     ...(opts.apiKeys ? { apiKeys: opts.apiKeys } : {}),
     ...(opts.listTeams ? { listTeams: opts.listTeams } : {}),
     ...(opts.webBaseUrl ? { webBaseUrl: opts.webBaseUrl } : {}),
+    storage,
   });
 
   return { app, chatService };
