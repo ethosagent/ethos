@@ -240,12 +240,15 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     console.log('');
     const displayHost = serveHost === '0.0.0.0' ? 'localhost' : serveHost;
     console.log(`ethos web UI listening on http://${displayHost}:${port}`);
-    console.log(`  open: http://${displayHost}:${port}/auth/exchange?t=${token}`);
-    console.log('  (token rotates on first use; cookie remains the steady-state credential)');
     if (webDist) {
+      console.log(`  open: http://${displayHost}:${port}/auth/exchange?t=${token}`);
+      console.log('  (token rotates on first use; cookie remains the steady-state credential)');
       console.log(`  serving SPA from: ${webDist}`);
     } else {
+      console.log(`  auth token: ${token}`);
+      console.log('  (token rotates on first use; cookie remains the steady-state credential)');
       console.log('  no SPA build found — run `pnpm --filter @ethosagent/web dev` for HMR,');
+      console.log(`    then visit http://localhost:5173/auth/exchange?t=${token}`);
       console.log('  or `pnpm --filter @ethosagent/web build` to bundle into this server.');
     }
     webShutdown = () =>
