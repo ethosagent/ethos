@@ -8,6 +8,7 @@ import {
   DefaultLLMProviderRegistry,
   DefaultMemoryProviderRegistry,
   DefaultToolRegistry,
+  DefaultToolResultReducerRegistry,
   EagerPrefetchPolicy,
   FileClarifyStore,
   LastWriteWinsPolicy,
@@ -32,6 +33,7 @@ import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
 import { FsAttachmentCache, FsStorage, REF_TO_ENV } from '@ethosagent/storage-fs';
 import { createBrowserTools } from '@ethosagent/tools-browser';
 import { createCodeTools } from '@ethosagent/tools-code';
+import { readFileReducer } from '@ethosagent/tools-code/reducers/read-file';
 import { createCronTools } from '@ethosagent/tools-cron';
 import { createDelegationTools } from '@ethosagent/tools-delegation';
 import { createFileTools } from '@ethosagent/tools-file';
@@ -43,6 +45,7 @@ import {
   registerPostmortemHandler,
   type TeamRole,
 } from '@ethosagent/tools-kanban';
+import { kanbanListReducer } from '@ethosagent/tools-kanban/reducers/kanban-list';
 import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
 import { createMemoryTools, createTeamMemoryTools, isSafeTopicKey } from '@ethosagent/tools-memory';
 import { createMessagingTools, type MessagingSendFn } from '@ethosagent/tools-messaging';
@@ -53,6 +56,7 @@ import {
 import { createProcessGuardHook, createProcessTools } from '@ethosagent/tools-process';
 import { createSkillsTools } from '@ethosagent/tools-skills';
 import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-terminal';
+import { bashReducer } from '@ethosagent/tools-terminal/reducers/bash';
 import { createThinkDeeperTool } from '@ethosagent/tools-tier';
 import { createTodoTools, InMemoryTodoStore } from '@ethosagent/tools-todo';
 import { createTtsTools } from '@ethosagent/tools-tts';
@@ -699,7 +703,11 @@ export async function createAgentLoop(
     personalityNetworkPolicy: activePerson.safety?.network ?? {},
     attachmentCache: new FsAttachmentCache(new FsStorage(), join(dataDir, 'cache', 'attachments')),
   };
-  const tools = new DefaultToolRegistry(capabilityBackends);
+  const reducerRegistry = new DefaultToolResultReducerRegistry();
+  reducerRegistry.register(bashReducer);
+  reducerRegistry.register(readFileReducer);
+  reducerRegistry.register(kanbanListReducer);
+  const tools = new DefaultToolRegistry(capabilityBackends, reducerRegistry);
   for (const tool of createFileTools()) tools.register(tool);
   for (const tool of createTerminalTools()) tools.register(tool);
   for (const tool of createWebTools()) tools.register(tool);

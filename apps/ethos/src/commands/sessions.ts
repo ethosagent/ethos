@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import type { SearchResult, Session } from '@ethosagent/types';
+import type { SearchResult, Session, SessionUsage } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 import { ethosDir } from '../config';
 
@@ -139,6 +139,101 @@ export async function searchSessions(
 }
 
 // ---------------------------------------------------------------------------
+// Session cost formatting — exported for unit tests
+// ---------------------------------------------------------------------------
+
+export interface SessionCostSummary {
+  costLine: string;
+  tokenLine: string;
+  cacheSavingsPct: number;
+}
+
+/**
+ * Format session usage into human-readable cost and token lines.
+ * Extracted for unit-testability.
+ */
+export function formatSessionCost(usage: SessionUsage): SessionCostSummary {
+  const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, estimatedCostUsd } =
+    usage;
+  const totalInput = inputTokens + cacheReadTokens + cacheCreationTokens;
+  const cacheSavingsPct =
+    totalInput > 0 ? Math.min(99, Math.max(0, Math.round((cacheReadTokens / totalInput) * 90))) : 0;
+
+  const tokenLine =
+    `in=${inputTokens.toLocaleString()}  out=${outputTokens.toLocaleString()}` +
+    `  cache_read=${cacheReadTokens.toLocaleString()}  cache_creation=${cacheCreationTokens.toLocaleString()}`;
+  const costLine = `$${estimatedCostUsd.toFixed(3)}  (cache savings: ~${cacheSavingsPct}%)`;
+
+  return { tokenLine, costLine, cacheSavingsPct };
+}
+
+// ---------------------------------------------------------------------------
+// ethos session show <id> — exported for routing from index.ts if needed
+// ---------------------------------------------------------------------------
+
+export async function runSessionShow(argv: string[]): Promise<void> {
+  const sessionId = argv[0];
+  const jsonMode = argv.includes('--json');
+
+  if (!sessionId) {
+    process.stderr.write('Usage: ethos sessions show <session_id> [--json]\n');
+    process.exit(1);
+  }
+
+  const dbPath = join(ethosDir(), 'sessions.db');
+  const store = new SQLiteSessionStore(dbPath);
+
+  try {
+    const session = await store.getSession(sessionId);
+    if (!session) {
+      throw new EthosError({
+        code: 'SESSION_NOT_FOUND',
+        cause: `Session not found: ${sessionId}`,
+        action: 'Check the session ID with `ethos sessions list`.',
+      });
+    }
+
+    const compressions = await store.listCompressions(sessionId);
+    const { tokenLine, costLine } = formatSessionCost(session.usage);
+    const compactionCount = compressions.length;
+    const firstCompaction = compressions[0];
+
+    if (jsonMode) {
+      process.stdout.write(
+        `${JSON.stringify({
+          id: session.id,
+          key: session.key,
+          title: session.title,
+          turns: session.usage.apiCallCount,
+          usage: session.usage,
+          compactionCount,
+        })}\n`,
+      );
+      return;
+    }
+
+    const isTTY = process.stdout.isTTY;
+    const bold = (s: string) => (isTTY ? `\x1b[1m${s}\x1b[0m` : s);
+    const dim = (s: string) => (isTTY ? `\x1b[2m${s}\x1b[0m` : s);
+
+    const compactionSuffix =
+      compactionCount > 0 && firstCompaction
+        ? `  ${dim(`(after turn ~${firstCompaction.originalCount})`)}`
+        : '';
+
+    process.stdout.write(
+      `\n${bold('Session:')} ${session.key}${session.title ? `  "${session.title}"` : ''}\n` +
+        `${bold('Turns:')}   ${session.usage.apiCallCount}\n` +
+        `${bold('Tokens:')}  ${tokenLine}\n` +
+        `${bold('Cost:')}    ${costLine}\n` +
+        `${bold('Compactions:')} ${compactionCount}${compactionSuffix}\n\n`,
+    );
+  } finally {
+    store.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // CLI command — ethos sessions <sub> [args]
 // ---------------------------------------------------------------------------
 
@@ -251,42 +346,7 @@ export async function runSessionsCommand(sub: string, argv: string[]): Promise<v
       }
 
       case 'show': {
-        const sessionId = argv[0];
-        if (!sessionId) {
-          console.error('Usage: ethos sessions show <session_id> [--compressions]');
-          process.exit(1);
-        }
-        const session = await store.getSession(sessionId);
-        if (!session) {
-          throw new EthosError({
-            code: 'SESSION_NOT_FOUND',
-            cause: `Session not found: ${sessionId}`,
-            action: 'Check the session ID with `ethos sessions list`.',
-          });
-        }
-        console.log(`\n${session.id}`);
-        if (session.title) console.log(`  title:        ${session.title}`);
-        console.log(`  key:          ${session.key}`);
-        console.log(`  personality:  ${session.personalityId ?? '(none)'}`);
-        console.log(`  last active:  ${timeAgo(session.updatedAt)}`);
-        console.log(`  compactions:  ${session.usage.compactionCount}`);
-
-        if (argv.includes('--compressions')) {
-          const events = await store.listCompressions(sessionId);
-          if (events.length === 0) {
-            console.log('\n  No compaction events recorded for this session.');
-          } else {
-            console.log(`\n  Compaction events (${events.length}):`);
-            for (const ev of events) {
-              console.log(
-                `  - ${ev.createdAt.toISOString()}  ${ev.engineName}  ` +
-                  `${ev.originalCount}→${ev.keptCount} msgs  ` +
-                  `${ev.preTotalTokens}→${ev.postTotalTokens} tok  (${ev.durationMs}ms)`,
-              );
-            }
-          }
-        }
-        console.log();
+        await runSessionShow(argv);
         break;
       }
 

@@ -165,6 +165,7 @@ const sidebars: SidebarsConfig = {
             'building/explanation/injection-at-construction',
             'building/explanation/hook-execution-models',
             'building/explanation/tool-result-budget',
+            'building/explanation/context-cost-optimization',
             'building/explanation/audience-boundary',
             'building/explanation/teams-and-meshes',
             'building/explanation/why-orpc',

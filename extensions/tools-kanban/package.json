@@ -8,6 +8,11 @@
       "import": "./src/index.ts",
       "types": "./src/index.ts",
       "production": "./dist/index.js"
+    },
+    "./reducers/kanban-list": {
+      "import": "./src/reducers/kanban-list.ts",
+      "types": "./src/reducers/kanban-list.ts",
+      "production": "./dist/reducers/kanban-list.js"
     }
   },
   "scripts": {

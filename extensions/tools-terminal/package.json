@@ -8,6 +8,11 @@
       "import": "./src/index.ts",
       "types": "./src/index.ts",
       "production": "./dist/index.js"
+    },
+    "./reducers/bash": {
+      "import": "./src/reducers/bash.ts",
+      "types": "./src/reducers/bash.ts",
+      "production": "./dist/reducers/bash.js"
     }
   },
   "scripts": {

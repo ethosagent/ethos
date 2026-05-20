@@ -4,8 +4,11 @@ import type {
   ToolCapabilities,
   ToolContext,
   ToolFilterOpts,
+  ToolReducerContext,
   ToolRegistry,
   ToolResult,
+  ToolResultReducer,
+  ToolResultReducerRegistry,
 } from '@ethosagent/types';
 import type { CapabilityBackends } from './capability-resolver';
 import { resolveCapabilities } from './capability-resolver';
@@ -54,12 +57,22 @@ function passesFilter(entry: ToolEntry, filterOpts: ToolFilterOpts | undefined):
   return true;
 }
 
+function safeReduce(r: ToolResultReducer, result: ToolResult, ctx: ToolReducerContext): ToolResult {
+  try {
+    return r.reduce(result, ctx);
+  } catch {
+    return result;
+  }
+}
+
 export class DefaultToolRegistry implements ToolRegistry {
   private readonly tools = new Map<string, ToolEntry>();
   private readonly backends?: CapabilityBackends;
+  private readonly reducers?: ToolResultReducerRegistry;
 
-  constructor(backends?: CapabilityBackends) {
+  constructor(backends?: CapabilityBackends, reducers?: ToolResultReducerRegistry) {
     this.backends = backends;
+    this.reducers = reducers;
   }
 
   register(tool: Tool, opts?: { pluginId?: string }): void {
@@ -279,7 +292,12 @@ export class DefaultToolRegistry implements ToolRegistry {
             );
             Object.assign(toolCtx, resolved);
           }
-          const result = await entry.tool.execute(call.args, toolCtx);
+          const rawResult = await entry.tool.execute(call.args, toolCtx);
+          // Apply reducer before budget trim so budget sees post-reduced text
+          const reducer = this.reducers?.get(call.name);
+          const result = reducer
+            ? safeReduce(reducer, rawResult, { args: call.args, turnCount: ctx.currentTurn ?? 0 })
+            : rawResult;
           // Post-trim result to budget
           if (result.ok && result.value.length > budget) {
             return {

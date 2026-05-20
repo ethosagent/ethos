@@ -16,6 +16,9 @@
       "@ethosagent/session-sqlite": ["./extensions/session-sqlite/src"],
       "@ethosagent/kanban-store": ["./extensions/kanban-store/src"],
       "@ethosagent/tools-kanban": ["./extensions/tools-kanban/src"],
+      "@ethosagent/tools-kanban/reducers/kanban-list": [
+        "./extensions/tools-kanban/src/reducers/kanban-list"
+      ],
       "@ethosagent/agent-mesh": ["./extensions/agent-mesh/src"],
       "@ethosagent/team-supervisor": ["./extensions/team-supervisor/src"],
       "@ethosagent/acp-server": ["./apps/acp-server/src"],
@@ -45,6 +48,7 @@
       "@ethosagent/skills-coding": ["./extensions/skills-coding/src"],
       "@ethosagent/tools-file": ["./extensions/tools-file/src"],
       "@ethosagent/tools-terminal": ["./extensions/tools-terminal/src"],
+      "@ethosagent/tools-terminal/reducers/bash": ["./extensions/tools-terminal/src/reducers/bash"],
       "@ethosagent/tools-web": ["./extensions/tools-web/src"],
       "@ethosagent/tools-delegation": ["./extensions/tools-delegation/src"],
       "@ethosagent/tools-memory": ["./extensions/tools-memory/src"],
@@ -60,6 +64,9 @@
       "@ethosagent/sandbox-docker": ["./extensions/sandbox-docker/src"],
       "@ethosagent/tools-browser": ["./extensions/tools-browser/src"],
       "@ethosagent/tools-code": ["./extensions/tools-code/src"],
+      "@ethosagent/tools-code/reducers/read-file": [
+        "./extensions/tools-code/src/reducers/read-file"
+      ],
       "@ethosagent/tools-mcp": ["./extensions/tools-mcp/src"],
       "@ethosagent/tui": ["./apps/tui/src"],
       "@ethosagent/batch-runner": ["./extensions/batch-runner/src"],

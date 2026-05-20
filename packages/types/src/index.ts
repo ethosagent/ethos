@@ -27,3 +27,8 @@ export * from './team';
 export * from './todo';
 export * from './tool';
 export * from './tool-capabilities';
+export type {
+  ToolReducerContext,
+  ToolResultReducer,
+  ToolResultReducerRegistry,
+} from './tool-reducer';

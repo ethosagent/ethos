@@ -1,24 +1,32 @@
 ---
 title: "ToolRegistry reference"
-description: "ToolRegistry interface, DefaultToolRegistry, executeParallel budget splitting, and per-personality tool gating."
+description: "ToolRegistry interface and DefaultToolRegistry implementation — registration, executeParallel, reducer pipeline, budget split, and toolset filtering."
 kind: reference
 audience: developer
 slug: tool-registry
-updated: 2026-05-12
+updated: 2026-05-20
 ---
 
-The [tool registry](../../getting-started/glossary.md#tool-registry) is the catalogue of every [tool](../../getting-started/glossary.md#tool) the LLM may call. `AgentLoop` reads it twice per turn: once via `toDefinitions()` to build the LLM's tool list, and once via `executeParallel()` to run the calls the LLM made.
+The [tool](../../getting-started/glossary.md#tool) registry holds every tool the agent can invoke, filters by [personality](../../getting-started/glossary.md#personality) toolset, and runs parallel execution with budget enforcement and output reduction.
 
 ## Source {#source}
 
-Interface in [`packages/types/src/tool.ts`](https://github.com/MiteshSharma/ethos/blob/main/packages/types/src/tool.ts) (`ToolRegistry`, `ToolFilterOpts`). Implementation in [`packages/core/src/tool-registry.ts`](https://github.com/MiteshSharma/ethos/blob/main/packages/core/src/tool-registry.ts) (`DefaultToolRegistry`).
+Interface in [`packages/types/src/tool.ts`](https://github.com/MiteshSharma/ethos/blob/main/packages/types/src/tool.ts) (`ToolRegistry`, `ToolFilterOpts`). Implementation in [`packages/core/src/tool-registry.ts`](https://github.com/MiteshSharma/ethos/blob/main/packages/core/src/tool-registry.ts) (`DefaultToolRegistry`). Reducer registry in [`packages/core/src/tool-reducer-registry.ts`](https://github.com/MiteshSharma/ethos/blob/main/packages/core/src/tool-reducer-registry.ts) (`DefaultToolResultReducerRegistry`).
 
 ## ToolRegistry {#tool-registry}
 
 ### Signature {#tool-registry-signature}
 
 ```ts
-import type { Tool, ToolContext, ToolFilterOpts, ToolRegistry, ToolResult } from '@ethosagent/types';
+import type {
+  Attachment,
+  Tool,
+  ToolContext,
+  ToolFilterOpts,
+  ToolRegistry,
+  ToolResult,
+} from '@ethosagent/types';
+import type { ToolDefinitionLite } from '@ethosagent/types';
 
 export interface ToolRegistry {
   register(tool: Tool, opts?: { pluginId?: string }): void;
@@ -32,6 +40,7 @@ export interface ToolRegistry {
     ctx: ToolContext,
     allowedTools?: string[],
     filterOpts?: ToolFilterOpts,
+    turnAttachments?: Attachment[],
   ): Promise<Array<{ toolCallId: string; name: string; result: ToolResult }>>;
   toDefinitions(
     allowedTools?: string[],
@@ -42,148 +51,116 @@ export interface ToolRegistry {
 
 ### Methods {#tool-registry-methods}
 
-| Method | Description |
-|---|---|
-| `register(tool, opts?)` | Add a [`Tool`](./tool-interface.md) under `tool.name`. `opts.pluginId` tags the entry for per-[personality](../../getting-started/glossary.md#personality) plugin gating. |
-| `registerAll(tools)` | Convenience wrapper that calls `register(t)` for each entry. |
-| `unregister(name)` | Remove the tool with the given name. Used by `PluginApiImpl.cleanup` and tests. |
-| `get(name)` | Look up a `Tool` by name. Returns `undefined` if missing. |
-| `getAvailable()` | Return every registered tool whose `isAvailable()` returns true (or is absent). |
-| `getForToolset(toolset)` | Filter `getAvailable()` to tools whose `toolset` field matches. |
-| `executeParallel(calls, ctx, allowedTools?, filterOpts?)` | Run every call in parallel; see [below](#execute-parallel). |
-| `toDefinitions(allowedTools?, filterOpts?)` | Produce the `ToolDefinitionLite[]` the LLM sees; see [below](#to-definitions). |
-
-## ToolFilterOpts {#tool-filter-opts}
-
-### Signature {#tool-filter-opts-signature}
-
-```ts
-export interface ToolFilterOpts {
-  allowedMcpServers?: string[];
-  allowedPlugins?: string[];
-}
-```
-
-### Members {#tool-filter-opts-members}
-
-| Field | Type | Description |
+| Method | Signature | Description |
 |---|---|---|
-| `allowedMcpServers` | `string[]` | MCP-server allowlist. Tools named `mcp__<server>__*` are dropped unless their server name is in this list. `undefined` disables the filter. |
-| `allowedPlugins` | `string[]` | Plugin allowlist. Tools registered with a `pluginId` are dropped unless that id is in this list. `undefined` lets every plugin tool through; `[]` strips all plugin tools. |
-
-## toDefinitions {#to-definitions}
-
-Returns the tool list the LLM sees. Built from three gates applied in order:
-
-1. **`isAvailable()` gate** — tools that declare `isAvailable` and return `false` are dropped.
-2. **Toolset gate** — applied only to built-in tools (name does not start with `mcp__` and no `pluginId`). When `allowedTools` is non-empty, a built-in tool must be in the list to pass. `alwaysInclude: true` bypasses this gate.
-3. **`filterOpts` gate** — `allowedMcpServers` filters `mcp__<server>__*` tools; `allowedPlugins` filters plugin-tagged tools.
-
-Surviving entries are mapped to `{ name, description, parameters: tool.schema }`.
-
-### Why toolset gating only applies to built-ins {#why-built-in-only}
-
-MCP and plugin tool names are dynamic — they appear and disappear as servers / plugins load. Requiring users to enumerate every MCP tool by name in `toolset.yaml` is unworkable. The two-tier model lets users gate built-ins by name and gate MCP / plugin tools wholesale via `mcp_servers` / `plugins`.
-
-## executeParallel {#execute-parallel}
-
-Runs every requested tool call in parallel. Returns results in input order. Throws never; failures become `{ ok: false }` `ToolResult`s.
-
-### Per-call budget splitting {#per-call-budget}
-
-```ts
-const perCallBudget = Math.floor(ctx.resultBudgetChars / Math.max(calls.length, 1));
-const budget = Math.min(perCallBudget, tool.maxResultChars ?? perCallBudget);
-```
-
-The turn-wide budget (`ctx.resultBudgetChars`, default 80,000) is split evenly across concurrent calls, then clamped by the tool's own `maxResultChars` ceiling. Each result is post-trimmed:
-
-```
-${value.slice(0, budget)}
-[truncated — ${value.length} chars total]
-```
-
-See [tool-result-budget](../explanation/tool-result-budget.md) for the design rationale.
-
-### Gating order {#gating-order}
-
-For each call, `executeParallel` checks in order:
-
-1. **Unknown tool** → `{ ok: false, code: 'not_available' }`.
-2. **Built-in tool not in `allowedTools`** → `{ ok: false, code: 'not_available' }` with the message "is not permitted for this personality".
-3. **Fails `filterOpts` (MCP server / plugin)** → `{ ok: false, code: 'not_available' }`.
-4. **`isAvailable()` returns false** → `{ ok: false, code: 'not_available' }` with "is not currently available".
-5. **`execute` throws** → `{ ok: false, code: 'execution_failed', error: err.message }`.
-6. **Success exceeds budget** → trimmed with the `[truncated — N chars total]` marker.
-
-Steps 1–4 mirror the `toDefinitions` gates so the LLM never sees a tool it cannot call, and `executeParallel` rejects rogue calls regardless (belt and suspenders against prompt injection).
+| `register` | `(tool: Tool, opts?: { pluginId?: string }): void` | Register a tool. Optional `pluginId` tags it for per-personality plugin gating. |
+| `registerAll` | `(tools: Tool[]): void` | Register multiple tools. |
+| `unregister` | `(name: string): void` | Remove a tool by name. |
+| `get` | `(name: string): Tool \| undefined` | Lookup by name. |
+| `getAvailable` | `(): Tool[]` | All tools where `isAvailable()` returns true (or is absent). |
+| `getForToolset` | `(toolset: string): Tool[]` | All tools in a given toolset group. |
+| `executeParallel` | `(calls, ctx, allowedTools?, filterOpts?, turnAttachments?): Promise<...>` | Run tool calls concurrently with budget split and reduction. See [executeParallel](#execute-parallel). |
+| `toDefinitions` | `(allowedTools?, filterOpts?): ToolDefinitionLite[]` | Build LLM tool definitions, filtered by personality toolset. See [toDefinitions](#to-definitions). |
 
 ## DefaultToolRegistry {#default-tool-registry}
 
-The in-memory implementation `AgentLoop` uses. Internals worth knowing:
+The concrete implementation in `packages/core/src/tool-registry.ts`.
 
-| Member | Description |
-|---|---|
-| `tools: Map<string, { tool, pluginId? }>` | Single source of truth. Keyed by `tool.name`. |
-| `toolNamesForPersonality(personality)` | Helper used by the [skill](../../getting-started/glossary.md#skill) ingest filter. Returns the effective reach set: `personality.toolset` (built-ins) ∪ `mcp_servers` ∪ `plugins`. |
-
-## Notes {#notes}
-
-- `executeParallel` uses `Promise.allSettled`. A handler that throws never propagates — it's captured into `{ ok: false }`.
-- `pluginId` on `register()` is what powers `unregisterPlugin` cleanup. Built-in tools are registered without it and cannot be removed by plugin unload.
-- `alwaysInclude: true` on a `Tool` bypasses only the toolset gate. MCP and plugin filters still apply.
-- `allowedTools = []` means "no built-ins allowed". `undefined` means "no filter". Pass `personality.toolset ?? undefined` to honour this.
-- Per-call results are returned in input order regardless of which finished first. Consumers can rely on `results[i].toolCallId === calls[i].toolCallId`.
-- The trim marker (`\n[truncated — N chars total]`) is appended only on success. Error `ToolResult`s carry whatever `error` string the tool returned, unmodified.
-
-## Example: registering and invoking {#example}
+### Constructor {#default-tool-registry-constructor}
 
 ```ts
-import { DefaultToolRegistry } from '@ethosagent/core';
-import { defineTool, ok } from '@ethosagent/plugin-sdk';
+import type { CapabilityBackends } from '@ethosagent/core';
+import type { ToolResultReducerRegistry } from '@ethosagent/types';
 
-const registry = new DefaultToolRegistry();
-
-registry.register(
-  defineTool<{ q: string }>({
-    name: 'echo',
-    description: 'Return the query verbatim.',
-    schema: {
-      type: 'object',
-      required: ['q'],
-      properties: { q: { type: 'string' } },
-    },
-    async execute({ q }) {
-      return ok(`echo: ${q}`);
-    },
-  }),
-);
-
-// What the LLM will see — filtered to the personality's toolset:
-const defs = registry.toDefinitions(['echo']);
-
-// What AgentLoop runs each round:
-const results = await registry.executeParallel(
-  [{ toolCallId: 't1', name: 'echo', args: { q: 'hello' } }],
-  ctx,
-  ['echo'],
-);
+const tools = new DefaultToolRegistry(capabilityBackends?, reducerRegistry?);
 ```
 
-## Used by {#used-by}
+| Parameter | Type | Description |
+|---|---|---|
+| `capabilityBackends` | `CapabilityBackends \| undefined` | Optional backends for tools that declare [capabilities](./tool-capabilities.md) (network, secrets, storage, fs_reach, process, attachments). |
+| `reducerRegistry` | `ToolResultReducerRegistry \| undefined` | Optional registry of [result reducers](#tool-result-reducer-registry). When present, `executeParallel` applies reducers after execution and before budget trim. |
 
-| Consumer | Role |
-|---|---|
-| `packages/core/src/agent-loop.ts` | Calls `toDefinitions` (LLM tool list) and `executeParallel` (each round of tool calls). |
-| `apps/ethos/src/wiring.ts` | Registers every built-in tool from `extensions/tools-*` at startup. |
-| `packages/plugin-sdk/src/index.ts` | `PluginApiImpl.registerTool` calls `register(tool, { pluginId })`. |
-| `extensions/plugin-loader/src/` | Calls `unregister` during plugin deactivation. |
-| `extensions/skills/src/` | Calls `toolNamesForPersonality` to validate skill `required_tools`. |
-| `extensions/tools-mcp/src/index.ts` | Registers `mcp__<server>__*` tools on MCP-server discovery. |
+## executeParallel {#execute-parallel}
+
+The core method. Runs every requested tool call concurrently via `Promise.allSettled`. Returns results in input order. Never throws -- failures become `{ ok: false }` results.
+
+### Pipeline {#execute-parallel-pipeline}
+
+1. **Budget split** -- `perCallBudget = Math.floor(ctx.resultBudgetChars / Math.max(calls.length, 1))`. Default total budget: 80,000 chars.
+2. **Unknown tool check** -- If the tool name is not in the registry: `{ ok: false, error: 'Unknown tool: ...', code: 'not_available' }`.
+3. **Allowlist check** -- Each call is checked against `allowedTools` + `filterOpts`. Built-in tools (not `mcp__*`, no `pluginId`) must appear in `allowedTools` when that list is non-empty. MCP and plugin tools are gated by `filterOpts` via `passesFilter()`. Rejected calls get `{ ok: false, error: '...not permitted...', code: 'not_available' }`.
+4. **Availability check** -- If the tool declares `isAvailable()` and it returns `false`: `{ ok: false, error: '...not currently available', code: 'not_available' }`.
+5. **Capability backend check** -- If the tool declares capabilities that need backends (`network`, `secrets`, `storage`, `fs_reach`, `process`, `attachments`) and no backends are configured: `{ ok: false, code: 'not_available' }`.
+6. **Dry-run mode** -- If `ctx.dryRun`, returns a synthetic result without execution.
+7. **Per-call budget** -- `Math.min(perCallBudget, tool.maxResultChars ?? perCallBudget)`.
+8. **Capability resolution** -- If the tool declares capabilities and backends are configured, backends are resolved and injected into the tool context.
+9. **Execution** -- `tool.execute(args, ctx)`.
+10. **Reducer pipeline** -- After execution, before budget trim. Looks up `ToolResultReducer` by tool name in the reducer registry. If found, calls `safeReduce(reducer, result, { args, turnCount })`. Safe: catches reducer errors and returns the original result.
+11. **Post-trim** -- If the result value exceeds the per-call budget, truncates and appends `\n[truncated — N chars total]`.
+
+## toDefinitions {#to-definitions}
+
+Filters the registry by personality toolset (`allowedTools`) + MCP/plugin filters (`filterOpts`). Returns `ToolDefinitionLite[]` for the LLM request.
+
+### Filtering gates (applied in order) {#to-definitions-gates}
+
+1. **`isAvailable()` gate** -- Tools that declare `isAvailable` and return `false` are dropped.
+2. **Toolset gate (built-in tools only)** -- Built-in tools (name does not start with `mcp__`, no `pluginId`) must appear in `allowedTools` when that list is non-empty. `alwaysInclude: true` bypasses this gate.
+3. **`filterOpts` gate** -- `allowedMcpServers` filters `mcp__<server>__*` tools by server name. `allowedPlugins` filters plugin-tagged tools by `pluginId`.
+
+Surviving entries are mapped to `{ name, description, parameters: tool.schema }`.
+
+## DefaultToolResultReducerRegistry {#tool-result-reducer-registry}
+
+The reducer registry implementation in `packages/core/src/tool-reducer-registry.ts`. Provides exact-match lookup of `ToolResultReducer` by tool name.
+
+### Signature {#tool-result-reducer-registry-signature}
+
+```ts
+import type { ToolResultReducer, ToolResultReducerRegistry } from '@ethosagent/types';
+
+export class DefaultToolResultReducerRegistry implements ToolResultReducerRegistry {
+  register(reducer: ToolResultReducer): () => void;
+  get(toolName: string): ToolResultReducer | undefined;
+}
+```
+
+### Methods {#tool-result-reducer-registry-methods}
+
+| Method | Signature | Description |
+|---|---|---|
+| `register` | `(reducer: ToolResultReducer): () => void` | Register a reducer. Throws if one is already registered for the same tool name. Returns a cleanup function that unregisters the reducer. |
+| `get` | `(toolName: string): ToolResultReducer \| undefined` | Lookup reducer by tool name. Exact match. |
+
+## Built-in reducers {#built-in-reducers}
+
+| Reducer | Tool name | Source | Strategy |
+|---|---|---|---|
+| Bash reducer | `terminal` | `extensions/tools-terminal/src/reducers/bash.ts` | Recognizes `git status`, test runs, package installs; head+tail fallback for output exceeding 8 KB. |
+| Read-file reducer | `read_file` | `extensions/tools-code/src/reducers/read-file.ts` | Prepends file-size hint, truncates to 200 lines on unconstrained reads (no `lineStart`/`lineEnd`). |
+| Kanban-list reducer | `kanban_list` | `extensions/tools-kanban/src/reducers/kanban-list.ts` | Status counts + top 5 open tickets when list exceeds 10 items. |
+
+## Wiring {#wiring}
+
+How it is assembled at startup in `packages/wiring/src/index.ts`:
+
+```ts
+import { DefaultToolRegistry, DefaultToolResultReducerRegistry } from '@ethosagent/core';
+import { bashReducer } from '@ethosagent/tools-terminal/reducers/bash';
+import { readFileReducer } from '@ethosagent/tools-code/reducers/read-file';
+import { kanbanListReducer } from '@ethosagent/tools-kanban/reducers/kanban-list';
+
+const reducerRegistry = new DefaultToolResultReducerRegistry();
+reducerRegistry.register(bashReducer);
+reducerRegistry.register(readFileReducer);
+reducerRegistry.register(kanbanListReducer);
+const tools = new DefaultToolRegistry(capabilityBackends, reducerRegistry);
+```
 
 ## See also {#see-also}
 
-- [Tool interface](./tool-interface.md) — what a `Tool` is.
-- [Tool-result budget](../explanation/tool-result-budget.md) — how `maxResultChars` and `resultBudgetChars` interact.
-- [Plugin SDK reference](./plugin-sdk.md) — registering tools from a plugin.
-- [Glossary: ToolRegistry](../../getting-started/glossary.md#tool-registry) — one-line definition shared across the building tree.
+- [Tool interface reference](./tool-interface.md) -- `Tool`, `ToolResult`, `ToolResultReducer` contracts.
+- [Why is there an 80k tool result budget?](../explanation/tool-result-budget.md)
+- [Context cost optimization](../explanation/context-cost-optimization.md) -- the seven-layer defense.
+- [HookRegistry reference](./hook-registry.md) -- the parallel registry for hooks.
+- [Architecture in 90 seconds](../../getting-started/architecture-90-seconds.md)

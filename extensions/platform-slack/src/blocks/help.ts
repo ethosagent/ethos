@@ -25,6 +25,9 @@ export function helpBlocks(input: {
         '`/ethos help` — this message',
       ].join('\n'),
     ),
+    section(
+      '*Context cost.* Run `ethos sessions show <id>` to see tokens, cost, and cache hit rate for a session.',
+    ),
     context([
       'Modes: `mention_only` (default) responds to DMs and @mentions; ' +
         '`thread_follow` also responds in threads the bot has posted in; ' +
