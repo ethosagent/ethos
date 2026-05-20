@@ -2,11 +2,17 @@ import { os } from './context';
 
 // Thin RPC shell for the MCP install-flow namespace.
 //
-// `_mcpPendingState` is a non-enumerable property set by the Hono layer in
-// routes/rpc.ts when the `ethos_mcp_pending` cookie is present. It carries
-// the cookie value into the service so complete/status can validate CSRF
-// binding. The cast is intentional — modifying the oRPC context type is
-// invasive, and the property is invisible to other service methods.
+// `_mcpPendingState` and `_mcpRequestOrigin` are non-enumerable
+// properties set by the Hono layer in routes/rpc.ts:
+//
+//   - `_mcpPendingState` carries the `ethos_mcp_pending` cookie value
+//     into the service so complete/status can validate CSRF binding.
+//   - `_mcpRequestOrigin` carries the derived OAuth callback URL (built
+//     from the request's Origin / Host header) so DCR registers a
+//     redirect_uri that matches whatever host/port the UI is served on.
+//
+// The casts are intentional — modifying the oRPC context type is
+// invasive, and the properties are invisible to other service methods.
 
 /** Read the pending-state cookie value threaded into context by the Hono layer. */
 function pendingState(context: object): string | undefined {
@@ -14,8 +20,16 @@ function pendingState(context: object): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+/** Read the derived OAuth `redirect_uri` threaded into context by the Hono layer. */
+function requestOrigin(context: object): string | undefined {
+  const value: unknown = (context as { _mcpRequestOrigin?: unknown })._mcpRequestOrigin;
+  return typeof value === 'string' ? value : undefined;
+}
+
 export const mcpRouter = {
-  start: os.mcp.start.handler(({ input, context }) => context.mcp.start(input)),
+  start: os.mcp.start.handler(({ input, context }) =>
+    context.mcp.start(input, requestOrigin(context)),
+  ),
   complete: os.mcp.complete.handler(({ input, context }) =>
     context.mcp.complete(input, pendingState(context)),
   ),

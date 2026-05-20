@@ -57,6 +57,18 @@ export type InstallFlowStatus = 'pending' | 'connected' | 'error' | 'expired';
 export interface StartOptions {
   mcpUrl: string;
   name?: string;
+  /**
+   * Per-flow OAuth `redirect_uri`. When set, it overrides the
+   * constructor-level default and is persisted on the pending session so
+   * `complete()` exchanges the code against the same URI that was
+   * registered with DCR and used to build the authorization URL (OAuth
+   * RFC 6749 §4.1.3 requires the value to match).
+   *
+   * Used by the web flow to derive the URI from the inbound request's
+   * Origin header, so the install works regardless of which host/port the
+   * UI is served on.
+   */
+  redirectUri?: string;
 }
 
 export interface StartResult {
@@ -98,6 +110,13 @@ interface PendingSession {
   state: string;
   mcpUrl: string;
   serverName: string;
+  /**
+   * The exact `redirect_uri` that was registered with DCR and embedded in
+   * the authorization URL for this flow. `complete()` MUST pass this same
+   * string to `exchangeCode` — the token endpoint rejects the exchange if
+   * the URIs don't match.
+   */
+  redirectUri: string;
   codeVerifier: string;
   clientId: string;
   tokenEndpoint: string;
@@ -229,11 +248,18 @@ export class McpInstallFlow {
     }
     const registrationEndpoint = metadata.registration_endpoint;
 
+    // Per-flow redirect URI (e.g. derived from the web request's Origin)
+    // takes precedence over the constructor-level default. Whatever we
+    // pick here is what gets registered with DCR, embedded in the
+    // authorization URL, and persisted on the session for the eventual
+    // code-exchange call — those three MUST all match per OAuth.
+    const redirectUri = opts.redirectUri ?? this.redirectUri;
+
     // DCR — propagates ConfidentialClientUnsupported when the server returns
     // a client_secret. No rollback needed — nothing has been written yet.
     const dcrResult: DcrResponse = await registerOAuthClient(registrationEndpoint, {
       client_name: 'Ethos',
-      redirect_uris: [this.redirectUri],
+      redirect_uris: [redirectUri],
       token_endpoint_auth_method: 'none' as const,
       grant_types: ['authorization_code', 'refresh_token'] as [
         'authorization_code',
@@ -259,7 +285,7 @@ export class McpInstallFlow {
       oauthConfig.scopes = scopes;
     }
 
-    const authorizeUrl = buildAuthorizationUrl(oauthConfig, this.redirectUri, state, codeChallenge);
+    const authorizeUrl = buildAuthorizationUrl(oauthConfig, redirectUri, state, codeChallenge);
 
     const createdAt = this.now();
     const expiresAt = new Date(createdAt.getTime() + this.pendingTtlMs);
@@ -290,6 +316,7 @@ export class McpInstallFlow {
       state,
       mcpUrl: opts.mcpUrl,
       serverName,
+      redirectUri,
       codeVerifier,
       clientId: dcrResult.client_id,
       tokenEndpoint: metadata.token_endpoint,
@@ -355,7 +382,7 @@ export class McpInstallFlow {
       tokens = await exchangeCode(
         session.oauthConfig,
         opts.code,
-        this.redirectUri,
+        session.redirectUri,
         session.codeVerifier,
       );
     } catch (err) {

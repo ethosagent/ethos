@@ -468,6 +468,7 @@ export const McpStartOutputSchema = z.discriminatedUnion('ok', [
       'name_taken',
       'webBaseUrl_missing',
       'ssrf_blocked',
+      'invalid_origin',
     ]),
     detail: z.string().optional(),
   }),

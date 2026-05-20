@@ -40,6 +40,7 @@ const sidebars: SidebarsConfig = {
             'using/how-to/deploy-on-ec2',
             'using/how-to/run-multiple-bots',
             'using/how-to/run-as-daemon',
+            'using/how-to/run-in-docker',
             'using/how-to/use-skills',
             'using/how-to/migrate-from-openclaw',
             'using/how-to/use-as-mcp-server',

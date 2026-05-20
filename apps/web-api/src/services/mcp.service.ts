@@ -40,7 +40,7 @@ export class McpService {
     });
   }
 
-  async start(input: { url: string; name?: string }) {
+  async start(input: { url: string; name?: string }, redirectUri?: string) {
     try {
       validateUrl(input.url, { allowLocalhost: true });
     } catch (err) {
@@ -50,7 +50,19 @@ export class McpService {
     }
 
     try {
-      const result = await this.flow.start({ mcpUrl: input.url, name: input.name });
+      // Prefer the per-flow `redirectUri` (derived from the web request's
+      // Origin in routes/rpc.ts). When the caller doesn't supply one (e.g.
+      // tests, server-to-server, or a request with no Origin and a
+      // non-allowlisted host), `flow.start` falls back to the
+      // constructor-level default.
+      const startOpts: {
+        mcpUrl: string;
+        name?: string;
+        redirectUri?: string;
+      } = { mcpUrl: input.url };
+      if (input.name !== undefined) startOpts.name = input.name;
+      if (redirectUri !== undefined) startOpts.redirectUri = redirectUri;
+      const result = await this.flow.start(startOpts);
       return {
         ok: true as const,
         state: result.state,

@@ -6,6 +6,7 @@ import { getCookie } from 'hono/cookie';
 import { statusFor } from '../middleware/error-envelope';
 import { apiRouter } from '../rpc/router';
 import type { ServiceContainer } from './index';
+import { deriveMcpRequestOrigin } from './rpc-origin';
 
 // Mounts the oRPC handler at `/*` (relative to wherever this sub-app is
 // attached — `createWebApi` mounts it under `/rpc`). The handler lifts the
@@ -31,6 +32,13 @@ const MCP_COOKIE_MAX_AGE = 600; // 10 minutes
 
 export interface RpcRoutesOptions {
   services: ServiceContainer;
+  /**
+   * Trust anchor for deriving the per-request MCP OAuth redirect URI.
+   * Loopback (`localhost`, `127.0.0.1`, `::1`) and RFC 1918 private ranges
+   * are always accepted; anything else must match this URL's origin to be
+   * trusted. Boot code passes `opts.webBaseUrl` from `createWebApi` here.
+   */
+  webBaseUrl?: string;
 }
 
 export function rpcRoutes(opts: RpcRoutesOptions) {
@@ -60,13 +68,30 @@ export function rpcRoutes(opts: RpcRoutesOptions) {
     // For mcp.status the state comes from the cookie, not the body.
     const mcpPending = getCookie(c, MCP_PENDING_COOKIE);
 
-    // Thread the cookie value into the service context so McpService can
-    // use it as the CSRF binding key.
-    const context: ServiceContainer = mcpPending
-      ? Object.create(opts.services, {
-          _mcpPendingState: { value: mcpPending, enumerable: false },
-        })
-      : opts.services;
+    // Derive the OAuth callback URL from the inbound request so the MCP
+    // install flow registers a redirect_uri that matches whatever
+    // host/port the web UI is actually being served on. Returns undefined
+    // when the origin can't be trusted (non-loopback, non-private,
+    // non-allowlisted); McpService falls back to the constructor default
+    // in that case.
+    const mcpRequestOrigin = deriveMcpRequestOrigin(c.req.raw, opts.webBaseUrl);
+
+    // Thread the cookie value + derived redirect URI into the service
+    // context as enumerable own properties. oRPC interceptors spread the
+    // context (`{...options.context, ...next.context}`), so prototype-only
+    // properties would be lost — every field the handlers read must be
+    // own-and-enumerable on the same object. The underscore prefix marks
+    // these as framework-internal so namespace code knows not to touch
+    // them outside the dedicated helpers in `rpc/mcp.ts`.
+    const context: ServiceContainer =
+      mcpPending || mcpRequestOrigin
+        ? Object.assign(
+            Object.create(null) as ServiceContainer,
+            opts.services,
+            mcpPending ? { _mcpPendingState: mcpPending } : {},
+            mcpRequestOrigin ? { _mcpRequestOrigin: mcpRequestOrigin } : {},
+          )
+        : opts.services;
 
     const { matched, response } = await handler.handle(c.req.raw, {
       prefix: '/rpc',

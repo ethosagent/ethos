@@ -39,6 +39,11 @@ export interface CreateRoutesOptions {
    *  routes. Omit during dev — Vite's :5173 dev server proxies API calls
    *  to this Hono app instead. */
   webDist?: string;
+  /** Configured public base URL of the web UI — used as an allowlist
+   *  anchor when deriving the MCP OAuth redirect URI from inbound
+   *  requests. Loopback + RFC 1918 origins are always trusted; anything
+   *  else must match this. */
+  webBaseUrl?: string;
 }
 
 export interface ServiceContainer {
@@ -141,7 +146,13 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   const mcpStartRateLimit = rateLimitMiddleware();
   app.use('/rpc/mcp.start', mcpStartRateLimit);
 
-  app.route('/rpc', rpcRoutes({ services: opts.services }));
+  app.route(
+    '/rpc',
+    rpcRoutes({
+      services: opts.services,
+      ...(opts.webBaseUrl ? { webBaseUrl: opts.webBaseUrl } : {}),
+    }),
+  );
   app.route('/sse', sseRoutes({ chat: opts.services.chat }));
   app.route('/openapi', openapiRoutes({ services: opts.services }));
 

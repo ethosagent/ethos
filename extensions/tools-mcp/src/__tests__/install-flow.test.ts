@@ -345,6 +345,36 @@ describe('McpInstallFlow.start', () => {
       command: 'x',
     });
   });
+
+  it('per-flow redirectUri overrides the constructor default in DCR + authorize URL', async () => {
+    const { flow, script } = await makeHarness();
+    // Wire discovery + an instrumented DCR responder that captures the
+    // request body so we can assert on `redirect_uris`.
+    script.responders.set(
+      'https://mcp.linear.app/.well-known/oauth-protected-resource/sse',
+      async () => new Response('not found', { status: 404 }),
+    );
+    script.responders.set(
+      'https://mcp.linear.app/.well-known/oauth-authorization-server',
+      async () => jsonResponse(DISCOVERY_OK),
+    );
+    let capturedDcrBody: { redirect_uris?: string[] } | undefined;
+    script.responders.set(DISCOVERY_OK.registration_endpoint, async ({ init }) => {
+      const raw = typeof init?.body === 'string' ? init.body : '';
+      capturedDcrBody = raw ? (JSON.parse(raw) as { redirect_uris?: string[] }) : undefined;
+      return jsonResponse(DCR_OK, 201);
+    });
+
+    const flowRedirect = 'http://192.168.1.50:5173/oauth/callback';
+    const result = await flow.start({ mcpUrl: MCP_URL, redirectUri: flowRedirect });
+
+    // Authorize URL uses the per-flow URI, NOT REDIRECT_URI.
+    const authUrl = new URL(result.authorizeUrl);
+    expect(authUrl.searchParams.get('redirect_uri')).toBe(flowRedirect);
+
+    // DCR registered exactly that URI as the sole entry.
+    expect(capturedDcrBody?.redirect_uris).toEqual([flowRedirect]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -452,6 +482,28 @@ describe('McpInstallFlow.complete', () => {
     expect(await jsonStore.get(serverName)).toBeNull();
     expect(await secrets.get(`mcp/${serverName}/access_token`)).toBeNull();
     expect(await secrets.get(`mcp/${serverName}/refresh_token`)).toBeNull();
+  });
+
+  it('exchanges the code against the per-flow redirectUri persisted on the session', async () => {
+    const { flow, script } = await makeHarness();
+    scriptHappyDiscoveryAndDcr(script);
+
+    const flowRedirect = 'http://localhost:5173/oauth/callback';
+    const { state } = await flow.start({ mcpUrl: MCP_URL, redirectUri: flowRedirect });
+
+    // Instrument the token endpoint to capture the form body.
+    let capturedTokenForm: URLSearchParams | undefined;
+    script.responders.set(DISCOVERY_OK.token_endpoint, async ({ init }) => {
+      const raw = typeof init?.body === 'string' ? init.body : '';
+      capturedTokenForm = new URLSearchParams(raw);
+      return jsonResponse(TOKEN_OK);
+    });
+
+    await flow.complete({ code: 'auth-code', state });
+
+    // exchangeCode passes redirect_uri as a form field; it MUST match the
+    // per-flow URI, not the constructor default.
+    expect(capturedTokenForm?.get('redirect_uri')).toBe(flowRedirect);
   });
 
   it('rejects when the session has already completed', async () => {
