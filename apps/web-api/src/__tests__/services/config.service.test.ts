@@ -102,6 +102,45 @@ describe('ConfigService', () => {
     expect(written).toContain('apiKey: sk-keep-this');
   });
 
+  it('get returns providers with redacted keys', async () => {
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      [
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'apiKey: sk-anthropic-1234567890abcdef',
+        'personality: researcher',
+        'providers.0.provider: anthropic',
+        'providers.0.apiKey: sk-anthropic-1234567890abcdef',
+        'providers.0.model: claude-opus-4-7',
+        'providers.1.provider: openrouter',
+        'providers.1.apiKey: sk-or-testkey-abcdef1234',
+        'providers.1.model: gpt-4',
+      ].join('\n'),
+    );
+
+    const result = await service.get();
+    expect(result.providers).toHaveLength(2);
+    expect(result.providers[0]?.apiKeyPreview).toBe('sk-…cdef');
+    expect(result.providers[0]?.provider).toBe('anthropic');
+    expect(result.providers[0]?.model).toBe('claude-opus-4-7');
+    expect(result.providers[1]?.apiKeyPreview).toBe('sk-…1234');
+    expect(result.providers[1]?.provider).toBe('openrouter');
+    // Raw keys must never appear
+    expect(JSON.stringify(result)).not.toContain('1234567890abcdef');
+    expect(JSON.stringify(result)).not.toContain('testkey-abcdef1234');
+  });
+
+  it('get returns empty providers array when none are configured', async () => {
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      ['provider: anthropic', 'model: claude-opus-4-7', 'personality: researcher'].join('\n'),
+    );
+
+    const result = await service.get();
+    expect(result.providers).toEqual([]);
+  });
+
   it('update can replace the apiKey when a non-empty value is supplied', async () => {
     await storage.write(
       join(DATA, 'config.yaml'),

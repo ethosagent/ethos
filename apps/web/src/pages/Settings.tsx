@@ -1,7 +1,6 @@
 import { BUILTIN_SKIN_NAMES, BUILTIN_SKINS } from '@ethosagent/design-tokens';
-import type { ApiKeyMetadata, ApiKeyScope } from '@ethosagent/web-contracts';
+import type { ApiKeyMetadata, ApiKeyScope, ProviderEntry } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { FormInstance } from 'antd';
 import {
   App as AntApp,
   Button,
@@ -21,7 +20,7 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { rpc } from '../rpc';
 
@@ -37,73 +36,137 @@ import { rpc } from '../rpc';
 // a fresh value into the field.
 
 // ---------------------------------------------------------------------------
-// Test Connection Button
+// Provider chain row — local state for the editor
 // ---------------------------------------------------------------------------
 
-function TestConnectionButton({ form }: { form: FormInstance<FormShape> }) {
-  const [status, setStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
-  const [error, setError] = useState<string>();
+let nextRowId = 1;
 
+interface ProviderRow {
+  /** Stable key for React list rendering. */
+  _id: number;
+  provider: string;
+  model: string;
+  apiKey: string;
+  apiKeyPreview: string;
+  baseUrl: string;
+  testStatus: 'idle' | 'testing' | 'success' | 'error';
+  testError?: string;
+}
+
+function emptyRow(): ProviderRow {
+  return {
+    _id: nextRowId++,
+    provider: '',
+    model: '',
+    apiKey: '',
+    apiKeyPreview: '',
+    baseUrl: '',
+    testStatus: 'idle',
+  };
+}
+
+function rowsFromConfig(
+  providers: ProviderEntry[],
+  legacyProvider?: string,
+  legacyModel?: string,
+  legacyApiKeyPreview?: string,
+  legacyBaseUrl?: string | null,
+): ProviderRow[] {
+  if (providers.length > 0) {
+    return providers.map((p) => ({
+      _id: nextRowId++,
+      provider: p.provider,
+      model: p.model ?? '',
+      apiKey: '',
+      apiKeyPreview: p.apiKeyPreview,
+      baseUrl: p.baseUrl ?? '',
+      testStatus: 'idle' as const,
+    }));
+  }
+  // Backward compat: populate from single-field config
+  if (legacyProvider) {
+    return [
+      {
+        _id: nextRowId++,
+        provider: legacyProvider,
+        model: legacyModel ?? '',
+        apiKey: '',
+        apiKeyPreview: legacyApiKeyPreview ?? '',
+        baseUrl: legacyBaseUrl ?? '',
+        testStatus: 'idle' as const,
+      },
+    ];
+  }
+  return [emptyRow()];
+}
+
+// ---------------------------------------------------------------------------
+// Inline test button for a single provider row
+// ---------------------------------------------------------------------------
+
+function RowTestButton({
+  row,
+  onStatusChange,
+}: {
+  row: ProviderRow;
+  onStatusChange: (status: ProviderRow['testStatus'], error?: string) => void;
+}) {
   const handleTest = async () => {
-    const provider = form.getFieldValue('provider');
-    const apiKey = form.getFieldValue('apiKey');
-    if (!provider || !apiKey) return;
-    setStatus('testing');
+    if (!row.provider || !row.apiKey) return;
+    onStatusChange('testing');
     try {
       const result = await rpc.onboarding.validateProvider({
-        provider: provider as
+        provider: row.provider as
           | 'anthropic'
           | 'openai'
           | 'openrouter'
           | 'openai-compat'
           | 'ollama'
           | 'azure',
-        apiKey,
-        ...(form.getFieldValue('baseUrl') ? { baseUrl: form.getFieldValue('baseUrl') } : {}),
+        apiKey: row.apiKey,
+        ...(row.baseUrl ? { baseUrl: row.baseUrl } : {}),
       });
       if (result.ok) {
-        setStatus('success');
-        setError(undefined);
+        onStatusChange('success');
       } else {
-        setStatus('error');
-        setError(result.error ?? 'Validation failed');
+        onStatusChange('error', result.error ?? 'Validation failed');
       }
     } catch (err) {
-      setStatus('error');
-      setError((err as Error).message);
+      onStatusChange('error', (err as Error).message);
     }
   };
 
-  const apiKey = Form.useWatch('apiKey', form);
-  const hasKey = !!apiKey && apiKey.length > 0;
+  const hasKey = row.apiKey.length > 0;
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <Tooltip
         title={hasKey ? 'Test connection with the new API key' : 'Enter a new API key to test'}
       >
-        <Button size="small" onClick={handleTest} loading={status === 'testing'} disabled={!hasKey}>
+        <Button
+          size="small"
+          onClick={handleTest}
+          loading={row.testStatus === 'testing'}
+          disabled={!hasKey}
+        >
           Test
         </Button>
       </Tooltip>
-      {status === 'success' && <Tag color="success">Connected</Tag>}
-      {status === 'error' && <Tag color="error">{error ?? 'Failed'}</Tag>}
+      {row.testStatus === 'success' && <Tag color="success">Connected</Tag>}
+      {row.testStatus === 'error' && <Tag color="error">{row.testError ?? 'Failed'}</Tag>}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Form shape
+// Form shape (no longer includes provider/model/apiKey/baseUrl — those live
+// in the provider chain state)
 // ---------------------------------------------------------------------------
 
 interface FormShape {
   personality: string;
   memory: 'markdown' | 'vector';
   skin: string;
-  provider: string;
-  model: string;
-  apiKey: string;
-  baseUrl: string;
 }
 
 export function Settings() {
@@ -112,6 +175,8 @@ export function Settings() {
   const navigate = useNavigate();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [form] = Form.useForm<FormShape>();
+  const [providerRows, setProviderRows] = useState<ProviderRow[]>([emptyRow()]);
+  const hydratedRef = useRef(false);
 
   const configQuery = useQuery({
     queryKey: ['config'],
@@ -123,27 +188,62 @@ export function Settings() {
     queryFn: () => rpc.personalities.list({}),
   });
 
-  // Hydrate form whenever config data arrives or refreshes.
+  // Hydrate form + provider rows whenever config data arrives or refreshes.
   useEffect(() => {
     if (configQuery.data) {
       form.setFieldsValue({
         personality: configQuery.data.personality,
         memory: configQuery.data.memory,
         skin: configQuery.data.skin,
-        provider: configQuery.data.provider,
-        model: configQuery.data.model,
-        baseUrl: configQuery.data.baseUrl ?? '',
       });
+      // Only hydrate provider rows on first load or when data changes identity
+      if (!hydratedRef.current) {
+        setProviderRows(
+          rowsFromConfig(
+            configQuery.data.providers,
+            configQuery.data.provider,
+            configQuery.data.model,
+            configQuery.data.apiKeyPreview,
+            configQuery.data.baseUrl,
+          ),
+        );
+        hydratedRef.current = true;
+      }
     }
   }, [configQuery.data, form]);
+
+  const updateRow = useCallback((index: number, patch: Partial<ProviderRow>) => {
+    setProviderRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  }, []);
+
+  const moveRow = useCallback((index: number, direction: -1 | 1) => {
+    setProviderRows((prev) => {
+      const next = [...prev];
+      const target = index + direction;
+      if (target < 0 || target >= next.length) return prev;
+      const a = next[index];
+      const b = next[target];
+      if (!a || !b) return prev;
+      next[index] = b;
+      next[target] = a;
+      return next;
+    });
+  }, []);
+
+  const removeRow = useCallback((index: number) => {
+    setProviderRows((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const addRow = useCallback(() => {
+    setProviderRows((prev) => [...prev, emptyRow()]);
+  }, []);
 
   const updateMut = useMutation({
     mutationFn: (patch: Parameters<typeof rpc.config.update>[0]) => rpc.config.update(patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['config'] });
+      hydratedRef.current = false;
       notification.success({ message: 'Settings saved', placement: 'topRight' });
-      // Clear the apiKey field after save so it shows the preview again.
-      form.setFieldValue('apiKey', '');
     },
     onError: (err) =>
       notification.error({ message: 'Save failed', description: (err as Error).message }),
@@ -167,14 +267,27 @@ export function Settings() {
   const personalities = personalitiesQuery.data?.items ?? [];
 
   const onFinish = (values: FormShape) => {
-    if (!values.provider || !values.model) {
-      notification.error({ message: 'Provider and model are required.' });
+    const primary = providerRows[0];
+    if (!primary?.provider || !primary.model) {
+      notification.error({ message: 'Primary provider and model are required.' });
       return;
     }
 
+    // Build the providers array for the update
+    const providers = providerRows.map((row) => {
+      const entry: { provider: string; model?: string; apiKey?: string; baseUrl?: string } = {
+        provider: row.provider,
+      };
+      if (row.model) entry.model = row.model;
+      if (row.apiKey) entry.apiKey = row.apiKey;
+      if (row.baseUrl) entry.baseUrl = row.baseUrl;
+      return entry;
+    });
+
     const patch: Parameters<typeof rpc.config.update>[0] = {
-      provider: values.provider,
-      model: values.model,
+      // Backward compat: also write the legacy single-provider fields from primary
+      provider: primary.provider,
+      model: primary.model,
       personality: values.personality,
       memory: values.memory,
       skin: values.skin,
@@ -183,9 +296,10 @@ export function Settings() {
           ([k]) => k !== '__fallbackChain',
         ),
       ),
+      providers,
     };
-    if (values.apiKey && values.apiKey.length > 0) patch.apiKey = values.apiKey;
-    if (values.baseUrl !== undefined) patch.baseUrl = values.baseUrl;
+    if (primary.apiKey) patch.apiKey = primary.apiKey;
+    if (primary.baseUrl !== undefined) patch.baseUrl = primary.baseUrl;
 
     updateMut.mutate(patch);
   };
@@ -203,39 +317,124 @@ export function Settings() {
       </header>
 
       <Form<FormShape> form={form} layout="vertical" onFinish={onFinish} style={{ maxWidth: 640 }}>
-        <Card title="Provider" size="small" style={{ marginBottom: 16 }}>
-          <Form.Item
-            label="Provider"
-            name="provider"
-            rules={[{ required: true, message: 'Required' }]}
-          >
-            <Input placeholder="anthropic | openrouter | openai-compat | ollama" />
-          </Form.Item>
-          <Form.Item label="Model" name="model" rules={[{ required: true, message: 'Required' }]}>
-            <Input placeholder="e.g. claude-opus-4-7" />
-          </Form.Item>
-          <Form.Item
-            label="API key"
-            name="apiKey"
-            extra={
-              configQuery.data?.apiKeyPreview
-                ? `Active: ${configQuery.data.apiKeyPreview}`
-                : undefined
-            }
-          >
-            <Input.Password
-              autoComplete="off"
-              placeholder={configQuery.data?.apiKeyPreview || 'paste new key'}
-            />
-          </Form.Item>
-          {showAdvanced && (
-            <Form.Item label="Base URL" name="baseUrl">
-              <Input placeholder="https://openrouter.ai/api/v1" />
-            </Form.Item>
-          )}
-          <Form.Item>
-            <TestConnectionButton form={form} />
-          </Form.Item>
+        <Card title="Provider chain" size="small" style={{ marginBottom: 16 }}>
+          {providerRows.map((row, idx) => {
+            const label = idx === 0 ? 'Primary' : `Fallback ${idx}`;
+            return (
+              <div
+                key={row._id}
+                style={{
+                  border: '1px solid var(--ethos-border, #d9d9d9)',
+                  borderRadius: 6,
+                  padding: 12,
+                  marginBottom: 12,
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 8,
+                  }}
+                >
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    {label}
+                  </Typography.Text>
+                  <Space size={4}>
+                    {idx > 0 && (
+                      <Tooltip title="Move up">
+                        <Button size="small" onClick={() => moveRow(idx, -1)}>
+                          Up
+                        </Button>
+                      </Tooltip>
+                    )}
+                    {idx < providerRows.length - 1 && (
+                      <Tooltip title="Move down">
+                        <Button size="small" onClick={() => moveRow(idx, 1)}>
+                          Down
+                        </Button>
+                      </Tooltip>
+                    )}
+                    {idx > 0 && (
+                      <Tooltip title="Remove this fallback">
+                        <Button size="small" danger onClick={() => removeRow(idx)}>
+                          Remove
+                        </Button>
+                      </Tooltip>
+                    )}
+                  </Space>
+                </div>
+
+                <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Provider
+                    </Typography.Text>
+                    <Input
+                      size="small"
+                      placeholder="anthropic | openrouter | openai-compat | ollama"
+                      value={row.provider}
+                      onChange={(e) => updateRow(idx, { provider: e.target.value })}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Model
+                    </Typography.Text>
+                    <Input
+                      size="small"
+                      placeholder="e.g. claude-opus-4-7"
+                      value={row.model}
+                      onChange={(e) => updateRow(idx, { model: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 8 }}>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    API key
+                  </Typography.Text>
+                  <Input.Password
+                    size="small"
+                    autoComplete="off"
+                    placeholder={row.apiKeyPreview || 'paste new key'}
+                    value={row.apiKey}
+                    onChange={(e) => updateRow(idx, { apiKey: e.target.value, testStatus: 'idle' })}
+                  />
+                  {row.apiKeyPreview && !row.apiKey && (
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      Active: {row.apiKeyPreview}
+                    </Typography.Text>
+                  )}
+                </div>
+
+                {showAdvanced && (
+                  <div style={{ marginBottom: 8 }}>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Base URL
+                    </Typography.Text>
+                    <Input
+                      size="small"
+                      placeholder="https://openrouter.ai/api/v1"
+                      value={row.baseUrl}
+                      onChange={(e) => updateRow(idx, { baseUrl: e.target.value })}
+                    />
+                  </div>
+                )}
+
+                <RowTestButton
+                  row={row}
+                  onStatusChange={(status, error) =>
+                    updateRow(idx, { testStatus: status, testError: error })
+                  }
+                />
+              </div>
+            );
+          })}
+          <Button type="dashed" size="small" onClick={addRow} style={{ width: '100%' }}>
+            Add fallback
+          </Button>
         </Card>
 
         <Card title="Default personality" size="small" style={{ marginBottom: 16 }}>
