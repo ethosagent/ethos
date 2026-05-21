@@ -27,6 +27,7 @@ const DEFAULT_DREAM_PROMPT =
 
 export class DreamExecutor {
   private readonly lastUserTurnAt = new Map<string, number>();
+  private readonly inFlight = new Map<string, AbortController>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private ticking = false;
 
@@ -40,6 +41,11 @@ export class DreamExecutor {
   recordUserTurn(personalityId: string): void {
     assertSafeId(personalityId, 'personalityId');
     this.lastUserTurnAt.set(personalityId, Date.now());
+    // Cancel in-flight dream — user activity takes priority
+    const inflight = this.inFlight.get(personalityId);
+    if (inflight) {
+      inflight.abort();
+    }
   }
 
   /** Start the idle-check interval (every 5 minutes). */
@@ -57,6 +63,10 @@ export class DreamExecutor {
       clearInterval(this.timer);
       this.timer = undefined;
     }
+    for (const abort of this.inFlight.values()) {
+      abort.abort();
+    }
+    this.inFlight.clear();
   }
 
   private async tick(): Promise<void> {
@@ -66,6 +76,7 @@ export class DreamExecutor {
       for (const [personalityId, lastTurn] of this.lastUserTurnAt) {
         const config = this.getConfig(personalityId);
         if (!config?.dreaming?.enable) continue;
+        if (this.inFlight.has(personalityId)) continue;
 
         const idleMs = (config.dreaming.idleMinutes ?? 60) * 60_000;
         if (Date.now() - lastTurn < idleMs) continue;
@@ -114,16 +125,24 @@ export class DreamExecutor {
     const prompt = config.dreaming?.prompt ?? DEFAULT_DREAM_PROMPT;
     const sessionKey = `dream:${personalityId}:${Date.now()}`;
 
+    const abort = new AbortController();
+    this.inFlight.set(personalityId, abort);
+
     let success = false;
-    for await (const event of loop.run(prompt, {
-      personalityId,
-      sessionKey,
-    })) {
-      if (event.type === 'done') {
-        success = true;
-        break;
+    try {
+      for await (const event of loop.run(prompt, {
+        personalityId,
+        sessionKey,
+        abortSignal: abort.signal,
+      })) {
+        if (event.type === 'done') {
+          success = true;
+          break;
+        }
+        if (event.type === 'error') break;
       }
-      if (event.type === 'error') break;
+    } finally {
+      this.inFlight.delete(personalityId);
     }
 
     if (success) {
