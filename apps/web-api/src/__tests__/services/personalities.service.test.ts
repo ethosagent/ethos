@@ -26,7 +26,7 @@ describe('PersonalitiesService', () => {
           name: 'Researcher',
           description: 'curious + careful',
           model: 'claude-opus-4-7',
-          memoryScope: 'global',
+          memoryScope: 'per-personality',
           // soulFile lives outside the user dir → built-in
           soulFile: '/usr/share/ethos/personalities/researcher/SOUL.md',
         },

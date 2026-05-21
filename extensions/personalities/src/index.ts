@@ -650,7 +650,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       model,
       provider: cfg.provider,
       platform: cfg.platform,
-      memoryScope: (cfg.memoryScope as PersonalityConfig['memoryScope']) ?? 'global',
+      memoryScope: cfg.memoryScope === 'per-personality' ? 'per-personality' : undefined,
       ...(capabilities?.length ? { capabilities } : {}),
       ...(soulExists ? { soulFile: join(dir, 'SOUL.md') } : {}),
       ...(skillsExists ? { skillsDirs: [join(dir, 'skills')] } : {}),

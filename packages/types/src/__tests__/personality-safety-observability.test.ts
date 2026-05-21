@@ -11,7 +11,7 @@ describe('PersonalityConfig safety.observability schema', () => {
       id: 'test',
       name: 'Test',
       model: 'claude-sonnet-4-6',
-      memoryScope: 'global',
+      memoryScope: 'per-personality',
     };
     expect(cfg.safety).toBeUndefined();
   });
@@ -39,7 +39,7 @@ describe('PersonalityConfig safety.observability schema', () => {
       id: 'test',
       name: 'Test',
       model: 'claude-sonnet-4-6',
-      memoryScope: 'global',
+      memoryScope: 'per-personality',
       safety: { observability: { storeToolBodies: 'redacted' } },
     };
     expect(cfg.safety?.observability?.storeToolBodies).toBe('redacted');
