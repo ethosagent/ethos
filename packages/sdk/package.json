@@ -38,6 +38,6 @@
   "dependencies": {
     "@ethosagent/web-contracts": "workspace:*",
     "@orpc/client": "^1.14.0",
-    "@orpc/contract": "^1.14.0"
+    "@orpc/contract": "^1.14.3"
   }
 }

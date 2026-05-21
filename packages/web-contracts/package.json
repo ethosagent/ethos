@@ -37,7 +37,7 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
-    "@orpc/contract": "^1.14.0",
+    "@orpc/contract": "^1.14.3",
     "zod": "^4.3.6"
   }
 }
