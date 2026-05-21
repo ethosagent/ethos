@@ -461,13 +461,12 @@ describe('FilePersonalityRegistry', () => {
       await mkdir(personalityDir, { recursive: true });
       await writeFile(
         join(personalityDir, 'config.yaml'),
-        [
-          'name: DreamFull',
-          'dreaming.enable: true',
-          'dreaming.idleMinutes: 30',
-          'dreaming.maxPerDay: 3',
-          'dreaming.prompt: Reflect.',
-        ].join('\n') + '\n',
+        `name: DreamFull
+dreaming.enable: true
+dreaming.idleMinutes: 30
+dreaming.maxPerDay: 3
+dreaming.prompt: Reflect.
+`,
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# DreamFull');
 
