@@ -293,9 +293,9 @@ export interface PersonalityConfig {
    */
   outbound_policy?: OutboundPolicyConfig;
   /**
-   * Idle-time dreaming. When enabled, the agent generates reflective
-   * thoughts after `idleMinutes` of inactivity, up to `maxPerDay` per
-   * calendar day. Counts as ONE field for the schema-freeze gate.
+   * Idle-time dreaming. When enabled, the gateway triggers a background
+   * maintenance turn after `idleMinutes` of silence, up to `maxPerDay`
+   * per rolling 24-hour window. Counts as ONE field for the schema-freeze gate.
    */
   dreaming?: DreamingConfig;
 }

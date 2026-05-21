@@ -1,4 +1,5 @@
 import type { AgentLoop } from '@ethosagent/core';
+import { assertSafeId } from '@ethosagent/types';
 import type { PersonalityConfig, Storage } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -27,6 +28,7 @@ const DEFAULT_DREAM_PROMPT =
 export class DreamExecutor {
   private readonly lastUserTurnAt = new Map<string, number>();
   private timer: ReturnType<typeof setInterval> | undefined;
+  private ticking = false;
 
   constructor(
     private readonly storage: Storage,
@@ -36,6 +38,7 @@ export class DreamExecutor {
 
   /** Call on every inbound user message to update the activity timestamp. */
   recordUserTurn(personalityId: string): void {
+    assertSafeId(personalityId, 'personalityId');
     this.lastUserTurnAt.set(personalityId, Date.now());
   }
 
@@ -57,29 +60,37 @@ export class DreamExecutor {
   }
 
   private async tick(): Promise<void> {
-    for (const [personalityId, lastTurn] of this.lastUserTurnAt) {
-      const config = this.getConfig(personalityId);
-      if (!config?.dreaming?.enable) continue;
+    if (this.ticking) return;
+    this.ticking = true;
+    try {
+      for (const [personalityId, lastTurn] of this.lastUserTurnAt) {
+        const config = this.getConfig(personalityId);
+        if (!config?.dreaming?.enable) continue;
 
-      const idleMs = (config.dreaming.idleMinutes ?? 60) * 60_000;
-      if (Date.now() - lastTurn < idleMs) continue;
+        const idleMs = (config.dreaming.idleMinutes ?? 60) * 60_000;
+        if (Date.now() - lastTurn < idleMs) continue;
 
-      // Check eligibility
-      const eligible = await this.checkEligibility(personalityId, config.dreaming.maxPerDay ?? 1);
-      if (!eligible) {
-        // Reset so this crossing doesn't re-fire every tick
+        // Check eligibility
+        const eligible = await this.checkEligibility(personalityId, config.dreaming.maxPerDay ?? 1);
+        if (!eligible) {
+          // Reset so this crossing doesn't re-fire every tick
+          this.lastUserTurnAt.set(personalityId, Date.now());
+          continue;
+        }
+
+        // Execute dream run
+        await this.executeDream(personalityId, config);
+        // Reset timer — dream counts as activity
         this.lastUserTurnAt.set(personalityId, Date.now());
-        continue;
       }
-
-      // Execute dream run
-      await this.executeDream(personalityId, config);
-      // Reset timer — dream counts as activity
-      this.lastUserTurnAt.set(personalityId, Date.now());
+    } finally {
+      this.ticking = false;
     }
   }
 
   private async checkEligibility(personalityId: string, maxPerDay: number): Promise<boolean> {
+    if (maxPerDay <= 0) return false;
+    assertSafeId(personalityId, 'personalityId');
     const path = `personalities/${personalityId}/dream-state.json`;
     const raw = await this.storage.read(path);
     if (!raw) return true;
@@ -103,18 +114,21 @@ export class DreamExecutor {
     const prompt = config.dreaming?.prompt ?? DEFAULT_DREAM_PROMPT;
     const sessionKey = `dream:${personalityId}:${Date.now()}`;
 
-    // Run the dream turn — consume all events silently
+    let success = false;
     for await (const event of loop.run(prompt, {
       personalityId,
       sessionKey,
     })) {
-      // Drain events — dream output is not surfaced to any user channel
+      if (event.type === 'done') {
+        success = true;
+        break;
+      }
       if (event.type === 'error') break;
-      if (event.type === 'done') break;
     }
 
-    // Persist updated state
-    await this.persistState(personalityId);
+    if (success) {
+      await this.persistState(personalityId);
+    }
   }
 
   private async persistState(personalityId: string): Promise<void> {
