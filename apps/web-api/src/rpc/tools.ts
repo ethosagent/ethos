@@ -23,6 +23,10 @@ export const toolsRouter = {
     const tools = context.toolRegistry?.getAvailable() ?? [];
     const groupMap = new Map<string, Array<{ name: string; description?: string }>>();
     for (const t of tools) {
+      // MCP tools are gated by `personality.mcp_servers` (the server allowlist),
+      // not by `toolset`. They have a dedicated UI (the MCP tab); excluding them
+      // here keeps the built-in toolset picker to built-in tools only.
+      if (t.toolset === 'mcp') continue;
       const group = t.toolset ? t.toolset.charAt(0).toUpperCase() + t.toolset.slice(1) : 'Other';
       let arr = groupMap.get(group);
       if (!arr) {
