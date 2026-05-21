@@ -38,6 +38,13 @@ async function seedStorage(storage: InMemoryStorage, personalityId = 'test-perso
 }
 
 // ---------------------------------------------------------------------------
+// Private-access helper — avoids `as any` for Biome's noExplicitAny rule
+// ---------------------------------------------------------------------------
+
+type Internals = { tick(): Promise<void>; timer: unknown; ticking: boolean };
+const internals = (e: DreamExecutor) => e as unknown as Internals;
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -83,7 +90,7 @@ describe('DreamExecutor', () => {
 
       // Advance past idle threshold (60 min) so tick fires dream
       vi.setSystemTime(Date.now() + 61 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
 
       const raw = await storage.read(statePath);
       expect(raw).not.toBeNull();
@@ -101,7 +108,7 @@ describe('DreamExecutor', () => {
       build();
       executor.recordUserTurn(personalityId);
       vi.setSystemTime(Date.now() + 61 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
 
       expect(loop.runCalls).toHaveLength(1);
     });
@@ -116,7 +123,7 @@ describe('DreamExecutor', () => {
       build(makeConfig({ maxPerDay: 2 }));
       executor.recordUserTurn(personalityId);
       vi.setSystemTime(Date.now() + 61 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
 
       expect(loop.runCalls).toHaveLength(0);
     });
@@ -131,7 +138,7 @@ describe('DreamExecutor', () => {
       build();
       executor.recordUserTurn(personalityId);
       vi.setSystemTime(Date.now() + 61 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
 
       expect(loop.runCalls).toHaveLength(1);
       // runsToday should reset to 1 (new window)
@@ -145,7 +152,7 @@ describe('DreamExecutor', () => {
       build();
       executor.recordUserTurn(personalityId);
       vi.setSystemTime(Date.now() + 61 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
 
       expect(loop.runCalls).toHaveLength(1);
     });
@@ -161,7 +168,7 @@ describe('DreamExecutor', () => {
       executor.recordUserTurn(personalityId);
 
       // Tick immediately — should not fire (not idle yet)
-      await (executor as any).tick();
+      await internals(executor).tick();
 
       expect(loop.runCalls).toHaveLength(0);
     });
@@ -172,7 +179,7 @@ describe('DreamExecutor', () => {
 
       // Advance past 60-minute idle threshold
       vi.setSystemTime(Date.now() + 61 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
 
       expect(loop.runCalls).toHaveLength(1);
     });
@@ -189,7 +196,7 @@ describe('DreamExecutor', () => {
       // Advance another 30 minutes from that point (total 60 from start,
       // but only 30 from last turn)
       vi.setSystemTime(Date.now() + 30 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
 
       expect(loop.runCalls).toHaveLength(0);
     });
@@ -200,12 +207,12 @@ describe('DreamExecutor', () => {
 
       // Trigger first dream
       vi.setSystemTime(Date.now() + 61 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
       expect(loop.runCalls).toHaveLength(1);
 
       // Advance only 30 minutes from post-dream reset — should not fire again
       vi.setSystemTime(Date.now() + 30 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
       expect(loop.runCalls).toHaveLength(1); // still 1
     });
 
@@ -215,7 +222,7 @@ describe('DreamExecutor', () => {
       executor.recordUserTurn(personalityId);
 
       vi.setSystemTime(Date.now() + 120 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
 
       expect(loop.runCalls).toHaveLength(0);
     });
@@ -226,7 +233,7 @@ describe('DreamExecutor', () => {
       executor.recordUserTurn(personalityId);
 
       vi.setSystemTime(Date.now() + 120 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
 
       expect(loop.runCalls).toHaveLength(0);
     });
@@ -243,7 +250,7 @@ describe('DreamExecutor', () => {
       executor.recordUserTurn(personalityId);
 
       vi.setSystemTime(now + 61 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
 
       const raw = await storage.read(statePath);
       expect(raw).not.toBeNull();
@@ -262,7 +269,7 @@ describe('DreamExecutor', () => {
 
       // First dream
       vi.setSystemTime(Date.now() + 61 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
       expect(loop.runCalls).toHaveLength(1);
 
       const stateAfterFirst = JSON.parse((await storage.read(statePath)) ?? '');
@@ -271,7 +278,7 @@ describe('DreamExecutor', () => {
       // Record a new user turn and trigger second dream
       executor.recordUserTurn(personalityId);
       vi.setSystemTime(Date.now() + 61 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
 
       expect(loop.runCalls).toHaveLength(2);
       const stateAfterSecond = JSON.parse((await storage.read(statePath)) ?? '');
@@ -289,7 +296,7 @@ describe('DreamExecutor', () => {
       executor.recordUserTurn(personalityId);
 
       vi.setSystemTime(Date.now() + 61 * 60_000);
-      await (executor as any).tick();
+      await internals(executor).tick();
 
       expect(loop.runCalls).toHaveLength(1);
       const opts = loop.runCalls[0].opts as Record<string, unknown>;
@@ -306,18 +313,18 @@ describe('DreamExecutor', () => {
     it('start() creates an interval; stop() clears it', () => {
       build();
       executor.start();
-      expect((executor as any).timer).toBeDefined();
+      expect(internals(executor).timer).toBeDefined();
 
       executor.stop();
-      expect((executor as any).timer).toBeUndefined();
+      expect(internals(executor).timer).toBeUndefined();
     });
 
     it('start() is idempotent — calling twice does not create a second timer', () => {
       build();
       executor.start();
-      const firstTimer = (executor as any).timer;
+      const firstTimer = internals(executor).timer;
       executor.start();
-      expect((executor as any).timer).toBe(firstTimer);
+      expect(internals(executor).timer).toBe(firstTimer);
     });
   });
 });
