@@ -19,6 +19,7 @@ import { OAuthCallback } from './pages/OAuthCallback';
 import { Onboarding } from './pages/Onboarding';
 import { Personalities } from './pages/Personalities';
 import { PersonalityCreate } from './pages/PersonalityCreate';
+import { PersonalityDetail } from './pages/PersonalityDetail';
 import { Plugins } from './pages/Plugins';
 import { Sessions } from './pages/Sessions';
 import { Settings } from './pages/Settings';
@@ -121,6 +122,7 @@ export function App() {
           <Route path="/plugins" element={<Plugins />} />
           <Route path="/communications" element={<Communications />} />
           <Route path="/personalities" element={<Personalities />} />
+          <Route path="/personalities/:id" element={<PersonalityDetail />} />
           <Route path="/personality/create" element={<PersonalityCreate />} />
           <Route path="/batch" element={<Batch />} />
           <Route path="/eval" element={<Eval />} />

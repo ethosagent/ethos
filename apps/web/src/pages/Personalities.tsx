@@ -29,6 +29,7 @@ import {
   Typography,
 } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { rpc } from '../rpc';
 
 // Personalities tab — v1.
@@ -49,6 +50,7 @@ import { rpc } from '../rpc';
 // session state that need a wider refactor to disposable mode.
 
 export function Personalities() {
+  const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [duplicatePrompt, setDuplicatePrompt] = useState<Personality | null>(null);
@@ -128,7 +130,7 @@ export function Personalities() {
       render: (_: unknown, p: Personality) => (
         <PersonalityRowActions
           personality={p}
-          onEdit={() => setEditingId(p.id)}
+          onEdit={() => navigate(`/personalities/${p.id}`)}
           onDuplicate={() => setDuplicatePrompt(p)}
         />
       ),
@@ -1015,7 +1017,7 @@ function WizardPluginsTab({
 // Edit modal — three tabs (Identity / Toolset / Config) + Skills sub-surface
 // ---------------------------------------------------------------------------
 
-function EditModal({ id, onClose }: { id: string; onClose: () => void }) {
+export function EditModal({ id, onClose }: { id: string; onClose: () => void }) {
   const { data, isLoading } = useQuery({
     queryKey: ['personalities', 'get', id],
     queryFn: () => rpc.personalities.get({ id }),
