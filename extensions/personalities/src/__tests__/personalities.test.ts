@@ -414,6 +414,123 @@ describe('FilePersonalityRegistry', () => {
     });
   });
 
+  describe('dreaming config', () => {
+    it('returns undefined when no dreaming keys are present', async () => {
+      const personalityDir = join(testDir, 'no-dream');
+      await mkdir(personalityDir, { recursive: true });
+      await writeFile(join(personalityDir, 'config.yaml'), 'name: NoDream\n');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# NoDream');
+
+      const registry = new FilePersonalityRegistry();
+      await registry.loadFromDirectory(testDir);
+      expect(registry.get('no-dream')?.dreaming).toBeUndefined();
+    });
+
+    it('returns undefined when dreaming.enable is false', async () => {
+      const personalityDir = join(testDir, 'dream-off');
+      await mkdir(personalityDir, { recursive: true });
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        'name: DreamOff\ndreaming.enable: false\n',
+      );
+      await writeFile(join(personalityDir, 'SOUL.md'), '# DreamOff');
+
+      const registry = new FilePersonalityRegistry();
+      await registry.loadFromDirectory(testDir);
+      expect(registry.get('dream-off')?.dreaming).toBeUndefined();
+    });
+
+    it('returns defaults when only dreaming.enable is true', async () => {
+      const personalityDir = join(testDir, 'dream-on');
+      await mkdir(personalityDir, { recursive: true });
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        'name: DreamOn\ndreaming.enable: true\n',
+      );
+      await writeFile(join(personalityDir, 'SOUL.md'), '# DreamOn');
+
+      const registry = new FilePersonalityRegistry();
+      await registry.loadFromDirectory(testDir);
+      const dreaming = registry.get('dream-on')?.dreaming;
+      expect(dreaming).toEqual({ enable: true, idleMinutes: 60, maxPerDay: 1 });
+      expect(dreaming?.prompt).toBeUndefined();
+    });
+
+    it('parses all dreaming keys when set', async () => {
+      const personalityDir = join(testDir, 'dream-full');
+      await mkdir(personalityDir, { recursive: true });
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        [
+          'name: DreamFull',
+          'dreaming.enable: true',
+          'dreaming.idleMinutes: 30',
+          'dreaming.maxPerDay: 3',
+          'dreaming.prompt: Reflect.',
+        ].join('\n') + '\n',
+      );
+      await writeFile(join(personalityDir, 'SOUL.md'), '# DreamFull');
+
+      const registry = new FilePersonalityRegistry();
+      await registry.loadFromDirectory(testDir);
+      expect(registry.get('dream-full')?.dreaming).toEqual({
+        enable: true,
+        idleMinutes: 30,
+        maxPerDay: 3,
+        prompt: 'Reflect.',
+      });
+    });
+
+    it('falls back to default idleMinutes when value is non-numeric', async () => {
+      const personalityDir = join(testDir, 'dream-bad');
+      await mkdir(personalityDir, { recursive: true });
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        'name: DreamBad\ndreaming.enable: true\ndreaming.idleMinutes: abc\n',
+      );
+      await writeFile(join(personalityDir, 'SOUL.md'), '# DreamBad');
+
+      const registry = new FilePersonalityRegistry();
+      await registry.loadFromDirectory(testDir);
+      expect(registry.get('dream-bad')?.dreaming?.idleMinutes).toBe(60);
+    });
+  });
+
+  describe('model.dreaming tier', () => {
+    it('parses model.dreaming into ModelTierConfig alongside model.default', async () => {
+      const personalityDir = join(testDir, 'dream-model');
+      await mkdir(personalityDir, { recursive: true });
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        'name: DreamModel\nmodel.default: claude-sonnet-4-5\nmodel.dreaming: claude-haiku-4-5\n',
+      );
+      await writeFile(join(personalityDir, 'SOUL.md'), '# DreamModel');
+
+      const registry = new FilePersonalityRegistry();
+      await registry.loadFromDirectory(testDir);
+      const config = registry.get('dream-model');
+      expect(config?.model).toEqual({
+        default: 'claude-sonnet-4-5',
+        dreaming: 'claude-haiku-4-5',
+      });
+    });
+
+    it('parses model.dreaming alone into ModelTierConfig', async () => {
+      const personalityDir = join(testDir, 'dream-only');
+      await mkdir(personalityDir, { recursive: true });
+      await writeFile(
+        join(personalityDir, 'config.yaml'),
+        'name: DreamOnly\nmodel.dreaming: claude-haiku-4-5\n',
+      );
+      await writeFile(join(personalityDir, 'SOUL.md'), '# DreamOnly');
+
+      const registry = new FilePersonalityRegistry();
+      await registry.loadFromDirectory(testDir);
+      const config = registry.get('dream-only');
+      expect(config?.model).toEqual({ dreaming: 'claude-haiku-4-5' });
+    });
+  });
+
   describe('memory config', () => {
     it('parses memory.provider from config.yaml', async () => {
       const personalityDir = join(testDir, 'mem-custom');
