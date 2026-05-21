@@ -383,7 +383,7 @@ export interface CreatePersonalityInput {
   id: string;
   name: string;
   description?: string;
-  model?: string;
+  model?: string | import('@ethosagent/types').ModelTierConfig;
   toolset: string[];
   soulMd: string;
   memoryScope?: 'per-personality';
@@ -397,7 +397,7 @@ export interface CreatePersonalityInput {
 export interface UpdatePersonalityPatch {
   name?: string;
   description?: string;
-  model?: string;
+  model?: string | import('@ethosagent/types').ModelTierConfig;
   toolset?: string[];
   soulMd?: string;
   memoryScope?: 'per-personality';
@@ -625,12 +625,11 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
           }
         }
       }
-      const existingModel = typeof config.model === 'object' ? config.model.default : config.model;
       const merged = {
         id: config.id,
         name: patch.name ?? config.name,
         description: patch.description ?? config.description,
-        model: patch.model ?? existingModel,
+        model: patch.model ?? config.model,
         toolset: patch.toolset ?? config.toolset ?? [],
         soulMd: '',
         memoryScope: patch.memoryScope ?? config.memoryScope,
@@ -1299,7 +1298,15 @@ function renderConfigYaml(input: CreatePersonalityInput): string {
   const lines: string[] = [`name: ${yamlScalar(input.name)}`];
   if (input.description) lines.push(`description: ${yamlScalar(input.description)}`);
   if (input.provider) lines.push(`provider: ${yamlScalar(input.provider)}`);
-  if (input.model) lines.push(`model: ${yamlScalar(input.model)}`);
+  if (input.model) {
+    if (typeof input.model === 'string') {
+      lines.push(`model: ${yamlScalar(input.model)}`);
+    } else {
+      if (input.model.trivial) lines.push(`model.trivial: ${yamlScalar(input.model.trivial)}`);
+      if (input.model.default) lines.push(`model.default: ${yamlScalar(input.model.default)}`);
+      if (input.model.deep) lines.push(`model.deep: ${yamlScalar(input.model.deep)}`);
+    }
+  }
   if (input.memoryScope) lines.push(`memoryScope: ${yamlScalar(input.memoryScope)}`);
   if (input.capabilities !== undefined && input.capabilities.length > 0) {
     lines.push(`capabilities: ${input.capabilities.map(yamlScalar).join(', ')}`);

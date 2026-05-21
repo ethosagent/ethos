@@ -78,11 +78,18 @@ export type StoredMessage = z.infer<typeof StoredMessageSchema>;
 
 export const MemoryScopeSchema = z.literal('per-personality');
 
+export const ModelTierConfigSchema = z.object({
+  trivial: z.string().optional(),
+  default: z.string().optional(),
+  deep: z.string().optional(),
+});
+export type ModelTierConfigWire = z.infer<typeof ModelTierConfigSchema>;
+
 export const PersonalitySchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string().nullable(),
-  model: z.string().nullable(),
+  model: z.union([z.string(), ModelTierConfigSchema]).nullable(),
   provider: z.string().nullable(),
   toolset: z.array(z.string()).nullable(),
   capabilities: z.array(z.string()).nullable(),

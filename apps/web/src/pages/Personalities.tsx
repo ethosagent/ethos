@@ -1,6 +1,7 @@
 import type {
   McpPolicy,
   McpServerInfo,
+  ModelTierConfigWire,
   Personality,
   PersonalitySkill,
   PluginInfo,
@@ -103,9 +104,11 @@ export function Personalities() {
       dataIndex: 'model',
       key: 'model',
       width: 200,
-      render: (m: string | null) =>
+      render: (m: string | { trivial?: string; default?: string; deep?: string } | null) =>
         m ? (
-          <Typography.Text code>{m}</Typography.Text>
+          <Typography.Text code>
+            {typeof m === 'string' ? m : (m.default ?? m.trivial ?? m.deep ?? '—')}
+          </Typography.Text>
         ) : (
           <Typography.Text type="secondary">—</Typography.Text>
         ),
@@ -261,6 +264,10 @@ interface WizardState {
   name: string;
   description: string;
   model: string;
+  modelTrivial: string;
+  modelDefault: string;
+  modelDeep: string;
+  modelTiered: boolean;
   provider: string;
   capabilities: string[];
   fsReachRead: string[];
@@ -282,6 +289,10 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
     name: '',
     description: '',
     model: '',
+    modelTrivial: '',
+    modelDefault: '',
+    modelDeep: '',
+    modelTiered: false,
     provider: '',
     capabilities: [],
     fsReachRead: [],
@@ -314,7 +325,17 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
         id: state.id,
         name: state.name,
         ...(state.description ? { description: state.description } : {}),
-        ...(state.model ? { model: state.model } : {}),
+        ...(state.modelTiered
+          ? (() => {
+              const tier: Record<string, string> = {};
+              if (state.modelTrivial) tier.trivial = state.modelTrivial;
+              if (state.modelDefault) tier.default = state.modelDefault;
+              if (state.modelDeep) tier.deep = state.modelDeep;
+              return Object.keys(tier).length > 0 ? { model: tier } : {};
+            })()
+          : state.model
+            ? { model: state.model }
+            : {}),
         ...(state.provider ? { provider: state.provider as ProviderId } : {}),
         ...(state.capabilities.length > 0 ? { capabilities: state.capabilities } : {}),
         ...(state.fsReachRead.length > 0 || state.fsReachWrite.length > 0
@@ -693,13 +714,64 @@ function WizardConfigTab({
       <Typography.Paragraph type="secondary">
         Optional. Leave blank to use the global default from Settings.
       </Typography.Paragraph>
-      <Form.Item label="Model" help="e.g. claude-opus-4-7, gpt-4o, moonshotai/kimi-k2.6">
-        <Input
-          value={state.model}
-          placeholder="claude-opus-4-7"
-          onChange={(e) => setState((s) => ({ ...s, model: e.target.value }))}
-        />
-      </Form.Item>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <Typography.Text strong>Models</Typography.Text>
+          <Switch
+            size="small"
+            checked={state.modelTiered}
+            onChange={(checked) =>
+              setState((prev) => ({
+                ...prev,
+                modelTiered: checked,
+                model: checked ? '' : prev.model,
+                modelTrivial: checked ? prev.modelTrivial : '',
+                modelDefault: checked ? prev.modelDefault : '',
+                modelDeep: checked ? prev.modelDeep : '',
+              }))
+            }
+            checkedChildren="tiered"
+            unCheckedChildren="single"
+          />
+        </div>
+        {state.modelTiered ? (
+          <>
+            <Form.Item label="Trivial" help="e.g. claude-haiku-4-5">
+              <Input
+                value={state.modelTrivial}
+                placeholder="claude-haiku-4-5"
+                onChange={(e) => setState((prev) => ({ ...prev, modelTrivial: e.target.value }))}
+              />
+            </Form.Item>
+            <Form.Item label="Default" help="e.g. claude-sonnet-4-6">
+              <Input
+                value={state.modelDefault}
+                placeholder="claude-sonnet-4-6"
+                onChange={(e) => setState((prev) => ({ ...prev, modelDefault: e.target.value }))}
+              />
+            </Form.Item>
+            <Form.Item label="Deep" help="e.g. claude-opus-4-7">
+              <Input
+                value={state.modelDeep}
+                placeholder="claude-opus-4-7"
+                onChange={(e) => setState((prev) => ({ ...prev, modelDeep: e.target.value }))}
+              />
+            </Form.Item>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              default is the model used unless a tier is explicitly selected. trivial and deep are
+              selectable tiers. Automatic per-task tier routing is not configured here.
+            </Typography.Text>
+          </>
+        ) : (
+          <Form.Item label="Model" help="e.g. claude-opus-4-7, gpt-4o, moonshotai/kimi-k2.6">
+            <Input
+              value={state.model}
+              placeholder="claude-opus-4-7"
+              onChange={(e) => setState((prev) => ({ ...prev, model: e.target.value }))}
+            />
+          </Form.Item>
+        )}
+      </div>
       <Form.Item
         label="Provider"
         extra="Engine default is set in Settings. Set this only if this personality must route to a specific provider."
@@ -1169,17 +1241,29 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
     description: string;
     provider: ProviderId | '';
     model: string;
+    modelTrivial: string;
+    modelDefault: string;
+    modelDeep: string;
     capabilities: string[];
     fsReachRead: string[];
     fsReachWrite: string[];
   }>();
+  const [tieredMode, setTieredMode] = useState(
+    typeof personality.model === 'object' && personality.model !== null,
+  );
 
   useEffect(() => {
+    const m = personality.model;
+    const isObj = typeof m === 'object' && m !== null;
+    setTieredMode(isObj);
     form.setFieldsValue({
       name: personality.name,
       description: personality.description ?? '',
       provider: (personality.provider ?? '') as ProviderId | '',
-      model: personality.model ?? '',
+      model: isObj ? '' : (m ?? ''),
+      modelTrivial: isObj ? (m.trivial ?? '') : '',
+      modelDefault: isObj ? (m.default ?? '') : '',
+      modelDeep: isObj ? (m.deep ?? '') : '',
       capabilities: personality.capabilities ?? [],
       fsReachRead: personality.fs_reach?.read ?? [],
       fsReachWrite: personality.fs_reach?.write ?? [],
@@ -1192,19 +1276,33 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
       description: string;
       provider: ProviderId | '';
       model: string;
+      modelTrivial: string;
+      modelDefault: string;
+      modelDeep: string;
       capabilities: string[];
       fsReachRead: string[];
       fsReachWrite: string[];
-    }) =>
-      rpc.personalities.update({
+    }) => {
+      let model: string | ModelTierConfigWire;
+      if (tieredMode) {
+        const tier: ModelTierConfigWire = {};
+        if (values.modelTrivial) tier.trivial = values.modelTrivial;
+        if (values.modelDefault) tier.default = values.modelDefault;
+        if (values.modelDeep) tier.deep = values.modelDeep;
+        model = Object.keys(tier).length > 0 ? tier : '';
+      } else {
+        model = values.model;
+      }
+      return rpc.personalities.update({
         id,
         name: values.name,
         description: values.description,
-        model: values.model,
+        model,
         provider: values.provider || '',
         capabilities: values.capabilities,
         fs_reach: { read: values.fsReachRead, write: values.fsReachWrite },
-      }),
+      });
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['personalities', 'get', id] });
       qc.invalidateQueries({ queryKey: ['personalities', 'characterSheet', id] });
@@ -1225,6 +1323,9 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
           description: values.description,
           provider: values.provider,
           model: values.model,
+          modelTrivial: values.modelTrivial ?? '',
+          modelDefault: values.modelDefault ?? '',
+          modelDeep: values.modelDeep ?? '',
           capabilities: values.capabilities ?? [],
           fsReachRead: values.fsReachRead ?? [],
           fsReachWrite: values.fsReachWrite ?? [],
@@ -1255,9 +1356,46 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
           ]}
         />
       </Form.Item>
-      <Form.Item label="Model" name="model">
-        <Input placeholder="optional override" />
-      </Form.Item>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <Typography.Text strong>Models</Typography.Text>
+          <Switch
+            size="small"
+            checked={tieredMode}
+            onChange={(checked) => {
+              setTieredMode(checked);
+              if (!checked) {
+                form.setFieldsValue({ modelTrivial: '', modelDefault: '', modelDeep: '' });
+              } else {
+                form.setFieldsValue({ model: '' });
+              }
+            }}
+            checkedChildren="tiered"
+            unCheckedChildren="single"
+          />
+        </div>
+        {tieredMode ? (
+          <>
+            <Form.Item label="Trivial" name="modelTrivial" style={{ marginBottom: 8 }}>
+              <Input placeholder="e.g. claude-haiku-4-5" />
+            </Form.Item>
+            <Form.Item label="Default" name="modelDefault" style={{ marginBottom: 8 }}>
+              <Input placeholder="e.g. claude-sonnet-4-6" />
+            </Form.Item>
+            <Form.Item label="Deep" name="modelDeep" style={{ marginBottom: 8 }}>
+              <Input placeholder="e.g. claude-opus-4-7" />
+            </Form.Item>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              default is the model used unless a tier is explicitly selected. trivial and deep are
+              selectable tiers. Automatic per-task tier routing is not configured here.
+            </Typography.Text>
+          </>
+        ) : (
+          <Form.Item label="Model" name="model" style={{ marginBottom: 0 }}>
+            <Input placeholder="optional override" />
+          </Form.Item>
+        )}
+      </div>
       <Form.Item label="Memory scope">
         <Typography.Text>per-personality</Typography.Text>
       </Form.Item>

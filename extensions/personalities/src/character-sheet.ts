@@ -1,4 +1,4 @@
-import type { PersonalityConfig } from '@ethosagent/types';
+import { type PersonalityConfig, resolveModelDisplay } from '@ethosagent/types';
 
 // The generated character sheet — the "tight character sheet" promise from
 // SOUL.md made into a real artifact. One Markdown screen per personality:
@@ -49,7 +49,7 @@ export function renderCharacterSheet(config: PersonalityConfig, soulMd: string):
   if (prose) lines.push(prose, '');
 
   lines.push('## Routing');
-  lines.push(`- Model: ${config.model ?? '(engine default)'}`);
+  lines.push(`- Model: ${resolveModelDisplay(config.model, '(engine default)')}`);
   lines.push(`- Provider: ${config.provider ?? '(engine default)'}`);
   lines.push('');
 

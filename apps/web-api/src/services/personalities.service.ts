@@ -7,7 +7,7 @@ import {
   type UpdatePersonalityPatch,
 } from '@ethosagent/personalities';
 import type { PersonalitySkillRecord, SkillsLibrary } from '@ethosagent/skills';
-import { EthosError, resolveModelDisplay } from '@ethosagent/types';
+import { EthosError } from '@ethosagent/types';
 import type { McpPolicy, Personality, PersonalitySkill } from '@ethosagent/web-contracts';
 
 // Personalities service. Calls into FilePersonalityRegistry for the
@@ -162,7 +162,7 @@ function toWire(d: DescribedPersonality): Personality {
     id: c.id,
     name: c.name,
     description: c.description ?? null,
-    model: resolveModelDisplay(c.model, '') || null,
+    model: c.model ?? null,
     provider: c.provider ?? null,
     toolset: c.toolset ?? null,
     capabilities: c.capabilities ?? null,

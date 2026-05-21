@@ -36,6 +36,7 @@ import {
   MeshAgentSchema,
   MeshRouteResultSchema,
   MissedRunPolicySchema,
+  ModelTierConfigSchema,
   OnboardingStepSchema,
   PendingSkillSchema,
   PersonalitySchema,
@@ -160,7 +161,7 @@ const PersonalityCreateInput = z.object({
   id: z.string().min(1).regex(PersonalityIdRegex),
   name: z.string().min(1),
   description: z.string().optional(),
-  model: z.string().optional(),
+  model: z.union([z.string(), ModelTierConfigSchema]).optional(),
   toolset: z.array(z.string()),
   /** Markdown body of SOUL.md. May be empty. */
   soulMd: z.string(),
@@ -183,7 +184,7 @@ const PersonalityUpdateInput = z.object({
   /** Patch — only present fields are written. */
   name: z.string().optional(),
   description: z.string().optional(),
-  model: z.string().optional(),
+  model: z.union([z.string(), ModelTierConfigSchema]).optional(),
   toolset: z.array(z.string()).optional(),
   soulMd: z.string().optional(),
   memoryScope: z.literal('per-personality').optional(),
