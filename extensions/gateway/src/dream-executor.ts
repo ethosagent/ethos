@@ -1,6 +1,6 @@
 import type { AgentLoop } from '@ethosagent/core';
-import { assertSafeId } from '@ethosagent/types';
 import type { PersonalityConfig, Storage } from '@ethosagent/types';
+import { assertSafeId } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Dream state — internal, not exported from types
