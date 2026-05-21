@@ -178,7 +178,11 @@ export function Settings() {
       personality: values.personality,
       memory: values.memory,
       skin: values.skin,
-      modelRouting: configQuery.data?.modelRouting ?? {},
+      modelRouting: Object.fromEntries(
+        Object.entries(configQuery.data?.modelRouting ?? {}).filter(
+          ([k]) => k !== '__fallbackChain',
+        ),
+      ),
     };
     if (values.apiKey && values.apiKey.length > 0) patch.apiKey = values.apiKey;
     if (values.baseUrl !== undefined) patch.baseUrl = values.baseUrl;
