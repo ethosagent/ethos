@@ -1,4 +1,5 @@
 import type { ClarifyBridge } from '@ethosagent/core';
+import type { ToolRegistry } from '@ethosagent/types';
 import { contract } from '@ethosagent/web-contracts';
 import { implement } from '@orpc/server';
 import type { ApiKeysService } from '../services/api-keys.service';
@@ -47,6 +48,7 @@ export interface RpcContext {
   lab: LabService;
   kanban: KanbanService;
   apiKeys: ApiKeysService;
+  toolRegistry?: ToolRegistry;
 }
 
 export const os = implement(contract).$context<RpcContext>();

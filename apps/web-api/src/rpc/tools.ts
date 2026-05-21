@@ -18,4 +18,20 @@ export const toolsRouter = {
     await context.approvals.deny(input.approvalId, input.reason, input.clientId);
     return { ok: true as const };
   }),
+
+  catalog: os.tools.catalog.handler(async ({ context }) => {
+    const tools = context.toolRegistry?.getAvailable() ?? [];
+    const groupMap = new Map<string, Array<{ name: string; description?: string }>>();
+    for (const t of tools) {
+      const group = t.toolset ? t.toolset.charAt(0).toUpperCase() + t.toolset.slice(1) : 'Other';
+      let arr = groupMap.get(group);
+      if (!arr) {
+        arr = [];
+        groupMap.set(group, arr);
+      }
+      arr.push({ name: t.name, ...(t.description ? { description: t.description } : {}) });
+    }
+    const groups = [...groupMap.entries()].map(([group, tools]) => ({ group, tools }));
+    return { groups };
+  }),
 };

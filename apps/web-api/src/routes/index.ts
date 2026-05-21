@@ -72,6 +72,7 @@ export interface ServiceContainer {
   kanban: import('../services/kanban.service').KanbanService;
   completions: import('../services/completions.service').CompletionsService;
   apiKeys: import('../services/api-keys.service').ApiKeysService;
+  toolRegistry?: import('@ethosagent/types').ToolRegistry;
 }
 
 export function createRoutes(opts: CreateRoutesOptions): Hono {

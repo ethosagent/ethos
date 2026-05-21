@@ -120,6 +120,8 @@ export interface CreateWebApiOptions {
    * models list reports only personalities + `ethos-default`.
    */
   listTeams?: () => Promise<string[]>;
+  /** Tool registry for the tools.catalog RPC. */
+  toolRegistry?: import('@ethosagent/types').ToolRegistry;
   /**
    * McpManager instance for the MCP install flow. Boot code constructs
    * and `connect()`s it; the web-api delegates to `McpService` which
@@ -319,6 +321,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       kanban: kanbanService,
       completions: completionsService,
       apiKeys: apiKeysService,
+      toolRegistry: opts.toolRegistry,
     },
     ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),
     ...(opts.secureCookie !== undefined ? { secureCookie: opts.secureCookie } : {}),

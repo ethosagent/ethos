@@ -60,7 +60,7 @@ export interface ToolContext {
   /** Active personality for this turn. Tools that touch memory must thread this through. */
   personalityId?: string;
   /** Resolved memory scope for the active personality (filled by AgentLoop). */
-  memoryScope?: 'global' | 'per-personality';
+  memoryScope?: 'per-personality';
   /**
    * Opaque scope id resolved by AgentLoop. When present, memory tools use it directly instead
    * of deriving `personality:<id>` from personalityId and memoryScope.

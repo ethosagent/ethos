@@ -8,7 +8,7 @@ import { CronScheduler } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
-import { EthosError } from '@ethosagent/types';
+import { EthosError, type ToolRegistry } from '@ethosagent/types';
 import { type ChatService, createWebApi, WebTokenRepository } from '@ethosagent/web-api';
 import {
   createDangerPredicate,
@@ -68,6 +68,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   const loopProfile = webEnabled ? 'web' : 'cli';
 
   let loop: AgentLoop;
+  let toolRegistry: ToolRegistry | undefined;
   let activeMeshName: string;
   let activePersonality: string;
 
@@ -134,10 +135,12 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
       },
     );
     loop = result.loop;
+    toolRegistry = result.toolRegistry;
   } else if (teamFlag) {
     // Chat UX: `ethos serve --team <name>` → run as the team's coordinator.
     const {
       loop: teamLoop,
+      toolRegistry: teamToolRegistry,
       coordinatorPersonality,
       meshName: teamMesh,
     } = await createTeamAgentLoop(config, teamFlag, {
@@ -145,6 +148,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
       ...(roleFlag ? { role: roleFlag } : {}),
     });
     loop = teamLoop;
+    toolRegistry = teamToolRegistry;
     activeMeshName = teamMesh;
     activePersonality = coordinatorPersonality;
   } else {
@@ -156,6 +160,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
       ...(cronScheduler ? { cronScheduler } : {}),
     });
     loop = result.loop;
+    toolRegistry = result.toolRegistry;
   }
   const session = createSessionStore({ dataDir: dir });
   const mesh = new AgentMesh(meshRegistryPath(activeMeshName));
@@ -223,6 +228,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
       // the approval modal instead of a hard block.
       dangerPredicate: createDangerPredicate(),
       ...(cronScheduler ? { cronScheduler } : {}),
+      ...(toolRegistry ? { toolRegistry } : {}),
       apiKeys,
       listTeams: async () => listRegisteredTeams(dir),
       ...(webDist ? { webDist } : {}),

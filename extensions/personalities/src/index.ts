@@ -158,7 +158,7 @@ export interface CreatePersonalityInput {
   model?: string;
   toolset: string[];
   soulMd: string;
-  memoryScope?: 'global' | 'per-personality';
+  memoryScope?: 'per-personality';
   provider?: string;
   capabilities?: string[];
   mcp_servers?: string[];
@@ -172,7 +172,7 @@ export interface UpdatePersonalityPatch {
   model?: string;
   toolset?: string[];
   soulMd?: string;
-  memoryScope?: 'global' | 'per-personality';
+  memoryScope?: 'per-personality';
   mcp_servers?: string[];
   plugins?: string[];
   capabilities?: string[];

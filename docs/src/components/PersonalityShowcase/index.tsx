@@ -3,7 +3,7 @@ import { type ReactNode, useMemo } from 'react';
 
 import styles from './styles.module.css';
 
-type MemoryScope = 'global' | 'per-personality';
+type MemoryScope = 'per-personality';
 
 interface Personality {
   id: string;

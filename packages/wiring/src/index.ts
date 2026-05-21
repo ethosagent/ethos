@@ -76,6 +76,7 @@ import type {
   RequestDumpStore,
   SecretsResolver,
   SessionStore,
+  ToolRegistry,
 } from '@ethosagent/types';
 import { resolveKanbanDbPath } from './kanban-path';
 import { MODEL_CATALOG } from './model-catalog';
@@ -570,6 +571,7 @@ export { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrou
 
 export interface CreateAgentLoopResult {
   loop: AgentLoop;
+  toolRegistry: ToolRegistry;
   /** Replace the messaging tool's send implementation with the real gateway.
    *  Called from gateway.ts after Gateway construction. Scoped to this loop
    *  instance — multiple loops in the same process are independent. */
@@ -1242,6 +1244,7 @@ export async function createAgentLoop(
 
   return {
     loop,
+    toolRegistry: tools,
     setMessagingSend: (fn: MessagingSendFn) => {
       gatewaySendFn = fn;
     },

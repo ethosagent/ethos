@@ -156,7 +156,7 @@ const PersonalityCreateInput = z.object({
   toolset: z.array(z.string()),
   /** Markdown body of SOUL.md. May be empty. */
   soulMd: z.string(),
-  memoryScope: z.enum(['global', 'per-personality']).optional(),
+  memoryScope: z.literal('per-personality').optional(),
   provider: ProviderIdSchema.or(z.literal('')).optional(),
   capabilities: z.array(z.string()).optional(),
   mcp_servers: z.array(z.string()).optional(),
@@ -178,7 +178,7 @@ const PersonalityUpdateInput = z.object({
   model: z.string().optional(),
   toolset: z.array(z.string()).optional(),
   soulMd: z.string().optional(),
-  memoryScope: z.enum(['global', 'per-personality']).optional(),
+  memoryScope: z.literal('per-personality').optional(),
   mcp_servers: z.array(z.string()).optional(),
   plugins: z.array(z.string()).optional(),
   capabilities: z.array(z.string()).optional(),
@@ -313,10 +313,26 @@ const ToolDenyInput = z.object({
 });
 const ToolDenyOutput = z.object({ ok: z.literal(true) });
 
+const ToolsCatalogInput = z.object({});
+const ToolsCatalogOutput = z.object({
+  groups: z.array(
+    z.object({
+      group: z.string(),
+      tools: z.array(
+        z.object({
+          name: z.string(),
+          description: z.string().optional(),
+        }),
+      ),
+    }),
+  ),
+});
+
 /** @experimental */
 const tools = {
   approve: oc.input(ToolApproveInput).output(ToolApproveOutput),
   deny: oc.input(ToolDenyInput).output(ToolDenyOutput),
+  catalog: oc.input(ToolsCatalogInput).output(ToolsCatalogOutput),
 };
 
 // ---------------------------------------------------------------------------

@@ -243,12 +243,12 @@ interface WizardState {
   description: string;
   model: string;
   provider: string;
-  memoryScope: string;
   capabilities: string[];
   fsReachRead: string[];
   fsReachWrite: string[];
   toolset: string[];
   soulMd: string;
+  skills: string[];
   mcpServers: string[];
   plugins: string[];
 }
@@ -264,12 +264,16 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
     description: '',
     model: '',
     provider: '',
-    memoryScope: '',
     capabilities: [],
     fsReachRead: [],
     fsReachWrite: [],
-    toolset: [],
+    toolset: [
+      'memory_read', 'memory_write', 'session_search',
+      'create_cron_job', 'list_cron_jobs', 'delete_cron_job',
+      'pause_cron_job', 'resume_cron_job', 'run_cron_job_now',
+    ],
     soulMd: SOUL_TEMPLATE,
+    skills: [],
     mcpServers: [],
     plugins: [],
   });
@@ -287,9 +291,6 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
         ...(state.description ? { description: state.description } : {}),
         ...(state.model ? { model: state.model } : {}),
         ...(state.provider ? { provider: state.provider as ProviderId } : {}),
-        ...(state.memoryScope
-          ? { memoryScope: state.memoryScope as 'global' | 'per-personality' }
-          : {}),
         ...(state.capabilities.length > 0 ? { capabilities: state.capabilities } : {}),
         ...(state.fsReachRead.length > 0 || state.fsReachWrite.length > 0
           ? { fs_reach: { read: state.fsReachRead, write: state.fsReachWrite } }
@@ -299,7 +300,13 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
         toolset: state.toolset,
         soulMd: state.soulMd,
       }),
-    onSuccess: () => {
+    onSuccess: async () => {
+      if (state.skills.length > 0) {
+        await rpc.personalities.skillsImportGlobal({
+          personalityId: state.id,
+          skillIds: state.skills,
+        });
+      }
       qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
       qc.invalidateQueries({ queryKey: ['palette', 'personalities'] });
       notification.success({ message: `Created ${state.name}`, placement: 'topRight' });
@@ -339,12 +346,17 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
       }
     >
       <Tabs
-        defaultActiveKey="identity"
+        defaultActiveKey="basics"
         items={[
           {
-            key: 'identity',
-            label: 'Identity',
+            key: 'basics',
+            label: 'Basics',
             children: <IdentityStep state={state} setState={setState} idCollision={idCollision} />,
+          },
+          {
+            key: 'soul',
+            label: 'Soul',
+            children: <SoulMdStep state={state} setState={setState} />,
           },
           {
             key: 'config',
@@ -357,9 +369,9 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
             children: <ToolsetStep state={state} setState={setState} />,
           },
           {
-            key: 'soul',
-            label: 'SOUL.md',
-            children: <SoulMdStep state={state} setState={setState} />,
+            key: 'skills',
+            label: 'Skills',
+            children: <WizardSkillsStep state={state} setState={setState} />,
           },
           {
             key: 'mcp',
@@ -458,35 +470,14 @@ function ToolsetStep({
   state: WizardState;
   setState: React.Dispatch<React.SetStateAction<WizardState>>;
 }) {
-  // Tool catalog is built into the wizard rather than fetched from the
-  // server — the agent loop's runtime tool registry isn't surfaced via
-  // RPC yet. Keep this list aligned with the standard tool extensions.
-  const TOOL_GROUPS: Array<{ group: string; tools: string[] }> = [
-    {
-      group: 'File',
-      tools: ['read_file', 'write_file', 'patch_file', 'search_files'],
-    },
-    {
-      group: 'Web',
-      tools: ['web_search', 'web_extract', 'web_crawl', 'web_fetch'],
-    },
-    {
-      group: 'Terminal',
-      tools: ['terminal'],
-    },
-    {
-      group: 'Code',
-      tools: ['execute_code', 'run_tests', 'lint'],
-    },
-    {
-      group: 'Memory',
-      tools: ['memory_read', 'memory_write', 'session_search'],
-    },
-    {
-      group: 'Delegation',
-      tools: ['delegate'],
-    },
-  ];
+  const catalogQuery = useQuery({
+    queryKey: ['tools', 'catalog'],
+    queryFn: () => rpc.tools.catalog({}),
+  });
+  const TOOL_GROUPS = (catalogQuery.data?.groups ?? []).map((g) => ({
+    group: g.group,
+    tools: g.tools.map((t) => t.name),
+  }));
 
   const toggle = (name: string) => {
     setState((s) => {
@@ -495,11 +486,19 @@ function ToolsetStep({
     });
   };
 
+  if (catalogQuery.isLoading) {
+    return (
+      <div style={{ display: 'grid', placeItems: 'center', height: 120 }}>
+        <Spin />
+      </div>
+    );
+  }
+
   return (
     <div>
       <Typography.Paragraph type="secondary">
-        Pick the tools this personality can call. Empty = the agent runs without any external action
-        (text-only). You can edit this later.
+        Pick the tools this personality can call. Memory and cron tools are pre-selected as
+        recommended defaults. You can edit this later.
       </Typography.Paragraph>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {TOOL_GROUPS.map((group) => (
@@ -515,7 +514,15 @@ function ToolsetStep({
               }}
             >
               {group.group}
+              {(group.group === 'Memory' || group.group === 'Cron') ? (
+                <Tag color="blue" bordered={false} style={{ fontSize: 10, marginLeft: 6, verticalAlign: 'middle' }}>recommended</Tag>
+              ) : null}
             </div>
+            {group.group === 'Cron' ? (
+              <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+                Requires a running CronScheduler (serve/gateway mode).
+              </Typography.Text>
+            ) : null}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {group.tools.map((tool) => {
                 const enabled = state.toolset.includes(tool);
@@ -563,6 +570,71 @@ function SoulMdStep({
   );
 }
 
+function WizardSkillsStep({
+  state,
+  setState,
+}: {
+  state: WizardState;
+  setState: React.Dispatch<React.SetStateAction<WizardState>>;
+}) {
+  const skillsQuery = useQuery({
+    queryKey: ['skills', 'list'],
+    queryFn: () => rpc.skills.list(),
+  });
+
+  if (skillsQuery.isLoading) {
+    return (
+      <div style={{ display: 'grid', placeItems: 'center', height: 120 }}>
+        <Spin />
+      </div>
+    );
+  }
+
+  const skills = skillsQuery.data?.skills ?? [];
+
+  if (skills.length === 0) {
+    return (
+      <Empty
+        image={Empty.PRESENTED_IMAGE_SIMPLE}
+        description="No skills in the global library. Create skills on the Skills page first."
+      />
+    );
+  }
+
+  const selectedSet = new Set(state.skills);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <Typography.Paragraph type="secondary">
+        Select skills to attach from the global library. Skills can also be added after creation.
+      </Typography.Paragraph>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {skills.map((s) => (
+          <Checkbox
+            key={s.id}
+            checked={selectedSet.has(s.id)}
+            onChange={(e) => {
+              setState((prev) => {
+                const next = new Set(prev.skills);
+                if (e.target.checked) next.add(s.id);
+                else next.delete(s.id);
+                return { ...prev, skills: [...next] };
+              });
+            }}
+          >
+            <span style={{ fontWeight: 500 }}>{s.name}</span>
+            {s.description ? (
+              <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                {s.description}
+              </Typography.Text>
+            ) : null}
+          </Checkbox>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function WizardConfigTab({
   state,
   setState,
@@ -598,17 +670,6 @@ function WizardConfigTab({
             { label: 'OpenAI Compatible', value: 'openai-compat' },
             { label: 'Ollama', value: 'ollama' },
             { label: 'Azure', value: 'azure' },
-          ]}
-        />
-      </Form.Item>
-      <Form.Item label="Memory scope">
-        <Select
-          allowClear
-          value={state.memoryScope || undefined}
-          onChange={(val) => setState((s) => ({ ...s, memoryScope: val ?? '' }))}
-          options={[
-            { label: 'global (default)', value: 'global' },
-            { label: 'per-personality', value: 'per-personality' },
           ]}
         />
       </Form.Item>
@@ -1054,7 +1115,6 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
     description: string;
     provider: ProviderId | '';
     model: string;
-    memoryScope: 'global' | 'per-personality' | undefined;
     capabilities: string[];
     fsReachRead: string[];
     fsReachWrite: string[];
@@ -1066,7 +1126,6 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
       description: personality.description ?? '',
       provider: (personality.provider ?? '') as ProviderId | '',
       model: personality.model ?? '',
-      memoryScope: personality.memoryScope ?? undefined,
       capabilities: personality.capabilities ?? [],
       fsReachRead: personality.fs_reach?.read ?? [],
       fsReachWrite: personality.fs_reach?.write ?? [],
@@ -1079,7 +1138,6 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
       description: string;
       provider: ProviderId | '';
       model: string;
-      memoryScope?: 'global' | 'per-personality';
       capabilities: string[];
       fsReachRead: string[];
       fsReachWrite: string[];
@@ -1089,7 +1147,6 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
         name: values.name,
         description: values.description,
         model: values.model,
-        ...(values.memoryScope ? { memoryScope: values.memoryScope } : {}),
         provider: values.provider || '',
         capabilities: values.capabilities,
         fs_reach: { read: values.fsReachRead, write: values.fsReachWrite },
@@ -1114,7 +1171,6 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
           description: values.description,
           provider: values.provider,
           model: values.model,
-          ...(values.memoryScope ? { memoryScope: values.memoryScope } : {}),
           capabilities: values.capabilities ?? [],
           fsReachRead: values.fsReachRead ?? [],
           fsReachWrite: values.fsReachWrite ?? [],
@@ -1148,14 +1204,8 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
       <Form.Item label="Model" name="model">
         <Input placeholder="optional override" />
       </Form.Item>
-      <Form.Item label="Memory scope" name="memoryScope">
-        <Select
-          allowClear
-          options={[
-            { label: 'global (default)', value: 'global' },
-            { label: 'per-personality', value: 'per-personality' },
-          ]}
-        />
+      <Form.Item label="Memory scope">
+        <Typography.Text>per-personality</Typography.Text>
       </Form.Item>
       <Form.Item
         label="Capabilities"

@@ -76,7 +76,7 @@ export type StoredMessage = z.infer<typeof StoredMessageSchema>;
 // (server filesystem paths) are intentionally NOT in the wire schema.
 // ---------------------------------------------------------------------------
 
-export const MemoryScopeSchema = z.enum(['global', 'per-personality']);
+export const MemoryScopeSchema = z.literal('per-personality');
 
 export const PersonalitySchema = z.object({
   id: z.string(),

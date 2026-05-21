@@ -210,7 +210,7 @@ function scaffoldPersonalityTool(storage: Storage, toolRegistry: ToolRegistry): 
             description: { type: 'string' },
             model: { type: 'string' },
             provider: { type: 'string' },
-            memoryScope: { type: 'string', enum: ['global', 'per-personality'] },
+            memoryScope: { type: 'string', enum: ['per-personality'] },
             capabilities: { type: 'string', description: 'Comma-separated capability labels' },
             fs_reach_read: { type: 'array', items: { type: 'string' } },
             fs_reach_write: { type: 'array', items: { type: 'string' } },

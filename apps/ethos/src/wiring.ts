@@ -22,6 +22,7 @@ import type {
   SecretsResolver,
   Storage,
   TeamManifest,
+  ToolRegistry,
 } from '@ethosagent/types';
 import {
   type CreateAgentLoopResult,
@@ -248,6 +249,7 @@ export async function createAgentLoop(
 
 export interface TeamLoopInfo {
   loop: AgentLoop;
+  toolRegistry: ToolRegistry;
   /** Personality the coordinator runs as. */
   coordinatorPersonality: string;
   /** Mesh name (team name unless manifest.mesh overrides it). */
@@ -296,7 +298,7 @@ export async function createTeamAgentLoop(
 
   // Plan B — thread teamName + role into the wiring so the kanban store points at
   // the team board and the role-gate hook gets registered.
-  const { loop } = await createAgentLoop(
+  const { loop, toolRegistry } = await createAgentLoop(
     {
       ...coordinatorConfig,
       personality: coordinatorPersonality,
@@ -314,7 +316,7 @@ export async function createTeamAgentLoop(
     return { prependSystem: coordinatorSystem };
   });
 
-  return { loop, coordinatorPersonality, meshName };
+  return { loop, toolRegistry, coordinatorPersonality, meshName };
 }
 
 function buildCoordinatorTeamPrompt(manifest: TeamManifest): string {
