@@ -302,10 +302,22 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
       }),
     onSuccess: async () => {
       if (state.skills.length > 0) {
-        await rpc.personalities.skillsImportGlobal({
-          personalityId: state.id,
-          skillIds: state.skills,
-        });
+        try {
+          await rpc.personalities.skillsImportGlobal({
+            personalityId: state.id,
+            skillIds: state.skills,
+          });
+        } catch {
+          notification.warning({
+            message: `Created ${state.name}, but skill attachment failed`,
+            description: 'Open the personality editor to attach skills manually.',
+            placement: 'topRight',
+          });
+          qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
+          qc.invalidateQueries({ queryKey: ['palette', 'personalities'] });
+          onClose();
+          return;
+        }
       }
       qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
       qc.invalidateQueries({ queryKey: ['palette', 'personalities'] });
