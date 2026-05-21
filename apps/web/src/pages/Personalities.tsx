@@ -268,9 +268,15 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
     fsReachRead: [],
     fsReachWrite: [],
     toolset: [
-      'memory_read', 'memory_write', 'session_search',
-      'create_cron_job', 'list_cron_jobs', 'delete_cron_job',
-      'pause_cron_job', 'resume_cron_job', 'run_cron_job_now',
+      'memory_read',
+      'memory_write',
+      'session_search',
+      'create_cron_job',
+      'list_cron_jobs',
+      'delete_cron_job',
+      'pause_cron_job',
+      'resume_cron_job',
+      'run_cron_job_now',
     ],
     soulMd: SOUL_TEMPLATE,
     skills: [],
@@ -526,12 +532,21 @@ function ToolsetStep({
               }}
             >
               {group.group}
-              {(group.group === 'Memory' || group.group === 'Cron') ? (
-                <Tag color="blue" bordered={false} style={{ fontSize: 10, marginLeft: 6, verticalAlign: 'middle' }}>recommended</Tag>
+              {group.group === 'Memory' || group.group === 'Cron' ? (
+                <Tag
+                  color="blue"
+                  bordered={false}
+                  style={{ fontSize: 10, marginLeft: 6, verticalAlign: 'middle' }}
+                >
+                  recommended
+                </Tag>
               ) : null}
             </div>
             {group.group === 'Cron' ? (
-              <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+              <Typography.Text
+                type="secondary"
+                style={{ fontSize: 11, display: 'block', marginBottom: 4 }}
+              >
                 Requires a running CronScheduler (serve/gateway mode).
               </Typography.Text>
             ) : null}
