@@ -1,6 +1,6 @@
 ---
 title: "What are the built-in personalities, and why these three?"
-description: "Three user-facing personalities ship by default — researcher, engineer, reviewer — each with its own toolset, memory scope, and model. Two system personalities (personality-architect, team-architect) handle building and managing other personalities."
+description: "Three personalities ship by default — researcher, engineer, reviewer — plus two system personalities for building and managing agents."
 kind: explanation
 audience: user
 slug: built-in-personalities
