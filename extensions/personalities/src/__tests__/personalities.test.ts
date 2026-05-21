@@ -56,9 +56,9 @@ describe('FilePersonalityRegistry', () => {
       expect(registry.getDefault().id).toBe('researcher');
     });
 
-    it('researcher memoryScope is global', async () => {
+    it('researcher memoryScope is per-personality', async () => {
       const registry = await createPersonalityRegistry();
-      expect(registry.get('researcher')?.memoryScope).toBe('global');
+      expect(registry.get('researcher')?.memoryScope).toBe('per-personality');
     });
 
     it('reviewer memoryScope is per-personality', async () => {

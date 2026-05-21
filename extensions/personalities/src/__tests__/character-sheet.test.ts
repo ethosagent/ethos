@@ -17,7 +17,7 @@ const fullConfig: PersonalityConfig = {
   description: 'Terse, code-first agent that writes working code immediately.',
   model: 'claude-sonnet-4-6',
   provider: 'anthropic',
-  memoryScope: 'global',
+  memoryScope: 'per-personality',
   toolset: ['read_file', 'write_file', 'terminal'],
   mcp_servers: ['github', 'sentry'],
   plugins: ['linear'],
@@ -52,7 +52,7 @@ describe('renderCharacterSheet', () => {
 
   it('renders the memory scope', () => {
     const sheet = renderCharacterSheet(fullConfig, soulMd);
-    expect(sheet).toMatch(/Memory scope.*global/i);
+    expect(sheet).toMatch(/Memory scope.*per-personality/i);
   });
 
   it('lists every tool in the toolset', () => {
