@@ -17,15 +17,23 @@ afterEach(async () => {
 
 describe('FilePersonalityRegistry', () => {
   describe('built-ins via createPersonalityRegistry()', () => {
-    it('loads built-in personalities including coordinator', async () => {
+    it('loads built-in personalities', async () => {
       const registry = await createPersonalityRegistry();
       const ids = registry.list().map((p) => p.id);
       expect(ids).toContain('researcher');
       expect(ids).toContain('engineer');
       expect(ids).toContain('reviewer');
-      expect(ids).toContain('coach');
-      expect(ids).toContain('operator');
-      expect(ids).toContain('coordinator');
+      expect(ids).toContain('personality-architect');
+      expect(ids).toContain('team-architect');
+      expect(ids).not.toContain('coach');
+      expect(ids).not.toContain('operator');
+      expect(ids).not.toContain('coordinator');
+      expect(ids).not.toContain('task-tracker');
+    });
+
+    it('archived directory is not loaded as a personality', async () => {
+      const registry = await createPersonalityRegistry();
+      expect(registry.get('archived')).toBeUndefined();
     });
 
     it('researcher has soulFile and toolset', async () => {
@@ -42,13 +50,6 @@ describe('FilePersonalityRegistry', () => {
       const reviewer = registry.get('reviewer');
       expect(reviewer?.toolset).not.toContain('terminal');
       expect(reviewer?.toolset).not.toContain('write_file');
-    });
-
-    it('operator has terminal but no web tools', async () => {
-      const registry = await createPersonalityRegistry();
-      const operator = registry.get('operator');
-      expect(operator?.toolset).toContain('terminal');
-      expect(operator?.toolset).not.toContain('web_search');
     });
 
     it('default personality is researcher', async () => {

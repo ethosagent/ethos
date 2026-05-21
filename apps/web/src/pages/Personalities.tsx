@@ -11,6 +11,7 @@ import {
   App as AntApp,
   Button,
   Checkbox,
+  Divider,
   Empty,
   Form,
   Input,
@@ -72,12 +73,70 @@ export function Personalities() {
 
   const personalities = listQuery.data?.items ?? [];
   const defaultId = listQuery.data?.defaultId ?? null;
+  const userPersonalities = personalities.filter((p) => !p.system);
+  const systemPersonalities = personalities.filter((p) => p.system);
+
+  const columns = [
+    {
+      title: 'Name',
+      dataIndex: 'name',
+      key: 'name',
+      render: (name: string, p: Personality) => (
+        <div>
+          <div style={{ fontWeight: 500 }}>
+            {name} {p.id === defaultId ? <Tag color="blue">default</Tag> : null}{' '}
+            {p.builtin ? <Tag>built-in</Tag> : null}
+          </div>
+          <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>{p.id}</div>
+        </div>
+      ),
+    },
+    {
+      title: 'Description',
+      dataIndex: 'description',
+      key: 'description',
+      render: (d: string | null) => (d ? d : <Typography.Text type="secondary">—</Typography.Text>),
+    },
+    {
+      title: 'Model',
+      dataIndex: 'model',
+      key: 'model',
+      width: 200,
+      render: (m: string | null) =>
+        m ? (
+          <Typography.Text code>{m}</Typography.Text>
+        ) : (
+          <Typography.Text type="secondary">—</Typography.Text>
+        ),
+    },
+    {
+      title: 'Tools',
+      dataIndex: 'toolset',
+      key: 'toolset',
+      width: 100,
+      align: 'right' as const,
+      render: (t: string[] | null) => t?.length ?? 0,
+    },
+    {
+      title: '',
+      key: 'actions',
+      width: 240,
+      render: (_: unknown, p: Personality) => (
+        <PersonalityRowActions
+          personality={p}
+          onEdit={() => setEditingId(p.id)}
+          onDuplicate={() => setDuplicatePrompt(p)}
+        />
+      ),
+    },
+  ];
 
   return (
     <div className="personalities-tab">
       <header className="personalities-toolbar">
         <span className="personalities-count">
-          {personalities.length} {personalities.length === 1 ? 'personality' : 'personalities'}
+          {userPersonalities.length}{' '}
+          {userPersonalities.length === 1 ? 'personality' : 'personalities'}
         </span>
         <Button type="primary" onClick={() => setCreateOpen(true)}>
           New personality
@@ -86,7 +145,7 @@ export function Personalities() {
 
       <Table<Personality>
         rowKey="id"
-        dataSource={personalities}
+        dataSource={userPersonalities}
         pagination={false}
         size="small"
         locale={{
@@ -97,62 +156,21 @@ export function Personalities() {
             />
           ),
         }}
-        columns={[
-          {
-            title: 'Name',
-            dataIndex: 'name',
-            key: 'name',
-            render: (name: string, p) => (
-              <div>
-                <div style={{ fontWeight: 500 }}>
-                  {name} {p.id === defaultId ? <Tag color="blue">default</Tag> : null}{' '}
-                  {p.builtin ? <Tag>built-in</Tag> : null}
-                </div>
-                <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>{p.id}</div>
-              </div>
-            ),
-          },
-          {
-            title: 'Description',
-            dataIndex: 'description',
-            key: 'description',
-            render: (d: string | null) =>
-              d ? d : <Typography.Text type="secondary">—</Typography.Text>,
-          },
-          {
-            title: 'Model',
-            dataIndex: 'model',
-            key: 'model',
-            width: 200,
-            render: (m: string | null) =>
-              m ? (
-                <Typography.Text code>{m}</Typography.Text>
-              ) : (
-                <Typography.Text type="secondary">—</Typography.Text>
-              ),
-          },
-          {
-            title: 'Tools',
-            dataIndex: 'toolset',
-            key: 'toolset',
-            width: 100,
-            align: 'right',
-            render: (t: string[] | null) => t?.length ?? 0,
-          },
-          {
-            title: '',
-            key: 'actions',
-            width: 240,
-            render: (_, p) => (
-              <PersonalityRowActions
-                personality={p}
-                onEdit={() => setEditingId(p.id)}
-                onDuplicate={() => setDuplicatePrompt(p)}
-              />
-            ),
-          },
-        ]}
+        columns={columns}
       />
+
+      {systemPersonalities.length > 0 ? (
+        <>
+          <Divider orientation="left">System</Divider>
+          <Table<Personality>
+            rowKey="id"
+            dataSource={systemPersonalities}
+            pagination={false}
+            size="small"
+            columns={columns}
+          />
+        </>
+      ) : null}
 
       {createOpen ? (
         <CreateWizard

@@ -3,6 +3,7 @@ import {
   type DescribedPersonality,
   type FilePersonalityRegistry,
   renderCharacterSheet,
+  SYSTEM_PERSONALITY_IDS,
   type UpdatePersonalityPatch,
 } from '@ethosagent/personalities';
 import type { PersonalitySkillRecord, SkillsLibrary } from '@ethosagent/skills';
@@ -160,6 +161,7 @@ function toWire(d: DescribedPersonality): Personality {
     fs_reach: c.fs_reach
       ? { read: c.fs_reach.read ?? null, write: c.fs_reach.write ?? null }
       : null,
+    system: d.builtin && SYSTEM_PERSONALITY_IDS.has(c.id),
     builtin: d.builtin,
     version: 1,
   };

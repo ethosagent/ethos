@@ -4,7 +4,7 @@ description: "Ethos is a TypeScript agent framework where personality is archite
 kind: explanation
 audience: shared
 slug: what-is-ethos
-updated: 2026-05-12
+updated: 2026-05-21
 ---
 
 **Ethos is a TypeScript framework where [personality](glossary.md#personality) is the unit of architecture.** Not a system prompt string. A directory of files that, when switched, atomically changes the agent's prompt, tool access, memory scope, and model.
@@ -31,15 +31,15 @@ You cannot accidentally run the engineer personality's write-shaped tools under 
 
 ## What you get out of the box
 
-Five personalities ship by default. Each has its own role, tools, and voice.
+Three personalities ship by default for everyday use. Each has its own role, tools, and voice.
 
 | Personality | Role | Tools | Voice |
 |---|---|---|---|
 | `researcher` | Explores, summarises, cites | Read, search, browse | Curious, citation-heavy |
 | `engineer` | Writes and edits code | Read, write, run, test | Direct, code-first |
 | `reviewer` | Critiques diffs and designs | Read-only | Caution-first, structured |
-| `coach` | Explains and encourages | Read, search | Patient, scaffolding |
-| `operator` | Runs ops, talks to systems | Process, network, terminal | Terse, operational |
+
+Two additional system personalities — `personality-architect` and `team-architect` — are available for building and managing other personalities.
 
 Plus:
 

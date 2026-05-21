@@ -98,6 +98,7 @@ export const PersonalitySchema = z.object({
       write: z.array(z.string()).nullable(),
     })
     .nullable(),
+  system: z.boolean(),
   /** True when the personality lives in the package's built-in data directory
    *  (read-only). User-created personalities under `~/.ethos/personalities/`
    *  are mutable. */

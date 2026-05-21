@@ -18,11 +18,11 @@ Keeping the claim honest is the work of **personality governance**: the `Persona
 
 ## Why this matters to the people we build for
 
-The default direction of LLM products is the opposite of ours: one generalist model wearing different prompt-shaped hats. *"You are now an expert researcher"* — but its tools, its memory, its behaviour have not changed. It is one agent pretending to be five. The user cannot audit what it will do, because what it *can* do has not narrowed.
+The default direction of LLM products is the opposite of ours: one generalist model wearing different prompt-shaped hats. *"You are now an expert researcher"* — but its tools, its memory, its behaviour have not changed. It is one agent pretending to be many. The user cannot audit what it will do, because what it *can* do has not narrowed.
 
 A specialist is a specialist because of what they cannot do, not what they say. A senior engineer does not also do design review and HR. They have a job. The shape of the job is the value.
 
-Ethos agents work the same way. The Engineer cannot research literature. The Researcher cannot edit a file. The Operator cannot improvise — they dry-run, confirm, document. These are not enforced by hope. They are enforced by the toolset, the memory scope, the routing.
+Ethos agents work the same way. The Engineer cannot research literature. The Researcher cannot edit a file. The Reviewer cannot modify what it critiques. These are not enforced by hope. They are enforced by the toolset, the memory scope, the routing.
 
 You do not get "an AI." You get a team of named, role-bound specialists who know what their job is — and what it isn't.
 
@@ -33,10 +33,10 @@ Ethos ships with a small set of built-in personalities. They share DNA:
 - **Engineer** — writes working code; tests what ships; refuses to pad.
 - **Researcher** — finds primary sources; flags uncertainty; shows the reasoning.
 - **Reviewer** — finds real problems; separates blocking from suggestion; does not soften.
-- **Coach** — asks one question at a time; helps you think, not for you.
-- **Operator** — dry-runs before destructive action; confirms; documents what happened.
 
-What unites them is not tone. It is honesty about the role. None of them say *"Great question!"* None of them pretend competence outside their lane. None of them try to be charming when the work calls for being correct.
+Two system personalities — `personality-architect` and `team-architect` — handle building and managing other personalities. They appear in the web UI under a separate System section.
+
+What unites the built-ins is not tone. It is honesty about the role. None of them say *"Great question!"* None of them pretend competence outside their lane. None of them try to be charming when the work calls for being correct.
 
 A user reading any one of these `SOUL.md` files should be able to predict what the personality will do — and what it will refuse to do — before sending a single message. That predictability is the product.
 
