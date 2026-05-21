@@ -13,6 +13,7 @@ import {
   Spin,
   Table,
   Tabs,
+  Tag,
   Typography,
 } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
@@ -27,6 +28,24 @@ import { rpc } from '../rpc';
 // The pending queue's "Approve" button moves a candidate file from the
 // pending dir into the live skills dir. The SkillsInjector picks it up
 // on the next chat turn via mtime cache — no restart needed.
+
+type SkillOrigin = 'built-in' | 'user' | 'evolver' | 'personality';
+type OriginFilter = 'all' | SkillOrigin;
+
+const ORIGIN_CONFIG: Record<SkillOrigin, { color: string; label: string }> = {
+  'built-in': { color: 'blue', label: 'Built-in' },
+  user: { color: 'green', label: 'User' },
+  evolver: { color: 'orange', label: 'Evolver' },
+  personality: { color: 'purple', label: 'Personality' },
+};
+
+function getSkillOrigin(skill: Skill): SkillOrigin {
+  const scope = skill.frontmatter.scope;
+  if (scope === 'built-in') return 'built-in';
+  if (scope === 'evolver') return 'evolver';
+  if (scope === 'personality') return 'personality';
+  return 'user';
+}
 
 export function Skills() {
   const [activeTab, setActiveTab] = useState<'library' | 'evolver'>('library');
@@ -66,7 +85,7 @@ export function Skills() {
 }
 
 // ---------------------------------------------------------------------------
-// Library panel — list / view / edit / delete / create global skills
+// Library panel — card grid with search, filter chips, origin badges
 // ---------------------------------------------------------------------------
 
 interface LibraryPanelProps {
@@ -76,6 +95,23 @@ interface LibraryPanelProps {
 function LibraryPanel({ skillsQuery }: LibraryPanelProps) {
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [originFilter, setOriginFilter] = useState<OriginFilter>('all');
+
+  const skills = skillsQuery.data?.skills ?? [];
+
+  const filteredSkills = useMemo(() => {
+    const q = searchQuery.toLowerCase();
+    return skills.filter((skill) => {
+      if (originFilter !== 'all' && getSkillOrigin(skill) !== originFilter) return false;
+      if (q) {
+        const name = skill.name.toLowerCase();
+        const desc = (skill.description ?? '').toLowerCase();
+        if (!name.includes(q) && !desc.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [skills, searchQuery, originFilter]);
 
   if (skillsQuery.isLoading) {
     return (
@@ -92,68 +128,87 @@ function LibraryPanel({ skillsQuery }: LibraryPanelProps) {
     );
   }
 
-  const skills = skillsQuery.data?.skills ?? [];
+  const filterOptions: { key: OriginFilter; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'built-in', label: 'Built-in' },
+    { key: 'user', label: 'User' },
+    { key: 'evolver', label: 'Evolver' },
+    { key: 'personality', label: 'Personality' },
+  ];
 
   return (
     <>
       <header className="skills-toolbar">
         <span className="skills-count">
-          {skills.length} {skills.length === 1 ? 'skill' : 'skills'}
+          {filteredSkills.length} {filteredSkills.length === 1 ? 'skill' : 'skills'}
         </span>
         <Button type="primary" onClick={() => setCreateOpen(true)}>
           New skill
         </Button>
       </header>
 
-      <Table<Skill>
-        rowKey="id"
-        dataSource={skills}
-        pagination={false}
-        size="small"
-        locale={{
-          emptyText: (
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description="No skills installed yet. Create one to teach this agent how you work."
-            />
-          ),
-        }}
-        columns={[
-          {
-            title: 'Name',
-            dataIndex: 'name',
-            key: 'name',
-            render: (name: string, skill) => (
-              <div>
-                <div style={{ fontWeight: 500 }}>{name}</div>
-                <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>{skill.id}.md</div>
+      <div className="skills-search">
+        <Input.Search
+          placeholder="Search skills by name or description..."
+          allowClear
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+      </div>
+
+      <div className="skills-filter-bar">
+        {filterOptions.map((opt) => (
+          <Button
+            key={opt.key}
+            className="skills-filter-chip"
+            type={originFilter === opt.key ? 'primary' : 'default'}
+            size="small"
+            onClick={() => setOriginFilter(opt.key)}
+          >
+            {opt.label}
+          </Button>
+        ))}
+      </div>
+
+      {filteredSkills.length === 0 ? (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={
+            skills.length === 0
+              ? 'No skills installed yet. Create one to teach this agent how you work.'
+              : 'No skills match the current filters.'
+          }
+        />
+      ) : (
+        <div className="skills-grid">
+          {filteredSkills.map((skill) => {
+            const origin = getSkillOrigin(skill);
+            const config = ORIGIN_CONFIG[origin];
+            return (
+              <div key={skill.id} className="skill-card">
+                <div className="skill-card-header">
+                  <div style={{ fontWeight: 500 }}>{skill.name}</div>
+                  <Tag color={config.color}>{config.label}</Tag>
+                </div>
+                <div className="skill-card-description">
+                  {skill.description ?? (
+                    <Typography.Text type="secondary">No description</Typography.Text>
+                  )}
+                </div>
+                <div className="skill-card-meta">
+                  <Typography.Text code style={{ fontSize: 11 }}>
+                    {skill.id}.md
+                  </Typography.Text>
+                  <span>{formatRelative(skill.modifiedAt)}</span>
+                </div>
+                <div className="skill-card-actions">
+                  <SkillCardActions skill={skill} onEdit={() => setEditingSkill(skill)} />
+                </div>
               </div>
-            ),
-          },
-          {
-            title: 'Description',
-            dataIndex: 'description',
-            key: 'description',
-            render: (d: string | null) =>
-              d ? d : <Typography.Text type="secondary">—</Typography.Text>,
-          },
-          {
-            title: 'Modified',
-            dataIndex: 'modifiedAt',
-            key: 'modifiedAt',
-            width: 140,
-            render: (iso: string) => formatRelative(iso),
-          },
-          {
-            title: '',
-            key: 'actions',
-            width: 160,
-            render: (_, skill) => (
-              <SkillRowActions skill={skill} onEdit={() => setEditingSkill(skill)} />
-            ),
-          },
-        ]}
-      />
+            );
+          })}
+        </div>
+      )}
 
       {createOpen ? (
         <CreateSkillModal open={createOpen} onClose={() => setCreateOpen(false)} />
@@ -169,7 +224,7 @@ function LibraryPanel({ skillsQuery }: LibraryPanelProps) {
   );
 }
 
-function SkillRowActions({ skill, onEdit }: { skill: Skill; onEdit: () => void }) {
+function SkillCardActions({ skill, onEdit }: { skill: Skill; onEdit: () => void }) {
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
   const deleteMut = useMutation({

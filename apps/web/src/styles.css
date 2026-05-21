@@ -2924,6 +2924,342 @@ body,
   box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.18);
 }
 
+/* ── Skills card grid (Move 1) ── */
+
+.skills-search {
+  margin-bottom: 12px;
+  max-width: 400px;
+}
+
+.skills-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.skills-filter-chip {
+  /* Antd Button styling handles most of this, but set font size */
+  font-size: 12px;
+}
+
+.skills-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.skill-card {
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.15s ease;
+}
+
+.skill-card:hover {
+  border-color: var(--ethos-border-strong, #3a3a3a);
+}
+
+.skill-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.skill-card-header h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ethos-text);
+  line-height: 1.4;
+}
+
+.skill-card-description {
+  font-size: 12px;
+  color: var(--ethos-text-dim);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 34px; /* 2 lines × 12px × 1.4 line-height ≈ 34px */
+}
+
+.skill-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ethos-text-dim);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.skill-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--ethos-border);
+}
+
+/* ── Provider chain editor (Move 2) ── */
+
+.provider-chain {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.provider-chain-diagram {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  background: var(--ethos-bg);
+  border: 1px solid var(--ethos-border);
+  border-radius: 6px;
+  overflow-x: auto;
+  flex-wrap: wrap;
+}
+
+.provider-chain-diagram-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  color: var(--ethos-text);
+  white-space: nowrap;
+}
+
+.provider-chain-diagram-pill:first-child {
+  border-color: #4a9eff;
+  color: #4a9eff;
+}
+
+.provider-chain-diagram-arrow {
+  color: var(--ethos-text-dim);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.provider-chain-row {
+  border: 1px solid var(--ethos-border);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--ethos-bg-elevated);
+}
+
+.provider-chain-row-primary {
+  border-color: #4a9eff;
+  border-width: 1px;
+}
+
+.provider-chain-row-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ethos-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.provider-chain-row-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 600px) {
+  .provider-chain-row-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+.provider-chain-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ethos-border);
+}
+
+.provider-chain-row-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.provider-chain-field-label {
+  display: block;
+  font-size: 12px;
+  color: var(--ethos-text-dim);
+  margin-bottom: 2px;
+}
+
+.provider-chain-test-result {
+  margin-left: 8px;
+  font-size: 12px;
+}
+
+.provider-chain-add {
+  align-self: flex-start;
+}
+
+/* ── Activity timeline (Move 3) ── */
+
+.activity-page {
+  max-width: 900px;
+}
+
+.activity-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.activity-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.activity-filter-chip {
+  font-size: 12px;
+  padding: 4px 12px;
+  border: 1px solid var(--ethos-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ethos-text-dim);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  font-family: inherit;
+}
+
+.activity-filter-chip:hover {
+  border-color: var(--ethos-text-dim);
+  color: var(--ethos-text);
+}
+
+.activity-filter-chip.active {
+  background: #4a9eff;
+  border-color: #4a9eff;
+  color: #fff;
+}
+
+.activity-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.activity-event {
+  padding: 10px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+  border: 1px solid transparent;
+}
+
+.activity-event:hover {
+  background: var(--ethos-bg-elevated);
+}
+
+.activity-event--expanded {
+  background: var(--ethos-bg-elevated);
+  border-color: var(--ethos-border);
+}
+
+.activity-event-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.activity-event-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.activity-event-dot--tool_start,
+.activity-event-dot--tool_end {
+  background: #4a9eff;
+}
+
+.activity-event-dot--done {
+  background: #4ade80;
+}
+
+.activity-event-dot--error {
+  background: #f87171;
+}
+
+.activity-event-dot--approval {
+  background: #f59e0b;
+}
+
+.activity-event-dot--cron {
+  background: #e879f9;
+}
+
+.activity-event-time {
+  font-size: 11px;
+  color: var(--ethos-text-dim);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.activity-event-summary {
+  font-size: 13px;
+  color: var(--ethos-text);
+}
+
+.activity-event-session {
+  font-size: 11px;
+  color: var(--ethos-text-dim);
+  margin-top: 2px;
+  padding-left: 16px; /* aligned with the dot */
+}
+
+.activity-event-raw {
+  margin: 8px 0 0;
+  padding: 12px;
+  background: var(--ethos-bg);
+  border: 1px solid var(--ethos-border);
+  border-radius: 4px;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  color: var(--ethos-text);
+}
+
 /* ── Responsive — stack panels on phones ── */
 
 @media (max-width: 760px) {
@@ -2944,6 +3280,19 @@ body,
   }
   .cc-header {
     padding: 12px 16px;
+    flex-wrap: wrap;
+  }
+  .skills-grid {
+    grid-template-columns: 1fr;
+  }
+  .provider-chain-row-fields {
+    grid-template-columns: 1fr;
+  }
+  .activity-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .activity-event-header {
     flex-wrap: wrap;
   }
 }
