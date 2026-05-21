@@ -1,4 +1,5 @@
 import { SsrfError, validateUrl } from '@ethosagent/core';
+import { PersonalityScopedSecrets } from '@ethosagent/storage-fs';
 import {
   ConfidentialClientUnsupported,
   DcrUnsupported,
@@ -25,11 +26,13 @@ export class McpService {
   private readonly flow: McpInstallFlow;
   private readonly mcpJsonStore: McpJsonStore;
   private readonly mcpManager: McpManager;
+  private readonly personalityUpdater: PersonalityUpdater;
   private readonly secrets: SecretsResolver;
 
   constructor(opts: McpServiceOptions) {
     this.mcpJsonStore = opts.mcpJsonStore;
     this.mcpManager = opts.mcpManager;
+    this.personalityUpdater = opts.personalityUpdater;
     this.secrets = opts.secrets;
     this.flow = new McpInstallFlow({
       mcpManager: opts.mcpManager,
@@ -40,7 +43,7 @@ export class McpService {
     });
   }
 
-  async start(input: { url: string; name?: string }, redirectUri?: string) {
+  async start(input: { url: string; name?: string; personalityId: string }, redirectUri?: string) {
     try {
       validateUrl(input.url, { allowLocalhost: true });
     } catch (err) {
@@ -58,8 +61,9 @@ export class McpService {
       const startOpts: {
         mcpUrl: string;
         name?: string;
+        personalityId: string;
         redirectUri?: string;
-      } = { mcpUrl: input.url };
+      } = { mcpUrl: input.url, personalityId: input.personalityId };
       if (input.name !== undefined) startOpts.name = input.name;
       if (redirectUri !== undefined) startOpts.redirectUri = redirectUri;
       const result = await this.flow.start(startOpts);
@@ -158,25 +162,7 @@ export class McpService {
     const configs = await this.mcpJsonStore.read();
     const servers = await Promise.all(
       configs.map(async (c) => {
-        let authStatus: 'none' | 'authorized' | 'expired' | 'missing' | 'pending' | null = null;
-        if (c.auth?.type === 'oauth2') {
-          const token = await this.secrets.get(`mcp/${c.name}/access_token`).catch(() => null);
-          if (!token) {
-            authStatus = 'missing';
-          } else {
-            const expiresAtStr = await this.secrets
-              .get(`mcp/${c.name}/expires_at`)
-              .catch(() => null);
-            if (expiresAtStr) {
-              const expiresAt = Number(expiresAtStr);
-              authStatus = Date.now() >= expiresAt ? 'expired' : 'authorized';
-            } else {
-              authStatus = 'authorized';
-            }
-          }
-        } else {
-          authStatus = 'none';
-        }
+        const authStatus = await this.computeAuthStatus(c.name, this.secrets, c);
         return {
           name: c.name,
           transport: c.transport as 'stdio' | 'sse' | 'streamable-http',
@@ -187,6 +173,32 @@ export class McpService {
         };
       }),
     );
+    return { servers };
+  }
+
+  async personalityServers(input: { personalityId: string }) {
+    const personality = this.personalityUpdater.get(input.personalityId);
+    if (!personality) return { servers: [] };
+    const mcpServers = personality.mcp_servers ?? [];
+    const scopedSecrets = new PersonalityScopedSecrets(this.secrets, input.personalityId);
+    const configs = await this.mcpJsonStore.read();
+
+    const servers = await Promise.all(
+      mcpServers.map(async (name) => {
+        const config = configs.find((c) => c.name === name);
+        const raw = await this.computeAuthStatus(name, scopedSecrets, config);
+        // Non-OAuth servers are always accessible — map 'none' to 'authorized'.
+        const authStatus: 'authorized' | 'expired' | 'missing' =
+          raw === 'none' ? 'authorized' : raw;
+        return {
+          name,
+          transport: config?.transport,
+          url: typeof config?.url === 'string' ? config.url : undefined,
+          auth_status: authStatus,
+        };
+      }),
+    );
+
     return { servers };
   }
 
@@ -251,7 +263,22 @@ export class McpService {
     return { available: tools.length > 0, tools };
   }
 
-  async reconnect(input: { name: string }) {
+  private async computeAuthStatus(
+    serverName: string,
+    secrets: SecretsResolver,
+    config?: { auth?: { type: string } },
+  ): Promise<'none' | 'authorized' | 'expired' | 'missing'> {
+    if (config?.auth?.type !== 'oauth2') return 'none';
+    const token = await secrets.get(`mcp/${serverName}/access_token`).catch(() => null);
+    if (!token) return 'missing';
+    const expiresAtStr = await secrets.get(`mcp/${serverName}/expires_at`).catch(() => null);
+    if (expiresAtStr) {
+      return Date.now() >= Number(expiresAtStr) ? 'expired' : 'authorized';
+    }
+    return 'authorized';
+  }
+
+  async reconnect(input: { name: string; personalityId: string }) {
     const configs = await this.mcpJsonStore.read();
     const existing = configs.find((c) => c.name === input.name);
     if (!existing?.url) {
@@ -261,6 +288,10 @@ export class McpService {
         detail: `Server '${input.name}' not found or has no URL`,
       };
     }
-    return this.start({ url: existing.url, name: input.name });
+    return this.start({
+      url: existing.url,
+      name: input.name,
+      personalityId: input.personalityId,
+    });
   }
 }

@@ -57,7 +57,7 @@ describe('McpService.start — redirectUri thread-through', () => {
     const { service, flowStart } = makeServiceWithSpy();
 
     const result = await service.start(
-      { url: 'https://mcp.example/sse', name: 'example' },
+      { url: 'https://mcp.example/sse', name: 'example', personalityId: 'p1' },
       'http://192.168.1.10:5173/oauth/callback',
     );
 
@@ -67,6 +67,7 @@ describe('McpService.start — redirectUri thread-through', () => {
     expect(args?.[0]).toEqual({
       mcpUrl: 'https://mcp.example/sse',
       name: 'example',
+      personalityId: 'p1',
       redirectUri: 'http://192.168.1.10:5173/oauth/callback',
     });
   });
@@ -74,13 +75,17 @@ describe('McpService.start — redirectUri thread-through', () => {
   it('omits redirectUri from the call when none is supplied (constructor default applies)', async () => {
     const { service, flowStart } = makeServiceWithSpy();
 
-    const result = await service.start({ url: 'https://mcp.example/sse' });
+    const result = await service.start({
+      url: 'https://mcp.example/sse',
+      personalityId: 'p1',
+    });
 
     expect(result.ok).toBe(true);
     expect(flowStart).toHaveBeenCalledTimes(1);
     const args = flowStart.mock.calls[0] as unknown[] | undefined;
     const arg = args?.[0] as Record<string, unknown> | undefined;
     expect(arg?.mcpUrl).toBe('https://mcp.example/sse');
+    expect(arg?.personalityId).toBe('p1');
     expect(arg).not.toHaveProperty('redirectUri');
     expect(arg).not.toHaveProperty('name');
   });
@@ -153,5 +158,146 @@ describe('McpService.serverTools — per-server tool discovery', () => {
     const result = await service.serverTools({ personalityId: 'p1', serverName: 'linear' });
     expect(result.available).toBe(false);
     expect(result.tools).toEqual([]);
+  });
+});
+
+describe('McpService.personalityServers', () => {
+  async function makeServiceForPersonality(opts: {
+    personality?: { id: string; mcp_servers?: string[] };
+    configs?: Array<{
+      name: string;
+      transport: string;
+      url?: string;
+      auth?: { type: string };
+    }>;
+    secrets?: Record<string, string>;
+  }): Promise<McpService> {
+    const storage = new InMemoryStorage();
+    const secretsResolver = new InMemorySecretsResolver();
+    const mcpJsonStore = new McpJsonStore(storage);
+    const mcpManager: McpManager = {
+      connect: async () => {},
+      disconnect: async () => {},
+      shutdown: async () => {},
+      getTools: () => [],
+      listServers: () => [],
+      addServer: async () => {},
+      removeServer: async () => {},
+    } as unknown as McpManager;
+
+    const personalityUpdater = {
+      get: (id: string) => {
+        if (opts.personality && opts.personality.id === id) return opts.personality;
+        return undefined;
+      },
+      update: async () => undefined,
+    };
+
+    // Seed configs before constructing the service.
+    if (opts.configs) {
+      for (const c of opts.configs) {
+        await mcpJsonStore.upsert(c.name, c as never);
+      }
+    }
+
+    // Seed secrets.
+    if (opts.secrets) {
+      for (const [key, value] of Object.entries(opts.secrets)) {
+        await secretsResolver.set(key, value);
+      }
+    }
+
+    return new McpService({
+      mcpManager,
+      personalityUpdater,
+      secrets: secretsResolver,
+      mcpJsonStore,
+      redirectUri: 'http://test/callback',
+    });
+  }
+
+  it('returns empty servers when personality is unknown', async () => {
+    const service = await makeServiceForPersonality({});
+    const result = await service.personalityServers({ personalityId: 'unknown' });
+    expect(result.servers).toEqual([]);
+  });
+
+  it('returns authorized for non-OAuth servers', async () => {
+    const service = await makeServiceForPersonality({
+      personality: { id: 'p1', mcp_servers: ['stdio-server'] },
+      configs: [{ name: 'stdio-server', transport: 'stdio' }],
+    });
+    const result = await service.personalityServers({ personalityId: 'p1' });
+    expect(result.servers).toHaveLength(1);
+    expect(result.servers[0]).toMatchObject({
+      name: 'stdio-server',
+      auth_status: 'authorized',
+    });
+  });
+
+  it('returns missing when personality has no scoped tokens for an OAuth server', async () => {
+    const service = await makeServiceForPersonality({
+      personality: { id: 'p1', mcp_servers: ['oauth-srv'] },
+      configs: [
+        {
+          name: 'oauth-srv',
+          transport: 'streamable-http',
+          url: 'https://mcp.example',
+          auth: { type: 'oauth2' },
+        },
+      ],
+    });
+    const result = await service.personalityServers({ personalityId: 'p1' });
+    expect(result.servers).toHaveLength(1);
+    expect(result.servers[0]).toMatchObject({
+      name: 'oauth-srv',
+      auth_status: 'missing',
+    });
+  });
+
+  it('returns authorized when personality has valid scoped tokens', async () => {
+    const service = await makeServiceForPersonality({
+      personality: { id: 'p1', mcp_servers: ['oauth-srv'] },
+      configs: [
+        {
+          name: 'oauth-srv',
+          transport: 'streamable-http',
+          url: 'https://mcp.example',
+          auth: { type: 'oauth2' },
+        },
+      ],
+      secrets: {
+        'personalities/p1/mcp/oauth-srv/access_token': 'tok_valid',
+        'personalities/p1/mcp/oauth-srv/expires_at': String(Date.now() + 3600_000),
+      },
+    });
+    const result = await service.personalityServers({ personalityId: 'p1' });
+    expect(result.servers[0]).toMatchObject({
+      name: 'oauth-srv',
+      auth_status: 'authorized',
+    });
+  });
+
+  it('returns expired when scoped token has passed its expires_at', async () => {
+    const service = await makeServiceForPersonality({
+      personality: { id: 'p1', mcp_servers: ['oauth-srv'] },
+      configs: [
+        {
+          name: 'oauth-srv',
+          transport: 'streamable-http',
+          url: 'https://mcp.example',
+          auth: { type: 'oauth2' },
+        },
+      ],
+      secrets: {
+        'personalities/p1/mcp/oauth-srv/access_token': 'tok_expired',
+        'personalities/p1/mcp/oauth-srv/expires_at': String(Date.now() - 1000),
+      },
+    });
+    const result = await service.personalityServers({ personalityId: 'p1' });
+    expect(result.servers[0]).toMatchObject({
+      name: 'oauth-srv',
+      auth_status: 'expired',
+    });
   });
 });

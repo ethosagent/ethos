@@ -466,6 +466,7 @@ export type McpServerInfo = z.infer<typeof McpServerInfoSchema>;
 export const McpStartInputSchema = z.object({
   url: z.string().url(),
   name: z.string().min(1).max(64).optional(),
+  personalityId: z.string().min(1),
 });
 
 export const McpStartOutputSchema = z.discriminatedUnion('ok', [
@@ -539,6 +540,7 @@ export const McpDeleteInputSchema = z.object({
 
 export const McpReconnectInputSchema = z.object({
   name: z.string(),
+  personalityId: z.string().min(1),
 });
 
 export const McpListOutputSchema = z.object({
@@ -581,6 +583,24 @@ export const McpServerToolsOutputSchema = z.object({
     z.object({
       name: z.string(),
       description: z.string().optional(),
+    }),
+  ),
+});
+
+// MCP per-personality server listing — returns the servers attached to a
+// personality with their OAuth auth status.
+
+export const McpPersonalityServersInputSchema = z.object({
+  personalityId: z.string().min(1),
+});
+
+export const McpPersonalityServersOutputSchema = z.object({
+  servers: z.array(
+    z.object({
+      name: z.string(),
+      transport: z.string().optional(),
+      url: z.string().optional(),
+      auth_status: z.enum(['authorized', 'expired', 'missing']),
     }),
   ),
 });

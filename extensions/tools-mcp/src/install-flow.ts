@@ -34,6 +34,7 @@
 // sessions and expired terminal sessions are dropped from the map.
 
 import { randomBytes } from 'node:crypto';
+import { PersonalityScopedSecrets } from '@ethosagent/storage-fs';
 import type { SecretsResolver } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 import type { McpManager, McpServerConfig, McpServerInfo } from './index';
@@ -57,6 +58,8 @@ export type InstallFlowStatus = 'pending' | 'connected' | 'error' | 'expired';
 export interface StartOptions {
   mcpUrl: string;
   name?: string;
+  /** Personality to scope OAuth tokens to. */
+  personalityId: string;
   /**
    * Per-flow OAuth `redirect_uri`. When set, it overrides the
    * constructor-level default and is persisted on the pending session so
@@ -110,6 +113,7 @@ interface PendingSession {
   state: string;
   mcpUrl: string;
   serverName: string;
+  personalityId: string;
   /**
    * The exact `redirect_uri` that was registered with DCR and embedded in
    * the authorization URL for this flow. `complete()` MUST pass this same
@@ -316,6 +320,7 @@ export class McpInstallFlow {
       state,
       mcpUrl: opts.mcpUrl,
       serverName,
+      personalityId: opts.personalityId,
       redirectUri,
       codeVerifier,
       clientId: dcrResult.client_id,
@@ -396,10 +401,11 @@ export class McpInstallFlow {
 
     // Step 2 — persist tokens. Rollback on failure: best-effort delete of any
     // tokens that landed before the throw, then drop placeholder + session.
+    const scopedSecrets = new PersonalityScopedSecrets(this.secrets, session.personalityId);
     try {
-      await storeTokens(session.serverName, tokens, this.secrets);
+      await storeTokens(session.serverName, tokens, scopedSecrets);
     } catch (err) {
-      await this.bestEffortDeleteTokens(session.serverName);
+      await this.bestEffortDeleteTokens(session.serverName, session.personalityId);
       session.status = 'error';
       session.connectedAt = this.now();
       session.errorReason = err instanceof Error ? err.message : String(err);
@@ -414,7 +420,7 @@ export class McpInstallFlow {
       const serverConfig = buildPersistedConfigFromSession(session);
       await this.mcpManager.addServer(serverConfig);
     } catch (err) {
-      await this.bestEffortDeleteTokens(session.serverName);
+      await this.bestEffortDeleteTokens(session.serverName, session.personalityId);
       session.status = 'error';
       session.connectedAt = this.now();
       session.errorReason = err instanceof Error ? err.message : String(err);
@@ -563,19 +569,20 @@ export class McpInstallFlow {
    * (access / refresh / expires_at). Used when token storage partially
    * succeeded or when we need to revoke after a downstream failure.
    */
-  private async bestEffortDeleteTokens(serverName: string): Promise<void> {
+  private async bestEffortDeleteTokens(serverName: string, personalityId: string): Promise<void> {
+    const secrets = new PersonalityScopedSecrets(this.secrets, personalityId);
     try {
-      await this.secrets.delete(`mcp/${serverName}/access_token`);
+      await secrets.delete(`mcp/${serverName}/access_token`);
     } catch {
       /* best-effort */
     }
     try {
-      await this.secrets.delete(`mcp/${serverName}/refresh_token`);
+      await secrets.delete(`mcp/${serverName}/refresh_token`);
     } catch {
       /* best-effort */
     }
     try {
-      await this.secrets.delete(`mcp/${serverName}/expires_at`);
+      await secrets.delete(`mcp/${serverName}/expires_at`);
     } catch {
       /* best-effort */
     }

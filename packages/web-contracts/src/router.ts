@@ -23,6 +23,8 @@ import {
   McpCompleteOutputSchema,
   McpDeleteInputSchema,
   McpListOutputSchema,
+  McpPersonalityServersInputSchema,
+  McpPersonalityServersOutputSchema,
   McpPolicySchema,
   McpReconnectInputSchema,
   McpServerInfoSchema,
@@ -688,6 +690,10 @@ const mcp = {
   /** List the bare tool names a given MCP server exposes, for the
    *  per-server tool checklist in the personality editor. */
   serverTools: oc.input(McpServerToolsInputSchema).output(McpServerToolsOutputSchema),
+  /** List MCP servers attached to a personality with their OAuth auth status. */
+  personalityServers: oc
+    .input(McpPersonalityServersInputSchema)
+    .output(McpPersonalityServersOutputSchema),
 };
 
 // ---------------------------------------------------------------------------

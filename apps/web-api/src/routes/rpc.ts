@@ -88,6 +88,29 @@ export function rpcRoutes(opts: RpcRoutesOptions) {
     // in that case.
     const mcpRequestOrigin = deriveMcpRequestOrigin(c.req.raw, opts.webBaseUrl);
 
+    // Parse the pending cookie: `<state>.<personalityId>`. The cookie was
+    // set by mcp.start and carries both values so complete/status can
+    // recover the personalityId without trusting the request body.
+    let mcpPendingState: string | undefined;
+    let mcpPendingPersonalityId: string | undefined;
+    if (mcpPending) {
+      const dotIdx = mcpPending.indexOf('.');
+      if (dotIdx !== -1) {
+        mcpPendingState = mcpPending.slice(0, dotIdx);
+        mcpPendingPersonalityId = mcpPending.slice(dotIdx + 1);
+      } else {
+        mcpPendingState = mcpPending;
+      }
+    }
+
+    // For mcp.start, clone the request so we can read personalityId from
+    // the body after the handler consumes the original.
+    const path = new URL(c.req.url).pathname;
+    let startReqClone: Request | undefined;
+    if (path === mcpRpcPath('start')) {
+      startReqClone = c.req.raw.clone();
+    }
+
     // Thread the cookie value + derived redirect URI into the service
     // context as enumerable own properties. oRPC interceptors spread the
     // context (`{...options.context, ...next.context}`), so prototype-only
@@ -96,11 +119,12 @@ export function rpcRoutes(opts: RpcRoutesOptions) {
     // these as framework-internal so namespace code knows not to touch
     // them outside the dedicated helpers in `rpc/mcp.ts`.
     const context: ServiceContainer =
-      mcpPending || mcpRequestOrigin
+      mcpPendingState || mcpRequestOrigin || mcpPendingPersonalityId
         ? Object.assign(
             Object.create(null) as ServiceContainer,
             opts.services,
-            mcpPending ? { _mcpPendingState: mcpPending } : {},
+            mcpPendingState ? { _mcpPendingState: mcpPendingState } : {},
+            mcpPendingPersonalityId ? { _mcpPendingPersonalityId: mcpPendingPersonalityId } : {},
             mcpRequestOrigin ? { _mcpRequestOrigin: mcpRequestOrigin } : {},
           )
         : opts.services;
@@ -112,21 +136,33 @@ export function rpcRoutes(opts: RpcRoutesOptions) {
 
     if (!matched || !response) return c.text('Not Found', 404);
 
-    const path = new URL(c.req.url).pathname;
-
-    // mcp.start — set cookie with the state value returned by the handler.
+    // mcp.start — set cookie with `<state>.<personalityId>` so
+    // complete/status can recover both from the HttpOnly cookie.
     if (path === mcpRpcPath('start') && response.ok) {
       try {
         const cloned = response.clone();
         const body = await cloned.json();
         const state: unknown = body?.state;
         if (body?.ok === true && typeof state === 'string') {
+          // Read personalityId from the cloned request body.
+          let reqPersonalityId = '';
+          if (startReqClone) {
+            try {
+              const reqBody = await startReqClone.json();
+              if (typeof reqBody?.personalityId === 'string') {
+                reqPersonalityId = reqBody.personalityId;
+              }
+            } catch {
+              /* best-effort */
+            }
+          }
+          const cookieValue = reqPersonalityId ? `${state}.${reqPersonalityId}` : String(state);
           const headers = new Headers(response.headers);
           const secure = c.req.url.startsWith('https');
           headers.append(
             'Set-Cookie',
             [
-              `${MCP_PENDING_COOKIE}=${state}`,
+              `${MCP_PENDING_COOKIE}=${cookieValue}`,
               'HttpOnly',
               secure ? 'Secure' : '',
               'SameSite=Strict',
