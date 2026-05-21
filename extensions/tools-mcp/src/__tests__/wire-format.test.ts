@@ -519,7 +519,9 @@ describe('Wire format conformance (Phases 2.3-2.7)', () => {
         created_via: 'ui',
       };
 
-      expect(config.auth?.dcr?.registration_endpoint).toBe('https://linear.app/api/oauth/register');
+      expect(
+        config.auth?.type === 'oauth2' ? config.auth.dcr?.registration_endpoint : undefined,
+      ).toBe('https://linear.app/api/oauth/register');
       expect(config.created_via).toBe('ui');
     });
 

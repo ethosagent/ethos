@@ -913,6 +913,75 @@ function WizardPluginsTab({
 }
 
 // ---------------------------------------------------------------------------
+// MCP Tokens — set / remove bearer tokens for attached MCP servers
+// ---------------------------------------------------------------------------
+
+function McpTokenRow({ personalityId, server }: { personalityId: string; server: string }) {
+  const [token, setToken] = useState('');
+  const { message } = AntApp.useApp();
+
+  const setMutation = useMutation({
+    mutationFn: () => rpc.personalities.mcpSetToken({ personalityId, server, token }),
+    onSuccess: () => {
+      message.success(`Token saved for ${server}`);
+      setToken('');
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => rpc.personalities.mcpDeleteToken({ personalityId, server }),
+    onSuccess: () => message.success(`Token removed for ${server}`),
+    onError: (err: Error) => message.error(err.message),
+  });
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <Typography.Text strong style={{ minWidth: 120 }}>
+        {server}
+      </Typography.Text>
+      <Input.Password
+        placeholder="Bearer token"
+        value={token}
+        onChange={(e) => setToken(e.target.value)}
+        style={{ flex: 1 }}
+      />
+      <Button
+        type="primary"
+        size="small"
+        disabled={!token}
+        loading={setMutation.isPending}
+        onClick={() => setMutation.mutate()}
+      >
+        Save
+      </Button>
+      <Button
+        danger
+        size="small"
+        loading={deleteMutation.isPending}
+        onClick={() => deleteMutation.mutate()}
+      >
+        Remove
+      </Button>
+    </div>
+  );
+}
+
+function McpTokensPanel({ personalityId, servers }: { personalityId: string; servers: string[] }) {
+  if (servers.length === 0) {
+    return <Typography.Text type="secondary">No MCP servers attached.</Typography.Text>;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {servers.map((server) => (
+        <McpTokenRow key={server} personalityId={personalityId} server={server} />
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Edit modal — three tabs (Identity / Toolset / Config) + Skills sub-surface
 // ---------------------------------------------------------------------------
 
@@ -982,6 +1051,13 @@ export function EditModal({ id, onClose }: { id: string; onClose: () => void }) 
               label: 'Plugins',
               children: (
                 <PluginsAttachPanel id={id} initialPlugins={data.personality.plugins ?? []} />
+              ),
+            },
+            {
+              key: 'mcpTokens',
+              label: 'MCP Tokens',
+              children: (
+                <McpTokensPanel personalityId={id} servers={data.personality.mcp_servers ?? []} />
               ),
             },
           ]}

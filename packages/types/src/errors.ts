@@ -46,6 +46,9 @@ export type EthosErrorCode =
   | 'CRON_PERSONALITY_MISSING'
   // MCP
   | 'MCP_TRANSPORT_INVALID'
+  | 'MCP_SERVER_NOT_FOUND'
+  // Secrets
+  | 'SECRETS_UNAVAILABLE'
   // Network / registry
   | 'REGISTRY_FETCH_FAILED'
   | 'NETWORK_ERROR'

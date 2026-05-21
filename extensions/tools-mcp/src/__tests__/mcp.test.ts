@@ -3,7 +3,7 @@ import { Server } from '@modelcontextprotocol/sdk/server';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it } from 'vitest';
 import type { McpServerConfig } from '../index';
-import { McpClient, McpManager } from '../index';
+import { McpClient, McpManager, mcpTokenSecretRef } from '../index';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -308,6 +308,42 @@ describe('McpServerConfig', () => {
         introspection_endpoint: 'http://auth/introspect',
       },
     };
-    expect(config.auth?.introspection_endpoint).toBe('http://auth/introspect');
+    expect(config.auth?.type === 'oauth2' ? config.auth.introspection_endpoint : undefined).toBe(
+      'http://auth/introspect',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bearer auth tests
+// ---------------------------------------------------------------------------
+
+describe('bearer auth', () => {
+  it('constructor rejects Authorization header', () => {
+    const config: McpServerConfig = {
+      name: 'test',
+      transport: 'stdio',
+      command: 'unused',
+      headers: { Authorization: 'Bearer token' },
+    };
+    expect(() => new McpClient(config)).toThrow(
+      'McpServerConfig.headers must not contain Bearer tokens',
+    );
+  });
+
+  it('constructor rejects authorization header (lowercase)', () => {
+    const config: McpServerConfig = {
+      name: 'test',
+      transport: 'stdio',
+      command: 'unused',
+      headers: { authorization: 'Bearer token' },
+    };
+    expect(() => new McpClient(config)).toThrow(
+      'McpServerConfig.headers must not contain Bearer tokens',
+    );
+  });
+
+  it('mcpTokenSecretRef returns correct key', () => {
+    expect(mcpTokenSecretRef('my-server')).toBe('mcp/my-server/access_token');
   });
 });

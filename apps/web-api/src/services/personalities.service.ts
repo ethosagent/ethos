@@ -7,6 +7,7 @@ import {
   type UpdatePersonalityPatch,
 } from '@ethosagent/personalities';
 import type { PersonalitySkillRecord, SkillsLibrary } from '@ethosagent/skills';
+import { mcpTokenSecretRef } from '@ethosagent/tools-mcp';
 import { EthosError } from '@ethosagent/types';
 import type { McpPolicy, Personality, PersonalitySkill } from '@ethosagent/web-contracts';
 
@@ -18,6 +19,7 @@ import type { McpPolicy, Personality, PersonalitySkill } from '@ethosagent/web-c
 export interface PersonalitiesServiceOptions {
   personalities: FilePersonalityRegistry;
   library: SkillsLibrary;
+  secrets?: import('@ethosagent/types').SecretsResolver;
 }
 
 export class PersonalitiesService {
@@ -133,6 +135,50 @@ export class PersonalitiesService {
     this.requirePersonality(personalityId);
     const records = await this.opts.library.importGlobalIntoPersonality(personalityId, skillIds);
     return { imported: records.map(toWirePersonalitySkill) };
+  }
+
+  async mcpSetToken(personalityId: string, server: string, token: string): Promise<void> {
+    this.requirePersonality(personalityId);
+    const described = this.opts.personalities.describe(personalityId);
+    if (!described || !(described.config.mcp_servers ?? []).includes(server)) {
+      throw new EthosError({
+        code: 'MCP_SERVER_NOT_FOUND',
+        cause: `Server "${server}" is not attached to personality "${personalityId}".`,
+        action: 'Attach the server first via personalities.update, then set the token.',
+      });
+    }
+    if (!this.opts.secrets) {
+      throw new EthosError({
+        code: 'SECRETS_UNAVAILABLE',
+        cause: 'No secrets resolver configured',
+        action: 'Configure secrets in web-api startup.',
+      });
+    }
+    const { PersonalityScopedSecrets } = await import('@ethosagent/storage-fs');
+    const scoped = new PersonalityScopedSecrets(this.opts.secrets, personalityId);
+    await scoped.set(mcpTokenSecretRef(server), token);
+  }
+
+  async mcpDeleteToken(personalityId: string, server: string): Promise<void> {
+    this.requirePersonality(personalityId);
+    const described = this.opts.personalities.describe(personalityId);
+    if (!described || !(described.config.mcp_servers ?? []).includes(server)) {
+      throw new EthosError({
+        code: 'MCP_SERVER_NOT_FOUND',
+        cause: `Server "${server}" is not attached to personality "${personalityId}".`,
+        action: 'Attach the server first via personalities.update, then set the token.',
+      });
+    }
+    if (!this.opts.secrets) {
+      throw new EthosError({
+        code: 'SECRETS_UNAVAILABLE',
+        cause: 'No secrets resolver configured',
+        action: 'Configure secrets in web-api startup.',
+      });
+    }
+    const { PersonalityScopedSecrets } = await import('@ethosagent/storage-fs');
+    const scoped = new PersonalityScopedSecrets(this.opts.secrets, personalityId);
+    await scoped.delete(mcpTokenSecretRef(server));
   }
 
   private requirePersonality(id: string): void {

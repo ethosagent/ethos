@@ -102,4 +102,14 @@ export const personalitiesRouter = {
   skillsImportGlobal: os.personalities.skillsImportGlobal.handler(({ input, context }) =>
     context.personalities.skillsImportGlobal(input.personalityId, input.skillIds),
   ),
+
+  mcpSetToken: os.personalities.mcpSetToken.handler(async ({ input, context }) => {
+    await context.personalities.mcpSetToken(input.personalityId, input.server, input.token);
+    return { ok: true as const };
+  }),
+
+  mcpDeleteToken: os.personalities.mcpDeleteToken.handler(async ({ input, context }) => {
+    await context.personalities.mcpDeleteToken(input.personalityId, input.server);
+    return { ok: true as const };
+  }),
 };

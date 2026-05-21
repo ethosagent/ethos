@@ -112,21 +112,23 @@ export interface McpServerConfig {
   keepaliveSeconds?: number;
   /** Timeout in ms for reconnect attempts. Default 10_000. */
   connectTimeoutMs?: number;
-  /** OAuth 2.1 configuration for servers that require authorization. */
-  auth?: {
-    type: 'oauth2';
-    authorization_endpoint: string;
-    token_endpoint: string;
-    client_id: string;
-    scopes?: string[];
-    revocation_endpoint?: string;
-    introspection_endpoint?: string;
-    dcr?: {
-      registration_endpoint: string;
-      client_id_issued_at?: number;
-      registration_client_uri?: string;
-    };
-  };
+  /** Auth configuration for servers that require authorization. */
+  auth?:
+    | {
+        type: 'oauth2';
+        authorization_endpoint: string;
+        token_endpoint: string;
+        client_id: string;
+        scopes?: string[];
+        revocation_endpoint?: string;
+        introspection_endpoint?: string;
+        dcr?: {
+          registration_endpoint: string;
+          client_id_issued_at?: number;
+          registration_client_uri?: string;
+        };
+      }
+    | { type: 'bearer' };
   created_via?: 'cli' | 'ui';
 }
 
@@ -205,6 +207,17 @@ export class McpClient {
   enableScopeProbe?: boolean;
 
   constructor(config: McpServerConfig, opts?: { logger?: Logger; secrets?: SecretsResolver }) {
+    if (config.headers) {
+      for (const [key, value] of Object.entries(config.headers)) {
+        if (key.toLowerCase() === 'authorization' && /^\s*bearer\s/i.test(value)) {
+          throw new Error(
+            `McpServerConfig.headers must not contain Bearer tokens.\n` +
+              `Use auth: { type: 'bearer' } and store the token via:\n` +
+              `  echo "<token>" | ethos personality mcp <id> --token-stdin ${config.name}`,
+          );
+        }
+      }
+    }
     this._config = config;
     this._sdk = new Client({ name: 'ethos', version: '1.0.0' }, { capabilities: {} });
     this._logger = opts?.logger ?? noopLogger;
@@ -362,6 +375,20 @@ export class McpClient {
         );
         headers.Authorization = `Bearer ${token}`;
       }
+      if (this._config.auth?.type === 'bearer') {
+        if (!this._secrets) {
+          throw new Error(
+            `MCP server '${this._config.name}' requires bearer auth but no secrets resolver is configured.`,
+          );
+        }
+        const token = await this._secrets.get(mcpTokenSecretRef(this._config.name));
+        if (!token) {
+          throw new Error(
+            `MCP server '${this._config.name}' requires a bearer token. Set it via: echo "<token>" | ethos personality mcp <id> --token-stdin ${this._config.name}`,
+          );
+        }
+        headers.Authorization = `Bearer ${token}`;
+      }
       // SSRF gate: validate initial URL + disable redirect following so the SDK fetch
       // cannot be redirected to a private/metadata endpoint after passing the initial check.
       // allowLocalhost permits developer-local servers while still blocking cloud metadata.
@@ -389,6 +416,20 @@ export class McpClient {
           this._secrets,
           'ui',
         );
+        headers.Authorization = `Bearer ${token}`;
+      }
+      if (this._config.auth?.type === 'bearer') {
+        if (!this._secrets) {
+          throw new Error(
+            `MCP server '${this._config.name}' requires bearer auth but no secrets resolver is configured.`,
+          );
+        }
+        const token = await this._secrets.get(mcpTokenSecretRef(this._config.name));
+        if (!token) {
+          throw new Error(
+            `MCP server '${this._config.name}' requires a bearer token. Set it via: echo "<token>" | ethos personality mcp <id> --token-stdin ${this._config.name}`,
+          );
+        }
         headers.Authorization = `Bearer ${token}`;
       }
       // SSRF gate: validate initial URL + disable redirect following so the SDK fetch
@@ -563,6 +604,15 @@ export class McpClient {
         } catch {
           // Refresh failed — fall through to error
         }
+      }
+
+      // Bearer 401 — no refresh possible, surface actionable message
+      if (allowRetry && this._is401Error(msg) && this._config.auth?.type === 'bearer') {
+        return {
+          ok: false,
+          error: `MCP server '${this._config.name}' returned 401. Re-set the token: echo "<token>" | ethos personality mcp <id> --token-stdin ${this._config.name}`,
+          code: 'not_available',
+        };
       }
 
       if (allowRetry && this._isConnectionError(msg)) {
@@ -1240,6 +1290,14 @@ export async function loadMcpConfig(
   } catch {
     return [];
   }
+}
+
+// ---------------------------------------------------------------------------
+// Token secret ref helper
+// ---------------------------------------------------------------------------
+
+export function mcpTokenSecretRef(serverName: string): string {
+  return `mcp/${serverName}/access_token`;
 }
 
 // Re-export schema rewrite helper for external use / testing

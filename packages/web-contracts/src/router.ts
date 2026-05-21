@@ -258,7 +258,21 @@ const PersonalitySkillsImportInput = z.object({
 });
 const PersonalitySkillsImportOutput = z.object({ imported: z.array(PersonalitySkillSchema) });
 
-/** @stable v1 — read-only at v1 */
+// Per-personality MCP bearer-token management (headless gap 4).
+const PersonalityMcpSetTokenInput = z.object({
+  personalityId: z.string().min(1),
+  server: z.string().min(1),
+  token: z.string().min(1),
+});
+const PersonalityMcpSetTokenOutput = z.object({ ok: z.literal(true) });
+
+const PersonalityMcpDeleteTokenInput = z.object({
+  personalityId: z.string().min(1),
+  server: z.string().min(1),
+});
+const PersonalityMcpDeleteTokenOutput = z.object({ ok: z.literal(true) });
+
+/** @stable v1 */
 const personalities = {
   list: oc.input(PersonalityListInput).output(PersonalityListOutput),
   get: oc.input(PersonalityGetInput).output(PersonalityGetOutput),
@@ -273,6 +287,8 @@ const personalities = {
   skillsUpdate: oc.input(PersonalitySkillsUpdateInput).output(PersonalitySkillsUpdateOutput),
   skillsDelete: oc.input(PersonalitySkillsDeleteInput).output(PersonalityOkOutput),
   skillsImportGlobal: oc.input(PersonalitySkillsImportInput).output(PersonalitySkillsImportOutput),
+  mcpSetToken: oc.input(PersonalityMcpSetTokenInput).output(PersonalityMcpSetTokenOutput),
+  mcpDeleteToken: oc.input(PersonalityMcpDeleteTokenInput).output(PersonalityMcpDeleteTokenOutput),
 };
 
 // ---------------------------------------------------------------------------

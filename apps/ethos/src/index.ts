@@ -311,9 +311,12 @@ try {
         await runPersonalityDuplicate(args.slice(2));
       } else if (sub === 'show') {
         await runPersonalityShow(args.slice(2));
+      } else if (sub === 'import') {
+        const { runPersonalityImport } = await import('./commands/backup');
+        await runPersonalityImport(args.slice(2));
       } else {
         console.log(
-          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | set <id> | duplicate <src> <dst> | mcp <id> [--attach <name> | --detach <name>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
+          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | set <id> | duplicate <src> <dst> | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
         );
       }
       break;
@@ -709,18 +712,29 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// ethos personality mcp <id> [--attach <name> | --detach <name>]
+// ethos personality mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>]
 // ---------------------------------------------------------------------------
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString('utf8').trim();
+}
 
 async function runPersonalityMcp(argv: string[]): Promise<void> {
   const id = argv[0];
   if (!id) {
-    console.log('Usage: ethos personality mcp <id> [--attach <name> | --detach <name>]');
+    console.log(
+      'Usage: ethos personality mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>]',
+    );
     return;
   }
   const flags = parseCliFlags(argv.slice(1));
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
-  const { loadMcpConfig } = await import('@ethosagent/tools-mcp');
+  const { loadMcpConfig, mcpTokenSecretRef } = await import('@ethosagent/tools-mcp');
+  const { PersonalityScopedSecrets } = await import('@ethosagent/storage-fs');
   const { ethosDir } = await import('./config');
   const storage = getStorage();
   const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: ethosDir() });
@@ -735,6 +749,33 @@ async function runPersonalityMcp(argv: string[]): Promise<void> {
   const allServers = await loadMcpConfig(storage);
   const attached = new Set(personality.mcp_servers ?? []);
 
+  // Mode A: --attach <server> --token-stdin — attach + store token from stdin
+  if (flags.attach && argv.includes('--token-stdin')) {
+    const token = await readStdin();
+    if (!token) {
+      console.error('No token received on stdin.');
+      process.exitCode = 1;
+      return;
+    }
+
+    attached.add(flags.attach);
+    await reg.update(id, { mcp_servers: [...attached] });
+
+    const secrets = await getSecretsResolver();
+    const scoped = new PersonalityScopedSecrets(secrets, id);
+    await scoped.set(mcpTokenSecretRef(flags.attach), token);
+
+    const serverCfg = allServers.find((s) => s.name === flags.attach);
+    if (serverCfg && (serverCfg.auth?.type as string) !== 'bearer') {
+      console.warn(
+        `⚠ Server "${flags.attach}" auth is not { type: 'bearer' }. Token stored but will not be used until auth is updated in mcp.json.`,
+      );
+    }
+
+    console.log(`✓ Token stored for server "${flags.attach}" on personality "${id}"`);
+    return;
+  }
+
   if (flags.attach) {
     attached.add(flags.attach);
     await reg.update(id, { mcp_servers: [...attached] });
@@ -748,6 +789,39 @@ async function runPersonalityMcp(argv: string[]): Promise<void> {
     return;
   }
 
+  // Mode B: --token-stdin <server> — standalone token update from stdin
+  if (argv.includes('--token-stdin')) {
+    const tokenStdinIdx = argv.indexOf('--token-stdin');
+    const serverName = argv[tokenStdinIdx + 1];
+    if (!serverName || serverName.startsWith('--')) {
+      console.error('Usage: echo "<token>" | ethos personality mcp <id> --token-stdin <server>');
+      process.exitCode = 1;
+      return;
+    }
+
+    const token = await readStdin();
+    if (!token) {
+      console.error('No token received on stdin.');
+      process.exitCode = 1;
+      return;
+    }
+
+    const secrets = await getSecretsResolver();
+    const scoped = new PersonalityScopedSecrets(secrets, id);
+    await scoped.set(mcpTokenSecretRef(serverName), token);
+
+    const serverCfg = allServers.find((s) => s.name === serverName);
+    if (serverCfg && (serverCfg.auth?.type as string) !== 'bearer') {
+      console.warn(
+        `⚠ Server "${serverName}" auth is not { type: 'bearer' }. Token stored but will not be used until auth is updated in mcp.json.`,
+      );
+    }
+
+    console.log(`✓ Token stored for server "${serverName}" on personality "${id}"`);
+    return;
+  }
+
+  // Default: list servers with attachment status
   console.log(`\nMCP servers for ${id}:\n`);
   if (allServers.length === 0) {
     console.log('  No MCP servers configured in ~/.ethos/mcp.json');
