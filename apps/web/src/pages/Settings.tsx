@@ -1,6 +1,7 @@
 import { BUILTIN_SKIN_NAMES, BUILTIN_SKINS } from '@ethosagent/design-tokens';
 import type { ApiKeyMetadata, ApiKeyScope } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { FormInstance } from 'antd';
 import {
   App as AntApp,
   Button,
@@ -20,15 +21,15 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { rpc } from '../rpc';
 
 // Settings tab — read/write surface for ~/.ethos/config.yaml.
 //
 // Two visibility modes:
-//   • Default   — provider chain, personality, memory mode.
-//   • Advanced  — adds base URL per provider, modelRouting record.
+//   • Default   — provider, personality, memory mode.
+//   • Advanced  — adds base URL, modelRouting record.
 //
 // The raw API key never crosses the wire on read; the server returns
 // `apiKeyPreview` (e.g. `sk-…abc1`) so users can confirm "which key" is
@@ -36,275 +37,73 @@ import { rpc } from '../rpc';
 // a fresh value into the field.
 
 // ---------------------------------------------------------------------------
-// Provider Chain Editor types
+// Test Connection Button
 // ---------------------------------------------------------------------------
 
-interface ProviderEntry {
-  id: string;
-  provider: string;
-  model: string;
-  apiKey: string;
-  apiKeyPreview: string;
-  baseUrl: string;
-  testStatus: 'idle' | 'testing' | 'success' | 'error';
-  testError?: string;
-}
+function TestConnectionButton({ form }: { form: FormInstance<FormShape> }) {
+  const [status, setStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [error, setError] = useState<string>();
 
-const FALLBACK_CHAIN_KEY = '__fallbackChain';
-
-let nextEntryId = 0;
-function makeEntryId(): string {
-  nextEntryId += 1;
-  return `pe_${Date.now()}_${nextEntryId}`;
-}
-
-function emptyEntry(): ProviderEntry {
-  return {
-    id: makeEntryId(),
-    provider: '',
-    model: '',
-    apiKey: '',
-    apiKeyPreview: '',
-    baseUrl: '',
-    testStatus: 'idle',
-  };
-}
-
-/** Parse fallback chain from modelRouting.__fallbackChain JSON string. */
-function parseFallbackChain(routing: Record<string, string>): ProviderEntry[] {
-  const raw = routing[FALLBACK_CHAIN_KEY];
-  if (!raw) return [];
-  try {
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return [];
-    return arr.map((entry: Record<string, string>) => ({
-      id: makeEntryId(),
-      provider: entry.provider ?? '',
-      model: entry.model ?? '',
-      apiKey: '',
-      apiKeyPreview: entry.apiKeyPreview ?? '',
-      baseUrl: entry.baseUrl ?? '',
-      testStatus: 'idle' as const,
-    }));
-  } catch {
-    return [];
-  }
-}
-
-/** Serialize fallback entries (excluding primary) to a JSON string for modelRouting. */
-function serializeFallbackChain(
-  entries: ProviderEntry[],
-): { provider: string; model: string; apiKeyPreview: string; baseUrl?: string }[] {
-  return entries.map((e) => ({
-    provider: e.provider,
-    model: e.model,
-    apiKeyPreview: e.apiKeyPreview,
-    ...(e.baseUrl ? { baseUrl: e.baseUrl } : {}),
-  }));
-}
-
-// ---------------------------------------------------------------------------
-// Provider Chain Editor component
-// ---------------------------------------------------------------------------
-
-function ProviderChainEditor({
-  chain,
-  onChange,
-  showAdvanced,
-}: {
-  chain: ProviderEntry[];
-  onChange: (chain: ProviderEntry[]) => void;
-  showAdvanced: boolean;
-}) {
-  const updateEntry = useCallback(
-    (id: string, patch: Partial<ProviderEntry>) => {
-      onChange(chain.map((e) => (e.id === id ? { ...e, ...patch } : e)));
-    },
-    [chain, onChange],
-  );
-
-  const removeEntry = useCallback(
-    (id: string) => {
-      onChange(chain.filter((e) => e.id !== id));
-    },
-    [chain, onChange],
-  );
-
-  const moveEntry = useCallback(
-    (index: number, direction: 'up' | 'down') => {
-      const target = direction === 'up' ? index - 1 : index + 1;
-      if (target < 0 || target >= chain.length) return;
-      const next = [...chain];
-      const temp = next[index];
-      next[index] = next[target];
-      next[target] = temp;
-      onChange(next);
-    },
-    [chain, onChange],
-  );
-
-  const addFallback = useCallback(() => {
-    onChange([...chain, emptyEntry()]);
-  }, [chain, onChange]);
-
-  const testConnection = useCallback(
-    async (id: string) => {
-      const entry = chain.find((e) => e.id === id);
-      if (!entry?.provider) return;
-      updateEntry(id, { testStatus: 'testing', testError: undefined });
-      try {
-        const result = await rpc.onboarding.validateProvider({
-          provider: entry.provider as
-            | 'anthropic'
-            | 'openai'
-            | 'openrouter'
-            | 'openai-compat'
-            | 'ollama'
-            | 'azure',
-          apiKey: entry.apiKey || 'existing-key',
-          ...(entry.baseUrl ? { baseUrl: entry.baseUrl } : {}),
-        });
-        if (result.ok) {
-          updateEntry(id, { testStatus: 'success' });
-        } else {
-          updateEntry(id, { testStatus: 'error', testError: result.error ?? 'Validation failed' });
-        }
-      } catch (err) {
-        updateEntry(id, { testStatus: 'error', testError: (err as Error).message });
+  const handleTest = async () => {
+    const provider = form.getFieldValue('provider');
+    const apiKey = form.getFieldValue('apiKey');
+    if (!provider || !apiKey) return;
+    setStatus('testing');
+    try {
+      const result = await rpc.onboarding.validateProvider({
+        provider: provider as
+          | 'anthropic'
+          | 'openai'
+          | 'openrouter'
+          | 'openai-compat'
+          | 'ollama'
+          | 'azure',
+        apiKey,
+        ...(form.getFieldValue('baseUrl') ? { baseUrl: form.getFieldValue('baseUrl') } : {}),
+      });
+      if (result.ok) {
+        setStatus('success');
+        setError(undefined);
+      } else {
+        setStatus('error');
+        setError(result.error ?? 'Validation failed');
       }
-    },
-    [chain, updateEntry],
-  );
+    } catch (err) {
+      setStatus('error');
+      setError((err as Error).message);
+    }
+  };
+
+  const apiKey = Form.useWatch('apiKey', form);
+  const hasKey = !!apiKey && apiKey.length > 0;
 
   return (
-    <div className="provider-chain">
-      {/* Chain diagram — always visible */}
-      {chain.length > 0 && (
-        <div className="provider-chain-diagram">
-          {chain.map((entry, i) => (
-            <span key={entry.id} style={{ display: 'inline-flex', alignItems: 'center' }}>
-              <span className="provider-chain-diagram-pill">
-                {entry.provider || 'unset'}
-                {entry.model ? ` / ${entry.model}` : ''}
-              </span>
-              {i < chain.length - 1 && <span className="provider-chain-diagram-arrow">{'→'}</span>}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Provider rows */}
-      {chain.map((entry, index) => (
-        <div
-          key={entry.id}
-          className={`provider-chain-row${index === 0 ? ' provider-chain-row-primary' : ''}`}
-        >
-          <div className="provider-chain-row-header">
-            <Typography.Text strong style={{ fontSize: 13 }}>
-              {index === 0 ? 'Primary' : `Fallback ${index}`}
-            </Typography.Text>
-            <div className="provider-chain-row-actions">
-              <Tooltip title="Move up">
-                <Button size="small" disabled={index === 0} onClick={() => moveEntry(index, 'up')}>
-                  {'↑'}
-                </Button>
-              </Tooltip>
-              <Tooltip title="Move down">
-                <Button
-                  size="small"
-                  disabled={index === chain.length - 1}
-                  onClick={() => moveEntry(index, 'down')}
-                >
-                  {'↓'}
-                </Button>
-              </Tooltip>
-              <Button
-                size="small"
-                onClick={() => testConnection(entry.id)}
-                loading={entry.testStatus === 'testing'}
-              >
-                Test
-              </Button>
-              {index > 0 && (
-                <Button size="small" danger onClick={() => removeEntry(entry.id)}>
-                  Remove
-                </Button>
-              )}
-            </div>
-          </div>
-
-          <div className="provider-chain-row-fields">
-            <div>
-              <span className="provider-chain-field-label">Provider</span>
-              <Input
-                size="small"
-                placeholder="anthropic | openrouter | openai-compat | ollama"
-                value={entry.provider}
-                onChange={(e) => updateEntry(entry.id, { provider: e.target.value })}
-              />
-            </div>
-            <div>
-              <span className="provider-chain-field-label">Model</span>
-              <Input
-                size="small"
-                placeholder="e.g. claude-opus-4-7"
-                value={entry.model}
-                onChange={(e) => updateEntry(entry.id, { model: e.target.value })}
-              />
-            </div>
-            <div>
-              <span className="provider-chain-field-label">API key</span>
-              <Input.Password
-                size="small"
-                autoComplete="off"
-                placeholder={entry.apiKeyPreview || 'paste new key'}
-                value={entry.apiKey}
-                onChange={(e) => updateEntry(entry.id, { apiKey: e.target.value })}
-              />
-              {entry.apiKeyPreview && !entry.apiKey && (
-                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                  Active: {entry.apiKeyPreview}
-                </Typography.Text>
-              )}
-            </div>
-            {showAdvanced && (
-              <div>
-                <span className="provider-chain-field-label">Base URL</span>
-                <Input
-                  size="small"
-                  placeholder="https://openrouter.ai/api/v1"
-                  value={entry.baseUrl}
-                  onChange={(e) => updateEntry(entry.id, { baseUrl: e.target.value })}
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Test result */}
-          <div className="provider-chain-test-result">
-            {entry.testStatus === 'success' && <Tag color="success">Connected</Tag>}
-            {entry.testStatus === 'error' && (
-              <Tag color="error">{entry.testError ?? 'Connection failed'}</Tag>
-            )}
-          </div>
-        </div>
-      ))}
-
-      <Button type="dashed" className="provider-chain-add" onClick={addFallback}>
-        + Add fallback provider
-      </Button>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <Tooltip
+        title={hasKey ? 'Test connection with the new API key' : 'Enter a new API key to test'}
+      >
+        <Button size="small" onClick={handleTest} loading={status === 'testing'} disabled={!hasKey}>
+          Test
+        </Button>
+      </Tooltip>
+      {status === 'success' && <Tag color="success">Connected</Tag>}
+      {status === 'error' && <Tag color="error">{error ?? 'Failed'}</Tag>}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Form shape (non-chain fields)
+// Form shape
 // ---------------------------------------------------------------------------
 
 interface FormShape {
   personality: string;
   memory: 'markdown' | 'vector';
   skin: string;
+  provider: string;
+  model: string;
+  apiKey: string;
+  baseUrl: string;
 }
 
 export function Settings() {
@@ -313,8 +112,6 @@ export function Settings() {
   const navigate = useNavigate();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [form] = Form.useForm<FormShape>();
-  const [providerChain, setProviderChain] = useState<ProviderEntry[]>([]);
-  const [chainInitialized, setChainInitialized] = useState(false);
 
   const configQuery = useQuery({
     queryKey: ['config'],
@@ -326,38 +123,27 @@ export function Settings() {
     queryFn: () => rpc.personalities.list({}),
   });
 
-  // Hydrate form + provider chain once config arrives.
+  // Hydrate form whenever config data arrives or refreshes.
   useEffect(() => {
-    if (configQuery.data && !chainInitialized) {
+    if (configQuery.data) {
       form.setFieldsValue({
         personality: configQuery.data.personality,
         memory: configQuery.data.memory,
         skin: configQuery.data.skin,
-      });
-
-      // Build the chain: primary from top-level fields, fallbacks from modelRouting.
-      const primary: ProviderEntry = {
-        id: makeEntryId(),
         provider: configQuery.data.provider,
         model: configQuery.data.model,
-        apiKey: '',
-        apiKeyPreview: configQuery.data.apiKeyPreview,
         baseUrl: configQuery.data.baseUrl ?? '',
-        testStatus: 'idle',
-      };
-      const fallbacks = parseFallbackChain(configQuery.data.modelRouting ?? {});
-      setProviderChain([primary, ...fallbacks]);
-      setChainInitialized(true);
+      });
     }
-  }, [configQuery.data, form, chainInitialized]);
+  }, [configQuery.data, form]);
 
   const updateMut = useMutation({
     mutationFn: (patch: Parameters<typeof rpc.config.update>[0]) => rpc.config.update(patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['config'] });
       notification.success({ message: 'Settings saved', placement: 'topRight' });
-      // Clear apiKey fields in the chain after save.
-      setProviderChain((prev) => prev.map((e) => ({ ...e, apiKey: '' })));
+      // Clear the apiKey field after save so it shows the preview again.
+      form.setFieldValue('apiKey', '');
     },
     onError: (err) =>
       notification.error({ message: 'Save failed', description: (err as Error).message }),
@@ -381,33 +167,21 @@ export function Settings() {
   const personalities = personalitiesQuery.data?.items ?? [];
 
   const onFinish = (values: FormShape) => {
-    const primary = providerChain[0];
-    if (!primary?.provider || !primary.model) {
-      notification.error({ message: 'Primary provider and model are required.' });
+    if (!values.provider || !values.model) {
+      notification.error({ message: 'Provider and model are required.' });
       return;
     }
 
-    // Build the existing modelRouting, excluding our fallback key.
-    const existingRouting = { ...(configQuery.data?.modelRouting ?? {}) };
-    delete existingRouting[FALLBACK_CHAIN_KEY];
-
-    // Serialize fallbacks into modelRouting.
-    const fallbacks = providerChain.slice(1);
-    const modelRouting: Record<string, string> = { ...existingRouting };
-    if (fallbacks.length > 0) {
-      modelRouting[FALLBACK_CHAIN_KEY] = JSON.stringify(serializeFallbackChain(fallbacks));
-    }
-
     const patch: Parameters<typeof rpc.config.update>[0] = {
-      provider: primary.provider,
-      model: primary.model,
+      provider: values.provider,
+      model: values.model,
       personality: values.personality,
       memory: values.memory,
       skin: values.skin,
-      modelRouting,
+      modelRouting: configQuery.data?.modelRouting ?? {},
     };
-    if (primary.apiKey && primary.apiKey.length > 0) patch.apiKey = primary.apiKey;
-    if (primary.baseUrl !== undefined) patch.baseUrl = primary.baseUrl;
+    if (values.apiKey && values.apiKey.length > 0) patch.apiKey = values.apiKey;
+    if (values.baseUrl !== undefined) patch.baseUrl = values.baseUrl;
 
     updateMut.mutate(patch);
   };
@@ -425,15 +199,39 @@ export function Settings() {
       </header>
 
       <Form<FormShape> form={form} layout="vertical" onFinish={onFinish} style={{ maxWidth: 640 }}>
-        <Card title="Provider chain" size="small" style={{ marginBottom: 16 }}>
-          <Typography.Paragraph type="secondary" style={{ marginTop: 0, marginBottom: 12 }}>
-            Primary provider is tried first. Fallbacks are used in order if the primary fails.
-          </Typography.Paragraph>
-          <ProviderChainEditor
-            chain={providerChain}
-            onChange={setProviderChain}
-            showAdvanced={showAdvanced}
-          />
+        <Card title="Provider" size="small" style={{ marginBottom: 16 }}>
+          <Form.Item
+            label="Provider"
+            name="provider"
+            rules={[{ required: true, message: 'Required' }]}
+          >
+            <Input placeholder="anthropic | openrouter | openai-compat | ollama" />
+          </Form.Item>
+          <Form.Item label="Model" name="model" rules={[{ required: true, message: 'Required' }]}>
+            <Input placeholder="e.g. claude-opus-4-7" />
+          </Form.Item>
+          <Form.Item
+            label="API key"
+            name="apiKey"
+            extra={
+              configQuery.data?.apiKeyPreview
+                ? `Active: ${configQuery.data.apiKeyPreview}`
+                : undefined
+            }
+          >
+            <Input.Password
+              autoComplete="off"
+              placeholder={configQuery.data?.apiKeyPreview || 'paste new key'}
+            />
+          </Form.Item>
+          {showAdvanced && (
+            <Form.Item label="Base URL" name="baseUrl">
+              <Input placeholder="https://openrouter.ai/api/v1" />
+            </Form.Item>
+          )}
+          <Form.Item>
+            <TestConnectionButton form={form} />
+          </Form.Item>
         </Card>
 
         <Card title="Default personality" size="small" style={{ marginBottom: 16 }}>
@@ -868,8 +666,7 @@ function ApiKeysSection() {
 }
 
 function ModelRoutingView({ routing }: { routing: Record<string, string> }) {
-  // Filter out internal keys used by the provider chain editor.
-  const entries = Object.entries(routing).filter(([key]) => key !== FALLBACK_CHAIN_KEY);
+  const entries = Object.entries(routing);
   if (entries.length === 0) {
     return <Typography.Text type="secondary">No per-personality overrides set.</Typography.Text>;
   }
