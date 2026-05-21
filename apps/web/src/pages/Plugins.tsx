@@ -14,8 +14,7 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useState } from 'react';
 import { AddMcpModal } from '../components/mcp/AddMcpModal';
 import { rpc } from '../rpc';
 
@@ -47,18 +46,6 @@ export function Plugins() {
   const isLoading = pluginsLoading || persLoading;
   const [activeTab, setActiveTab] = useState('matrix');
   const [addMcpOpen, setAddMcpOpen] = useState(false);
-
-  const location = useLocation();
-  const mcpConnected = (location.state as { mcpConnected?: string } | null)?.mcpConnected;
-
-  useEffect(() => {
-    if (mcpConnected) {
-      setActiveTab('mcp');
-      setAddMcpOpen(true);
-      // Clear the state to prevent re-triggering on re-renders
-      window.history.replaceState({}, '', location.pathname);
-    }
-  }, [mcpConnected, location.pathname]);
 
   if (pluginsError) {
     return (

@@ -58,8 +58,8 @@ export type InstallFlowStatus = 'pending' | 'connected' | 'error' | 'expired';
 export interface StartOptions {
   mcpUrl: string;
   name?: string;
-  /** Personality to scope OAuth tokens to. */
-  personalityId: string;
+  /** Personality to scope OAuth tokens to. When omitted, tokens are stored globally. */
+  personalityId?: string;
   /**
    * Per-flow OAuth `redirect_uri`. When set, it overrides the
    * constructor-level default and is persisted on the pending session so
@@ -113,7 +113,7 @@ interface PendingSession {
   state: string;
   mcpUrl: string;
   serverName: string;
-  personalityId: string;
+  personalityId?: string;
   /**
    * The exact `redirect_uri` that was registered with DCR and embedded in
    * the authorization URL for this flow. `complete()` MUST pass this same
@@ -401,7 +401,9 @@ export class McpInstallFlow {
 
     // Step 2 — persist tokens. Rollback on failure: best-effort delete of any
     // tokens that landed before the throw, then drop placeholder + session.
-    const scopedSecrets = new PersonalityScopedSecrets(this.secrets, session.personalityId);
+    const scopedSecrets = session.personalityId
+      ? new PersonalityScopedSecrets(this.secrets, session.personalityId)
+      : this.secrets;
     try {
       await storeTokens(session.serverName, tokens, scopedSecrets);
     } catch (err) {
@@ -569,8 +571,10 @@ export class McpInstallFlow {
    * (access / refresh / expires_at). Used when token storage partially
    * succeeded or when we need to revoke after a downstream failure.
    */
-  private async bestEffortDeleteTokens(serverName: string, personalityId: string): Promise<void> {
-    const secrets = new PersonalityScopedSecrets(this.secrets, personalityId);
+  private async bestEffortDeleteTokens(serverName: string, personalityId?: string): Promise<void> {
+    const secrets = personalityId
+      ? new PersonalityScopedSecrets(this.secrets, personalityId)
+      : this.secrets;
     try {
       await secrets.delete(`mcp/${serverName}/access_token`);
     } catch {

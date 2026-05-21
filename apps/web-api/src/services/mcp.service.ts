@@ -43,7 +43,7 @@ export class McpService {
     });
   }
 
-  async start(input: { url: string; name?: string; personalityId: string }, redirectUri?: string) {
+  async start(input: { url: string; name?: string; personalityId?: string }, redirectUri?: string) {
     try {
       validateUrl(input.url, { allowLocalhost: true });
     } catch (err) {
@@ -61,9 +61,10 @@ export class McpService {
       const startOpts: {
         mcpUrl: string;
         name?: string;
-        personalityId: string;
+        personalityId?: string;
         redirectUri?: string;
-      } = { mcpUrl: input.url, personalityId: input.personalityId };
+      } = { mcpUrl: input.url };
+      if (input.personalityId !== undefined) startOpts.personalityId = input.personalityId;
       if (input.name !== undefined) startOpts.name = input.name;
       if (redirectUri !== undefined) startOpts.redirectUri = redirectUri;
       const result = await this.flow.start(startOpts);
@@ -278,7 +279,7 @@ export class McpService {
     return 'authorized';
   }
 
-  async reconnect(input: { name: string; personalityId: string }) {
+  async reconnect(input: { name: string; personalityId?: string }) {
     const configs = await this.mcpJsonStore.read();
     const existing = configs.find((c) => c.name === input.name);
     if (!existing?.url) {
@@ -288,10 +289,11 @@ export class McpService {
         detail: `Server '${input.name}' not found or has no URL`,
       };
     }
-    return this.start({
+    const startInput: { url: string; name: string; personalityId?: string } = {
       url: existing.url,
       name: input.name,
-      personalityId: input.personalityId,
-    });
+    };
+    if (input.personalityId !== undefined) startInput.personalityId = input.personalityId;
+    return this.start(startInput);
   }
 }

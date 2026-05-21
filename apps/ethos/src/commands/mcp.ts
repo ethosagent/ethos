@@ -31,7 +31,6 @@ import {
   revokeToken,
   runDcrAuthorization,
   runPkceLogin,
-  storeTokens,
 } from '@ethosagent/tools-mcp';
 import type { SecretsResolver } from '@ethosagent/types';
 import { ethosDir, readConfig, readRawConfig } from '../config';
@@ -393,16 +392,8 @@ async function runAdd(argv: string[]): Promise<void> {
 
     await mcpStore.upsert(entry.name, entry);
 
-    const secrets = await getSecretsResolver();
-    await storeTokens(parsed.name, urlResult.tokens, secrets);
-    if (urlResult.registrationAccessToken) {
-      await secrets.set(
-        `mcp/${parsed.name}/registration_access_token`,
-        urlResult.registrationAccessToken,
-      );
-    }
-
     console.log(`Added MCP server '${parsed.name}' to ~/.ethos/mcp.json`);
+    console.log(`Run 'ethos mcp login ${parsed.name} --personality <id>' to authenticate.`);
     return;
   } else {
     console.error('Either --preset, --url, or --command is required.\n');

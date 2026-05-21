@@ -466,7 +466,7 @@ export type McpServerInfo = z.infer<typeof McpServerInfoSchema>;
 export const McpStartInputSchema = z.object({
   url: z.string().url(),
   name: z.string().min(1).max(64).optional(),
-  personalityId: z.string().min(1),
+  personalityId: z.string().min(1).optional(),
 });
 
 export const McpStartOutputSchema = z.discriminatedUnion('ok', [
@@ -540,7 +540,7 @@ export const McpDeleteInputSchema = z.object({
 
 export const McpReconnectInputSchema = z.object({
   name: z.string(),
-  personalityId: z.string().min(1),
+  personalityId: z.string().min(1).optional(),
 });
 
 export const McpListOutputSchema = z.object({
