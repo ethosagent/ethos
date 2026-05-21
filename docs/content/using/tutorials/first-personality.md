@@ -1,6 +1,6 @@
 ---
 title: "Create your first personality"
-description: "Build a strategist personality end to end: ETHOS.md identity, config.yaml fields, toolset.yaml allowlist, hot-reload, and a memory-scope demo."
+description: "Build a strategist personality end to end: SOUL.md identity, config.yaml fields, toolset.yaml allowlist, hot-reload, and a memory-scope demo."
 kind: tutorial
 audience: user
 slug: first-personality
@@ -14,9 +14,9 @@ The five built-in personalities cover the common roles. This tutorial builds a s
 
 By the end, you have:
 
-- A working personality at `~/.ethos/personalities/strategist/` with `ETHOS.md`, `config.yaml`, and `toolset.yaml`.
+- A working personality at `~/.ethos/personalities/strategist/` with `SOUL.md`, `config.yaml`, and `toolset.yaml`.
 - A live `ethos chat` session running as that personality with the tools you listed and the voice you wrote.
-- Watched the registry hot-reload your edits to `ETHOS.md` between turns without a restart.
+- Watched the registry hot-reload your edits to `SOUL.md` between turns without a restart.
 - Verified `memoryScope: per-personality` isolates this personality's memory from the global `MEMORY.md`.
 - A reusable starting template — `ethos personality duplicate` — for the next personality you build.
 
@@ -25,7 +25,7 @@ The personality you build is small on purpose. The point of the tutorial is the 
 ## Prereqs
 
 - [Build your first agent](./first-agent.md) finished — you have used `/personality` to switch between built-ins and know that the chip in the header is the source of truth.
-- A text editor with two files open at once: `~/.ethos/personalities/strategist/ETHOS.md` and a chat window.
+- A text editor with two files open at once: `~/.ethos/personalities/strategist/SOUL.md` and a chat window.
 - A working directory you do not mind associating with strategy work — sessions are still keyed per directory.
 - A clear picture in your head of one role you actually want an agent to play. The tutorial uses "strategist" as a stand-in; if you have a real role (`code-reviewer`, `tech-writer`, `release-manager`, `incident-commander`), substitute its name everywhere and use this as a recipe.
 
@@ -46,14 +46,14 @@ ls ~/.ethos/personalities/
 
 You should see `strategist/`. The five built-ins are not listed here — they ship inside the CLI package at `extensions/personalities/data/`. Both directories merge into one list at runtime; user files override builtins on the same id. If you name your directory `researcher`, your version wins over the bundled one — useful for taking a built-in and editing it in place.
 
-## 2. Write `ETHOS.md` — the identity
+## 2. Write `SOUL.md` — the identity
 
-`ETHOS.md` is first-person prose. It defines who the agent is and how it speaks. The registry loads it as the system-prompt baseline; the framework then layers memory context and personality metadata on top.
+`SOUL.md` is first-person prose. It defines who the agent is and how it speaks. The registry loads it as the system-prompt baseline; the framework then layers memory context and personality metadata on top.
 
 Keep it concrete. Six paragraphs is plenty. No marketing voice ("Welcome!", "I'll help you unlock..."). No emoji. Active voice over passive.
 
 ```bash
-cat > ~/.ethos/personalities/strategist/ETHOS.md <<'EOF'
+cat > ~/.ethos/personalities/strategist/SOUL.md <<'EOF'
 # Strategist
 
 I am a strategic advisor. My job is long-horizon planning and prioritisation. I help you decide what to commit to, what to defer, and what to cut entirely.
@@ -70,15 +70,15 @@ I structure plans into three layers: what to do this week, what to do this quart
 EOF
 ```
 
-A few rules that make `ETHOS.md` productive:
+A few rules that make `SOUL.md` productive:
 
 - **First person.** "I do X" beats "The strategist does X". The model assumes the voice more reliably and refers to itself with the right pronoun.
 - **Behaviour, not skills.** "I cite sources" is behaviour. "Knows everything about strategy" is a skill claim and a hallucination magnet — the model will fabricate to live up to it.
 - **Concrete refusals.** "I do not pad responses" is enforceable in tone. "I write clearly" is a vibe.
-- **Length is a budget.** Every token here ships on every turn, on every session, forever. Keep it tight — the engineer's `ETHOS.md` is under 200 tokens for a reason.
+- **Length is a budget.** Every token here ships on every turn, on every session, forever. Keep it tight — the engineer's `SOUL.md` is under 200 tokens for a reason.
 - **Read it as the agent.** Open it later and ask "would I want this read aloud at me at every turn?". If a paragraph is filler, cut it.
 
-The shipped researcher and engineer ETHOS files are good reference material — read them at `extensions/personalities/data/researcher/ETHOS.md` and `extensions/personalities/data/engineer/ETHOS.md` in the repo for tone.
+The shipped researcher and engineer ETHOS files are good reference material — read them at `extensions/personalities/data/researcher/SOUL.md` and `extensions/personalities/data/engineer/SOUL.md` in the repo for tone.
 
 ## 3. Write `config.yaml` — the wiring
 
@@ -182,7 +182,7 @@ The header chip updates to `Strategist`. Send a probe message in the voice you w
 You > i have three projects competing for the next two weeks. which should i ask about first?
 ```
 
-A working strategist asks a clarifying question (per the `ETHOS.md`) rather than guessing. If you see a generic "here are five frameworks!" answer, the personality did not load — check the chip in the header and `/personality list` for typos in the directory name.
+A working strategist asks a clarifying question (per the `SOUL.md`) rather than guessing. If you see a generic "here are five frameworks!" answer, the personality did not load — check the chip in the header and `/personality list` for typos in the directory name.
 
 If `/personality strategist` errors with `Unknown personality`, the directory either does not exist or has the wrong path. The registry expects `~/.ethos/personalities/<id>/`. Listing helps:
 
@@ -190,13 +190,13 @@ If `/personality strategist` errors with `Unknown personality`, the directory ei
 ls -la ~/.ethos/personalities/strategist/
 ```
 
-You should see all three files. If `ETHOS.md` is missing, the personality loads but speaks in the framework default; if `config.yaml` is missing, the personality is rejected and not listed.
+You should see all three files. If `SOUL.md` is missing, the personality loads but speaks in the framework default; if `config.yaml` is missing, the personality is rejected and not listed.
 
 ## 6. Hot-reload — edit identity while chat is running
 
 The registry caches each personality directory by the mtimes of its three files. On every [turn](../../getting-started/glossary.md#turn), `FilePersonalityRegistry.loadFromDirectory` checks the fingerprint; if any file changed on disk, it re-reads them before the prompt is built.
 
-Test it. Without exiting chat, open `ETHOS.md` in your editor and add one line:
+Test it. Without exiting chat, open `SOUL.md` in your editor and add one line:
 
 ```diff
  I am a strategic advisor. My job is long-horizon planning and prioritisation. I help you decide what to commit to, what to defer, and what to cut entirely.
@@ -323,7 +323,7 @@ This writes `personality: strategist` to `~/.ethos/config.yaml`. The next `ethos
 
 ## 10. Duplicate a built-in as a starting template
 
-Writing `ETHOS.md` from a blank file is harder than editing. Future personalities are usually easier to start from a copy:
+Writing `SOUL.md` from a blank file is harder than editing. Future personalities are usually easier to start from a copy:
 
 ```bash
 ethos personality duplicate engineer engineer-paired
@@ -335,7 +335,7 @@ Common duplicate-and-customise patterns:
 
 - `researcher-domain` — restrict `fs_reach` to one project tree, tighten `web_search` to a domain allowlist via the `safety.network.allow` block.
 - `engineer-paired` — flip `safety.approvalMode` to `smart` so the agent confirms destructive tool calls before running them.
-- `coach-language` — start from `coach`, change the language directives in `ETHOS.md`, keep the read-heavy toolset.
+- `coach-language` — start from `coach`, change the language directives in `SOUL.md`, keep the read-heavy toolset.
 
 The full safety block lives in [Personality config reference](../reference/personality-yaml.md#safety).
 
@@ -365,7 +365,7 @@ A read or write outside the allowlist raises a `BoundaryError` at the tool bound
 The personality schema is intentionally frozen. The following categories do NOT belong in `config.yaml`:
 
 - **Voice modes / TTS settings** — channel-adapter concerns.
-- **Emotion / mood / sentiment tags** — prompt-engineering concerns; put them in `ETHOS.md`.
+- **Emotion / mood / sentiment tags** — prompt-engineering concerns; put them in `SOUL.md`.
 - **Per-channel UI affordances** (button text, response templates) — adapter concerns.
 - **Default skill content** — skills are their own files, not personality fields.
 
@@ -378,13 +378,13 @@ Once you have one custom personality working, the second is faster. A few shapes
 - **A read-only reviewer.** Start with `reviewer`, duplicate to `reviewer-strict`, remove every write tool, set `safety.approvalMode: manual`, narrow `fs_reach.write` to nothing. The agent can read and reason but cannot edit.
 - **A project-bound engineer.** Duplicate `engineer` to `engineer-<project>`, set `fs_reach.read` and `.write` to that project's tree, attach a project-specific `safety.network.allow` list. The agent cannot accidentally touch unrelated code.
 - **A coach with extra patience.** Duplicate `coach`, lift `streamingTimeoutMs` to allow long thinking, increase `budgetCapUsd` if you expect verbose answers. The voice stays the same; the technical envelope expands.
-- **A specialist that takes orders from a supervisor.** Build the specialist with a tight toolset and a minimal `ETHOS.md`, then reference it from a mesh manifest (see [Teams and meshes](../../building/explanation/teams-and-meshes.md)). The specialist is callable from a coordinator personality.
+- **A specialist that takes orders from a supervisor.** Build the specialist with a tight toolset and a minimal `SOUL.md`, then reference it from a mesh manifest (see [Teams and meshes](../../building/explanation/teams-and-meshes.md)). The specialist is callable from a coordinator personality.
 
 There is no rule that says you must use all five built-ins. Many teams end up with two custom personalities — a researcher-style one for exploration and an engineer-style one for execution — and use the rest as references. Start narrow; broaden when you feel the friction of a missing role.
 
 ## What you learned
 
-- A personality is three files at `~/.ethos/personalities/<id>/`: identity (`ETHOS.md`), wiring (`config.yaml`), allowlist (`toolset.yaml`).
+- A personality is three files at `~/.ethos/personalities/<id>/`: identity (`SOUL.md`), wiring (`config.yaml`), allowlist (`toolset.yaml`).
 - `config.yaml` is flat YAML; the parser ignores unknown keys. The full field list is in the [Personality config reference](../reference/personality-yaml.md).
 - The registry hot-reloads on file mtime — edit any file, send the next turn, the change is live.
 - `memoryScope: per-personality` redirects memory reads and writes into the personality's directory, isolating its running context from global memory and from every other personality.

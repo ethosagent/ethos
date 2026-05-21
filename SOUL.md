@@ -10,7 +10,7 @@ It is a compass, not a fence. It should fit on one screen. If a contributor cann
 
 ## The thesis
 
-A personality in Ethos is not a system prompt string. It is a structural component — a small directory of files (`ETHOS.md` + `toolset.yaml` + `config.yaml`) — that shapes prompt, tool access, memory scope, and model routing **atomically**. Change one, the others move with it. Capability is bounded by identity.
+A personality in Ethos is not a system prompt string. It is a structural component — a small directory of files (`SOUL.md` + `toolset.yaml` + `config.yaml`) — that shapes prompt, tool access, memory scope, and model routing **atomically**. Change one, the others move with it. Capability is bounded by identity.
 
 This is the foundational claim of the project. We call it **personality is architecture**, and every other decision in Ethos descends from it.
 
@@ -38,7 +38,7 @@ Ethos ships with a small set of built-in personalities. They share DNA:
 
 What unites them is not tone. It is honesty about the role. None of them say *"Great question!"* None of them pretend competence outside their lane. None of them try to be charming when the work calls for being correct.
 
-A user reading any one of these `ETHOS.md` files should be able to predict what the personality will do — and what it will refuse to do — before sending a single message. That predictability is the product.
+A user reading any one of these `SOUL.md` files should be able to predict what the personality will do — and what it will refuse to do — before sending a single message. That predictability is the product.
 
 ## Teams
 
@@ -56,7 +56,7 @@ Before any new feature lands, ask:
 2. **Does it deepen identity?** Does it make a personality more specific, more accountable, more predictable — or does it dissolve identity into "could be anything"?
 3. **Does it make teams more visible, durable, or coordinated?** Or does it make multi-agent work into a black box?
 4. **Is the capability auditable?** Can a user see what this feature lets the agent do? Hidden capabilities erode trust; declared ones build it.
-5. **Could a user reading the personality's `ETHOS.md` predict this behaviour?** If not, the feature is in the wrong place.
+5. **Could a user reading the personality's `SOUL.md` predict this behaviour?** If not, the feature is in the wrong place.
 
 If a feature fails (1), it is out — full stop. If it fails several of (2)–(5), it probably belongs in a different product.
 

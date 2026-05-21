@@ -133,8 +133,8 @@ const PersonalityListOutput = z.object({
 const PersonalityGetInput = z.object({ id: z.string() });
 const PersonalityGetOutput = z.object({
   personality: PersonalitySchema,
-  /** Markdown body of ETHOS.md. Empty string when the file isn't present. */
-  ethosMd: z.string(),
+  /** Markdown body of SOUL.md. Empty string when the file isn't present. */
+  soulMd: z.string(),
 });
 
 const PersonalityCharacterSheetInput = z.object({ id: z.string() });
@@ -154,8 +154,8 @@ const PersonalityCreateInput = z.object({
   description: z.string().optional(),
   model: z.string().optional(),
   toolset: z.array(z.string()),
-  /** Markdown body of ETHOS.md. May be empty. */
-  ethosMd: z.string(),
+  /** Markdown body of SOUL.md. May be empty. */
+  soulMd: z.string(),
   memoryScope: z.enum(['global', 'per-personality']).optional(),
   provider: ProviderIdSchema.or(z.literal('')).optional(),
   capabilities: z.array(z.string()).optional(),
@@ -177,7 +177,7 @@ const PersonalityUpdateInput = z.object({
   description: z.string().optional(),
   model: z.string().optional(),
   toolset: z.array(z.string()).optional(),
-  ethosMd: z.string().optional(),
+  soulMd: z.string().optional(),
   memoryScope: z.enum(['global', 'per-personality']).optional(),
   mcp_servers: z.array(z.string()).optional(),
   plugins: z.array(z.string()).optional(),

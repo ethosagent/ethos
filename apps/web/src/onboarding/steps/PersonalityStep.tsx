@@ -240,9 +240,7 @@ function PersonalityPreviewPane({
           {data.personality.description ? (
             <p className="onboarding-preview-pane-desc">{data.personality.description}</p>
           ) : null}
-          {data.ethosMd ? (
-            <pre className="onboarding-preview-pane-ethos">{data.ethosMd}</pre>
-          ) : null}
+          {data.soulMd ? <pre className="onboarding-preview-pane-soul">{data.soulMd}</pre> : null}
           <div className="onboarding-preview-pane-actions">
             <Button
               type="primary"

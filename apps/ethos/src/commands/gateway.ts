@@ -978,7 +978,7 @@ function createSlackMemoryReader(personalityId: string) {
 
 /**
  * Build the `/ethos personality rich` card reader: the personality registry
- * supplies config + ETHOS.md, and the shared `SkillsInjector.resolveSkills()`
+ * supplies config + SOUL.md, and the shared `SkillsInjector.resolveSkills()`
  * supplies the resolved skill set. The injector is constructed the way
  * `createInjectors` builds it for the agent loop, so the card never drifts
  * from what the personality actually sees. Built once at boot; `read()`
@@ -1000,13 +1000,13 @@ async function createSlackPersonalityCardReader() {
       await registry.loadFromDirectory(personalitiesDir);
       const config = registry.get(personalityId);
       if (!config) return null;
-      const ethosMd = await registry.readEthosMd(personalityId);
+      const soulMd = await registry.readSoulMd(personalityId);
       const resolved = await skillsInjector.resolveSkills(personalityId);
       return {
         id: config.id,
         name: config.name,
         description: config.description ?? '',
-        prose: firstParagraph(ethosMd),
+        prose: firstParagraph(soulMd),
         model: resolveModelDisplay(config.model),
         provider: config.provider ?? '(engine default)',
         toolset: config.toolset ?? [],
@@ -1047,13 +1047,13 @@ async function createTelegramPersonalityCardReader() {
       await registry.loadFromDirectory(personalitiesDir);
       const config = registry.get(personalityId);
       if (!config) return null;
-      const ethosMd = await registry.readEthosMd(personalityId);
+      const soulMd = await registry.readSoulMd(personalityId);
       const resolved = await skillsInjector.resolveSkills(personalityId);
       const card = {
         id: config.id,
         name: config.name,
         description: config.description ?? '',
-        prose: firstParagraph(ethosMd),
+        prose: firstParagraph(soulMd),
         model: resolveModelDisplay(config.model),
         provider: config.provider ?? '(engine default)',
         toolset: config.toolset ?? [],
@@ -1067,7 +1067,7 @@ async function createTelegramPersonalityCardReader() {
 /**
  * Build the Telegram `/start` greeting provider. Returns a personality-aware
  * greeting composed of the personality's description (or first paragraph of
- * ETHOS.md), plus a pointer to `/help`.
+ * SOUL.md), plus a pointer to `/help`.
  */
 async function createTelegramGreetingProvider() {
   const storage = getStorage();
@@ -1083,8 +1083,8 @@ async function createTelegramGreetingProvider() {
       if (!config) {
         return `Hello! I'm *${personalityId}*. Send a message to get started, or try /help for available commands.`;
       }
-      const ethosMd = await registry.readEthosMd(personalityId).catch(() => '');
-      const prose = firstParagraph(ethosMd);
+      const soulMd = await registry.readSoulMd(personalityId).catch(() => '');
+      const prose = firstParagraph(soulMd);
       const intro = prose || config.description || config.name;
       return `${intro}\n\nUse /help to see available commands.`;
     },
@@ -1128,8 +1128,8 @@ export async function buildAdapters(
         if (botCfg.bind.type === 'personality') {
           const pConfig = registry.get(botCfg.bind.name);
           if (pConfig) {
-            const ethosMd = await registry.readEthosMd(botCfg.bind.name).catch(() => '');
-            const prose = firstParagraph(ethosMd);
+            const soulMd = await registry.readSoulMd(botCfg.bind.name).catch(() => '');
+            const prose = firstParagraph(soulMd);
             identity = {
               name: pConfig.name,
               shortDescription: pConfig.description ?? pConfig.name,

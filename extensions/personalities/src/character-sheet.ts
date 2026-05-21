@@ -3,21 +3,21 @@ import type { PersonalityConfig } from '@ethosagent/types';
 // The generated character sheet — the "tight character sheet" promise from
 // SOUL.md made into a real artifact. One Markdown screen per personality:
 // what it is, what it has, what it can reach. Regenerated on demand from
-// the personality's config + ETHOS.md; never stored. The CLI
+// the personality's config + SOUL.md; never stored. The CLI
 // (`ethos personality show`) and the Web Personalities tab both render
 // this single source.
 
 /**
- * The prose directly under the ETHOS.md title — the personality's own
+ * The prose directly under the SOUL.md title — the personality's own
  * voice describing who it is. Returns `''` when the document has no body
  * paragraph (heading-only or empty file). Exported so surfaces that build
  * their own character-sheet rendering (e.g. the Slack `/ethos personality
  * rich` card) extract the identity line the same way the canonical sheet
  * does.
  */
-export function firstParagraph(ethosMd: string): string {
+export function firstParagraph(soulMd: string): string {
   const para: string[] = [];
-  for (const line of ethosMd.split('\n')) {
+  for (const line of soulMd.split('\n')) {
     const trimmed = line.trim();
     if (trimmed.startsWith('#')) continue; // skip heading lines
     if (trimmed === '') {
@@ -36,16 +36,16 @@ function bulletList(items: readonly string[], emptyLabel: string): string[] {
 
 /**
  * Render a personality's character sheet as Markdown. Pure — takes the
- * loaded config and the ETHOS.md body, returns the artifact. Optional
+ * loaded config and the SOUL.md body, returns the artifact. Optional
  * fields render as explicit `(none)` / `(engine default)` states so a
  * reader never has to guess whether a blank means "unset" or "missing".
  */
-export function renderCharacterSheet(config: PersonalityConfig, ethosMd: string): string {
+export function renderCharacterSheet(config: PersonalityConfig, soulMd: string): string {
   const lines: string[] = [`# ${config.id} — ${config.name}`, ''];
 
   if (config.description) lines.push(config.description, '');
 
-  const prose = firstParagraph(ethosMd);
+  const prose = firstParagraph(soulMd);
   if (prose) lines.push(prose, '');
 
   lines.push('## Routing');

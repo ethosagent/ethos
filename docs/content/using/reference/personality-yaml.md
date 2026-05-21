@@ -11,7 +11,7 @@ A [personality](../../getting-started/glossary.md#personality) is a directory at
 
 | File | Purpose |
 |---|---|
-| `ETHOS.md` | First-person identity prose. Loaded as the system-prompt baseline. Free-form markdown. |
+| `SOUL.md` | First-person identity prose. Loaded as the system-prompt baseline. Free-form markdown. |
 | `config.yaml` | Flat `key: value` config — fields documented below. Dotted keys (e.g. `fs_reach.read`) express nested structure. |
 | `toolset.yaml` | Flat YAML list of [tool](../../getting-started/glossary.md#tool) names this personality is allowed to call. |
 
@@ -19,7 +19,7 @@ A [personality](../../getting-started/glossary.md#personality) is a directory at
 
 The schema type lives in [`packages/types/src/personality.ts`](../../../../packages/types/src/personality.ts) (`PersonalityConfig`). The loader / parser lives in [`extensions/personalities/src/index.ts`](../../../../extensions/personalities/src/index.ts) — `parseConfigYaml` (flat keys + the `safety:` nested block) and `parseToolsetYaml` (the `- name` list).
 
-The schema is frozen — adding a top-level field requires the `personality-schema-change` PR label and a bump to `.personality-field-count`. Internal-only fields (`id`, `ethosFile`, `skillsDirs`, `metadata`) are populated by the loader and are not user-editable.
+The schema is frozen — adding a top-level field requires the `personality-schema-change` PR label and a bump to `.personality-field-count`. Internal-only fields (`id`, `soulFile`, `skillsDirs`, `metadata`) are populated by the loader and are not user-editable.
 
 ## Minimal example {#minimal-example}
 
@@ -218,7 +218,7 @@ Workspace-aware context layering. Controls how `AGENTS.md` / `CLAUDE.md` files a
 ```yaml
 context_layering.mode: progressive
 context_layering.max_depth: 3
-context_layering.discovery_files: AGENTS.md, CLAUDE.md, ETHOS.md
+context_layering.discovery_files: AGENTS.md, CLAUDE.md, SOUL.md
 context_layering.cap_total_chars: 12000
 ```
 
@@ -299,7 +299,7 @@ Notes:
 - An empty file (or one with only comments) means the personality runs with no external tools. The file may be omitted entirely for an internal-only personality.
 - Tools the personality requests but does not list are rejected by `DefaultToolRegistry` and returned to the LLM as `is_error: true` so the Anthropic tool-result contract remains intact.
 
-## ETHOS.md {#ethos-md}
+## SOUL.md {#ethos-md}
 
 The first-person identity file. Markdown, no front-matter required. Loaded as part of the system prompt at every turn — combined with memory context and the dynamic personality config.
 

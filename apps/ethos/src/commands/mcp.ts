@@ -533,7 +533,7 @@ function runInspect(): void {
   console.log('  ethos://memory/MEMORY.md          Agent memory');
   console.log('  ethos://memory/USER.md             User context');
   console.log('  ethos://sessions/recent            Recent sessions');
-  console.log('  ethos://personalities/<id>/ETHOS.md  Personality identity');
+  console.log('  ethos://personalities/<id>/SOUL.md  Personality identity');
 
   console.log('\nPrompts:\n');
   console.log('  code_review          Structured code review');

@@ -96,7 +96,7 @@ Cause · The configured personality id does not match any built-in or `~/.ethos/
 Fix ·
 1. Run `ethos personality list` and copy a valid id.
 2. Switch with `ethos personality set <id>`, or edit `personality:` in `~/.ethos/config.yaml`.
-3. For a custom personality, check the directory contains `ETHOS.md`, `config.yaml`, and `toolset.yaml`.
+3. For a custom personality, check the directory contains `SOUL.md`, `config.yaml`, and `toolset.yaml`.
 
 ### `PERSONALITY_READ_ONLY` {#personality-read-only}
 
@@ -112,7 +112,7 @@ Fix · Pick a different id, or remove the existing user copy first.
 
 ### Personality is not hot-reloading {#personality-not-reloading}
 
-Cause · `FilePersonalityRegistry.loadFromDirectory()` is mtime-cached on `config.yaml`. Edits to `ETHOS.md` or `toolset.yaml` alone do not invalidate the cache.
+Cause · `FilePersonalityRegistry.loadFromDirectory()` is mtime-cached on `config.yaml`. Edits to `SOUL.md` or `toolset.yaml` alone do not invalidate the cache.
 
 Fix · `touch ~/.ethos/personalities/<id>/config.yaml` after editing the other files.
 

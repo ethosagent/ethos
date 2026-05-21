@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { PersonalitiesService } from '../../services/personalities.service';
 import { makeStubPersonalityRegistry } from '../test-helpers';
 
-// Service tests cover both the repository (via real ETHOS.md reads from
+// Service tests cover both the repository (via real SOUL.md reads from
 // InMemoryStorage) and the wire-shape mapping.
 
 const DATA = '/data';
@@ -27,8 +27,8 @@ describe('PersonalitiesService', () => {
           description: 'curious + careful',
           model: 'claude-opus-4-7',
           memoryScope: 'global',
-          // ethosFile lives outside the user dir → built-in
-          ethosFile: '/usr/share/ethos/personalities/researcher/ETHOS.md',
+          // soulFile lives outside the user dir → built-in
+          soulFile: '/usr/share/ethos/personalities/researcher/SOUL.md',
         },
       ],
     });
@@ -40,16 +40,16 @@ describe('PersonalitiesService', () => {
     expect(p.id).toBe('researcher');
     expect(p.builtin).toBe(true);
     // Server-internal fields are stripped
-    expect('ethosFile' in p).toBe(false);
+    expect('soulFile' in p).toBe(false);
     expect('skillsDirs' in p).toBe(false);
   });
 
-  it('marks user personalities as builtin: false based on ethosFile path', () => {
-    const userEthosFile = join(DATA, 'personalities', 'custom', 'ETHOS.md');
+  it('marks user personalities as builtin: false based on soulFile path', () => {
+    const userSoulFile = join(DATA, 'personalities', 'custom', 'SOUL.md');
     const service = makeService({
       personalities: [
-        { id: 'custom', name: 'Custom', ethosFile: userEthosFile },
-        // No ethosFile → treated as built-in (config-only personalities are built-ins by default)
+        { id: 'custom', name: 'Custom', soulFile: userSoulFile },
+        // No soulFile → treated as built-in (config-only personalities are built-ins by default)
         { id: 'builtin', name: 'Built-in' },
       ],
     });
@@ -59,22 +59,22 @@ describe('PersonalitiesService', () => {
     expect(byId.builtin?.builtin).toBe(true);
   });
 
-  it('get returns personality + reads ETHOS.md body from disk', async () => {
+  it('get returns personality + reads SOUL.md body from disk', async () => {
     const storage = new InMemoryStorage();
-    const ethosPath = join(DATA, 'personalities', 'researcher', 'ETHOS.md');
+    const soulPath = join(DATA, 'personalities', 'researcher', 'SOUL.md');
     await storage.mkdir(join(DATA, 'personalities', 'researcher'));
-    await storage.write(ethosPath, '# Researcher\n\nI am a careful researcher.\n');
+    await storage.write(soulPath, '# Researcher\n\nI am a careful researcher.\n');
 
     const registry = new FilePersonalityRegistry(storage, DATA);
-    registry.define({ id: 'researcher', name: 'Researcher', ethosFile: ethosPath });
+    registry.define({ id: 'researcher', name: 'Researcher', soulFile: soulPath });
     registry.setDefault('researcher');
     const library = new SkillsLibrary({ dataDir: DATA, storage });
     const service = new PersonalitiesService({ personalities: registry, library });
 
     const result = await service.get('researcher');
     expect(result.personality.id).toBe('researcher');
-    expect(result.ethosMd).toContain('I am a careful researcher.');
-    // ethosFile under DATA/personalities/ → user-owned → builtin: false
+    expect(result.soulMd).toContain('I am a careful researcher.');
+    // soulFile under DATA/personalities/ → user-owned → builtin: false
     expect(result.personality.builtin).toBe(false);
   });
 
@@ -83,32 +83,32 @@ describe('PersonalitiesService', () => {
     await expect(service.get('nope')).rejects.toMatchObject({ code: 'PERSONALITY_NOT_FOUND' });
   });
 
-  it('get returns empty ethosMd when file is missing', async () => {
+  it('get returns empty soulMd when file is missing', async () => {
     const service = makeService({
       personalities: [
         {
           id: 'researcher',
           name: 'Researcher',
-          ethosFile: join(DATA, 'personalities', 'researcher', 'ETHOS.md'),
+          soulFile: join(DATA, 'personalities', 'researcher', 'SOUL.md'),
         },
       ],
     });
     const result = await service.get('researcher');
-    expect(result.ethosMd).toBe('');
+    expect(result.soulMd).toBe('');
   });
 
-  it('characterSheet renders the Markdown artifact from config + ETHOS.md', async () => {
+  it('characterSheet renders the Markdown artifact from config + SOUL.md', async () => {
     const storage = new InMemoryStorage();
-    const ethosPath = join(DATA, 'personalities', 'researcher', 'ETHOS.md');
+    const soulPath = join(DATA, 'personalities', 'researcher', 'SOUL.md');
     await storage.mkdir(join(DATA, 'personalities', 'researcher'));
-    await storage.write(ethosPath, '# Researcher\n\nI am a careful researcher.\n');
+    await storage.write(soulPath, '# Researcher\n\nI am a careful researcher.\n');
 
     const registry = new FilePersonalityRegistry(storage, DATA);
     registry.define({
       id: 'researcher',
       name: 'Researcher',
       model: 'claude-opus-4-7',
-      ethosFile: ethosPath,
+      soulFile: soulPath,
     });
     registry.setDefault('researcher');
     const library = new SkillsLibrary({ dataDir: DATA, storage });

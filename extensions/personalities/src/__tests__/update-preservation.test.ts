@@ -40,7 +40,7 @@ describe('update preserves unmodified fields', () => {
       'fs_reach.write: /data/output',
     ];
     await writeFile(join(dir, 'config.yaml'), `${configLines.join('\n')}\n`);
-    await writeFile(join(dir, 'ETHOS.md'), '# Preserve\n\nIdentity.\n');
+    await writeFile(join(dir, 'SOUL.md'), '# Preserve\n\nIdentity.\n');
     await writeFile(join(dir, 'toolset.yaml'), '- read_file\n- write_file\n');
 
     const registry = makeRegistry();

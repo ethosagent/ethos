@@ -193,7 +193,7 @@ describe('scaffold_personality', () => {
     const result = await scaffoldTool?.execute(
       {
         id: 'my-researcher',
-        ethos_md: '# My Researcher\n\nI research topics.',
+        soul_md: '# My Researcher\n\nI research topics.',
         config: {
           name: 'My Researcher',
           description: 'A research personality',
@@ -208,7 +208,7 @@ describe('scaffold_personality', () => {
     expect(result?.ok).toBe(true);
 
     const ethos = await storage.read(
-      `${process.env.HOME ?? '/root'}/.ethos/personalities/my-researcher/ETHOS.md`,
+      `${process.env.HOME ?? '/root'}/.ethos/personalities/my-researcher/SOUL.md`,
     );
     expect(ethos).toContain('# My Researcher');
 
@@ -239,7 +239,7 @@ describe('scaffold_personality', () => {
     const result = await scaffoldTool?.execute(
       {
         id: 'MyBadId',
-        ethos_md: '# Bad',
+        soul_md: '# Bad',
         config: { name: 'Bad' },
         toolset: ['read_file'],
       },
@@ -266,7 +266,7 @@ describe('scaffold_personality', () => {
     const result = await scaffoldTool?.execute(
       {
         id: 'test-p',
-        ethos_md: '# Test',
+        soul_md: '# Test',
         config: { name: 'Test' },
         toolset: ['read_file', 'nonexistent_tool'],
       },
@@ -279,7 +279,7 @@ describe('scaffold_personality', () => {
     }
   });
 
-  it('rejects empty ethos_md', async () => {
+  it('rejects empty soul_md', async () => {
     const storage = new InMemoryStorage();
     const registry = makeToolRegistry([makeTool('read_file')]);
     const designTools = createPersonalityDesignTools({
@@ -293,7 +293,7 @@ describe('scaffold_personality', () => {
     const result = await scaffoldTool?.execute(
       {
         id: 'test-p',
-        ethos_md: '   ',
+        soul_md: '   ',
         config: { name: 'Test' },
         toolset: ['read_file'],
       },

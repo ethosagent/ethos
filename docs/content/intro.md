@@ -7,7 +7,7 @@ slug: /
 updated: 2026-05-12
 ---
 
-**[Personalities](getting-started/glossary.md#personality) aren't hats you swap in the prompt. They're enforced boundaries.** A personality in Ethos is a directory of files — `ETHOS.md`, `config.yaml`, `toolset.yaml` — that the runtime treats as a structural component. Switching it changes prompt, tools, memory, and model atomically. The boundary is enforced at the [tool registry](getting-started/glossary.md#tool), not requested in the prompt.
+**[Personalities](getting-started/glossary.md#personality) aren't hats you swap in the prompt. They're enforced boundaries.** A personality in Ethos is a directory of files — `SOUL.md`, `config.yaml`, `toolset.yaml` — that the runtime treats as a structural component. Switching it changes prompt, tools, memory, and model atomically. The boundary is enforced at the [tool registry](getting-started/glossary.md#tool), not requested in the prompt.
 
 That single decision pays off four ways:
 

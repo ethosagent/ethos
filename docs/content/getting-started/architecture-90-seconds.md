@@ -112,9 +112,9 @@ Every interface below is in `@ethosagent/types` (zero dependencies; safe to depe
 
 ## What a personality changes
 
-A personality lives at `~/.ethos/personalities/<id>/` — three files (`ETHOS.md`, `config.yaml`, `toolset.yaml`). Switching personalities atomically changes:
+A personality lives at `~/.ethos/personalities/<id>/` — three files (`SOUL.md`, `config.yaml`, `toolset.yaml`). Switching personalities atomically changes:
 
-- **System prompt** (from `ETHOS.md`)
+- **System prompt** (from `SOUL.md`)
 - **Tool access** (from `toolset.yaml`)
 - **Memory scope** (from `memoryScope` in `config.yaml`)
 - **Model** (from `model` in `config.yaml`)

@@ -157,7 +157,7 @@ export interface CreatePersonalityInput {
   description?: string;
   model?: string;
   toolset: string[];
-  ethosMd: string;
+  soulMd: string;
   memoryScope?: 'global' | 'per-personality';
   provider?: string;
   capabilities?: string[];
@@ -171,7 +171,7 @@ export interface UpdatePersonalityPatch {
   description?: string;
   model?: string;
   toolset?: string[];
-  ethosMd?: string;
+  soulMd?: string;
   memoryScope?: 'global' | 'per-personality';
   mcp_servers?: string[];
   plugins?: string[];
@@ -182,7 +182,7 @@ export interface UpdatePersonalityPatch {
 
 export class FilePersonalityRegistry implements PersonalityRegistry {
   private readonly personalities = new Map<string, PersonalityConfig>();
-  // dir → fingerprint of config.yaml + ETHOS.md + toolset.yaml mtimes
+  // dir → fingerprint of config.yaml + SOUL.md + toolset.yaml mtimes
   private readonly fingerprintCache = new Map<string, string>();
   private defaultId = 'researcher';
   private readonly storage: Storage;
@@ -279,14 +279,14 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
   }
 
   /**
-   * Read the ETHOS.md body for a personality. Returns `''` if the
-   * personality has no `ethosFile` (config-only personalities) or if the
+   * Read the SOUL.md body for a personality. Returns `''` if the
+   * personality has no `soulFile` (config-only personalities) or if the
    * file isn't readable.
    */
-  async readEthosMd(id: string): Promise<string> {
+  async readSoulMd(id: string): Promise<string> {
     const config = this.personalities.get(id);
-    if (!config?.ethosFile) return '';
-    return (await this.storage.read(config.ethosFile)) ?? '';
+    if (!config?.soulFile) return '';
+    return (await this.storage.read(config.soulFile)) ?? '';
   }
 
   async create(input: CreatePersonalityInput): Promise<DescribedPersonality> {
@@ -302,7 +302,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     await this.storage.mkdir(dir);
     await this.storage.write(join(dir, 'config.yaml'), renderConfigYaml(input));
     await this.storage.write(join(dir, 'toolset.yaml'), renderToolsetYaml(input.toolset));
-    await this.storage.write(join(dir, 'ETHOS.md'), input.ethosMd);
+    await this.storage.write(join(dir, 'SOUL.md'), input.soulMd);
     await this.refreshUserDir();
     const created = this.describe(input.id);
     if (!created) {
@@ -392,7 +392,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         description: patch.description ?? config.description,
         model: patch.model ?? existingModel,
         toolset: patch.toolset ?? config.toolset ?? [],
-        ethosMd: '',
+        soulMd: '',
         memoryScope: patch.memoryScope ?? config.memoryScope,
         mcp_servers: patch.mcp_servers ?? config.mcp_servers,
         plugins: patch.plugins ?? config.plugins,
@@ -405,8 +405,8 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     if (patch.toolset !== undefined) {
       await this.storage.write(join(dir, 'toolset.yaml'), renderToolsetYaml(patch.toolset));
     }
-    if (patch.ethosMd !== undefined) {
-      await this.storage.write(join(dir, 'ETHOS.md'), patch.ethosMd);
+    if (patch.soulMd !== undefined) {
+      await this.storage.write(join(dir, 'SOUL.md'), patch.soulMd);
     }
     // Invalidate the mtime-based fingerprint so a rapid second write within
     // the same millisecond is not silently skipped by loadOne's cache guard.
@@ -453,8 +453,8 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         action: 'Use list() to see available ids.',
       });
     }
-    const sourceDir = src.ethosFile
-      ? src.ethosFile.replace(/\/ETHOS\.md$/, '')
+    const sourceDir = src.soulFile
+      ? src.soulFile.replace(/\/SOUL\.md$/, '')
       : src.skillsDirs?.[0]?.replace(/\/skills$/, '');
     if (!sourceDir) {
       throw new EthosError({
@@ -504,15 +504,15 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
   }
 
   private toDescribed(config: PersonalityConfig): DescribedPersonality {
-    const ethosFile = config.ethosFile;
+    const soulFile = config.soulFile;
     const userPrefix = this.userDir ? `${this.userDir}/` : null;
-    const builtin = userPrefix && ethosFile ? !ethosFile.startsWith(userPrefix) : true;
+    const builtin = userPrefix && soulFile ? !soulFile.startsWith(userPrefix) : true;
     return { config, builtin };
   }
 
   private dirOf(p: DescribedPersonality): string {
-    const ethosFile = p.config.ethosFile;
-    if (ethosFile) return ethosFile.replace(/\/ETHOS\.md$/, '');
+    const soulFile = p.config.soulFile;
+    if (soulFile) return soulFile.replace(/\/SOUL\.md$/, '');
     return this.userPathFor(p.config.id);
   }
 
@@ -566,7 +566,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     // is vanishingly unlikely for personality files (humans editing config).
     const fingerprint = await this.fileFingerprint([
       join(dir, 'config.yaml'),
-      join(dir, 'ETHOS.md'),
+      join(dir, 'SOUL.md'),
       join(dir, 'toolset.yaml'),
     ]);
     if (this.fingerprintCache.get(dir) === fingerprint) return;
@@ -577,15 +577,15 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
   }
 
   private async buildConfig(dir: string, id: string): Promise<PersonalityConfig | null> {
-    // Must have at least config.yaml or ETHOS.md to be considered a personality
-    const [configSrc, toolsetSrc, ethosExists, skillsExists] = await Promise.all([
+    // Must have at least config.yaml or SOUL.md to be considered a personality
+    const [configSrc, toolsetSrc, soulExists, skillsExists] = await Promise.all([
       this.storage.read(join(dir, 'config.yaml')),
       this.storage.read(join(dir, 'toolset.yaml')),
-      this.storage.exists(join(dir, 'ETHOS.md')),
+      this.storage.exists(join(dir, 'SOUL.md')),
       this.storage.exists(join(dir, 'skills')),
     ]);
 
-    if (!configSrc && !ethosExists) return null;
+    if (!configSrc && !soulExists) return null;
 
     const parsed = configSrc ? parseConfigYaml(configSrc) : { flat: {}, nested: {} };
     const cfg = parsed.flat;
@@ -652,7 +652,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       platform: cfg.platform,
       memoryScope: (cfg.memoryScope as PersonalityConfig['memoryScope']) ?? 'global',
       ...(capabilities?.length ? { capabilities } : {}),
-      ...(ethosExists ? { ethosFile: join(dir, 'ETHOS.md') } : {}),
+      ...(soulExists ? { soulFile: join(dir, 'SOUL.md') } : {}),
       ...(skillsExists ? { skillsDirs: [join(dir, 'skills')] } : {}),
       ...(toolsetSrc ? { toolset: parseToolsetYaml(toolsetSrc) } : {}),
       ...(streamingTimeoutMs !== undefined ? { streamingTimeoutMs } : {}),

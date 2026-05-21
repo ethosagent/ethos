@@ -248,12 +248,12 @@ interface WizardState {
   fsReachRead: string[];
   fsReachWrite: string[];
   toolset: string[];
-  ethosMd: string;
+  soulMd: string;
   mcpServers: string[];
   plugins: string[];
 }
 
-const ETHOS_TEMPLATE = `# About me\n\nI am a {role}. I {what I do}. I {how I work}.\n\n## How I respond\n\n- {tone / shape}\n- {tone / shape}\n- {tone / shape}\n`;
+const SOUL_TEMPLATE = `# About me\n\nI am a {role}. I {what I do}. I {how I work}.\n\n## How I respond\n\n- {tone / shape}\n- {tone / shape}\n- {tone / shape}\n`;
 
 function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onClose: () => void }) {
   const qc = useQueryClient();
@@ -269,7 +269,7 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
     fsReachRead: [],
     fsReachWrite: [],
     toolset: [],
-    ethosMd: ETHOS_TEMPLATE,
+    soulMd: SOUL_TEMPLATE,
     mcpServers: [],
     plugins: [],
   });
@@ -297,7 +297,7 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
         ...(state.mcpServers.length > 0 ? { mcp_servers: state.mcpServers } : {}),
         ...(state.plugins.length > 0 ? { plugins: state.plugins } : {}),
         toolset: state.toolset,
-        ethosMd: state.ethosMd,
+        soulMd: state.soulMd,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
@@ -312,7 +312,7 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
   const idValid = /^[a-z0-9_-]+$/.test(state.id);
   const nameValid = state.name.trim().length > 0;
   const idCollision = existingIds.has(state.id);
-  const canCreate = idValid && nameValid && !idCollision && state.ethosMd.length > 0;
+  const canCreate = idValid && nameValid && !idCollision && state.soulMd.length > 0;
 
   const mcpServers = pluginsQuery.data?.mcpServers ?? [];
   const availablePlugins = pluginsQuery.data?.plugins ?? [];
@@ -357,9 +357,9 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
             children: <ToolsetStep state={state} setState={setState} />,
           },
           {
-            key: 'ethos',
-            label: 'ETHOS.md',
-            children: <EthosMdStep state={state} setState={setState} />,
+            key: 'soul',
+            label: 'SOUL.md',
+            children: <SoulMdStep state={state} setState={setState} />,
           },
           {
             key: 'mcp',
@@ -538,7 +538,7 @@ function ToolsetStep({
   );
 }
 
-function EthosMdStep({
+function SoulMdStep({
   state,
   setState,
 }: {
@@ -553,10 +553,10 @@ function EthosMdStep({
       </Typography.Paragraph>
       <Form.Item required>
         <Input.TextArea
-          value={state.ethosMd}
+          value={state.soulMd}
           autoSize={{ minRows: 12, maxRows: 24 }}
           style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12.5 }}
-          onChange={(e) => setState((s) => ({ ...s, ethosMd: e.target.value }))}
+          onChange={(e) => setState((s) => ({ ...s, soulMd: e.target.value }))}
         />
       </Form.Item>
     </Form>
@@ -876,7 +876,7 @@ function EditModal({ id, onClose }: { id: string; onClose: () => void }) {
             {
               key: 'identity',
               label: 'Identity',
-              children: <IdentityEditor id={id} initialEthosMd={data.ethosMd} />,
+              children: <IdentityEditor id={id} initialSoulMd={data.soulMd} />,
             },
             {
               key: 'toolset',
@@ -934,8 +934,8 @@ function CharacterSheetPanel({ id }: { id: string }) {
   return (
     <>
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-        Auto-generated from config + ETHOS.md — the same artifact{' '}
-        <code>ethos personality show</code> prints.
+        Auto-generated from config + SOUL.md — the same artifact <code>ethos personality show</code>{' '}
+        prints.
       </Typography.Paragraph>
       <pre
         style={{
@@ -951,18 +951,18 @@ function CharacterSheetPanel({ id }: { id: string }) {
   );
 }
 
-function IdentityEditor({ id, initialEthosMd }: { id: string; initialEthosMd: string }) {
+function IdentityEditor({ id, initialSoulMd }: { id: string; initialSoulMd: string }) {
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
-  const [draft, setDraft] = useState(initialEthosMd);
+  const [draft, setDraft] = useState(initialSoulMd);
 
   const mut = useMutation({
-    mutationFn: () => rpc.personalities.update({ id, ethosMd: draft }),
+    mutationFn: () => rpc.personalities.update({ id, soulMd: draft }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['personalities', 'get', id] });
       qc.invalidateQueries({ queryKey: ['personalities', 'characterSheet', id] });
       qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
-      notification.success({ message: 'ETHOS.md saved', placement: 'topRight' });
+      notification.success({ message: 'SOUL.md saved', placement: 'topRight' });
     },
     onError: (err) =>
       notification.error({ message: 'Save failed', description: (err as Error).message }),
@@ -983,7 +983,7 @@ function IdentityEditor({ id, initialEthosMd }: { id: string; initialEthosMd: st
       </Form.Item>
       <Button
         type="primary"
-        disabled={draft === initialEthosMd}
+        disabled={draft === initialSoulMd}
         loading={mut.isPending}
         onClick={() => mut.mutate()}
       >
@@ -1580,7 +1580,7 @@ function DuplicateModal({
     >
       <Form layout="vertical">
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-          Copies all four files (ETHOS.md, toolset.yaml, config.yaml, skills/) into{' '}
+          Copies all four files (SOUL.md, toolset.yaml, config.yaml, skills/) into{' '}
           <Typography.Text code>~/.ethos/personalities/&lt;new-id&gt;/</Typography.Text>. The editor
           opens on the copy when this completes.
         </Typography.Paragraph>

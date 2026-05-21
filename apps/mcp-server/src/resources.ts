@@ -41,11 +41,11 @@ export function listResources(dataDir: string): McpResource[] {
   for (const dir of personalityDirs) {
     if (!existsSync(dir)) continue;
     for (const id of readdirSync(dir)) {
-      const ethosMd = join(dir, id, 'ETHOS.md');
+      const soulMd = join(dir, id, 'SOUL.md');
       const configYaml = join(dir, id, 'config.yaml');
-      if (existsSync(ethosMd))
+      if (existsSync(soulMd))
         resources.push({
-          uri: `ethos://personalities/${id}/ETHOS.md`,
+          uri: `ethos://personalities/${id}/SOUL.md`,
           name: `${id} identity`,
           mimeType: 'text/markdown',
         });
@@ -75,7 +75,7 @@ export function readResource(uri: string, dataDir: string): string {
     return JSON.stringify({ message: 'Session history available via SQLite session store.' });
   }
 
-  // ethos://personalities/<id>/ETHOS.md or config.yaml
+  // ethos://personalities/<id>/SOUL.md or config.yaml
   const personalityMatch = uri.match(/^ethos:\/\/personalities\/([^/]+)\/(.+)$/);
   if (personalityMatch) {
     const [, id, file] = personalityMatch;

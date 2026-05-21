@@ -20,7 +20,7 @@ async function seedPersonality(id: string): Promise<void> {
   const dir = join(testDir, 'personalities', id);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'config.yaml'), `name: ${id}\n`);
-  await writeFile(join(dir, 'ETHOS.md'), `# ${id}\n\nIdentity.\n`);
+  await writeFile(join(dir, 'SOUL.md'), `# ${id}\n\nIdentity.\n`);
   await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
 }
 

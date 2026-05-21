@@ -33,7 +33,7 @@ The MCP server lives in [`apps/mcp-server/src/`](https://github.com/MiteshSharma
 | Tool | `search_memory(query)` | Search `MEMORY.md` and `USER.md`. |
 | Resource | `ethos://memory/MEMORY.md` | The rolling project memory. |
 | Resource | `ethos://memory/USER.md` | The user-identity memory. |
-| Resource | `ethos://personalities/<id>/ETHOS.md` | A personality's identity file. |
+| Resource | `ethos://personalities/<id>/SOUL.md` | A personality's identity file. |
 | Resource | `ethos://sessions/recent` | Index of recent sessions. |
 | Prompt | `code_review`, `research_topic`, `reflect_on_decision`, `debug_failure` | Ready-to-invoke prompt templates. |
 

@@ -20,7 +20,7 @@ export const personalitiesRouter = {
       ...(input.description !== undefined ? { description: input.description } : {}),
       ...(input.model !== undefined ? { model: input.model } : {}),
       toolset: input.toolset,
-      ethosMd: input.ethosMd,
+      soulMd: input.soulMd,
       ...(input.memoryScope !== undefined ? { memoryScope: input.memoryScope } : {}),
       ...(input.provider !== undefined ? { provider: input.provider } : {}),
       ...(input.capabilities !== undefined ? { capabilities: input.capabilities } : {}),

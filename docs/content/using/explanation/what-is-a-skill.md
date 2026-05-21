@@ -37,7 +37,7 @@ The honest reason is that instructions belong in instruction shape, not in code 
 
 If a code-review checklist were a tool, every project that wanted to tweak it would need a TypeScript change and a redeploy. As a markdown file, it sits next to other markdown documents, is editable in any editor, diffs in any review tool, and propagates to every agent that scans the directory.
 
-If a checklist were baked into a personality's `ETHOS.md`, the personality file would grow unbounded. The reviewer's identity ("I am evidence-based, I always explain why") is small and stable. The checklists the reviewer applies to JavaScript, to Terraform, to SQL schemas, to PR descriptions — those are many, change often, and are properly *guidance under* the identity, not part of it.
+If a checklist were baked into a personality's `SOUL.md`, the personality file would grow unbounded. The reviewer's identity ("I am evidence-based, I always explain why") is small and stable. The checklists the reviewer applies to JavaScript, to Terraform, to SQL schemas, to PR descriptions — those are many, change often, and are properly *guidance under* the identity, not part of it.
 
 If a checklist were a chat-time prompt the user pastes each session, it would not propagate across sessions, would not survive `/new`, would not survive switching platforms. Skills do.
 

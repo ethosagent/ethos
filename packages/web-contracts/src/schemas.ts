@@ -72,7 +72,7 @@ export type StoredMessage = z.infer<typeof StoredMessageSchema>;
 // Personalities
 //
 // `id` / `name` / `description` / `model` / `memoryScope` / `streamingTimeoutMs`
-// are user-facing fields from PersonalityConfig. `ethosFile` / `skillsDirs`
+// are user-facing fields from PersonalityConfig. `soulFile` / `skillsDirs`
 // (server filesystem paths) are intentionally NOT in the wire schema.
 // ---------------------------------------------------------------------------
 

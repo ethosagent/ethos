@@ -74,7 +74,7 @@ These namespaces are committed to semver stability. Breaking changes require a m
 | Method | Input | Output | Description |
 |---|---|---|---|
 | `list` | -- | `{ personalities, defaultId }` | All loaded personalities. |
-| `get` | `{ id }` | `{ personality, ethosMd }` | Single personality with its ETHOS.md body. |
+| `get` | `{ id }` | `{ personality, soulMd }` | Single personality with its SOUL.md body. |
 | `characterSheet` | `{ id }` | `{ markdown }` | Rendered character sheet. |
 | `create` | `{ id, name, ... }` | `{ personality }` | Create a new personality. |
 | `update` | `{ id, name?, ... }` | `{ personality }` | Patch an existing personality. |

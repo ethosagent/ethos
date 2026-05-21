@@ -98,7 +98,7 @@ This is why the test directory `packages/core/src/__tests__/` is short. Most beh
 
 ### Personalities are injected too — at the registry
 
-A subtlety worth surfacing: the personality is not passed directly. The `PersonalityRegistry` is passed; the loop resolves the active personality from it on every turn. This is what makes hot reload work — `FilePersonalityRegistry.loadFromDirectory()` checks `mtime` on every call, and the next turn picks up an edited `ETHOS.md` without a restart.
+A subtlety worth surfacing: the personality is not passed directly. The `PersonalityRegistry` is passed; the loop resolves the active personality from it on every turn. This is what makes hot reload work — `FilePersonalityRegistry.loadFromDirectory()` checks `mtime` on every call, and the next turn picks up an edited `SOUL.md` without a restart.
 
 The wider rule: the loop does not cache a "current personality" object. It re-reads from the registry each turn so that the live truth on disk is what the next turn sees. The registry is the source; the loop is the consumer.
 

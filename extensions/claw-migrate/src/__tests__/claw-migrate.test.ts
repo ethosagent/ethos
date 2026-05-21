@@ -155,11 +155,11 @@ describe('ClawMigrator.execute', () => {
 
     // SOUL.md becomes a personality dir with three files
     const personalityDir = join(target, 'personalities', 'migrated');
-    expect(await exists(join(personalityDir, 'ETHOS.md'))).toBe(true);
+    expect(await exists(join(personalityDir, 'SOUL.md'))).toBe(true);
     expect(await exists(join(personalityDir, 'config.yaml'))).toBe(true);
     expect(await exists(join(personalityDir, 'toolset.yaml'))).toBe(true);
-    const ethosBody = await readFile(join(personalityDir, 'ETHOS.md'), 'utf-8');
-    expect(ethosBody).toBe('# I am.\n');
+    const soulBody = await readFile(join(personalityDir, 'SOUL.md'), 'utf-8');
+    expect(soulBody).toBe('# I am.\n');
 
     // AGENTS.md goes to workspace, not target
     expect(await exists(join(workspace, 'AGENTS.md'))).toBe(true);

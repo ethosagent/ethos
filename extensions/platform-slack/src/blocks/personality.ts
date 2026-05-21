@@ -35,7 +35,7 @@ export interface PersonalityCard {
   id: string;
   name: string;
   description: string;
-  /** First paragraph of ETHOS.md — the personality's own voice. '' when absent. */
+  /** First paragraph of SOUL.md — the personality's own voice. '' when absent. */
   prose: string;
   model: string;
   provider: string;
@@ -51,7 +51,7 @@ const SKILLS_MAX = 1500;
 export function personalityRichBlocks(card: PersonalityCard): SlackBlock[] {
   const blocks: SlackBlock[] = [header(card.name)];
 
-  // Identity — description plus the personality's own ETHOS.md voice (italic).
+  // Identity — description plus the personality's own SOUL.md voice (italic).
   const identityLines: string[] = [];
   if (card.description) identityLines.push(escapeMrkdwn(card.description));
   if (card.prose) identityLines.push(`_${escapeMrkdwn(card.prose)}_`);

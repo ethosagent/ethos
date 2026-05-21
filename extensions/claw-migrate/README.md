@@ -25,11 +25,11 @@ The plan emits `CopyOp`s in a deliberate order — config → keys → memory �
 | `file` | Verbatim copy (MEMORY.md, USER.md, keys.json, AGENTS.md). |
 | `tree` | Recursive copy (skills/ → skills/openclaw-imports/). |
 | `config-merge` | OpenClaw config.yaml → translated Ethos config.yaml with `personality:` resolved. |
-| `soul-as-personality` | SOUL.md → `personalities/migrated/{ETHOS.md, config.yaml, toolset.yaml}`. |
+| `soul-as-personality` | SOUL.md → `personalities/migrated/{SOUL.md, config.yaml, toolset.yaml}`. |
 
 `execute()` walks the ops sequentially. Each `apply*` checks the destination and bails with `status: 'skipped'` if it exists and `overwrite` is false (`src/index.ts:308`). On `dryRun`, the existence check still runs so the user sees the same skip list they'd hit on a real run — only the actual write is suppressed. Failures are caught per-op and reported as `status: 'failed'` with the error message; one bad op never aborts the rest.
 
-`applySoul()` synthesizes a three-file personality bundle: `ETHOS.md` is the SOUL.md content verbatim, `config.yaml` declares `name: Migrated` with a model picked from the resolved personality hint, and `toolset.yaml` is a comment-only stub so the LLM provider's default toolset applies (`src/index.ts:352`). The "already exists" check looks specifically for `ETHOS.md` inside the destination dir.
+`applySoul()` synthesizes a three-file personality bundle: the destination `SOUL.md` is the OpenClaw `SOUL.md` content verbatim, `config.yaml` declares `name: Migrated` with a model picked from the resolved personality hint, and `toolset.yaml` is a comment-only stub so the LLM provider's default toolset applies (`src/index.ts:352`). The "already exists" check looks specifically for `SOUL.md` inside the destination dir.
 
 `applyConfigMerge()` rewrites OpenClaw config keys into Ethos format: keeps `provider`, `model`, `baseUrl`, all known platform tokens (`telegramToken`, `discordToken`, three Slack keys), and writes the resolved `personality:` regardless of what was in the source. `apiKey` is only carried over when `preset === 'all'`; `--preset user-data` strips secrets (`src/index.ts:339`).
 

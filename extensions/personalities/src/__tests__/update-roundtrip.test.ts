@@ -21,13 +21,13 @@ afterEach(async () => {
 async function seedPersonality(
   id: string,
   config: string,
-  ethosMd = `# ${id}\n\nIdentity text.\n`,
+  soulMd = `# ${id}\n\nIdentity text.\n`,
   toolset = '- read_file\n',
 ): Promise<void> {
   const dir = join(testDir, 'personalities', id);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'config.yaml'), config);
-  await writeFile(join(dir, 'ETHOS.md'), ethosMd);
+  await writeFile(join(dir, 'SOUL.md'), soulMd);
   await writeFile(join(dir, 'toolset.yaml'), toolset);
 }
 

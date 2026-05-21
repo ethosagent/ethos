@@ -83,7 +83,7 @@ To duplicate it under a new id (useful before editing):
 ethos personality duplicate migrated my-persona
 ```
 
-Then edit `~/.ethos/personalities/my-persona/ETHOS.md` and `config.yaml`.
+Then edit `~/.ethos/personalities/my-persona/SOUL.md` and `config.yaml`.
 
 ### 5. Verify the provider stayed intact
 

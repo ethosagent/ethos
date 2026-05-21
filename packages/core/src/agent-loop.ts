@@ -659,11 +659,11 @@ export class AgentLoop {
       systemParts.push(INJECTION_DEFENSE_PRELUDE);
     }
 
-    // ETHOS.md / personality identity — routes through Storage so ScopedStorage
+    // SOUL.md / personality identity — routes through Storage so ScopedStorage
     // and InMemoryStorage fixtures work correctly. Only runs when storage is
-    // wired (production always provides it; tests without a real ethosFile skip).
-    if (personality.ethosFile && this.storage) {
-      const identity = await this.storage.read(personality.ethosFile);
+    // wired (production always provides it; tests without a real soulFile skip).
+    if (personality.soulFile && this.storage) {
+      const identity = await this.storage.read(personality.soulFile);
       if (identity) systemParts.push(identity.trim());
     }
 

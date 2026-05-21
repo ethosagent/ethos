@@ -6,7 +6,7 @@ Use this skill when helping a user create, edit, or debug an Ethos personality.
 
 A personality is a structural component (not just a system prompt string) that simultaneously shapes:
 
-- **Identity / voice** — `ETHOS.md` (first-person), injected at priority 110.
+- **Identity / voice** — `SOUL.md` (first-person), injected at priority 110.
 - **Tool access** — `toolset.yaml` declares which tools the personality is allowed to call. The registry enforces this at execution time — calls outside the allowlist return a `tool_result` with `is_error: true`.
 - **Skills** — optional `skills/` directory of `*.md` files injected into the system prompt by `SkillsInjector` (priority 100).
 - **Routing & runtime** — `config.yaml` sets the model, provider, platform, memory scope, and mesh-advertised capabilities.
@@ -18,14 +18,14 @@ A personality is loaded by `FilePersonalityRegistry.loadFromDirectory()` (mtime-
 ```
 <id>/                  ← directory name = personality id (lowercase, no spaces)
 ├── config.yaml        ← required: name, description, model, memoryScope, capabilities
-├── ETHOS.md           ← required: first-person identity ("I am ...", "I do ...")
+├── SOUL.md           ← required: first-person identity ("I am ...", "I do ...")
 ├── toolset.yaml       ← optional but recommended: flat list of allowed tool names
 └── skills/            ← optional: per-personality skill markdown files
     ├── <skill>.md
     └── ...
 ```
 
-At least one of `config.yaml` or `ETHOS.md` must exist for the directory to register as a personality.
+At least one of `config.yaml` or `SOUL.md` must exist for the directory to register as a personality.
 
 ## Installation locations
 
@@ -73,7 +73,7 @@ If `toolset.yaml` is omitted, the personality gets all registered tools. Always 
 
 `capabilities` ≠ `toolset`. Capabilities are labels advertised to the mesh router; toolset is the hard allowlist of tool names the personality may call.
 
-## `ETHOS.md` writing rules
+## `SOUL.md` writing rules
 
 First-person identity. Read like the agent describing itself, not a manual about the agent.
 
@@ -84,11 +84,11 @@ First-person identity. Read like the agent describing itself, not a manual about
 - Don't repeat what's in `toolset.yaml` or `config.yaml`. Identity, not config.
 
 Reference exemplars in `extensions/personalities/data/`:
-- `engineer/ETHOS.md` — terse, code-first
-- `coach/ETHOS.md` — warm but direct, asks questions
-- `researcher/ETHOS.md` — methodical, primary-source bias
-- `reviewer/ETHOS.md` — critical, evidence-based
-- `operator/ETHOS.md` — cautious, confirms before irreversible actions
+- `engineer/SOUL.md` — terse, code-first
+- `coach/SOUL.md` — warm but direct, asks questions
+- `researcher/SOUL.md` — methodical, primary-source bias
+- `reviewer/SOUL.md` — critical, evidence-based
+- `operator/SOUL.md` — cautious, confirms before irreversible actions
 
 ## Per-personality `skills/`
 
@@ -106,7 +106,7 @@ Discovery: top-level `*.md`, plus `<dir>/<slug>/SKILL.md`, plus `<dir>/<scope>/<
 1. **Pick the id** — lowercase, single word, no spaces. The directory name is the id.
 2. **Pick the model** — `haiku` for fast lookups, `sonnet` for code/review, `opus` for planning/coaching.
 3. **Decide memory scope** — `global` lets the personality see other agents' MEMORY.md notes; `per-personality` isolates it (good for reviewer/operator).
-4. **Write ETHOS.md first** — identity drives every other choice.
+4. **Write SOUL.md first** — identity drives every other choice.
 5. **Derive toolset from identity** — a coach doesn't need `terminal`; an operator does.
 6. **Write config.yaml last** — name, description, model, memoryScope, capabilities.
 7. **Verify** — start `ethos`, run `/personality <id>`, check the personality loads and the model resolves.
@@ -115,11 +115,11 @@ Discovery: top-level `*.md`, plus `<dir>/<slug>/SKILL.md`, plus `<dir>/<scope>/<
 
 - **Nested YAML in `config.yaml`** — the parser only handles flat `key: value`. `model:\n  default: claude-...` silently produces `model: ''`.
 - **`capabilities` written as YAML list** — must be a comma-separated string (`code, review`), not `- code\n- review`.
-- **Missing `ETHOS.md`** — a directory with only `config.yaml` will register, but the agent has no identity injection. Always include both.
+- **Missing `SOUL.md`** — a directory with only `config.yaml` will register, but the agent has no identity injection. Always include both.
 - **`toolset.yaml` with hyphens but indented** — lines must start with `- ` at column 0 (after trimming). Indented entries are ignored.
 - **Identity written in third person** — "The agent should be terse" reads like a spec, not a self. Rewrite as "I am terse."
 - **Memory scope mismatch** — declaring `memoryScope: per-personality` but expecting context from a `global` session means MEMORY.md writes won't carry over.
-- **Writing the personality as a plugin without registering an identity injector** — `api.registerPersonality({...})` adds the config, but you also need an injector at priority 110 to inject the ETHOS.md content.
+- **Writing the personality as a plugin without registering an identity injector** — `api.registerPersonality({...})` adds the config, but you also need an injector at priority 110 to inject the SOUL.md content.
 - **Choosing a model id that doesn't exist** — model resolution happens per-turn; an unknown model throws at runtime, not at load time.
 
 ## Where to look for help

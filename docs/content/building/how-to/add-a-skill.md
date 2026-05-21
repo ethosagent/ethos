@@ -122,7 +122,7 @@ To bypass every filter rule for one personality, drop the skill inside its direc
 
 ```text
 ~/.ethos/personalities/researcher/
-├── ETHOS.md
+├── SOUL.md
 ├── config.yaml
 ├── toolset.yaml
 └── skills/

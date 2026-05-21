@@ -4,7 +4,7 @@
 
 ## Why this exists
 
-`AgentLoop` builds the system prompt from a list of `ContextInjector`s sorted by priority. The injectors here are how an Ethos agent actually picks up your project's `AGENTS.md`, the personality's skill markdown files, and any third-party OpenClaw / ClawHub skills you've dropped into `~/.ethos/skills/`. Without these injectors the system prompt would contain only the personality's `ETHOS.md` and memory; nothing project- or skill-specific would reach the model.
+`AgentLoop` builds the system prompt from a list of `ContextInjector`s sorted by priority. The injectors here are how an Ethos agent actually picks up your project's `AGENTS.md`, the personality's skill markdown files, and any third-party OpenClaw / ClawHub skills you've dropped into `~/.ethos/skills/`. Without these injectors the system prompt would contain only the personality's `SOUL.md` and memory; nothing project- or skill-specific would reach the model.
 
 This package also implements OpenClaw frontmatter parsing (`metadata.openclaw|clawdbot|clawdis`) so skills authored for other agent frameworks load without modification — see the migrate-from-openclaw guide for context.
 

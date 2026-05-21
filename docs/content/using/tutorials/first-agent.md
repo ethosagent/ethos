@@ -107,7 +107,7 @@ Cost    : $0.05420
 
 What the numbers mean:
 
-- **Input tokens** include the system prompt, the [ETHOS.md](../../getting-started/glossary.md#ethos-md) of the active personality, any [memory](../../getting-started/glossary.md#memory) prefetch, and every message in the session so far. They grow each turn.
+- **Input tokens** include the system prompt, the [SOUL.md](../../getting-started/glossary.md#ethos-md) of the active personality, any [memory](../../getting-started/glossary.md#memory) prefetch, and every message in the session so far. They grow each turn.
 - **Output tokens** count only what the model wrote back.
 - **Cost** is the provider's published rate applied to those token counts. It is an estimate — the model's billing dashboard is the source of truth.
 
@@ -213,7 +213,7 @@ Engineer answers with the command first, terse explanation second. Its toolset i
 
 What changed in one slash command:
 
-- **System prompt** — swapped from `researcher`'s `ETHOS.md` to `engineer`'s.
+- **System prompt** — swapped from `researcher`'s `SOUL.md` to `engineer`'s.
 - **Tool catalog** — `terminal`, `write_file`, `patch_file`, `run_tests` came into scope; the LLM now sees them. `web_search` and `web_extract` left scope.
 - **Model** — researcher defaults to `claude-opus-4-7`; engineer ships with `claude-sonnet-4-6`. The personality's `model` field overrode the global default for this turn.
 - **Memory scope** — both researcher and engineer ship with `memoryScope: global`, so they share `MEMORY.md`. If you had switched to `reviewer`, its `memoryScope: per-personality` would have isolated its memory from the others.
@@ -316,7 +316,7 @@ The `--query=<text>` and bare `ethos -q <text>` forms are equivalent. The sessio
 
 You have used the five built-in personalities. The next tutorial builds a sixth — a custom `strategist` personality from scratch, with hot-reload and a memory-scope demo.
 
-- [Create your first personality](./first-personality.md) — `ETHOS.md`, `config.yaml`, `toolset.yaml`.
+- [Create your first personality](./first-personality.md) — `SOUL.md`, `config.yaml`, `toolset.yaml`.
 - [Slash commands reference](../reference/slash-commands.md) — every `/command` available in chat.
 - [Built-in personalities](../explanation/built-in-personalities.md) — why each of the five ships with the toolset it does.
 - [Sessions and history](../explanation/sessions-and-history.md) — what `getMessages` returns and why.

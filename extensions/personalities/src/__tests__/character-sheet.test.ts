@@ -24,46 +24,46 @@ const fullConfig: PersonalityConfig = {
   fs_reach: { read: ['${self}', '${shared}'], write: ['${self}'] },
 };
 
-const ethosMd =
+const soulMd =
   '# Engineer\n\nI write working code. That is the primary output.\n\nI read error messages fully before responding.\n';
 
 describe('renderCharacterSheet', () => {
   it('puts the personality id and name in the identity heading', () => {
-    const sheet = renderCharacterSheet(fullConfig, ethosMd);
+    const sheet = renderCharacterSheet(fullConfig, soulMd);
     expect(sheet).toMatch(/^# engineer — Engineer$/m);
   });
 
   it('renders the description as the role tagline', () => {
-    const sheet = renderCharacterSheet(fullConfig, ethosMd);
+    const sheet = renderCharacterSheet(fullConfig, soulMd);
     expect(sheet).toContain('Terse, code-first agent that writes working code immediately.');
   });
 
-  it('renders the first ETHOS.md paragraph as role prose and stops there', () => {
-    const sheet = renderCharacterSheet(fullConfig, ethosMd);
+  it('renders the first SOUL.md paragraph as role prose and stops there', () => {
+    const sheet = renderCharacterSheet(fullConfig, soulMd);
     expect(sheet).toContain('I write working code. That is the primary output.');
     expect(sheet).not.toContain('I read error messages fully before responding.');
   });
 
   it('renders model and provider routing', () => {
-    const sheet = renderCharacterSheet(fullConfig, ethosMd);
+    const sheet = renderCharacterSheet(fullConfig, soulMd);
     expect(sheet).toContain('claude-sonnet-4-6');
     expect(sheet).toContain('anthropic');
   });
 
   it('renders the memory scope', () => {
-    const sheet = renderCharacterSheet(fullConfig, ethosMd);
+    const sheet = renderCharacterSheet(fullConfig, soulMd);
     expect(sheet).toMatch(/Memory scope.*global/i);
   });
 
   it('lists every tool in the toolset', () => {
-    const sheet = renderCharacterSheet(fullConfig, ethosMd);
+    const sheet = renderCharacterSheet(fullConfig, soulMd);
     expect(sheet).toContain('read_file');
     expect(sheet).toContain('write_file');
     expect(sheet).toContain('terminal');
   });
 
   it('renders mcp servers, plugins, and fs_reach when present', () => {
-    const sheet = renderCharacterSheet(fullConfig, ethosMd);
+    const sheet = renderCharacterSheet(fullConfig, soulMd);
     expect(sheet).toContain('github');
     expect(sheet).toContain('sentry');
     expect(sheet).toContain('linear');
@@ -83,7 +83,7 @@ describe('renderCharacterSheet', () => {
     expect(sheet).toMatch(/## Filesystem reach\n- \(default/);
   });
 
-  it('falls back gracefully when ETHOS.md is empty', () => {
+  it('falls back gracefully when SOUL.md is empty', () => {
     const sheet = renderCharacterSheet(fullConfig, '');
     expect(sheet).toMatch(/^# engineer — Engineer$/m);
     expect(sheet).not.toContain('undefined');
@@ -91,7 +91,7 @@ describe('renderCharacterSheet', () => {
 
   it('renders capabilities when set', () => {
     const config = { ...fullConfig, capabilities: ['triage', 'cost-sensitive'] };
-    const sheet = renderCharacterSheet(config, ethosMd);
+    const sheet = renderCharacterSheet(config, soulMd);
     expect(sheet).toContain('## Capabilities');
     expect(sheet).toContain('- triage');
     expect(sheet).toContain('- cost-sensitive');

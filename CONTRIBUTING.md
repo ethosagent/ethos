@@ -90,7 +90,7 @@ comment, section header within 3 lines, or descriptive sentence within 5
 lines.
 
 Internal/derived fields (populated by the loader, not user-set — `id`,
-`ethosFile`, `skillsDirs`, `metadata` on `PersonalityConfig`) are tagged
+`soulFile`, `skillsDirs`, `metadata` on `PersonalityConfig`) are tagged
 `@internal` in source and skipped by the test. If you add a new field that
 genuinely shouldn't surface in docs, add `@internal` in the same PR.
 

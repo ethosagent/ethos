@@ -35,7 +35,7 @@ In LangChain, CrewAI, and AutoGen, ["personality"](glossary.md#personality) mean
 
 In Ethos, a personality is a directory. Swapping it changes:
 
-- The system prompt (via `ETHOS.md`)
+- The system prompt (via `SOUL.md`)
 - The tool access (via `toolset.yaml`)
 - The memory scope (via `memoryScope` in `config.yaml`)
 - The model in use (via `model` in `config.yaml`)

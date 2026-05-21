@@ -149,8 +149,8 @@ export interface PersonalityConfig {
   id: string;
   name: string;
   description?: string;
-  /** @internal Absolute path to ETHOS.md; populated by the loader. */
-  ethosFile?: string;
+  /** @internal Absolute path to SOUL.md; populated by the loader. */
+  soulFile?: string;
   /** @internal Absolute paths to skills directories; populated by the loader. */
   skillsDirs?: string[];
   toolset?: string[];
@@ -290,7 +290,7 @@ export interface PersonalityConfig {
  * Patch shape consumed by `PersonalityRegistry.update`. Narrow on purpose —
  * the SDK install flow only ever needs to mutate the `mcp_servers` list,
  * and consumers in the type layer should not be aware of the broader edit
- * shape that the file-backed registry supports (name, ETHOS.md, toolset).
+ * shape that the file-backed registry supports (name, SOUL.md, toolset).
  * Concrete implementations may accept a wider patch via their own type.
  */
 export interface PersonalityRegistryPatch {

@@ -27,7 +27,7 @@ describe('FilePersonalityRegistry — CRUD mutations', () => {
         description: 'thinks in moves',
         model: 'claude-opus-4-7',
         toolset: ['web_search', 'memory_read'],
-        ethosMd: '# I am a strategist\n',
+        soulMd: '# I am a strategist\n',
       });
 
       expect(created.config.id).toBe('strategist');
@@ -38,26 +38,26 @@ describe('FilePersonalityRegistry — CRUD mutations', () => {
       const personalityDir = join(DATA, 'personalities', 'strategist');
       expect(await storage.read(join(personalityDir, 'config.yaml'))).toContain('name: Strategist');
       expect(await storage.read(join(personalityDir, 'toolset.yaml'))).toContain('- web_search');
-      expect(await storage.read(join(personalityDir, 'ETHOS.md'))).toBe('# I am a strategist\n');
+      expect(await storage.read(join(personalityDir, 'SOUL.md'))).toBe('# I am a strategist\n');
     });
 
     it('rejects duplicate ids with PERSONALITY_EXISTS', async () => {
-      await registry.create({ id: 'one', name: 'One', toolset: [], ethosMd: '' });
+      await registry.create({ id: 'one', name: 'One', toolset: [], soulMd: '' });
       await expect(
-        registry.create({ id: 'one', name: 'One redux', toolset: [], ethosMd: '' }),
+        registry.create({ id: 'one', name: 'One redux', toolset: [], soulMd: '' }),
       ).rejects.toMatchObject({ code: 'PERSONALITY_EXISTS' });
     });
   });
 
   describe('update', () => {
-    it('writes ETHOS.md when patch.ethosMd is present', async () => {
-      await registry.create({ id: 'p', name: 'P', toolset: [], ethosMd: 'old' });
-      await registry.update('p', { ethosMd: 'new identity' });
-      expect(await registry.readEthosMd('p')).toBe('new identity');
+    it('writes SOUL.md when patch.soulMd is present', async () => {
+      await registry.create({ id: 'p', name: 'P', toolset: [], soulMd: 'old' });
+      await registry.update('p', { soulMd: 'new identity' });
+      expect(await registry.readSoulMd('p')).toBe('new identity');
     });
 
     it('updates config.yaml when name/description/model change', async () => {
-      await registry.create({ id: 'p', name: 'Old', toolset: [], ethosMd: '' });
+      await registry.create({ id: 'p', name: 'Old', toolset: [], soulMd: '' });
       await registry.update('p', { name: 'New', description: 'now updated' });
       const yaml = await storage.read(join(DATA, 'personalities', 'p', 'config.yaml'));
       expect(yaml).toContain('name: New');
@@ -65,7 +65,7 @@ describe('FilePersonalityRegistry — CRUD mutations', () => {
     });
 
     it('refreshes toolset.yaml when patch.toolset is present', async () => {
-      await registry.create({ id: 'p', name: 'P', toolset: ['a'], ethosMd: '' });
+      await registry.create({ id: 'p', name: 'P', toolset: ['a'], soulMd: '' });
       await registry.update('p', { toolset: ['x', 'y'] });
       const yaml = await storage.read(join(DATA, 'personalities', 'p', 'toolset.yaml'));
       expect(yaml).toContain('- x');
@@ -77,15 +77,15 @@ describe('FilePersonalityRegistry — CRUD mutations', () => {
       registry.define({
         id: 'reviewer',
         name: 'Reviewer',
-        ethosFile: '/usr/share/ethos/personalities/reviewer/ETHOS.md',
+        soulFile: '/usr/share/ethos/personalities/reviewer/SOUL.md',
       });
-      await expect(registry.update('reviewer', { ethosMd: 'try' })).rejects.toMatchObject({
+      await expect(registry.update('reviewer', { soulMd: 'try' })).rejects.toMatchObject({
         code: 'PERSONALITY_READ_ONLY',
       });
     });
 
     it('rejects unknown ids with PERSONALITY_NOT_FOUND', async () => {
-      await expect(registry.update('ghost', { ethosMd: 'x' })).rejects.toMatchObject({
+      await expect(registry.update('ghost', { soulMd: 'x' })).rejects.toMatchObject({
         code: 'PERSONALITY_NOT_FOUND',
       });
     });
@@ -93,7 +93,7 @@ describe('FilePersonalityRegistry — CRUD mutations', () => {
 
   describe('deletePersonality', () => {
     it('removes the directory and forgets the personality', async () => {
-      await registry.create({ id: 'gone', name: 'Gone', toolset: [], ethosMd: '' });
+      await registry.create({ id: 'gone', name: 'Gone', toolset: [], soulMd: '' });
       await registry.deletePersonality('gone');
       expect(registry.describe('gone')).toBeNull();
       expect(await storage.exists(join(DATA, 'personalities', 'gone'))).toBe(false);
@@ -103,7 +103,7 @@ describe('FilePersonalityRegistry — CRUD mutations', () => {
       registry.define({
         id: 'builtin',
         name: 'Builtin',
-        ethosFile: '/usr/share/ethos/personalities/builtin/ETHOS.md',
+        soulFile: '/usr/share/ethos/personalities/builtin/SOUL.md',
       });
       await expect(registry.deletePersonality('builtin')).rejects.toMatchObject({
         code: 'PERSONALITY_READ_ONLY',
@@ -121,7 +121,7 @@ describe('FilePersonalityRegistry — CRUD mutations', () => {
         'name: Engineer\ndescription: terse + correct\n',
       );
       await storage.write(join(sourceDir, 'toolset.yaml'), '- terminal\n- read_file\n');
-      await storage.write(join(sourceDir, 'ETHOS.md'), '# Engineer body\n');
+      await storage.write(join(sourceDir, 'SOUL.md'), '# Engineer body\n');
       await registry.loadFromDirectory(builtinDir);
 
       const dup = await registry.duplicate('engineer', 'engineer-copy');
@@ -130,18 +130,18 @@ describe('FilePersonalityRegistry — CRUD mutations', () => {
       expect(dup.builtin).toBe(false);
 
       const copyDir = join(DATA, 'personalities', 'engineer-copy');
-      expect(await storage.read(join(copyDir, 'ETHOS.md'))).toBe('# Engineer body\n');
+      expect(await storage.read(join(copyDir, 'SOUL.md'))).toBe('# Engineer body\n');
       const yaml = await storage.read(join(copyDir, 'config.yaml'));
       expect(yaml).toContain('name: Engineer (copy)');
       expect(yaml).toContain('description: terse + correct');
     });
 
     it('rejects when the new id collides', async () => {
-      await registry.create({ id: 'taken', name: 'Taken', toolset: [], ethosMd: '' });
+      await registry.create({ id: 'taken', name: 'Taken', toolset: [], soulMd: '' });
       registry.define({
         id: 'src',
         name: 'Src',
-        ethosFile: '/tmp/fake/src/ETHOS.md',
+        soulFile: '/tmp/fake/src/SOUL.md',
       });
       await expect(registry.duplicate('src', 'taken')).rejects.toMatchObject({
         code: 'PERSONALITY_EXISTS',

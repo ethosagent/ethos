@@ -79,7 +79,7 @@ async function scaffoldBlank(name: string | undefined): Promise<void> {
 
   mkdirSync(dir, { recursive: true });
 
-  writeFileSync(join(dir, 'ETHOS.md'), `# ${name}\n\nDescribe this personality's identity here.\n`);
+  writeFileSync(join(dir, 'SOUL.md'), `# ${name}\n\nDescribe this personality's identity here.\n`);
   writeFileSync(
     join(dir, 'config.yaml'),
     `name: ${yamlScalar(name)}\ndescription: \nmodel: claude-sonnet-4-6\nmemoryScope: global\n`,

@@ -207,7 +207,7 @@ export default function PersonalityShowcase(): ReactNode {
           </p>
           <p>
             Personalities invert it. Each has a curated toolset, a first-person identity (
-            <code>ETHOS.md</code>), and a memory scope. Researcher gets the 8 tools it needs.
+            <code>SOUL.md</code>), and a memory scope. Researcher gets the 8 tools it needs.
             Reviewer gets 3 and a <code>per-personality</code> memory scope so its code-review notes
             never leak into your coach session.
           </p>

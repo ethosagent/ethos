@@ -20,7 +20,7 @@ import type { Storage } from '@ethosagent/types';
 export type CopyKind =
   | 'file' // verbatim copy
   | 'tree' // recursive copy of a directory
-  | 'soul-as-personality' // SOUL.md → personalities/migrated/{ETHOS.md,config.yaml,toolset.yaml}
+  | 'soul-as-personality' // SOUL.md → personalities/migrated/{SOUL.md,config.yaml,toolset.yaml}
   | 'config-merge' // OpenClaw config.yaml → translated Ethos config.yaml
   | 'cron-migrate'; // cron/jobs.json → backfilled with resolved personality
 
@@ -368,9 +368,9 @@ export class ClawMigrator {
 
   private async applySoul(op: CopyOp, plan: MigrationPlan): Promise<ItemResult> {
     // The personality dir contains three files; consider the personality
-    // "already exists" if the directory exists with an ETHOS.md inside.
-    const ethosFile = join(op.dest, 'ETHOS.md');
-    if ((await isFileLike(this.storage, ethosFile)) && !this.overwrite) {
+    // "already exists" if the directory exists with a SOUL.md inside.
+    const soulFile = join(op.dest, 'SOUL.md');
+    if ((await isFileLike(this.storage, soulFile)) && !this.overwrite) {
       return { label: op.label, status: 'skipped', reason: 'already exists' };
     }
 
@@ -386,7 +386,7 @@ export class ClawMigrator {
 
     if (this.dryRun) return { label: op.label, status: 'copied' };
     await this.storage.mkdir(op.dest);
-    await this.storage.write(ethosFile, soul);
+    await this.storage.write(soulFile, soul);
     await this.storage.write(join(op.dest, 'config.yaml'), `${configYaml}\n`);
     await this.storage.write(join(op.dest, 'toolset.yaml'), toolsetYaml);
     return { label: op.label, status: 'copied' };

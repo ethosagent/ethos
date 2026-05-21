@@ -175,7 +175,7 @@ function listAvailableSkillsTool(skills: Skill[]): Tool {
 
 interface ScaffoldPersonalityArgs {
   id: string;
-  ethos_md: string;
+  soul_md: string;
   config: {
     name: string;
     description?: string;
@@ -193,15 +193,15 @@ function scaffoldPersonalityTool(storage: Storage, toolRegistry: ToolRegistry): 
   return {
     name: 'scaffold_personality',
     description:
-      'Validate and write personality files (ETHOS.md, config.yaml, toolset.yaml) atomically to ~/.ethos/personalities/<id>/. Creates a fully-formed custom personality.',
+      'Validate and write personality files (SOUL.md, config.yaml, toolset.yaml) atomically to ~/.ethos/personalities/<id>/. Creates a fully-formed custom personality.',
     toolset: 'personality_design',
     capabilities: { fs_reach: { write: ['~/.ethos/personalities/'] } },
     schema: {
       type: 'object',
-      required: ['id', 'ethos_md', 'config', 'toolset'],
+      required: ['id', 'soul_md', 'config', 'toolset'],
       properties: {
         id: { type: 'string', description: 'Personality ID (kebab-case, e.g. my-researcher)' },
-        ethos_md: { type: 'string', description: 'Full ETHOS.md content' },
+        soul_md: { type: 'string', description: 'Full SOUL.md content' },
         config: {
           type: 'object',
           required: ['name'],
@@ -234,8 +234,8 @@ function scaffoldPersonalityTool(storage: Storage, toolRegistry: ToolRegistry): 
           code: 'input_invalid',
         };
       }
-      if (!args.ethos_md.trim()) {
-        return { ok: false, error: 'ethos_md must be non-empty.', code: 'input_invalid' };
+      if (!args.soul_md.trim()) {
+        return { ok: false, error: 'soul_md must be non-empty.', code: 'input_invalid' };
       }
       if (!args.config.name.trim()) {
         return { ok: false, error: 'config.name must be non-empty.', code: 'input_invalid' };
@@ -277,13 +277,13 @@ function scaffoldPersonalityTool(storage: Storage, toolRegistry: ToolRegistry): 
 
       // Write files atomically
       await storage.mkdir(base);
-      await storage.writeAtomic(join(base, 'ETHOS.md'), args.ethos_md);
+      await storage.writeAtomic(join(base, 'SOUL.md'), args.soul_md);
       await storage.writeAtomic(join(base, 'config.yaml'), configYaml);
       await storage.writeAtomic(join(base, 'toolset.yaml'), toolsetYaml);
 
       return {
         ok: true,
-        value: `Personality "${args.id}" scaffolded successfully.\n\nFiles written:\n- ${base}/ETHOS.md\n- ${base}/config.yaml\n- ${base}/toolset.yaml\n\nTest it: ethos chat --personality ${args.id}`,
+        value: `Personality "${args.id}" scaffolded successfully.\n\nFiles written:\n- ${base}/SOUL.md\n- ${base}/config.yaml\n- ${base}/toolset.yaml\n\nTest it: ethos chat --personality ${args.id}`,
       };
     },
   };

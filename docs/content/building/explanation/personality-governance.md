@@ -50,17 +50,17 @@ A governed contract you cannot read is not governed — it is just constrained. 
 ethos personality show engineer
 ```
 
-It generates a single Markdown artifact from the personality's `config.yaml` and `ETHOS.md`: the identity line (id and role), the role prose (the first paragraph of `ETHOS.md`), model and provider routing, [memory scope](../../getting-started/glossary.md#memory-scope), the explicit toolset, and the MCP servers, plugins, and `fs_reach` the personality can touch. Optional fields render as explicit `(none)` or `(engine default)` states — a reader never has to guess whether a blank means "unset" or "missing."
+It generates a single Markdown artifact from the personality's `config.yaml` and `SOUL.md`: the identity line (id and role), the role prose (the first paragraph of `SOUL.md`), model and provider routing, [memory scope](../../getting-started/glossary.md#memory-scope), the explicit toolset, and the MCP servers, plugins, and `fs_reach` the personality can touch. Optional fields render as explicit `(none)` or `(engine default)` states — a reader never has to guess whether a blank means "unset" or "missing."
 
-The artifact is generated, never stored. `renderCharacterSheet` in `@ethosagent/personalities` is a pure function over the config and the `ETHOS.md` body; it is regenerated on every call. There is no `character-sheet.md` to drift out of sync with the directory it describes. The CLI prints it; the Web Personalities tab renders the same function's output through the `personalities.characterSheet` RPC. One generator, every surface.
+The artifact is generated, never stored. `renderCharacterSheet` in `@ethosagent/personalities` is a pure function over the config and the `SOUL.md` body; it is regenerated on every call. There is no `character-sheet.md` to drift out of sync with the directory it describes. The CLI prints it; the Web Personalities tab renders the same function's output through the `personalities.characterSheet` RPC. One generator, every surface.
 
 This is why the schema-freeze rule and the character sheet are the same governance. The sheet is only a *tight* character sheet because the schema is small. Every field the freeze rule keeps out is a line the sheet does not have to carry. A 22-field schema renders as one screen; a 40-field schema would render as a form.
 
 ### Generated, not authored
 
-The character sheet is deliberately not a file you write. `ETHOS.md` is authored — first-person, opinionated, the personality's own voice. The character sheet is *derived* — it reads the authored files and the structural config and presents them together.
+The character sheet is deliberately not a file you write. `SOUL.md` is authored — first-person, opinionated, the personality's own voice. The character sheet is *derived* — it reads the authored files and the structural config and presents them together.
 
-The split matters for trust. An authored summary of a personality can lie, or simply lag. A generated one cannot: if the toolset changes, the sheet changes on the next call, because it is the toolset. The character sheet supplements `ETHOS.md` — it does not replace it. `ETHOS.md` is who the agent says it is; the character sheet is what the runtime will actually do.
+The split matters for trust. An authored summary of a personality can lie, or simply lag. A generated one cannot: if the toolset changes, the sheet changes on the next call, because it is the toolset. The character sheet supplements `SOUL.md` — it does not replace it. `SOUL.md` is who the agent says it is; the character sheet is what the runtime will actually do.
 
 ### How a schema change actually happens
 
@@ -80,7 +80,7 @@ The bump procedure is not red tape. It is the schema defending the property that
 
 **Display preferences lost their per-personality home.** Removing `skin`, `verbosity`, and `busyInputMode` means a user who wanted one personality to always render in `paper` and another in `mono` no longer can. That capability was cut deliberately: per-personality display overrides will return as a per-user preferences layer only if real demand surfaces, designed on evidence rather than carried speculatively on the identity schema.
 
-**The sheet is only as good as `ETHOS.md`.** The role prose is the first paragraph of `ETHOS.md`. A personality whose `ETHOS.md` opens with throat-clearing gets a weak character sheet. The fix is upstream — write a concrete first paragraph — not a richer renderer.
+**The sheet is only as good as `SOUL.md`.** The role prose is the first paragraph of `SOUL.md`. A personality whose `SOUL.md` opens with throat-clearing gets a weak character sheet. The fix is upstream — write a concrete first paragraph — not a richer renderer.
 
 ## Recommended reading order
 

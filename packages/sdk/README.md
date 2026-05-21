@@ -80,7 +80,7 @@ await client.rpc.chat.abort({ sessionId });
 
 // Personalities
 const { personalities } = await client.rpc.personalities.list();
-const { personality, ethosMd } = await client.rpc.personalities.get({ id: 'sage' });
+const { personality, soulMd } = await client.rpc.personalities.get({ id: 'sage' });
 
 // Memory
 const { files } = await client.rpc.memory.list();

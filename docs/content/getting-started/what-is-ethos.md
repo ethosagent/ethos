@@ -15,14 +15,14 @@ A `personality` lives at `~/.ethos/personalities/<id>/` and contains three files
 
 ```
 <id>/
-├── ETHOS.md        first-person identity (how do I speak, what am I for)
+├── SOUL.md        first-person identity (how do I speak, what am I for)
 ├── config.yaml     name, description, model, memoryScope, budget, fs_reach
 └── toolset.yaml    flat list of allowed tool names
 ```
 
 Switching from `researcher` to `engineer` mid-chat does not just swap a system prompt. It atomically swaps:
 
-- The system prompt (`ETHOS.md`)
+- The system prompt (`SOUL.md`)
 - The tools the agent can call (`toolset.yaml`)
 - Whether memory is shared with the user-default scope or isolated (`memoryScope`)
 - Which model handles the next turn (`model`)

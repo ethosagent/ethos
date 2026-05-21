@@ -17,7 +17,7 @@ The `personalities` namespace in the contract exposes three read operations that
 
 **`personalities.list`** returns every personality with its `id`, `name`, `description`, `model`, `memoryScope`, and `toolset` array. A dashboard uses this to populate a picker — the user selects which personality to chat with or inspect.
 
-**`personalities.get`** takes a personality `id` and returns the full `PersonalityConfig` plus the raw Markdown body of `ETHOS.md`. A dashboard can render the identity document directly — it is Markdown, designed to be read.
+**`personalities.get`** takes a personality `id` and returns the full `PersonalityConfig` plus the raw Markdown body of `SOUL.md`. A dashboard can render the identity document directly — it is Markdown, designed to be read.
 
 **`personalities.characterSheet`** takes a personality `id` and returns a generated Markdown character sheet — the same artifact `ethos personality show` prints in the CLI. This is the canonical one-screen summary of what a personality is: identity, model routing, memory scope, toolset, MCP servers, plugins, filesystem reach. The sheet is regenerated on each call via `renderCharacterSheet` in `@ethosagent/personalities`; it reflects the current on-disk state, not a cached snapshot.
 
@@ -39,11 +39,11 @@ Built-in tools are gated by exact name match against `allowedTools`. MCP and plu
 
 A dashboard that wants to show "this personality can use: read_file, write_file, bash" reads `personality.toolset`. A dashboard that wants to show "this personality has access to MCP server X" reads `personality.mcp_servers`. The two filtering paths are independent.
 
-## The ETHOS.md boundary
+## The SOUL.md boundary
 
-`ETHOS.md` is the first-person identity document — "who am I, how do I speak." A dashboard can read it via `personalities.get` and display it. A dashboard can write to it via `personalities.update` with the `ethosMd` field.
+`SOUL.md` is the first-person identity document — "who am I, how do I speak." A dashboard can read it via `personalities.get` and display it. A dashboard can write to it via `personalities.update` with the `soulMd` field.
 
-The content of `ETHOS.md` flows into the agent's system prompt. A dashboard that edits it is editing the personality's identity. This is powerful and intentional — the web UI is the editor for personality identity. But it also means a dashboard must treat `ETHOS.md` as a privileged write. Validation is minimal (it is free-form Markdown); the governance constraint is social, not mechanical.
+The content of `SOUL.md` flows into the agent's system prompt. A dashboard that edits it is editing the personality's identity. This is powerful and intentional — the web UI is the editor for personality identity. But it also means a dashboard must treat `SOUL.md` as a privileged write. Validation is minimal (it is free-form Markdown); the governance constraint is social, not mechanical.
 
 ## Skills per personality
 
@@ -59,7 +59,7 @@ The SDK's `memory` namespace handles scoping server-side — a dashboard does no
 
 ## Create, duplicate, delete
 
-The contract supports full lifecycle management for personalities. `personalities.create` takes an `id` (lowercase, directory-safe), `name`, `toolset` array, and `ethosMd` body. `personalities.duplicate` clones an existing personality to a new `id`. `personalities.delete` removes it.
+The contract supports full lifecycle management for personalities. `personalities.create` takes an `id` (lowercase, directory-safe), `name`, `toolset` array, and `soulMd` body. `personalities.duplicate` clones an existing personality to a new `id`. `personalities.delete` removes it.
 
 These mutations affect the on-disk personality directory under `~/.ethos/personalities/`. The `FilePersonalityRegistry` is mtime-cached — it re-reads a personality only when `config.yaml` changes. A dashboard that creates or updates a personality sees the change reflected immediately in subsequent `list` or `get` calls because the server writes the file and the next registry load picks it up.
 
@@ -68,9 +68,9 @@ These mutations affect the on-disk personality directory under `~/.ethos/persona
 | Operation | Dashboard can | Dashboard cannot |
 |---|---|---|
 | List personalities | Yes — `personalities.list` | |
-| Read identity | Yes — `get` returns ETHOS.md | |
+| Read identity | Yes — `get` returns SOUL.md | |
 | Read character sheet | Yes — `characterSheet` returns the generated summary | |
-| Edit identity | Yes — `update` with `ethosMd` | |
+| Edit identity | Yes — `update` with `soulMd` | |
 | See toolset | Yes — `toolset` array in the response | |
 | Expand toolset at runtime | | No — server-side enforcement in `toDefinitions` |
 | Manage per-personality skills | Yes — `skillsList`, `skillsCreate`, etc. | |

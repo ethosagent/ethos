@@ -23,12 +23,12 @@ The directory contains exactly three load-bearing files. Anything else in it is 
 
 ```
 ~/.ethos/personalities/<id>/
-├── ETHOS.md        first-person identity — who am I, how do I speak
+├── SOUL.md        first-person identity — who am I, how do I speak
 ├── config.yaml     name, description, model, memoryScope, fs_reach, ...
 └── toolset.yaml    flat list of allowed tool names
 ```
 
-`ETHOS.md` is the agent speaking in the first person. Not a description of a persona — the agent itself. "I am a methodical research assistant. I cite primary sources. I flag uncertainty rather than smoothing over it." Loaded as the system prompt baseline.
+`SOUL.md` is the agent speaking in the first person. Not a description of a persona — the agent itself. "I am a methodical research assistant. I cite primary sources. I flag uncertainty rather than smoothing over it." Loaded as the system prompt baseline.
 
 `config.yaml` is plain `key: value`. It names the personality, declares which model handles its turns, sets the [memory scope](../../getting-started/glossary.md#memory-scope), optionally restricts filesystem reach, optionally allowlists MCP servers and plugins. The full field list is in the [personality config reference](../reference/personality-yaml.md).
 
@@ -51,7 +51,7 @@ A minimal `toolset.yaml`:
 - session_search
 ```
 
-That is the entire surface for a working personality. The agent reads `ETHOS.md` to know who it is, `config.yaml` to know which model and memory scope, and `toolset.yaml` to know what it can call. Three files in, working agent out.
+That is the entire surface for a working personality. The agent reads `SOUL.md` to know who it is, `config.yaml` to know which model and memory scope, and `toolset.yaml` to know what it can call. Three files in, working agent out.
 
 ### The four dimensions that move together
 
@@ -59,7 +59,7 @@ Switching personalities in chat — `/personality engineer` to `/personality rev
 
 | Dimension | What changes | Source of truth |
 |---|---|---|
-| System prompt | Identity, voice, what the agent is *for* | `ETHOS.md` |
+| System prompt | Identity, voice, what the agent is *for* | `SOUL.md` |
 | Tool access | Which actions the LLM can request | `toolset.yaml` |
 | Memory scope | Whether MEMORY.md is shared or per-role | `memoryScope` in `config.yaml` |
 | Model routing | Which LLM handles the turn | `model` in `config.yaml` |
@@ -70,9 +70,9 @@ The conversation thread does not fork on a switch. The same [session](../../gett
 
 ### Hot-reload, mtime-cached
 
-`FilePersonalityRegistry` re-reads a personality only when one of its three files changes on disk. The loader fingerprints `config.yaml`, `ETHOS.md`, and `toolset.yaml` by `mtime`; identical fingerprint means the cached config wins. Calling `loadFromDirectory()` on every turn is cheap when nothing changed and reflects the new content on the next turn when something did.
+`FilePersonalityRegistry` re-reads a personality only when one of its three files changes on disk. The loader fingerprints `config.yaml`, `SOUL.md`, and `toolset.yaml` by `mtime`; identical fingerprint means the cached config wins. Calling `loadFromDirectory()` on every turn is cheap when nothing changed and reflects the new content on the next turn when something did.
 
-This is the property that lets you edit `ETHOS.md` mid-session, send a follow-up message, and watch the agent's voice change without losing history. The conversation continues; the role updates.
+This is the property that lets you edit `SOUL.md` mid-session, send a follow-up message, and watch the agent's voice change without losing history. The conversation continues; the role updates.
 
 There is one quiet benefit of this design. Tuning a personality is a fast loop — edit, send a message, see the difference, edit again. The cost of iterating on "how should the reviewer phrase findings" is zero process restarts and zero session loss. The personality is a config file, not a stored procedure.
 
@@ -93,13 +93,13 @@ The categories the schema explicitly refuses:
 
 Each of these is a real product need; none of them are personality concerns. Voice belongs to the channel adapter. Response templates belong to skills. UI affordances belong to the surface (web, CLI, Telegram). Mixing them into the personality directory was the first instinct and has been refused four times — the goal is a tight unit you can reason about, not a god object that accretes every cross-cutting concern.
 
-### The first-person voice in `ETHOS.md`
+### The first-person voice in `SOUL.md`
 
 A common pattern in prompt engineering is the third-person description: "You are a careful reviewer who asks for evidence." It works, but it produces an agent that can be reasoned out of its role — "actually, just for this turn, do not ask for evidence". The third-person framing is advice; the model can argue with it.
 
-`ETHOS.md` is written in the first person. The agent is not described to itself; the agent speaks as itself. "I am a methodical research assistant. I cite primary sources. I flag uncertainty rather than smoothing over it." The grammatical shape changes the failure mode: the agent is more reluctant to drop its identity mid-turn because it would have to switch grammatical persons to do so.
+`SOUL.md` is written in the first person. The agent is not described to itself; the agent speaks as itself. "I am a methodical research assistant. I cite primary sources. I flag uncertainty rather than smoothing over it." The grammatical shape changes the failure mode: the agent is more reluctant to drop its identity mid-turn because it would have to switch grammatical persons to do so.
 
-Keep `ETHOS.md` opinionated. A vague identity produces vague behaviour. "I am a critical, evidence-based reviewer" gives the model a stronger anchor than "I review code carefully". Be concrete about what the role refuses to do; the refusals are how a personality stays itself when a user asks it to be something else.
+Keep `SOUL.md` opinionated. A vague identity produces vague behaviour. "I am a critical, evidence-based reviewer" gives the model a stronger anchor than "I review code carefully". Be concrete about what the role refuses to do; the refusals are how a personality stays itself when a user asks it to be something else.
 
 ### Isolation enforced, not advised
 
@@ -127,7 +127,7 @@ The combined effect: a personality with a five-tool list literally cannot call a
 
 Three reasons.
 
-You can read it. A personality is plain text. You can `cat ETHOS.md`, `grep` your toolsets, `diff` two versions, commit the directory to a repo, and review a personality change in code review. Memory you cannot read is memory you cannot trust; the same logic applies to identity.
+You can read it. A personality is plain text. You can `cat SOUL.md`, `grep` your toolsets, `diff` two versions, commit the directory to a repo, and review a personality change in code review. Memory you cannot read is memory you cannot trust; the same logic applies to identity.
 
 You can version it. A team shares personalities by committing them to the repo. The reviewer personality your team uses for code review is in source control next to the code it reviews. There is no separate "personality database" to back up.
 
@@ -174,11 +174,11 @@ The shape of this layering — interface in `@ethosagent/types`, default impleme
 
 ## Trade-offs
 
-**You give up the "one super-agent with knobs" mental model.** Every distinct role is a directory you commit to. Five distinct roles is five directories, five `ETHOS.md` files, five toolsets. The alternative — one agent with a `mode` field and per-mode tool filters — was rejected because the resulting code path is one big branch on the mode flag and the boundaries leak.
+**You give up the "one super-agent with knobs" mental model.** Every distinct role is a directory you commit to. Five distinct roles is five directories, five `SOUL.md` files, five toolsets. The alternative — one agent with a `mode` field and per-mode tool filters — was rejected because the resulting code path is one big branch on the mode flag and the boundaries leak.
 
 **You give up cross-personality memory by default.** A `per-personality` memory scope means the reviewer cannot see the engineer's notes. This is the point — opinions about what was reviewed should not leak into what gets built — but it has to be reasoned about. Use `global` scope when continuity matters across roles; use `per-personality` when isolation matters more.
 
-**You give up a single configuration surface.** A personality is a directory of three files, not a YAML field in one config. Five personalities is fifteen files. The trade is legibility for compactness: a `cat ~/.ethos/personalities/reviewer/ETHOS.md` is a complete answer to "what is the reviewer", and that answer survives `grep`, `diff`, and code review.
+**You give up a single configuration surface.** A personality is a directory of three files, not a YAML field in one config. Five personalities is fifteen files. The trade is legibility for compactness: a `cat ~/.ethos/personalities/reviewer/SOUL.md` is a complete answer to "what is the reviewer", and that answer survives `grep`, `diff`, and code review.
 
 **You cannot pick a model per turn.** A personality declares one model. If you want Opus on planning and Sonnet on writing, that is two personalities (`researcher` is Opus, `engineer` is Sonnet) that you switch between, not a knob inside one. The atomic-swap rule makes that legible.
 

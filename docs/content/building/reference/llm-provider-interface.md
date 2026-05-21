@@ -98,7 +98,7 @@ export interface CompletionOptions {
 
 | Field | Type | Description |
 |---|---|---|
-| `system` | `string` | System prompt. Built by `AgentLoop` from `ETHOS.md` + memory + injectors. |
+| `system` | `string` | System prompt. Built by `AgentLoop` from `SOUL.md` + memory + injectors. |
 | `maxTokens` | `number` | Maximum tokens in the response. Defaults vary by provider. |
 | `temperature` | `number` | Sampling temperature. Most surfaces use `0` or `0.2`. |
 | `thinkingBudget` | `number` | Token budget for extended thinking. Ignored if `supportsThinking` is false. |

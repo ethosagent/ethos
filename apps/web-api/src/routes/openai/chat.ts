@@ -216,7 +216,7 @@ function rejectUnsupported(req: ChatCompletionRequest): Rejection | null {
       return {
         message:
           'System messages are not supported. The personality owns the system prompt. ' +
-          'Configure the personality (ETHOS.md, config.yaml) instead of overriding per-request.',
+          'Configure the personality (SOUL.md, config.yaml) instead of overriding per-request.',
         code: 'system_messages_not_supported',
         param: 'messages',
       };

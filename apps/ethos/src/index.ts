@@ -803,7 +803,7 @@ async function runPersonalityDuplicate(argv: string[]): Promise<void> {
 
 // `ethos personality show <id>` — print the generated character sheet: one
 // Markdown screen of what the personality is, what it has, and what it can
-// reach. The artifact is regenerated on every call from config + ETHOS.md.
+// reach. The artifact is regenerated on every call from config + SOUL.md.
 async function runPersonalityShow(argv: string[]): Promise<void> {
   const id = argv[0];
   if (!id) {
@@ -824,8 +824,8 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
     console.error('Run `ethos personality list` to see available ids.');
     process.exit(1);
   }
-  const ethosMd = await reg.readEthosMd(id);
-  console.log(`\n${renderCharacterSheet(described.config, ethosMd)}`);
+  const soulMd = await reg.readSoulMd(id);
+  console.log(`\n${renderCharacterSheet(described.config, soulMd)}`);
 }
 
 // ---------------------------------------------------------------------------

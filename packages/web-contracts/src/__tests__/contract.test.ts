@@ -67,7 +67,7 @@ describe('entity schemas', () => {
     ).toThrow();
   });
 
-  it('Personality omits server-internal fields (ethosFile, skillsDirs)', () => {
+  it('Personality omits server-internal fields (soulFile, skillsDirs)', () => {
     const p = {
       id: 'researcher',
       name: 'Researcher',
@@ -86,7 +86,7 @@ describe('entity schemas', () => {
     };
     const parsed = PersonalitySchema.parse(p);
     expect(parsed).toEqual(p);
-    expect('ethosFile' in parsed).toBe(false);
+    expect('soulFile' in parsed).toBe(false);
     expect('skillsDirs' in parsed).toBe(false);
   });
 

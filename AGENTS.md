@@ -73,7 +73,7 @@ The main session does not write or edit files. Every code or doc change — even
 Why: the main session's context fills with conversation; sub-agents get clean, scoped context for the actual change. Mistakes contained to a sub-agent do not pollute the main session's understanding of the codebase.
 
 What this is
-Ethos is a TypeScript agent framework where personality is architecture. A personality (ETHOS.md + toolset.yaml + config.yaml) is a structural component — not a system prompt string — that shapes tool access, memory filtering, model routing, and communication style simultaneously.
+Ethos is a TypeScript agent framework where personality is architecture. A personality (SOUL.md + toolset.yaml + config.yaml) is a structural component — not a system prompt string — that shapes tool access, memory filtering, model routing, and communication style simultaneously.
 
 The CLI (ethos) gives you an interactive agent that persists sessions across restarts, loads built-in or custom personalities, and streams LLM responses with tool events.
 
@@ -198,7 +198,7 @@ Adding a personality
 Drop a directory in ~/.ethos/personalities/<id>/:
 
 <id>/
-├── ETHOS.md        ← first-person identity (who am I, how do I speak)
+├── SOUL.md        ← first-person identity (who am I, how do I speak)
 ├── config.yaml     ← name, description, model, memoryScope
 └── toolset.yaml    ← flat list of allowed tool names
 config.yaml is simple key: value (no nested YAML). Parsed by parseConfigYaml() in extensions/personalities/src/index.ts.
@@ -363,7 +363,7 @@ The web UI (in development) references DESIGN.md tokens via Antd ConfigProvider.
 When reviewing or writing code that touches UI, flag any deviations from DESIGN.md (slop blacklist, font choices, color hex values, motion durations, "cards earn existence" rule).
 
 Docs system
-Documentation work (Docusaurus pages, READMEs, llms.txt, ETHOS.md files) is governed by the `/docs` skill at [.agents/skills/docs/SKILL.md](.agents/skills/docs/SKILL.md). The skill auto-suggests for any doc work and defines page kinds, the front-matter contract, voice rules, anti-patterns, and the page-acceptance checklist. Invoke it before touching any doc.
+Documentation work (Docusaurus pages, READMEs, llms.txt, SOUL.md files) is governed by the `/docs` skill at [.agents/skills/docs/SKILL.md](.agents/skills/docs/SKILL.md). The skill auto-suggests for any doc work and defines page kinds, the front-matter contract, voice rules, anti-patterns, and the page-acceptance checklist. Invoke it before touching any doc.
 
 gstack
 Available skills: /review, /plan-eng-review, /plan-ceo-review, /plan-design-review, /design-consultation, /browse, /investigate, /careful, /ship, /qa, /retro.

@@ -73,7 +73,7 @@ ethos chat --team analytics
   researcher do market scan, reviewer pressure-test.
 ```
 
-The coordinator's rewritten ETHOS.md is explicit about this pattern: a multi-part request becomes `kanban_create_goal` for the top-level intent, then `kanban_create` for each sub-task with `parents` and `assignee` set. A typical trace:
+The coordinator's rewritten SOUL.md is explicit about this pattern: a multi-part request becomes `kanban_create_goal` for the top-level intent, then `kanban_create` for each sub-task with `parents` and `assignee` set. A typical trace:
 
 ```
 [ coordinator: kanban_create_goal(title="Q3 Analytics Roadmap") → g_4f2          ]

@@ -28,11 +28,11 @@ describe('FilePersonalityRegistry', () => {
       expect(ids).toContain('coordinator');
     });
 
-    it('researcher has ethosFile and toolset', async () => {
+    it('researcher has soulFile and toolset', async () => {
       const registry = await createPersonalityRegistry();
       const researcher = registry.get('researcher');
       expect(researcher).toBeDefined();
-      expect(researcher?.ethosFile).toBeTruthy();
+      expect(researcher?.soulFile).toBeTruthy();
       expect(researcher?.toolset?.length).toBeGreaterThan(0);
       expect(researcher?.toolset).toContain('web_search');
     });
@@ -75,7 +75,7 @@ describe('FilePersonalityRegistry', () => {
         join(personalityDir, 'config.yaml'),
         'name: Strategist\ndescription: Thinks in frameworks\nmodel: claude-opus-4-7\nmemoryScope: global\n',
       );
-      await writeFile(join(personalityDir, 'ETHOS.md'), '# Strategist\n\nI think in frameworks.');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# Strategist\n\nI think in frameworks.');
       await writeFile(
         join(personalityDir, 'toolset.yaml'),
         '- web_search\n- read_file\n- memory_read\n',
@@ -88,12 +88,12 @@ describe('FilePersonalityRegistry', () => {
       expect(strategist).toBeDefined();
       expect(strategist?.name).toBe('Strategist');
       expect(strategist?.model).toBe('claude-opus-4-7');
-      expect(strategist?.ethosFile).toBeTruthy();
+      expect(strategist?.soulFile).toBeTruthy();
       expect(strategist?.toolset).toContain('web_search');
       expect(strategist?.toolset).toContain('memory_read');
     });
 
-    it('skips directories without config.yaml or ETHOS.md', async () => {
+    it('skips directories without config.yaml or SOUL.md', async () => {
       await mkdir(join(testDir, 'empty-dir'));
       await writeFile(join(testDir, 'empty-dir', 'notes.txt'), 'nothing useful');
 
@@ -111,7 +111,7 @@ describe('FilePersonalityRegistry', () => {
       const personalityDir = join(testDir, 'cached');
       await mkdir(personalityDir);
       await writeFile(join(personalityDir, 'config.yaml'), 'name: Cached\ndescription: Test\n');
-      await writeFile(join(personalityDir, 'ETHOS.md'), '# Cached\n\nTest personality.');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# Cached\n\nTest personality.');
 
       const registry = new FilePersonalityRegistry();
       await registry.loadFromDirectory(testDir);
@@ -126,11 +126,11 @@ describe('FilePersonalityRegistry', () => {
       expect(registry.get('cached')?.name).toBe('Mutated');
     });
 
-    it('mtime cache invalidates when ETHOS.md changes', async () => {
+    it('mtime cache invalidates when SOUL.md changes', async () => {
       const personalityDir = join(testDir, 'ethosedit');
       await mkdir(personalityDir);
       await writeFile(join(personalityDir, 'config.yaml'), 'name: Real\n');
-      await writeFile(join(personalityDir, 'ETHOS.md'), 'first version');
+      await writeFile(join(personalityDir, 'SOUL.md'), 'first version');
 
       const registry = new FilePersonalityRegistry();
       await registry.loadFromDirectory(testDir);
@@ -139,11 +139,11 @@ describe('FilePersonalityRegistry', () => {
       // Sentinel value to detect a reload (any reload overwrites it back to "Real")
       registry.define({ id: 'ethosedit', name: 'Sentinel' });
 
-      // Touch ETHOS.md with a future mtime so cache key changes regardless
+      // Touch SOUL.md with a future mtime so cache key changes regardless
       // of filesystem mtime resolution on this OS.
       const future = new Date(Date.now() + 10_000);
       const { utimes } = await import('node:fs/promises');
-      await utimes(join(personalityDir, 'ETHOS.md'), future, future);
+      await utimes(join(personalityDir, 'SOUL.md'), future, future);
 
       await registry.loadFromDirectory(testDir);
       expect(registry.get('ethosedit')?.name).toBe('Real');
@@ -153,7 +153,7 @@ describe('FilePersonalityRegistry', () => {
       const personalityDir = join(testDir, 'toolsetedit');
       await mkdir(personalityDir);
       await writeFile(join(personalityDir, 'config.yaml'), 'name: Tooled\n');
-      await writeFile(join(personalityDir, 'ETHOS.md'), 'identity');
+      await writeFile(join(personalityDir, 'SOUL.md'), 'identity');
       await writeFile(join(personalityDir, 'toolset.yaml'), '- read_file\n');
 
       const registry = new FilePersonalityRegistry();
@@ -187,7 +187,7 @@ describe('FilePersonalityRegistry', () => {
           '    storeToolArgs: full',
         ].join('\n'),
       );
-      await writeFile(join(dir, 'ETHOS.md'), '# Analyst');
+      await writeFile(join(dir, 'SOUL.md'), '# Analyst');
       await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
       const registry = new FilePersonalityRegistry(undefined, testDir);
       await registry.loadFromDirectory(testDir);
@@ -203,7 +203,7 @@ describe('FilePersonalityRegistry', () => {
         join(dir, 'config.yaml'),
         'name: Plain\nmodel: claude-sonnet-4-6\nmemoryScope: global\n',
       );
-      await writeFile(join(dir, 'ETHOS.md'), '# Plain');
+      await writeFile(join(dir, 'SOUL.md'), '# Plain');
       await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
       const registry = new FilePersonalityRegistry(undefined, testDir);
       await registry.loadFromDirectory(testDir);
@@ -224,7 +224,7 @@ describe('FilePersonalityRegistry', () => {
           '    storeToolBodies: invalid-value',
         ].join('\n'),
       );
-      await writeFile(join(dir, 'ETHOS.md'), '# Bad');
+      await writeFile(join(dir, 'SOUL.md'), '# Bad');
       await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
       const registry = new FilePersonalityRegistry(undefined, testDir);
       await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(/storeToolBodies/);
@@ -243,7 +243,7 @@ describe('FilePersonalityRegistry', () => {
           '  foo: bar',
         ].join('\n'),
       );
-      await writeFile(join(dir, 'ETHOS.md'), '# Nested');
+      await writeFile(join(dir, 'SOUL.md'), '# Nested');
       await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
       const registry = new FilePersonalityRegistry(undefined, testDir);
       await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(
@@ -288,7 +288,7 @@ describe('FilePersonalityRegistry', () => {
         join(personalityDir, 'config.yaml'),
         'name: P1\nsafety:\n  approvalMode: smart\n',
       );
-      await writeFile(join(personalityDir, 'ETHOS.md'), '# P1');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# P1');
 
       const registry = new FilePersonalityRegistry();
       await registry.loadFromDirectory(testDir);
@@ -302,7 +302,7 @@ describe('FilePersonalityRegistry', () => {
         join(personalityDir, 'config.yaml'),
         'name: Bot\nplatform: telegram\nsafety:\n  approvalMode: off\n',
       );
-      await writeFile(join(personalityDir, 'ETHOS.md'), '# Bot');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# Bot');
 
       const registry = new FilePersonalityRegistry();
       await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(/approvalMode: off/);
@@ -320,7 +320,7 @@ describe('FilePersonalityRegistry', () => {
         join(personalityDir, 'config.yaml'),
         `name: P\nplatform: ${platform}\nsafety:\n  approvalMode: off\n`,
       );
-      await writeFile(join(personalityDir, 'ETHOS.md'), '# P');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# P');
 
       const registry = new FilePersonalityRegistry();
       await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(/approvalMode: off/);
@@ -333,7 +333,7 @@ describe('FilePersonalityRegistry', () => {
         join(personalityDir, 'config.yaml'),
         'name: Cron\nplatform: cli\nsafety:\n  approvalMode: off\n',
       );
-      await writeFile(join(personalityDir, 'ETHOS.md'), '# Cron');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# Cron');
 
       const registry = new FilePersonalityRegistry();
       await registry.loadFromDirectory(testDir);
@@ -347,7 +347,7 @@ describe('FilePersonalityRegistry', () => {
         join(personalityDir, 'config.yaml'),
         'name: Bot\nplatform: telegram\nsafety:\n  approvalMode: manual\n',
       );
-      await writeFile(join(personalityDir, 'ETHOS.md'), '# Bot');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# Bot');
 
       const registry = new FilePersonalityRegistry();
       await registry.loadFromDirectory(testDir);
@@ -361,7 +361,7 @@ describe('FilePersonalityRegistry', () => {
         join(personalityDir, 'config.yaml'),
         'name: Bad\nsafety:\n  approvalMode: paranoid\n',
       );
-      await writeFile(join(personalityDir, 'ETHOS.md'), '# Bad');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# Bad');
 
       const registry = new FilePersonalityRegistry();
       await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(/Invalid approvalMode/);
@@ -376,7 +376,7 @@ describe('FilePersonalityRegistry', () => {
         join(personalityDir, 'config.yaml'),
         'name: Tiered\nmodel.trivial: haiku\nmodel.default: sonnet\nmodel.deep: opus\n',
       );
-      await writeFile(join(personalityDir, 'ETHOS.md'), '# Tiered');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# Tiered');
 
       const registry = new FilePersonalityRegistry();
       await registry.loadFromDirectory(testDir);
@@ -392,7 +392,7 @@ describe('FilePersonalityRegistry', () => {
         join(personalityDir, 'config.yaml'),
         'name: Plain\nmodel: claude-sonnet-4-6\n',
       );
-      await writeFile(join(personalityDir, 'ETHOS.md'), '# Plain');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# Plain');
 
       const registry = new FilePersonalityRegistry();
       await registry.loadFromDirectory(testDir);
@@ -421,7 +421,7 @@ describe('FilePersonalityRegistry', () => {
         join(personalityDir, 'config.yaml'),
         'name: MemCustom\nmemory.provider: vector\nmemory.options.embedding_model: text-3-large\n',
       );
-      await writeFile(join(personalityDir, 'ETHOS.md'), '# MemCustom');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# MemCustom');
 
       const registry = new FilePersonalityRegistry();
       await registry.loadFromDirectory(testDir);
@@ -436,7 +436,7 @@ describe('FilePersonalityRegistry', () => {
       const personalityDir = join(testDir, 'no-mem');
       await mkdir(personalityDir, { recursive: true });
       await writeFile(join(personalityDir, 'config.yaml'), 'name: NoMem\n');
-      await writeFile(join(personalityDir, 'ETHOS.md'), '# NoMem');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# NoMem');
 
       const registry = new FilePersonalityRegistry();
       await registry.loadFromDirectory(testDir);

@@ -18,7 +18,7 @@ export interface PersonalityCard {
   id: string;
   name: string;
   description: string;
-  /** First paragraph of ETHOS.md — the personality's own voice. '' when absent. */
+  /** First paragraph of SOUL.md — the personality's own voice. '' when absent. */
   prose: string;
   model: string;
   provider: string;
@@ -56,7 +56,7 @@ export function personalityRichMessage(card: PersonalityCard, opts?: Personality
   lines.push(b(esc(card.name)));
   lines.push('');
 
-  // Identity — description plus the personality's own ETHOS.md voice.
+  // Identity — description plus the personality's own SOUL.md voice.
   if (card.description) lines.push(esc(card.description));
   if (card.prose) lines.push(i(esc(card.prose)));
   if (card.description || card.prose) lines.push('');

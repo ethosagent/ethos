@@ -39,13 +39,13 @@ The abstraction the [AgentLoop](#agent-loop) calls to perform inference. Impleme
 
 ### Personality {#personality}
 
-A directory at `~/.ethos/personalities/` containing three files: `ETHOS.md` (identity), `config.yaml` (model and memory scope), `toolset.yaml` (allowed tools). The unit of architecture in Ethos. Switching personalities atomically changes prompt, tools, memory scope, and model. See [Why is personality the unit?](../using/explanation/what-is-a-personality.md).
+A directory at `~/.ethos/personalities/` containing three files: `SOUL.md` (identity), `config.yaml` (model and memory scope), `toolset.yaml` (allowed tools). The unit of architecture in Ethos. Switching personalities atomically changes prompt, tools, memory scope, and model. See [Why is personality the unit?](../using/explanation/what-is-a-personality.md).
 
 ### Built-in personality {#built-in-personality}
 
 One of the five personalities Ethos ships by default: `researcher`, `engineer`, `reviewer`, `coach`, `operator`. Each has a distinct role, toolset, and voice. See [What are the built-in personalities?](../using/explanation/built-in-personalities.md).
 
-### ETHOS.md {#ethos-md}
+### SOUL.md {#ethos-md}
 
 The first-person identity file inside a personality directory. Defines who the agent is, how it speaks, and what it is for. Loaded as the system prompt baseline; combined at runtime with memory context and personality config.
 

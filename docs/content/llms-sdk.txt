@@ -60,7 +60,7 @@ chat.send is fire-and-forget. The response streams over SSE, not this RPC.
 
 ### personalities
 - list() → { personalities, defaultId }
-- get({ id }) → { personality, ethosMd }
+- get({ id }) → { personality, soulMd }
 - characterSheet({ id }) → { markdown }
 - create({ id, name, ... }) → { personality }
 - update({ id, ... }) → { personality }

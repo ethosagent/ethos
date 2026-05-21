@@ -105,7 +105,7 @@ The default personality on a fresh install is `researcher`. The reasoning: the f
 
 The built-ins are not a closed system. They live at `extensions/personalities/data/<id>/` inside the package; your own personalities live at `~/.ethos/personalities/<id>/`. Both directories are scanned at startup. A user-defined personality with the same id as a built-in shadows it for that user only — the built-in still ships unchanged in the package.
 
-The cheapest path to a new role is `ethos personality duplicate engineer engineer-typescript`. The duplicator copies the source directory, renames the duplicate, and bumps the `name` field. From there you edit `ETHOS.md` to encode the more specific voice ("I write idiomatic TypeScript, never JavaScript") and trim or expand `toolset.yaml` to fit. The resulting personality is yours; it lives under `~/.ethos/personalities/`; it can be committed to a team repo.
+The cheapest path to a new role is `ethos personality duplicate engineer engineer-typescript`. The duplicator copies the source directory, renames the duplicate, and bumps the `name` field. From there you edit `SOUL.md` to encode the more specific voice ("I write idiomatic TypeScript, never JavaScript") and trim or expand `toolset.yaml` to fit. The resulting personality is yours; it lives under `~/.ethos/personalities/`; it can be committed to a team repo.
 
 ### Why these five, not three or seven
 

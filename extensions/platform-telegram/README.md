@@ -123,7 +123,7 @@ If something looks wrong after Step 4, work top-to-bottom — earlier rows block
 | Long replies look chopped | Telegram's 4096-char limit; the adapter chunks automatically | Working as intended — chunks land as separate messages |
 | Markdown formatting disappears | Markdown parse error; the adapter retries as plain text | Check the agent's output for unclosed formatting tokens |
 | Eyes reaction never clears | The reply failed or was dropped by outbound dedup | Check gateway logs for send errors |
-| `/start` returns a generic greeting | Personality config has no description or ETHOS.md | Add a `description:` to the personality's `config.yaml` or write an ETHOS.md |
+| `/start` returns a generic greeting | Personality config has no description or SOUL.md | Add a `description:` to the personality's `config.yaml` or write an SOUL.md |
 
 ---
 

@@ -3,7 +3,7 @@
  *
  * Pattern demonstrated: registering a custom personality via a plugin.
  * The personality includes a config (model, toolset, memory scope) plus
- * an inline system prompt injector that acts as the "ETHOS.md" identity.
+ * an inline system prompt injector that acts as the "SOUL.md" identity.
  *
  * This is how to ship a personality as a reusable npm package rather than
  * as a directory in ~/.ethos/personalities/.
@@ -12,7 +12,7 @@
 import type { EthosPlugin, EthosPluginApi } from '@ethosagent/plugin-sdk';
 
 // ---------------------------------------------------------------------------
-// The personality's "ETHOS.md" — injected as a context section
+// The personality's "SOUL.md" — injected as a context section
 // ---------------------------------------------------------------------------
 
 const STRATEGIST_IDENTITY = `# Strategist

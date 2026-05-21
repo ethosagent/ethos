@@ -23,12 +23,12 @@ A personality directory contains exactly three files. None of them is optional.
 
 ```
 ~/.ethos/personalities/<id>/
-├── ETHOS.md        first-person identity — who am I, how do I speak
+├── SOUL.md        first-person identity — who am I, how do I speak
 ├── config.yaml     name, model, memoryScope, fs_reach, mcp_servers, plugins
 └── toolset.yaml    flat list of allowed tool names
 ```
 
-`ETHOS.md` becomes the system prompt baseline. `config.yaml` parameterises model routing, [memory scope](../../getting-started/glossary.md#memory-scope), filesystem reach, MCP allowlist, plugin allowlist. `toolset.yaml` is the allowlist `DefaultToolRegistry.toDefinitions(allowedTools)` filters the visible toolset against.
+`SOUL.md` becomes the system prompt baseline. `config.yaml` parameterises model routing, [memory scope](../../getting-started/glossary.md#memory-scope), filesystem reach, MCP allowlist, plugin allowlist. `toolset.yaml` is the allowlist `DefaultToolRegistry.toDefinitions(allowedTools)` filters the visible toolset against.
 
 When you switch personality, all four change in one step. The `AgentLoop.run()` generator reads the active personality once at the top of the turn (see `packages/core/src/agent-loop.ts`) and uses it to parameterise every subsystem call: which model to ask, which tools to expose, which memory directory to resolve, which MCP servers and plugins to fire. None of those subsystems know about the others. The personality is the binding point.
 
@@ -46,7 +46,7 @@ The friction is deliberate. The schema is the load-bearing surface — it is the
 
 The mechanical loader lives at `extensions/personalities/src/index.ts`. `FilePersonalityRegistry.loadFromDirectory(dir)` walks the immediate subdirectories of `dir`, reads each one's three files, and produces a `PersonalityConfig` for each valid directory.
 
-A "valid directory" is the minimum the contract asks: an `ETHOS.md` (at least empty), a `config.yaml` with at least `name`, and a `toolset.yaml` (which may be an empty list). Missing files produce a load-time error pointing at the directory and the field; malformed YAML produces a parse error with the line number. The loader does not guess.
+A "valid directory" is the minimum the contract asks: an `SOUL.md` (at least empty), a `config.yaml` with at least `name`, and a `toolset.yaml` (which may be an empty list). Missing files produce a load-time error pointing at the directory and the field; malformed YAML produces a parse error with the line number. The loader does not guess.
 
 The per-directory load is `mtime`-fingerprinted. The registry caches the parsed `PersonalityConfig` keyed by directory id; on the next `loadFromDirectory` call, it stats the three files and reuses the cached config if no `mtime` changed. Calling `loadFromDirectory` per turn is cheap on the steady state and reflects edits on the changed-files state.
 
@@ -60,7 +60,7 @@ Three things you cannot get from a prompt string.
 
 **Atomic switching.** When you go from `engineer` to `reviewer` in chat, the model swap, the toolset swap, the memory scope swap, and the prompt swap happen as one operation. There is no transient state where the engineer's write tools are exposed under the reviewer's prompt. The atomicity is what makes "the reviewer cannot edit" credible — it cannot become "the reviewer cannot edit, except for one stray turn during the switch".
 
-**Legibility.** A personality is plain text. You can `cat ETHOS.md`, `grep` your toolsets, `diff` two versions, and commit the directory to a repo. The reviewer your team uses for code review is in source control next to the code it reviews. Memory you cannot read is memory you cannot trust; the same logic applies to identity. The `FilePersonalityRegistry` at `extensions/personalities/src/index.ts` is one implementation of the `PersonalityRegistry` interface; a remote registry, a database-backed one, or a hot-reloading network share are straight ports of the contract.
+**Legibility.** A personality is plain text. You can `cat SOUL.md`, `grep` your toolsets, `diff` two versions, and commit the directory to a repo. The reviewer your team uses for code review is in source control next to the code it reviews. Memory you cannot read is memory you cannot trust; the same logic applies to identity. The `FilePersonalityRegistry` at `extensions/personalities/src/index.ts` is one implementation of the `PersonalityRegistry` interface; a remote registry, a database-backed one, or a hot-reloading network share are straight ports of the contract.
 
 ### The five built-ins are not five prompt presets
 
@@ -83,7 +83,7 @@ If you set out to replicate this with prompt strings, you would write five promp
 The "what does not belong on `PersonalityConfig`" question is the one that comes up repeatedly. Four categories the schema has refused, with the reason each was rejected:
 
 - **Voice modes / TTS settings.** Voice is the channel adapter's concern. Telegram does not speak; the email adapter does not stream audio. Putting voice on the personality assumes one surface.
-- **Emotion / mood / sentiment tags.** Mood is a presentation hint, not a structural property. A reviewer being "cautious" is its identity (`ETHOS.md`), not a flag.
+- **Emotion / mood / sentiment tags.** Mood is a presentation hint, not a structural property. A reviewer being "cautious" is its identity (`SOUL.md`), not a flag.
 - **Response templates.** A skill is the unit for "how do I phrase a code-review comment". Templates belong to skills because they are reusable across personalities.
 - **Per-channel UI affordances.** Button labels, card layouts, Slack block kit — these are channel-adapter concerns. A personality does not know which surface is rendering it.
 
@@ -93,7 +93,7 @@ Each rejection has the same shape: the property is real, but the personality is 
 
 `FilePersonalityRegistry.loadFromDirectory()` fingerprints each personality's three files by `mtime`. Calling it on every turn is cheap when nothing changed; when one of the three files changes on disk, the next turn sees the new content. No restart, no session loss, no cache to invalidate by hand.
 
-This is the property that lets you tune a personality interactively. Edit `ETHOS.md`, send the next message, watch the voice change. Edit `toolset.yaml`, ask the agent to do something it now cannot do, see the rejection. The fast feedback loop is the difference between "I can iterate on this personality" and "I have to restart the process to see if my edit worked".
+This is the property that lets you tune a personality interactively. Edit `SOUL.md`, send the next message, watch the voice change. Edit `toolset.yaml`, ask the agent to do something it now cannot do, see the rejection. The fast feedback loop is the difference between "I can iterate on this personality" and "I have to restart the process to see if my edit worked".
 
 The performance cost is one `stat` per file per turn. For a registry with twenty personalities that is sixty stat calls before the model is asked anything. On a fast filesystem this is in the noise; on a network filesystem it is measurable but bounded.
 
@@ -162,13 +162,13 @@ The "common rejections" comment is below the freeze notice — the four categori
 
 A personality is a directory because:
 
-You can read it. `cat ~/.ethos/personalities/reviewer/ETHOS.md` is a complete answer to "what does the reviewer do". That answer survives `grep`, `diff`, code review, and `git log`. A database row is a query away from being readable, and the query never survives a migration.
+You can read it. `cat ~/.ethos/personalities/reviewer/SOUL.md` is a complete answer to "what does the reviewer do". That answer survives `grep`, `diff`, code review, and `git log`. A database row is a query away from being readable, and the query never survives a migration.
 
 You can version it. Commit the directory to a repo and the personality your team uses is in source control alongside the code it operates on. There is no separate "personality database" to back up, restore, or replicate across machines.
 
 You can swap the backend without changing the contract. `PersonalityRegistry` is an interface; `FilePersonalityRegistry` is one implementation. A remote registry that fetches personalities from a service is the same contract with a different `loadFromDirectory`. The data model — three files, a memory scope, a toolset — is what's invariant.
 
-You can hand-edit it. `ETHOS.md` is markdown. `config.yaml` is `key: value` YAML. `toolset.yaml` is a flat list. No GUI, no admin panel, no migration tool — the file is the source of truth.
+You can hand-edit it. `SOUL.md` is markdown. `config.yaml` is `key: value` YAML. `toolset.yaml` is a flat list. No GUI, no admin panel, no migration tool — the file is the source of truth.
 
 ### Plugins and MCP servers are default-deny
 
@@ -191,13 +191,13 @@ Some boundaries are *not* personality-scoped, on purpose. Switching personalitie
 
 The personality controls "what the agent does and says". The boundary it does not control is "who you are and where you are". Those distinctions keep the user in continuous control of the session while the role shifts beneath them.
 
-### Identity is in the `ETHOS.md`, not the schema
+### Identity is in the `SOUL.md`, not the schema
 
-A subtle property of the design is what *isn't* in `PersonalityConfig`. There is no `tone`, no `style`, no `personality_traits`. The agent's voice and reasoning style live in `ETHOS.md` — markdown, first-person, opinionated. The schema is the structural surface; the prose is the identity.
+A subtle property of the design is what *isn't* in `PersonalityConfig`. There is no `tone`, no `style`, no `personality_traits`. The agent's voice and reasoning style live in `SOUL.md` — markdown, first-person, opinionated. The schema is the structural surface; the prose is the identity.
 
-This split is load-bearing. A future you can read `ETHOS.md` and reason about who the agent is. A future you can read `config.yaml` and reason about what the agent can touch. Mixing them — putting "be concise" alongside `memoryScope` — would smear the boundary; structural and behavioural concerns would interleave on every page of the spec.
+This split is load-bearing. A future you can read `SOUL.md` and reason about who the agent is. A future you can read `config.yaml` and reason about what the agent can touch. Mixing them — putting "be concise" alongside `memoryScope` — would smear the boundary; structural and behavioural concerns would interleave on every page of the spec.
 
-The cost is `ETHOS.md` carries the load of being readable, opinionated, and concrete. The CLAUDE.md note labels the convention: *first-person identity (who am I, how do I speak)*. A vague `ETHOS.md` produces vague behaviour. The reviewer's `ETHOS.md` reads "I am a critical, evidence-based reviewer. I cite specific lines. I refuse to soften concerns to be polite." Not "you are a careful reviewer". The grammatical first person is harder for the model to argue itself out of.
+The cost is `SOUL.md` carries the load of being readable, opinionated, and concrete. The CLAUDE.md note labels the convention: *first-person identity (who am I, how do I speak)*. A vague `SOUL.md` produces vague behaviour. The reviewer's `SOUL.md` reads "I am a critical, evidence-based reviewer. I cite specific lines. I refuse to soften concerns to be polite." Not "you are a careful reviewer". The grammatical first person is harder for the model to argue itself out of.
 
 ### The skills layer sits underneath, not inside
 

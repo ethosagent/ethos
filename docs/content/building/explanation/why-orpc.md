@@ -74,7 +74,7 @@ This is the core value proposition: one file defines the contract, two consumers
 
 A dashboard builder who depends on `@ethosagent/sdk` gets:
 
-1. **Type-checked RPC calls** — `client.rpc.personalities.get({ id })` returns a typed `{ personality, ethosMd }`. No manual response parsing.
+1. **Type-checked RPC calls** — `client.rpc.personalities.get({ id })` returns a typed `{ personality, soulMd }`. No manual response parsing.
 2. **Stability guarantees tied to the contract** — namespaces tagged `@stable` in `router.ts` promise additive-only changes. See [Stability tiers](stability-tiers.md).
 3. **OpenAPI as an escape hatch** — if the SDK's oRPC client does not fit their stack (e.g., they are building in Python), the same endpoints are reachable as plain REST via `/openapi/`.
 4. **No code generation step** — unlike GraphQL or OpenAPI-codegen workflows, there is no build-time generation. Types flow through the TypeScript compiler directly.

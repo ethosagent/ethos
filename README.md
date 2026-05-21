@@ -128,7 +128,7 @@ ethos claw migrate               # apply
 What moves cleanly:
 
 - `MEMORY.md` and `USER.md` → the new personality's memory scope, identical semantics.
-- `SOUL.md` (OpenClaw) → a `migrated` personality with `ETHOS.md` derived from it; built-in matches resolve automatically (`engineer.md` lands on the built-in `engineer`, etc.).
+- `SOUL.md` (OpenClaw) → a `migrated` personality with `SOUL.md` derived from it; built-in matches resolve automatically (`engineer.md` lands on the built-in `engineer`, etc.).
 - Platform tokens (Telegram bot tokens, Slack app credentials, Discord tokens) → the new `SecretsResolver` with `chmod 0600`, referenced from `config.yaml` as `${secrets:slack/<bot>/botToken}`.
 - Provider API keys → `~/.ethos/secrets/providers/<provider>/apiKey`.
 - Skills directory → unchanged path semantics; OpenClaw-compat parses `SKILL.md` frontmatter, env substitutions, and OS gates, so existing clawhub skills install and run without modification.

@@ -7,7 +7,7 @@ slug: personality-registry
 updated: 2026-05-12
 ---
 
-`FilePersonalityRegistry` is the disk-backed loader for [personalities](../../getting-started/glossary.md#personality). It walks one or more directories of `<id>/{ETHOS.md, config.yaml, toolset.yaml}` triples, parses them into `PersonalityConfig` values, and caches based on file mtimes so `loadFromDirectory` is cheap to call every turn for hot-reload.
+`FilePersonalityRegistry` is the disk-backed loader for [personalities](../../getting-started/glossary.md#personality). It walks one or more directories of `<id>/{SOUL.md, config.yaml, toolset.yaml}` triples, parses them into `PersonalityConfig` values, and caches based on file mtimes so `loadFromDirectory` is cheap to call every turn for hot-reload.
 
 ## Source {#source}
 
@@ -57,7 +57,7 @@ const registry = await createPersonalityRegistry({
 | `setDefault(id)` | `void` | Set the default. Throws if `id` is not loaded. |
 | `describe(id)` | `DescribedPersonality \| null` | Returns `{ config, builtin }`. `builtin === true` when the source dir is the package's bundled `data/`. |
 | `describeAll()` | `DescribedPersonality[]` | Same as `describe` for every loaded id. |
-| `readEthosMd(id)` | `Promise<string>` | Read the personality's `ETHOS.md` body. Returns `''` if absent. |
+| `readSoulMd(id)` | `Promise<string>` | Read the personality's `SOUL.md` body. Returns `''` if absent. |
 | `userPathFor(id)` | `string` | Absolute path of `<userPersonalitiesDir>/<id>` (even if it does not exist). Throws if no `userPersonalitiesDir` was configured. |
 
 ### Loaders {#loaders}
@@ -73,7 +73,7 @@ Available only when `userPersonalitiesDir` was passed to the constructor. Built-
 
 | Method | Description |
 |---|---|
-| `create(input)` | Write a new `<userDir>/personalities/<id>/` with `config.yaml`, `toolset.yaml`, `ETHOS.md`. Throws `PERSONALITY_EXISTS` if the id is taken. |
+| `create(input)` | Write a new `<userDir>/personalities/<id>/` with `config.yaml`, `toolset.yaml`, `SOUL.md`. Throws `PERSONALITY_EXISTS` if the id is taken. |
 | `update(id, patch)` | Patch one or more fields. Only the fields present in `patch` are rewritten. Throws `PERSONALITY_READ_ONLY` for built-ins. |
 | `duplicate(id, newId)` | Copy a built-in (or any other) personality into the user dir. The copy's `name:` becomes `<original> (copy)`. |
 | `deletePersonality(id)` | `rm -rf` the personality's user dir and drop from memory. Throws for built-ins. |
@@ -88,7 +88,7 @@ export interface CreatePersonalityInput {
   description?: string;
   model?: string;
   toolset: string[];
-  ethosMd: string;
+  soulMd: string;
   memoryScope?: 'global' | 'per-personality';
 }
 ```
@@ -101,7 +101,7 @@ export interface UpdatePersonalityPatch {
   description?: string;
   model?: string;
   toolset?: string[];
-  ethosMd?: string;
+  soulMd?: string;
   memoryScope?: 'global' | 'per-personality';
   mcp_servers?: string[];
   plugins?: string[];
@@ -113,7 +113,7 @@ export interface UpdatePersonalityPatch {
 
 ## mtime caching {#mtime-caching}
 
-`loadOne()` fingerprints each personality dir by joining the mtimes of `config.yaml`, `ETHOS.md`, and `toolset.yaml`:
+`loadOne()` fingerprints each personality dir by joining the mtimes of `config.yaml`, `SOUL.md`, and `toolset.yaml`:
 
 ```
 <configMtime>|<ethosMtime>|<toolsetMtime>
@@ -151,7 +151,7 @@ Sub-millisecond resolution makes two writes within the same tick vanishingly unl
 
 ## Notes {#notes}
 
-- `describe(id).builtin` is computed by comparing `config.ethosFile` against the user-dir prefix. Personalities loaded from the package's `data/` directory always report `builtin: true`.
+- `describe(id).builtin` is computed by comparing `config.soulFile` against the user-dir prefix. Personalities loaded from the package's `data/` directory always report `builtin: true`.
 - `loadBuiltins()` resolves the data directory via `import.meta.dirname` (Node 21.2+). Do not replace with the `fileURLToPath(new URL(...))` workaround — Ethos runs on Node 24.
 - `validateUnsafeCombinations` refuses load if a personality has `safety.approvalMode: off` and `platform:` is one of the channel-ingress platforms (`telegram`, `discord`, `slack`, `whatsapp`, `email`). Stranger-driven auto-approval is rejected at config-load time.
 - The `defaultId` field is in-memory only; restart resets it to `researcher` (or first loaded).

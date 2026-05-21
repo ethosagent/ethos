@@ -4,7 +4,7 @@ Filesystem-backed `PersonalityRegistry` with five built-in personalities and an 
 
 ## Why this exists
 
-In Ethos, a personality is structural — it shapes tool access, model routing, and prompt content all at once (see the root `CLAUDE.md`, "Adding a personality"). The core `AgentLoop` only knows the `PersonalityRegistry` interface from `@ethosagent/types`; this extension is the concrete implementation that reads `ETHOS.md` / `config.yaml` / `toolset.yaml` from disk and turns them into `PersonalityConfig` records the loop can resolve every turn.
+In Ethos, a personality is structural — it shapes tool access, model routing, and prompt content all at once (see the root `CLAUDE.md`, "Adding a personality"). The core `AgentLoop` only knows the `PersonalityRegistry` interface from `@ethosagent/types`; this extension is the concrete implementation that reads `SOUL.md` / `config.yaml` / `toolset.yaml` from disk and turns them into `PersonalityConfig` records the loop can resolve every turn.
 
 Without this extension there are no personalities to choose from, so `AgentLoop` would have nothing to consult when filtering tools or selecting a model.
 
@@ -32,7 +32,7 @@ The CLI then calls `loadFromDirectory(~/.ethos/personalities)` on top of the bui
 
 `loadOne()` (`src/index.ts:99`) caches `config.yaml` mtime per directory. On subsequent calls, if the file has not changed, the personality is not re-read — so the chat REPL can call `loadFromDirectory()` cheaply on every turn for hot-reload.
 
-`buildConfig()` (`src/index.ts:126`) is permissive: a directory needs only `config.yaml` *or* `ETHOS.md` to be considered a personality. Missing `toolset.yaml` means the personality has no toolset filter, and `AgentLoop` will expose every registered tool to the LLM (toolset-based filtering only kicks in when `personality.toolset` is set — see `tool-registry.ts:57`).
+`buildConfig()` (`src/index.ts:126`) is permissive: a directory needs only `config.yaml` *or* `SOUL.md` to be considered a personality. Missing `toolset.yaml` means the personality has no toolset filter, and `AgentLoop` will expose every registered tool to the LLM (toolset-based filtering only kicks in when `personality.toolset` is set — see `tool-registry.ts:57`).
 
 The YAML parsers are intentionally minimal — `parseConfigYaml` is `^(\w+):\s*(.+)$` line-by-line (no nesting), `parseToolsetYaml` accepts only flat `- item` lists. No external YAML dependency.
 
@@ -42,7 +42,7 @@ The YAML parsers are intentionally minimal — `parseConfigYaml` is `^(\w+):\s*(
 ~/.ethos/personalities/<id>/
   config.yaml      # name, description, model, provider, platform,
                    # memoryScope, capabilities (CSV), streamingTimeoutMs
-  ETHOS.md         # first-person identity prompt (optional)
+  SOUL.md         # first-person identity prompt (optional)
   toolset.yaml     # flat - <tool_name> list (optional)
   skills/          # directory of skill markdown files (optional)
 ```
@@ -51,10 +51,10 @@ The YAML parsers are intentionally minimal — `parseConfigYaml` is `^(\w+):\s*(
 
 ## Gotchas
 
-- A directory with neither `config.yaml` nor `ETHOS.md` is silently ignored (`src/index.ts:135`).
+- A directory with neither `config.yaml` nor `SOUL.md` is silently ignored (`src/index.ts:135`).
 - `config.yaml` is single-level only — `parseConfigYaml` does not handle nested keys or multiline values.
 - `capabilities` is comma-separated *inside the value*, not a YAML list (`code, file, terminal`).
-- The mtime cache tracks the max mtime of `config.yaml`, `ETHOS.md`, and `toolset.yaml`. Adding or removing files inside the personality's `skills/` directory is *not* watched — those changes are picked up by `SkillsInjector` directly on the next turn, not by a personality reload.
+- The mtime cache tracks the max mtime of `config.yaml`, `SOUL.md`, and `toolset.yaml`. Adding or removing files inside the personality's `skills/` directory is *not* watched — those changes are picked up by `SkillsInjector` directly on the next turn, not by a personality reload.
 - `getDefault()` falls back to the first inserted personality if `defaultId` is unknown, then to a hard-coded `{ id: 'default', name: 'Default' }` if the registry is empty.
 - `loadFromDirectory()` swallows ENOENT — a missing personalities directory is treated as no personalities, not an error.
 

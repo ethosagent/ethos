@@ -30,11 +30,11 @@ export class PersonalitiesService {
     };
   }
 
-  async get(id: string): Promise<{ personality: Personality; ethosMd: string }> {
+  async get(id: string): Promise<{ personality: Personality; soulMd: string }> {
     const described = this.opts.personalities.describe(id);
     if (!described) throw notFound(id);
-    const ethosMd = await this.opts.personalities.readEthosMd(id);
-    return { personality: toWire(described), ethosMd };
+    const soulMd = await this.opts.personalities.readSoulMd(id);
+    return { personality: toWire(described), soulMd };
   }
 
   /** Generated Markdown character sheet — the same artifact `ethos personality
@@ -42,8 +42,8 @@ export class PersonalitiesService {
   async characterSheet(id: string): Promise<{ markdown: string }> {
     const described = this.opts.personalities.describe(id);
     if (!described) throw notFound(id);
-    const ethosMd = await this.opts.personalities.readEthosMd(id);
-    return { markdown: renderCharacterSheet(described.config, ethosMd) };
+    const soulMd = await this.opts.personalities.readSoulMd(id);
+    return { markdown: renderCharacterSheet(described.config, soulMd) };
   }
 
   async create(input: CreatePersonalityInput): Promise<{ personality: Personality }> {
