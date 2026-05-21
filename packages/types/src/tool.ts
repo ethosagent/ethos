@@ -166,6 +166,13 @@ export interface ToolFilterOpts {
    * [] = only built-in (non-plugin) tools.
    */
   allowedPlugins?: string[];
+  /**
+   * Per-server MCP tool allowlist. Maps server name to list of allowed bare
+   * tool names (the part after `mcp__<server>__`). A server absent from
+   * this map means all its tools pass. A server present with a list means
+   * only the listed tools pass. undefined = no per-tool filter.
+   */
+  allowedMcpTools?: Record<string, string[]>;
 }
 
 export interface ToolRegistry {

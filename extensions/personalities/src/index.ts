@@ -140,6 +140,179 @@ function parseToolsetYaml(src: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// mcp.yaml parser — handles the subset we need for McpPolicy
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse `mcp.yaml` into an `McpPolicy`. Expected shape:
+ *
+ *   servers:
+ *     linear:
+ *       tools:
+ *         - list_issues
+ *         - get_issue
+ *       reject_args:
+ *         save_issue:
+ *           status:
+ *             - Done
+ *     slack:
+ *       tools:
+ *         - search_public
+ */
+export function parseMcpYaml(src: string): {
+  policy: import('@ethosagent/types').McpPolicy;
+  warnings: string[];
+} {
+  const lines = src.split('\n');
+  const policy: import('@ethosagent/types').McpPolicy = {};
+  const warnings: string[] = [];
+
+  // Detect tabs anywhere — tabs in YAML are always wrong.
+  for (let t = 0; t < lines.length; t++) {
+    if ((lines[t] ?? '').includes('\t')) {
+      warnings.push(`line ${t + 1}: contains tab character (YAML requires spaces for indentation)`);
+    }
+  }
+
+  // Find `servers:` top-level key
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i] ?? '';
+    if (/^servers:\s*$/.test(line)) {
+      i++;
+      break;
+    }
+    i++;
+  }
+  if (i >= lines.length) return { policy, warnings };
+
+  policy.servers = {};
+
+  // Parse each server block (indent level 2)
+  while (i < lines.length) {
+    const line = lines[i] ?? '';
+    if (line.trim() === '' || /^\s*#/.test(line)) {
+      i++;
+      continue;
+    }
+    const lineIndent = line.match(/^(\s*)/)?.[1]?.length ?? 0;
+    if (lineIndent < 2) break;
+
+    const serverMatch = line.match(/^\s{2}(\w[\w-]*):\s*$/);
+    if (!serverMatch) {
+      // Non-blank, non-comment line at indent 2 that doesn't match a server name.
+      // This is likely a bad indent or structural error — policy is being silently dropped.
+      warnings.push(
+        `line ${i + 1}: unrecognized line under servers: (expected "  <serverName>:"): ${line.trimEnd()}`,
+      );
+      i++;
+      continue;
+    }
+    const serverName = serverMatch[1] ?? '';
+    const serverPolicy: import('@ethosagent/types').McpServerPolicy = {};
+    i++;
+
+    // Parse server sub-keys at indent 4+
+    while (i < lines.length) {
+      const sline = lines[i] ?? '';
+      if (sline.trim() === '' || /^\s*#/.test(sline)) {
+        i++;
+        continue;
+      }
+      const sIndent = sline.match(/^(\s*)/)?.[1]?.length ?? 0;
+      if (sIndent < 4) break;
+
+      if (/^\s{4}tools:\s*$/.test(sline)) {
+        serverPolicy.tools = [];
+        i++;
+        while (i < lines.length) {
+          const tline = lines[i] ?? '';
+          if (tline.trim() === '' || /^\s*#/.test(tline)) {
+            i++;
+            continue;
+          }
+          const tMatch = tline.match(/^\s{6}-\s+(.+)$/);
+          if (!tMatch) break;
+          serverPolicy.tools.push((tMatch[1] ?? '').trim());
+          i++;
+        }
+        continue;
+      }
+
+      if (/^\s{4}reject_args:\s*$/.test(sline)) {
+        serverPolicy.reject_args = {};
+        i++;
+        while (i < lines.length) {
+          const rline = lines[i] ?? '';
+          if (rline.trim() === '' || /^\s*#/.test(rline)) {
+            i++;
+            continue;
+          }
+          const rIndent = rline.match(/^(\s*)/)?.[1]?.length ?? 0;
+          if (rIndent < 6) break;
+
+          const toolMatch = rline.match(/^\s{6}(\w[\w-]*):\s*$/);
+          if (!toolMatch) {
+            i++;
+            continue;
+          }
+          const toolName = toolMatch[1] ?? '';
+          const argRules: Record<string, string[]> = {};
+          i++;
+
+          while (i < lines.length) {
+            const aline = lines[i] ?? '';
+            if (aline.trim() === '' || /^\s*#/.test(aline)) {
+              i++;
+              continue;
+            }
+            const aIndent = aline.match(/^(\s*)/)?.[1]?.length ?? 0;
+            if (aIndent < 8) break;
+
+            const argMatch = aline.match(/^\s{8}(\w[\w-]*):\s*$/);
+            if (!argMatch) {
+              i++;
+              continue;
+            }
+            const argName = argMatch[1] ?? '';
+            const values: string[] = [];
+            i++;
+
+            while (i < lines.length) {
+              const vline = lines[i] ?? '';
+              if (vline.trim() === '' || /^\s*#/.test(vline)) {
+                i++;
+                continue;
+              }
+              const vMatch = vline.match(/^\s{10}-\s+(.+)$/);
+              if (!vMatch) break;
+              values.push((vMatch[1] ?? '').trim());
+              i++;
+            }
+            argRules[argName] = values;
+          }
+          serverPolicy.reject_args[toolName] = argRules;
+        }
+        continue;
+      }
+
+      // Non-blank, non-comment line at indent 4 that isn't tools: or reject_args:.
+      // Unknown key — possible typo; the key's content is silently dropped.
+      const unknownKeyMatch = sline.match(/^\s{4}(\w[\w-]*):/);
+      const keyName = unknownKeyMatch ? unknownKeyMatch[1] : sline.trim();
+      warnings.push(
+        `line ${i + 1}: unknown key "${keyName}" under server "${serverName}" (expected "tools" or "reject_args")`,
+      );
+      i++;
+    }
+
+    policy.servers[serverName] = serverPolicy;
+  }
+
+  return { policy, warnings };
+}
+
+// ---------------------------------------------------------------------------
 // FilePersonalityRegistry
 // ---------------------------------------------------------------------------
 
@@ -149,6 +322,14 @@ export interface DescribedPersonality {
    *  (read-only); false if it lives under the user's writable
    *  `<userPersonalitiesDir>/<id>/`. */
   builtin: boolean;
+  /** Per-personality MCP tool policy loaded from mcp.yaml (NOT part of the
+   *  frozen PersonalityConfig schema). Undefined when the personality has no
+   *  mcp.yaml file. */
+  mcpPolicy?: import('@ethosagent/types').McpPolicy;
+  /** Warnings from parsing mcp.yaml — present when the file contained
+   *  structural problems that caused policy to be silently dropped (e.g.
+   *  tab indentation, unknown keys, bad indent). Empty array omitted. */
+  mcpWarnings?: string[];
 }
 
 export interface CreatePersonalityInput {
@@ -182,7 +363,12 @@ export interface UpdatePersonalityPatch {
 
 export class FilePersonalityRegistry implements PersonalityRegistry {
   private readonly personalities = new Map<string, PersonalityConfig>();
-  // dir → fingerprint of config.yaml + SOUL.md + toolset.yaml mtimes
+  /** Per-personality MCP policy loaded from mcp.yaml (sibling artifact, NOT
+   *  on PersonalityConfig). Keyed by personality id. */
+  private readonly mcpPolicies = new Map<string, import('@ethosagent/types').McpPolicy>();
+  /** Warnings from parsing mcp.yaml, keyed by personality id. */
+  private readonly mcpWarningsMap = new Map<string, string[]>();
+  // dir → fingerprint of config.yaml + SOUL.md + toolset.yaml + mcp.yaml mtimes
   private readonly fingerprintCache = new Map<string, string>();
   private defaultId = 'researcher';
   private readonly storage: Storage;
@@ -207,6 +393,12 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     return this.personalities.get(id);
   }
 
+  /** Return the McpPolicy loaded from mcp.yaml for the given personality id.
+   *  Returns undefined when the personality has no mcp.yaml file. */
+  getMcpPolicy(id: string): import('@ethosagent/types').McpPolicy | undefined {
+    return this.mcpPolicies.get(id);
+  }
+
   list(): PersonalityConfig[] {
     return [...this.personalities.values()];
   }
@@ -228,6 +420,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
 
   remove(id: string): void {
     this.personalities.delete(id);
+    this.mcpWarningsMap.delete(id);
     // Also drop fingerprint entries for that id's directory so a
     // subsequent re-create with the same id rebuilds cleanly. We
     // don't know the dir from the id alone, so iterate.
@@ -507,7 +700,14 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     const soulFile = config.soulFile;
     const userPrefix = this.userDir ? `${this.userDir}/` : null;
     const builtin = userPrefix && soulFile ? !soulFile.startsWith(userPrefix) : true;
-    return { config, builtin };
+    const mcpPolicy = this.mcpPolicies.get(config.id);
+    const mcpWarnings = this.mcpWarningsMap.get(config.id);
+    return {
+      config,
+      builtin,
+      ...(mcpPolicy ? { mcpPolicy } : {}),
+      ...(mcpWarnings ? { mcpWarnings } : {}),
+    };
   }
 
   private dirOf(p: DescribedPersonality): string {
@@ -568,24 +768,45 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       join(dir, 'config.yaml'),
       join(dir, 'SOUL.md'),
       join(dir, 'toolset.yaml'),
+      join(dir, 'mcp.yaml'),
     ]);
     if (this.fingerprintCache.get(dir) === fingerprint) return;
     this.fingerprintCache.set(dir, fingerprint);
 
-    const config = await this.buildConfig(dir, id);
-    if (config) this.define(config);
+    const { config, mcpPolicy, mcpWarnings } = await this.buildConfig(dir, id);
+    if (config) {
+      this.define(config);
+      if (mcpPolicy) {
+        this.mcpPolicies.set(id, mcpPolicy);
+      } else {
+        this.mcpPolicies.delete(id);
+      }
+      if (mcpWarnings) {
+        this.mcpWarningsMap.set(id, mcpWarnings);
+      } else {
+        this.mcpWarningsMap.delete(id);
+      }
+    }
   }
 
-  private async buildConfig(dir: string, id: string): Promise<PersonalityConfig | null> {
+  private async buildConfig(
+    dir: string,
+    id: string,
+  ): Promise<{
+    config: PersonalityConfig | null;
+    mcpPolicy?: import('@ethosagent/types').McpPolicy;
+    mcpWarnings?: string[];
+  }> {
     // Must have at least config.yaml or SOUL.md to be considered a personality
-    const [configSrc, toolsetSrc, soulExists, skillsExists] = await Promise.all([
+    const [configSrc, toolsetSrc, soulExists, skillsExists, mcpSrc] = await Promise.all([
       this.storage.read(join(dir, 'config.yaml')),
       this.storage.read(join(dir, 'toolset.yaml')),
       this.storage.exists(join(dir, 'SOUL.md')),
       this.storage.exists(join(dir, 'skills')),
+      this.storage.read(join(dir, 'mcp.yaml')),
     ]);
 
-    if (!configSrc && !soulExists) return null;
+    if (!configSrc && !soulExists) return { config: null };
 
     const parsed = configSrc ? parseConfigYaml(configSrc) : { flat: {}, nested: {} };
     const cfg = parsed.flat;
@@ -673,7 +894,14 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     };
 
     validateUnsafeCombinations(id, config);
-    return config;
+    let mcpPolicy: import('@ethosagent/types').McpPolicy | undefined;
+    let mcpWarnings: string[] | undefined;
+    if (mcpSrc) {
+      const parsed = parseMcpYaml(mcpSrc);
+      mcpPolicy = parsed.policy;
+      if (parsed.warnings.length > 0) mcpWarnings = parsed.warnings;
+    }
+    return { config, mcpPolicy, mcpWarnings };
   }
 
   private async fileFingerprint(paths: string[]): Promise<string> {

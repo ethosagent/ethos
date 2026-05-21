@@ -22,6 +22,7 @@ import {
   zed,
 } from '@ethosagent/mcp-server';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
+import { PersonalityScopedSecrets } from '@ethosagent/storage-fs';
 import type { McpServerConfig, OAuthConfig, TokenSet } from '@ethosagent/tools-mcp';
 import {
   getPreset,
@@ -32,7 +33,8 @@ import {
   runPkceLogin,
   storeTokens,
 } from '@ethosagent/tools-mcp';
-import { ethosDir, readConfig } from '../config';
+import type { SecretsResolver } from '@ethosagent/types';
+import { ethosDir, readConfig, readRawConfig } from '../config';
 import { createAgentLoop, getSecretsResolver, getStorage } from '../wiring';
 
 const mcpStore = new McpJsonStore(getStorage());
@@ -627,10 +629,57 @@ async function runRegistryInstall(argv: string[]): Promise<void> {
 // mcp login / logout — OAuth 2.1 PKCE flows
 // ---------------------------------------------------------------------------
 
+function parsePersonalityFlag(argv: string[]): {
+  serverName?: string;
+  personalityId?: string;
+  error?: string;
+} {
+  let serverName: string | undefined;
+  let personalityId: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--personality') {
+      const next = argv[i + 1];
+      if (!next || next.startsWith('--')) {
+        return { error: '--personality requires a value' };
+      }
+      personalityId = next;
+      i++;
+    } else if (!arg?.startsWith('--') && !serverName) {
+      serverName = arg;
+    }
+  }
+  return { serverName, personalityId };
+}
+
+async function resolvePersonalitySecrets(
+  explicitId: string | undefined,
+): Promise<{ secrets: SecretsResolver; personalityId: string | undefined }> {
+  const secrets = await getSecretsResolver();
+  let personalityId = explicitId;
+
+  if (!personalityId) {
+    const raw = await readRawConfig(getStorage());
+    if (raw) {
+      personalityId = raw.activeContext?.name ?? raw.personality;
+    }
+  }
+
+  if (personalityId) {
+    return { secrets: new PersonalityScopedSecrets(secrets, personalityId), personalityId };
+  }
+  return { secrets, personalityId: undefined };
+}
+
 async function runLogin(argv: string[]): Promise<void> {
-  const serverName = argv[0];
+  const { serverName, personalityId, error } = parsePersonalityFlag(argv);
+  if (error) {
+    console.error(error);
+    process.exitCode = 1;
+    return;
+  }
   if (!serverName) {
-    console.error('Usage: ethos mcp login <serverName>');
+    console.error('Usage: ethos mcp login <serverName> [--personality <id>]');
     process.exitCode = 1;
     return;
   }
@@ -650,12 +699,13 @@ async function runLogin(argv: string[]): Promise<void> {
     return;
   }
 
-  const secrets = await getSecretsResolver();
+  const resolved = await resolvePersonalitySecrets(personalityId);
   const oauthConfig: OAuthConfig = config.auth;
 
   try {
-    await runPkceLogin(serverName, oauthConfig, secrets);
-    console.log(`Successfully authenticated with '${serverName}'`);
+    await runPkceLogin(serverName, oauthConfig, resolved.secrets);
+    const scope = resolved.personalityId ? ` (personality: ${resolved.personalityId})` : '';
+    console.log(`Successfully authenticated with '${serverName}'${scope}`);
   } catch (err) {
     console.error(`Login failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
@@ -663,9 +713,14 @@ async function runLogin(argv: string[]): Promise<void> {
 }
 
 async function runLogout(argv: string[]): Promise<void> {
-  const serverName = argv[0];
+  const { serverName, personalityId, error } = parsePersonalityFlag(argv);
+  if (error) {
+    console.error(error);
+    process.exitCode = 1;
+    return;
+  }
   if (!serverName) {
-    console.error('Usage: ethos mcp logout <serverName>');
+    console.error('Usage: ethos mcp logout <serverName> [--personality <id>]');
     process.exitCode = 1;
     return;
   }
@@ -679,7 +734,6 @@ async function runLogout(argv: string[]): Promise<void> {
     return;
   }
 
-  const secrets = await getSecretsResolver();
   const oauthConfig: OAuthConfig | undefined =
     config.auth?.type === 'oauth2' ? config.auth : undefined;
 
@@ -689,9 +743,12 @@ async function runLogout(argv: string[]): Promise<void> {
     return;
   }
 
+  const resolved = await resolvePersonalitySecrets(personalityId);
+
   try {
-    await revokeToken(serverName, oauthConfig, secrets);
-    console.log(`Logged out of '${serverName}' — tokens revoked and deleted`);
+    await revokeToken(serverName, oauthConfig, resolved.secrets);
+    const scope = resolved.personalityId ? ` (personality: ${resolved.personalityId})` : '';
+    console.log(`Logged out of '${serverName}' — tokens revoked and deleted${scope}`);
   } catch (err) {
     console.error(`Logout failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;

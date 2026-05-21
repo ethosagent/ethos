@@ -862,6 +862,7 @@ export async function createAgentLoop(
   const mcpManager = new McpManager(mcpConfig, {
     logger: log,
     enableScopeProbe: process.env.ETHOS_MCP_SCOPE_PROBE === '1',
+    innerSecrets: config.secretsResolver,
     // Phase A.5 — propagate runtime addServer/removeServer to the ToolRegistry
     // so an in-progress chat session sees new MCP tools on its next turn.
     onToolsChanged: (added, removedNames) => {
@@ -869,8 +870,11 @@ export async function createAgentLoop(
       for (const name of removedNames) tools.unregister(name);
     },
   });
-  await mcpManager.connect();
-  for (const tool of mcpManager.getTools()) tools.register(tool);
+  // Phase B — per-personality MCP connections. OAuth servers get isolated
+  // token storage scoped to the active personality; stdio servers share a
+  // single connection across all personalities.
+  const mcpTools = await mcpManager.getToolsForPersonality(activePerson.id);
+  for (const tool of mcpTools) tools.register(tool);
 
   // Risk #2: warn at boot when MCP servers are globally configured but the active
   // personality has no mcp_servers allowlist — the tools will be registered but
@@ -1192,6 +1196,9 @@ export async function createAgentLoop(
     }
   }
 
+  // Per-personality MCP tool policy from mcp.yaml (NOT on PersonalityConfig).
+  const activeMcpPolicy = personalities.getMcpPolicy(activePerson.id);
+
   const loop = new AgentLoop({
     llm,
     tools,
@@ -1212,6 +1219,7 @@ export async function createAgentLoop(
     ...(config.teamName ? { teamId: config.teamName } : {}),
     ...(opts.observability ? { observability: opts.observability } : {}),
     ...(requestDumpStore ? { requestDumpStore } : {}),
+    ...(activeMcpPolicy ? { mcpPolicy: activeMcpPolicy } : {}),
     options: {
       platform: profile,
       workingDir,

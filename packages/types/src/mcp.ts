@@ -20,3 +20,18 @@ export interface McpServerInfo {
   auth_status?: McpAuthStatus;
   created_via?: McpCreatedVia;
 }
+
+// ---------------------------------------------------------------------------
+// Per-personality MCP policy — loaded from mcp.yaml alongside config.yaml.
+// NOT part of the frozen PersonalityConfig schema; carried as a sibling
+// artifact on the personality registry's internal representation.
+// ---------------------------------------------------------------------------
+
+export interface McpServerPolicy {
+  tools?: string[];
+  reject_args?: Record<string, Record<string, string[]>>;
+}
+
+export interface McpPolicy {
+  servers?: Record<string, McpServerPolicy>;
+}

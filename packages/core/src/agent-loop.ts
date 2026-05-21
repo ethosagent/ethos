@@ -253,6 +253,12 @@ export interface AgentLoopConfig {
    */
   clarifyBridge?: ClarifyBridge;
   /**
+   * Per-personality MCP tool policy loaded from mcp.yaml. NOT part of
+   * PersonalityConfig (frozen schema). Passed through from wiring so
+   * AgentLoop can build per-tool MCP allowlists in filterOpts.
+   */
+  mcpPolicy?: import('@ethosagent/types').McpPolicy;
+  /**
    * Optional request dump store. When provided, AgentLoop appends a full
    * record of each LLM request/response for offline analysis and debugging.
    */
@@ -369,6 +375,8 @@ export class AgentLoop {
   private readonly requestDumpStore?: import('@ethosagent/types').RequestDumpStore;
   /** Phase 3 — team id stamped onto ToolContext when loop runs inside a team. */
   private readonly teamId?: string;
+  /** Per-personality MCP tool policy from mcp.yaml (NOT on PersonalityConfig). */
+  private readonly mcpPolicy?: import('@ethosagent/types').McpPolicy;
   /** Per-session accumulated spend in USD. Keyed by sessionKey. Reset via resetSessionCost(). */
   private readonly sessionCosts = new Map<string, number>();
   /** FW-28 — per-session mtime registry. Keyed by sessionKey → (absPath → record). */
@@ -404,6 +412,7 @@ export class AgentLoop {
     if (config.watcher) this.watcher = config.watcher;
     if (config.clarifyBridge) this.clarifyBridge = config.clarifyBridge;
     if (config.requestDumpStore) this.requestDumpStore = config.requestDumpStore;
+    if (config.mcpPolicy) this.mcpPolicy = config.mcpPolicy;
     this.contextEngines = config.contextEngines ?? new DefaultContextEngineRegistry();
   }
 
@@ -560,9 +569,24 @@ export class AgentLoop {
     const allowedTools = personality.toolset ?? undefined;
     // Per-personality plugin + MCP gate (default-deny: missing field = no access)
     const allowedPlugins = personality.plugins ?? [];
+
+    // Build per-tool MCP allowlist from mcp.yaml policy (if present).
+    const mcpServers = this.mcpPolicy?.servers;
+    const allowedMcpTools: Record<string, string[]> | undefined = mcpServers
+      ? Object.fromEntries(
+          Object.entries(mcpServers)
+            .filter(([, v]) => v.tools !== undefined)
+            .map(([k, v]) => {
+              const tools = v.tools;
+              return [k, tools ?? []];
+            }),
+        )
+      : undefined;
+
     const filterOpts: ToolFilterOpts = {
       allowedMcpServers: personality.mcp_servers ?? [],
       allowedPlugins,
+      ...(allowedMcpTools && Object.keys(allowedMcpTools).length > 0 ? { allowedMcpTools } : {}),
     };
 
     // Step 2: Fire session_start hooks
@@ -1274,6 +1298,33 @@ export class AgentLoop {
         }
 
         const effectiveArgs = beforeResult.args ?? tc.args;
+
+        // MCP reject_args policy — checked after hooks so modified args are evaluated.
+        const rejectError = checkMcpRejectArgs(this.mcpPolicy, tc.toolName, effectiveArgs);
+        if (rejectError) {
+          this.observability?.recordSafetyBlock({
+            traceId,
+            code: 'tool_blocked',
+            cause: rejectError,
+          });
+          observe({ type: 'tool_end', toolName: tc.toolName, ok: false });
+          yield {
+            type: 'tool_end',
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            ok: false,
+            durationMs: 0,
+            result: rejectError,
+          };
+          prepped.push({
+            toolCallId: tc.toolCallId,
+            name: tc.toolName,
+            args: effectiveArgs,
+            rejected: rejectError,
+          });
+          continue;
+        }
+
         const spanId = this.observability?.startSpan({
           traceId: traceId ?? '',
           kind: 'tool_call',
@@ -1993,6 +2044,39 @@ function extractFilePath(args: unknown): string | undefined {
   if (typeof a.file_path === 'string' && a.file_path.length > 0) return a.file_path;
   if (typeof a.filePath === 'string' && a.filePath.length > 0) return a.filePath;
   if (typeof a.cwd === 'string' && a.cwd.length > 0) return a.cwd;
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// MCP reject_args policy — standalone so it can be tested without constructing
+// a full AgentLoop.  Evaluates the per-server / per-tool forbidden-arg-value
+// rules from mcp.yaml.  Returns an error string when the call should be
+// rejected, or undefined when it is allowed through.
+// ---------------------------------------------------------------------------
+export function checkMcpRejectArgs(
+  mcpPolicy: import('@ethosagent/types').McpPolicy | undefined,
+  toolName: string,
+  args: unknown,
+): string | undefined {
+  const servers = mcpPolicy?.servers;
+  if (!servers || !toolName.startsWith('mcp__')) return undefined;
+
+  const firstSep = toolName.indexOf('__');
+  const secondSep = toolName.indexOf('__', firstSep + 2);
+  if (secondSep === -1) return undefined;
+
+  const server = toolName.slice(firstSep + 2, secondSep);
+  const bareTool = toolName.slice(secondSep + 2);
+  const argRules = servers[server]?.reject_args?.[bareTool];
+  if (!argRules) return undefined;
+
+  const typedArgs = args as Record<string, unknown>;
+  for (const [argName, forbiddenValues] of Object.entries(argRules)) {
+    const value = typedArgs[argName];
+    if (typeof value === 'string' && forbiddenValues.includes(value)) {
+      return `MCP policy: argument '${argName}' value '${value}' is rejected for tool '${bareTool}' on server '${server}'`;
+    }
+  }
   return undefined;
 }
 
