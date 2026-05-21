@@ -24,12 +24,10 @@ Point any OpenAI-compatible client — `openai` Python SDK, `openai` Node SDK, A
 
 ## Steps
 
-### 1. Boot the server with the web API enabled
-
-The OpenAI surface mounts only when the experimental web API is enabled:
+### 1. Boot the server
 
 ```bash
-ethos serve --web-experimental --web-port 3000
+ethos serve --web-port 3000
 ```
 
 What this gives you:
@@ -194,7 +192,7 @@ The route rejects features that are not yet implemented, with a precise OpenAI-s
 
 **`400 team_routing_not_implemented`** — Drop the `team:` prefix; use a personality id directly.
 
-**The server runs but `/v1/*` returns 404** — You started `ethos serve` without `--web-experimental`. The OpenAI surface mounts only when the web API is enabled.
+**The server runs but `/v1/*` returns 404** — Ensure you are running a current version of Ethos. The web API (including the OpenAI surface) always mounts with `ethos serve`.
 
 ## See also
 

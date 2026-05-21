@@ -455,7 +455,7 @@ const config = {
 //
 // Web tab manages jobs.json on disk and reads run-output files from
 // `<dataDir>/cron/output/<jobId>/<timestamp>.md`. The actual ticker
-// lives in `serve.ts` when --web-experimental is enabled.
+// lives in `serve.ts`.
 // ---------------------------------------------------------------------------
 
 const CronListOutput = z.object({ jobs: z.array(CronJobSchema) });

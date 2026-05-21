@@ -433,6 +433,8 @@ export interface EthosConfig {
 }
 
 export function ethosDir(): string {
+  const override = process.env.ETHOS_STATE_DIR;
+  if (override) return override;
   return join(homedir(), '.ethos');
 }
 

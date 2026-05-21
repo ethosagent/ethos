@@ -41,9 +41,10 @@ import {
   validateBotBindings,
   writeConfig,
 } from '../config';
+import { createHealthServer } from '../health-server';
 import { emitReady } from '../logger';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';
-import { notifyReady } from '../sd-notify';
+import { notifyReady, startWatchdog } from '../sd-notify';
 import { createAgentLoop, createTeamAgentLoop, getSecretsResolver, getStorage } from '../wiring';
 import {
   ensureTeamSupervisors,
@@ -603,9 +604,27 @@ export async function runGatewayStart(): Promise<void> {
 
   emitReady('gateway');
   notifyReady();
-  console.log(`${c.dim}Listening for messages. Press Ctrl+C to stop.${c.reset}\n`);
+  const stopWatchdog = startWatchdog();
 
   const heartbeatStartedAt = new Date().toISOString();
+
+  const healthPort = Number(process.env.ETHOS_GATEWAY_HEALTH_PORT) || 3002;
+  const healthHost = process.env.ETHOS_SERVE_HOST ?? '127.0.0.1';
+  const healthServer = createHealthServer(healthPort, healthHost, async () => {
+    const hb = await buildGatewayHeartbeat(adapters, heartbeatStartedAt);
+    const allOk = hb.adapters.length > 0 && hb.adapters.every((a) => a.ok);
+    return {
+      status: allOk ? 'ok' : 'degraded',
+      uptime: process.uptime(),
+      pid: hb.pid,
+      startedAt: hb.startedAt,
+      updatedAt: hb.updatedAt,
+      adapters: hb.adapters,
+    };
+  });
+  console.log(`  health: http://${healthHost}:${healthPort}/healthz`);
+
+  console.log(`${c.dim}Listening for messages. Press Ctrl+C to stop.${c.reset}\n`);
   let heartbeatInFlight = false;
   const writeHeartbeat = async () => {
     if (heartbeatInFlight) return;
@@ -629,6 +648,8 @@ export async function runGatewayStart(): Promise<void> {
   // never comes. See plan/IMPROVEMENT.md P1-1.
   const shutdown = async () => {
     console.log(`\n${c.dim}Shutting down...${c.reset}`);
+    if (stopWatchdog) stopWatchdog();
+    healthServer.close();
     clearInterval(pruneTimer);
     clearInterval(heartbeatTimer);
     scheduler.stop();

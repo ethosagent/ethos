@@ -22,7 +22,7 @@ The tools are registered on the agent's tool registry **only when** an `CronSche
 | Caller | Behaviour |
 |---|---|
 | `ethos gateway` | Always wires a scheduler. Every personality bound to a configured bot has the cron tools available if it lists them in `toolset.yaml`. |
-| `ethos serve --web-experimental` | Wires a scheduler when web mode is active (the web Cron tab needs a running scheduler). Without `--web-experimental`, no scheduler, no cron tools. |
+| `ethos serve` | Always wires a scheduler. The web Cron tab and agent-callable cron tools share the same scheduler instance. |
 | `ethos chat` / CLI one-off | No scheduler — cron jobs created in an ephemeral process can't persist past exit. The tools aren't registered. |
 
 A personality that lists a cron tool in `toolset.yaml` but runs in a context without a scheduler gets an "unknown tool" error at call time. That's intentional — calling `create_cron_job` from a CLI chat would silently create jobs that never fire.
@@ -143,7 +143,7 @@ That said, **cron creates durable side effects** (recurring runs cost provider t
 
 | `code` | When | Operator fix |
 |---|---|---|
-| `not_available` | Tool listed in toolset but no scheduler wired (e.g. `ethos chat` profile) | Run from `ethos gateway` or `ethos serve --web-experimental` |
+| `not_available` | Tool listed in toolset but no scheduler wired (e.g. `ethos chat` profile) | Run from `ethos gateway` or `ethos serve` |
 | `input_invalid` | Cron expression failed `isValidCronExpression` | Fix the 5-field syntax; reject DST-ambiguous slots |
 | `input_invalid` | Missing required field (`name`, `schedule`, `prompt`, or `id`) | Provide it |
 | `not_available` | `delete_cron_job` / `pause_cron_job` / `resume_cron_job` / `run_cron_job_now` called with unknown id | Run `list_cron_jobs` first; ids are short-lived in tests, durable in prod |

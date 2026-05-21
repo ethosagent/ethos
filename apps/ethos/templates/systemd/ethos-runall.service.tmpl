@@ -12,6 +12,7 @@ EnvironmentFile=-{{ETHOS_HOME}}/.ethos/.env
 ExecStart={{ETHOS_BINARY}} run-all
 Restart=on-failure
 RestartSec=5
+WatchdogSec=30
 StandardOutput=journal
 StandardError=journal
 

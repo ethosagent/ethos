@@ -66,6 +66,7 @@ const inferredChatFromQueryFlag =
 const inferredChatFromResumeFlag =
   command === '--continue' || command === '-c' || command === '--resume' || command === '-r';
 const effectiveCommand = inferredChatFromQueryFlag || inferredChatFromResumeFlag ? 'chat' : command;
+process.title = `ethos${effectiveCommand ? ` ${effectiveCommand}` : ''}`;
 
 // FW-8: parse CLI override flags from the full argv. These override
 // ~/.ethos/config.yaml for this invocation only and are never written back.
@@ -436,7 +437,7 @@ try {
     }
 
     // `ethos run-all` — child-process supervisor. Spawns `gateway start` and
-    // `serve --web-experimental` as subprocesses and restarts them on crash.
+    // `serve` as subprocesses and restarts them on crash.
     // One command for the full production surface; wrap it in PM2/systemd for
     // reboot survival. See docs/content/using/how-to/deploy-in-production.md.
     case 'run-all': {

@@ -348,7 +348,7 @@ Synopsis: `ethos systemd-unit <name>`
 | Name | Description |
 |---|---|
 | `ethos-gateway` | Unit for `ethos gateway start`. |
-| `ethos-serve` | Unit for `ethos serve --web-experimental`. |
+| `ethos-serve` | Unit for `ethos serve`. |
 | `ethos-runall` | Unit for `ethos run-all`. |
 
 Placeholder values are substituted from environment variables at generation time:

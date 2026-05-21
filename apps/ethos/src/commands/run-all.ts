@@ -1,7 +1,7 @@
 // `ethos run-all` — child-process supervisor.
 //
 // One command to bring the gateway (Telegram + Slack + Discord + Email) and
-// `serve --web-experimental` (web dashboard + ACP) up together. Each child is
+// `serve` (web dashboard + ACP) up together. Each child is
 // a real subprocess: a crash in one doesn't take the other down, and the
 // supervisor restarts a crashed child with exponential backoff. SIGINT and
 // SIGTERM are forwarded to children before this process exits.
@@ -17,8 +17,9 @@ import { createWriteStream, mkdirSync, statSync, type WriteStream } from 'node:f
 import { join } from 'node:path';
 import { ethosDir } from '../config';
 import { type LogRotationConfig, rotateIfNeeded } from '../error-log';
+import { createHealthServer } from '../health-server';
 import { emitReady } from '../logger';
-import { notifyReady } from '../sd-notify';
+import { notifyReady, startWatchdog } from '../sd-notify';
 
 // Tuning constants. Exported via `__testing__` so unit tests can assert on
 // them without re-deriving the values.
@@ -74,7 +75,7 @@ export interface RunAllOptions {
 export function defaultChildSpecs(): ChildSpec[] {
   return [
     { name: 'gateway', args: ['gateway', 'start'] },
-    { name: 'serve', args: ['serve', '--web-experimental'] },
+    { name: 'serve', args: ['serve'] },
   ];
 }
 
@@ -165,15 +166,20 @@ export async function runAll(opts: RunAllOptions = {}): Promise<void> {
   // Aggregate ready tracking: emit ethos.ready for run-all exactly once,
   // after every child has signalled ready on its own stderr.
   const childNames = new Set(children.map((sc) => sc.spec.name));
+  let stopWatchdog: (() => void) | null = null;
   const onChildReady = createReadyTracker(childNames, () => {
     emitReady('run-all');
     notifyReady();
+    stopWatchdog = startWatchdog();
   });
 
+  let healthServer: import('node:http').Server | null = null;
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals): void => {
     if (shuttingDown) return;
     shuttingDown = true;
+    if (stopWatchdog) stopWatchdog();
+    if (healthServer) healthServer.close();
     log.log(`\n${c.dim}run-all: ${signal} received, stopping children…${c.reset}`);
     for (const sc of children) {
       sc.shuttingDown = true;
@@ -209,6 +215,24 @@ export async function runAll(opts: RunAllOptions = {}): Promise<void> {
   for (const sc of children) {
     startChild(sc, entryPoint, logsDir, spawn, log, onChildReady, rotation);
   }
+
+  const healthPort = Number(process.env.ETHOS_RUNALL_HEALTH_PORT) || 3003;
+  const healthHost = process.env.ETHOS_SERVE_HOST ?? '127.0.0.1';
+  healthServer = createHealthServer(healthPort, healthHost, () => {
+    const childStatuses = children.map((child) => ({
+      name: child.spec.name,
+      running: child.process !== null && !child.shuttingDown,
+      pid: child.process?.pid ?? null,
+      restarts: child.restarts.length,
+    }));
+    const allRunning = childStatuses.every((s) => s.running);
+    return {
+      status: allRunning ? 'ok' : 'degraded',
+      uptime: process.uptime(),
+      children: childStatuses,
+    };
+  });
+  log.log(`${c.dim}  health: http://${healthHost}:${healthPort}/healthz${c.reset}`);
 
   // Keep the event loop alive; signals and child exits drive everything.
   await new Promise<void>(() => {});

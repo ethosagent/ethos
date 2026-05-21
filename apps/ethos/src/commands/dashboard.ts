@@ -3,13 +3,12 @@ import { platform } from 'node:os';
 import type { EthosConfig } from '../config';
 import { runServe } from './serve';
 
-// `ethos dashboard` — discoverability alias for `ethos serve --web-experimental`.
+// `ethos dashboard` — discoverability alias for `ethos serve`.
 //
-// Rationale: operators don't intuit that `--web-experimental` is the verb that
-// boots the web mission-control UI. The dashboard verb makes the surface
-// discoverable from `ethos --help` without changing the underlying boot path.
-// All flags are forwarded; `--no-open` suppresses the auto-launch of the
-// default browser (useful in headless deployments / CI).
+// Rationale: `ethos serve` always boots the web mission-control UI, but the
+// dashboard verb makes the surface discoverable from `ethos --help` and
+// auto-opens the browser. All flags are forwarded; `--no-open` suppresses
+// the auto-launch of the default browser (useful in headless deployments / CI).
 
 const c = {
   reset: '\x1b[0m',
@@ -22,17 +21,12 @@ export async function runDashboard(args: string[], config: EthosConfig): Promise
   const shouldOpen = !args.includes('--no-open');
   const filtered = args.filter((a) => a !== '--no-open');
 
-  // Always boot the web surface. If --web-experimental is already in args
-  // we don't double it; if not we inject it. serve.ts treats `hasFlag`
-  // membership, not count.
-  const forwarded = filtered.includes('--web-experimental')
-    ? filtered
-    : ['--web-experimental', ...filtered];
+  const forwarded = filtered;
 
   const webPort = parsePort(filtered, ['--web-port'], 3000);
 
   console.log(
-    `${c.cyan}${c.bold}ethos dashboard${c.reset} ${c.dim}— booting via 'ethos serve --web-experimental'${c.reset}`,
+    `${c.cyan}${c.bold}ethos dashboard${c.reset} ${c.dim}— booting via 'ethos serve'${c.reset}`,
   );
 
   if (shouldOpen) {

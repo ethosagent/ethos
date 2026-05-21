@@ -2,7 +2,7 @@
 //
 // One supervisor process (`ethos run-all`) spawns and watches:
 //   • ethos gateway start          (Telegram + Slack + Discord + Email bots)
-//   • ethos serve --web-experimental (web dashboard :3000, ACP server :3001)
+//   • ethos serve                    (web dashboard :3000, ACP server :3001)
 //
 // PM2's job here is reboot survival: it restarts `ethos run-all` if the
 // supervisor itself dies, and `pm2 startup` wires it into your init system so

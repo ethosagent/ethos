@@ -175,7 +175,7 @@ web-dev:
 	@echo ""
 	@$(NVM_EXEC) bash -c '\
 		trap "kill 0" EXIT INT TERM; \
-		pnpm exec tsx apps/ethos/src/index.ts serve --web-experimental --port $(ACP_PORT) --web-port $(WEB_PORT) & \
+		pnpm exec tsx apps/ethos/src/index.ts serve --port $(ACP_PORT) --web-port $(WEB_PORT) & \
 		pnpm --filter @ethosagent/web dev -- --port $(VITE_PORT) --strictPort & \
 		wait \
 	'
@@ -183,7 +183,7 @@ web-dev:
 # Production-like — build first so the static handler has dist to serve.
 web: web-build
 	@echo "Web UI bundled — starting ethos serve at http://localhost:$(WEB_PORT)/"
-	@$(NVM_EXEC) pnpm exec tsx apps/ethos/src/index.ts serve --web-experimental --port $(ACP_PORT) --web-port $(WEB_PORT)
+	@$(NVM_EXEC) pnpm exec tsx apps/ethos/src/index.ts serve --port $(ACP_PORT) --web-port $(WEB_PORT)
 
 gateway-setup:
 	@$(NVM_EXEC) pnpm exec tsx apps/ethos/src/index.ts gateway setup
