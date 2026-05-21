@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { validateUrl } from '@ethosagent/core';
 import { noopLogger } from '@ethosagent/logger';
 import { buildMcpEnv } from '@ethosagent/safety-scanner';
-import { FsStorage } from '@ethosagent/storage-fs';
+import { FsStorage, PersonalityScopedSecrets } from '@ethosagent/storage-fs';
 import type {
   Logger,
   McpServerInfo,
@@ -162,6 +162,12 @@ export interface McpManagerConfig {
    * per successful add/remove. Not invoked on add failures.
    */
   onToolsChanged?: (added: Tool[], removedNames: string[]) => void;
+  /**
+   * Base secrets resolver for per-personality scoping. When set,
+   * `getToolsForPersonality()` wraps this in `PersonalityScopedSecrets` for
+   * OAuth-based servers so each personality gets isolated token storage.
+   */
+  innerSecrets?: SecretsResolver;
 }
 
 // ---------------------------------------------------------------------------
@@ -648,6 +654,23 @@ function adaptMcpTool(mcpTool: McpToolDef, serverName: string, client: McpClient
 export class McpManager {
   private _clients: McpClient[];
   /**
+   * Per-personality OAuth clients keyed by `${personalityId}::${serverName}`.
+   * OAuth/SSE/streamable-http servers get isolated token storage per personality.
+   */
+  private _oauthClients: Map<string, McpClient> = new Map();
+  /**
+   * Shared stdio clients keyed by `serverName` alone. Stdio servers have no
+   * OAuth tokens, so one connection is reused across all personalities.
+   */
+  private _stdioClients: Map<string, McpClient> = new Map();
+  /**
+   * In-flight connection promises keyed by the same keys used for
+   * `_oauthClients` and `_stdioClients`. Deduplicates concurrent
+   * `getToolsForPersonality()` calls that would otherwise both miss
+   * the cache and open duplicate connections.
+   */
+  private _connectingClients: Map<string, Promise<McpClient | null>> = new Map();
+  /**
    * Immutable snapshot. Mutators (`connect`, `addServer`, `removeServer`,
    * and the per-client `tools/list_changed` handler) build a NEW array
    * under the mutex and atomic-swap it. Readers (`getTools`) return the
@@ -658,9 +681,12 @@ export class McpManager {
   private readonly logger: Logger;
   private readonly _collisionPolicy: 'warn' | 'error';
   private readonly _secrets?: SecretsResolver;
+  private readonly _innerSecrets?: SecretsResolver;
   private readonly _enableScopeProbe: boolean;
   private readonly _obs?: McpManagerConfig['obs'];
   private readonly _onToolsChanged?: McpManagerConfig['onToolsChanged'];
+  /** The original configs passed at construction, needed for lazy per-personality connects. */
+  private _configs: McpServerConfig[];
   /** Mutex tail. `addServer` / `removeServer` / `listServers` chain onto this. */
   private _mutationChain: Promise<unknown> = Promise.resolve();
 
@@ -668,9 +694,11 @@ export class McpManager {
     this.logger = opts.logger ?? noopLogger;
     this._collisionPolicy = opts.collisionPolicy ?? 'warn';
     this._secrets = opts.secrets;
+    this._innerSecrets = opts.innerSecrets;
     this._enableScopeProbe = opts.enableScopeProbe ?? false;
     this._obs = opts.obs;
     this._onToolsChanged = opts.onToolsChanged;
+    this._configs = configs;
     this._clients = configs.map((c) => this._buildClient(c));
   }
 
@@ -713,6 +741,166 @@ export class McpManager {
       };
     }
     return client;
+  }
+
+  /**
+   * Build a client with an explicit secrets resolver override. Used by
+   * `getToolsForPersonality` to inject personality-scoped secrets for
+   * OAuth servers while keeping the same callback wiring as `_buildClient`.
+   *
+   * `protected` so test subclasses can inject in-memory transports — same
+   * rationale as `_buildClient`.
+   */
+  protected _buildClientWithSecrets(
+    config: McpServerConfig,
+    secrets: SecretsResolver | undefined,
+  ): McpClient {
+    const client = new McpClient(config, { logger: this.logger, secrets });
+    client.enableScopeProbe = this._enableScopeProbe;
+    client.onToolsChanged = (newTools) => {
+      const prefix = `mcp__${client.name}__`;
+      const next = this._tools.filter((t) => !t.name.startsWith(prefix));
+      for (const t of newTools) {
+        next.push(adaptMcpTool(t, client.name, client));
+      }
+      this._tools = next;
+    };
+    if (this._obs) {
+      const obs = this._obs;
+      client.onScopeProbe = (result) => {
+        obs.recordEvent({
+          category: 'mcp.scope_probe',
+          severity: result.outcome === 'match' ? 'info' : 'warn',
+          code: result.outcome,
+          details: {
+            server: result.server,
+            declaredScopes: result.declaredScopes,
+            actualScopes: result.actualScopes,
+            ...(result.error ? { error: result.error } : {}),
+          },
+        });
+      };
+    }
+    return client;
+  }
+
+  /** Whether a transport type needs per-personality OAuth isolation. */
+  private _isOAuthTransport(transport: McpServerConfig['transport']): boolean {
+    return transport === 'streamable-http' || transport === 'sse';
+  }
+
+  /**
+   * Lazily connect MCP servers for a specific personality. Stdio servers
+   * share one connection across all personalities; OAuth-based servers
+   * (streamable-http, SSE) get a per-personality client with scoped token
+   * storage.
+   *
+   * Returns the union of tools from all connected servers.
+   */
+  async getToolsForPersonality(personalityId: string): Promise<Tool[]> {
+    const tools: Tool[] = [];
+
+    await Promise.allSettled(
+      this._configs.map(async (config) => {
+        let client: McpClient;
+        if (this._isOAuthTransport(config.transport)) {
+          const key = `${personalityId}::${config.name}`;
+          const cached = this._oauthClients.get(key);
+          if (cached) {
+            client = cached;
+          } else {
+            const inflight = this._connectingClients.get(key);
+            if (inflight) {
+              const resolved = await inflight;
+              if (!resolved) return;
+              client = resolved;
+            } else {
+              const connectPromise = (async (): Promise<McpClient | null> => {
+                const scopedSecrets = this._innerSecrets
+                  ? new PersonalityScopedSecrets(this._innerSecrets, personalityId)
+                  : this._secrets;
+                const c = this._buildClientWithSecrets(config, scopedSecrets);
+                try {
+                  await c.connect();
+                  this._oauthClients.set(key, c);
+                  return c;
+                } catch (err) {
+                  this.logger.warn(
+                    `[ethos] MCP server '${config.name}' failed to connect for personality '${personalityId}'`,
+                    {
+                      component: 'tools-mcp',
+                      server: config.name,
+                      personality: personalityId,
+                      error: err instanceof Error ? err.message : String(err),
+                    },
+                  );
+                  return null;
+                } finally {
+                  this._connectingClients.delete(key);
+                }
+              })();
+              this._connectingClients.set(key, connectPromise);
+              const resolved = await connectPromise;
+              if (!resolved) return;
+              client = resolved;
+            }
+          }
+        } else {
+          // stdio — shared across personalities
+          const key = `stdio::${config.name}`;
+          const cached = this._stdioClients.get(config.name);
+          if (cached) {
+            client = cached;
+          } else {
+            const inflight = this._connectingClients.get(key);
+            if (inflight) {
+              const resolved = await inflight;
+              if (!resolved) return;
+              client = resolved;
+            } else {
+              const connectPromise = (async (): Promise<McpClient | null> => {
+                const c = this._buildClient(config);
+                try {
+                  await c.connect();
+                  this._stdioClients.set(config.name, c);
+                  return c;
+                } catch (err) {
+                  this.logger.warn(`[ethos] MCP server '${config.name}' failed to connect`, {
+                    component: 'tools-mcp',
+                    server: config.name,
+                    error: err instanceof Error ? err.message : String(err),
+                  });
+                  return null;
+                } finally {
+                  this._connectingClients.delete(key);
+                }
+              })();
+              this._connectingClients.set(key, connectPromise);
+              const resolved = await connectPromise;
+              if (!resolved) return;
+              client = resolved;
+            }
+          }
+        }
+
+        try {
+          const mcpTools = await client.listTools();
+          for (const t of mcpTools) {
+            tools.push(adaptMcpTool(t, config.name, client));
+          }
+        } catch (err) {
+          this.logger.warn(`[ethos] MCP server '${config.name}' listTools failed`, {
+            component: 'tools-mcp',
+            server: config.name,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }),
+    );
+
+    // Update the immutable tools snapshot so getTools() reflects the latest state.
+    this._tools = tools;
+    return tools;
   }
 
   /**
@@ -802,7 +990,15 @@ export class McpManager {
   }
 
   async disconnect(): Promise<void> {
-    await Promise.allSettled(this._clients.map((c) => c.disconnect()));
+    const allClients: McpClient[] = [
+      ...this._clients,
+      ...this._oauthClients.values(),
+      ...this._stdioClients.values(),
+    ];
+    await Promise.allSettled(allClients.map((c) => c.disconnect()));
+    this._oauthClients.clear();
+    this._stdioClients.clear();
+    this._connectingClients.clear();
   }
 
   /** Alias for disconnect — intention-revealing name for lifecycle management. */
@@ -834,6 +1030,7 @@ export class McpManager {
         // racing getTools() either sees the old reference or the new one.
         this._tools = [...this._tools, ...adapted];
         this._clients = [...this._clients, client];
+        this._configs = [...this._configs, config];
         if (this._onToolsChanged) this._onToolsChanged(adapted, []);
       } catch (err) {
         // Best-effort teardown of any partially-established connection.
@@ -877,6 +1074,29 @@ export class McpManager {
       }
       this._tools = this._tools.filter((t) => !t.name.startsWith(prefix));
       this._clients = this._clients.filter((c) => c.name !== name);
+      this._configs = this._configs.filter((c) => c.name !== name);
+      // Also clean up personality-keyed maps for this server name.
+      const oauthToRemove: string[] = [];
+      for (const [key, c] of this._oauthClients) {
+        if (c.name === name) {
+          oauthToRemove.push(key);
+          try {
+            await c.disconnect();
+          } catch {
+            /* best-effort */
+          }
+        }
+      }
+      for (const k of oauthToRemove) this._oauthClients.delete(k);
+      const stdioClient = this._stdioClients.get(name);
+      if (stdioClient) {
+        try {
+          await stdioClient.disconnect();
+        } catch {
+          /* best-effort */
+        }
+        this._stdioClients.delete(name);
+      }
       if (this._onToolsChanged) this._onToolsChanged([], removedNames);
     });
   }

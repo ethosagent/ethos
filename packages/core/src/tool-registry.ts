@@ -41,12 +41,26 @@ function mcpServerName(toolName: string): string | undefined {
 function passesFilter(entry: ToolEntry, filterOpts: ToolFilterOpts | undefined): boolean {
   if (!filterOpts) return true;
 
-  const { allowedMcpServers, allowedPlugins } = filterOpts;
+  const { allowedMcpServers, allowedPlugins, allowedMcpTools } = filterOpts;
+  const toolName = entry.tool.name;
 
   // MCP server gate: MCP tools only appear when their server is in the allowlist.
   if (allowedMcpServers !== undefined) {
-    const server = mcpServerName(entry.tool.name);
+    const server = mcpServerName(toolName);
     if (server !== undefined && !allowedMcpServers.includes(server)) return false;
+  }
+
+  // Per-tool MCP gate: after the server-level gate passes, check tool-level allowlist.
+  if (allowedMcpTools !== undefined) {
+    const server = mcpServerName(toolName);
+    if (server !== undefined) {
+      const allowed = allowedMcpTools[server];
+      if (allowed !== undefined) {
+        // Extract bare tool name: mcp__linear__list_issues -> list_issues
+        const bareName = toolName.split('__').slice(2).join('__');
+        if (!allowed.includes(bareName)) return false;
+      }
+    }
   }
 
   // Plugin gate: plugin tools only appear when their plugin is in the allowlist.
