@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import type { Span } from '@ethosagent/types';
 import { ethosDir } from '../config';
+import { writeJson } from '../json-output';
 
 export async function runPerf(argv: string[]): Promise<void> {
   let slowest = 20;
@@ -71,6 +72,18 @@ export async function runPerf(argv: string[]): Promise<void> {
   });
 
   const top = allSpans.slice(0, slowest);
+
+  if (argv.includes('--json')) {
+    const spans = top.map((span, i) => ({
+      rank: i + 1,
+      name: span.name,
+      kind: span.kind,
+      durationMs: (span.endTs ?? 0) - span.startTs,
+      traceId: span.traceId,
+    }));
+    writeJson(spans);
+    return;
+  }
 
   console.log('Slowest spans');
   console.log('──────────────────────────────────────────────────────');

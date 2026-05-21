@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { ethosDir } from '../config';
+import { writeJson } from '../json-output';
 import { getSecretsResolver } from '../wiring';
 
 const c = {
@@ -20,11 +21,21 @@ function maskValue(value: string): string {
 export async function runSecrets(args: string[]): Promise<void> {
   const sub = args[0] ?? 'list';
   const resolver = await getSecretsResolver();
+  const json = args.includes('--json');
 
   switch (sub) {
     case 'list': {
-      const prefix = args[1];
+      const prefix = args[1] && !args[1].startsWith('--') ? args[1] : undefined;
       const refs = await resolver.list(prefix);
+      if (json) {
+        const result: Array<{ ref: string; masked: string }> = [];
+        for (const ref of refs.sort()) {
+          const val = await resolver.get(ref);
+          result.push({ ref, masked: val ? maskValue(val) : '(empty)' });
+        }
+        writeJson(result);
+        return;
+      }
       if (refs.length === 0) {
         console.log(`\n${c.dim}No secrets stored.${c.reset}`);
         console.log(`${c.dim}Add one with: ${c.reset}ethos secrets set <ref> <value>\n`);
@@ -59,15 +70,23 @@ export async function runSecrets(args: string[]): Promise<void> {
     }
 
     case 'get': {
-      const ref = args[1];
+      const ref = args[1] === '--json' ? undefined : args[1];
       if (!ref) {
         console.log('Usage: ethos secrets get <ref>');
         process.exit(1);
       }
       const value = await resolver.get(ref);
       if (value === null) {
+        if (json) {
+          writeJson({ ref, value: null });
+          return;
+        }
         console.log(`${c.red}Secret not found: ${ref}${c.reset}`);
         process.exit(1);
+      }
+      if (json) {
+        writeJson({ ref, value });
+        return;
       }
       console.log(value);
       break;

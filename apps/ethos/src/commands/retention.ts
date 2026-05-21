@@ -1,6 +1,7 @@
 import { mergeRetentionConfig, parseDuration } from '@ethosagent/observability-sqlite';
 import { RETENTION_DEFAULTS, type RetentionConfig } from '@ethosagent/types';
 import { readRawConfig, writeConfig } from '../config';
+import { writeJson } from '../json-output';
 import { getStorage } from '../wiring';
 
 // ---------------------------------------------------------------------------
@@ -189,6 +190,20 @@ export async function runRetention(sub: string, argv: string[]): Promise<void> {
     const effectiveRetention = flags.personality
       ? mergeRetentionConfig(globalRetention ?? RETENTION_DEFAULTS, personalityRetention ?? {})
       : globalRetention;
+
+    if (argv.includes('--json')) {
+      const categories = Object.entries(CATEGORY_LABELS).map(([key]) => {
+        const overrideVal = getRetentionValue(effectiveRetention, key);
+        const defaultVal = getDefault(key);
+        return {
+          name: key,
+          duration: overrideVal ?? defaultVal,
+          isOverride: overrideVal !== undefined,
+        };
+      });
+      writeJson({ categories });
+      return;
+    }
 
     console.log('\nRetention settings');
     console.log('══════════════════════');

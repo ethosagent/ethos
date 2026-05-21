@@ -3,6 +3,7 @@ import { stripAnsiEscapes } from '@ethosagent/core';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import type { ObsEvent } from '@ethosagent/types';
 import { ethosDir } from '../config';
+import { writeJson } from '../json-output';
 
 // ethos errors [--recent [N]] [--since <duration>] [--code <code>]
 
@@ -97,6 +98,23 @@ export async function runErrors(args: string[]): Promise<void> {
     if (flags.code) {
       const needle = flags.code.toUpperCase();
       events = events.filter((e) => (e.code ?? '').toUpperCase() === needle);
+    }
+
+    if (args.includes('--json')) {
+      const summary: Record<string, number> = {};
+      const errors = events.map((e) => {
+        const key = e.code ?? '(no code)';
+        summary[key] = (summary[key] ?? 0) + 1;
+        return {
+          timestamp: e.ts,
+          severity: e.severity,
+          code: e.code ?? null,
+          traceId: e.traceId ?? null,
+          cause: e.cause ?? null,
+        };
+      });
+      writeJson({ errors, summary });
+      return;
     }
 
     console.log(`\n${c.bold}ethos errors${c.reset}  ${c.dim}${events.length} event(s)${c.reset}\n`);

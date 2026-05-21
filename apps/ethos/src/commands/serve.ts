@@ -36,9 +36,7 @@ const WEB_PORT_FALLBACK_ATTEMPTS = 5;
 export async function runServe(args: string[], config: EthosConfig): Promise<void> {
   const acpPort = parsePort(parseFlagValue(args, ['--port']), ACP_PORT_DEFAULT);
   const webPort = parsePort(parseFlagValue(args, ['--web-port']), WEB_PORT_DEFAULT);
-  // Default to localhost-only binding. Override with --host or ETHOS_SERVE_HOST
-  // to expose on the network (e.g. --host 0.0.0.0).
-  const serveHost = parseFlagValue(args, ['--host']) ?? process.env.ETHOS_SERVE_HOST ?? '127.0.0.1';
+  const webHost = parseFlagValue(args, ['--web-host']) ?? process.env.ETHOS_WEB_HOST ?? '127.0.0.1';
 
   const personalityOverride = parseFlagValue(args, ['--personality']);
   if (personalityOverride) config = { ...config, personality: personalityOverride };
@@ -228,10 +226,10 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     webApp,
     webPort,
     WEB_PORT_FALLBACK_ATTEMPTS,
-    serveHost,
+    webHost,
   );
   console.log('');
-  const displayHost = serveHost === '0.0.0.0' ? 'localhost' : serveHost;
+  const displayHost = webHost === '0.0.0.0' ? 'localhost' : webHost;
   console.log(`ethos web UI listening on http://${displayHost}:${port}`);
   if (webDist) {
     console.log(`  open: http://${displayHost}:${port}/auth/exchange?t=${token}`);

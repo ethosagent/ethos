@@ -29,6 +29,14 @@ export function createHealthServer(
     res.writeHead(404);
     res.end();
   });
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(
+        `[health] port ${port} in use — health endpoint unavailable. ` +
+          `Set ETHOS_GATEWAY_HEALTH_PORT or ETHOS_RUNALL_HEALTH_PORT to change.`,
+      );
+    }
+  });
   server.listen(port, host);
   server.unref();
   return server;

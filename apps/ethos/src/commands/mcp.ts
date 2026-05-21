@@ -35,6 +35,7 @@ import {
 } from '@ethosagent/tools-mcp';
 import type { SecretsResolver } from '@ethosagent/types';
 import { ethosDir, readConfig, readRawConfig } from '../config';
+import { writeJson } from '../json-output';
 import { createAgentLoop, getSecretsResolver, getStorage } from '../wiring';
 
 const mcpStore = new McpJsonStore(getStorage());
@@ -75,13 +76,13 @@ export async function runMcp(argv: string[]): Promise<void> {
     case 'init':
       return runInit(argv[1]);
     case 'doctor':
-      return runDoctor();
+      return runDoctor(argv.slice(1));
     case 'inspect':
-      return runInspect();
+      return runInspect(argv.slice(1));
     case 'add':
       return runAdd(argv.slice(1));
     case 'presets':
-      return runPresets();
+      return runPresets(argv.slice(1));
     case 'login':
       return runLogin(argv.slice(1));
     case 'logout':
@@ -491,7 +492,17 @@ async function runAddUrl(name: string, mcpUrl: string): Promise<UrlAddResult | n
 // mcp presets — list available presets
 // ---------------------------------------------------------------------------
 
-function runPresets(): void {
+function runPresets(argv: string[]): void {
+  if (argv.includes('--json')) {
+    const presets = Object.values(MCP_PRESETS).map((preset) => ({
+      name: preset.name,
+      description: preset.description,
+      envVars: preset.envVars,
+    }));
+    writeJson(presets);
+    return;
+  }
+
   console.log('Available MCP server presets:\n');
   for (const preset of Object.values(MCP_PRESETS)) {
     const envHint = preset.envVars.length > 0 ? ` (env: ${preset.envVars.join(', ')})` : '';
@@ -500,11 +511,30 @@ function runPresets(): void {
   console.log('\nUsage: ethos mcp add <name> --preset <preset> [--env KEY=val ...]');
 }
 
-function runDoctor(): void {
-  console.log('Ethos MCP doctor\n');
-
+function runDoctor(argv: string[]): void {
   const execPath = process.execPath;
   const scriptPath = process.argv[1] ?? 'ethos';
+
+  if (argv.includes('--json')) {
+    const clients = CLIENTS.map((adapter) => {
+      const path = adapter.configPath();
+      return {
+        name: adapter.name,
+        displayName: adapter.displayName,
+        configPath: path,
+        installed: existsSync(path),
+      };
+    });
+    writeJson({
+      node: execPath,
+      script: scriptPath,
+      command: `${execPath} ${scriptPath} mcp serve`,
+      clients,
+    });
+    return;
+  }
+
+  console.log('Ethos MCP doctor\n');
   console.log(`  Node:   ${execPath}`);
   console.log(`  Script: ${scriptPath}`);
   console.log(`  Command: ${execPath} ${scriptPath} mcp serve`);
@@ -521,7 +551,34 @@ function runDoctor(): void {
   console.log('Run "ethos mcp install <client>" to configure a client.');
 }
 
-function runInspect(): void {
+function runInspect(argv: string[]): void {
+  if (argv.includes('--json')) {
+    writeJson({
+      tools: [
+        { name: 'ask_personality', description: 'Run a prompt through a specific personality' },
+        { name: 'list_personalities', description: 'List all available personalities' },
+        { name: 'search_memory', description: 'Search MEMORY.md and USER.md' },
+        { name: 'list_sessions', description: 'List recent sessions with metadata' },
+        { name: 'get_session', description: 'Get session metadata and first page of messages' },
+        { name: 'get_messages', description: 'Get messages from a session' },
+        { name: 'search_sessions', description: 'Full-text search across session messages' },
+      ],
+      resources: [
+        { uri: 'ethos://memory/MEMORY.md', description: 'Agent memory' },
+        { uri: 'ethos://memory/USER.md', description: 'User context' },
+        { uri: 'ethos://sessions/recent', description: 'Recent sessions' },
+        { uri: 'ethos://personalities/<id>/SOUL.md', description: 'Personality identity' },
+      ],
+      prompts: [
+        { name: 'code_review', description: 'Structured code review' },
+        { name: 'research_topic', description: 'Deep research with citations' },
+        { name: 'reflect_on_decision', description: 'Coaching reflection' },
+        { name: 'debug_failure', description: 'Evidence-first failure investigation' },
+      ],
+    });
+    return;
+  }
+
   console.log('Tools:\n');
   console.log('  ask_personality     Run a prompt through a specific personality');
   console.log('  list_personalities  List all available personalities');
@@ -565,6 +622,7 @@ async function runRegistry(argv: string[]): Promise<void> {
 
 async function runRegistryList(argv: string[]): Promise<void> {
   let search = '';
+  const json = argv.includes('--json');
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--search' && argv[i + 1]) {
       search = argv[i + 1] ?? '';
@@ -582,6 +640,16 @@ async function runRegistryList(argv: string[]): Promise<void> {
   const data = (await res.json()) as {
     objects: Array<{ package: { name: string; description?: string; version: string } }>;
   };
+
+  if (json) {
+    const packages = data.objects.map((obj) => ({
+      name: obj.package.name,
+      version: obj.package.version,
+      description: obj.package.description ?? null,
+    }));
+    writeJson(packages);
+    return;
+  }
 
   if (data.objects.length === 0) {
     console.log('No packages found.');

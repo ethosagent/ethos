@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: run-as-daemon
 time: "10 min"
-updated: 2026-05-15
+updated: 2026-05-21
 ---
 
 > **Looking for the full production setup?** If you want **both** the gateway (Telegram + Slack + Discord + Email) **and** the web dashboard up under one supervisor, with reboot survival on a mini-PC / VPS / home server, jump to [Deploy in production](deploy-in-production.md) — it uses `ethos run-all` and PM2 and is the shorter path. This page is the building-block reference for daemonising a **single** `ethos` command (the gateway by itself, or cron, or serve).
@@ -233,6 +233,62 @@ Tail the structured logs Ethos writes alongside whatever stdout your service man
 
 ```bash
 tail -f ~/.ethos/logs/gateway.out.log
+```
+
+## Operator concerns
+
+### Linger (headless Linux)
+
+systemd user units are tied to login sessions. When the last session for a user closes — including SSH disconnects — systemd kills all user services by default. On a headless server with no GUI session, `ethos` stops as soon as you close SSH.
+
+The fix is a one-time command:
+
+```bash
+sudo loginctl enable-linger $USER
+```
+
+This tells systemd to keep the user's service manager alive even with zero sessions. The user's services start at boot and survive logout.
+
+To undo (e.g. when decommissioning):
+
+```bash
+sudo loginctl disable-linger $USER
+```
+
+Check the current state:
+
+```bash
+loginctl show-user $USER --property=Linger
+```
+
+### Detached child processes
+
+The bash and process tools can spawn long-running background processes with `detached: true`. These processes intentionally survive when `ethos` itself stops — they are children of PID 1, not of the Ethos process tree. `ethos stop`, `systemctl --user stop ethos-gateway`, and `SIGTERM` do not reap them.
+
+This is by design: a user might ask the agent to start a dev server or a build watcher that should keep running. But it means decommissioning `ethos` does not automatically clean up everything it started.
+
+To see what is still running:
+
+```bash
+ethos process list
+```
+
+To stop a specific detached process:
+
+```bash
+ethos process stop <pid>
+```
+
+To stop all tracked detached processes:
+
+```bash
+ethos process stop --all
+```
+
+If `ethos process list` shows nothing but you suspect orphans, check for processes whose cwd is under `~/.ethos/`:
+
+```bash
+lsof +D ~/.ethos/ 2>/dev/null | grep -v ethos
 ```
 
 ## Troubleshoot

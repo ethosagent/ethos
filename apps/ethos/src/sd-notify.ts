@@ -34,6 +34,8 @@ export function notifyWatchdog(): void {
 export function startWatchdog(): (() => void) | null {
   const usec = process.env.WATCHDOG_USEC;
   if (!usec) return null;
+  const pid = process.env.WATCHDOG_PID;
+  if (pid && Number(pid) !== process.pid) return null;
   const intervalMs = Math.floor(Number(usec) / 1000 / 2);
   if (!Number.isFinite(intervalMs) || intervalMs <= 0) return null;
   const timer = setInterval(() => notifyWatchdog(), intervalMs);

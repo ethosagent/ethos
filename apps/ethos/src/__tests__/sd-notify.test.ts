@@ -83,13 +83,22 @@ describe('startWatchdog', () => {
     expect(startWatchdog()).toBeNull();
   });
 
+  it('returns null when WATCHDOG_PID does not match process.pid', () => {
+    process.env.WATCHDOG_USEC = '30000000';
+    process.env.WATCHDOG_PID = '99999';
+    expect(startWatchdog()).toBeNull();
+    delete process.env.WATCHDOG_PID;
+  });
+
   it('returns a cleanup function when WATCHDOG_USEC is set', () => {
     process.env.WATCHDOG_USEC = '30000000';
+    process.env.WATCHDOG_PID = String(process.pid);
     process.env.NOTIFY_SOCKET = '/tmp/fake-notify.sock';
     const stop = startWatchdog();
     expect(stop).toBeTypeOf('function');
     if (stop) stop();
     delete process.env.NOTIFY_SOCKET;
+    delete process.env.WATCHDOG_PID;
   });
 
   it('returns null for invalid WATCHDOG_USEC', () => {

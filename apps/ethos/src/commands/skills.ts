@@ -15,6 +15,7 @@ import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
 import { isSafePathSegment } from '@ethosagent/storage-fs';
 import { EthosError, type Skill } from '@ethosagent/types';
 import { ethosDir } from '../config';
+import { writeJson } from '../json-output';
 
 const c = {
   reset: '\x1b[0m',
@@ -70,7 +71,7 @@ export async function runSkills(args: string[]): Promise<void> {
     }
 
     case 'list': {
-      await listSkills();
+      await listSkills(args);
       break;
     }
 
@@ -181,7 +182,8 @@ async function removeSkill(slug: string): Promise<void> {
   console.log(`${c.green}✓ Removed ${slug}.${c.reset}`);
 }
 
-async function listSkills(): Promise<void> {
+async function listSkills(args: string[] = []): Promise<void> {
+  const jsonMode = args.includes('--json');
   const pool = await new UniversalScanner({
     trustedFirstPartySources: [bundledCodingSkillsSource()],
   }).scan();
@@ -202,6 +204,25 @@ async function listSkills(): Promise<void> {
   const sortedSources = [...bySource.keys()].sort(
     (a, b) => sourceOrder(a) - sourceOrder(b) || a.localeCompare(b),
   );
+
+  if (jsonMode) {
+    const result: Array<{ name: string; source: string; category?: string }> = [];
+    for (const source of sortedSources) {
+      const skills = (bySource.get(source) ?? []).sort((a, b) => a.name.localeCompare(b.name));
+      for (const skill of skills) {
+        const ethosFm = skill.rawFrontmatter.ethos as { category?: unknown } | undefined;
+        const category = typeof ethosFm?.category === 'string' ? ethosFm.category : undefined;
+        const entry: { name: string; source: string; category?: string } = {
+          name: skill.name,
+          source,
+        };
+        if (category) entry.category = category;
+        result.push(entry);
+      }
+    }
+    writeJson(result);
+    return;
+  }
 
   if (sortedSources.length === 0) {
     console.log(`\n${c.dim}No skills found.${c.reset}`);

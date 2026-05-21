@@ -11,6 +11,7 @@ import {
 } from '@ethosagent/team-supervisor';
 import type { TeamManifest } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
+import { writeJson } from '../json-output';
 import { runtimeHealth } from './team-runtime';
 
 const c = {
@@ -98,7 +99,8 @@ function serializeTeamManifest(manifest: TeamManifest): string {
 // list
 // ---------------------------------------------------------------------------
 
-async function runTeamList(): Promise<void> {
+async function runTeamList(args: string[] = []): Promise<void> {
+  const jsonMode = args.includes('--json');
   const dir = teamsDir();
   let files: string[] = [];
   try {
@@ -110,7 +112,31 @@ async function runTeamList(): Promise<void> {
   }
 
   if (files.length === 0) {
+    if (jsonMode) {
+      writeJson([]);
+      return;
+    }
     console.log(`${c.dim}No teams found. Create one at ~/.ethos/teams/<name>.yaml${c.reset}`);
+    return;
+  }
+
+  if (jsonMode) {
+    const result = files.map((file) => {
+      const teamName = basename(file, '.yaml');
+      const rt = readRuntime(teamName);
+      const health = runtimeHealth(rt);
+      if (health === 'stale') removeRuntime(teamName);
+      const liveRt = health === 'running' ? rt : null;
+      const liveMembers = liveRt?.members.filter(
+        (m) => m.status !== 'stopped' && m.status !== 'failed',
+      );
+      return {
+        name: teamName,
+        status: (liveMembers?.length ?? 0) > 0 ? 'running' : 'stopped',
+        members: liveMembers?.length ?? 0,
+      };
+    });
+    writeJson(result);
     return;
   }
 
@@ -334,31 +360,59 @@ function statusColor(status: MemberRuntime['status']): string {
   }
 }
 
-async function runTeamStatus(name: string | undefined): Promise<void> {
-  if (!name) {
+async function runTeamStatus(name: string | undefined, args: string[] = []): Promise<void> {
+  const jsonMode = args.includes('--json');
+  const effectiveName = name === '--json' ? undefined : name;
+  if (!effectiveName) {
     console.error('Usage: ethos team status <name>');
     process.exit(1);
   }
 
-  const rt = readRuntime(name);
+  const rt = readRuntime(effectiveName);
   const rtHealth = runtimeHealth(rt);
   if (rtHealth === 'missing') {
-    console.log(`Team "${name}": ${c.dim}stopped${c.reset} (no runtime file)`);
+    if (jsonMode) {
+      writeJson({ name: effectiveName, status: 'stopped', members: [] });
+      return;
+    }
+    console.log(`Team "${effectiveName}": ${c.dim}stopped${c.reset} (no runtime file)`);
     return;
   }
 
   if (rtHealth === 'stale') {
-    removeRuntime(name);
-    console.log(`Team "${name}": ${c.dim}stopped${c.reset} (cleaned stale runtime)`);
+    removeRuntime(effectiveName);
+    if (jsonMode) {
+      writeJson({ name: effectiveName, status: 'stopped', members: [] });
+      return;
+    }
+    console.log(`Team "${effectiveName}": ${c.dim}stopped${c.reset} (cleaned stale runtime)`);
     return;
   }
 
   if (!rt) {
     throw new EthosError({
       code: 'INTERNAL',
-      cause: `Runtime unexpectedly missing for team "${name}" after liveness checks`,
-      action: `Re-run 'ethos team status ${name}'. If this repeats, file an issue.`,
+      cause: `Runtime unexpectedly missing for team "${effectiveName}" after liveness checks`,
+      action: `Re-run 'ethos team status ${effectiveName}'. If this repeats, file an issue.`,
     });
+  }
+
+  if (jsonMode) {
+    const members = rt.members.map((m) => ({
+      personality: m.personality,
+      port: m.port,
+      status: m.status,
+      pid: m.pid ?? null,
+      failureCount: m.failureCount,
+    }));
+    writeJson({
+      name: rt.name,
+      supervisorPid: rt.supervisorPid,
+      startedAt: rt.startedAt,
+      uptimeSeconds: Math.floor((Date.now() - new Date(rt.startedAt).getTime()) / 1000),
+      members,
+    });
+    return;
   }
 
   const uptime = Math.floor((Date.now() - new Date(rt.startedAt).getTime()) / 1000);
@@ -381,12 +435,12 @@ async function runTeamStatus(name: string | undefined): Promise<void> {
   }
 
   const { ethosDir } = await import('../config');
-  const boardPath = join(ethosDir(), 'teams', name, 'board.db');
+  const boardPath = join(ethosDir(), 'teams', effectiveName, 'board.db');
   if (existsSync(boardPath)) {
     try {
       const { KanbanStore, autonomyTier } = await import('@ethosagent/kanban-store');
-      const manifest = parseTeamManifest(readFileSync(resolveManifestPath(name), 'utf-8'));
-      const board = new KanbanStore(boardPath, { teamId: name });
+      const manifest = parseTeamManifest(readFileSync(resolveManifestPath(effectiveName), 'utf-8'));
+      const board = new KanbanStore(boardPath, { teamId: effectiveName });
       const stats = board.getMemberStats();
       board.close();
       if (stats.size > 0) {
@@ -638,7 +692,7 @@ export async function runTeamCommand(sub: string, args: string[]): Promise<void>
   switch (sub) {
     case 'list':
     case '':
-      await runTeamList();
+      await runTeamList(args);
       break;
     case 'create':
       await runTeamCreate(args[0], args.slice(1));
@@ -653,7 +707,7 @@ export async function runTeamCommand(sub: string, args: string[]): Promise<void>
       await runTeamDestroy(args[0], args.slice(1));
       break;
     case 'status':
-      await runTeamStatus(args[0]);
+      await runTeamStatus(args[0], args);
       break;
     case 'logs':
       await runTeamLogs(args[0], args.slice(1));

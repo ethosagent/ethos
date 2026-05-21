@@ -14,6 +14,7 @@ import {
 import { RETENTION_DEFAULTS } from '@ethosagent/types';
 import { EthosObservability } from '@ethosagent/wiring';
 import { ethosDir, readRawConfig } from '../config';
+import { writeJson } from '../json-output';
 import { getStorage } from '../wiring';
 
 // ---------------------------------------------------------------------------
@@ -107,7 +108,7 @@ function parseFlags(argv: string[]): {
   return { dryRun, blobsOnly, category, olderThan, personality, positional };
 }
 
-async function runStats(): Promise<void> {
+async function runStats(argv: string[]): Promise<void> {
   const dir = ethosDir();
 
   const sessDbPath = join(dir, 'sessions.db');
@@ -123,6 +124,16 @@ async function runStats(): Promise<void> {
     countFiles(blobsDir),
     countFiles(archiveDir, '.tar.gz'),
   ]);
+
+  if (argv.includes('--json')) {
+    writeJson({
+      sessionsDb: { exists: sessSize > 0, sizeBytes: sessSize },
+      observabilityDb: { exists: obsSize > 0, sizeBytes: obsSize },
+      blobs: { exists: blobsSize > 0, sizeBytes: blobsSize },
+      archive: { exists: archiveSize > 0, sizeBytes: archiveSize },
+    });
+    return;
+  }
 
   console.log('\nData stats — ~/.ethos/');
   console.log('══════════════════════');
@@ -370,7 +381,7 @@ async function runArchiveCommand(argv: string[]): Promise<void> {
 
 export async function runData(sub: string, argv: string[]): Promise<void> {
   if (sub === 'stats' || sub === '') {
-    await runStats();
+    await runStats(argv);
     return;
   }
 
