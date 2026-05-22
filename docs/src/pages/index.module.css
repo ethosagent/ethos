@@ -192,6 +192,19 @@
   margin: 0;
 }
 
+.heroImageWrap {
+  max-width: 960px;
+  margin: 48px auto 0;
+  padding: 0 32px;
+}
+
+.heroImage {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--ethos-border-subtle);
+  display: block;
+}
+
 /* ── QuickStart — install + invoke a personality, side by side ─────── */
 
 .quickStart {
@@ -533,5 +546,9 @@
   .teaserInner {
     flex-direction: column;
     align-items: flex-start;
+  }
+  .heroImageWrap {
+    padding: 0 16px;
+    margin-top: 32px;
   }
 }

@@ -60,6 +60,13 @@ function Hero() {
           mit · node 24 · typescript strict · zero deps in the types layer
         </p>
       </div>
+      <div className={styles.heroImageWrap}>
+        <img
+          src="/img/ethos-gemini.png"
+          alt="Ethos — personality as architecture"
+          className={styles.heroImage}
+        />
+      </div>
     </section>
   );
 }

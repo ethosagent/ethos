@@ -18,8 +18,6 @@ That single decision pays off four ways:
 
 Three personalities ship by default for everyday use. Two system personalities — personality-architect and team-architect — are available for building and managing agents. Your existing Claude Code, OpenClaw, OpenCode, and Hermes [skill](getting-started/glossary.md#skill) libraries run as-is, filtered to the right specialist per personality.
 
-<img src="/img/ethos-gemini.png" alt="Ethos — personality as architecture" style={{ width: '100%', marginBottom: '2rem' }} />
-
 ## Two doors
 
 The rest of these docs split by what you're here to do — run Ethos, or extend it.
