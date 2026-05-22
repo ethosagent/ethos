@@ -329,6 +329,8 @@ export interface RunOptions {
    * Consumed once; does not persist across runs.
    */
   tierOverride?: import('@ethosagent/types').ModelTierName;
+  /** Opaque user id (from IdentityMap). When present, USER.md is read from `user:<userId>` scope. */
+  userId?: string;
   dryRun?: boolean;
   dryRunMaxToolCalls?: number;
 }
@@ -638,8 +640,7 @@ export class AgentLoop {
         )) ?? this.memory)
       : this.memory;
 
-    const memScopeId =
-      personality.memoryScope === 'per-personality' ? `personality:${personality.id}` : 'global';
+    const memScopeId = `personality:${personality.id}`;
     const memCtx: MemoryContext = {
       scopeId: memScopeId,
       sessionId,
@@ -658,6 +659,29 @@ export class AgentLoop {
       const hits = await activeMemory.search(text, memCtx, { limit: 5 });
       if (hits.length > 0) {
         memSnapshot = { entries: hits.map((h) => ({ key: h.key, content: h.content })) };
+      }
+    }
+
+    // Per-user profile prefetch
+    const userScopeId = opts.userId ? `user:${opts.userId}` : undefined;
+    if (userScopeId) {
+      const userCtx: MemoryContext = {
+        scopeId: userScopeId,
+        sessionId,
+        sessionKey,
+        platform: this.platform,
+        workingDir: this.workingDir,
+      };
+      const userEntry = await activeMemory.read('USER.md', userCtx);
+      if (userEntry?.content.trim()) {
+        const userSnapshot = {
+          entries: [{ key: 'USER.md', content: userEntry.content }],
+        };
+        if (memSnapshot) {
+          memSnapshot = { entries: [...userSnapshot.entries, ...memSnapshot.entries] };
+        } else {
+          memSnapshot = userSnapshot;
+        }
       }
     }
 
@@ -1201,8 +1225,8 @@ export class AgentLoop {
         workingDir: this.workingDir,
         agentId: opts.agentId,
         personalityId: personality.id,
-        memoryScope: personality.memoryScope,
         memoryScopeId: memScopeId,
+        ...(userScopeId ? { userScopeId } : {}),
         ...(this.teamId !== undefined && { teamId: this.teamId }),
         ...(opts.dryRun ? { dryRun: true as const } : {}),
         currentTurn: turnCount,

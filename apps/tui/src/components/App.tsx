@@ -775,7 +775,7 @@ export function App({
         try {
           const mem = createMemoryProvider({ dataDir: `${homedir()}/.ethos` });
           const result = await mem.prefetch({
-            scopeId: 'global',
+            scopeId: `personality:${personality}`,
             sessionId: '',
             sessionKey,
             platform: 'cli',

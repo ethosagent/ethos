@@ -198,7 +198,6 @@ describe('scaffold_personality', () => {
           name: 'My Researcher',
           description: 'A research personality',
           model: 'claude-sonnet-4-6',
-          memoryScope: 'per-personality',
         },
         toolset: ['read_file', 'terminal'],
       },

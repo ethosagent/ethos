@@ -166,7 +166,6 @@ export interface PersonalityConfig {
   model?: string | ModelTierConfig;
   provider?: string;
   platform?: string;
-  memoryScope?: 'per-personality';
   /**
    * Per-personality streaming watchdog: if no chunk arrives from the LLM within
    * this many milliseconds, the agent aborts the stream and emits an error.

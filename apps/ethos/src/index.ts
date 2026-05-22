@@ -397,8 +397,9 @@ try {
         const { createMemoryProvider } = await import('@ethosagent/wiring');
         const { ethosDir: getDir } = await import('./config');
         const mem = createMemoryProvider({ dataDir: getDir() });
+        const personalityId = config?.personality ?? 'default';
         const cliCtx = {
-          scopeId: 'global',
+          scopeId: `personality:${personalityId}`,
           sessionId: '',
           sessionKey: 'cli',
           platform: 'cli',

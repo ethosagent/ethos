@@ -1,30 +1,34 @@
 import type { MemoryFile, MemoryStoreId } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { App as AntApp, Button, Input, Spin, Tabs, Tooltip, Typography } from 'antd';
+import { App as AntApp, Button, Input, Select, Spin, Tabs, Tooltip, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import { rpc } from '../rpc';
 
-// Memory tab — v1.
-//
-// Edits the two markdown files MarkdownFileMemoryProvider reads:
-//   • MEMORY.md — rolling project context
-//   • USER.md   — who you are; persists across personalities + sessions
-//
-// Vector-mode chunk CRUD is out of scope for this commit. The Settings
-// tab toggles between markdown and vector providers; when vector is
-// active these files exist but the agent loop ignores them. The page
-// shows a hint pointing the user back to Settings in that case.
-//
-// Search across both files is local-only (a substring filter on the
-// active file's content) — the vector retrieval is the agent loop's
-// path, not the editor's.
-
 export function Memory() {
   const [activeStore, setActiveStore] = useState<MemoryStoreId>('memory');
+  const [personalityId, setPersonalityId] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+
+  const personalitiesQuery = useQuery({
+    queryKey: ['personalities', 'list'],
+    queryFn: () => rpc.personalities.list({}),
+  });
+
+  const effectivePersonalityId = personalityId ?? personalitiesQuery.data?.defaultId ?? null;
+
+  const usersQuery = useQuery({
+    queryKey: ['memory', 'listUsers'],
+    queryFn: () => rpc.memory.listUsers({}),
+  });
 
   const listQuery = useQuery({
-    queryKey: ['memory', 'list'],
-    queryFn: () => rpc.memory.list({}),
+    queryKey: ['memory', 'list', effectivePersonalityId, activeStore === 'user' ? userId : null],
+    queryFn: () =>
+      rpc.memory.list({
+        personalityId: effectivePersonalityId as string,
+        ...(activeStore === 'user' && userId ? { userId } : {}),
+      }),
+    enabled: !!effectivePersonalityId,
   });
 
   const configQuery = useQuery({
@@ -32,7 +36,7 @@ export function Memory() {
     queryFn: () => rpc.config.get(),
   });
 
-  if (listQuery.isLoading) {
+  if (personalitiesQuery.isLoading || (personalitiesQuery.isSuccess && listQuery.isLoading)) {
     return (
       <div style={{ display: 'grid', placeItems: 'center', height: 200 }}>
         <Spin />
@@ -51,8 +55,49 @@ export function Memory() {
   const fileByStore = new Map(files.map((f) => [f.store, f] as const));
   const memoryMode = configQuery.data?.memory ?? 'markdown';
 
+  const personalities = personalitiesQuery.data?.items ?? [];
+  const users = usersQuery.data?.users ?? [];
+
   return (
     <div className="memory-tab">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Personality
+        </Typography.Text>
+        <Select
+          size="small"
+          style={{ width: 200 }}
+          value={effectivePersonalityId ?? undefined}
+          onChange={(v) => setPersonalityId(v)}
+          loading={personalitiesQuery.isLoading}
+          options={personalities.map((p) => ({
+            value: p.id,
+            label: p.name,
+          }))}
+        />
+        {activeStore === 'user' ? (
+          <>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              User
+            </Typography.Text>
+            <Select
+              size="small"
+              style={{ width: 200 }}
+              value={userId ?? '__shared__'}
+              onChange={(v) => setUserId(v === '__shared__' ? null : v)}
+              loading={usersQuery.isLoading}
+              options={[
+                { value: '__shared__', label: 'Shared (personality default)' },
+                ...users.map((u) => ({
+                  value: u.userId,
+                  label: u.displayLabel,
+                })),
+              ]}
+            />
+          </>
+        ) : null}
+      </div>
+
       {memoryMode === 'vector' ? (
         <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
           Vector mode is active — the agent uses semantic chunks, not these files. Switch to{' '}
@@ -67,12 +112,25 @@ export function Memory() {
           {
             key: 'memory',
             label: 'MEMORY.md',
-            children: <MemoryEditor store="memory" file={fileByStore.get('memory') ?? null} />,
+            children: effectivePersonalityId ? (
+              <MemoryEditor
+                store="memory"
+                file={fileByStore.get('memory') ?? null}
+                personalityId={effectivePersonalityId}
+              />
+            ) : null,
           },
           {
             key: 'user',
             label: 'USER.md',
-            children: <MemoryEditor store="user" file={fileByStore.get('user') ?? null} />,
+            children: effectivePersonalityId ? (
+              <MemoryEditor
+                store="user"
+                file={fileByStore.get('user') ?? null}
+                personalityId={effectivePersonalityId}
+                userId={userId ?? undefined}
+              />
+            ) : null,
           },
         ]}
       />
@@ -80,19 +138,29 @@ export function Memory() {
   );
 }
 
-function MemoryEditor({ store, file }: { store: MemoryStoreId; file: MemoryFile | null }) {
+function MemoryEditor({
+  store,
+  file,
+  personalityId,
+  userId,
+}: {
+  store: MemoryStoreId;
+  file: MemoryFile | null;
+  personalityId: string;
+  userId?: string;
+}) {
   const qc = useQueryClient();
   const { notification, modal } = AntApp.useApp();
   const [draft, setDraft] = useState(file?.content ?? '');
   const [search, setSearch] = useState('');
 
-  // Re-hydrate when the upstream file changes (mode switch, refresh).
   useEffect(() => {
     setDraft(file?.content ?? '');
   }, [file]);
 
   const writeMut = useMutation({
-    mutationFn: (content: string) => rpc.memory.write({ store, content }),
+    mutationFn: (content: string) =>
+      rpc.memory.write({ store, content, personalityId, ...(userId ? { userId } : {}) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['memory', 'list'] });
       notification.success({ message: 'Saved', placement: 'topRight' });

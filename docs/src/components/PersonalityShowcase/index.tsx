@@ -3,8 +3,6 @@ import { type ReactNode, useMemo } from 'react';
 
 import styles from './styles.module.css';
 
-type MemoryScope = 'per-personality';
-
 interface Personality {
   id: string;
   accent: string;
@@ -13,7 +11,6 @@ interface Personality {
   sample: string;
   // Actual tool names from extensions/personalities/data/<id>/toolset.yaml
   tools: string[];
-  memoryScope: MemoryScope;
 }
 
 const personalities: Personality[] = [
@@ -34,7 +31,6 @@ const personalities: Personality[] = [
       'memory_write',
       'session_search',
     ],
-    memoryScope: 'global',
   },
   {
     id: 'engineer',
@@ -55,7 +51,6 @@ const personalities: Personality[] = [
       'run_tests',
       'lint',
     ],
-    memoryScope: 'global',
   },
   {
     id: 'reviewer',
@@ -64,7 +59,6 @@ const personalities: Personality[] = [
     tagline: 'critical · evidence-based · always explains why',
     sample: 'Two real concerns. The token rotation logic at auth.ts:47 has a TOCTOU race.',
     tools: ['read_file', 'search_files', 'session_search'],
-    memoryScope: 'per-personality',
   },
   {
     id: 'coach',
@@ -73,7 +67,6 @@ const personalities: Personality[] = [
     tagline: 'warm but direct · question-led · helps you think',
     sample: 'OK. Stuck on what specifically? Walk me through what you tried so far.',
     tools: ['web_search', 'web_extract', 'memory_read', 'memory_write', 'session_search'],
-    memoryScope: 'global',
   },
   {
     id: 'operator',
@@ -90,7 +83,6 @@ const personalities: Personality[] = [
       'execute_code',
       'run_tests',
     ],
-    memoryScope: 'per-personality',
   },
 ];
 
@@ -185,7 +177,7 @@ function PersonalityRow({ personality }: { personality: Personality }): ReactNod
           <code>{personality.model}</code>
         </div>
         <div className={styles.metaScope}>
-          memory · <code>{personality.memoryScope}</code>
+          memory · <code>personality:{personality.id}</code>
         </div>
       </div>
     </div>

@@ -12,6 +12,7 @@ import {
   EvalScorerSchema,
   EvolveConfigSchema,
   EvolverRunSchema,
+  IdentityMapEntrySchema,
   KanbanBoardSnapshotSchema,
   KanbanTaskSchema,
   KanbanTaskStatusSchema,
@@ -165,7 +166,6 @@ const PersonalityCreateInput = z.object({
   toolset: z.array(z.string()),
   /** Markdown body of SOUL.md. May be empty. */
   soulMd: z.string(),
-  memoryScope: z.literal('per-personality').optional(),
   provider: ProviderIdSchema.or(z.literal('')).optional(),
   capabilities: z.array(z.string()).optional(),
   mcp_servers: z.array(z.string()).optional(),
@@ -187,7 +187,6 @@ const PersonalityUpdateInput = z.object({
   model: z.union([z.string(), ModelTierConfigSchema]).optional(),
   toolset: z.array(z.string()).optional(),
   soulMd: z.string().optional(),
-  memoryScope: z.literal('per-personality').optional(),
   mcp_servers: z.array(z.string()).optional(),
   /** Per-server MCP tool subsets, written to `mcp.yaml`. Maps a server name
    *  to the BARE tool names that server may expose. Only include a server
@@ -700,30 +699,46 @@ const mcp = {
 // ---------------------------------------------------------------------------
 
 const MemoryListInput = z.object({
+  personalityId: z.string().min(1),
   /** Page size. */
   limit: z.number().int().positive().optional(),
   /** Opaque cursor from the previous response's `nextCursor`. */
   cursor: z.string().optional(),
+  /** When present and store is 'user', reads user-scoped memory. */
+  userId: z.string().optional(),
 });
 const MemoryListOutput = z.object({
   items: z.array(MemoryFileSchema),
   nextCursor: z.string().nullable(),
 });
 
-const MemoryGetInput = z.object({ store: MemoryStoreSchema });
+const MemoryGetInput = z.object({
+  store: MemoryStoreSchema,
+  personalityId: z.string().min(1),
+  /** When present and store is 'user', reads user-scoped memory. */
+  userId: z.string().optional(),
+});
 const MemoryGetOutput = z.object({ file: MemoryFileSchema });
 
 const MemoryWriteInput = z.object({
   store: MemoryStoreSchema,
   content: z.string(),
+  personalityId: z.string().min(1),
+  /** When present and store is 'user', writes user-scoped memory. */
+  userId: z.string().optional(),
 });
 const MemoryWriteOutput = z.object({ file: MemoryFileSchema });
+
+const MemoryListUsersOutput = z.object({
+  users: z.array(IdentityMapEntrySchema),
+});
 
 /** @stable v1 */
 const memory = {
   list: oc.input(MemoryListInput).output(MemoryListOutput),
   get: oc.input(MemoryGetInput).output(MemoryGetOutput),
   write: oc.input(MemoryWriteInput).output(MemoryWriteOutput),
+  listUsers: oc.input(z.object({})).output(MemoryListUsersOutput),
 };
 
 // ---------------------------------------------------------------------------

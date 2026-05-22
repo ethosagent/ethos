@@ -34,29 +34,33 @@ export function createMemoryReadTool(memory: MemoryProvider): Tool {
     async execute(args, ctx): Promise<ToolResult> {
       const { store = 'both' } = args as { store?: 'memory' | 'user' | 'both' };
 
-      const memCtx = buildMemoryContext(ctx);
-      const snapshot = await memory.prefetch(memCtx);
-
-      if (!snapshot || snapshot.entries.length === 0) {
-        return { ok: true, value: 'Memory is empty. No notes recorded yet.' };
+      if (store === 'user') {
+        const userCtx = buildUserMemoryContext(ctx);
+        const entry = await memory.read('USER.md', userCtx);
+        return {
+          ok: true,
+          value: redactString(entry?.content.trim() ?? '') || 'USER.md is empty.',
+        };
       }
 
-      const byKey = new Map(snapshot.entries.map((e) => [e.key, e.content]));
+      const memCtx = buildMemoryContext(ctx);
 
       if (store === 'memory') {
-        const content = byKey.get('MEMORY.md');
-        return { ok: true, value: redactString(content?.trim() ?? '') || 'MEMORY.md is empty.' };
-      }
-      if (store === 'user') {
-        const content = byKey.get('USER.md');
-        return { ok: true, value: redactString(content?.trim() ?? '') || 'USER.md is empty.' };
+        const entry = await memory.read('MEMORY.md', memCtx);
+        return {
+          ok: true,
+          value: redactString(entry?.content.trim() ?? '') || 'MEMORY.md is empty.',
+        };
       }
 
+      // store === 'both'
       const parts: string[] = [];
-      const user = byKey.get('USER.md');
-      if (user) parts.push(`## About You\n\n${user.trim()}`);
-      const mem = byKey.get('MEMORY.md');
-      if (mem) parts.push(`## Memory\n\n${mem.trim()}`);
+      const userCtx = buildUserMemoryContext(ctx);
+      const userEntry = await memory.read('USER.md', userCtx);
+      if (userEntry?.content.trim()) parts.push(`## About You\n\n${userEntry.content.trim()}`);
+      const memEntry = await memory.read('MEMORY.md', memCtx);
+      if (memEntry?.content.trim()) parts.push(`## Memory\n\n${memEntry.content.trim()}`);
+      if (parts.length === 0) return { ok: true, value: 'Memory is empty. No notes recorded yet.' };
       return { ok: true, value: redactString(parts.join('\n\n')) };
     },
   };
@@ -116,7 +120,7 @@ export function createMemoryWriteTool(memory: MemoryProvider): Tool {
         };
       }
 
-      const memCtx = buildMemoryContext(ctx);
+      const memCtx = store === 'user' ? buildUserMemoryContext(ctx) : buildMemoryContext(ctx);
       const key = store === 'memory' ? 'MEMORY.md' : 'USER.md';
 
       if (action === 'remove') {
@@ -492,6 +496,16 @@ export function createTeamMemoryTools(teamMemory: MemoryProvider): Tool[] {
 function buildMemoryContext(ctx: ToolContext): MemoryContext {
   return {
     scopeId: ctx.memoryScopeId ?? 'global',
+    sessionId: ctx.sessionId,
+    sessionKey: ctx.sessionKey,
+    platform: ctx.platform,
+    workingDir: ctx.workingDir,
+  };
+}
+
+function buildUserMemoryContext(ctx: ToolContext): MemoryContext {
+  return {
+    scopeId: ctx.userScopeId ?? ctx.memoryScopeId ?? 'global',
     sessionId: ctx.sessionId,
     sessionKey: ctx.sessionKey,
     platform: ctx.platform,

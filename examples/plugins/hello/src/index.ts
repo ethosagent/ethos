@@ -63,7 +63,6 @@ const friendlyPersonality = {
   name: 'Friendly',
   description: 'Warm, approachable, uses the greet tool to welcome users',
   model: 'claude-sonnet-4-6',
-  memoryScope: 'global' as const,
   toolset: ['greet', 'memory_read', 'memory_write'],
 };
 

@@ -1,16 +1,16 @@
 /**
  * Phase 4 — Memory & session isolation verification
  *
- * Verifies the four isolation properties that must hold when multiple bots
+ * Verifies the isolation properties that must hold when multiple bots
  * share a single Ethos process:
  *
  * 1. Different-personality bots write to separate per-personality MEMORY.md files.
  * 2. Same-personality bots (e.g. one human-facing, one programmatic) share memory —
  *    this is expected and documented behaviour.
- * 3. USER.md is always global: it describes the human, not the agent, so every bot
- *    sees it regardless of personality binding.
+ * 3. USER.md is scoped per-personality (lives in personality subdirectory). Per-user
+ *    profiles use the `user:<userId>` scope prefix (tested in scope-isolation.test.ts).
  * 4. prefetch for each personality returns only that personality's own MEMORY.md
- *    plus the shared USER.md — no cross-contamination.
+ *    and USER.md — no cross-contamination.
  *
  * Session-lane isolation (different botKeys → different lane keys → distinct
  * AgentLoop sessions) is already covered in
@@ -25,13 +25,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MarkdownFileMemoryProvider } from '../index';
 
 // Minimal session context — matches what AgentLoop passes to the memory provider.
-function botCtx(
-  botKey: string,
-  personalityId: string,
-  scope: 'personality' | 'global' = 'personality',
-): MemoryContext {
+function botCtx(botKey: string, personalityId: string): MemoryContext {
   return {
-    scopeId: scope === 'personality' ? `personality:${personalityId}` : 'global',
+    scopeId: `personality:${personalityId}`,
     sessionId: `tg:${botKey}:chat42`,
     sessionKey: `tg:${botKey}:chat42`,
     platform: 'telegram',
@@ -128,11 +124,11 @@ describe('same-personality bots — shared memory', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 3: USER.md is always global across all bots
+// Scenario 3: USER.md is scoped per-personality (no longer global)
 // ---------------------------------------------------------------------------
 
-describe('USER.md — global across bots', () => {
-  it('a USER.md write from one bot is visible to a different-personality bot on prefetch', async () => {
+describe('USER.md — scoped per personality', () => {
+  it('a USER.md write from one bot is NOT visible to a different-personality bot', async () => {
     const researcherCtx = botCtx('researcher-bot', 'researcher');
     const coderCtx = botCtx('coder-bot', 'coder');
 
@@ -143,28 +139,28 @@ describe('USER.md — global across bots', () => {
 
     const result = await provider.prefetch(coderCtx);
     const all = result?.entries.map((e) => e.content).join('\n') ?? '';
-    expect(all).toContain('I prefer TypeScript.');
+    expect(all).not.toContain('I prefer TypeScript.');
   });
 
-  it('USER.md file lives at the root, not inside any personality subdirectory', async () => {
+  it('USER.md file lives in the personality subdirectory', async () => {
     await provider.sync(
-      [{ action: 'replace', key: 'USER.md', content: 'Root user fact.' }],
+      [{ action: 'replace', key: 'USER.md', content: 'Per-personality user fact.' }],
       botCtx('researcher-bot', 'researcher'),
     );
-
-    const rootUser = await readFile(join(testDir, 'USER.md'), 'utf-8');
-    expect(rootUser).toContain('Root user fact.');
 
     const personalityUser = await readFile(
       join(testDir, 'personalities', 'researcher', 'USER.md'),
       'utf-8',
-    ).catch(() => null);
-    expect(personalityUser).toBeNull();
+    );
+    expect(personalityUser).toContain('Per-personality user fact.');
+
+    const rootUser = await readFile(join(testDir, 'USER.md'), 'utf-8').catch(() => null);
+    expect(rootUser).toBeNull();
   });
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 4: prefetch returns own MEMORY.md + shared USER.md, not other's
+// Scenario 4: prefetch returns own MEMORY.md + own USER.md, not other's
 // ---------------------------------------------------------------------------
 
 describe('prefetch — per-bot memory context', () => {
@@ -190,7 +186,7 @@ describe('prefetch — per-bot memory context', () => {
     expect(coderMem).not.toContain('Researcher-only fact.');
   });
 
-  it('prefetch includes shared USER.md for all bots alongside per-personality MEMORY.md', async () => {
+  it('prefetch includes only that personality own USER.md alongside MEMORY.md', async () => {
     await provider.sync(
       [{ action: 'replace', key: 'USER.md', content: 'I work in fintech.' }],
       botCtx('researcher-bot', 'researcher'),
@@ -210,8 +206,10 @@ describe('prefetch — per-bot memory context', () => {
     const flatten = (r: typeof researcherResult) =>
       r?.entries.map((e) => `${e.key}::${e.content}`).join('\n') ?? '';
 
+    // Researcher sees its own USER.md
     expect(flatten(researcherResult)).toContain('I work in fintech.');
-    expect(flatten(coderResult)).toContain('I work in fintech.');
+    // Coder does NOT see researcher's USER.md
+    expect(flatten(coderResult)).not.toContain('I work in fintech.');
 
     expect(flatten(researcherResult)).toContain('Researcher memory.');
     expect(flatten(researcherResult)).not.toContain('Coder memory.');

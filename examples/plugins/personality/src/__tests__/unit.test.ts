@@ -70,7 +70,6 @@ describe('strategist personality plugin', () => {
     expect(p).toBeDefined();
     expect(p?.name).toBe('Strategist');
     expect(p?.model).toBe('claude-opus-4-7');
-    expect(p?.memoryScope).toBe('global');
   });
 
   it('strategist toolset contains web and memory tools', () => {

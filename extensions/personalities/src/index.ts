@@ -387,7 +387,6 @@ export interface CreatePersonalityInput {
   model?: string | import('@ethosagent/types').ModelTierConfig;
   toolset: string[];
   soulMd: string;
-  memoryScope?: 'per-personality';
   provider?: string;
   capabilities?: string[];
   mcp_servers?: string[];
@@ -401,7 +400,6 @@ export interface UpdatePersonalityPatch {
   model?: string | import('@ethosagent/types').ModelTierConfig;
   toolset?: string[];
   soulMd?: string;
-  memoryScope?: 'per-personality';
   mcp_servers?: string[];
   plugins?: string[];
   capabilities?: string[];
@@ -563,7 +561,6 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       patch.name !== undefined ||
       patch.description !== undefined ||
       patch.model !== undefined ||
-      patch.memoryScope !== undefined ||
       patch.mcp_servers !== undefined ||
       patch.plugins !== undefined ||
       patch.capabilities !== undefined ||
@@ -633,7 +630,6 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         model: patch.model ?? config.model,
         toolset: patch.toolset ?? config.toolset ?? [],
         soulMd: '',
-        memoryScope: patch.memoryScope ?? config.memoryScope,
         mcp_servers: patch.mcp_servers ?? config.mcp_servers,
         plugins: patch.plugins ?? config.plugins,
         capabilities: patch.capabilities === undefined ? config.capabilities : patch.capabilities,
@@ -985,7 +981,6 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       model,
       provider: cfg.provider,
       platform: cfg.platform,
-      memoryScope: cfg.memoryScope === 'per-personality' ? 'per-personality' : undefined,
       ...(capabilities?.length ? { capabilities } : {}),
       soulFile: join(dir, 'SOUL.md'),
       ...(skillsExists ? { skillsDirs: [join(dir, 'skills')] } : {}),
@@ -1328,7 +1323,6 @@ function renderConfigYaml(input: CreatePersonalityInput): string {
       if (input.model.dreaming) lines.push(`model.dreaming: ${yamlScalar(input.model.dreaming)}`);
     }
   }
-  if (input.memoryScope) lines.push(`memoryScope: ${yamlScalar(input.memoryScope)}`);
   if (input.capabilities !== undefined && input.capabilities.length > 0) {
     lines.push(`capabilities: ${input.capabilities.map(yamlScalar).join(', ')}`);
   }

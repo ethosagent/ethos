@@ -21,7 +21,6 @@ export const personalitiesRouter = {
       ...(input.model !== undefined ? { model: input.model } : {}),
       toolset: input.toolset,
       soulMd: input.soulMd,
-      ...(input.memoryScope !== undefined ? { memoryScope: input.memoryScope } : {}),
       ...(input.provider !== undefined ? { provider: input.provider } : {}),
       ...(input.capabilities !== undefined ? { capabilities: input.capabilities } : {}),
       ...(input.mcp_servers !== undefined ? { mcp_servers: input.mcp_servers } : {}),

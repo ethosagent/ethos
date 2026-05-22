@@ -60,7 +60,6 @@ export function activate(api: EthosPluginApi): void {
     description:
       'Thinks in frameworks. Identifies core constraints. Presents options with tradeoffs.',
     model: 'claude-opus-4-7',
-    memoryScope: 'global',
     toolset: ['web_search', 'web_extract', 'read_file', 'memory_read', 'memory_write'],
   });
 

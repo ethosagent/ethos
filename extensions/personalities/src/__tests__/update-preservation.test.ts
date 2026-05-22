@@ -32,7 +32,6 @@ describe('update preserves unmodified fields', () => {
       'description: A thorough test personality',
       'model: claude-opus-4-7',
       'provider: anthropic',
-      'memoryScope: per-personality',
       'capabilities: triage, release',
       'mcp_servers: github sentry',
       'plugins: linear jira',
@@ -52,7 +51,6 @@ describe('update preserves unmodified fields', () => {
     expect(before?.description).toBe('A thorough test personality');
     expect(before?.model).toBe('claude-opus-4-7');
     expect(before?.provider).toBe('anthropic');
-    expect(before?.memoryScope).toBe('per-personality');
     expect(before?.capabilities).toEqual(['triage', 'release']);
     expect(before?.mcp_servers).toEqual(['github', 'sentry']);
     expect(before?.plugins).toEqual(['linear', 'jira']);
@@ -71,7 +69,6 @@ describe('update preserves unmodified fields', () => {
     expect(after?.description).toBe('A thorough test personality');
     expect(after?.model).toBe('claude-opus-4-7');
     expect(after?.provider).toBe('anthropic');
-    expect(after?.memoryScope).toBe('per-personality');
     expect(after?.capabilities).toEqual(['triage', 'release']);
     expect(after?.mcp_servers).toEqual(['github', 'sentry']);
     expect(after?.plugins).toEqual(['linear', 'jira']);

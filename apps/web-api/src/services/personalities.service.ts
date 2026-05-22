@@ -166,7 +166,6 @@ function toWire(d: DescribedPersonality): Personality {
     provider: c.provider ?? null,
     toolset: c.toolset ?? null,
     capabilities: c.capabilities ?? null,
-    memoryScope: c.memoryScope ?? null,
     streamingTimeoutMs: c.streamingTimeoutMs ?? null,
     mcp_servers: c.mcp_servers ?? null,
     plugins: c.plugins ?? null,

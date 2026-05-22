@@ -58,7 +58,7 @@ export function renderCharacterSheet(config: PersonalityConfig, soulMd: string):
   lines.push('');
 
   lines.push('## Memory');
-  lines.push(`- Memory scope: ${config.memoryScope ?? '(engine default)'}`);
+  lines.push(`- Memory scope: personality:${config.id}`);
   lines.push('');
 
   const toolset = config.toolset ?? [];

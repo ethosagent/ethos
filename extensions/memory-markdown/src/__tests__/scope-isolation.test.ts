@@ -51,7 +51,7 @@ describe('MarkdownFileMemoryProvider — scope isolation', () => {
     expect(entry).toBeNull();
   });
 
-  it('USER.md is intentionally shared across scopes (cross-scope exception)', async () => {
+  it('USER.md is scoped per-personality (no longer shared across scopes)', async () => {
     const storage = new InMemoryStorage();
 
     const provider = new MarkdownFileMemoryProvider({ dir: '/ethos', storage });
@@ -59,12 +59,28 @@ describe('MarkdownFileMemoryProvider — scope isolation', () => {
     const ctxA = makeCtx('personality:alpha');
     const ctxB = makeCtx('personality:beta');
 
+    await provider.sync([{ action: 'replace', key: 'USER.md', content: 'Alpha user info.' }], ctxA);
+
+    const entryA = await provider.read('USER.md', ctxA);
+    expect(entryA?.content).toContain('Alpha user info.');
+
+    const entryB = await provider.read('USER.md', ctxB);
+    expect(entryB).toBeNull();
+  });
+
+  it('user:<userId> scope stores USER.md in users/<userId>/', async () => {
+    const storage = new InMemoryStorage();
+
+    const provider = new MarkdownFileMemoryProvider({ dir: '/ethos', storage });
+
+    const userCtx = makeCtx('user:abc123');
+
     await provider.sync(
-      [{ action: 'replace', key: 'USER.md', content: 'Shared user info.' }],
-      ctxA,
+      [{ action: 'replace', key: 'USER.md', content: 'Per-user profile.' }],
+      userCtx,
     );
 
-    const entry = await provider.read('USER.md', ctxB);
-    expect(entry?.content).toContain('Shared user info.');
+    const entry = await provider.read('USER.md', userCtx);
+    expect(entry?.content).toContain('Per-user profile.');
   });
 });
