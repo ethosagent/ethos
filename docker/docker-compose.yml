@@ -35,7 +35,7 @@ services:
         cat > "$$CONFIG_FILE" <<EOF
         schemaVersion: 1
         provider: $$PROVIDER
-        apiKey: $$API_KEY
+        apiKey: "$$API_KEY"
         EOF
         chmod 600 "$$CONFIG_FILE"
         echo "config.yaml created with provider: $$PROVIDER"
