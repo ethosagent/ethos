@@ -76,6 +76,7 @@
       "@ethosagent/skill-evolver": ["./extensions/skill-evolver/src"],
       "@ethosagent/claw-migrate": ["./extensions/claw-migrate/src"],
       "@ethosagent/secrets-aws": ["./extensions/secrets-aws/src"],
+      "@ethosagent/storage-crypto": ["./extensions/storage-crypto/src"],
       "@ethosagent/agent-bridge": ["./packages/agent-bridge/src"],
       "@ethosagent/wiring": ["./packages/wiring/src"],
       "@ethosagent/wiring/provider-catalog": ["./packages/wiring/src/provider-catalog"],

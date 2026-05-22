@@ -228,6 +228,7 @@ export async function createAgentLoop(
     ...(config.postmortems !== undefined ? { postmortems: config.postmortems } : {}),
     ...(config.trustPolicy !== undefined ? { trustPolicy: config.trustPolicy } : {}),
     ...(config.modelCatalog ? { modelCatalogConfig: config.modelCatalog } : {}),
+    ...(config.storage ? { storage: config.storage } : {}),
     secretsResolver: await getSecretsResolver(),
   };
   return packageCreateAgentLoop(wiringConfig, {
