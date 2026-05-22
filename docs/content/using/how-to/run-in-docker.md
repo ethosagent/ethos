@@ -33,6 +33,20 @@ Open `http://localhost:3000`.
 
 On first run the `init` service detects your provider key, writes a minimal `config.yaml` into the `ethos-data` volume, and exits. Subsequent runs skip init if the config already exists.
 
+## Verify
+
+```bash
+curl -fsS http://localhost:3000/healthz
+# {"status":"ok","uptime":42.1}
+```
+
+Check the init service exited cleanly:
+
+```bash
+docker compose -f docker/docker-compose.yml ps init
+# State should be "exited (0)"
+```
+
 ## Required env vars
 
 At least one must be set. The init service uses the first one it finds, in priority order:
