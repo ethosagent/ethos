@@ -350,15 +350,43 @@ export class SkillsLibrary {
     const out: SkillRecord[] = [];
     for (const entry of entries) {
       if (!entry.isDir) continue;
-      const skill = await this.readSystemSkill(entry.name);
-      if (skill) out.push(skill);
+      const directPath = join(this.catalogDir, entry.name, 'SKILL.md');
+      if (await this.storage.exists(directPath)) {
+        const skill = await this.readSystemSkillAt(entry.name, directPath);
+        if (skill) out.push(skill);
+        continue;
+      }
+      const subEntries = await this.storage.listEntries(join(this.catalogDir, entry.name));
+      for (const sub of subEntries) {
+        if (!sub.isDir) continue;
+        const nestedPath = join(this.catalogDir, entry.name, sub.name, 'SKILL.md');
+        if (await this.storage.exists(nestedPath)) {
+          const skill = await this.readSystemSkillAt(sub.name, nestedPath);
+          if (skill) out.push(skill);
+        }
+      }
     }
     return out;
   }
 
   private async readSystemSkill(id: string): Promise<SkillRecord | null> {
     if (!this.catalogDir) return null;
-    const path = join(this.catalogDir, id, 'SKILL.md');
+    const directPath = join(this.catalogDir, id, 'SKILL.md');
+    if (await this.storage.exists(directPath)) {
+      return this.readSystemSkillAt(id, directPath);
+    }
+    const entries = await this.storage.listEntries(this.catalogDir);
+    for (const entry of entries) {
+      if (!entry.isDir) continue;
+      const nestedPath = join(this.catalogDir, entry.name, id, 'SKILL.md');
+      if (await this.storage.exists(nestedPath)) {
+        return this.readSystemSkillAt(id, nestedPath);
+      }
+    }
+    return null;
+  }
+
+  private async readSystemSkillAt(id: string, path: string): Promise<SkillRecord | null> {
     const raw = await this.storage.read(path);
     const mtimeMs = await this.storage.mtime(path);
     if (raw === null || mtimeMs === null) return null;
@@ -383,8 +411,17 @@ export class SkillsLibrary {
     const userRaw = await this.storage.read(userPath);
     if (userRaw !== null) return userRaw;
     if (!this.catalogDir) return null;
-    const systemPath = join(this.catalogDir, skillId, 'SKILL.md');
-    return this.storage.read(systemPath);
+    const directPath = join(this.catalogDir, skillId, 'SKILL.md');
+    const directRaw = await this.storage.read(directPath);
+    if (directRaw !== null) return directRaw;
+    const entries = await this.storage.listEntries(this.catalogDir);
+    for (const entry of entries) {
+      if (!entry.isDir) continue;
+      const nestedPath = join(this.catalogDir, entry.name, skillId, 'SKILL.md');
+      const nestedRaw = await this.storage.read(nestedPath);
+      if (nestedRaw !== null) return nestedRaw;
+    }
+    return null;
   }
 }
 

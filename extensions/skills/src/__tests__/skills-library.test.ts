@@ -292,5 +292,66 @@ describe('SkillsLibrary', () => {
       const skills = await catLib.listSkills();
       expect(skills.find((s) => s.id === 'README')).toBeUndefined();
     });
+
+    it('discovers skills nested under category directories', async () => {
+      await storage.mkdir(join(CATALOG, 'github'));
+      await storage.mkdir(join(CATALOG, 'github', 'create-ticket'));
+      await storage.write(
+        join(CATALOG, 'github', 'create-ticket', 'SKILL.md'),
+        '---\nname: Create Ticket\ndescription: Create a GitHub issue\n---\n\nCreate ticket body',
+      );
+      await storage.mkdir(join(CATALOG, 'github', 'debug-issue'));
+      await storage.write(
+        join(CATALOG, 'github', 'debug-issue', 'SKILL.md'),
+        '---\nname: Debug Issue\n---\n\nDebug body',
+      );
+      const skills = await catLib.listSkills();
+      const ids = skills.map((s) => s.id);
+      expect(ids).toContain('create-ticket');
+      expect(ids).toContain('debug-issue');
+      const ct = skills.find((s) => s.id === 'create-ticket');
+      expect(ct).toMatchObject({
+        source: 'system',
+        readonly: true,
+        name: 'Create Ticket',
+        description: 'Create a GitHub issue',
+      });
+    });
+
+    it('getSkill finds nested system skills by id', async () => {
+      await storage.mkdir(join(CATALOG, 'github'));
+      await storage.mkdir(join(CATALOG, 'github', 'create-ticket'));
+      await storage.write(
+        join(CATALOG, 'github', 'create-ticket', 'SKILL.md'),
+        '---\nname: Create Ticket\n---\n\nbody',
+      );
+      const skill = await catLib.getSkill('create-ticket');
+      expect(skill).toMatchObject({ id: 'create-ticket', source: 'system' });
+    });
+
+    it('importGlobalIntoPersonality can import nested system skills', async () => {
+      await storage.mkdir(join(CATALOG, 'github'));
+      await storage.mkdir(join(CATALOG, 'github', 'create-ticket'));
+      await storage.write(
+        join(CATALOG, 'github', 'create-ticket', 'SKILL.md'),
+        '---\nname: Create Ticket\n---\n\nticket body',
+      );
+      const imported = await catLib.importGlobalIntoPersonality('p2', ['create-ticket']);
+      expect(imported).toHaveLength(1);
+      expect(imported[0]).toMatchObject({ id: 'create-ticket' });
+    });
+
+    it('mixes direct and nested skills in listing', async () => {
+      await storage.mkdir(join(CATALOG, 'github'));
+      await storage.mkdir(join(CATALOG, 'github', 'create-ticket'));
+      await storage.write(
+        join(CATALOG, 'github', 'create-ticket', 'SKILL.md'),
+        '---\nname: Create Ticket\n---\n\nbody',
+      );
+      const skills = await catLib.listSkills();
+      const ids = skills.map((s) => s.id);
+      expect(ids).toContain('web-search');
+      expect(ids).toContain('create-ticket');
+    });
   });
 });
