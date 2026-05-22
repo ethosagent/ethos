@@ -37,6 +37,7 @@ services:
         provider: $$PROVIDER
         apiKey: $$API_KEY
         EOF
+        chmod 600 "$$CONFIG_FILE"
         echo "config.yaml created with provider: $$PROVIDER"
     environment:
       - ANTHROPIC_API_KEY

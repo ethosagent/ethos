@@ -38,5 +38,5 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ethosagent/ethos:latest
             ethosagent/ethos:${{ steps.version.outputs.version }}
+            ${{ !contains(steps.version.outputs.version, '-') && 'ethosagent/ethos:latest' || '' }}

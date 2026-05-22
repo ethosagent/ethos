@@ -9,7 +9,6 @@ Reference for the Docker packaging and Compose setup.
 | `Dockerfile` | Multi-stage build: installs `@ethosagent/cli` from npm in a build stage, then copies into a clean `node:24-slim` runtime image. Runs as uid 1000 (`ethos`), exposes port 3000. |
 | `docker-entrypoint.sh` | Reads `ETHOS_MODE` and execs the corresponding Ethos command (`run-all`, `gateway start`, or `serve`). |
 | `.dockerignore` | Excludes `.git`, `node_modules`, `plan/`, `docs/`, tests, and dist from the build context. |
-| `docker-init.sh` | Standalone init script: detects the first available provider API key, writes a minimal `config.yaml`. Idempotent — skips if config already exists. |
 | `docker-compose.yml` | Three-service Compose stack described below. |
 
 ## Compose services

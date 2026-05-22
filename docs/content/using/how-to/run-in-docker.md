@@ -97,7 +97,7 @@ If you prefer not to use Compose, build and run the image directly.
 ```bash
 git clone https://github.com/MiteshSharma/ethos.git
 cd ethos
-docker build -t ethos:local -f docker/Dockerfile .
+docker build -t ethos:local -f docker/Dockerfile docker/
 ```
 
 **Run:**
@@ -179,7 +179,7 @@ spec:
         - { name: state,   persistentVolumeClaim: { claimName: ethos-state } }
 ```
 
-Build the image with `docker build -t ethos:local -f docker/Dockerfile .` (note: `docker/Dockerfile`, not the old `apps/ethos/Dockerfile` path).
+Build the image with `docker build -t ethos:local -f docker/Dockerfile docker/` (note: `docker/Dockerfile`, not the old `apps/ethos/Dockerfile` path).
 
 To wrap this as a Helm chart, move the per-environment values (provider, model, image tag, channel bot lists, MCP server list) into `values.yaml` and templatise the ConfigMap and Secret bodies.
 
