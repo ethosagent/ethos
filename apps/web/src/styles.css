@@ -3169,33 +3169,104 @@ body,
 .activity-timeline {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
-.activity-event {
-  padding: 10px 12px;
+/* Conversation group */
+.activity-group {
+  border: 1px solid var(--ethos-border);
   border-radius: 6px;
+  overflow: hidden;
+}
+
+.activity-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
   cursor: pointer;
   transition: background 0.12s ease;
-  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  width: 100%;
+  gap: 8px;
 }
 
-.activity-event:hover {
+.activity-group-header:hover {
   background: var(--ethos-bg-elevated);
 }
 
-.activity-event--expanded {
+.activity-group-header--expanded {
   background: var(--ethos-bg-elevated);
-  border-color: var(--ethos-border);
+  border-bottom: 1px solid var(--ethos-border);
 }
 
-.activity-event-header {
+.activity-group-meta {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
 }
 
+.activity-group-summary {
+  font-size: 13px;
+  color: var(--ethos-text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-group-time {
+  font-size: 11px;
+  color: var(--ethos-text-dim);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.activity-group-chevron {
+  font-size: 10px;
+  color: var(--ethos-text-dim);
+  flex-shrink: 0;
+}
+
+/* Sub-events inside an expanded group */
+.activity-group-events {
+  background: var(--ethos-bg);
+  padding: 4px 0;
+}
+
+.activity-subevent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  width: 100%;
+}
+
+.activity-subevent:hover,
+.activity-subevent--expanded {
+  background: var(--ethos-bg-elevated);
+}
+
+.activity-subevent-summary {
+  font-size: 12px;
+  color: var(--ethos-text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Dot indicators (shared with sub-events) */
 .activity-event-dot {
   width: 8px;
   height: 8px;
@@ -3224,40 +3295,71 @@ body,
   background: #e879f9;
 }
 
-.activity-event-time {
-  font-size: 11px;
-  color: var(--ethos-text-dim);
-  font-family: "Geist Mono", ui-monospace, monospace;
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
+.activity-event-dot--pulse {
+  animation: activity-dot-pulse 1.2s ease-in-out infinite;
 }
 
-.activity-event-summary {
-  font-size: 13px;
-  color: var(--ethos-text);
+@keyframes activity-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 
-.activity-event-session {
-  font-size: 11px;
-  color: var(--ethos-text-dim);
-  margin-top: 2px;
-  padding-left: 16px; /* aligned with the dot */
-}
-
-.activity-event-raw {
-  margin: 8px 0 0;
-  padding: 12px;
+/* Structured event detail */
+.activity-event-detail {
+  padding: 8px 16px 10px 32px;
   background: var(--ethos-bg);
-  border: 1px solid var(--ethos-border);
-  border-radius: 4px;
-  font-family: "Geist Mono", ui-monospace, monospace;
+  border-top: 1px solid var(--ethos-border);
+}
+
+.aed-row {
+  display: flex;
+  gap: 12px;
+  padding: 2px 0;
   font-size: 12px;
-  line-height: 1.45;
-  overflow-x: auto;
-  max-height: 300px;
-  overflow-y: auto;
-  white-space: pre-wrap;
+  align-items: flex-start;
+}
+
+.aed-key {
+  color: var(--ethos-text-dim);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  flex-shrink: 0;
+  width: 72px;
+  text-align: right;
+}
+
+.aed-val {
   color: var(--ethos-text);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.aed-nested {
+  border-left: 2px solid var(--ethos-border);
+  padding-left: 8px;
+  margin-top: 2px;
+}
+
+.aed-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ethos-text);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.aed-empty {
+  color: var(--ethos-text-dim);
 }
 
 /* ── Responsive — stack panels on phones ── */
@@ -3291,8 +3393,5 @@ body,
   .activity-toolbar {
     flex-direction: column;
     align-items: stretch;
-  }
-  .activity-event-header {
-    flex-wrap: wrap;
   }
 }
