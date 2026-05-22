@@ -311,12 +311,15 @@ try {
         await runPersonalityDuplicate(args.slice(2));
       } else if (sub === 'show') {
         await runPersonalityShow(args.slice(2));
+      } else if (sub === 'export') {
+        const { runPersonalityExport } = await import('./commands/personality-export');
+        await runPersonalityExport(args.slice(2));
       } else if (sub === 'import') {
-        const { runPersonalityImport } = await import('./commands/backup');
+        const { runPersonalityImport } = await import('./commands/personality-export');
         await runPersonalityImport(args.slice(2));
       } else {
         console.log(
-          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | set <id> | duplicate <src> <dst> | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
+          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | set <id> | duplicate <src> <dst> | export <id> [--output <path>] | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
         );
       }
       break;

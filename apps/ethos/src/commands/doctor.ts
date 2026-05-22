@@ -23,7 +23,7 @@ import type { Skill } from '@ethosagent/types';
 import { type EthosConfig, ethosDir, readRawConfig } from '../config';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { buildVersionInfo } from '../version-info';
-import { createLLM, getStorage } from '../wiring';
+import { createLLM, getSecretsResolver, getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -91,6 +91,81 @@ const CHANNEL_SDKS: SdkRow[] = [
     configuredWhen: (cfg) => Boolean(cfg.emailSmtpHost && cfg.emailUser && cfg.emailPassword),
   },
 ];
+
+interface SecretCheckRow {
+  key: string;
+  secretRef: string;
+  required: boolean;
+  fillWith: string;
+  configuredWhen?: (cfg: EthosConfig) => boolean;
+}
+
+const SECRET_CHECKS: SecretCheckRow[] = [
+  {
+    key: 'ANTHROPIC_API_KEY',
+    secretRef: 'anthropic-api-key',
+    required: false,
+    fillWith: 'ethos keys set anthropic-api-key <value>',
+    configuredWhen: (cfg) => cfg.provider === 'anthropic',
+  },
+  {
+    key: 'OPENAI_API_KEY',
+    secretRef: 'openai-api-key',
+    required: false,
+    fillWith: 'ethos keys set openai-api-key <value>',
+    configuredWhen: (cfg) => cfg.provider === 'openai-compat',
+  },
+  {
+    key: 'TELEGRAM_BOT_TOKEN',
+    secretRef: 'telegram-bot-token',
+    required: false,
+    fillWith: 'ethos keys set telegram-bot-token <value>',
+    configuredWhen: (cfg) => Boolean(cfg.telegramToken),
+  },
+  {
+    key: 'SLACK_BOT_TOKEN',
+    secretRef: 'slack-bot-token',
+    required: false,
+    fillWith: 'ethos keys set slack-bot-token <value>',
+    configuredWhen: (cfg) => Boolean(cfg.slackBotToken),
+  },
+  {
+    key: 'DISCORD_BOT_TOKEN',
+    secretRef: 'discord-bot-token',
+    required: false,
+    fillWith: 'ethos keys set discord-bot-token <value>',
+    configuredWhen: (cfg) => Boolean(cfg.discordToken),
+  },
+];
+
+interface SecretCheckResult {
+  key: string;
+  present: boolean;
+  required: boolean;
+  applicable: boolean;
+  fillWith: string;
+}
+
+async function checkSecrets(config: EthosConfig | null): Promise<SecretCheckResult[]> {
+  const secrets = await getSecretsResolver();
+  const results: SecretCheckResult[] = [];
+  for (const row of SECRET_CHECKS) {
+    const hasCondition = Boolean(row.configuredWhen);
+    const conditionMet = hasCondition && config ? row.configuredWhen?.(config) : false;
+    const applicable = row.required || Boolean(conditionMet);
+    if (!applicable) continue;
+    const val = await secrets.get(row.secretRef);
+    const present = val !== null && val.trim().length > 0;
+    results.push({
+      key: row.key,
+      present,
+      required: row.required,
+      applicable: true,
+      fillWith: row.fillWith,
+    });
+  }
+  return results;
+}
 
 async function checkSdk(modulePath: string): Promise<{ ok: boolean; error?: string }> {
   try {
@@ -203,15 +278,27 @@ export async function runDoctor(args: string[] = []): Promise<void> {
     const coreFailures = sdks.filter((s) => s.required && !s.loadable);
     const configuredMissing = sdks.filter((s) => !s.required && s.configured && !s.loadable);
 
+    const secretResults = await checkSecrets(config);
+    const requiredSecretMissing = secretResults.some((s) => !s.present);
+
     const awsSecretsStatus = await checkAwsSecrets(config);
     const awsFailed = awsSecretsStatus.enabled && awsSecretsStatus.reachable === false;
-    const exitCode = coreFailures.length > 0 || configuredMissing.length > 0 || awsFailed ? 1 : 0;
+    const exitCode =
+      coreFailures.length > 0 || configuredMissing.length > 0 || awsFailed || requiredSecretMissing
+        ? 1
+        : 0;
 
     const result = {
       version: buildVersionInfo(),
       sdks,
       config: config ? { present: true, path: cfgPath } : { present: false, path: cfgPath },
       personalities: { dir: userPersonalitiesDir, loadable: personalitiesLoadable },
+      secrets: secretResults.map((s) => ({
+        key: s.key,
+        present: s.present,
+        required: s.required,
+        fillWith: s.fillWith,
+      })),
       skillCliIssues: await buildSkillsCliJson(),
       awsSecrets: awsSecretsStatus,
       exit: exitCode,
@@ -256,6 +343,26 @@ export async function runDoctor(args: string[] = []): Promise<void> {
     console.log(`     provider:    ${config.provider ?? '(not set)'}`);
     console.log(`     model:       ${config.model ?? '(not set)'}`);
     console.log(`     personality: ${config.personality ?? '(default)'}`);
+  }
+  console.log('');
+
+  // -------------------------------------------------------------------------
+  // Secrets
+  // -------------------------------------------------------------------------
+
+  console.log(`${c.bold}Secrets${c.reset}`);
+  const secretResults = await checkSecrets(config);
+  let requiredSecretMissing = false;
+  for (const s of secretResults) {
+    const keyCol = s.key.padEnd(24);
+    if (s.present) {
+      console.log(`  ${c.green}✓${c.reset}  ${keyCol} present`);
+    } else {
+      requiredSecretMissing = true;
+      console.log(
+        `  ${c.red}✗${c.reset}  ${keyCol} ${c.red}missing${c.reset}   ${c.dim}${s.fillWith}${c.reset}`,
+      );
+    }
   }
   console.log('');
 
@@ -358,11 +465,13 @@ export async function runDoctor(args: string[] = []): Promise<void> {
   const coreFailures = coreResults.filter((r) => !r.ok);
   const configuredButMissing = channelResults.filter((r) => !r.ok && r.inUse);
 
+  let exitCode = 0;
+
   if (coreFailures.length > 0) {
     console.log(
       `${c.red}✗ Core SDK missing — ethos cannot run.${c.reset} Reinstall: ${c.cyan}npm install -g @ethosagent/cli${c.reset}`,
     );
-    process.exit(1);
+    exitCode = 1;
   }
   if (configuredButMissing.length > 0) {
     const list = configuredButMissing.map((r) => r.row.label).join(', ');
@@ -373,9 +482,16 @@ export async function runDoctor(args: string[] = []): Promise<void> {
     console.log(
       `${c.dim}  Or try: ${c.reset}${c.cyan}ethos doctor --fix${c.reset}${c.dim} → ${c.cyan}ethos setup auth${c.reset}${c.dim} → ${c.cyan}ethos setup model${c.reset}`,
     );
-    process.exit(1);
+    exitCode = 1;
   }
-  if (coreFailures.length === 0 && configuredButMissing.length === 0) {
+  if (requiredSecretMissing) {
+    console.log(`${c.red}✗ Required secret missing — see Secrets section above.${c.reset}`);
+    exitCode = 1;
+  }
+  if (exitCode > 0) {
+    process.exit(exitCode);
+  }
+  if (coreFailures.length === 0 && configuredButMissing.length === 0 && !requiredSecretMissing) {
     console.log(`${c.green}✓ Healthy.${c.reset}`);
   }
 }
