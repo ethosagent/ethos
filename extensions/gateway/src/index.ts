@@ -19,6 +19,7 @@ import type Database from 'better-sqlite3';
 import { MessageDedupCache } from './dedup';
 
 export { MessageDedupCache } from './dedup';
+export { DreamExecutor } from './dream-executor';
 
 /**
  * Minimal observability surface the gateway needs. Defined locally so this

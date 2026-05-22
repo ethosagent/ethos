@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
 import {
   assertSafeId,
+  type DreamingConfig,
   EthosError,
   type ModelTierConfig,
   type PersonalityConfig,
@@ -970,6 +971,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
 
     // E3 — skill_evolution.* dotted keys.
     const skillEvolution = buildSkillEvolution(cfg);
+    const dreamingConfig = buildDreamingConfig(cfg);
     const memoryConfig = buildMemoryConfig(cfg);
     const mcpExport = buildMcpExportConfig(cfg);
     const outboundPolicy = buildOutboundPolicy(cfg);
@@ -1000,6 +1002,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         ? { context_engine_options: contextEngineOptions }
         : {}),
       ...(skillEvolution !== undefined ? { skill_evolution: skillEvolution } : {}),
+      ...(dreamingConfig !== undefined ? { dreaming: dreamingConfig } : {}),
       ...(memoryConfig !== undefined ? { memory: memoryConfig } : {}),
       ...(mcpExport !== undefined ? { mcp_export: mcpExport } : {}),
       ...(outboundPolicy !== undefined ? { outbound_policy: outboundPolicy } : {}),
@@ -1114,6 +1117,21 @@ function buildSkillEvolution(
   return out;
 }
 
+function buildDreamingConfig(cfg: Record<string, string>): DreamingConfig | undefined {
+  const enable = cfg['dreaming.enable'];
+  if (enable !== 'true') return undefined;
+  const idleMinutes = cfg['dreaming.idleMinutes'];
+  const maxPerDay = cfg['dreaming.maxPerDay'];
+  const prompt = cfg['dreaming.prompt'];
+  const out: DreamingConfig = {
+    enable: true,
+    idleMinutes: idleMinutes && /^\d+$/.test(idleMinutes) ? Number.parseInt(idleMinutes, 10) : 60,
+    maxPerDay: maxPerDay && /^\d+$/.test(maxPerDay) ? Number.parseInt(maxPerDay, 10) : 1,
+  };
+  if (prompt) out.prompt = prompt;
+  return out;
+}
+
 function buildMemoryConfig(
   cfg: Record<string, string>,
 ): import('@ethosagent/types').PersonalityMemoryConfig | undefined {
@@ -1171,11 +1189,13 @@ function buildModelConfig(cfg: Record<string, string>): string | ModelTierConfig
   const trivial = cfg['model.trivial'];
   const defaultModel = cfg['model.default'];
   const deep = cfg['model.deep'];
-  if (!trivial && !defaultModel && !deep) return cfg.model || undefined;
+  const dreaming = cfg['model.dreaming'];
+  if (!trivial && !defaultModel && !deep && !dreaming) return cfg.model || undefined;
   const out: ModelTierConfig = {};
   if (trivial) out.trivial = trivial;
   if (defaultModel) out.default = defaultModel;
   if (deep) out.deep = deep;
+  if (dreaming) out.dreaming = dreaming;
   return out;
 }
 
@@ -1305,6 +1325,7 @@ function renderConfigYaml(input: CreatePersonalityInput): string {
       if (input.model.trivial) lines.push(`model.trivial: ${yamlScalar(input.model.trivial)}`);
       if (input.model.default) lines.push(`model.default: ${yamlScalar(input.model.default)}`);
       if (input.model.deep) lines.push(`model.deep: ${yamlScalar(input.model.deep)}`);
+      if (input.model.dreaming) lines.push(`model.dreaming: ${yamlScalar(input.model.dreaming)}`);
     }
   }
   if (input.memoryScope) lines.push(`memoryScope: ${yamlScalar(input.memoryScope)}`);

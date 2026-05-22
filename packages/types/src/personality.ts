@@ -85,7 +85,7 @@ export interface PersonalitySafetyConfig {
   };
 }
 
-export type ModelTierName = 'trivial' | 'default' | 'deep';
+export type ModelTierName = 'trivial' | 'default' | 'deep' | 'dreaming';
 
 export interface PersonalityMemoryConfig {
   provider: string;
@@ -106,10 +106,18 @@ export interface OutboundPolicyConfig {
   approver_personality?: string;
 }
 
+export interface DreamingConfig {
+  enable: boolean;
+  idleMinutes: number;
+  maxPerDay: number;
+  prompt?: string;
+}
+
 export interface ModelTierConfig {
   trivial?: string;
   default?: string;
   deep?: string;
+  dreaming?: string;
 }
 
 /**
@@ -284,6 +292,12 @@ export interface PersonalityConfig {
    * Counts as ONE field for the schema-freeze gate.
    */
   outbound_policy?: OutboundPolicyConfig;
+  /**
+   * Idle-time dreaming. When enabled, the gateway triggers a background
+   * maintenance turn after `idleMinutes` of silence, up to `maxPerDay`
+   * per rolling 24-hour window. Counts as ONE field for the schema-freeze gate.
+   */
+  dreaming?: DreamingConfig;
 }
 
 /**
