@@ -14,6 +14,7 @@ import { getStorage } from '../wiring';
 import { type Entry, writeTarGz } from './backup';
 
 const MCP_TOKEN_FILENAMES = new Set(['access_token', 'refresh_token', 'expires_at']);
+const MCP_EXPORT_ALLOWLIST = new Set(['config.yaml']);
 
 const KNOWN_SECRET_FIELDS = new Set([
   'anthropicapikey',
@@ -155,10 +156,9 @@ function collectMcpEntries(mcpDir: string, prefix: string, entries: Entry[]): vo
       const fileSt = lstatSync(filePath);
       if (fileSt.isSymbolicLink() || !fileSt.isFile()) continue;
 
-      // Skip token files — they are secrets
-      if (MCP_TOKEN_FILENAMES.has(file)) continue;
+      // Only include known safe config files
+      if (!MCP_EXPORT_ALLOWLIST.has(file)) continue;
 
-      // Include non-secret config files (e.g. config.yaml)
       entries.push({
         relPath: join(prefix, 'mcp', serverName, file),
         content: readFileSync(filePath),
