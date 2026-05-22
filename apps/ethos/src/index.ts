@@ -48,6 +48,7 @@ import { runTrace } from './commands/trace';
 import { runUpgrade } from './commands/upgrade';
 import { ethosDir, readConfig } from './config';
 import { appendErrorLog } from './error-log';
+import { writeJson } from './json-output';
 import { loadRequiredConfig } from './managed-mode';
 import { getSecretsResolver, getStorage } from './wiring';
 
@@ -66,6 +67,7 @@ const inferredChatFromQueryFlag =
 const inferredChatFromResumeFlag =
   command === '--continue' || command === '-c' || command === '--resume' || command === '-r';
 const effectiveCommand = inferredChatFromQueryFlag || inferredChatFromResumeFlag ? 'chat' : command;
+process.title = `ethos${effectiveCommand ? ` ${effectiveCommand}` : ''}`;
 
 // FW-8: parse CLI override flags from the full argv. These override
 // ~/.ethos/config.yaml for this invocation only and are never written back.
@@ -269,8 +271,20 @@ try {
     case 'personality': {
       const sub = args[1] ?? '';
       if (sub === 'list' || sub === '') {
+        const jsonMode = args.includes('--json');
         const { createPersonalityRegistry } = await import('@ethosagent/personalities');
         const reg = await createPersonalityRegistry();
+        if (jsonMode) {
+          const defaultId = reg.getDefault().id;
+          writeJson(
+            reg.list().map((p) => ({
+              id: p.id,
+              description: p.description ?? null,
+              isDefault: p.id === defaultId,
+            })),
+          );
+          break;
+        }
         console.log('\nBuilt-in personalities:\n');
         for (const p of reg.list()) {
           const def = reg.getDefault().id === p.id ? ' (default)' : '';
@@ -312,6 +326,7 @@ try {
 
     case 'memory': {
       const sub = args[1] ?? 'show';
+      const jsonMode = args.includes('--json');
       const config = await readConfig(getStorage(), await getSecretsResolver());
 
       if (config?.memory === 'vector') {
@@ -321,6 +336,18 @@ try {
 
         if (sub === 'show' || sub === '') {
           const records = mem.showRecent(20);
+          if (jsonMode) {
+            writeJson(
+              records.map((r) => ({
+                scopeId: r.scopeId,
+                key: r.key,
+                createdAt: r.createdAt.toISOString(),
+                content: r.content,
+              })),
+            );
+            mem.close();
+            break;
+          }
           if (records.length === 0) {
             console.log('No memory yet.');
           } else {
@@ -380,6 +407,14 @@ try {
 
         if (sub === 'show' || sub === '') {
           const result = await mem.prefetch(cliCtx);
+          if (jsonMode) {
+            writeJson({
+              entries: result
+                ? result.entries.map((e) => ({ key: e.key, content: e.content.trim() }))
+                : [],
+            });
+            break;
+          }
           if (result && result.entries.length > 0) {
             console.log(result.entries.map((e) => e.content.trim()).join('\n\n'));
           } else {
@@ -436,7 +471,7 @@ try {
     }
 
     // `ethos run-all` — child-process supervisor. Spawns `gateway start` and
-    // `serve --web-experimental` as subprocesses and restarts them on crash.
+    // `serve` as subprocesses and restarts them on crash.
     // One command for the full production surface; wrap it in PM2/systemd for
     // reboot survival. See docs/content/using/how-to/deploy-in-production.md.
     case 'run-all': {
@@ -805,9 +840,10 @@ async function runPersonalityDuplicate(argv: string[]): Promise<void> {
 // Markdown screen of what the personality is, what it has, and what it can
 // reach. The artifact is regenerated on every call from config + SOUL.md.
 async function runPersonalityShow(argv: string[]): Promise<void> {
-  const id = argv[0];
+  const jsonMode = argv.includes('--json');
+  const id = argv.find((a) => a !== '--json');
   if (!id) {
-    console.log('Usage: ethos personality show <id>');
+    console.log('Usage: ethos personality show <id> [--json]');
     return;
   }
   const { createPersonalityRegistry, renderCharacterSheet } = await import(
@@ -825,6 +861,14 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
     process.exit(1);
   }
   const soulMd = await reg.readSoulMd(id);
+  if (jsonMode) {
+    writeJson({
+      id,
+      config: described.config,
+      soulMd: soulMd ?? null,
+    });
+    return;
+  }
   console.log(`\n${renderCharacterSheet(described.config, soulMd)}`);
 }
 

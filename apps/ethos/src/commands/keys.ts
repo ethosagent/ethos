@@ -1,4 +1,5 @@
 import { readKeys, writeKeys } from '../config';
+import { writeJson } from '../json-output';
 import { getSecretsResolver, getStorage } from '../wiring';
 
 const c = {
@@ -17,11 +18,23 @@ function maskKey(key: string): string {
 
 export async function runKeys(args: string[]): Promise<void> {
   const sub = args[0] ?? 'list';
+  const jsonMode = args.includes('--json');
   const storage = getStorage();
 
   switch (sub) {
     case 'list': {
       const keys = await readKeys(storage);
+      if (jsonMode) {
+        writeJson(
+          keys.map((k, i) => ({
+            index: i + 1,
+            masked: maskKey(k?.apiKey ?? ''),
+            label: k?.label ?? null,
+            priority: k?.priority ?? 0,
+          })),
+        );
+        return;
+      }
       if (keys.length === 0) {
         console.log(`\n${c.dim}No rotation keys configured.${c.reset}`);
         console.log(`${c.dim}Add one with: ${c.reset}ethos keys add <api-key>\n`);

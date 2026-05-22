@@ -19,6 +19,7 @@ import { pipeline } from 'node:stream/promises';
 import { createGunzip, createGzip } from 'node:zlib';
 import { EthosError } from '@ethosagent/types';
 import { ethosDir } from '../config';
+import { writeJson } from '../json-output';
 
 const BACKUP_FILES = ['config.yaml', 'keys.json', 'MEMORY.md', 'USER.md'];
 
@@ -26,21 +27,34 @@ const _USAGE_BACKUP = 'Usage: ethos backup [output-path]';
 const USAGE_IMPORT = 'Usage: ethos import <backup-path>';
 
 export async function runBackup(argv: string[]): Promise<void> {
-  const outPath = argv[0] ?? `ethos-backup-${timestamp()}-${randomBytes(4).toString('hex')}.tar.gz`;
+  const jsonMode = argv.includes('--json');
+  const filtered = argv.filter((a) => a !== '--json');
+  const outPath =
+    filtered[0] ?? `ethos-backup-${timestamp()}-${randomBytes(4).toString('hex')}.tar.gz`;
   const dataDir = ethosDir();
 
   const entries = collectEntries(dataDir);
   if (entries.length === 0) {
+    if (jsonMode) {
+      writeJson({ ok: true, path: outPath, fileCount: 0 });
+      return;
+    }
     console.log('Nothing to backup — ~/.ethos/ is empty.');
     return;
   }
 
   await writeTarGz(entries, outPath);
+  if (jsonMode) {
+    writeJson({ ok: true, path: outPath, fileCount: entries.length });
+    return;
+  }
   console.log(`✓ Backup written to: ${outPath} (${entries.length} files)`);
 }
 
 export async function runImport(argv: string[]): Promise<void> {
-  const srcPath = argv[0];
+  const jsonMode = argv.includes('--json');
+  const filtered = argv.filter((a) => a !== '--json');
+  const srcPath = filtered[0];
   if (!srcPath) {
     console.error(USAGE_IMPORT);
     process.exitCode = 1;
@@ -71,6 +85,10 @@ export async function runImport(argv: string[]): Promise<void> {
     writeFileSync(dest, content);
   }
 
+  if (jsonMode) {
+    writeJson({ ok: true, importedFiles: entries.length });
+    return;
+  }
   console.log(`✓ Imported ${entries.length} files into ~/.ethos/`);
 }
 

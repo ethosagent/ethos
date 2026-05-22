@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { ethosDir } from '../config';
+import { writeJson } from '../json-output';
 import { getStorage } from '../wiring';
 
 const c = {
@@ -164,7 +165,7 @@ function statusMark(exists: boolean): string {
   return exists ? `${c.green}✓${c.reset}` : `${c.yellow}–${c.reset}`;
 }
 
-async function runList(): Promise<void> {
+async function runList(json: boolean): Promise<void> {
   const storage = getStorage();
   const root = logsRoot();
   const files = [
@@ -175,6 +176,17 @@ async function runList(): Promise<void> {
     'gateway.err.log',
     'notes.log',
   ];
+
+  if (json) {
+    const result: Array<{ path: string; exists: boolean }> = [];
+    for (const name of files) {
+      const path = join(root, name);
+      const exists = await storage.exists(path);
+      result.push({ path, exists });
+    }
+    writeJson(result);
+    return;
+  }
 
   console.log(`\n${c.bold}ethos logs${c.reset}  ${c.dim}paths${c.reset}\n`);
   console.log(`  root: ${c.cyan}${root}${c.reset}`);
@@ -203,7 +215,7 @@ async function runList(): Promise<void> {
   console.log('');
 }
 
-async function runSummary(): Promise<void> {
+async function runSummary(json: boolean): Promise<void> {
   const storage = getStorage();
   const root = logsRoot();
   const errorsPath = join(root, 'errors.jsonl');
@@ -211,6 +223,16 @@ async function runSummary(): Promise<void> {
 
   const errors = summarizeErrors(await storage.read(errorsPath));
   const supervisor = summarizeSupervisor(await storage.read(supervisorPath));
+
+  if (json) {
+    writeJson({
+      errorCount: errors.total,
+      errorsByCode: Object.fromEntries(errors.byCode),
+      supervisorEvents: supervisor.total,
+      supervisorEventsByType: Object.fromEntries(supervisor.byEvent),
+    });
+    return;
+  }
 
   console.log(`\n${c.bold}ethos logs${c.reset}  ${c.dim}summary${c.reset}\n`);
   console.log(`  errors: ${errors.total}`);
@@ -384,13 +406,14 @@ export async function runLogs(args: string[]): Promise<void> {
   const sub = (args[0] ?? 'list').toLowerCase();
   const rest = args.slice(1);
   const flags = parseFlags(rest);
+  const json = args.includes('--json');
 
   switch (sub) {
     case 'list':
-      await runList();
+      await runList(json);
       return;
     case 'summary':
-      await runSummary();
+      await runSummary(json);
       return;
     case 'note':
       await runNote();

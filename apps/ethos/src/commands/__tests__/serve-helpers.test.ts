@@ -15,7 +15,7 @@ describe('parseFlagValue', () => {
   });
 
   it('returns undefined when flag is absent', () => {
-    expect(parseFlagValue(['serve', '--web-experimental'], ['--port'])).toBeUndefined();
+    expect(parseFlagValue(['serve', '--verbose'], ['--port'])).toBeUndefined();
   });
 
   it('matches the first alias hit', () => {
@@ -25,11 +25,11 @@ describe('parseFlagValue', () => {
 
 describe('hasFlag', () => {
   it('detects a bare flag', () => {
-    expect(hasFlag(['serve', '--web-experimental'], ['--web-experimental'])).toBe(true);
+    expect(hasFlag(['serve', '--verbose'], ['--verbose'])).toBe(true);
   });
 
   it('detects --name=value form', () => {
-    expect(hasFlag(['--web-experimental=true'], ['--web-experimental'])).toBe(true);
+    expect(hasFlag(['--verbose=true'], ['--verbose'])).toBe(true);
   });
 
   it('does not match similar prefixes', () => {
@@ -39,7 +39,7 @@ describe('hasFlag', () => {
   });
 
   it('returns false when no flag matches', () => {
-    expect(hasFlag(['serve'], ['--web-experimental'])).toBe(false);
+    expect(hasFlag(['serve'], ['--verbose'])).toBe(false);
   });
 });
 

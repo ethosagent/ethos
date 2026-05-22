@@ -212,7 +212,7 @@ export class AcpServer {
 
   private async handleHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // Health check is unauthenticated
-    if (req.method === 'GET' && req.url === '/health') {
+    if (req.method === 'GET' && (req.url === '/health' || req.url === '/healthz')) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({

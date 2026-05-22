@@ -24,7 +24,7 @@ By the end you have:
 ## Prereqs
 
 - Node 24+ and pnpm 10.
-- A running Ethos server with the web API enabled — `ethos serve --web-experimental --web-port 3000`.
+- A running Ethos server — `ethos serve --web-port 3000`.
 - An API key with the scopes a dashboard needs: `sessions:read`, `chat:send`, `events:subscribe`.
 
 If you do not yet have a key, mint one before starting:

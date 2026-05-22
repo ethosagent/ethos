@@ -17,17 +17,14 @@ import {
 } from '@ethosagent/wiring';
 import { type EthosConfig, ethosDir } from '../config';
 import { emitReady } from '../logger';
-import { notifyReady } from '../sd-notify';
+import { notifyReady, startWatchdog } from '../sd-notify';
 import { createAgentLoop, createTeamAgentLoop } from '../wiring';
-import { hasFlag, parseFlagValue, parsePort } from './serve-helpers';
+import { parseFlagValue, parsePort } from './serve-helpers';
 import { listenWithFallback } from './serve-listen';
 
 // `ethos serve` boots:
-//   • Always: ACP server on `--port` (default 3001) + mesh registration
-//   • With `--web-experimental`: web UI HTTP+SSE on `--web-port` (default 3000)
-//
-// Web is opt-in to keep current users' boots unchanged. Flag rename when
-// 26.x leaves experimental — for now it matches plan/phases/26-web-ui.md.
+//   • ACP server on `--port` (default 3001) + mesh registration
+//   • Web UI HTTP+SSE on `--web-port` (default 3000)
 //
 // Both servers share one `SessionStore` so chat from web and from ACP land
 // in the same database. SIGINT / SIGTERM cleans up both before exiting.
@@ -38,11 +35,8 @@ const WEB_PORT_FALLBACK_ATTEMPTS = 5;
 
 export async function runServe(args: string[], config: EthosConfig): Promise<void> {
   const acpPort = parsePort(parseFlagValue(args, ['--port']), ACP_PORT_DEFAULT);
-  const webEnabled = hasFlag(args, ['--web-experimental']);
   const webPort = parsePort(parseFlagValue(args, ['--web-port']), WEB_PORT_DEFAULT);
-  // Default to localhost-only binding. Override with --host or ETHOS_SERVE_HOST
-  // to expose on the network (e.g. --host 0.0.0.0).
-  const serveHost = parseFlagValue(args, ['--host']) ?? process.env.ETHOS_SERVE_HOST ?? '127.0.0.1';
+  const webHost = parseFlagValue(args, ['--web-host']) ?? process.env.ETHOS_WEB_HOST ?? '127.0.0.1';
 
   const personalityOverride = parseFlagValue(args, ['--personality']);
   if (personalityOverride) config = { ...config, personality: personalityOverride };
@@ -65,59 +59,55 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   const meshName = parseFlagValue(args, ['--mesh']) ?? 'default';
 
   const dir = ethosDir();
-  const loopProfile = webEnabled ? 'web' : 'cli';
+  const loopProfile = 'web';
 
   let loop: AgentLoop;
   let toolRegistry: ToolRegistry | undefined;
   let activeMeshName: string;
   let activePersonality: string;
 
-  // Cron scheduler — hoisted ABOVE the agent-loop construction when web
-  // is enabled, so the same scheduler instance can be threaded into
-  // createAgentLoop (registers agent-callable cron tools against it)
-  // AND drive the web Cron tab's firing engine below. The `runJob`
-  // closure forward-references `loop`; the scheduler doesn't fire until
-  // `.start()` later, by which point `loop` is assigned. When web mode
-  // is off (`--web-experimental` not set), `cronScheduler` stays null
-  // and the cron tools simply don't register on the loop.
+  // Cron scheduler — hoisted ABOVE the agent-loop construction so the
+  // same scheduler instance can be threaded into createAgentLoop (registers
+  // agent-callable cron tools against it) AND drive the web Cron tab's
+  // firing engine below. The `runJob` closure forward-references `loop`;
+  // the scheduler doesn't fire until `.start()` later, by which point
+  // `loop` is assigned.
   let cronScheduler: CronScheduler | null = null;
   // chatService is bound after createWebApi; the scheduler's `runJob`
   // closes over a holder so any cron firing before the web surface is
   // ready is a silent no-op for the SSE push.
   let chatService: ChatService | null = null;
-  if (webEnabled) {
-    cronScheduler = new CronScheduler({
-      logger: new ConsoleLogger(),
-      runJob: async (job) => {
-        if (!loop) {
-          throw new EthosError({
-            code: 'INTERNAL',
-            cause: 'Agent loop not yet initialised at cron firing time',
-            action:
-              'This is a wiring bug — the scheduler started before the agent loop was assigned. File an issue.',
-          });
-        }
-        const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
-        const ranAt = new Date().toISOString();
-        let output = '';
-        for await (const event of loop.run(job.prompt, {
-          sessionKey,
-          ...(job.personality ? { personalityId: job.personality } : {}),
-        })) {
-          if (event.type === 'text_delta') output += event.text;
-        }
-        if (chatService) {
-          chatService.broadcastAll({
-            type: 'cron.fired',
-            jobId: job.id,
-            ranAt,
-            outputPath: null,
-          });
-        }
-        return { jobId: job.id, ranAt, output, sessionKey };
-      },
-    });
-  }
+  cronScheduler = new CronScheduler({
+    logger: new ConsoleLogger(),
+    runJob: async (job) => {
+      if (!loop) {
+        throw new EthosError({
+          code: 'INTERNAL',
+          cause: 'Agent loop not yet initialised at cron firing time',
+          action:
+            'This is a wiring bug — the scheduler started before the agent loop was assigned. File an issue.',
+        });
+      }
+      const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
+      const ranAt = new Date().toISOString();
+      let output = '';
+      for await (const event of loop.run(job.prompt, {
+        sessionKey,
+        ...(job.personality ? { personalityId: job.personality } : {}),
+      })) {
+        if (event.type === 'text_delta') output += event.text;
+      }
+      if (chatService) {
+        chatService.broadcastAll({
+          type: 'cron.fired',
+          jobId: job.id,
+          ranAt,
+          outputPath: null,
+        });
+      }
+      return { jobId: job.id, ranAt, output, sessionKey };
+    },
+  });
 
   if (teamFlag && personalityOverride) {
     // Plan B member spawn — supervisor spawns each member with
@@ -194,80 +184,75 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   console.log(`  capabilities: ${capabilities.length > 0 ? capabilities.join(', ') : '(none)'}`);
   console.log(`  WebSocket:    ws://localhost:${acpPort}/ws`);
 
-  // Web API (Phase 26). Additive — only mounts when --web-experimental is set.
+  // Web API — always mounts alongside the ACP server.
   let webShutdown: (() => Promise<void>) | null = null;
-  if (webEnabled) {
-    const webDist = locateWebDist(parseFlagValue(args, ['--web-dist']));
+  const webDist = locateWebDist(parseFlagValue(args, ['--web-dist']));
 
-    // The cronScheduler + chatService holder were hoisted above the
-    // agent-loop construction so the scheduler instance threads into
-    // createAgentLoop (agent-callable cron tools register against it)
-    // and the runJob closure forward-references both `loop` and
-    // `chatService`. Start the scheduler now — `loop` is assigned, and
-    // we'll bind `chatService` to the value returned by createWebApi
-    // below.
-    if (cronScheduler) cronScheduler.start();
+  // Start the cron scheduler now — `loop` is assigned, and we'll bind
+  // `chatService` to the value returned by createWebApi below.
+  if (cronScheduler) cronScheduler.start();
 
-    // OpenAI-compat surface (F1+F2). Shares sessions.db so `ethos api-key`
-    // and `ethos serve` see the same rows.
-    const apiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
+  // OpenAI-compat surface (F1+F2). Shares sessions.db so `ethos api-key`
+  // and `ethos serve` see the same rows.
+  const apiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
 
-    const created = createWebApi({
-      dataDir: dir,
-      sessionStore: session,
-      memoryProvider: createMemoryProvider({ dataDir: dir }),
-      agentLoop: loop,
-      // The same registry the agent loop loaded above is reused so mtime
-      // hot-reloads of personality files reach both surfaces in one tick.
-      personalities,
-      chatDefaults: {
-        model: config.model,
-        provider: config.provider,
-      },
-      // Same `checkCommand` rules the CLI guard uses; surfacing them via
-      // the approval modal instead of a hard block.
-      dangerPredicate: createDangerPredicate(),
-      ...(cronScheduler ? { cronScheduler } : {}),
-      ...(toolRegistry ? { toolRegistry } : {}),
-      apiKeys,
-      listTeams: async () => listRegisteredTeams(dir),
-      ...(webDist ? { webDist } : {}),
-      ...(config.webBaseUrl ? { webBaseUrl: config.webBaseUrl } : {}),
-    });
-    chatService = created.chatService;
-    const webApp = created.app;
-    const tokens = new WebTokenRepository({ dataDir: dir });
-    const token = await tokens.getOrCreate();
-    const { server, port } = await listenWithFallback(
-      webApp,
-      webPort,
-      WEB_PORT_FALLBACK_ATTEMPTS,
-      serveHost,
-    );
-    console.log('');
-    const displayHost = serveHost === '0.0.0.0' ? 'localhost' : serveHost;
-    console.log(`ethos web UI listening on http://${displayHost}:${port}`);
-    if (webDist) {
-      console.log(`  open: http://${displayHost}:${port}/auth/exchange?t=${token}`);
-      console.log('  (token rotates on first use; cookie remains the steady-state credential)');
-      console.log(`  serving SPA from: ${webDist}`);
-    } else {
-      console.log(`  auth token: ${token}`);
-      console.log('  (token rotates on first use; cookie remains the steady-state credential)');
-      console.log('  no SPA build found — run `pnpm --filter @ethosagent/web dev` for HMR,');
-      console.log(`    then visit http://localhost:5173/auth/exchange?t=${token}`);
-      console.log('  or `pnpm --filter @ethosagent/web build` to bundle into this server.');
-    }
-    webShutdown = () =>
-      new Promise<void>((resolve) => {
-        server.close(() => resolve());
-      });
+  const created = createWebApi({
+    dataDir: dir,
+    sessionStore: session,
+    memoryProvider: createMemoryProvider({ dataDir: dir }),
+    agentLoop: loop,
+    // The same registry the agent loop loaded above is reused so mtime
+    // hot-reloads of personality files reach both surfaces in one tick.
+    personalities,
+    chatDefaults: {
+      model: config.model,
+      provider: config.provider,
+    },
+    // Same `checkCommand` rules the CLI guard uses; surfacing them via
+    // the approval modal instead of a hard block.
+    dangerPredicate: createDangerPredicate(),
+    ...(cronScheduler ? { cronScheduler } : {}),
+    ...(toolRegistry ? { toolRegistry } : {}),
+    apiKeys,
+    listTeams: async () => listRegisteredTeams(dir),
+    ...(webDist ? { webDist } : {}),
+    ...(config.webBaseUrl ? { webBaseUrl: config.webBaseUrl } : {}),
+  });
+  chatService = created.chatService;
+  const webApp = created.app;
+  const tokens = new WebTokenRepository({ dataDir: dir });
+  const token = await tokens.getOrCreate();
+  const { server, port } = await listenWithFallback(
+    webApp,
+    webPort,
+    WEB_PORT_FALLBACK_ATTEMPTS,
+    webHost,
+  );
+  console.log('');
+  const displayHost = webHost === '0.0.0.0' ? 'localhost' : webHost;
+  console.log(`ethos web UI listening on http://${displayHost}:${port}`);
+  if (webDist) {
+    console.log(`  open: http://${displayHost}:${port}/auth/exchange?t=${token}`);
+    console.log('  (token rotates on first use; cookie remains the steady-state credential)');
+    console.log(`  serving SPA from: ${webDist}`);
+  } else {
+    console.log(`  auth token: ${token}`);
+    console.log('  (token rotates on first use; cookie remains the steady-state credential)');
+    console.log('  no SPA build found — run `pnpm --filter @ethosagent/web dev` for HMR,');
+    console.log(`    then visit http://localhost:5173/auth/exchange?t=${token}`);
+    console.log('  or `pnpm --filter @ethosagent/web build` to bundle into this server.');
   }
+  webShutdown = () =>
+    new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
 
   emitReady('serve');
   notifyReady();
+  const stopWatchdog = startWatchdog();
 
   const cleanup = async () => {
+    if (stopWatchdog) stopWatchdog();
     stopHeartbeat();
     await mesh.unregister(agentId);
     if (cronScheduler) cronScheduler.stop();

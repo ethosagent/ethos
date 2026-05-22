@@ -3,7 +3,7 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { notifyReady } from '../sd-notify';
+import { notifyReady, startWatchdog } from '../sd-notify';
 
 let prevNotifySocket: string | undefined;
 
@@ -62,5 +62,47 @@ describe('sd-notify', () => {
   it('does not throw when NOTIFY_SOCKET points to a nonexistent path', () => {
     process.env.NOTIFY_SOCKET = '/tmp/ethos-sd-notify-nonexistent.sock';
     expect(() => notifyReady()).not.toThrow();
+  });
+});
+
+describe('startWatchdog', () => {
+  let prevWatchdogUsec: string | undefined;
+
+  beforeEach(() => {
+    prevWatchdogUsec = process.env.WATCHDOG_USEC;
+    delete process.env.WATCHDOG_USEC;
+  });
+
+  afterEach(() => {
+    if (prevWatchdogUsec === undefined) delete process.env.WATCHDOG_USEC;
+    else process.env.WATCHDOG_USEC = prevWatchdogUsec;
+  });
+
+  it('returns null when WATCHDOG_USEC is not set', () => {
+    delete process.env.WATCHDOG_USEC;
+    expect(startWatchdog()).toBeNull();
+  });
+
+  it('returns null when WATCHDOG_PID does not match process.pid', () => {
+    process.env.WATCHDOG_USEC = '30000000';
+    process.env.WATCHDOG_PID = '99999';
+    expect(startWatchdog()).toBeNull();
+    delete process.env.WATCHDOG_PID;
+  });
+
+  it('returns a cleanup function when WATCHDOG_USEC is set', () => {
+    process.env.WATCHDOG_USEC = '30000000';
+    process.env.WATCHDOG_PID = String(process.pid);
+    process.env.NOTIFY_SOCKET = '/tmp/fake-notify.sock';
+    const stop = startWatchdog();
+    expect(stop).toBeTypeOf('function');
+    if (stop) stop();
+    delete process.env.NOTIFY_SOCKET;
+    delete process.env.WATCHDOG_PID;
+  });
+
+  it('returns null for invalid WATCHDOG_USEC', () => {
+    process.env.WATCHDOG_USEC = 'not-a-number';
+    expect(startWatchdog()).toBeNull();
   });
 });

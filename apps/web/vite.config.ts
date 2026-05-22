@@ -10,7 +10,7 @@ import { defineConfig } from 'vite';
 //            to localhost so the proxy is transparent.
 //  • Build — `pnpm --filter @ethosagent/web build` writes to `apps/web/dist/`.
 //            `apps/web-api`'s static handler serves that directory in
-//            production runs of `ethos serve --web-experimental`.
+//            production runs of `ethos serve`.
 //
 // The `@ethosagent/*` aliases mirror the root tsconfig so workspace imports
 // resolve to source — same pattern the rest of the monorepo uses (no build

@@ -5,6 +5,7 @@ import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { EthosError } from '@ethosagent/types';
 import { type EthosConfig, ethosDir } from '../config';
+import { writeJson } from '../json-output';
 import { createAgentLoop } from '../wiring';
 
 const c = {
@@ -64,11 +65,26 @@ export async function runCronCommand(
     case 'list': {
       const params = parseFlags(args);
       const filterPersonality = params.personality;
+      const jsonMode = args.includes('--json');
       const { scheduler, cleanup } = makeScheduler(config);
       try {
         let jobs = await scheduler.listJobs();
         if (filterPersonality) {
           jobs = jobs.filter((j) => (j.personality ?? config.personality) === filterPersonality);
+        }
+        if (jsonMode) {
+          writeJson(
+            jobs.map((j) => ({
+              id: j.id,
+              name: j.name,
+              status: j.status === 'paused' ? 'paused' : 'active',
+              schedule: j.schedule,
+              personality: j.personality ?? config.personality ?? 'default',
+              nextRun: j.nextRunAt ? new Date(j.nextRunAt).toISOString() : null,
+              prompt: j.prompt,
+            })),
+          );
+          return;
         }
         if (jobs.length === 0) {
           console.log(`${c.dim}No cron jobs. Create one with: ethos cron create${c.reset}`);
@@ -98,7 +114,8 @@ export async function runCronCommand(
     }
 
     case 'show': {
-      const id = args[0];
+      const id = args[0] === '--json' ? undefined : args[0];
+      const jsonMode = args.includes('--json');
       if (!id) {
         console.log('Usage: ethos cron show <id>');
         return;
@@ -108,6 +125,18 @@ export async function runCronCommand(
         const j = await scheduler.getJob(id);
         if (!j) {
           console.log(`${c.red}Job not found: ${id}${c.reset}`);
+          return;
+        }
+        if (jsonMode) {
+          writeJson({
+            id: j.id,
+            name: j.name,
+            status: j.status === 'paused' ? 'paused' : 'active',
+            schedule: j.schedule,
+            personality: j.personality ?? config.personality ?? 'default',
+            prompt: j.prompt,
+            lastRun: j.lastRunAt ? new Date(j.lastRunAt).toISOString() : null,
+          });
           return;
         }
         const status =

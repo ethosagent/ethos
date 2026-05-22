@@ -10,6 +10,7 @@ import {
   scanPluginCode,
 } from '@ethosagent/safety-scanner';
 import { EthosError } from '@ethosagent/types';
+import { writeJson } from '../json-output';
 
 const c = {
   reset: '\x1b[0m',
@@ -67,7 +68,7 @@ export async function runPlugin(args: string[]): Promise<void> {
     }
 
     case 'list': {
-      await listPlugins();
+      await listPlugins(args);
       break;
     }
 
@@ -329,7 +330,8 @@ function promptConfirm(question: string): Promise<boolean> {
 // List
 // ---------------------------------------------------------------------------
 
-async function listPlugins(): Promise<void> {
+async function listPlugins(args: string[] = []): Promise<void> {
+  const jsonMode = args.includes('--json');
   const dir = pluginsDir();
   const nmDir = join(dir, 'node_modules');
 
@@ -387,6 +389,23 @@ async function listPlugins(): Promise<void> {
     }
   } catch {
     // node_modules doesn't exist yet
+  }
+
+  if (jsonMode) {
+    const result: Array<{ name: string; version?: string; source: string }> = [];
+    for (const p of npm) {
+      const entry: { name: string; version?: string; source: string } = {
+        name: p.name,
+        source: 'npm',
+      };
+      if (p.version !== '?') entry.version = p.version;
+      result.push(entry);
+    }
+    for (const name of manual) {
+      result.push({ name, source: 'manual' });
+    }
+    writeJson(result);
+    return;
   }
 
   if (manual.length === 0 && npm.length === 0) {

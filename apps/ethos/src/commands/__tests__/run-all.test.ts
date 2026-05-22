@@ -14,10 +14,10 @@ describe('run-all — pure helpers', () => {
       expect(specs.map((s) => s.name)).toEqual(['gateway', 'serve']);
     });
 
-    it('serve uses --web-experimental so the dashboard is on', () => {
+    it('serve args are just ["serve"] (web is always-on)', () => {
       const serveSpec = defaultChildSpecs().find((s) => s.name === 'serve');
       expect(serveSpec).toBeDefined();
-      expect(serveSpec?.args).toContain('--web-experimental');
+      expect(serveSpec?.args).toEqual(['serve']);
     });
 
     it('gateway uses `gateway start`', () => {

@@ -1,5 +1,6 @@
 import { mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { AgentMesh, meshesDir, meshRegistryPath } from '@ethosagent/agent-mesh';
+import { writeJson, writeJsonError } from '../json-output';
 
 const c = {
   reset: '\x1b[0m',
@@ -14,7 +15,8 @@ const c = {
 // list
 // ---------------------------------------------------------------------------
 
-async function runMeshList(): Promise<void> {
+async function runMeshList(args: string[] = []): Promise<void> {
+  const jsonMode = args.includes('--json');
   const dir = meshesDir();
   let names: string[] = [];
   try {
@@ -32,9 +34,24 @@ async function runMeshList(): Promise<void> {
   }
 
   if (names.length === 0) {
+    if (jsonMode) {
+      writeJson([]);
+      return;
+    }
     console.log(
       `${c.dim}No meshes found. Start a team or run 'ethos serve' to create one.${c.reset}`,
     );
+    return;
+  }
+
+  if (jsonMode) {
+    const result = [];
+    for (const meshName of names) {
+      const mesh = new AgentMesh(meshRegistryPath(meshName));
+      const members = await mesh.list();
+      result.push({ name: meshName, liveMembers: members.length });
+    }
+    writeJson(result);
     return;
   }
 
@@ -53,21 +70,38 @@ async function runMeshList(): Promise<void> {
 // status
 // ---------------------------------------------------------------------------
 
-async function runMeshStatus(name: string | undefined): Promise<void> {
-  if (!name) {
+async function runMeshStatus(name: string | undefined, args: string[] = []): Promise<void> {
+  const jsonMode = args.includes('--json');
+  const effectiveName = name === '--json' ? undefined : name;
+  if (!effectiveName) {
+    if (jsonMode) writeJsonError('INPUT_REQUIRED', 'Usage: ethos mesh status <name>');
     console.error('Usage: ethos mesh status <name>');
     process.exit(1);
   }
 
-  const mesh = new AgentMesh(meshRegistryPath(name));
+  const mesh = new AgentMesh(meshRegistryPath(effectiveName));
   const members = await mesh.list();
 
-  if (members.length === 0) {
-    console.log(`Mesh "${name}": ${c.dim}no live members${c.reset}`);
+  if (jsonMode) {
+    writeJson({
+      name: effectiveName,
+      members: members.map((m) => ({
+        agentId: m.agentId,
+        port: m.port,
+        capabilities: m.capabilities,
+        activeSessions: m.activeSessions,
+        model: m.model,
+      })),
+    });
     return;
   }
 
-  console.log(`\n${c.bold}Mesh "${name}"${c.reset}  (${members.length} live)\n`);
+  if (members.length === 0) {
+    console.log(`Mesh "${effectiveName}": ${c.dim}no live members${c.reset}`);
+    return;
+  }
+
+  console.log(`\n${c.bold}Mesh "${effectiveName}"${c.reset}  (${members.length} live)\n`);
   console.log(`  ${'Agent ID'.padEnd(40)}${'Port'.padEnd(8)}${'Capabilities'.padEnd(30)}Sessions`);
   console.log(`  ${'-'.repeat(86)}`);
   for (const m of members) {
@@ -144,10 +178,10 @@ export async function runMeshCommand(sub: string, args: string[]): Promise<void>
   switch (sub) {
     case 'list':
     case '':
-      await runMeshList();
+      await runMeshList(args);
       break;
     case 'status':
-      await runMeshStatus(args[0]);
+      await runMeshStatus(args[0], args);
       break;
     case 'create':
       await runMeshCreate(args[0]);
