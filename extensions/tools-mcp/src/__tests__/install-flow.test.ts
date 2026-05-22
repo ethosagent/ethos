@@ -32,6 +32,7 @@ const MCP_URL = 'https://mcp.linear.app/sse';
 const REDIRECT_URI = 'https://ethos.local/oauth/callback';
 const MCP_JSON_PATH = '/home/test/.ethos/mcp.json';
 const MCP_JSON_DIR = '/home/test/.ethos';
+const PERSONALITY_ID = 'test-personality';
 
 const DISCOVERY_OK = {
   authorization_endpoint: 'https://auth.linear.app/authorize',
@@ -239,7 +240,7 @@ describe('McpInstallFlow.start', () => {
     const { flow, jsonStore, script, clock } = await makeHarness();
     scriptHappyDiscoveryAndDcr(script);
 
-    const result = await flow.start({ mcpUrl: MCP_URL });
+    const result = await flow.start({ mcpUrl: MCP_URL, personalityId: PERSONALITY_ID });
 
     expect(result.state).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(result.state.length).toBeGreaterThan(40); // 32-byte base64url ≈ 43 chars
@@ -277,14 +278,20 @@ describe('McpInstallFlow.start', () => {
     const { flow, script } = await makeHarness();
     scriptHappyDiscoveryAndDcr(script);
 
-    const result = await flow.start({ mcpUrl: MCP_URL, name: 'custom' });
+    const result = await flow.start({
+      mcpUrl: MCP_URL,
+      name: 'custom',
+      personalityId: PERSONALITY_ID,
+    });
     expect(result.serverName).toBe('custom');
   });
 
   it('OAuthDiscoveryError propagates; no placeholder written, no pending session', async () => {
     const { flow, jsonStore } = await makeHarness();
     // No discovery responders → all 404 → discovery fails.
-    await expect(flow.start({ mcpUrl: MCP_URL })).rejects.toBeInstanceOf(OAuthDiscoveryError);
+    await expect(
+      flow.start({ mcpUrl: MCP_URL, personalityId: PERSONALITY_ID }),
+    ).rejects.toBeInstanceOf(OAuthDiscoveryError);
 
     expect(await jsonStore.list()).toEqual([]);
     // Pending map is empty; an unknown state returns 'expired'.
@@ -305,7 +312,9 @@ describe('McpInstallFlow.start', () => {
       },
     );
 
-    await expect(flow.start({ mcpUrl: MCP_URL })).rejects.toBeInstanceOf(DcrUnsupported);
+    await expect(
+      flow.start({ mcpUrl: MCP_URL, personalityId: PERSONALITY_ID }),
+    ).rejects.toBeInstanceOf(DcrUnsupported);
     expect(await jsonStore.list()).toEqual([]);
   });
 
@@ -323,9 +332,9 @@ describe('McpInstallFlow.start', () => {
       jsonResponse({ ...DCR_OK, client_secret: 'shh' }, 201),
     );
 
-    await expect(flow.start({ mcpUrl: MCP_URL })).rejects.toBeInstanceOf(
-      ConfidentialClientUnsupported,
-    );
+    await expect(
+      flow.start({ mcpUrl: MCP_URL, personalityId: PERSONALITY_ID }),
+    ).rejects.toBeInstanceOf(ConfidentialClientUnsupported);
     expect(await jsonStore.list()).toEqual([]);
   });
 
@@ -334,7 +343,9 @@ describe('McpInstallFlow.start', () => {
     await jsonStore.upsert('linear', { name: 'linear', transport: 'stdio', command: 'x' });
     scriptHappyDiscoveryAndDcr(script);
 
-    await expect(flow.start({ mcpUrl: MCP_URL })).rejects.toMatchObject({
+    await expect(
+      flow.start({ mcpUrl: MCP_URL, personalityId: PERSONALITY_ID }),
+    ).rejects.toMatchObject({
       name: 'EthosError',
       code: 'INVALID_INPUT',
     });
@@ -366,7 +377,11 @@ describe('McpInstallFlow.start', () => {
     });
 
     const flowRedirect = 'http://192.168.1.50:5173/oauth/callback';
-    const result = await flow.start({ mcpUrl: MCP_URL, redirectUri: flowRedirect });
+    const result = await flow.start({
+      mcpUrl: MCP_URL,
+      personalityId: PERSONALITY_ID,
+      redirectUri: flowRedirect,
+    });
 
     // Authorize URL uses the per-flow URI, NOT REDIRECT_URI.
     const authUrl = new URL(result.authorizeUrl);
@@ -385,7 +400,10 @@ describe('McpInstallFlow.complete', () => {
   it('happy path: token exchange + storeTokens + addServer; status → connected', async () => {
     const { flow, manager, secrets, script } = await makeHarness();
     scriptHappyDiscoveryAndDcr(script);
-    const { state, serverName } = await flow.start({ mcpUrl: MCP_URL });
+    const { state, serverName } = await flow.start({
+      mcpUrl: MCP_URL,
+      personalityId: PERSONALITY_ID,
+    });
 
     scriptHappyTokenExchange(script);
     const result = await flow.complete({ code: 'auth-code-123', state });
@@ -398,8 +416,14 @@ describe('McpInstallFlow.complete', () => {
       url: MCP_URL,
       created_via: 'ui',
     });
-    expect(await secrets.get(`mcp/${serverName}/access_token`)).toBe(TOKEN_OK.access_token);
-    expect(await secrets.get(`mcp/${serverName}/refresh_token`)).toBe(TOKEN_OK.refresh_token);
+    // Tokens are stored under the personality-scoped path.
+    const prefix = `personalities/${PERSONALITY_ID}`;
+    expect(await secrets.get(`${prefix}/mcp/${serverName}/access_token`)).toBe(
+      TOKEN_OK.access_token,
+    );
+    expect(await secrets.get(`${prefix}/mcp/${serverName}/refresh_token`)).toBe(
+      TOKEN_OK.refresh_token,
+    );
     expect(flow.getStatus(state)).toBe('connected');
   });
 
@@ -414,7 +438,10 @@ describe('McpInstallFlow.complete', () => {
   it('rolls back placeholder + drops session when token exchange fails', async () => {
     const { flow, manager, jsonStore, secrets, script } = await makeHarness();
     scriptHappyDiscoveryAndDcr(script);
-    const { state, serverName } = await flow.start({ mcpUrl: MCP_URL });
+    const { state, serverName } = await flow.start({
+      mcpUrl: MCP_URL,
+      personalityId: PERSONALITY_ID,
+    });
 
     script.responders.set(
       DISCOVERY_OK.token_endpoint,
@@ -424,7 +451,8 @@ describe('McpInstallFlow.complete', () => {
     await expect(flow.complete({ code: 'bad', state })).rejects.toThrow(/Token exchange failed/);
     expect(manager.added).toHaveLength(0);
     expect(await jsonStore.get(serverName)).toBeNull();
-    expect(await secrets.get(`mcp/${serverName}/access_token`)).toBeNull();
+    const prefix = `personalities/${PERSONALITY_ID}`;
+    expect(await secrets.get(`${prefix}/mcp/${serverName}/access_token`)).toBeNull();
     expect(flow.getStatus(state)).toBe('expired');
   });
 
@@ -456,7 +484,10 @@ describe('McpInstallFlow.complete', () => {
     installFetchStub(script);
     scriptHappyDiscoveryAndDcr(script);
 
-    const { state, serverName } = await flow.start({ mcpUrl: MCP_URL });
+    const { state, serverName } = await flow.start({
+      mcpUrl: MCP_URL,
+      personalityId: PERSONALITY_ID,
+    });
 
     scriptHappyTokenExchange(script);
 
@@ -465,13 +496,17 @@ describe('McpInstallFlow.complete', () => {
     );
     expect(manager.added).toHaveLength(0);
     expect(await jsonStore.get(serverName)).toBeNull();
-    expect(await failingSecrets.get(`mcp/${serverName}/access_token`)).toBeNull();
+    const prefix = `personalities/${PERSONALITY_ID}`;
+    expect(await failingSecrets.get(`${prefix}/mcp/${serverName}/access_token`)).toBeNull();
   });
 
   it('rolls back tokens + placeholder when mcpManager.addServer fails', async () => {
     const { flow, manager, jsonStore, secrets, script } = await makeHarness();
     scriptHappyDiscoveryAndDcr(script);
-    const { state, serverName } = await flow.start({ mcpUrl: MCP_URL });
+    const { state, serverName } = await flow.start({
+      mcpUrl: MCP_URL,
+      personalityId: PERSONALITY_ID,
+    });
 
     scriptHappyTokenExchange(script);
     manager.failNext = new Error('mcp connect failed');
@@ -480,8 +515,9 @@ describe('McpInstallFlow.complete', () => {
 
     expect(manager.added).toHaveLength(0);
     expect(await jsonStore.get(serverName)).toBeNull();
-    expect(await secrets.get(`mcp/${serverName}/access_token`)).toBeNull();
-    expect(await secrets.get(`mcp/${serverName}/refresh_token`)).toBeNull();
+    const prefix = `personalities/${PERSONALITY_ID}`;
+    expect(await secrets.get(`${prefix}/mcp/${serverName}/access_token`)).toBeNull();
+    expect(await secrets.get(`${prefix}/mcp/${serverName}/refresh_token`)).toBeNull();
   });
 
   it('exchanges the code against the per-flow redirectUri persisted on the session', async () => {
@@ -489,7 +525,11 @@ describe('McpInstallFlow.complete', () => {
     scriptHappyDiscoveryAndDcr(script);
 
     const flowRedirect = 'http://localhost:5173/oauth/callback';
-    const { state } = await flow.start({ mcpUrl: MCP_URL, redirectUri: flowRedirect });
+    const { state } = await flow.start({
+      mcpUrl: MCP_URL,
+      personalityId: PERSONALITY_ID,
+      redirectUri: flowRedirect,
+    });
 
     // Instrument the token endpoint to capture the form body.
     let capturedTokenForm: URLSearchParams | undefined;
@@ -509,7 +549,7 @@ describe('McpInstallFlow.complete', () => {
   it('rejects when the session has already completed', async () => {
     const { flow, script } = await makeHarness();
     scriptHappyDiscoveryAndDcr(script);
-    const { state } = await flow.start({ mcpUrl: MCP_URL });
+    const { state } = await flow.start({ mcpUrl: MCP_URL, personalityId: PERSONALITY_ID });
     scriptHappyTokenExchange(script);
     await flow.complete({ code: 'auth', state });
 
@@ -517,6 +557,82 @@ describe('McpInstallFlow.complete', () => {
       name: 'EthosError',
       code: 'INVALID_INPUT',
     });
+  });
+
+  it('stores tokens at the personality-scoped path, not the global path', async () => {
+    const { flow, secrets, script } = await makeHarness();
+    scriptHappyDiscoveryAndDcr(script);
+    const pid = 'researcher';
+    const { state, serverName } = await flow.start({
+      mcpUrl: MCP_URL,
+      personalityId: pid,
+    });
+    scriptHappyTokenExchange(script);
+    await flow.complete({ code: 'auth-code', state });
+
+    // Scoped path must contain the token.
+    expect(await secrets.get(`personalities/${pid}/mcp/${serverName}/access_token`)).toBe(
+      TOKEN_OK.access_token,
+    );
+    // Global (unscoped) path must NOT contain the token.
+    expect(await secrets.get(`mcp/${serverName}/access_token`)).toBeNull();
+  });
+
+  it('different personalityIds produce isolated token namespaces', async () => {
+    const { secrets, script, manager, registry, jsonStore, clock } = await makeHarness();
+
+    // Flow for personality "alpha"
+    const flowAlpha = new McpInstallFlow({
+      mcpManager: manager as unknown as McpManager,
+      secrets,
+      personalityUpdater: registry,
+      redirectUri: REDIRECT_URI,
+      mcpJsonStore: jsonStore,
+      now: () => clock.now,
+    });
+    scriptHappyDiscoveryAndDcr(script);
+    const rAlpha = await flowAlpha.start({
+      mcpUrl: MCP_URL,
+      name: 'linear-a',
+      personalityId: 'alpha',
+    });
+    scriptHappyTokenExchange(script);
+    await flowAlpha.complete({ code: 'code-a', state: rAlpha.state });
+
+    // Remove mcp.json entry so second start with a new name won't collide.
+    await jsonStore.remove('linear-a');
+
+    // Flow for personality "beta"
+    const flowBeta = new McpInstallFlow({
+      mcpManager: manager as unknown as McpManager,
+      secrets,
+      personalityUpdater: registry,
+      redirectUri: REDIRECT_URI,
+      mcpJsonStore: jsonStore,
+      now: () => clock.now,
+    });
+    scriptHappyDiscoveryAndDcr(script);
+    const rBeta = await flowBeta.start({
+      mcpUrl: MCP_URL,
+      name: 'linear-b',
+      personalityId: 'beta',
+    });
+    scriptHappyTokenExchange(script);
+    await flowBeta.complete({ code: 'code-b', state: rBeta.state });
+
+    // Both scoped paths should have tokens.
+    expect(await secrets.get(`personalities/alpha/mcp/${rAlpha.serverName}/access_token`)).toBe(
+      TOKEN_OK.access_token,
+    );
+    expect(await secrets.get(`personalities/beta/mcp/${rBeta.serverName}/access_token`)).toBe(
+      TOKEN_OK.access_token,
+    );
+
+    // They should be independent (one deletion doesn't affect the other).
+    await secrets.delete(`personalities/alpha/mcp/${rAlpha.serverName}/access_token`);
+    expect(await secrets.get(`personalities/beta/mcp/${rBeta.serverName}/access_token`)).toBe(
+      TOKEN_OK.access_token,
+    );
   });
 });
 
@@ -528,7 +644,10 @@ describe('McpInstallFlow.cancel', () => {
   it('rolls back the placeholder and drops the pending session', async () => {
     const { flow, jsonStore, script } = await makeHarness();
     scriptHappyDiscoveryAndDcr(script);
-    const { state, serverName } = await flow.start({ mcpUrl: MCP_URL });
+    const { state, serverName } = await flow.start({
+      mcpUrl: MCP_URL,
+      personalityId: PERSONALITY_ID,
+    });
 
     expect(await jsonStore.get(serverName)).not.toBeNull();
     await flow.cancel(state);
@@ -545,7 +664,10 @@ describe('McpInstallFlow.cancel', () => {
   it('does NOT roll back the placeholder for a connected session', async () => {
     const { flow, jsonStore, script } = await makeHarness();
     scriptHappyDiscoveryAndDcr(script);
-    const { state, serverName } = await flow.start({ mcpUrl: MCP_URL });
+    const { state, serverName } = await flow.start({
+      mcpUrl: MCP_URL,
+      personalityId: PERSONALITY_ID,
+    });
     scriptHappyTokenExchange(script);
     await flow.complete({ code: 'auth', state });
 
@@ -569,7 +691,7 @@ describe('McpInstallFlow.getStatus', () => {
   it("'pending' immediately after start; 'connected' after complete", async () => {
     const { flow, script } = await makeHarness();
     scriptHappyDiscoveryAndDcr(script);
-    const { state } = await flow.start({ mcpUrl: MCP_URL });
+    const { state } = await flow.start({ mcpUrl: MCP_URL, personalityId: PERSONALITY_ID });
 
     expect(flow.getStatus(state)).toBe('pending');
 
@@ -581,7 +703,7 @@ describe('McpInstallFlow.getStatus', () => {
   it("drops a terminal session after terminalRetentionMs elapses → 'expired'", async () => {
     const { flow, clock, script } = await makeHarness({ terminalRetentionMs: 5_000 });
     scriptHappyDiscoveryAndDcr(script);
-    const { state } = await flow.start({ mcpUrl: MCP_URL });
+    const { state } = await flow.start({ mcpUrl: MCP_URL, personalityId: PERSONALITY_ID });
     scriptHappyTokenExchange(script);
     await flow.complete({ code: 'auth', state });
 
@@ -594,7 +716,7 @@ describe('McpInstallFlow.getStatus', () => {
   it('eager-on-touch sweep drops expired pending sessions', async () => {
     const { flow, clock, script } = await makeHarness({ pendingTtlMs: 1_000 });
     scriptHappyDiscoveryAndDcr(script);
-    const { state } = await flow.start({ mcpUrl: MCP_URL });
+    const { state } = await flow.start({ mcpUrl: MCP_URL, personalityId: PERSONALITY_ID });
 
     clock.now = new Date(clock.now.getTime() + 2_000);
     // Any method call triggers the sweep.

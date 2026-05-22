@@ -101,9 +101,14 @@ export function OAuthCallback() {
           }
         }
 
-        // Same-tab fallback: navigate back to plugins page
-        // Rehydrate modal state if available
-        setTimeout(() => navigate('/plugins', { state: { mcpConnected: name } }), 2000);
+        // Same-tab fallback: navigate back to originating page
+        const returnPath = sessionStorage.getItem('ethos:mcp_oauth_return');
+        sessionStorage.removeItem('ethos:mcp_oauth_return');
+        setTimeout(
+          () =>
+            navigate(returnPath ?? '/plugins', returnPath ? {} : { state: { mcpConnected: name } }),
+          2000,
+        );
       })
       .catch((err: unknown) => {
         if (window.opener) {
@@ -159,7 +164,7 @@ export function OAuthCallback() {
         <Alert
           type="success"
           message={`Connected to ${serverName}`}
-          description={window.opener ? 'You may close this window.' : 'Redirecting to plugins...'}
+          description={window.opener ? 'You may close this window.' : 'Redirecting...'}
         />
       </div>
     );
@@ -177,7 +182,15 @@ export function OAuthCallback() {
       }}
     >
       <Alert type="error" message="OAuth Error" description={errorMsg} />
-      <Button onClick={() => navigate('/plugins')}>Return to Ethos</Button>
+      <Button
+        onClick={() => {
+          const returnPath = sessionStorage.getItem('ethos:mcp_oauth_return');
+          sessionStorage.removeItem('ethos:mcp_oauth_return');
+          navigate(returnPath ?? '/plugins');
+        }}
+      >
+        Return to Ethos
+      </Button>
     </div>
   );
 }
