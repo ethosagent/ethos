@@ -29,6 +29,7 @@
   "files": [
     "dist",
     "data",
+    "skills",
     "web",
     "templates",
     "scripts/postinstall.mjs",
@@ -50,7 +51,8 @@
   "scripts": {
     "copy-data": "rm -rf data && cp -R ../../extensions/personalities/data data",
     "copy-web": "pnpm --filter @ethosagent/web build && rm -rf web && cp -R ../web/dist web && find web -name '*.map' -delete",
-    "prebuild": "pnpm copy-data && pnpm copy-web",
+    "copy-skills": "rm -rf skills && cp -R ../../skills skills",
+    "prebuild": "pnpm copy-data && pnpm copy-web && pnpm copy-skills",
     "build": "tsup",
     "postinstall": "node scripts/postinstall.mjs"
   },

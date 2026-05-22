@@ -40,8 +40,8 @@ const ORIGIN_CONFIG: Record<SkillOrigin, { color: string; label: string }> = {
 };
 
 function getSkillOrigin(skill: Skill): SkillOrigin {
+  if (skill.source === 'system') return 'built-in';
   const scope = skill.frontmatter.scope;
-  if (scope === 'built-in') return 'built-in';
   if (scope === 'evolver') return 'evolver';
   if (scope === 'personality') return 'personality';
   return 'user';
@@ -237,6 +237,16 @@ function SkillCardActions({ skill, onEdit }: { skill: Skill; onEdit: () => void 
       notification.error({ message: 'Delete failed', description: (err as Error).message }),
   });
 
+  if (skill.readonly) {
+    return (
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Button size="small" onClick={onEdit}>
+          View
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', gap: 8 }}>
       <Button size="small" onClick={onEdit}>
@@ -318,6 +328,7 @@ function EditSkillModal({ skill, onClose }: { skill: Skill; onClose: () => void 
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
   const [form] = Form.useForm<{ body: string }>();
+  const isReadonly = skill.readonly;
 
   // Reload the full body via skills.get on open — list returns it but we
   // still want a fresh read in case the file changed on disk between
@@ -349,11 +360,12 @@ function EditSkillModal({ skill, onClose }: { skill: Skill; onClose: () => void 
   return (
     <Modal
       open
-      title={`Edit ${skill.name}`}
+      title={isReadonly ? `View ${skill.name}` : `Edit ${skill.name}`}
       onCancel={onClose}
-      onOk={() => form.submit()}
-      okText="Save"
-      okButtonProps={{ loading: updateMut.isPending }}
+      onOk={isReadonly ? onClose : () => form.submit()}
+      okText={isReadonly ? 'Close' : 'Save'}
+      okButtonProps={isReadonly ? {} : { loading: updateMut.isPending }}
+      cancelButtonProps={isReadonly ? { style: { display: 'none' } } : {}}
       destroyOnClose
       width={680}
     >
@@ -362,9 +374,21 @@ function EditSkillModal({ skill, onClose }: { skill: Skill; onClose: () => void 
           <Spin />
         </div>
       ) : (
-        <Form form={form} layout="vertical" onFinish={(values) => updateMut.mutate(values.body)}>
-          <Form.Item label="Body" name="body" rules={[{ required: true, message: 'Required' }]}>
-            <Input.TextArea rows={18} style={{ fontFamily: 'Geist Mono, monospace' }} />
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={(values) => updateMut.mutate(values.body)}
+        >
+          <Form.Item
+            label="Body"
+            name="body"
+            rules={isReadonly ? [] : [{ required: true, message: 'Required' }]}
+          >
+            <Input.TextArea
+              rows={18}
+              style={{ fontFamily: 'Geist Mono, monospace' }}
+              disabled={isReadonly}
+            />
           </Form.Item>
         </Form>
       )}

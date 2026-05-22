@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { SkillsLibrary } from '../skills-library';
 
 const DATA = '/data';
+const CATALOG = '/catalog';
 
 describe('SkillsLibrary', () => {
   let storage: InMemoryStorage;
@@ -176,6 +177,120 @@ describe('SkillsLibrary', () => {
       await expect(lib.importGlobalIntoPersonality('p', ['ghost'])).rejects.toMatchObject({
         code: 'SKILL_NOT_FOUND',
       });
+    });
+  });
+
+  describe('source and readonly fields', () => {
+    it('user skills have source "user" and readonly false', async () => {
+      await lib.createSkill('my-skill', '---\nname: My Skill\n---\n\nbody');
+      const skill = await lib.getSkill('my-skill');
+      expect(skill).toMatchObject({ source: 'user', readonly: false });
+    });
+
+    it('listSkills marks user skills with source "user"', async () => {
+      await storage.mkdir(join(DATA, 'skills'));
+      await storage.write(join(DATA, 'skills', 'alpha.md'), '---\nname: Alpha\n---\n\nbody');
+      const skills = await lib.listSkills();
+      expect(skills[0]).toMatchObject({ id: 'alpha', source: 'user', readonly: false });
+    });
+  });
+
+  describe('system skills (catalogDir)', () => {
+    let catLib: SkillsLibrary;
+
+    beforeEach(async () => {
+      catLib = new SkillsLibrary({ dataDir: DATA, catalogDir: CATALOG, storage });
+      await storage.mkdir(join(CATALOG, 'web-search'));
+      await storage.write(
+        join(CATALOG, 'web-search', 'SKILL.md'),
+        '---\nname: Web Search\ndescription: Search the web\n---\n\nSearch body',
+      );
+      await storage.mkdir(join(CATALOG, 'summarize'));
+      await storage.write(
+        join(CATALOG, 'summarize', 'SKILL.md'),
+        '---\nname: Summarize\n---\n\nSummarize body',
+      );
+    });
+
+    it('listSkills returns system skills from catalogDir', async () => {
+      const skills = await catLib.listSkills();
+      expect(skills.map((s) => s.id)).toContain('web-search');
+      expect(skills.map((s) => s.id)).toContain('summarize');
+    });
+
+    it('system skills have source "system" and readonly true', async () => {
+      const skills = await catLib.listSkills();
+      const ws = skills.find((s) => s.id === 'web-search');
+      expect(ws).toMatchObject({
+        source: 'system',
+        readonly: true,
+        name: 'Web Search',
+        description: 'Search the web',
+      });
+    });
+
+    it('merges system and user skills sorted by name', async () => {
+      await catLib.createSkill('my-tool', '---\nname: My Tool\n---\n\nuser body');
+      const skills = await catLib.listSkills();
+      expect(skills.map((s) => s.name)).toEqual(['My Tool', 'Summarize', 'Web Search']);
+    });
+
+    it('user skill overrides system skill with same ID', async () => {
+      await catLib.createSkill('web-search', '---\nname: Custom Web Search\n---\n\ncustom body');
+      const skills = await catLib.listSkills();
+      const ws = skills.find((s) => s.id === 'web-search');
+      expect(ws).toMatchObject({
+        name: 'Custom Web Search',
+        source: 'user',
+        readonly: false,
+      });
+      expect(skills.filter((s) => s.id === 'web-search')).toHaveLength(1);
+    });
+
+    it('getSkill returns system skill when no user skill exists', async () => {
+      const skill = await catLib.getSkill('web-search');
+      expect(skill).toMatchObject({
+        id: 'web-search',
+        source: 'system',
+        readonly: true,
+      });
+    });
+
+    it('getSkill prefers user skill over system skill', async () => {
+      await catLib.createSkill('web-search', '---\nname: Override\n---\n\noverride body');
+      const skill = await catLib.getSkill('web-search');
+      expect(skill).toMatchObject({
+        id: 'web-search',
+        name: 'Override',
+        source: 'user',
+        readonly: false,
+      });
+    });
+
+    it('importGlobalIntoPersonality can import system skills', async () => {
+      const imported = await catLib.importGlobalIntoPersonality('p', ['web-search']);
+      expect(imported).toHaveLength(1);
+      expect(imported[0]).toMatchObject({ id: 'web-search', name: 'Web Search' });
+      const raw = await storage.read(join(DATA, 'personalities', 'p', 'skills', 'web-search.md'));
+      expect(raw).toContain('Search body');
+    });
+
+    it('importGlobalIntoPersonality prefers user skill over system skill', async () => {
+      await catLib.createSkill('web-search', '---\nname: User WS\n---\n\nuser ws body');
+      const imported = await catLib.importGlobalIntoPersonality('p', ['web-search']);
+      expect(imported[0]).toMatchObject({ name: 'User WS' });
+    });
+
+    it('listSkills returns empty when catalogDir has no subdirectories', async () => {
+      const emptyLib = new SkillsLibrary({ dataDir: DATA, catalogDir: '/empty-catalog', storage });
+      const skills = await emptyLib.listSkills();
+      expect(skills).toEqual([]);
+    });
+
+    it('ignores non-directory entries in catalogDir', async () => {
+      await storage.write(join(CATALOG, 'README.md'), 'ignore me');
+      const skills = await catLib.listSkills();
+      expect(skills.find((s) => s.id === 'README')).toBeUndefined();
     });
   });
 });

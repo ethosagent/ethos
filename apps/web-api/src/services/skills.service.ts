@@ -33,11 +33,15 @@ export class SkillsService {
   }
 
   async update(input: { id: string; body: string }): Promise<{ skill: Skill }> {
+    const existing = await this.opts.library.getSkill(input.id);
+    if (existing?.source === 'system') throw readonlyError();
     const skill = await this.opts.library.updateSkill(input.id, input.body);
     return { skill: toWire(skill) };
   }
 
   async delete(id: string): Promise<void> {
+    const existing = await this.opts.library.getSkill(id);
+    if (existing?.source === 'system') throw readonlyError();
     await this.opts.library.deleteSkill(id);
   }
 }
@@ -50,6 +54,8 @@ function toWire(record: SkillRecord): Skill {
     frontmatter: record.frontmatter,
     body: record.body,
     modifiedAt: record.modifiedAt,
+    source: record.source,
+    readonly: record.readonly,
   };
 }
 
@@ -58,5 +64,13 @@ function notFound(id: string): EthosError {
     code: 'SKILL_NOT_FOUND',
     cause: `Skill "${id}" not found.`,
     action: 'Use skills.list to see what is currently installed.',
+  });
+}
+
+function readonlyError(): EthosError {
+  return new EthosError({
+    code: 'SKILL_READONLY',
+    cause: 'System skills are read-only.',
+    action: 'Only user-created skills can be modified or deleted.',
   });
 }

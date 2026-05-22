@@ -5,6 +5,7 @@ import type {
   PersonalitySkill,
   PluginInfo,
   ProviderId,
+  Skill,
 } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -638,41 +639,60 @@ function WizardSkillsStep({
     return (
       <Empty
         image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description="No skills in the global library. Create skills on the Skills page first."
+        description="No skills available. Create skills on the Skills page first."
       />
     );
   }
 
+  const systemSkills = skills.filter((s) => s.source === 'system');
+  const userSkills = skills.filter((s) => s.source !== 'system');
   const selectedSet = new Set(state.skills);
+
+  const renderCheckbox = (s: Skill) => (
+    <Checkbox
+      key={s.id}
+      checked={selectedSet.has(s.id)}
+      onChange={(e) => {
+        setState((prev) => {
+          const next = new Set(prev.skills);
+          if (e.target.checked) next.add(s.id);
+          else next.delete(s.id);
+          return { ...prev, skills: [...next] };
+        });
+      }}
+    >
+      <span style={{ fontWeight: 500 }}>{s.name}</span>
+      {s.description ? (
+        <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+          {s.description}
+        </Typography.Text>
+      ) : null}
+    </Checkbox>
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <Typography.Paragraph type="secondary">
-        Select skills to attach from the global library. Skills can also be added after creation.
+        Select skills to attach from the library. Skills can also be added after creation.
       </Typography.Paragraph>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {skills.map((s) => (
-          <Checkbox
-            key={s.id}
-            checked={selectedSet.has(s.id)}
-            onChange={(e) => {
-              setState((prev) => {
-                const next = new Set(prev.skills);
-                if (e.target.checked) next.add(s.id);
-                else next.delete(s.id);
-                return { ...prev, skills: [...next] };
-              });
-            }}
-          >
-            <span style={{ fontWeight: 500 }}>{s.name}</span>
-            {s.description ? (
-              <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-                {s.description}
-              </Typography.Text>
-            ) : null}
-          </Checkbox>
-        ))}
-      </div>
+      {systemSkills.length > 0 ? (
+        <>
+          <Typography.Text strong>System</Typography.Text>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {systemSkills.map(renderCheckbox)}
+          </div>
+        </>
+      ) : null}
+      {userSkills.length > 0 ? (
+        <>
+          <Typography.Text strong style={systemSkills.length > 0 ? { marginTop: 12 } : {}}>
+            My Skills
+          </Typography.Text>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {userSkills.map(renderCheckbox)}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

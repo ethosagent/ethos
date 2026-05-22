@@ -212,6 +212,20 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
 
   const identityMap = new IdentityMap({ storage: new FsStorage(), dataDir: dir });
 
+  // System skills catalog: packaged at <pkg>/skills/ in production,
+  // at <repo>/skills/ in dev. Env var overrides both.
+  const skillsCatalogDir = (() => {
+    if (process.env.ETHOS_SKILLS_CATALOG_DIR) return process.env.ETHOS_SKILLS_CATALOG_DIR;
+    const candidates = [
+      join(import.meta.dirname, '..', '..', 'skills'),
+      join(import.meta.dirname, '..', '..', '..', '..', 'skills'),
+    ];
+    for (const c of candidates) {
+      if (existsSync(c)) return c;
+    }
+    return undefined;
+  })();
+
   const created = createWebApi({
     dataDir: dir,
     sessionStore: session,
@@ -228,6 +242,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     // Same `checkCommand` rules the CLI guard uses; surfacing them via
     // the approval modal instead of a hard block.
     dangerPredicate: createDangerPredicate(),
+    ...(skillsCatalogDir ? { catalogDir: skillsCatalogDir } : {}),
     ...(cronScheduler ? { cronScheduler } : {}),
     ...(toolRegistry ? { toolRegistry } : {}),
     apiKeys,

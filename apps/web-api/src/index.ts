@@ -123,6 +123,10 @@ export interface CreateWebApiOptions {
   listTeams?: () => Promise<string[]>;
   /** Tool registry for the tools.catalog RPC. */
   toolRegistry?: import('@ethosagent/types').ToolRegistry;
+  /** Path to the bundled system skills catalog directory. When set,
+   *  SkillsLibrary surfaces read-only system skills alongside user
+   *  skills. Omit when system skills are not available (e.g. tests). */
+  catalogDir?: string;
   /**
    * McpManager instance for the MCP install flow. Boot code constructs
    * and `connect()`s it; the web-api delegates to `McpService` which
@@ -157,7 +161,10 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const sessionsRepo = new SessionsRepository(opts.sessionStore);
   const configRepo = new ConfigRepository({ dataDir: opts.dataDir });
   const allowlistRepo = new AllowlistRepository({ dataDir: opts.dataDir });
-  const skillsLibrary = new SkillsLibrary({ dataDir: opts.dataDir });
+  const skillsLibrary = new SkillsLibrary({
+    dataDir: opts.dataDir,
+    ...(opts.catalogDir ? { catalogDir: opts.catalogDir } : {}),
+  });
   const evolverRepo = new EvolverRepository({ dataDir: opts.dataDir });
   // The mesh registry lives at `<dataDir>/mesh-registry.json`. ACP servers
   // (potentially in other processes) write heartbeats to this file; we

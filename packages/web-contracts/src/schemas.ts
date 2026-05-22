@@ -233,6 +233,8 @@ export const SkillSchema = z.object({
   body: z.string(),
   /** ISO-8601 mtime so the UI can show "edited 2h ago". */
   modifiedAt: z.string(),
+  source: z.enum(['system', 'user', 'evolver', 'personality']),
+  readonly: z.boolean(),
 });
 export type Skill = z.infer<typeof SkillSchema>;
 

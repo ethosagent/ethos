@@ -18,6 +18,8 @@ export interface SkillRecord {
   frontmatter: Record<string, unknown>;
   body: string;
   modifiedAt: string;
+  source: 'system' | 'user' | 'evolver' | 'personality';
+  readonly: boolean;
 }
 
 export interface PersonalitySkillRecord {
@@ -39,6 +41,8 @@ export interface PendingSkillRecord {
 export interface SkillsLibraryOptions {
   /** Root data dir — `~/.ethos/`. */
   dataDir: string;
+  /** Read-only system skills directory (subdirectory layout: `<id>/SKILL.md`). */
+  catalogDir?: string;
   /** Storage backend. Defaults to FsStorage. */
   storage?: Storage;
 }
@@ -48,12 +52,14 @@ export class SkillsLibrary {
   private readonly skillsDir: string;
   private readonly pendingDir: string;
   private readonly personalitiesDir: string;
+  private readonly catalogDir: string | null;
 
   constructor(opts: SkillsLibraryOptions) {
     this.storage = opts.storage ?? new FsStorage();
     this.skillsDir = join(opts.dataDir, 'skills');
     this.pendingDir = join(this.skillsDir, '.pending');
     this.personalitiesDir = join(opts.dataDir, 'personalities');
+    this.catalogDir = opts.catalogDir ?? null;
   }
 
   /** Absolute path to the directory holding live (global) skills. */
@@ -71,20 +77,30 @@ export class SkillsLibrary {
   // ---------------------------------------------------------------------------
 
   async listSkills(): Promise<SkillRecord[]> {
+    const systemSkills = await this.readSystemSkills();
+
     const names = await this.storage.list(this.skillsDir);
-    const out: SkillRecord[] = [];
+    const userSkills: SkillRecord[] = [];
     for (const name of names) {
       if (!name.endsWith('.md')) continue;
       const skill = await this.readGlobal(name);
-      if (skill) out.push(skill);
+      if (skill) userSkills.push(skill);
     }
-    out.sort((a, b) => a.name.localeCompare(b.name));
-    return out;
+
+    const userIds = new Set(userSkills.map((s) => s.id));
+    const merged = [
+      ...systemSkills.filter((s) => !userIds.has(s.id)),
+      ...userSkills,
+    ];
+    merged.sort((a, b) => a.name.localeCompare(b.name));
+    return merged;
   }
 
   async getSkill(id: string): Promise<SkillRecord | null> {
     assertSafeId(id, 'skillId');
-    return this.readGlobal(`${id}.md`);
+    const user = await this.readGlobal(`${id}.md`);
+    if (user) return user;
+    return this.readSystemSkill(id);
   }
 
   async createSkill(id: string, body: string): Promise<SkillRecord> {
@@ -263,13 +279,12 @@ export class SkillsLibrary {
     await this.storage.mkdir(dir);
     const imported: PersonalitySkillRecord[] = [];
     for (const skillId of skillIds) {
-      const sourcePath = join(this.skillsDir, `${skillId}.md`);
-      const sourceRaw = await this.storage.read(sourcePath);
+      const sourceRaw = await this.resolveSkillContent(skillId);
       if (sourceRaw === null) {
         throw new EthosError({
           code: 'SKILL_NOT_FOUND',
-          cause: `Global skill "${skillId}" not found in ~/.ethos/skills/.`,
-          action: 'Use listSkills() to see what is available globally.',
+          cause: `Skill "${skillId}" not found in user skills or system catalog.`,
+          action: 'Use listSkills() to see what is available.',
         });
       }
       await this.storage.write(join(dir, `${skillId}.md`), sourceRaw);
@@ -303,6 +318,8 @@ export class SkillsLibrary {
       frontmatter: fm,
       body,
       modifiedAt: new Date(mtimeMs).toISOString(),
+      source: 'user',
+      readonly: false,
     };
   }
 
@@ -325,6 +342,49 @@ export class SkillsLibrary {
       body,
       modifiedAt: new Date(mtimeMs).toISOString(),
     };
+  }
+
+  private async readSystemSkills(): Promise<SkillRecord[]> {
+    if (!this.catalogDir) return [];
+    const entries = await this.storage.listEntries(this.catalogDir);
+    const out: SkillRecord[] = [];
+    for (const entry of entries) {
+      if (!entry.isDir) continue;
+      const skill = await this.readSystemSkill(entry.name);
+      if (skill) out.push(skill);
+    }
+    return out;
+  }
+
+  private async readSystemSkill(id: string): Promise<SkillRecord | null> {
+    if (!this.catalogDir) return null;
+    const path = join(this.catalogDir, id, 'SKILL.md');
+    const raw = await this.storage.read(path);
+    const mtimeMs = await this.storage.mtime(path);
+    if (raw === null || mtimeMs === null) return null;
+    const parsed = parseSkillFrontmatter(raw);
+    const fm = parsed?.raw ?? {};
+    const body = parsed?.body ?? raw;
+    return {
+      id,
+      name: typeof fm.name === 'string' ? fm.name : id,
+      description: typeof fm.description === 'string' ? fm.description : null,
+      frontmatter: fm,
+      body,
+      modifiedAt: new Date(mtimeMs).toISOString(),
+      source: 'system',
+      readonly: true,
+    };
+  }
+
+  /** Try user skillsDir first, then catalogDir. Returns raw file content. */
+  private async resolveSkillContent(skillId: string): Promise<string | null> {
+    const userPath = join(this.skillsDir, `${skillId}.md`);
+    const userRaw = await this.storage.read(userPath);
+    if (userRaw !== null) return userRaw;
+    if (!this.catalogDir) return null;
+    const systemPath = join(this.catalogDir, skillId, 'SKILL.md');
+    return this.storage.read(systemPath);
   }
 }
 

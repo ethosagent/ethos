@@ -100,6 +100,9 @@ importers:
       '@types/better-sqlite3':
         specifier: ^7.6.12
         version: 7.6.13
+      argon2:
+        specifier: ^0.43.0
+        version: 0.43.1
       better-sqlite3:
         specifier: ^12.9.0
         version: 12.9.0

@@ -56,6 +56,7 @@ export type EthosErrorCode =
   | 'SKILL_INSTALL_FAILED'
   | 'SKILL_NOT_FOUND'
   | 'SKILL_EXISTS'
+  | 'SKILL_READONLY'
   | 'MISSING_SKILL'
   // Plugins (Phase 30.6 surface)
   | 'PLUGIN_CONTRACT_INCOMPATIBLE'
