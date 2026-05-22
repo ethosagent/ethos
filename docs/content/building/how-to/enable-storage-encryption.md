@@ -90,6 +90,25 @@ Changing the passphrase requires re-encrypting all files. Ethos does not handle 
 3. Set `ETHOS_STORAGE_KEY` to the new passphrase.
 4. Restart Ethos.
 
+## Verify
+
+Write a test file and confirm it's encrypted on disk:
+
+```bash
+# Start ethos with encryption enabled
+export ETHOS_STORAGE_KEY='test-passphrase'
+ethos chat
+```
+
+After writing some messages (which triggers memory writes), check that files under `~/.ethos/` are not readable as plaintext:
+
+```bash
+cat ~/.ethos/personalities/default/memory/MEMORY.md
+# Should show binary gibberish, not readable text
+```
+
+If the file contents are unreadable binary data, encryption is working.
+
 ## Managed deployments (Clawrium / Docker / systemd)
 
 Set `ETHOS_STORAGE_KEY` via the container or service environment. Do not bake the passphrase into an image or commit it to version control.

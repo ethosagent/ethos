@@ -122,6 +122,7 @@ const sidebars: SidebarsConfig = {
             'building/how-to/migrate-cookie-to-api-key',
             'building/how-to/deploy-mission-control-remote',
             'building/how-to/consume-attachments-in-a-tool',
+            'building/how-to/enable-storage-encryption',
           ],
         },
         {
