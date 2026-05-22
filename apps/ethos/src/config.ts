@@ -430,6 +430,11 @@ export interface EthosConfig {
   /** Public-facing URL of the web UI. Used as the OAuth redirect base.
    *  Resolution: ETHOS_PUBLIC_URL env > config.yaml webBaseUrl > localhost default. */
   webBaseUrl?: string;
+  /** Storage-layer settings. Currently supports at-rest encryption via
+   *  `storage.encryption: true` in config.yaml. Requires ETHOS_STORAGE_KEY. */
+  storage?: {
+    encryption?: boolean;
+  };
 }
 
 export function ethosDir(): string {
@@ -873,6 +878,12 @@ function parseConfigYaml(src: string): EthosConfig {
       (qcKv[qname] as Record<string, string>)[qc[2]] = qc[3].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // storage.<field>: <value>
+    const stg = line.match(/^storage\.(\w+):\s*(.+)$/);
+    if (stg) {
+      kv[`storage.${stg[1]}`] = stg[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     const m = line.match(/^(\w+):\s*(.+)$/);
     if (m) kv[m[1].trim()] = m[2].trim().replace(/^["']|["']$/g, '');
   }
@@ -1038,6 +1049,8 @@ function parseConfigYaml(src: string): EthosConfig {
     logs: logsRotation ? { rotation: logsRotation } : undefined,
     aws: awsConfig,
     webBaseUrl: process.env.ETHOS_PUBLIC_URL ?? kv.webBaseUrl ?? undefined,
+    storage:
+      kv['storage.encryption'] === 'true' ? { encryption: true } : undefined,
   };
   // Stash parse errors so the strict loader can surface them at boot.
   // readRawConfig (used by CLI commands that don't gateway-boot) ignores them

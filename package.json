@@ -48,6 +48,7 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "@discordjs/opus",
+      "argon2",
       "better-sqlite3",
       "esbuild",
       "playwright"

@@ -30,6 +30,7 @@ import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { createKvStoreFactory, SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { createInjectors, UniversalScanner } from '@ethosagent/skills';
 import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
+import { createCryptoStorage } from '@ethosagent/storage-crypto';
 import { FsAttachmentCache, FsStorage, REF_TO_ENV } from '@ethosagent/storage-fs';
 import { createBrowserTools } from '@ethosagent/tools-browser';
 import { createCodeTools } from '@ethosagent/tools-code';
@@ -76,6 +77,7 @@ import type {
   RequestDumpStore,
   SecretsResolver,
   SessionStore,
+  Storage,
   ToolRegistry,
 } from '@ethosagent/types';
 import { resolveKanbanDbPath } from './kanban-path';
@@ -195,6 +197,11 @@ export interface WiringConfig {
   /** File-backed secrets resolver. When provided, the capability backend
    *  resolves secrets from ~/.ethos/secrets/ before falling back to env vars. */
   secretsResolver?: SecretsResolver;
+  /** Storage-layer settings. When `encryption` is true, the primary FsStorage
+   *  is wrapped in CryptoStorage using ETHOS_STORAGE_KEY. */
+  storage?: {
+    encryption?: boolean;
+  };
   /**
    * Remote model catalog configuration. When provided with `enabled !== false`,
    * the wiring loads the remote catalog (with cache/fallback) and uses it
@@ -587,6 +594,18 @@ export async function createAgentLoop(
   const profile: WiringProfile = opts.profile ?? 'cli';
   const log: Logger = opts.logger ?? noopLogger;
 
+  // Storage encryption — fail fast if enabled without the required env var.
+  if (config.storage?.encryption) {
+    const key = process.env.ETHOS_STORAGE_KEY;
+    if (!key) {
+      console.error(
+        'Error: storage encryption is enabled but ETHOS_STORAGE_KEY is not set.\n' +
+          'Set it in your environment or EnvironmentFile before starting Ethos.',
+      );
+      process.exit(1);
+    }
+  }
+
   const NOOP_SECRETS: SecretsResolver = {
     get: async () => null,
     set: async () => {},
@@ -898,7 +917,11 @@ export async function createAgentLoop(
     }
   }
 
-  const designStorage = capabilityBackends.storage ?? new FsStorage();
+  let designStorage: Storage = capabilityBackends.storage ?? new FsStorage();
+  if (config.storage?.encryption) {
+    const passphrase = process.env.ETHOS_STORAGE_KEY ?? '';
+    designStorage = createCryptoStorage(designStorage, passphrase);
+  }
 
   // Remote model catalog: load from network/cache when configured, else fall back
   // to the bundled static array.
