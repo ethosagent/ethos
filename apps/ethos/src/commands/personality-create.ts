@@ -82,7 +82,7 @@ async function scaffoldBlank(name: string | undefined): Promise<void> {
   writeFileSync(join(dir, 'SOUL.md'), `# ${name}\n\nDescribe this personality's identity here.\n`);
   writeFileSync(
     join(dir, 'config.yaml'),
-    `name: ${yamlScalar(name)}\ndescription: \nmodel: claude-sonnet-4-6\nmemoryScope: global\n`,
+    `name: ${yamlScalar(name)}\ndescription: \nmodel: claude-sonnet-4-6\n`,
   );
   writeFileSync(join(dir, 'toolset.yaml'), '- read_file\n- write_file\n- terminal\n');
 

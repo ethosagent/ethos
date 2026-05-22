@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MarkdownFileMemoryProvider } from '../index';
 
 const globalCtx: MemoryContext = {
-  scopeId: 'global',
+  scopeId: 'personality:test',
   sessionId: 'test',
   sessionKey: 'cli:test',
   platform: 'cli',
@@ -21,7 +21,7 @@ beforeEach(async () => {
     tmpdir(),
     `ethos-memory-cap-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
-  await mkdir(testDir, { recursive: true });
+  await mkdir(join(testDir, 'personalities', 'test'), { recursive: true });
   provider = new MarkdownFileMemoryProvider({ dir: testDir });
 });
 

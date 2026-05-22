@@ -43,29 +43,46 @@ export class MarkdownFileMemoryProvider implements MemoryProvider {
   // ---------------------------------------------------------------------------
 
   /**
-   * Resolve the directory MEMORY.md (and other per-personality keys) live in
-   * for this turn. `personality:<id>` → `<root>/personalities/<id>/`.
-   * Anything else (or an unsafe id) falls back to the shared root.
+   * Resolve the storage directory for the given scope.
    *
-   * Note: USER.md is special-cased in `resolveKeyPath`; it always lives in
-   * the shared root regardless of scope, because it describes the human,
-   * not the agent.
+   * | Prefix | Directory |
+   * |---|---|
+   * | `personality:<id>` | `<root>/personalities/<id>/` |
+   * | `team:<id>` | `<root>/` (team provider is already scoped) |
+   * | `user:<userId>` | `<root>/users/<userId>/` |
+   *
+   * Unrecognised or unsafe scope ids throw.
    */
   private resolveScopeDir(ctx: MemoryContext): string {
-    const prefix = 'personality:';
-    if (!ctx.scopeId.startsWith(prefix)) return this.dir;
-    const id = ctx.scopeId.slice(prefix.length);
-    if (!id || !isSafePersonalityId(id)) return this.dir;
-    return join(this.dir, 'personalities', id);
+    if (ctx.scopeId.startsWith('personality:')) {
+      const id = ctx.scopeId.slice('personality:'.length);
+      if (!id || !isSafePersonalityId(id)) {
+        throw new Error(`unrecognised memory scope: ${ctx.scopeId}`);
+      }
+      return join(this.dir, 'personalities', id);
+    }
+    if (ctx.scopeId.startsWith('team:')) {
+      const id = ctx.scopeId.slice('team:'.length);
+      if (!id || !isSafePersonalityId(id)) {
+        throw new Error(`unrecognised memory scope: ${ctx.scopeId}`);
+      }
+      return this.dir;
+    }
+    if (ctx.scopeId.startsWith('user:')) {
+      const id = ctx.scopeId.slice('user:'.length);
+      if (!id || !isSafePersonalityId(id)) {
+        throw new Error(`unrecognised memory scope: ${ctx.scopeId}`);
+      }
+      return join(this.dir, 'users', id);
+    }
+    throw new Error(`unrecognised memory scope: ${ctx.scopeId}`);
   }
 
   /**
-   * Map (scope, key) → absolute file path. USER.md is the one shared-root
-   * exception; every other key is treated as a regular `.md` file within
-   * the scope dir.
+   * Map (scope, key) → absolute file path. All keys are stored within the
+   * scope directory.
    */
   private resolveKeyPath(key: string, ctx: MemoryContext): string {
-    if (key === 'USER.md') return join(this.dir, 'USER.md');
     const scopeDir = this.resolveScopeDir(ctx);
     return join(scopeDir, key);
   }
@@ -152,29 +169,11 @@ export class MarkdownFileMemoryProvider implements MemoryProvider {
     const scopeDir = this.resolveScopeDir(ctx);
     const refs: MemoryEntryRef[] = [];
 
-    const seen = new Set<string>();
-    // Always include the shared USER.md when it exists, even when the
-    // scope dir differs (USER.md is the one cross-scope key).
-    const sharedUserPath = join(this.dir, 'USER.md');
-    const sharedUserContent = await this.storage.read(sharedUserPath);
-    if (sharedUserContent !== null) {
-      seen.add('USER.md');
-      const ref: MemoryEntryRef = { key: 'USER.md' };
-      const mtime = await this.storage.mtime(sharedUserPath);
-      if (mtime !== null) ref.metadata = { lastUpdatedAt: mtime };
-      if (opts?.withSummaries) {
-        const summary = firstParagraph(sharedUserContent);
-        if (summary) ref.summary = summary;
-      }
-      refs.push(ref);
-    }
-
     // Enumerate .md files in the scope dir. Storage.list returns an empty
     // array when the directory doesn't exist, so no try/catch is needed.
     const names = await this.storage.list(scopeDir);
     for (const name of names) {
       if (!name.endsWith('.md')) continue;
-      if (seen.has(name)) continue;
       if (!isSafeKey(name)) continue;
       const path = join(scopeDir, name);
       const content = await this.storage.read(path);
@@ -187,7 +186,6 @@ export class MarkdownFileMemoryProvider implements MemoryProvider {
         if (summary) ref.summary = summary;
       }
       refs.push(ref);
-      seen.add(name);
     }
 
     if (opts?.limit !== undefined && refs.length > opts.limit) {

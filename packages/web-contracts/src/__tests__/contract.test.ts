@@ -76,7 +76,6 @@ describe('entity schemas', () => {
       provider: null,
       toolset: null,
       capabilities: null,
-      memoryScope: null,
       streamingTimeoutMs: null,
       mcp_servers: null,
       plugins: null,

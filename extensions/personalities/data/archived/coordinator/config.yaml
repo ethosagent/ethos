@@ -1,7 +1,6 @@
 name: Coordinator
 description: Plans, dispatches, and synthesizes work across specialist teammates.
 model: claude-opus-4-7
-memoryScope: per-personality
 capabilities: coordination, planning, synthesis
 context_engine: semantic_summary
 context_engine_options.preserve_first_n_turns: 2

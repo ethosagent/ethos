@@ -4,7 +4,6 @@ provider: anthropic
 model.trivial: claude-haiku-4-5
 model.default: claude-sonnet-4-6
 model.deep: claude-opus-4-7
-memoryScope: per-personality
 capabilities: code, file, terminal
 context_layering.mode: progressive
 skill_evolution.enabled: true

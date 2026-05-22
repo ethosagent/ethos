@@ -71,12 +71,10 @@ export type StoredMessage = z.infer<typeof StoredMessageSchema>;
 // ---------------------------------------------------------------------------
 // Personalities
 //
-// `id` / `name` / `description` / `model` / `memoryScope` / `streamingTimeoutMs`
+// `id` / `name` / `description` / `model` / `streamingTimeoutMs`
 // are user-facing fields from PersonalityConfig. `soulFile` / `skillsDirs`
 // (server filesystem paths) are intentionally NOT in the wire schema.
 // ---------------------------------------------------------------------------
-
-export const MemoryScopeSchema = z.literal('per-personality');
 
 export const ModelTierConfigSchema = z.object({
   trivial: z.string().optional(),
@@ -93,7 +91,6 @@ export const PersonalitySchema = z.object({
   provider: z.string().nullable(),
   toolset: z.array(z.string()).nullable(),
   capabilities: z.array(z.string()).nullable(),
-  memoryScope: MemoryScopeSchema.nullable(),
   streamingTimeoutMs: z.number().int().positive().nullable(),
   /** Allowed MCP server names. null = not configured (no access). */
   mcp_servers: z.array(z.string()).nullable(),
@@ -609,9 +606,8 @@ export const McpPersonalityServersOutputSchema = z.object({
 // Memory — v1
 //
 // The web tab edits the two markdown files MarkdownFileMemoryProvider
-// reads (MEMORY.md and USER.md, scoped to the active personality if
-// memoryScope is 'per-personality'). Vector-mode CRUD lands later —
-// the contract is markdown-shaped for now.
+// reads (MEMORY.md and USER.md, always scoped per-personality).
+// Vector-mode CRUD lands later — the contract is markdown-shaped for now.
 // ---------------------------------------------------------------------------
 
 export const MemoryStoreSchema = z.enum(['memory', 'user']);
@@ -628,6 +624,14 @@ export const MemoryFileSchema = z.object({
   modifiedAt: z.string().nullable(),
 });
 export type MemoryFile = z.infer<typeof MemoryFileSchema>;
+
+export const IdentityMapEntrySchema = z.object({
+  userId: z.string(),
+  displayLabel: z.string(),
+  platform: z.string(),
+  firstSeenAt: z.string(),
+});
+export type IdentityMapEntryWire = z.infer<typeof IdentityMapEntrySchema>;
 
 export const MeshRouteResultSchema = z.object({
   ok: z.boolean(),

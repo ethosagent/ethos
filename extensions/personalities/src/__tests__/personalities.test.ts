@@ -56,16 +56,6 @@ describe('FilePersonalityRegistry', () => {
       const registry = await createPersonalityRegistry();
       expect(registry.getDefault().id).toBe('researcher');
     });
-
-    it('researcher memoryScope is per-personality', async () => {
-      const registry = await createPersonalityRegistry();
-      expect(registry.get('researcher')?.memoryScope).toBe('per-personality');
-    });
-
-    it('reviewer memoryScope is per-personality', async () => {
-      const registry = await createPersonalityRegistry();
-      expect(registry.get('reviewer')?.memoryScope).toBe('per-personality');
-    });
   });
 
   describe('loadFromDirectory', () => {
@@ -74,7 +64,7 @@ describe('FilePersonalityRegistry', () => {
       await mkdir(personalityDir);
       await writeFile(
         join(personalityDir, 'config.yaml'),
-        'name: Strategist\ndescription: Thinks in frameworks\nmodel: claude-opus-4-7\nmemoryScope: global\n',
+        'name: Strategist\ndescription: Thinks in frameworks\nmodel: claude-opus-4-7\n',
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# Strategist\n\nI think in frameworks.');
       await writeFile(
@@ -181,7 +171,6 @@ describe('FilePersonalityRegistry', () => {
         [
           'name: Analyst',
           'model: claude-sonnet-4-6',
-          'memoryScope: global',
           'safety:',
           '  observability:',
           '    storeToolBodies: redacted',
@@ -200,10 +189,7 @@ describe('FilePersonalityRegistry', () => {
     it('personality without safety block loads with undefined safety', async () => {
       const dir = join(testDir, 'plain');
       await mkdir(dir);
-      await writeFile(
-        join(dir, 'config.yaml'),
-        'name: Plain\nmodel: claude-sonnet-4-6\nmemoryScope: global\n',
-      );
+      await writeFile(join(dir, 'config.yaml'), 'name: Plain\nmodel: claude-sonnet-4-6\n');
       await writeFile(join(dir, 'SOUL.md'), '# Plain');
       await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
       const registry = new FilePersonalityRegistry(undefined, testDir);
@@ -219,7 +205,6 @@ describe('FilePersonalityRegistry', () => {
         [
           'name: Bad',
           'model: claude-sonnet-4-6',
-          'memoryScope: global',
           'safety:',
           '  observability:',
           '    storeToolBodies: invalid-value',
@@ -236,13 +221,7 @@ describe('FilePersonalityRegistry', () => {
       await mkdir(dir);
       await writeFile(
         join(dir, 'config.yaml'),
-        [
-          'name: Nested',
-          'model: claude-sonnet-4-6',
-          'memoryScope: global',
-          'customBlock:',
-          '  foo: bar',
-        ].join('\n'),
+        ['name: Nested', 'model: claude-sonnet-4-6', 'customBlock:', '  foo: bar'].join('\n'),
       );
       await writeFile(join(dir, 'SOUL.md'), '# Nested');
       await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');

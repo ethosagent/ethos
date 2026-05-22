@@ -59,13 +59,16 @@ export interface ToolContext {
   agentId?: string;
   /** Active personality for this turn. Tools that touch memory must thread this through. */
   personalityId?: string;
-  /** Resolved memory scope for the active personality (filled by AgentLoop). */
-  memoryScope?: 'per-personality';
   /**
-   * Opaque scope id resolved by AgentLoop. When present, memory tools use it directly instead
-   * of deriving `personality:<id>` from personalityId and memoryScope.
+   * Opaque scope id resolved by AgentLoop. Memory tools use it directly
+   * to derive `personality:<id>` from personalityId.
    */
   memoryScopeId?: string;
+  /**
+   * Opaque user scope id resolved by AgentLoop. When present, memory tools use it
+   * for `store='user'` instead of the personality scope. Shape: `user:<userId>`.
+   */
+  userScopeId?: string;
   /**
    * Active team id for this turn. Set by AgentLoop when the loop runs inside a team
    * (WiringConfig.teamName is set). Team memory tools use this to build the

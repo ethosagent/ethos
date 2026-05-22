@@ -75,13 +75,12 @@ export interface PersonalityUnfurlData {
   id: string;
   name: string;
   description: string;
-  memoryScope: string;
 }
 
 export function personalityUnfurlBlocks(data: PersonalityUnfurlData): SlackBlock[] {
   return [
     header('Ethos personality'),
     section(`*${clean(data.name, NAME_MAX)}*\n${clean(data.description, DESCRIPTION_MAX)}`),
-    context([`Memory scope: \`${clean(data.memoryScope, SCOPE_MAX)}\``]),
+    context([`Memory scope: \`personality:${clean(data.id, SCOPE_MAX)}\``]),
   ];
 }

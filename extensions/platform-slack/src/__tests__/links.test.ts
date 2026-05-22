@@ -136,7 +136,6 @@ describe('blocks/unfurl', () => {
         id: 'researcher',
         name: 'Researcher',
         description: 'Digs into hard questions',
-        memoryScope: 'personality:researcher',
       }),
     );
     expect(text).toContain('Researcher');
@@ -173,7 +172,6 @@ describe('blocks/unfurl', () => {
         id: 'p1',
         name: '<!everyone>',
         description: '<script>',
-        memoryScope: '<scope>',
       }),
     );
     expect(personalityJson).not.toContain('<!everyone>');
@@ -211,7 +209,6 @@ describe('blocks/unfurl', () => {
           id: 'p1',
           name: 'n'.repeat(10_000),
           description: 'd'.repeat(10_000),
-          memoryScope: 's'.repeat(10_000),
         }),
       ),
     ).toBeLessThan(3000);
@@ -262,7 +259,6 @@ const fullDeps = {
       id,
       name: 'Researcher',
       description: 'Digs deep',
-      memoryScope: `personality:${id}`,
     }),
   },
 };

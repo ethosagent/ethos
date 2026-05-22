@@ -8,12 +8,14 @@ import { CronScheduler } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { EthosError, type ToolRegistry } from '@ethosagent/types';
 import { type ChatService, createWebApi, WebTokenRepository } from '@ethosagent/web-api';
 import {
   createDangerPredicate,
   createMemoryProvider,
   createSessionStore,
+  IdentityMap,
 } from '@ethosagent/wiring';
 import { type EthosConfig, ethosDir } from '../config';
 import { emitReady } from '../logger';
@@ -208,10 +210,13 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   // and `ethos serve` see the same rows.
   const apiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
 
+  const identityMap = new IdentityMap({ storage: new FsStorage(), dataDir: dir });
+
   const created = createWebApi({
     dataDir: dir,
     sessionStore: session,
     memoryProvider: createMemoryProvider({ dataDir: dir }),
+    identityMap,
     agentLoop: loop,
     // The same registry the agent loop loaded above is reused so mtime
     // hot-reloads of personality files reach both surfaces in one tick.

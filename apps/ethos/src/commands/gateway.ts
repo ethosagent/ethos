@@ -25,6 +25,7 @@ import {
 import {
   createDangerPredicate,
   createMemoryProvider,
+  IdentityMap,
   type MessagingSendFn,
 } from '@ethosagent/wiring';
 import Database from 'better-sqlite3';
@@ -247,6 +248,10 @@ export async function runGatewayStart(): Promise<void> {
     console.log(`${c.yellow}⚠ deprecation${c.reset} ${c.dim}${note}${c.reset}`);
   }
   const config = loaded.config;
+
+  const identityMap = new IdentityMap({ storage, dataDir: ethosDir() });
+  const resolveUserId = (platform: string, platformUserId: string, displayLabel?: string) =>
+    identityMap.resolve(platform, platformUserId, displayLabel);
 
   const hasEmailConfig =
     config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost;
@@ -538,6 +543,7 @@ export async function runGatewayStart(): Promise<void> {
           loop: systemLoop,
           defaultPersonality: config.personality,
           adapters: adapterMap,
+          resolveUserId,
           ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
           ...(pairingDb ? { pairingDb } : {}),
         })
@@ -545,6 +551,7 @@ export async function runGatewayStart(): Promise<void> {
           bots,
           attachmentCache,
           adapters: adapterMap,
+          resolveUserId,
           ...(clarifyMessageCorrelator ? { clarifyMessageCorrelator } : {}),
           ...(telegramCardReader ? { personalityCardReader: telegramCardReader } : {}),
           ...(telegramGreetingProvider ? { greetingProvider: telegramGreetingProvider } : {}),

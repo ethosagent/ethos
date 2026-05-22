@@ -1,4 +1,3 @@
 name: Task Tracker
 description: Durable solo task tracker. Uses the kanban primitive to track work that survives session restarts.
 model: claude-sonnet-4-6
-memoryScope: per-personality

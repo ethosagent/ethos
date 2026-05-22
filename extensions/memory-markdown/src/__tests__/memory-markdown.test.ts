@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MarkdownFileMemoryProvider } from '../index';
 
 const globalCtx: MemoryContext = {
-  scopeId: 'global',
+  scopeId: 'personality:test',
   sessionId: 'test',
   sessionKey: 'cli:test',
   platform: 'cli',
@@ -14,6 +14,8 @@ const globalCtx: MemoryContext = {
 };
 
 let testDir: string;
+/** The scoped directory where personality:test files live. */
+let scopeDir: string;
 let provider: MarkdownFileMemoryProvider;
 
 beforeEach(async () => {
@@ -21,7 +23,8 @@ beforeEach(async () => {
     tmpdir(),
     `ethos-memory-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
-  await mkdir(testDir, { recursive: true });
+  scopeDir = join(testDir, 'personalities', 'test');
+  await mkdir(scopeDir, { recursive: true });
   provider = new MarkdownFileMemoryProvider({ dir: testDir });
 });
 
@@ -36,7 +39,7 @@ describe('MarkdownFileMemoryProvider', () => {
     });
 
     it('returns USER.md as an entry when present', async () => {
-      await writeFile(join(testDir, 'USER.md'), 'I am a senior engineer.');
+      await writeFile(join(scopeDir, 'USER.md'), 'I am a senior engineer.');
       const result = await provider.prefetch(globalCtx);
       expect(result).not.toBeNull();
       const userEntry = result?.entries.find((e) => e.key === 'USER.md');
@@ -44,22 +47,22 @@ describe('MarkdownFileMemoryProvider', () => {
     });
 
     it('returns MEMORY.md as an entry when present', async () => {
-      await writeFile(join(testDir, 'MEMORY.md'), 'Working on ethos project.');
+      await writeFile(join(scopeDir, 'MEMORY.md'), 'Working on ethos project.');
       const result = await provider.prefetch(globalCtx);
       const memEntry = result?.entries.find((e) => e.key === 'MEMORY.md');
       expect(memEntry?.content).toContain('Working on ethos project');
     });
 
     it('returns both files as separate entries when present', async () => {
-      await writeFile(join(testDir, 'USER.md'), 'Senior engineer.');
-      await writeFile(join(testDir, 'MEMORY.md'), 'Working on ethos.');
+      await writeFile(join(scopeDir, 'USER.md'), 'Senior engineer.');
+      await writeFile(join(scopeDir, 'MEMORY.md'), 'Working on ethos.');
       const result = await provider.prefetch(globalCtx);
       expect(result?.entries.length).toBe(2);
       expect(result?.entries.map((e) => e.key).sort()).toEqual(['MEMORY.md', 'USER.md']);
     });
 
     it('skips empty/whitespace-only files', async () => {
-      await writeFile(join(testDir, 'MEMORY.md'), '   \n\n');
+      await writeFile(join(scopeDir, 'MEMORY.md'), '   \n\n');
       expect(await provider.prefetch(globalCtx)).toBeNull();
     });
   });
@@ -70,7 +73,7 @@ describe('MarkdownFileMemoryProvider', () => {
     });
 
     it('returns the entry when the key exists', async () => {
-      await writeFile(join(testDir, 'MEMORY.md'), 'cached fact');
+      await writeFile(join(scopeDir, 'MEMORY.md'), 'cached fact');
       const entry = await provider.read('MEMORY.md', globalCtx);
       expect(entry?.key).toBe('MEMORY.md');
       expect(entry?.content).toContain('cached fact');
@@ -84,8 +87,8 @@ describe('MarkdownFileMemoryProvider', () => {
 
   describe('search', () => {
     beforeEach(async () => {
-      await writeFile(join(testDir, 'MEMORY.md'), 'TypeScript is great\nUse Biome for linting');
-      await writeFile(join(testDir, 'USER.md'), 'I love TypeScript');
+      await writeFile(join(scopeDir, 'MEMORY.md'), 'TypeScript is great\nUse Biome for linting');
+      await writeFile(join(scopeDir, 'USER.md'), 'I love TypeScript');
     });
 
     it('returns matching entries (case-insensitive substring)', async () => {
@@ -108,26 +111,26 @@ describe('MarkdownFileMemoryProvider', () => {
   });
 
   describe('list', () => {
-    it('returns refs for all .md files including USER.md', async () => {
-      await writeFile(join(testDir, 'USER.md'), 'about me');
-      await writeFile(join(testDir, 'MEMORY.md'), 'memory');
-      await writeFile(join(testDir, 'NOTES.md'), 'notes');
+    it('returns refs for all .md files in the scope dir', async () => {
+      await writeFile(join(scopeDir, 'USER.md'), 'about me');
+      await writeFile(join(scopeDir, 'MEMORY.md'), 'memory');
+      await writeFile(join(scopeDir, 'NOTES.md'), 'notes');
       const refs = await provider.list(globalCtx);
       const keys = refs.map((r) => r.key).sort();
       expect(keys).toEqual(['MEMORY.md', 'NOTES.md', 'USER.md']);
     });
 
     it('attaches summaries when withSummaries is true', async () => {
-      await writeFile(join(testDir, 'MEMORY.md'), 'First paragraph.\n\nSecond paragraph.');
+      await writeFile(join(scopeDir, 'MEMORY.md'), 'First paragraph.\n\nSecond paragraph.');
       const refs = await provider.list(globalCtx, { withSummaries: true });
       const memRef = refs.find((r) => r.key === 'MEMORY.md');
       expect(memRef?.summary).toBe('First paragraph.');
     });
 
     it('honors limit', async () => {
-      await writeFile(join(testDir, 'A.md'), 'a');
-      await writeFile(join(testDir, 'B.md'), 'b');
-      await writeFile(join(testDir, 'C.md'), 'c');
+      await writeFile(join(scopeDir, 'A.md'), 'a');
+      await writeFile(join(scopeDir, 'B.md'), 'b');
+      await writeFile(join(scopeDir, 'C.md'), 'c');
       const refs = await provider.list(globalCtx, { limit: 2 });
       expect(refs.length).toBe(2);
     });
@@ -136,24 +139,24 @@ describe('MarkdownFileMemoryProvider', () => {
   describe('sync — add', () => {
     it('creates MEMORY.md and appends content', async () => {
       await provider.sync([{ action: 'add', key: 'MEMORY.md', content: 'Fact one.' }], globalCtx);
-      const content = await readFile(join(testDir, 'MEMORY.md'), 'utf-8');
+      const content = await readFile(join(scopeDir, 'MEMORY.md'), 'utf-8');
       expect(content).toContain('Fact one.');
     });
 
     it('appends to existing content without destroying it', async () => {
-      await writeFile(join(testDir, 'MEMORY.md'), 'Existing fact.\n');
+      await writeFile(join(scopeDir, 'MEMORY.md'), 'Existing fact.\n');
       await provider.sync([{ action: 'add', key: 'MEMORY.md', content: 'New fact.' }], globalCtx);
-      const content = await readFile(join(testDir, 'MEMORY.md'), 'utf-8');
+      const content = await readFile(join(scopeDir, 'MEMORY.md'), 'utf-8');
       expect(content).toContain('Existing fact.');
       expect(content).toContain('New fact.');
     });
 
-    it('writes USER.md to the shared root', async () => {
+    it('writes USER.md to the scope directory', async () => {
       await provider.sync(
         [{ action: 'add', key: 'USER.md', content: 'Prefers TypeScript.' }],
         globalCtx,
       );
-      const content = await readFile(join(testDir, 'USER.md'), 'utf-8');
+      const content = await readFile(join(scopeDir, 'USER.md'), 'utf-8');
       expect(content).toContain('Prefers TypeScript.');
     });
 
@@ -165,19 +168,19 @@ describe('MarkdownFileMemoryProvider', () => {
         ],
         globalCtx,
       );
-      const content = await readFile(join(testDir, 'MEMORY.md'), 'utf-8');
+      const content = await readFile(join(scopeDir, 'MEMORY.md'), 'utf-8');
       expect(content.indexOf('First.')).toBeLessThan(content.indexOf('Second.'));
     });
   });
 
   describe('sync — replace', () => {
     it('replaces entire file content', async () => {
-      await writeFile(join(testDir, 'MEMORY.md'), 'Old content.\n');
+      await writeFile(join(scopeDir, 'MEMORY.md'), 'Old content.\n');
       await provider.sync(
         [{ action: 'replace', key: 'MEMORY.md', content: 'Brand new.' }],
         globalCtx,
       );
-      const content = await readFile(join(testDir, 'MEMORY.md'), 'utf-8');
+      const content = await readFile(join(scopeDir, 'MEMORY.md'), 'utf-8');
       expect(content.trim()).toBe('Brand new.');
     });
   });
@@ -185,14 +188,14 @@ describe('MarkdownFileMemoryProvider', () => {
   describe('sync — remove', () => {
     it('removes lines containing substringMatch', async () => {
       await writeFile(
-        join(testDir, 'MEMORY.md'),
+        join(scopeDir, 'MEMORY.md'),
         'Keep this line.\nRemove this specific line.\nKeep this too.\n',
       );
       await provider.sync(
         [{ action: 'remove', key: 'MEMORY.md', substringMatch: 'specific' }],
         globalCtx,
       );
-      const content = await readFile(join(testDir, 'MEMORY.md'), 'utf-8');
+      const content = await readFile(join(scopeDir, 'MEMORY.md'), 'utf-8');
       expect(content).toContain('Keep this line.');
       expect(content).not.toContain('Remove this specific line.');
       expect(content).toContain('Keep this too.');
@@ -201,9 +204,9 @@ describe('MarkdownFileMemoryProvider', () => {
 
   describe('sync — delete', () => {
     it('removes the file entirely', async () => {
-      await writeFile(join(testDir, 'MEMORY.md'), 'goodbye');
+      await writeFile(join(scopeDir, 'MEMORY.md'), 'goodbye');
       await provider.sync([{ action: 'delete', key: 'MEMORY.md' }], globalCtx);
-      const exists = await readFile(join(testDir, 'MEMORY.md'), 'utf-8').catch(() => null);
+      const exists = await readFile(join(scopeDir, 'MEMORY.md'), 'utf-8').catch(() => null);
       expect(exists).toBeNull();
     });
   });
@@ -222,9 +225,9 @@ describe('MarkdownFileMemoryProvider', () => {
       ...globalCtx,
       scopeId: 'personality:operator',
     };
-    const coachGlobalCtx: MemoryContext = {
+    const coachCtx: MemoryContext = {
       ...globalCtx,
-      scopeId: 'global',
+      scopeId: 'personality:coach',
     };
 
     it('writes per-personality MEMORY.md to the personality subdirectory', async () => {
@@ -239,15 +242,13 @@ describe('MarkdownFileMemoryProvider', () => {
       expect(personalityFile).toContain('Reviewer-only fact.');
     });
 
-    it('per-personality writes never appear in the shared MEMORY.md', async () => {
+    it('per-personality writes never appear in another personality scope', async () => {
       await provider.sync(
         [{ action: 'add', key: 'MEMORY.md', content: 'Reviewer-only fact.' }],
         reviewerCtx,
       );
-      const sharedExists = await readFile(join(testDir, 'MEMORY.md'), 'utf-8').catch(() => null);
-      if (sharedExists !== null) {
-        expect(sharedExists).not.toContain('Reviewer-only fact.');
-      }
+      const coachEntry = await provider.read('MEMORY.md', coachCtx);
+      expect(coachEntry).toBeNull();
     });
 
     it('two per-personality scopes do not cross-contaminate', async () => {
@@ -275,60 +276,57 @@ describe('MarkdownFileMemoryProvider', () => {
       expect(operatorFile).not.toContain('Reviewer fact.');
     });
 
-    it('global-scope writes still go to the shared MEMORY.md', async () => {
-      await provider.sync(
-        [{ action: 'add', key: 'MEMORY.md', content: 'Coach observation.' }],
-        coachGlobalCtx,
-      );
-      const shared = await readFile(join(testDir, 'MEMORY.md'), 'utf-8');
-      expect(shared).toContain('Coach observation.');
-    });
-
-    it('per-personality prefetch reads only that personality plus shared USER.md', async () => {
+    it('per-personality prefetch reads only that personality scope', async () => {
       await provider.sync(
         [{ action: 'add', key: 'MEMORY.md', content: 'Reviewer-only fact.' }],
         reviewerCtx,
       );
-      await provider.sync(
-        [{ action: 'add', key: 'MEMORY.md', content: 'Global coach fact.' }],
-        coachGlobalCtx,
-      );
-      await writeFile(join(testDir, 'USER.md'), 'I prefer TypeScript.');
+      await provider.sync([{ action: 'add', key: 'MEMORY.md', content: 'Coach fact.' }], coachCtx);
 
       const result = await provider.prefetch(reviewerCtx);
       const all = result?.entries.map((e) => e.content).join('\n') ?? '';
       expect(all).toContain('Reviewer-only fact.');
-      expect(all).not.toContain('Global coach fact.');
-      expect(all).toContain('I prefer TypeScript.');
+      expect(all).not.toContain('Coach fact.');
     });
 
-    it('USER.md is shared even for per-personality scope (it describes the human)', async () => {
+    it('USER.md is scoped per-personality (lives in personality subdirectory)', async () => {
       await provider.sync(
         [{ action: 'add', key: 'USER.md', content: 'Senior engineer.' }],
         reviewerCtx,
       );
-      const sharedUser = await readFile(join(testDir, 'USER.md'), 'utf-8');
-      expect(sharedUser).toContain('Senior engineer.');
-      const isolatedUser = await readFile(
+      const personalityUser = await readFile(
         join(testDir, 'personalities', 'reviewer', 'USER.md'),
         'utf-8',
-      ).catch(() => null);
-      expect(isolatedUser).toBeNull();
+      );
+      expect(personalityUser).toContain('Senior engineer.');
+      // Should NOT be in the shared root
+      const sharedUser = await readFile(join(testDir, 'USER.md'), 'utf-8').catch(() => null);
+      expect(sharedUser).toBeNull();
     });
 
-    it('rejects unsafe personality ids by falling back to the shared root (no path traversal)', async () => {
+    it('rejects unsafe personality ids with an error (no path traversal)', async () => {
       const evilCtx: MemoryContext = {
         ...globalCtx,
         scopeId: 'personality:../etc/passwd',
       };
-      await provider.sync([{ action: 'add', key: 'MEMORY.md', content: 'Evil fact.' }], evilCtx);
+      await expect(
+        provider.sync([{ action: 'add', key: 'MEMORY.md', content: 'Evil fact.' }], evilCtx),
+      ).rejects.toThrow('unrecognised memory scope');
       const escaped = await readFile(
         join(testDir, '..', 'etc', 'passwd', 'MEMORY.md'),
         'utf-8',
       ).catch(() => null);
       expect(escaped).toBeNull();
-      const shared = await readFile(join(testDir, 'MEMORY.md'), 'utf-8');
-      expect(shared).toContain('Evil fact.');
+    });
+
+    it('unrecognised scope prefix throws', async () => {
+      const badCtx: MemoryContext = {
+        ...globalCtx,
+        scopeId: 'global',
+      };
+      await expect(
+        provider.sync([{ action: 'add', key: 'MEMORY.md', content: 'Bad.' }], badCtx),
+      ).rejects.toThrow('unrecognised memory scope');
     });
   });
 });

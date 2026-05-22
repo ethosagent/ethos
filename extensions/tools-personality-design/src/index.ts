@@ -181,7 +181,6 @@ interface ScaffoldPersonalityArgs {
     description?: string;
     model?: string;
     provider?: string;
-    memoryScope?: string;
     capabilities?: string;
     fs_reach_read?: string[];
     fs_reach_write?: string[];
@@ -210,7 +209,6 @@ function scaffoldPersonalityTool(storage: Storage, toolRegistry: ToolRegistry): 
             description: { type: 'string' },
             model: { type: 'string' },
             provider: { type: 'string' },
-            memoryScope: { type: 'string', enum: ['per-personality'] },
             capabilities: { type: 'string', description: 'Comma-separated capability labels' },
             fs_reach_read: { type: 'array', items: { type: 'string' } },
             fs_reach_write: { type: 'array', items: { type: 'string' } },
@@ -266,8 +264,6 @@ function scaffoldPersonalityTool(storage: Storage, toolRegistry: ToolRegistry): 
         configLines.push(`description: ${yamlScalar(args.config.description)}`);
       if (args.config.model) configLines.push(`model: ${yamlScalar(args.config.model)}`);
       if (args.config.provider) configLines.push(`provider: ${yamlScalar(args.config.provider)}`);
-      if (args.config.memoryScope)
-        configLines.push(`memoryScope: ${yamlScalar(args.config.memoryScope)}`);
       if (args.config.capabilities)
         configLines.push(`capabilities: ${yamlScalar(args.config.capabilities)}`);
       const configYaml = `${configLines.join('\n')}\n`;

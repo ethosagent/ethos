@@ -379,7 +379,6 @@ export class ClawMigrator {
       'name: Migrated',
       'description: Imported from OpenClaw SOUL.md by ethos claw migrate.',
       `model: ${plan.detected.config ? readModel(plan) : 'claude-opus-4-7'}`,
-      'memoryScope: global',
       'capabilities: imported',
     ].join('\n');
     const toolsetYaml = '# No toolset specified — inherits the LLM provider default.\n';

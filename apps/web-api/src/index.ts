@@ -7,8 +7,9 @@ import type { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { SkillsLibrary } from '@ethosagent/skills';
 import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
 import { McpJsonStore, type McpManager } from '@ethosagent/tools-mcp';
-import type { GlobalMemoryStore, SecretsResolver, SessionStore, Storage } from '@ethosagent/types';
+import type { MemoryProvider, SecretsResolver, SessionStore, Storage } from '@ethosagent/types';
 import type { SseEvent } from '@ethosagent/web-contracts';
+import type { IdentityMap } from '@ethosagent/wiring';
 import type { Hono } from 'hono';
 import type { ApiKeyAdminStore } from './middleware/bearer-auth';
 import { AllowlistRepository } from './repositories/allowlist.repository';
@@ -50,12 +51,12 @@ export interface CreateWebApiOptions {
   /** SQLite-backed session store, already initialised. Shared with ACP /
    *  gateway so the same DB rows back every surface. */
   sessionStore: SessionStore;
-  /** Direct read/write for the global memory entries (Memory + User
-   *  tabs). The agent loop owns the full MemoryProvider contract — the
-   *  web surface only needs the narrow editor capability, which is what
-   *  this option declares. Construct via `createMemoryProvider` from
-   *  `@ethosagent/wiring`; the returned value satisfies both halves. */
-  memoryProvider: GlobalMemoryStore;
+  /** Memory provider for scoped read/write. Construct via
+   *  `createMemoryProvider` from `@ethosagent/wiring`. */
+  memoryProvider: MemoryProvider;
+  /** Identity map for resolving platform users to opaque userIds.
+   *  Optional — when omitted, `memory.listUsers` returns empty. */
+  identityMap?: IdentityMap;
   /** Agent loop the chat surface drives. Must already be wired with tools,
    *  hooks, providers etc. (typically via `@ethosagent/wiring`). */
   agentLoop: AgentLoop;
@@ -190,7 +191,10 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const skillsService = new SkillsService({ library: skillsLibrary });
   const evolverService = new EvolverService({ evolver: evolverRepo, library: skillsLibrary });
   const meshService = new MeshService({ mesh });
-  const memoryService = new MemoryService({ memory: memoryProvider });
+  const memoryService = new MemoryService({
+    memory: memoryProvider,
+    identityMap: opts.identityMap,
+  });
   const kanbanService = new KanbanService();
   const apiKeysService = new ApiKeysService(opts.apiKeys ?? null);
   // Project-level plugins (`<cwd>/.ethos/plugins/`) are out of scope

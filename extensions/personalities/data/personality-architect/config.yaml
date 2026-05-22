@@ -1,6 +1,5 @@
 name: Personality Architect
 description: Designs focused AI specialist personalities for the Ethos framework
 model: claude-sonnet-4-6
-memoryScope: per-personality
 capabilities: personality-design
 fs_reach.write: ~/.ethos/personalities/

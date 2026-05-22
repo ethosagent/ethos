@@ -1429,6 +1429,7 @@ export { resolveModelTarget } from './model-resolver';
 // Ethos observability adapter
 // ---------------------------------------------------------------------------
 
+export { IdentityMap, type IdentityMapEntry, type IdentityMapOptions } from './identity-map';
 export {
   ETHOS_EVENT_CATEGORIES,
   ETHOS_TRACE_KINDS,

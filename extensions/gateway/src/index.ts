@@ -271,6 +271,12 @@ export interface GatewayConfig {
   attachmentCache?: AttachmentCache;
   /** Adapter lookup for agent-initiated outbound sends (send_message tool). */
   adapters?: Map<string, PlatformAdapter>;
+  /** Resolves (platform, platformUserId) -> internal userId for per-user profiles. */
+  resolveUserId?: (
+    platform: string,
+    platformUserId: string,
+    displayLabel?: string,
+  ) => Promise<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +392,9 @@ export class Gateway {
   private readonly attachmentCache: AttachmentCache | undefined;
   /** Adapter lookup for agent-initiated outbound sends (send_message tool). */
   private readonly adapterRegistry: Map<string, PlatformAdapter>;
+  private readonly resolveUserIdFn:
+    | ((platform: string, platformUserId: string, displayLabel?: string) => Promise<string>)
+    | undefined;
 
   constructor(config: GatewayConfig) {
     // The two construction shapes are mutually exclusive. Silent
@@ -454,6 +463,7 @@ export class Gateway {
     this.greetingProvider = config.greetingProvider;
     this.attachmentCache = config.attachmentCache;
     this.adapterRegistry = config.adapters ?? new Map();
+    this.resolveUserIdFn = config.resolveUserId;
 
     // Clarify sweep — fires on a single timer for all bots' bridges so a
     // multi-bot deployment doesn't pile up N timers. Each bridge owns its own
@@ -993,11 +1003,17 @@ export class Gateway {
           });
         }
 
+        const userId =
+          message.userId && this.resolveUserIdFn
+            ? await this.resolveUserIdFn(message.platform, message.userId, message.username)
+            : undefined;
+
         for await (const event of bot.loop.run(loopText, {
           sessionKey,
           personalityId,
           abortSignal: signal,
           attachments: message.attachments,
+          userId,
         })) {
           if (event.type === 'text_delta') responseText += event.text;
           if (event.type === 'usage') {

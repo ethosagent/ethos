@@ -28,13 +28,14 @@ describe('redaction boundary — tools-memory', () => {
   it('memory_read redacts credentials at the tool output boundary', async () => {
     const storage = new InMemoryStorage();
     const dir = '/ethos/test-redact';
-    await storage.mkdir(dir);
+    const scopeDir = `${dir}/personalities/test`;
+    await storage.mkdir(scopeDir);
     const key = `sk-ant-${'A'.repeat(93)}`;
-    await storage.write(`${dir}/MEMORY.md`, `Project key: ${key}\n`);
+    await storage.write(`${scopeDir}/MEMORY.md`, `Project key: ${key}\n`);
 
     const provider = new MarkdownFileMemoryProvider({ dir, storage });
     const tool = createMemoryReadTool(provider);
-    const ctx = makeCtx({ memoryScopeId: 'global' });
+    const ctx = makeCtx({ memoryScopeId: 'personality:test' });
 
     const result = await tool.execute({ store: 'memory' }, ctx);
     expect(result.ok).toBe(true);

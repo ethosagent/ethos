@@ -966,7 +966,7 @@ async function handleSlashCommand(
       const { ethosDir } = await import('../config');
       const mem = createMemoryProvider({ dataDir: ethosDir() });
       const result = await mem.prefetch({
-        scopeId: 'global',
+        scopeId: `personality:${state.personalityId}`,
         sessionId: '',
         sessionKey: state.sessionKey,
         platform: 'cli',
