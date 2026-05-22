@@ -4,7 +4,7 @@ description: "Comparison of Ethos to LangChain, CrewAI, AutoGen, OpenClaw, and H
 kind: explanation
 audience: shared
 slug: why-ethos
-updated: 2026-05-11
+updated: 2026-05-22
 ---
 
 Ethos makes different trade-offs than other agent frameworks. This page is the honest comparison.
@@ -129,9 +129,9 @@ Ethos stores LLM provider credentials as plain API keys in `~/.ethos/config.yaml
 
 **When this changes:** if a personality genuinely needs semantic recall over a large corpus, that is what `MemoryProvider` is for — implement a vector-backed provider for that personality. The default stays markdown.
 
-### Five personalities, not one super-agent
+### Three focused personalities, not one super-agent
 
-Ethos ships five built-in personalities (researcher, engineer, reviewer, coach, operator) rather than one configurable super-agent.
+Ethos ships three user-facing built-in personalities (researcher, engineer, reviewer) rather than one configurable super-agent.
 
 **Why:** an agent good at everything is good at nothing. A reviewer should not have write access; an engineer should not be told to be encouraging when a design is wrong; a researcher should not be asked to ship code. Different roles want different tools, different memory, different voice. Forcing them into one configuration vector produces blandness.
 

@@ -4,7 +4,7 @@ description: "FilePersonalityRegistry — disk-backed personality loader with mt
 kind: reference
 audience: developer
 slug: personality-registry
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
 `FilePersonalityRegistry` is the disk-backed loader for [personalities](../../getting-started/glossary.md#personality). It walks one or more directories of `<id>/{SOUL.md, config.yaml, toolset.yaml}` triples, parses them into `PersonalityConfig` values, and caches based on file mtimes so `loadFromDirectory` is cheap to call every turn for hot-reload.
@@ -171,4 +171,4 @@ Sub-millisecond resolution makes two writes within the same tick vanishingly unl
 - [Personality config reference](../../using/reference/personality-yaml.md) — every `config.yaml` field.
 - [Storage interface](./storage-interface.md) — backs the registry; tests swap `FsStorage` for `InMemoryStorage`.
 - [Glossary: Personality](../../getting-started/glossary.md#personality) — one-line definition shared across every page that names the construct.
-- [Glossary: Built-in personality](../../getting-started/glossary.md#built-in-personality) — the five shipped personalities the registry seeds.
+- [Glossary: Built-in personality](../../getting-started/glossary.md#built-in-personality) — the three user-facing shipped personalities (plus system personalities) the registry seeds.

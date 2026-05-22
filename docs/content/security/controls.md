@@ -4,7 +4,7 @@ description: Catalogue of shipped, partial, and planned security controls — ch
 kind: reference
 audience: shared
 slug: security-controls
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
 Most controls on this page are shipped — code in `packages/` and `extensions/`, tests next to it, audit trail in `observability.db`. A small number are **partial** or **planned** with a designed interface but the enforcement not yet wired; those are tagged inline so customers can plan around them.
@@ -217,6 +217,19 @@ After a read from an untrusted source flags the classifier, a configurable subse
 - Audit category: `audit.injection_flag`
 - Per-personality knob: `safety.injectionDefense` — `strict` | `balanced` | `off`. Default is `balanced`.
 
+### Memory injection scanning {#memory-injection-scanning}
+
+*Status: Shipped.*
+
+Memory content — `MEMORY.md`, `USER.md`, and team topic files — is sanitized through the same injection-pattern catalog used for context files. Any line matching patterns like "ignore previous instructions", `[SYSTEM]`, or role-override phrases is replaced with `[line removed by injection guard]`.
+
+Memory is a higher-risk surface than context files. A single poisoned line in MEMORY.md re-injects into the system prompt on every subsequent turn and every future session — the attack persists across restarts. A poisoned `USER.md` is worse: it crosses [personality](../getting-started/glossary.md#personality) boundaries, so every personality the user interacts with sees the injected content.
+
+The scan runs at two points: on write (in the memory tools, before `sync()` persists the update) and on read as a backstop (before the system prompt is assembled in AgentLoop Step 5). The write-time scan is the primary defense; the read-time scan catches content that was written before the scanning was deployed or was edited manually on disk.
+
+- Source: `packages/safety/injection/src/`
+- Audit category: `audit.injection_flag`
+
 ## Watcher (independent observer) {#watcher}
 
 *Status: Shipped.*
@@ -297,6 +310,16 @@ Every safety decision lands in `observability.db` as a typed event. The schema i
 The store uses STRICT mode SQLite, WAL, and FTS5. Retention is configurable per category. Policy snapshots let you reconstruct "what was the personality's network policy at the time the agent fetched this URL" — useful when investigating an incident.
 
 - Source: `extensions/observability-sqlite/src/store.ts`, `extensions/observability-sqlite/src/service.ts`
+
+## Cron output path containment {#cron-output-path-containment}
+
+*Status: Shipped.*
+
+`CronScheduler.readRunOutput()` enforces containment — only paths within the scheduler's `outputDir` are readable. Paths containing `..` or pointing outside the output directory throw. This prevents a caller from using the cron output reader as a general-purpose file read primitive to escape the scheduler's intended sandbox.
+
+## Removed empty safety stubs {#removed-empty-safety-stubs}
+
+`extensions/safety-injection/` and `extensions/safety-scanner/` were empty stub directories that shipped no code. They have been removed. The real injection defense and install scanner implementations live at `packages/safety/injection/` and `packages/safety/scanner/` respectively — the source paths listed throughout this page.
 
 ## Per-personality vs. global {#per-personality-vs-global}
 

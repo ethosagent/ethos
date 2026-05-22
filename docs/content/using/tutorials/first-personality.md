@@ -1,14 +1,14 @@
 ---
 title: "Create your first personality"
-description: "Build a strategist personality end to end: SOUL.md identity, config.yaml fields, toolset.yaml allowlist, hot-reload, and a memory-scope demo."
+description: "Build a strategist personality end to end: SOUL.md identity, config.yaml fields, toolset.yaml allowlist, hot-reload, and a per-personality memory demo."
 kind: tutorial
 audience: user
 slug: first-personality
 time: "20 min"
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
-The five built-in personalities cover the common roles. This tutorial builds a sixth — a `strategist` for long-horizon planning — and uses it to prove the four things personalities atomically change: prompt, tools, model, memory scope. Plus hot-reload, so you can edit identity prose while chat is running.
+The three user-facing built-in personalities cover the common roles. This tutorial builds a fourth — a `strategist` for long-horizon planning — and uses it to prove the things personalities atomically change: prompt, tools, and model. Plus hot-reload and per-personality memory isolation, so you can edit identity prose while chat is running and verify that each personality keeps its own context.
 
 ## Goal
 
@@ -17,7 +17,7 @@ By the end, you have:
 - A working personality at `~/.ethos/personalities/strategist/` with `SOUL.md`, `config.yaml`, and `toolset.yaml`.
 - A live `ethos chat` session running as that personality with the tools you listed and the voice you wrote.
 - Watched the registry hot-reload your edits to `SOUL.md` between turns without a restart.
-- Verified `memoryScope: per-personality` isolates this personality's memory from the global `MEMORY.md`.
+- Verified that per-personality memory keeps the strategist's `MEMORY.md` separate from every other personality's.
 - A reusable starting template — `ethos personality duplicate` — for the next personality you build.
 
 The personality you build is small on purpose. The point of the tutorial is the contract, not the role: every dimension you set here is enforceable by the framework, not aspirational in the prompt.
@@ -44,7 +44,7 @@ Confirm where the registry will look:
 ls ~/.ethos/personalities/
 ```
 
-You should see `strategist/`. The five built-ins are not listed here — they ship inside the CLI package at `extensions/personalities/data/`. Both directories merge into one list at runtime; user files override builtins on the same id. If you name your directory `researcher`, your version wins over the bundled one — useful for taking a built-in and editing it in place.
+You should see `strategist/`. The three user-facing built-ins are not listed here — they ship inside the CLI package at `extensions/personalities/data/`. Both directories merge into one list at runtime; user files override builtins on the same id. If you name your directory `researcher`, your version wins over the bundled one — useful for taking a built-in and editing it in place.
 
 ## 2. Write `SOUL.md` — the identity
 
@@ -89,7 +89,6 @@ cat > ~/.ethos/personalities/strategist/config.yaml <<'EOF'
 name: Strategist
 description: Long-horizon planning and prioritisation advisor.
 model: claude-opus-4-7
-memoryScope: per-personality
 capabilities: planning, prioritisation, decision-support
 EOF
 ```
@@ -99,8 +98,9 @@ What each field does:
 - **`name`** — human label printed in pickers and `/personality list`. Pick something readable.
 - **`description`** — one-line role summary. Shown in `/personality list` and the `--help` output for `ethos personality`.
 - **`model`** — overrides the global default model for this personality only. Opus is a deliberate choice for strategy work; Sonnet would be faster and cheaper at the cost of depth. The full provider/model pairing is in [config.yaml](../reference/config-yaml.md).
-- **`memoryScope`** — `global` (default) reads and writes the shared `~/.ethos/MEMORY.md` and `USER.md`. `per-personality` confines reads and writes to `~/.ethos/personalities/strategist/`. We pick `per-personality` so the strategist keeps its own running context separate from your engineering notes.
 - **`capabilities`** — free-form tags consumed by the skill ingestion filter and the personality picker. Tags do not change behaviour by themselves; they are routing hints.
+
+Memory is always per-personality — each personality reads and writes its own `MEMORY.md` at `~/.ethos/personalities/<id>/MEMORY.md`. No configuration field is needed.
 
 For the full field list, including `provider`, `streamingTimeoutMs`, `fs_reach`, `mcp_servers`, `plugins`, `budgetCapUsd`, `context_layering`, `skill_evolution`, and the nested `safety` block, see [Personality config reference](../reference/personality-yaml.md).
 
@@ -135,7 +135,7 @@ What each grants:
 | `web_extract` | Fetch a URL and return its main-text content. |
 | `read_file` | Read a file under the personality's [fs_reach](../../getting-started/glossary.md#fs-reach). |
 | `search_files` | Grep across files under fs_reach. |
-| `memory_read` | Read this personality's memory files (since `memoryScope: per-personality`). |
+| `memory_read` | Read this personality's memory files (`MEMORY.md` and `USER.md`). |
 | `memory_write` | Append, replace, or remove lines in those memory files. |
 | `session_search` | FTS5-search prior sessions for relevant context. |
 
@@ -222,11 +222,11 @@ Practical use cases for hot-reload:
 - Restrict the toolset after the fact. Remove `web_search` from `toolset.yaml`, save, send a follow-up — the agent now has no web access.
 - Swap the model on suspicion of an issue. Edit `model:`, send a probe, decide whether the regression is the model or the prompt.
 
-## 7. Prove `memoryScope: per-personality` isolates memory
+## 7. Prove per-personality memory isolation
 
-[Memory](../../getting-started/glossary.md#memory) and sessions are different layers. Sessions are the per-conversation log in SQLite, keyed by `cli:<cwd-basename>`. Memory is two markdown files (`~/.ethos/MEMORY.md` and `~/.ethos/USER.md`) that the agent reads at the start of every session and updates after every turn.
+[Memory](../../getting-started/glossary.md#memory) and sessions are different layers. Sessions are the per-conversation log in SQLite, keyed by `cli:<cwd-basename>`. Memory is two markdown files — `MEMORY.md` (per-personality at `~/.ethos/personalities/<id>/MEMORY.md`) and `USER.md` (per-user at `~/.ethos/users/<userId>/USER.md`) — that the agent reads at the start of every session and updates after every turn.
 
-When `memoryScope` is `global` (the default for `researcher` and `engineer`), the agent reads and writes the user-default files. When `memoryScope` is `per-personality` (what we set), reads and writes redirect to `~/.ethos/personalities/strategist/MEMORY.md` and `USER.md`.
+Every personality has its own `MEMORY.md`. The strategist's memory lives at `~/.ethos/personalities/strategist/MEMORY.md` and the researcher's at `~/.ethos/personalities/researcher/MEMORY.md`. They never share a file.
 
 Watch it happen.
 
@@ -236,27 +236,27 @@ First, ask the strategist to record something memorable:
 You > remember that i prefer quarterly horizons over annual ones.
 ```
 
-The agent confirms, and (under the hood) `MarkdownFileMemoryProvider.sync` appends a line to the strategist's per-personality memory file. Verify it:
+The agent confirms, and (under the hood) `MarkdownFileMemoryProvider.sync` appends a line to the strategist's memory file. Verify it:
 
 ```bash
 cat ~/.ethos/personalities/strategist/MEMORY.md
 ```
 
-You should see the new line. Now switch to a global-scoped personality and ask:
+You should see the new line. Now switch to the researcher and ask:
 
 ```
 /personality researcher
 You > what do you remember about my planning horizon preference?
 ```
 
-The researcher does not see it. Its memory provider reads `~/.ethos/MEMORY.md`, which the strategist never touched. Switch back:
+The researcher does not see it. Its memory provider reads `~/.ethos/personalities/researcher/MEMORY.md` — a different file entirely. Switch back:
 
 ```
 /personality strategist
 You > what was my planning horizon preference?
 ```
 
-The strategist remembers — its memory is its own. That isolation is the contract: per-personality memory scope is the gate, the markdown file path is the mechanism.
+The strategist remembers — its memory is its own. Each personality's `MEMORY.md` lives in its own directory, and that isolation is automatic.
 
 A few practical notes:
 
@@ -301,7 +301,8 @@ The cap is session-scoped — `/new` starts a fresh count. If you want a daily o
 Output:
 
 ```
-Built-ins: researcher · engineer · reviewer · coach · operator
+Built-ins: researcher · engineer · reviewer
+System:    personality-architect · team-architect
 User personalities: ~/.ethos/personalities/<id>/
 ```
 
@@ -335,7 +336,7 @@ Common duplicate-and-customise patterns:
 
 - `researcher-domain` — restrict `fs_reach` to one project tree, tighten `web_search` to a domain allowlist via the `safety.network.allow` block.
 - `engineer-paired` — flip `safety.approvalMode` to `smart` so the agent confirms destructive tool calls before running them.
-- `coach-language` — start from `coach`, change the language directives in `SOUL.md`, keep the read-heavy toolset.
+- `reviewer-strict` — start from `reviewer`, remove every write tool, narrow `fs_reach.write` to nothing.
 
 The full safety block lives in [Personality config reference](../reference/personality-yaml.md#safety).
 
@@ -377,17 +378,16 @@ Once you have one custom personality working, the second is faster. A few shapes
 
 - **A read-only reviewer.** Start with `reviewer`, duplicate to `reviewer-strict`, remove every write tool, set `safety.approvalMode: manual`, narrow `fs_reach.write` to nothing. The agent can read and reason but cannot edit.
 - **A project-bound engineer.** Duplicate `engineer` to `engineer-<project>`, set `fs_reach.read` and `.write` to that project's tree, attach a project-specific `safety.network.allow` list. The agent cannot accidentally touch unrelated code.
-- **A coach with extra patience.** Duplicate `coach`, lift `streamingTimeoutMs` to allow long thinking, increase `budgetCapUsd` if you expect verbose answers. The voice stays the same; the technical envelope expands.
 - **A specialist that takes orders from a supervisor.** Build the specialist with a tight toolset and a minimal `SOUL.md`, then reference it from a mesh manifest (see [Teams and meshes](../../building/explanation/teams-and-meshes.md)). The specialist is callable from a coordinator personality.
 
-There is no rule that says you must use all five built-ins. Many teams end up with two custom personalities — a researcher-style one for exploration and an engineer-style one for execution — and use the rest as references. Start narrow; broaden when you feel the friction of a missing role.
+There is no rule that says you must use all three user-facing built-ins. Many teams end up with two custom personalities — a researcher-style one for exploration and an engineer-style one for execution — and use the rest as references. Two system personalities (personality-architect, team-architect) are also available for meta-level tasks. Start narrow; broaden when you feel the friction of a missing role.
 
 ## What you learned
 
 - A personality is three files at `~/.ethos/personalities/<id>/`: identity (`SOUL.md`), wiring (`config.yaml`), allowlist (`toolset.yaml`).
 - `config.yaml` is flat YAML; the parser ignores unknown keys. The full field list is in the [Personality config reference](../reference/personality-yaml.md).
 - The registry hot-reloads on file mtime — edit any file, send the next turn, the change is live.
-- `memoryScope: per-personality` redirects memory reads and writes into the personality's directory, isolating its running context from global memory and from every other personality.
+- Memory is always per-personality — each personality reads and writes its own `MEMORY.md` automatically.
 - `budgetCapUsd` caps the per-session spend and refuses the next turn when crossed; `/budget reset` releases the counter.
 - `ethos personality duplicate <src> <dst>` is the cheap way to start a new personality from a working one.
 

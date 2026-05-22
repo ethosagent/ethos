@@ -4,7 +4,7 @@ description: "Configure two or more Telegram bots in one Ethos gateway, each bou
 kind: how-to
 audience: user
 time: "10 min"
-updated: 2026-05-17
+updated: 2026-05-22
 ---
 
 ## Task
@@ -23,7 +23,7 @@ For the cross-platform overview (Telegram + Slack in one process), see [Run mult
 
 - `ethos chat` works locally with a configured LLM provider.
 - Two (or more) bot tokens, one per bot — get each from `@BotFather` using `/newbot`.
-- The personalities you want to bind already exist. Built-ins (`researcher`, `engineer`, `reviewer`, `coach`, `operator`) are available without any setup. Custom personalities live under `~/.ethos/personalities/<id>/`.
+- The personalities you want to bind already exist. Built-ins (`researcher`, `engineer`, `reviewer`) are available without any setup. Custom personalities live under `~/.ethos/personalities/<id>/`.
 
 ## Steps
 

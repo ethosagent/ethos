@@ -4,7 +4,7 @@ description: "The Ethos CLI surface: ethos chat, slash commands, single-shot que
 kind: reference
 audience: shared
 slug: platform-cli
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
 The `ethos` binary is the default surface. It launches an interactive [agent](../getting-started/glossary.md#agent-loop) chat, streams [agent events](../getting-started/glossary.md#agent-event) to the terminal, persists conversation history in SQLite, and accepts slash commands for switching [personality](../getting-started/glossary.md#personality), inspecting [memory](../getting-started/glossary.md#memory-provider), and resetting state.
@@ -100,7 +100,7 @@ Available inside `ethos chat`. Source: `apps/ethos/src/commands/chat.ts`.
 | `/help` | Print the slash command reference. |
 | `/new` (alias `/reset`) | Start a fresh session (appends a timestamp to the session key). Also resets the session budget counter. |
 | `/personality` | Show the active personality. |
-| `/personality list` | Print the built-in roster: `researcher`, `engineer`, `reviewer`, `coach`, `operator`. |
+| `/personality list` | Print the built-in roster: `researcher`, `engineer`, `reviewer`. |
 | `/personality <id>` | Switch personality for the rest of the session. User personalities live in `~/.ethos/personalities/<id>/`. |
 | `/model <name>` | Show or change the model for this session. Changes take effect on the next restart; persist with `ethos set model <name>`. |
 | `/memory` | Print `~/.ethos/MEMORY.md` plus `USER.md` (with a truncated marker if oversized). |

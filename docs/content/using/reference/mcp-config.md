@@ -4,7 +4,7 @@ description: "Field-by-field reference for ~/.ethos/mcp.json: transports, OAuth,
 kind: reference
 audience: user
 slug: mcp-config
-updated: 2026-05-19
+updated: 2026-05-22
 ---
 
 ## Synopsis {#synopsis}
@@ -37,7 +37,35 @@ Reload semantics: configuring a server here makes it **available**; it does not 
 
 ## Adding servers from the UI {#ui-flow}
 
-The web UI offers a guided flow for OAuth-protected MCP servers: **Plugins → MCP Servers tab → Add MCP**. The modal handles OAuth discovery, dynamic client registration, and token storage automatically. Servers added through the UI are written to the same `~/.ethos/mcp.json` and are fully compatible with the CLI commands below.
+The web UI offers a guided flow for OAuth-protected MCP servers: **Plugins → MCP Servers tab → Add MCP**. Before the OAuth redirect, the UI requires selecting a [personality](../../getting-started/glossary.md#personality) from the personality dropdown — tokens are stored per-personality, not globally. The modal handles OAuth discovery, dynamic client registration, and token storage automatically. Servers added through the UI are written to the same `~/.ethos/mcp.json` and are fully compatible with the CLI commands below.
+
+## CLI workflow {#cli-workflow}
+
+The CLI splits MCP setup into two steps: **define** the server, then **authenticate** per-personality.
+
+### 1. Register the server {#register-server}
+
+```bash
+ethos mcp add --url https://mcp.linear.app
+```
+
+This writes an entry to `~/.ethos/mcp.json` (with OAuth discovery, OSV scan, etc.) but stores **no token**. The server is now available to any personality that lists it in `mcp_servers:`, but unauthenticated calls will fail until a token is acquired.
+
+### 2. Acquire a per-personality token {#acquire-token}
+
+```bash
+ethos mcp login linear --personality engineer
+```
+
+This runs the PKCE flow (opening a browser for OAuth servers) and stores the resulting token at the per-personality path: `~/.ethos/personalities/engineer/mcp/linear/access_token`. Each personality that needs access must run `login` separately — tokens are never shared across personalities.
+
+To revoke:
+
+```bash
+ethos mcp logout linear --personality engineer
+```
+
+This calls the revocation endpoint (if configured) and removes the stored token files.
 
 ## Server entry {#server-entry}
 
@@ -100,13 +128,15 @@ Servers that require an authorization flow declare an `auth` block. Ethos walks 
 | `scopes` | string[] | `[]` | no | Scopes to request at authorize time. |
 | `revocation_endpoint` | string | — | no | RFC 7009 revocation endpoint. Used when the operator runs `ethos mcp logout <name>`. |
 
-Token storage paths (under `~/.ethos/secrets/`, owner-only 0600):
+Token storage paths (per-personality, owner-only 0600):
 
-| Ref | Contents |
+| Path | Contents |
 |---|---|
-| `mcp/<name>/access_token` | Current bearer token |
-| `mcp/<name>/refresh_token` | Refresh credential (when issued) |
-| `mcp/<name>/expires_at` | RFC 3339 expiry timestamp |
+| `~/.ethos/personalities/<id>/mcp/<name>/access_token` | Current bearer token |
+| `~/.ethos/personalities/<id>/mcp/<name>/refresh_token` | Refresh credential (when issued) |
+| `~/.ethos/personalities/<id>/mcp/<name>/expires_at` | RFC 3339 expiry timestamp |
+
+Tokens are scoped to each personality. Two personalities using the same MCP server hold independent tokens — revoking one does not affect the other.
 
 Source of truth: [`oauth.ts`](https://github.com/MiteshSharma/ethos/blob/main/extensions/tools-mcp/src/oauth.ts).
 
@@ -268,7 +298,7 @@ Stored once with `ethos secrets set stripe/api_key sk_live_…`. The header valu
 }
 ```
 
-First connect opens a browser for the PKCE flow. Tokens land at `~/.ethos/secrets/mcp/linear/{access_token,refresh_token,expires_at}` and refresh silently thereafter.
+First connect opens a browser for the PKCE flow. Tokens land at `~/.ethos/personalities/<id>/mcp/linear/{access_token,refresh_token,expires_at}` (where `<id>` is the personality that ran `ethos mcp login`) and refresh silently thereafter.
 
 ## Common errors {#errors}
 
@@ -277,13 +307,14 @@ First connect opens a browser for the PKCE flow. Tokens land at `~/.ethos/secret
 | `Cannot find package '@modelcontextprotocol/sdk'` | Workspace dep missing | `pnpm install` from repo root |
 | Server listed but tools missing | Server failed to start | Check `~/.ethos/logs/mcp/<name>.log` |
 | `0 of N server(s) attached to "<personality>"` | Personality has no `mcp_servers` allowlist | `ethos personality mcp <id> --attach <name>` |
-| HTTP server returns 401 on every call | Token expired or wrong | Re-issue and update the secret with `ethos secrets set`; for OAuth, run `ethos mcp logout <name>` and reconnect |
+| HTTP server returns 401 on every call | Token expired or wrong | Re-issue and update the secret with `ethos secrets set`; for OAuth, run `ethos mcp logout <name> --personality <id>` and reconnect |
 | Server can't read `~/.ssh` or `~/.aws` | Sandboxed env strips the operator's `HOME` | This is intentional. If the server legitimately needs a file, copy it into `~/.ethos/mcp-runtime/<name>/` or pass the path via an env var listed in `mcpEnvPassthrough` |
 | Credential env var "missing" inside the server | Credential-pattern strip removed it | Add the var name to `mcpEnvPassthrough` |
 | Tool name `mcp__<a>__<tool>` resolves but personality can't call it | Personality's `toolset.yaml` lacks the entry | Add `- mcp__<a>__<tool>` to the personality's toolset, OR omit the per-tool list to inherit everything the server exposes |
 
 ## See also {#see-also}
 
+- [Set up MCP for a personality](../how-to/set-up-mcp-for-a-personality.md) — step-by-step walkthrough of the two-step CLI flow and the web OAuth path.
 - [Use Ethos as an MCP server](../how-to/use-as-mcp-server.md) — the inverse: serving personalities to Claude Desktop, Cursor, Continue, Zed.
 - [`native-mcp`](https://github.com/MiteshSharma/ethos/blob/main/extensions/skills-coding/data/native-mcp/SKILL.md) — bundled skill that wraps the operator workflow.
 - [Config field reference](config-yaml.md) — `~/.ethos/config.yaml` and the `${secrets:<ref>}` pattern.

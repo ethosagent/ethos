@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: migrate-from-openclaw
 time: "5 min"
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
 ## Task
@@ -100,7 +100,7 @@ If the OpenClaw config used a provider name Ethos does not recognise (the catalo
 ```bash
 ethos claw migrate --dry-run   # should report "Nothing to migrate."
 ethos skills list              # OpenClaw skills appear under the "ethos" source
-ethos personality list         # "migrated" appears alongside the five built-ins
+ethos personality list         # "migrated" appears alongside the built-ins
 ethos doctor                   # provider and key validate
 ```
 

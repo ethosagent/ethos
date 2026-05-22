@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: set-up-approval-gates
 time: 10 min
-updated: 2026-05-17
+updated: 2026-05-22
 ---
 
 Some tool calls write files, run shell commands, or hit the network. You do not want them firing unsupervised. Approval gates make the agent pause and ask before the dangerous call runs — or refuse it outright.
@@ -141,6 +141,6 @@ Neither adapter implements `ApprovalCapableAdapter` yet. A `dangerous` call from
 ## See also
 
 - [Personality config reference](../reference/personality-yaml.md) — every field on `safety:` and the rest of `config.yaml`.
-- [What are the built-in personalities, and why these five?](../explanation/built-in-personalities.md) — how `operator` ships with `approvalMode: manual` by default.
+- [What are the built-in personalities, and why these three?](../explanation/built-in-personalities.md) — how the built-ins handle approval modes by default.
 - [Security overview](../../security/overview.md) — where approval gates sit in the trust model.
 - [Slash commands reference](../reference/slash-commands.md) — `/personality` to switch the active role mid-conversation.

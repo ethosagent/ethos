@@ -4,7 +4,7 @@ description: "A personality is a structural component — a directory that binds
 kind: explanation
 audience: developer
 slug: personality-as-architecture
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
 ## Context
@@ -62,19 +62,19 @@ Three things you cannot get from a prompt string.
 
 **Legibility.** A personality is plain text. You can `cat SOUL.md`, `grep` your toolsets, `diff` two versions, and commit the directory to a repo. The reviewer your team uses for code review is in source control next to the code it reviews. Memory you cannot read is memory you cannot trust; the same logic applies to identity. The `FilePersonalityRegistry` at `extensions/personalities/src/index.ts` is one implementation of the `PersonalityRegistry` interface; a remote registry, a database-backed one, or a hot-reloading network share are straight ports of the contract.
 
-### The five built-ins are not five prompt presets
+### The three user-facing built-ins are not three prompt presets
 
-Ethos ships five [built-in personalities](../../getting-started/glossary.md#built-in-personality) at `extensions/personalities/data/`: `researcher`, `engineer`, `reviewer`, `coach`, `operator`. They are not five voices on top of one agent. Each has its own toolset, its own memory scope, and a model assignment that suits its work.
+Ethos ships three user-facing [built-in personalities](../../getting-started/glossary.md#built-in-personality) at `extensions/personalities/data/`: `researcher`, `engineer`, `reviewer`. They are not three voices on top of one agent. Each has its own toolset, its own memory scope, and a model assignment that suits its work.
 
 | Personality | What its `toolset.yaml` allows | `memoryScope` |
 |---|---|---|
 | `researcher` | Read, search, web, citations | `global` |
 | `engineer` | Read, write, run, test | `global` |
 | `reviewer` | Read-only | `per-personality` |
-| `coach` | Read, search | `global` |
-| `operator` | Process, network, terminal | `per-personality` |
 
-The `reviewer` is `per-personality` on purpose: opinions about what was reviewed should not leak into what gets built. The `operator` is `per-personality` because operational state ("we paged at 03:00") should not bleed into a casual `coach` session. The other three share `global` memory because their work composes — a researcher gathering primary sources hands context to an engineer who acts on it.
+The `reviewer` is `per-personality` on purpose: opinions about what was reviewed should not leak into what gets built. The other two share `global` memory because their work composes — a researcher gathering primary sources hands context to an engineer who acts on it.
+
+Two system personalities — `personality-architect` and `team-architect` — are also available for building and managing other personalities. They appear in the web UI under a "System" divider.
 
 If you set out to replicate this with prompt strings, you would write five prompts, document the convention of "only use these tools when prompt X is active", and hope every caller honoured it. The structural form makes the convention impossible to violate.
 
@@ -174,7 +174,7 @@ You can hand-edit it. `SOUL.md` is markdown. `config.yaml` is `key: value` YAML.
 
 A globally configured MCP server in `~/.ethos/mcp.json` is invisible to a personality unless that personality's `mcp_servers` list names it. An installed plugin from `extensions/plugin-loader` is dormant for a personality unless the personality's `plugins` list opts in.
 
-This is a deliberate inversion of the "if it's installed, the agent can use it" default in most frameworks. The personality is the gate. A user who installs a database MCP server does not implicitly hand database access to every personality; the `engineer` declares `mcp_servers: [postgres]` to opt in, and the `coach` simply does not. Same machine, same installed servers, different reach per role.
+This is a deliberate inversion of the "if it's installed, the agent can use it" default in most frameworks. The personality is the gate. A user who installs a database MCP server does not implicitly hand database access to every personality; the `engineer` declares `mcp_servers: [postgres]` to opt in, and the `researcher` simply does not. Same machine, same installed servers, different reach per role.
 
 The mechanism is the same registry filter that gates tools. `DefaultToolRegistry.toDefinitions(allowedTools, { allowedMcpServers, allowedPlugins })` builds the per-turn tool list from three allowlists in one pass. The LLM never sees an MCP tool from an unauthorised server; `executeParallel` rejects calls outside the allowlist with `code: 'not_available'`.
 
@@ -187,7 +187,7 @@ Some boundaries are *not* personality-scoped, on purpose. Switching personalitie
 - The current [session](../../getting-started/glossary.md#session) and its history. The thread continues; the next message reaches a different role.
 - `USER.md`. Who you are is a person fact, not a role fact.
 - LLM credentials. Personalities pick a model; the keys live in `~/.ethos/config.yaml`.
-- The CLI surface and channel adapters. Telegram and Discord do not reload when you `/personality coach`.
+- The CLI surface and channel adapters. Telegram and Discord do not reload when you `/personality researcher`.
 
 The personality controls "what the agent does and says". The boundary it does not control is "who you are and where you are". Those distinctions keep the user in continuous control of the session while the role shifts beneath them.
 
@@ -221,7 +221,7 @@ Ethos's claim is that *all four* dimensions move together, every time, and that 
 
 ## Trade-offs
 
-**You give up the one-super-agent mental model.** Every distinct role is a directory you commit to. Five roles is five directories, fifteen files. The alternative — one agent with a `mode` field and per-mode tool filters — was rejected because the resulting code path branches on the mode flag and the boundaries leak.
+**You give up the one-super-agent mental model.** Every distinct role is a directory you commit to. Three user-facing roles is three directories, nine files. The alternative — one agent with a `mode` field and per-mode tool filters — was rejected because the resulting code path branches on the mode flag and the boundaries leak.
 
 **You commit to a small schema.** `PersonalityConfig` is frozen. If you want a new top-level field, you do the work of justifying why it is not a [skill](../../getting-started/glossary.md#skill), not a channel-adapter config, and not a per-tool option. The friction is the feature; without it the schema would have grown to the same god-object shape every other framework's persona config eventually does.
 
@@ -237,7 +237,7 @@ Alternatives considered:
 - Personality as a function in code. Rejected: defeats hot reload, defeats version control of identity, defeats the "team shares a reviewer" workflow.
 - Personality as a database row. Rejected: not readable, not greppable, requires a migration to add a field, no `diff` story.
 - Tool access as a separate file unrelated to the personality. Rejected: the atomic-swap property is the headline. Joining tool access to the personality at the directory level keeps the four dimensions visibly coupled; splitting them invites drift where a personality "is" a reviewer but "can" write.
-- Personality overlays / inheritance. Rejected as overengineering for v1. Five built-ins, duplicate-and-edit, is enough; overlays add a layer that obscures what a personality actually is.
+- Personality overlays / inheritance. Rejected as overengineering for v1. Three user-facing built-ins, duplicate-and-edit, is enough; overlays add a layer that obscures what a personality actually is.
 
 ## Recommended reading order
 

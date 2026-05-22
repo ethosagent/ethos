@@ -4,7 +4,7 @@ description: "Ethos is a TypeScript agent framework where personality is archite
 kind: explanation
 audience: shared
 slug: /
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
 **[Personalities](getting-started/glossary.md#personality) aren't hats you swap in the prompt. They're enforced boundaries.** A personality in Ethos is a directory of files — `SOUL.md`, `config.yaml`, `toolset.yaml` — that the runtime treats as a structural component. Switching it changes prompt, tools, memory, and model atomically. The boundary is enforced at the [tool registry](getting-started/glossary.md#tool), not requested in the prompt.
@@ -16,7 +16,9 @@ That single decision pays off four ways:
 - **Safe plugins.** Every [tool](getting-started/glossary.md#tool) declares what it reads, what it writes, and what network it touches. The runtime enforces those declarations per call. Granting an unfamiliar plugin to a personality is bounded by what its toolset already allows.
 - **Teams, not just agents.** A coordinator personality decomposes one request into specialist tasks; the [team](getting-started/glossary.md#team) executes them against a durable kanban board with a full audit trail. Same primitives — personality, toolset, session — composed.
 
-Five personalities ship by default. Your existing Claude Code, OpenClaw, OpenCode, and Hermes [skill](getting-started/glossary.md#skill) libraries run as-is, filtered to the right specialist per personality.
+Three personalities ship by default for everyday use. Two system personalities — personality-architect and team-architect — are available for building and managing agents. Your existing Claude Code, OpenClaw, OpenCode, and Hermes [skill](getting-started/glossary.md#skill) libraries run as-is, filtered to the right specialist per personality.
+
+<img src="/img/ethos-gemini.png" alt="Ethos — personality as architecture" style={{ width: '100%', marginBottom: '2rem' }} />
 
 ## Two doors
 

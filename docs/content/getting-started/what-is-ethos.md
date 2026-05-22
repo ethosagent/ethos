@@ -4,7 +4,7 @@ description: "Ethos is a TypeScript agent framework where personality is archite
 kind: explanation
 audience: shared
 slug: what-is-ethos
-updated: 2026-05-21
+updated: 2026-05-22
 ---
 
 **Ethos is a TypeScript framework where [personality](glossary.md#personality) is the unit of architecture.** Not a system prompt string. A directory of files that, when switched, atomically changes the agent's prompt, tool access, memory scope, and model.
@@ -48,6 +48,9 @@ Plus:
 - Persistent sessions in SQLite, scoped per working directory.
 - Plain-text memory files (`MEMORY.md`, `USER.md`) you can read, grep, edit, and commit.
 - A skill discovery layer that picks up your existing libraries from Claude Code, OpenClaw, OpenCode, and Hermes — no porting.
+- Scheduled tasks via a single `cron` tool — daily briefings, weekly reports, recurring prompts that fire on a cron schedule.
+- Teams that decompose multi-part requests into specialist tasks on a durable kanban board with an audit trail.
+- A web dashboard (`ethos serve --web`) for managing personalities, memory, cron jobs, and MCP servers from the browser.
 
 ## What Ethos is *not*
 
