@@ -1,4 +1,5 @@
 import { applyTemporalDecay, parseTemporalBound } from '@ethosagent/core';
+import { sanitize } from '@ethosagent/safety-injection';
 import { redactString } from '@ethosagent/safety-redact';
 import type {
   MemoryContext,
@@ -39,7 +40,7 @@ export function createMemoryReadTool(memory: MemoryProvider): Tool {
         const entry = await memory.read('USER.md', userCtx);
         return {
           ok: true,
-          value: redactString(entry?.content.trim() ?? '') || 'USER.md is empty.',
+          value: redactString(sanitize(entry?.content.trim() ?? '')) || 'USER.md is empty.',
         };
       }
 
@@ -49,7 +50,7 @@ export function createMemoryReadTool(memory: MemoryProvider): Tool {
         const entry = await memory.read('MEMORY.md', memCtx);
         return {
           ok: true,
-          value: redactString(entry?.content.trim() ?? '') || 'MEMORY.md is empty.',
+          value: redactString(sanitize(entry?.content.trim() ?? '')) || 'MEMORY.md is empty.',
         };
       }
 
@@ -57,9 +58,10 @@ export function createMemoryReadTool(memory: MemoryProvider): Tool {
       const parts: string[] = [];
       const userCtx = buildUserMemoryContext(ctx);
       const userEntry = await memory.read('USER.md', userCtx);
-      if (userEntry?.content.trim()) parts.push(`## About You\n\n${userEntry.content.trim()}`);
+      if (userEntry?.content.trim())
+        parts.push(`## About You\n\n${sanitize(userEntry.content.trim())}`);
       const memEntry = await memory.read('MEMORY.md', memCtx);
-      if (memEntry?.content.trim()) parts.push(`## Memory\n\n${memEntry.content.trim()}`);
+      if (memEntry?.content.trim()) parts.push(`## Memory\n\n${sanitize(memEntry.content.trim())}`);
       if (parts.length === 0) return { ok: true, value: 'Memory is empty. No notes recorded yet.' };
       return { ok: true, value: redactString(parts.join('\n\n')) };
     },
@@ -127,7 +129,8 @@ export function createMemoryWriteTool(memory: MemoryProvider): Tool {
         const match = substring_match ?? content;
         await memory.sync([{ action: 'remove', key, substringMatch: match }], memCtx);
       } else {
-        await memory.sync([{ action, key, content }], memCtx);
+        const sanitizedContent = sanitize(content);
+        await memory.sync([{ action, key, content: sanitizedContent }], memCtx);
       }
 
       const verb = action === 'add' ? 'Appended to' : action === 'replace' ? 'Replaced' : 'Updated';
@@ -312,7 +315,10 @@ export function createTeamMemoryReadTool(teamMemory: MemoryProvider): Tool {
       const memCtx = buildTeamMemoryContext(ctx, ctx.teamId);
       const entry = await teamMemory.read(key.endsWith('.md') ? key : `${key}.md`, memCtx);
       if (!entry) return { ok: true, value: `No team memory entry for "${key}".` };
-      return { ok: true, value: redactString(entry.content.trim()) || `"${key}" is empty.` };
+      return {
+        ok: true,
+        value: redactString(sanitize(entry.content.trim())) || `"${key}" is empty.`,
+      };
     },
   };
 }
@@ -399,7 +405,8 @@ export function createTeamMemoryWriteTool(teamMemory: MemoryProvider): Tool {
       } else if (action === 'delete') {
         await teamMemory.sync([{ action: 'delete', key: fileKey }], memCtx);
       } else {
-        await teamMemory.sync([{ action, key: fileKey, content: content ?? '' }], memCtx);
+        const sanitizedContent = sanitize(content ?? '');
+        await teamMemory.sync([{ action, key: fileKey, content: sanitizedContent }], memCtx);
       }
 
       const verb =

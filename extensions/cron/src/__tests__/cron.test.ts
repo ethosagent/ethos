@@ -837,3 +837,39 @@ describe('CronScheduler delivery', () => {
     expect(output).toBe('Something is wrong!');
   });
 });
+
+// ---------------------------------------------------------------------------
+// readRunOutput — path containment
+// ---------------------------------------------------------------------------
+
+describe('readRunOutput — path containment', () => {
+  it('reads a valid output file inside outputDir', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Valid Read',
+      schedule: '0 8 * * *',
+      prompt: 'test output read',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    await scheduler.runJobNow(job.id);
+    const runs = await scheduler.listRuns(job.id);
+    expect(runs.length).toBeGreaterThan(0);
+    const output = await scheduler.readRunOutput(runs[0]?.outputPath ?? '');
+    expect(output).toContain('ran:');
+  });
+
+  it('rejects an absolute path outside outputDir', async () => {
+    const scheduler = makeScheduler();
+    await expect(scheduler.readRunOutput('/etc/passwd')).rejects.toThrow(
+      'Path outside output directory',
+    );
+  });
+
+  it('rejects a path with ".." traversal', async () => {
+    const scheduler = makeScheduler();
+    await expect(
+      scheduler.readRunOutput(join(testDir, 'output', '..', 'escape.md')),
+    ).rejects.toThrow('Path outside output directory');
+  });
+});

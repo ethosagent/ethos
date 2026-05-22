@@ -1,6 +1,6 @@
 import { open, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { noopLogger } from '@ethosagent/logger';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { Logger, Storage } from '@ethosagent/types';
@@ -309,6 +309,10 @@ export class CronScheduler {
 
   /** Read the full output body for a single run. */
   async readRunOutput(outputPath: string): Promise<string> {
+    const rel = relative(this.outputDir, resolve(outputPath));
+    if (rel.startsWith('..') || isAbsolute(rel)) {
+      throw new Error(`Path outside output directory: ${outputPath}`);
+    }
     const out = await this.storage.read(outputPath);
     if (out === null) throw new Error(`Run output not found: ${outputPath}`);
     return out;

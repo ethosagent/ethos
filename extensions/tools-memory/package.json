@@ -16,6 +16,7 @@
   "dependencies": {
     "@ethosagent/core": "workspace:*",
     "@ethosagent/memory-markdown": "workspace:*",
+    "@ethosagent/safety-injection": "workspace:*",
     "@ethosagent/safety-redact": "workspace:*",
     "@ethosagent/session-sqlite": "workspace:*",
     "@ethosagent/types": "workspace:*"
