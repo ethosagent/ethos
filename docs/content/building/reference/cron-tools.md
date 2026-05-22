@@ -1,6 +1,6 @@
 ---
 title: Cron tool
-description: "Single action-dispatch cron tool — create, list, get, read_run, update, pause, resume, run, remove. Wiring contract, scheduler sharing, and personality opt-in."
+description: "Action-dispatch cron tool — create, list, get, read_run, update, pause, resume, run, remove. Wiring contract, scheduler sharing, and personality opt-in."
 kind: reference
 audience: developer
 slug: cron-tools
