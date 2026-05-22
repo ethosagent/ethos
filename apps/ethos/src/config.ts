@@ -1049,8 +1049,7 @@ function parseConfigYaml(src: string): EthosConfig {
     logs: logsRotation ? { rotation: logsRotation } : undefined,
     aws: awsConfig,
     webBaseUrl: process.env.ETHOS_PUBLIC_URL ?? kv.webBaseUrl ?? undefined,
-    storage:
-      kv['storage.encryption'] === 'true' ? { encryption: true } : undefined,
+    storage: kv['storage.encryption'] === 'true' ? { encryption: true } : undefined,
   };
   // Stash parse errors so the strict loader can surface them at boot.
   // readRawConfig (used by CLI commands that don't gateway-boot) ignores them
