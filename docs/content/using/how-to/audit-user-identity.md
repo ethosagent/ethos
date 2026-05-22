@@ -114,4 +114,4 @@ No users have interacted with the agent yet. The file is created automatically w
 
 - [Why are user profiles keyed by userId?](../explanation/user-profiles.md) -- design rationale for per-user, not per-personality, profiles
 - [Why MEMORY.md and USER.md?](../explanation/memory-model.md) -- how USER.md fits into the memory model
-- [Security controls](../../../security/controls.md) -- injection scanning on memory content, including USER.md
+- [Security controls](../../security/controls.md) -- injection scanning on memory content, including USER.md

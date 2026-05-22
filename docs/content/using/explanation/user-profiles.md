@@ -137,7 +137,7 @@ You can edit it yourself. Add a line, remove a line, correct a fact. The agent r
 
 ### What USER.md does not contain
 
-USER.md is not a credentials store. It should not contain API keys, passwords, tokens, or secrets. The file lives on disk as plain text — the same threat model as your `.bashrc`. The agent is instructed not to write secrets to memory, and the [injection guard](../../../security/controls.md#prompt-injection-defenses) scans memory content on write, but the primary defense is not writing secrets there in the first place.
+USER.md is not a credentials store. It should not contain API keys, passwords, tokens, or secrets. The file lives on disk as plain text — the same threat model as your `.bashrc`. The agent is instructed not to write secrets to memory, and the [injection guard](../../security/controls.md#prompt-injection-defenses) scans memory content on write, but the primary defense is not writing secrets there in the first place.
 
 USER.md is also not a preferences file for the agent's behaviour. "Use Opus for my turns" is a personality config concern (`model:` in `config.yaml`), not a user profile concern. "I prefer concise answers" is a legitimate user fact; "always use extended thinking" is not.
 
@@ -149,7 +149,7 @@ USER.md is also not a preferences file for the agent's behaviour. "Use Opus for 
 
 **Linking requires manual intervention.** When the same person uses Telegram and Slack, the operator must edit `identity-map.json` to link them. There is no automatic cross-platform identity resolution. Automatic linking would require trusting platform-provided identity signals (display name, email) that are unreliable and spoofable. Manual linking is slower but correct.
 
-**A poisoned USER.md crosses personality boundaries.** Because USER.md is shared across personalities, a malicious or incorrect entry affects every personality the user interacts with. If someone injects "ignore previous instructions" into a USER.md, it re-enters the system prompt on every turn, under every personality. The [injection guard](../../../security/controls.md#prompt-injection-defenses) scans memory on write and on read as a backstop, but the cross-personality surface is real and is why USER.md is treated as a higher-risk memory surface than per-personality MEMORY.md.
+**A poisoned USER.md crosses personality boundaries.** Because USER.md is shared across personalities, a malicious or incorrect entry affects every personality the user interacts with. If someone injects "ignore previous instructions" into a USER.md, it re-enters the system prompt on every turn, under every personality. The [injection guard](../../security/controls.md#prompt-injection-defenses) scans memory on write and on read as a backstop, but the cross-personality surface is real and is why USER.md is treated as a higher-risk memory surface than per-personality MEMORY.md.
 
 ## See also
 
@@ -157,4 +157,4 @@ USER.md is also not a preferences file for the agent's behaviour. "Use Opus for 
 - [Why is personality the unit?](what-is-a-personality.md) — how the personality boundary interacts with user profiles
 - [Audit user identity mappings](../how-to/audit-user-identity.md) — inspect and manage the identity map
 - [Personality config reference](../reference/personality-yaml.md) — the `memoryScope` field and how it affects memory routing
-- [Security controls](../../../security/controls.md) — injection scanning on memory content
+- [Security controls](../../security/controls.md) — injection scanning on memory content
