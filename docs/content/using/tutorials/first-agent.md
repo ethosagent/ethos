@@ -5,7 +5,7 @@ kind: tutorial
 audience: user
 slug: first-agent
 time: "10 min"
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
 The CLI is installed and one provider is configured. This tutorial walks the agent turn cycle while you run it: pick a personality, send three messages, watch usage accumulate, prove sessions survive a restart, then switch personality and watch the same prompt behave differently.
@@ -44,7 +44,7 @@ The header prints the model, the active personality, and a reminder:
 ethos  claude-opus-4-7 · Researcher · /help
 ```
 
-Researcher is the default. Its [toolset](../../getting-started/glossary.md#tool) is read-heavy — web search, web extract, file read, file search, memory read and write, session search — and its voice is methodical and citation-aware. The other four built-ins (`engineer`, `reviewer`, `coach`, `operator`) ship different toolsets and voices for different roles. The [Built-in personalities](../explanation/built-in-personalities.md) page explains the design choices behind each.
+Researcher is the default. Its [toolset](../../getting-started/glossary.md#tool) is read-heavy — web search, web extract, file read, file search, memory read and write, session search — and its voice is methodical and citation-aware. The other built-ins (`engineer`, `reviewer`) ship different toolsets and voices for different roles. The [Built-in personalities](../explanation/built-in-personalities.md) page explains the design choices behind each.
 
 ## 2. Send the first message and watch the event stream
 
@@ -229,11 +229,11 @@ That atomic four-dimensional swap is the headline claim of Ethos. The personalit
 Output:
 
 ```
-Built-ins: researcher · engineer · reviewer · coach · operator
+Built-ins: researcher · engineer · reviewer
 User personalities: ~/.ethos/personalities/<id>/
 ```
 
-The five built-ins ship with the CLI inside `extensions/personalities/data/`. The user directory is empty until you write one — the next tutorial does exactly that. Switch back to researcher when you are done:
+The three built-ins ship with the CLI inside `extensions/personalities/data/`. The user directory is empty until you write one — the next tutorial does exactly that. Switch back to researcher when you are done:
 
 ```
 /personality researcher
@@ -292,7 +292,7 @@ The same `AbortController` signal is what surface code uses everywhere — chann
 The REPL is the primary surface, but you can also send a single message and get the reply back without entering chat:
 
 ```bash
-ethos chat -q "list the five built-in personalities by role in one line each"
+ethos chat -q "list the built-in personalities by role in one line each"
 ```
 
 The process streams its answer to stdout and exits when the turn is done. Useful for:
@@ -310,13 +310,13 @@ The `--query=<text>` and bare `ethos -q <text>` forms are equivalent. The sessio
 - Sessions persist in SQLite, keyed by `cli:<cwd-basename>`. `/new` starts a fresh one in the same directory; restarting `ethos chat` continues the active one.
 - `/usage` reports cumulative tokens and estimated cost; `/budget` reports session spend against the personality's `budgetCapUsd`.
 - Switching personality atomically swaps system prompt, tool catalog, model, and memory scope.
-- The five built-ins live inside the CLI; user personalities live in `~/.ethos/personalities/<id>/`.
+- The three built-ins live inside the CLI; user personalities live in `~/.ethos/personalities/<id>/`.
 
 ## Next step
 
-You have used the five built-in personalities. The next tutorial builds a sixth — a custom `strategist` personality from scratch, with hot-reload and a memory-scope demo.
+You have used the three built-in personalities. The next tutorial builds a fourth — a custom `strategist` personality from scratch, with hot-reload and a memory-scope demo.
 
 - [Create your first personality](./first-personality.md) — `SOUL.md`, `config.yaml`, `toolset.yaml`.
 - [Slash commands reference](../reference/slash-commands.md) — every `/command` available in chat.
-- [Built-in personalities](../explanation/built-in-personalities.md) — why each of the five ships with the toolset it does.
+- [Built-in personalities](../explanation/built-in-personalities.md) — why each of the three ships with the toolset it does.
 - [Sessions and history](../explanation/sessions-and-history.md) — what `getMessages` returns and why.

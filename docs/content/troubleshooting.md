@@ -4,7 +4,7 @@ description: "Error catalogue for Ethos — common failure modes by symptom, wit
 kind: reference
 audience: shared
 slug: troubleshooting
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
 When something goes wrong, the CLI prints a three-line block: a code, a one-line cause, and a one-line action. Search this page for the code or the symptom you saw. Each entry follows the same shape: **Cause**, **Fix**, **Prevent** (when applicable).
@@ -100,7 +100,7 @@ Fix ·
 
 ### `PERSONALITY_READ_ONLY` {#personality-read-only}
 
-Cause · You tried to edit or delete one of the five built-in personalities. Built-ins are immutable on disk.
+Cause · You tried to edit or delete one of the built-in personalities. Built-ins are immutable on disk.
 
 Fix · Duplicate first: `ethos personality duplicate <built-in-id> <new-id>`, then edit the copy under `~/.ethos/personalities/<new-id>/`.
 

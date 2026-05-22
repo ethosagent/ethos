@@ -4,7 +4,7 @@ description: "Every Ethos domain term in one place: personality, skill, tool, ho
 kind: reference
 audience: shared
 slug: glossary
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
 Every domain term used elsewhere in the docs has one canonical entry here. Pages link to the entry on first use. The list is alphabetical inside each cluster; clusters are ordered by how often a newcomer hits them.
@@ -43,7 +43,7 @@ A directory at `~/.ethos/personalities/` containing three files: `SOUL.md` (iden
 
 ### Built-in personality {#built-in-personality}
 
-One of the five personalities Ethos ships by default: `researcher`, `engineer`, `reviewer`, `coach`, `operator`. Each has a distinct role, toolset, and voice. See [What are the built-in personalities?](../using/explanation/built-in-personalities.md).
+One of the three user-facing personalities Ethos ships by default: `researcher`, `engineer`, `reviewer`. Each has a distinct role, toolset, and voice. Two system personalities (`personality-architect`, `team-architect`) are also available for building and managing agents. See [What are the built-in personalities?](../using/explanation/built-in-personalities.md).
 
 ### SOUL.md {#ethos-md}
 

@@ -5,7 +5,7 @@ kind: tutorial
 audience: developer
 slug: write-your-first-tool
 time: "20 min"
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
 The shortest path from the `Tool<TArgs>` interface to a working tool the agent calls during a [turn](../../getting-started/glossary.md#turn). This tutorial builds `get_weather` — a tool that takes a city, returns a one-line forecast, and demonstrates every part of the production contract: typed args, `ToolResult` codes, `maxResultChars`, `isAvailable`, abort handling, and registry wiring.
@@ -240,7 +240,7 @@ You should see `ethos-plugin-weather` with one tool: `get_weather`.
 
 A registered tool is invisible to the LLM until it lands in the active personality's `toolset.yaml`. The framework's [ToolRegistry](../../getting-started/glossary.md#tool-registry) intersects `registered_tools ∩ personality.toolset` and only the intersection reaches the model.
 
-For built-in personalities (researcher, engineer, reviewer, coach, operator), override the bundled toolset by creating the user-side directory:
+For built-in personalities (researcher, engineer, reviewer), override the bundled toolset by creating the user-side directory:
 
 ```bash
 mkdir -p ~/.ethos/personalities/researcher

@@ -5,7 +5,7 @@ kind: tutorial
 audience: user
 slug: first-deploy-telegram
 time: "30 min"
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
 Your [personality](../../getting-started/glossary.md#personality) runs locally in `ethos chat`. This tutorial puts it in front of real users on Telegram. The path is: create a bot, paste its token, foreground-test the gateway, then wrap it in a service manager that survives reboots.
@@ -20,7 +20,7 @@ By the end, you have:
 - An access list so only you (and people you name) can DM the bot — using the pairing-code flow.
 - A short troubleshooting cheat sheet for the daemon-vs-foreground failures you will eventually hit.
 
-The bot answers as whatever personality you set in [Create your first personality](./first-personality.md) — or as one of the five built-ins if you skipped that tutorial.
+The bot answers as whatever personality you set in [Create your first personality](./first-personality.md) — or as one of the built-ins if you skipped that tutorial.
 
 ## Prereqs
 

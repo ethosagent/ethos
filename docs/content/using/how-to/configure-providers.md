@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: configure-providers
 time: "5 min"
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
 ## Task
@@ -37,7 +37,7 @@ The wizard writes `~/.ethos/config.yaml` and prompts for:
 - **Provider** — one of `anthropic`, `openai`, `openrouter`, `ollama`.
 - **Model** — the model id for that provider (see the table below).
 - **API key** — stored locally in `~/.ethos/config.yaml`. Skip for `ollama`.
-- **Default [personality](../../getting-started/glossary.md#personality)** — pick one of the five built-ins.
+- **Default [personality](../../getting-started/glossary.md#personality)** — pick one of the built-ins.
 
 To re-run only the provider step on an existing config:
 

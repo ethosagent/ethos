@@ -5,7 +5,7 @@ kind: tutorial
 audience: user
 slug: quickstart
 time: "5 min"
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
 Install the CLI, paste one API key, send one message. No config files to hand-edit before the first reply.
@@ -78,7 +78,9 @@ The wizard walks you through four prompts. Pick defaults except where you have a
 - **Provider** — `anthropic` (default), `openrouter`, `ollama`, or `gemini`. OpenRouter aggregates many models behind one API key; Ollama runs models locally with no API key; Gemini is Google's API.
 - **Model** — `claude-opus-4-7` is the default for Anthropic. Other providers default to their headline model. You can change this later by editing `~/.ethos/config.yaml` or running `ethos setup model`.
 - **API key** — paste it. The wizard stores it in `~/.ethos/config.yaml` with file mode `0600` (owner read/write only).
-- **Personality** — accept `researcher` for now. The next tutorial covers switching to the other four built-ins (`engineer`, `reviewer`, `coach`, `operator`) and writing your own.
+- **Personality** — accept `researcher` for now. The next tutorial covers switching to the other built-ins (`engineer`, `reviewer`) and writing your own.
+
+> **Tip:** For secure key storage, use `ethos secrets set ANTHROPIC_API_KEY <value>` instead of pasting into config.yaml. The key is then referenced as `${secrets:ANTHROPIC_API_KEY}` in config. See [secrets reference](./reference/config-yaml.md) for details.
 
 When setup finishes, the wizard offers to launch chat. Say yes.
 
@@ -196,6 +198,8 @@ A working install creates exactly one directory: `~/.ethos/`. After this tutoria
 
 Two files you may want to back up: `config.yaml` (cheap to recreate, but contains the API key) and `sessions.db` (every conversation you have had). Memory files (`MEMORY.md`, `USER.md`) land here as well once a personality writes to them — the next tutorial covers that layer.
 
+For a graphical view, run `ethos serve --web` — the web dashboard lets you manage personalities, memory, cron jobs, and MCP servers from the browser. See [Use the web dashboard](./how-to/use-web-dashboard.md).
+
 Everything else (`mcp.json`, `communications.json`, `keys.json`, `skills/`) is created by features you have not yet used.
 
 ## What you learned
@@ -211,5 +215,6 @@ You have a working agent. The next tutorial walks you through the turn cycle con
 
 - [Build your first agent](./tutorials/first-agent.md) — three messages, two personalities, ten minutes.
 - [Deploy in production](./how-to/deploy-in-production.md) — bots and dashboard running on a mini PC or VPS, surviving reboots, in three commands.
+- [Use skills](./how-to/use-skills.md) — discover and install skills from Claude Code, OpenClaw, Hermes, and other sources.
 - [config.yaml reference](./reference/config-yaml.md) — every field the file accepts, if you want to read ahead.
 - [Glossary](../getting-started/glossary.md) — every domain term in one place.

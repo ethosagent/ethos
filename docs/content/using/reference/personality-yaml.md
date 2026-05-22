@@ -1,10 +1,10 @@
 ---
 title: "Personality config reference"
-description: "Every field in a personality's config.yaml and toolset.yaml — model, memory scope, fs_reach, MCP, plugins, budget, safety."
+description: "Every field in a personality's config.yaml and toolset.yaml — model, fs_reach, MCP, plugins, budget, safety."
 kind: reference
 audience: user
 slug: personality-yaml
-updated: 2026-05-12
+updated: 2026-05-22
 ---
 
 A [personality](../../getting-started/glossary.md#personality) is a directory at `~/.ethos/personalities/<id>/` with three files:
@@ -28,7 +28,6 @@ The schema is frozen — adding a top-level field requires the `personality-sche
 name: Researcher
 description: Deep reading and synthesis.
 model: claude-opus-4-7
-memoryScope: per-personality
 ```
 
 ```yaml
@@ -37,6 +36,8 @@ memoryScope: per-personality
 - write_file
 - web_search
 ```
+
+Memory is always per-personality — each personality reads and writes `~/.ethos/personalities/<id>/MEMORY.md` automatically. No configuration field is required.
 
 ## name {#name}
 
@@ -86,16 +87,6 @@ Channel binding hint. Recognised values (used by the load-time safety gate): `te
 
 ```yaml
 platform: slack
-```
-
-## memoryScope {#memory-scope}
-
-Type: `global` | `per-personality` · Default: `global`
-
-Controls whether this personality shares the user-default memory files (`~/.ethos/MEMORY.md`, `~/.ethos/USER.md`) or keeps its own. `per-personality` isolates running context so the reviewer cannot read the engineer's notes.
-
-```yaml
-memoryScope: per-personality
 ```
 
 ## capabilities {#capabilities}

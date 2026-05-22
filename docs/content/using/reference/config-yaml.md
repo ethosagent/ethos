@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model, channel t
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-05-15
+updated: 2026-05-22
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. The parser ignores quotes around values.
@@ -58,7 +58,7 @@ apiKey: sk-ant-...
 
 Type: string · Default: `researcher` · Required
 
-Id of the default [personality](../../getting-started/glossary.md#personality). Built-ins: `researcher`, `engineer`, `reviewer`, `coach`, `operator`. User personalities live under `~/.ethos/personalities/<id>/`.
+Id of the default [personality](../../getting-started/glossary.md#personality). Built-ins: `researcher`, `engineer`, `reviewer`. System: `personality-architect`, `team-architect`. User personalities live under `~/.ethos/personalities/<id>/`.
 
 ```yaml
 personality: engineer

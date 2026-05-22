@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: run-multiple-bots
 time: "10 min"
-updated: 2026-05-17
+updated: 2026-05-22
 ---
 
 ## Task
@@ -23,7 +23,7 @@ Configure two or more channel bots — across Telegram and Slack — in a single
 
 - `ethos chat` works locally with a configured LLM provider.
 - For each bot you want to run: the credentials (Telegram BotFather token, or Slack bot+app+signing-secret triple).
-- The personalities (or teams) you intend to bind already exist. Built-in personalities (`researcher`, `engineer`, `reviewer`, `coach`, `operator`) are available without setup. Custom personalities live under `~/.ethos/personalities/<id>/`. Teams live under `~/.ethos/teams/<name>.yaml`.
+- The personalities (or teams) you intend to bind already exist. Built-in personalities (`researcher`, `engineer`, `reviewer`) are available without setup. Custom personalities live under `~/.ethos/personalities/<id>/`. Teams live under `~/.ethos/teams/<name>.yaml`.
 
 ## Source
 
