@@ -10,7 +10,7 @@ updated: 2026-05-22
 
 ## Task
 
-Attach an [MCP](../../getting-started/glossary.md#mcp) server to a specific [personality](../../getting-started/glossary.md#personality) so its tools are available in chat.
+Attach an MCP server to a specific [personality](../../getting-started/glossary.md#personality) so its tools are available in chat.
 
 ## Result
 

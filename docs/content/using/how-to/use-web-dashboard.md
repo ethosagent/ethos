@@ -10,7 +10,7 @@ updated: 2026-05-22
 
 ## Task
 
-Use the web dashboard as a first-class management surface alongside the CLI for managing [personalities](../../getting-started/glossary.md#personality), [memory](../../getting-started/glossary.md#memory), cron jobs, and [MCP](../../getting-started/glossary.md#mcp) servers.
+Use the web dashboard as a first-class management surface alongside the CLI for managing [personalities](../../getting-started/glossary.md#personality), [memory](../../getting-started/glossary.md#memory), cron jobs, and MCP servers.
 
 ## Result
 
