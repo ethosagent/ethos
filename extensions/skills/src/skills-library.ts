@@ -53,6 +53,7 @@ export class SkillsLibrary {
   private readonly pendingDir: string;
   private readonly personalitiesDir: string;
   private readonly catalogDir: string | null;
+  private catalogIndex: Map<string, string> | null = null;
 
   constructor(opts: SkillsLibraryOptions) {
     this.storage = opts.storage ?? new FsStorage();
@@ -344,16 +345,27 @@ export class SkillsLibrary {
     };
   }
 
-  private async readSystemSkills(): Promise<SkillRecord[]> {
-    if (!this.catalogDir) return [];
+  private async getCatalogIndex(): Promise<Map<string, string>> {
+    if (this.catalogIndex) return this.catalogIndex;
+    const index = new Map<string, string>();
+    if (!this.catalogDir) {
+      this.catalogIndex = index;
+      return index;
+    }
     const entries = await this.storage.listEntries(this.catalogDir);
-    const out: SkillRecord[] = [];
     for (const entry of entries) {
       if (!entry.isDir) continue;
       const directPath = join(this.catalogDir, entry.name, 'SKILL.md');
       if (await this.storage.exists(directPath)) {
-        const skill = await this.readSystemSkillAt(entry.name, directPath);
-        if (skill) out.push(skill);
+        const existing = index.get(entry.name);
+        if (existing) {
+          throw new EthosError({
+            code: 'SKILL_EXISTS',
+            cause: `Duplicate system skill id "${entry.name}" found at "${directPath}" and "${existing}".`,
+            action: 'Rename one of the skills so each leaf directory has a unique name.',
+          });
+        }
+        index.set(entry.name, directPath);
         continue;
       }
       const subEntries = await this.storage.listEntries(join(this.catalogDir, entry.name));
@@ -361,29 +373,37 @@ export class SkillsLibrary {
         if (!sub.isDir) continue;
         const nestedPath = join(this.catalogDir, entry.name, sub.name, 'SKILL.md');
         if (await this.storage.exists(nestedPath)) {
-          const skill = await this.readSystemSkillAt(sub.name, nestedPath);
-          if (skill) out.push(skill);
+          const existing = index.get(sub.name);
+          if (existing) {
+            throw new EthosError({
+              code: 'SKILL_EXISTS',
+              cause: `Duplicate system skill id "${sub.name}" found at "${nestedPath}" and "${existing}".`,
+              action: 'Rename one of the skills so each leaf directory has a unique name.',
+            });
+          }
+          index.set(sub.name, nestedPath);
         }
       }
+    }
+    this.catalogIndex = index;
+    return index;
+  }
+
+  private async readSystemSkills(): Promise<SkillRecord[]> {
+    const index = await this.getCatalogIndex();
+    const out: SkillRecord[] = [];
+    for (const [id, path] of index) {
+      const skill = await this.readSystemSkillAt(id, path);
+      if (skill) out.push(skill);
     }
     return out;
   }
 
   private async readSystemSkill(id: string): Promise<SkillRecord | null> {
-    if (!this.catalogDir) return null;
-    const directPath = join(this.catalogDir, id, 'SKILL.md');
-    if (await this.storage.exists(directPath)) {
-      return this.readSystemSkillAt(id, directPath);
-    }
-    const entries = await this.storage.listEntries(this.catalogDir);
-    for (const entry of entries) {
-      if (!entry.isDir) continue;
-      const nestedPath = join(this.catalogDir, entry.name, id, 'SKILL.md');
-      if (await this.storage.exists(nestedPath)) {
-        return this.readSystemSkillAt(id, nestedPath);
-      }
-    }
-    return null;
+    const index = await this.getCatalogIndex();
+    const path = index.get(id);
+    if (!path) return null;
+    return this.readSystemSkillAt(id, path);
   }
 
   private async readSystemSkillAt(id: string, path: string): Promise<SkillRecord | null> {
@@ -410,18 +430,10 @@ export class SkillsLibrary {
     const userPath = join(this.skillsDir, `${skillId}.md`);
     const userRaw = await this.storage.read(userPath);
     if (userRaw !== null) return userRaw;
-    if (!this.catalogDir) return null;
-    const directPath = join(this.catalogDir, skillId, 'SKILL.md');
-    const directRaw = await this.storage.read(directPath);
-    if (directRaw !== null) return directRaw;
-    const entries = await this.storage.listEntries(this.catalogDir);
-    for (const entry of entries) {
-      if (!entry.isDir) continue;
-      const nestedPath = join(this.catalogDir, entry.name, skillId, 'SKILL.md');
-      const nestedRaw = await this.storage.read(nestedPath);
-      if (nestedRaw !== null) return nestedRaw;
-    }
-    return null;
+    const index = await this.getCatalogIndex();
+    const systemPath = index.get(skillId);
+    if (!systemPath) return null;
+    return this.storage.read(systemPath);
   }
 }
 

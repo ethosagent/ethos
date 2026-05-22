@@ -341,6 +341,24 @@ describe('SkillsLibrary', () => {
       expect(imported[0]).toMatchObject({ id: 'create-ticket' });
     });
 
+    it('throws SKILL_EXISTS when two categories have the same leaf skill id', async () => {
+      await storage.mkdir(join(CATALOG, 'github'));
+      await storage.mkdir(join(CATALOG, 'github', 'create-ticket'));
+      await storage.write(
+        join(CATALOG, 'github', 'create-ticket', 'SKILL.md'),
+        '---\nname: GH Create\n---\n\nbody',
+      );
+      await storage.mkdir(join(CATALOG, 'linear'));
+      await storage.mkdir(join(CATALOG, 'linear', 'create-ticket'));
+      await storage.write(
+        join(CATALOG, 'linear', 'create-ticket', 'SKILL.md'),
+        '---\nname: Linear Create\n---\n\nbody',
+      );
+      await expect(catLib.listSkills()).rejects.toMatchObject({
+        code: 'SKILL_EXISTS',
+      });
+    });
+
     it('mixes direct and nested skills in listing', async () => {
       await storage.mkdir(join(CATALOG, 'github'));
       await storage.mkdir(join(CATALOG, 'github', 'create-ticket'));
