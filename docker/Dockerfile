@@ -12,7 +12,8 @@ RUN apt-get update \
 # install nests every transitive dep inside cli/node_modules/ instead of
 # hoisting to /usr/local/lib/node_modules/, which then breaks Node ESM
 # resolution at runtime ("Cannot find package @ethosagent/types").
-RUN npm install -g --omit=dev @ethosagent/cli@0.3.9
+ARG CLI_VERSION=0.3.9
+RUN npm install -g --omit=dev @ethosagent/cli@${CLI_VERSION}
 
 # Stage 2: runtime — clean production image
 FROM node:24-slim AS runtime

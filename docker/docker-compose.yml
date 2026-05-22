@@ -1,0 +1,92 @@
+volumes:
+  ethos-data:
+    driver: local
+
+services:
+  init:
+    image: ethosagent/ethos:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        STATE_DIR="$${ETHOS_STATE_DIR:-/home/ethos/.ethos}"
+        CONFIG_FILE="$$STATE_DIR/config.yaml"
+        if [ -f "$$CONFIG_FILE" ]; then
+          echo "config.yaml already exists at $$CONFIG_FILE, skipping init."
+          exit 0
+        fi
+        if [ -n "$$ANTHROPIC_API_KEY" ]; then
+          PROVIDER="anthropic"
+          API_KEY="$$ANTHROPIC_API_KEY"
+        elif [ -n "$$OPENAI_API_KEY" ]; then
+          PROVIDER="openai"
+          API_KEY="$$OPENAI_API_KEY"
+        elif [ -n "$$OPENROUTER_API_KEY" ]; then
+          PROVIDER="openrouter"
+          API_KEY="$$OPENROUTER_API_KEY"
+        elif [ -n "$$GOOGLE_API_KEY" ]; then
+          PROVIDER="google"
+          API_KEY="$$GOOGLE_API_KEY"
+        else
+          echo "ERROR: No provider API key found." >&2
+          echo "Set one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, GOOGLE_API_KEY" >&2
+          exit 1
+        fi
+        mkdir -p "$$STATE_DIR"
+        cat > "$$CONFIG_FILE" <<EOF
+        schemaVersion: 1
+        provider: $$PROVIDER
+        apiKey: "$$API_KEY"
+        EOF
+        chmod 600 "$$CONFIG_FILE"
+        echo "config.yaml created with provider: $$PROVIDER"
+    environment:
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+      - OPENROUTER_API_KEY
+      - GOOGLE_API_KEY
+      - ETHOS_STATE_DIR
+    volumes:
+      - ethos-data:/home/ethos/.ethos
+    restart: "no"
+
+  ethos-web:
+    image: ethosagent/ethos:latest
+    environment:
+      ETHOS_MODE: ui
+      ANTHROPIC_API_KEY:
+      OPENAI_API_KEY:
+      OPENROUTER_API_KEY:
+      GOOGLE_API_KEY:
+      ETHOS_STATE_DIR:
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    ports:
+      - "3000:3000"
+    volumes:
+      - ethos-data:/home/ethos/.ethos
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+  ethos-gateway:
+    image: ethosagent/ethos:latest
+    environment:
+      ETHOS_MODE: gateway
+      ANTHROPIC_API_KEY:
+      OPENAI_API_KEY:
+      OPENROUTER_API_KEY:
+      GOOGLE_API_KEY:
+      ETHOS_STATE_DIR:
+    profiles:
+      - gateway
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    volumes:
+      - ethos-data:/home/ethos/.ethos
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
