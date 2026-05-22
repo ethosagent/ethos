@@ -426,12 +426,6 @@ export function PersonalityDetail() {
               <Typography.Text code>{modelDisplay}</Typography.Text>
             </>
           ) : null}
-          {personality.memoryScope ? (
-            <>
-              <Typography.Text type="secondary">Memory scope</Typography.Text>
-              <Typography.Text>{personality.memoryScope}</Typography.Text>
-            </>
-          ) : null}
           {personality.fs_reach !== undefined && personality.fs_reach !== null ? (
             <>
               <Typography.Text type="secondary">FS reach</Typography.Text>
