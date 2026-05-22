@@ -354,7 +354,7 @@ export class McpClient {
         );
       const headers = { ...this._config.headers };
       if (this._config.auth?.type === 'oauth2' && this._secrets) {
-        const token = await ensureValidToken(this._config.name, this._config.auth, this._secrets);
+        const token = await ensureValidToken(this._config.name, this._config.auth, this._secrets, 'ui');
         headers.Authorization = `Bearer ${token}`;
       }
       // SSRF gate: validate initial URL + disable redirect following so the SDK fetch
@@ -378,7 +378,7 @@ export class McpClient {
       );
       const headers = { ...this._config.headers };
       if (this._config.auth?.type === 'oauth2' && this._secrets) {
-        const token = await ensureValidToken(this._config.name, this._config.auth, this._secrets);
+        const token = await ensureValidToken(this._config.name, this._config.auth, this._secrets, 'ui');
         headers.Authorization = `Bearer ${token}`;
       }
       // SSRF gate: validate initial URL + disable redirect following so the SDK fetch

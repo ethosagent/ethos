@@ -985,7 +985,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       platform: cfg.platform,
       memoryScope: cfg.memoryScope === 'per-personality' ? 'per-personality' : undefined,
       ...(capabilities?.length ? { capabilities } : {}),
-      ...(soulExists ? { soulFile: join(dir, 'SOUL.md') } : {}),
+      soulFile: join(dir, 'SOUL.md'),
       ...(skillsExists ? { skillsDirs: [join(dir, 'skills')] } : {}),
       ...(toolsetSrc ? { toolset: parseToolsetYaml(toolsetSrc) } : {}),
       ...(streamingTimeoutMs !== undefined ? { streamingTimeoutMs } : {}),
