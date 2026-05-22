@@ -7,6 +7,7 @@ import {
   type InjectionClassifier,
   type InjectionVerdict,
   resolveDowngradedTools,
+  sanitize,
   shortPatternCheck,
   wrapUntrusted,
 } from '@ethosagent/safety-injection';
@@ -688,6 +689,17 @@ export class AgentLoop {
           memSnapshot = userSnapshot;
         }
       }
+    }
+
+    // Backstop: sanitize memory content for prompt-injection patterns before
+    // injecting into the system prompt (same defense context files get).
+    if (memSnapshot) {
+      memSnapshot = {
+        entries: memSnapshot.entries.map((e) => ({
+          key: e.key,
+          content: sanitize(e.content),
+        })),
+      };
     }
 
     // Step 6: Build system prompt from injectors
