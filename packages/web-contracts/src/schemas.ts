@@ -153,6 +153,14 @@ export const ProviderIdSchema = z.enum([
 ]);
 export type ProviderId = z.infer<typeof ProviderIdSchema>;
 
+export const ProviderEntrySchema = z.object({
+  provider: z.string(),
+  model: z.string().nullable(),
+  apiKeyPreview: z.string(),
+  baseUrl: z.string().nullable(),
+});
+export type ProviderEntry = z.infer<typeof ProviderEntrySchema>;
+
 // ---------------------------------------------------------------------------
 // Cron — proactive pillar of v0.5
 //

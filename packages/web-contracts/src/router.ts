@@ -43,6 +43,7 @@ import {
   PlatformIdSchema,
   PlatformStatusSchema,
   PluginInfoSchema,
+  ProviderEntrySchema,
   ProviderIdSchema,
   SessionSchema,
   SkillSchema,
@@ -430,6 +431,7 @@ const ConfigGetOutput = z.object({
   modelRouting: z.record(z.string(), z.string()),
   /** Currently selected skin (one of the BUILTIN_SKINS names). */
   skin: z.string(),
+  providers: z.array(ProviderEntrySchema),
 });
 
 const ConfigUpdateInput = z.object({
@@ -441,6 +443,16 @@ const ConfigUpdateInput = z.object({
   memory: z.enum(['markdown', 'vector']).optional(),
   modelRouting: z.record(z.string(), z.string()).optional(),
   skin: z.string().optional(),
+  providers: z
+    .array(
+      z.object({
+        provider: z.string(),
+        model: z.string().optional(),
+        apiKey: z.string().optional(),
+        baseUrl: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 const ConfigUpdateOutput = z.object({ ok: z.literal(true) });
 

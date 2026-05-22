@@ -1,5 +1,5 @@
 import { EthosError } from '@ethosagent/types';
-import type { ConfigRepository } from '../repositories/config.repository';
+import type { ConfigRepository, RawProviderEntry } from '../repositories/config.repository';
 
 // Read/update the parts of `~/.ethos/config.yaml` the web UI exposes. The
 // raw API key NEVER leaves this layer — `get` returns a redacted preview
@@ -15,6 +15,12 @@ export interface ConfigGetResult {
   memory: 'markdown' | 'vector';
   modelRouting: Record<string, string>;
   skin: string;
+  providers: Array<{
+    provider: string;
+    model: string | null;
+    apiKeyPreview: string;
+    baseUrl: string | null;
+  }>;
 }
 
 export interface ConfigUpdateInput {
@@ -26,6 +32,12 @@ export interface ConfigUpdateInput {
   memory?: 'markdown' | 'vector';
   modelRouting?: Record<string, string>;
   skin?: string;
+  providers?: Array<{
+    provider: string;
+    model?: string;
+    apiKey?: string;
+    baseUrl?: string;
+  }>;
 }
 
 export interface ConfigServiceOptions {
@@ -53,6 +65,12 @@ export class ConfigService {
       memory: raw.memory ?? 'markdown',
       modelRouting: raw.modelRouting,
       skin: raw.skin ?? 'default',
+      providers: raw.providers.map((p) => ({
+        provider: p.provider,
+        model: p.model ?? null,
+        apiKeyPreview: redactKey(p.apiKey),
+        baseUrl: p.baseUrl ?? null,
+      })),
     };
   }
 
@@ -60,7 +78,23 @@ export class ConfigService {
     // Empty-string apiKey would erase the existing key. Treat as no-op.
     const cleaned: typeof patch = { ...patch };
     if (cleaned.apiKey !== undefined && cleaned.apiKey === '') delete cleaned.apiKey;
-    await this.opts.config.update(cleaned);
+
+    // Convert providers to repository format when present.
+    let repoProviders: RawProviderEntry[] | undefined;
+    if (cleaned.providers) {
+      repoProviders = cleaned.providers.map((p) => {
+        const entry: RawProviderEntry = { provider: p.provider };
+        if (p.model) entry.model = p.model;
+        if (p.apiKey) entry.apiKey = p.apiKey;
+        if (p.baseUrl) entry.baseUrl = p.baseUrl;
+        return entry;
+      });
+    }
+
+    await this.opts.config.update({
+      ...cleaned,
+      ...(repoProviders !== undefined ? { providers: repoProviders } : {}),
+    });
   }
 }
 

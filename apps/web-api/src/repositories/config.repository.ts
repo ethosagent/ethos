@@ -19,6 +19,14 @@ export interface ConfigRepositoryOptions {
   storage?: Storage;
 }
 
+/** A single entry in the provider chain (providers.N.* lines in config.yaml). */
+export interface RawProviderEntry {
+  provider: string;
+  apiKey?: string;
+  model?: string;
+  baseUrl?: string;
+}
+
 /** Parsed shape — only the fields the web surface reads. Unknown keys are
  *  retained internally on the `_raw` map so writes preserve them. */
 export interface RawConfig {
@@ -31,6 +39,8 @@ export interface RawConfig {
   /** Active skin name (default | mono | paper, or future custom skins). */
   skin?: string;
   modelRouting: Record<string, string>;
+  /** Ordered provider chain for ChainedProvider failover. */
+  providers: RawProviderEntry[];
   /** Every other top-level key the file contained (telegramToken etc.).
    *  Round-tripped through writes verbatim. */
   passthrough: Record<string, string>;
@@ -63,9 +73,40 @@ export class ConfigRepository {
       'baseUrl',
       'skin',
     ]);
-    const config: RawConfig = { modelRouting: {}, passthrough: {} };
+    const config: RawConfig = { modelRouting: {}, providers: [], passthrough: {} };
+    const providerMap = new Map<number, RawProviderEntry>();
 
     for (const line of src.split('\n')) {
+      // `providers.<n>.<field>: <value>` — provider chain entries
+      const pm = line.match(/^providers\.(\d+)\.(\S+):\s*(.+)$/);
+      if (pm) {
+        const idx = Number(pm[1]);
+        const field = pm[2]?.trim();
+        const value = pm[3] !== undefined ? stripQuotes(pm[3].trim()) : '';
+        if (field && !Number.isNaN(idx)) {
+          let entry = providerMap.get(idx);
+          if (!entry) {
+            entry = { provider: '' };
+            providerMap.set(idx, entry);
+          }
+          switch (field) {
+            case 'provider':
+              entry.provider = value;
+              break;
+            case 'apiKey':
+              entry.apiKey = value;
+              break;
+            case 'model':
+              entry.model = value;
+              break;
+            case 'baseUrl':
+              entry.baseUrl = value;
+              break;
+          }
+        }
+        continue;
+      }
+
       // `modelRouting.<id>: <model>` — per-personality overrides
       const mr = line.match(/^modelRouting\.(\S+):\s*(.+)$/);
       if (mr) {
@@ -108,6 +149,14 @@ export class ConfigRepository {
         config.passthrough[key] = value;
       }
     }
+
+    // Assemble providers array from indexed map, sorted by index
+    const sortedIndices = [...providerMap.keys()].sort((a, b) => a - b);
+    for (const idx of sortedIndices) {
+      const entry = providerMap.get(idx);
+      if (entry) config.providers.push(entry);
+    }
+
     return config;
   }
 
@@ -126,11 +175,18 @@ export class ConfigRepository {
     const op = this.writeChain
       .catch(() => {})
       .then(async () => {
-        const current: RawConfig = (await this.read()) ?? { modelRouting: {}, passthrough: {} };
+        const current: RawConfig = (await this.read()) ?? {
+          modelRouting: {},
+          providers: [],
+          passthrough: {},
+        };
         next = {
           ...current,
           ...patch,
           modelRouting: { ...current.modelRouting, ...(patch.modelRouting ?? {}) },
+          // When providers is explicitly provided in the patch, replace entirely;
+          // otherwise keep the current array.
+          providers: patch.providers !== undefined ? patch.providers : current.providers,
           passthrough: { ...current.passthrough, ...(patch.passthrough ?? {}) },
         };
         await this.write(next);
@@ -151,7 +207,7 @@ export class ConfigRepository {
     const op = this.writeChain
       .catch(() => {})
       .then(async () => {
-        current = (await this.read()) ?? { modelRouting: {}, passthrough: {} };
+        current = (await this.read()) ?? { modelRouting: {}, providers: [], passthrough: {} };
         for (const key of keys) delete current.passthrough[key];
         await this.write(current);
       });
@@ -173,6 +229,14 @@ export class ConfigRepository {
     if (config.skin) lines.push(`skin: ${yamlScalar(config.skin)}`);
     for (const [id, model] of Object.entries(config.modelRouting)) {
       lines.push(`modelRouting.${yamlScalar(id)}: ${yamlScalar(model)}`);
+    }
+    for (let i = 0; i < config.providers.length; i++) {
+      const p = config.providers[i];
+      if (!p) continue;
+      lines.push(`providers.${i}.provider: ${yamlScalar(p.provider)}`);
+      if (p.apiKey) lines.push(`providers.${i}.apiKey: ${yamlScalar(p.apiKey)}`);
+      if (p.model) lines.push(`providers.${i}.model: ${yamlScalar(p.model)}`);
+      if (p.baseUrl) lines.push(`providers.${i}.baseUrl: ${yamlScalar(p.baseUrl)}`);
     }
     // Stable-order passthrough — keep keys the CLI cares about across
     // round-trips even if it adds new ones in the future.

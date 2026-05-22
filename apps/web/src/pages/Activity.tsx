@@ -1,9 +1,9 @@
 import type { SseEvent } from '@ethosagent/web-contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Empty, Select, Spin, Tag, Typography } from 'antd';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { rpc } from '../rpc';
-import { type SseSubscription, subscribeToSession } from '../sse';
+import { subscribeToSession } from '../sse';
 
 interface ActivityEvent {
   id: string;
@@ -137,7 +137,6 @@ export function Activity() {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [sessionFilter, setSessionFilter] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const subsRef = useRef<SseSubscription[]>([]);
 
   const { data: sessionsData, isLoading } = useQuery({
     queryKey: ['sessions', 'list', { limit: 10 }],
@@ -154,27 +153,23 @@ export function Activity() {
     });
   }, []);
 
+  const activeSessionId = sessionFilter ?? sessions[0]?.id ?? null;
+
   useEffect(() => {
-    for (const sub of subsRef.current) sub.close();
-    subsRef.current = [];
+    if (!activeSessionId) return;
 
-    if (sessions.length === 0) return;
+    const activeSession = sessions.find((s) => s.id === activeSessionId);
+    const title = activeSession?.title ?? null;
 
-    for (const session of sessions) {
-      const sub = subscribeToSession(session.id, {
-        onEvent: (sseEvent) => {
-          const converted = convertSseEvent(sseEvent, session.id, session.title);
-          if (converted) appendEvent(converted);
-        },
-      });
-      subsRef.current.push(sub);
-    }
+    const sub = subscribeToSession(activeSessionId, {
+      onEvent: (sseEvent) => {
+        const converted = convertSseEvent(sseEvent, activeSessionId, title);
+        if (converted) appendEvent(converted);
+      },
+    });
 
-    return () => {
-      for (const sub of subsRef.current) sub.close();
-      subsRef.current = [];
-    };
-  }, [sessions, appendEvent]);
+    return () => sub.close();
+  }, [activeSessionId, sessions, appendEvent]);
 
   const filtered = events.filter((evt) => {
     if (!matchesTypeFilter(evt.type, typeFilter)) return false;
@@ -198,7 +193,7 @@ export function Activity() {
         </Typography.Title>
         <Select
           allowClear
-          placeholder="All sessions"
+          placeholder="Most recent session"
           size="small"
           style={{ width: 220 }}
           value={sessionFilter}
