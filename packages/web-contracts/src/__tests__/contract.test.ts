@@ -81,6 +81,7 @@ describe('entity schemas', () => {
       mcp_servers: null,
       plugins: null,
       fs_reach: null,
+      system: false,
       builtin: true,
       version: 1,
     };

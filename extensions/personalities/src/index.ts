@@ -13,6 +13,11 @@ import {
 
 export { firstParagraph, renderCharacterSheet } from './character-sheet';
 
+export const SYSTEM_PERSONALITY_IDS: ReadonlySet<string> = new Set([
+  'personality-architect',
+  'team-architect',
+]);
+
 // ---------------------------------------------------------------------------
 // YAML parsers — no external dependency, handles the subset we need
 // ---------------------------------------------------------------------------
