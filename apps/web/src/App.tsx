@@ -7,6 +7,7 @@ import { RightDrawer } from './components/RightDrawer';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { usePushEventToasts } from './hooks/usePushEventToasts';
+import { Activity } from './pages/Activity';
 import { Batch } from './pages/Batch';
 import { Chat } from './pages/Chat';
 import { Communications } from './pages/Communications';
@@ -111,6 +112,7 @@ export function App() {
           <Route path="/cron" element={<Cron />} />
           <Route path="/skills" element={<Skills />} />
           <Route path="/mesh" element={<Mesh />} />
+          <Route path="/activity" element={<Activity />} />
           <Route path="/teams" element={<Teams />} />
           <Route path="/teams/create" element={<TeamCreate />} />
           <Route path="/teams/:name" element={<TeamControlCenter />} />

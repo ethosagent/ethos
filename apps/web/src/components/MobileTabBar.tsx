@@ -35,6 +35,7 @@ interface MoreLink {
 }
 
 const MORE_LINKS: ReadonlyArray<MoreLink> = [
+  { path: '/activity', label: 'Activity' },
   { path: '/personalities', label: 'Personalities' },
   { path: '/skills', label: 'Skills' },
   { path: '/memory', label: 'Memory' },
