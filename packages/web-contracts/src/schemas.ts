@@ -530,6 +530,46 @@ export const McpListOutputSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// MCP per-personality tool policy — mcp.yaml shape, surfaced so the editor
+// can initialize the per-server tool checklist from disk. Mirrors
+// `McpPolicy` / `McpServerPolicy` in @ethosagent/types. Tool names are BARE
+// (no `mcp__<server>__` prefix) — that's what mcp.yaml stores.
+// ---------------------------------------------------------------------------
+
+export const McpServerPolicySchema = z.object({
+  /** Bare tool names the server may expose. Absent = all tools allowed. */
+  tools: z.array(z.string()).optional(),
+  reject_args: z.record(z.string(), z.record(z.string(), z.array(z.string()))).optional(),
+});
+
+export const McpPolicySchema = z.object({
+  servers: z.record(z.string(), McpServerPolicySchema).optional(),
+});
+export type McpPolicy = z.infer<typeof McpPolicySchema>;
+
+// MCP server tool discovery — lists the tools a server exposes so the
+// editor can render the per-server checklist. `available: false` signals
+// the server is unreachable (not connected / no credentials); the UI then
+// shows a note instead of an empty checklist.
+export const McpServerToolsInputSchema = z.object({
+  /** Personality the discovery runs under — OAuth credentials are scoped per personality. */
+  personalityId: z.string().min(1),
+  serverName: z.string().min(1),
+});
+
+export const McpServerToolsOutputSchema = z.object({
+  /** False when the server could not be reached — `tools` will be empty. */
+  available: z.boolean(),
+  /** Bare tool names (prefix stripped). */
+  tools: z.array(
+    z.object({
+      name: z.string(),
+      description: z.string().optional(),
+    }),
+  ),
+});
+
+// ---------------------------------------------------------------------------
 // Memory — v1
 //
 // The web tab edits the two markdown files MarkdownFileMemoryProvider

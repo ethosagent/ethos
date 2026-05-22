@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { FilePersonalityRegistry, parseMcpYaml } from '../index';
+import { FilePersonalityRegistry, parseMcpYaml, renderMcpYaml } from '../index';
 
 let testDir: string;
 
@@ -166,6 +166,197 @@ describe('parseMcpYaml', () => {
 
     const { warnings } = parseMcpYaml(src);
     expect(warnings).toEqual([]);
+  });
+});
+
+describe('renderMcpYaml', () => {
+  it('returns empty string for a policy with no servers', () => {
+    expect(renderMcpYaml({})).toBe('');
+    expect(renderMcpYaml({ servers: {} })).toBe('');
+  });
+
+  it('round-trips a tools-only policy', () => {
+    const src = [
+      'servers:',
+      '  linear:',
+      '    tools:',
+      '      - list_issues',
+      '      - get_issue',
+      '  slack:',
+      '    tools:',
+      '      - search_public',
+      '',
+    ].join('\n');
+    const { policy } = parseMcpYaml(src);
+    expect(renderMcpYaml(policy)).toBe(src);
+  });
+
+  it('round-trips reject_args alongside tools', () => {
+    const src = [
+      'servers:',
+      '  linear:',
+      '    tools:',
+      '      - list_issues',
+      '      - save_issue',
+      '    reject_args:',
+      '      save_issue:',
+      '        status:',
+      '          - Done',
+      '          - Cancelled',
+      '',
+    ].join('\n');
+    const { policy } = parseMcpYaml(src);
+    expect(renderMcpYaml(policy)).toBe(src);
+  });
+
+  it('parse(render(policy)) is identity for a reject_args-only server', () => {
+    const policy = {
+      servers: {
+        linear: {
+          reject_args: { save_issue: { status: ['Done'] } },
+        },
+      },
+    };
+    const reparsed = parseMcpYaml(renderMcpYaml(policy));
+    expect(reparsed.policy).toEqual(policy);
+    expect(reparsed.warnings).toEqual([]);
+  });
+
+  it('emits an explicit empty tools list', () => {
+    const rendered = renderMcpYaml({ servers: { linear: { tools: [] } } });
+    expect(rendered).toBe(['servers:', '  linear:', '    tools:', ''].join('\n'));
+    const { policy } = parseMcpYaml(rendered);
+    expect(policy.servers?.linear?.tools).toEqual([]);
+  });
+});
+
+describe('FilePersonalityRegistry — writeMcpToolSubsets', () => {
+  it('writes a tool subset for an attached server', async () => {
+    const personalityDir = join(testDir, 'personalities', 'agent');
+    await mkdir(personalityDir, { recursive: true });
+    await writeFile(join(personalityDir, 'config.yaml'), 'name: Agent\nmcp_servers: linear\n');
+    await writeFile(join(personalityDir, 'SOUL.md'), '# Agent');
+
+    const reg = new FilePersonalityRegistry(undefined, testDir);
+    await reg.loadFromDirectory(join(testDir, 'personalities'));
+
+    await reg.writeMcpToolSubsets('agent', { linear: ['list_issues', 'get_issue'] });
+
+    const policy = reg.getMcpPolicy('agent');
+    expect(policy?.servers?.linear?.tools).toEqual(['list_issues', 'get_issue']);
+  });
+
+  it('preserves reject_args when narrowing a tool subset', async () => {
+    const personalityDir = join(testDir, 'personalities', 'with-reject');
+    await mkdir(personalityDir, { recursive: true });
+    await writeFile(join(personalityDir, 'config.yaml'), 'name: With Reject\n');
+    await writeFile(join(personalityDir, 'SOUL.md'), '# With Reject');
+    await writeFile(
+      join(personalityDir, 'mcp.yaml'),
+      [
+        'servers:',
+        '  linear:',
+        '    tools:',
+        '      - list_issues',
+        '      - save_issue',
+        '    reject_args:',
+        '      save_issue:',
+        '        status:',
+        '          - Done',
+      ].join('\n'),
+    );
+
+    const reg = new FilePersonalityRegistry(undefined, testDir);
+    await reg.loadFromDirectory(join(testDir, 'personalities'));
+
+    await reg.writeMcpToolSubsets('with-reject', { linear: ['list_issues'] });
+
+    const policy = reg.getMcpPolicy('with-reject');
+    expect(policy?.servers?.linear?.tools).toEqual(['list_issues']);
+    // reject_args must survive the round-trip untouched.
+    expect(policy?.servers?.linear?.reject_args?.save_issue?.status).toEqual(['Done']);
+  });
+
+  it('clears a tools key with null, keeping the server entry when reject_args remains', async () => {
+    const personalityDir = join(testDir, 'personalities', 'clear-tools');
+    await mkdir(personalityDir, { recursive: true });
+    await writeFile(join(personalityDir, 'config.yaml'), 'name: Clear Tools\n');
+    await writeFile(join(personalityDir, 'SOUL.md'), '# Clear Tools');
+    await writeFile(
+      join(personalityDir, 'mcp.yaml'),
+      [
+        'servers:',
+        '  linear:',
+        '    tools:',
+        '      - list_issues',
+        '    reject_args:',
+        '      save_issue:',
+        '        status:',
+        '          - Done',
+      ].join('\n'),
+    );
+
+    const reg = new FilePersonalityRegistry(undefined, testDir);
+    await reg.loadFromDirectory(join(testDir, 'personalities'));
+
+    await reg.writeMcpToolSubsets('clear-tools', { linear: null });
+
+    const policy = reg.getMcpPolicy('clear-tools');
+    expect(policy?.servers?.linear?.tools).toBeUndefined();
+    expect(policy?.servers?.linear?.reject_args?.save_issue?.status).toEqual(['Done']);
+  });
+
+  it('removes the mcp.yaml file when clearing the only server with no reject_args', async () => {
+    const personalityDir = join(testDir, 'personalities', 'all-default');
+    await mkdir(personalityDir, { recursive: true });
+    await writeFile(join(personalityDir, 'config.yaml'), 'name: All Default\n');
+    await writeFile(join(personalityDir, 'SOUL.md'), '# All Default');
+    await writeFile(
+      join(personalityDir, 'mcp.yaml'),
+      ['servers:', '  linear:', '    tools:', '      - list_issues'].join('\n'),
+    );
+
+    const reg = new FilePersonalityRegistry(undefined, testDir);
+    await reg.loadFromDirectory(join(testDir, 'personalities'));
+
+    await reg.writeMcpToolSubsets('all-default', { linear: null });
+
+    expect(reg.getMcpPolicy('all-default')).toBeUndefined();
+  });
+
+  it('leaves untouched servers intact', async () => {
+    const personalityDir = join(testDir, 'personalities', 'multi');
+    await mkdir(personalityDir, { recursive: true });
+    await writeFile(join(personalityDir, 'config.yaml'), 'name: Multi\n');
+    await writeFile(join(personalityDir, 'SOUL.md'), '# Multi');
+    await writeFile(
+      join(personalityDir, 'mcp.yaml'),
+      [
+        'servers:',
+        '  linear:',
+        '    tools:',
+        '      - list_issues',
+        '  slack:',
+        '    tools:',
+        '      - search_public',
+      ].join('\n'),
+    );
+
+    const reg = new FilePersonalityRegistry(undefined, testDir);
+    await reg.loadFromDirectory(join(testDir, 'personalities'));
+
+    await reg.writeMcpToolSubsets('multi', { linear: ['get_issue'] });
+
+    const policy = reg.getMcpPolicy('multi');
+    expect(policy?.servers?.linear?.tools).toEqual(['get_issue']);
+    // slack was not in the subsets map — it must be unchanged.
+    expect(policy?.servers?.slack?.tools).toEqual(['search_public']);
+  });
+
+  it('throws for a built-in personality', async () => {
+    const reg = new FilePersonalityRegistry(undefined, testDir);
+    await reg.loadBuiltins();
+    await expect(reg.writeMcpToolSubsets('researcher', { linear: ['x'] })).rejects.toThrow();
   });
 });
 

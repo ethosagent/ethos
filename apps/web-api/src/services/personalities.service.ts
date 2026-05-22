@@ -7,7 +7,7 @@ import {
 } from '@ethosagent/personalities';
 import type { PersonalitySkillRecord, SkillsLibrary } from '@ethosagent/skills';
 import { EthosError, resolveModelDisplay } from '@ethosagent/types';
-import type { Personality, PersonalitySkill } from '@ethosagent/web-contracts';
+import type { McpPolicy, Personality, PersonalitySkill } from '@ethosagent/web-contracts';
 
 // Personalities service. Calls into FilePersonalityRegistry for the
 // directory-level CRUD (create/update/delete/duplicate) and into
@@ -30,11 +30,13 @@ export class PersonalitiesService {
     };
   }
 
-  async get(id: string): Promise<{ personality: Personality; soulMd: string }> {
+  async get(
+    id: string,
+  ): Promise<{ personality: Personality; soulMd: string; mcpPolicy: McpPolicy | null }> {
     const described = this.opts.personalities.describe(id);
     if (!described) throw notFound(id);
     const soulMd = await this.opts.personalities.readSoulMd(id);
-    return { personality: toWire(described), soulMd };
+    return { personality: toWire(described), soulMd, mcpPolicy: described.mcpPolicy ?? null };
   }
 
   /** Generated Markdown character sheet — the same artifact `ethos personality
@@ -54,6 +56,16 @@ export class PersonalitiesService {
   async update(id: string, patch: UpdatePersonalityPatch): Promise<{ personality: Personality }> {
     const updated = await this.opts.personalities.update(id, patch);
     return { personality: toWire(updated) };
+  }
+
+  /**
+   * Write per-server MCP tool subsets into the personality's `mcp.yaml`.
+   * `subsets` maps a server name to either an explicit bare-tool-name list
+   * (a strict subset) or `null` to clear any prior subset (all tools
+   * allowed). Delegates to the registry, which preserves `reject_args`.
+   */
+  async writeMcpToolSubsets(id: string, subsets: Record<string, string[] | null>): Promise<void> {
+    await this.opts.personalities.writeMcpToolSubsets(id, subsets);
   }
 
   async delete(id: string): Promise<void> {

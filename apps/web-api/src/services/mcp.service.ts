@@ -220,6 +220,37 @@ export class McpService {
     return { ok: true as const };
   }
 
+  /**
+   * List the tools a given MCP server exposes, for the personality editor's
+   * per-server tool checklist. Tool names are returned BARE (the
+   * `mcp__<server>__` prefix is stripped) because `mcp.yaml` stores bare
+   * names.
+   *
+   * Discovery runs under `personalityId` because OAuth credentials are
+   * scoped per personality. When the server is unreachable (not connected /
+   * no credentials), `getToolsForPersonality` swallows the per-server
+   * failure and yields no tools — this returns `{ available: false }` so
+   * the UI can show a note instead of an empty checklist.
+   */
+  async serverTools(input: { personalityId: string; serverName: string }) {
+    const prefix = `mcp__${input.serverName}__`;
+    let all: Awaited<ReturnType<McpManager['getToolsForPersonality']>>;
+    try {
+      all = await this.mcpManager.getToolsForPersonality(input.personalityId);
+    } catch {
+      return { available: false as const, tools: [] };
+    }
+    const tools = all
+      .filter((t) => t.name.startsWith(prefix))
+      .map((t) => {
+        const bare = t.name.slice(prefix.length);
+        return t.description && t.description !== bare
+          ? { name: bare, description: t.description }
+          : { name: bare };
+      });
+    return { available: tools.length > 0, tools };
+  }
+
   async reconnect(input: { name: string }) {
     const configs = await this.mcpJsonStore.read();
     const existing = configs.find((c) => c.name === input.name);

@@ -30,9 +30,10 @@ export const personalitiesRouter = {
     }),
   ),
 
-  update: os.personalities.update.handler(({ input, context }) => {
-    const { id, mcp_servers, plugins, capabilities, provider, fs_reach, ...rest } = input;
-    return context.personalities.update(id, {
+  update: os.personalities.update.handler(async ({ input, context }) => {
+    const { id, mcp_servers, mcp_tools, plugins, capabilities, provider, fs_reach, ...rest } =
+      input;
+    const result = await context.personalities.update(id, {
       ...rest,
       ...(mcp_servers !== undefined ? { mcp_servers } : {}),
       ...(plugins !== undefined ? { plugins } : {}),
@@ -40,6 +41,20 @@ export const personalitiesRouter = {
       ...(provider !== undefined ? { provider } : {}),
       ...(fs_reach !== undefined ? { fs_reach } : {}),
     });
+    // Per-server MCP tool subsets are an off-schema sibling (`mcp.yaml`),
+    // written after the config update. Ignored unless `mcp_servers` was
+    // also supplied — `mcp_tools` alone has no attached servers to scope.
+    if (mcp_servers !== undefined && mcp_tools !== undefined) {
+      const subsets: Record<string, string[] | null> = {};
+      for (const server of mcp_servers) {
+        // A server with an explicit subset → write the list; a server with
+        // every tool selected is omitted from `mcp_tools` by the UI → null
+        // clears any prior subset back to default-allow.
+        subsets[server] = mcp_tools[server] ?? null;
+      }
+      await context.personalities.writeMcpToolSubsets(id, subsets);
+    }
+    return result;
   }),
 
   delete: os.personalities.delete.handler(async ({ input, context }) => {

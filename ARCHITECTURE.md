@@ -281,6 +281,15 @@ A plugin declares the contract major version it was built against. The
 loader rejects mismatches without overlap. *Rationale:* overlap
 deprecation has, historically, become permanent compatibility.
 
+**S9 — Secret values are stored exclusively in SecretsResolver.**
+A secret value — API key, bearer token, OAuth token, password, or any
+credential — must never be written to a config file, personality file,
+MCP server config, export archive, or any storage path outside the
+`SecretsResolver` interface. Config files may reference a secret by
+name (for documentation or manifest purposes) but never by value.
+`SecretsResolver` is the sole storage and retrieval path for all
+credential material. No exception path exists for this rule.
+
 ------------------------------------------------------------------------
 
 ## VI. Change Governance
@@ -549,6 +558,15 @@ safety:
 
   S8_plugin_contract_strict:
     overlap_deprecation: forbidden
+
+  S9_secrets_in_resolver_only:
+    rule: "Secret values must never be written outside SecretsResolver"
+    checks:
+      - "No McpServerConfig.headers contains a literal Authorization token value"
+      - "No personality config file or export archive contains a secret value"
+      - "SecretsResolver is the only write path for credentials"
+    severity: error
+    no_exception_path: true
 
 # ---- Frozen schemas (§VII) -------------------------------------------
 # Identities listed here; contract module paths live in the sidecar.

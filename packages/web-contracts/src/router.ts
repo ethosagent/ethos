@@ -23,8 +23,11 @@ import {
   McpCompleteOutputSchema,
   McpDeleteInputSchema,
   McpListOutputSchema,
+  McpPolicySchema,
   McpReconnectInputSchema,
   McpServerInfoSchema,
+  McpServerToolsInputSchema,
+  McpServerToolsOutputSchema,
   McpStartInputSchema,
   McpStartOutputSchema,
   McpStatusOutputSchema,
@@ -135,6 +138,10 @@ const PersonalityGetOutput = z.object({
   personality: PersonalitySchema,
   /** Markdown body of SOUL.md. Empty string when the file isn't present. */
   soulMd: z.string(),
+  /** Per-personality MCP tool policy from `mcp.yaml`. Null when the
+   *  personality has no `mcp.yaml`. A server with no `tools` entry means
+   *  "all tools allowed" (default-allow). */
+  mcpPolicy: McpPolicySchema.nullable(),
 });
 
 const PersonalityCharacterSheetInput = z.object({ id: z.string() });
@@ -180,6 +187,13 @@ const PersonalityUpdateInput = z.object({
   soulMd: z.string().optional(),
   memoryScope: z.literal('per-personality').optional(),
   mcp_servers: z.array(z.string()).optional(),
+  /** Per-server MCP tool subsets, written to `mcp.yaml`. Maps a server name
+   *  to the BARE tool names that server may expose. Only include a server
+   *  here when it is a STRICT subset — a server with every tool selected
+   *  should be omitted (that records "all tools allowed"). Servers attached
+   *  via `mcp_servers` but absent here have any prior `tools` entry cleared.
+   *  Ignored unless `mcp_servers` is also present. */
+  mcp_tools: z.record(z.string(), z.array(z.string())).optional(),
   plugins: z.array(z.string()).optional(),
   capabilities: z.array(z.string()).optional(),
   provider: ProviderIdSchema.or(z.literal('')).optional(),
@@ -658,6 +672,9 @@ const mcp = {
   list: oc.output(McpListOutputSchema),
   delete: oc.input(McpDeleteInputSchema).output(z.object({ ok: z.literal(true) })),
   reconnect: oc.input(McpReconnectInputSchema).output(McpStartOutputSchema),
+  /** List the bare tool names a given MCP server exposes, for the
+   *  per-server tool checklist in the personality editor. */
+  serverTools: oc.input(McpServerToolsInputSchema).output(McpServerToolsOutputSchema),
 };
 
 // ---------------------------------------------------------------------------

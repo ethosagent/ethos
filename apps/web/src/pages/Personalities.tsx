@@ -1,4 +1,5 @@
 import type {
+  McpPolicy,
   McpServerInfo,
   Personality,
   PersonalitySkill,
@@ -785,6 +786,10 @@ function WizardMcpTab({
         Check each MCP server this personality can reach. Unchecked servers are invisible to this
         role.
       </Typography.Text>
+      <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+        Choose specific tools per server after creating the personality — edit it once the server's
+        credentials are connected.
+      </Typography.Text>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {servers.map((s) => (
           <Checkbox
@@ -985,7 +990,11 @@ function EditModal({ id, onClose }: { id: string; onClose: () => void }) {
               key: 'mcp',
               label: 'MCP',
               children: (
-                <McpServersPanel id={id} initialMcpServers={data.personality.mcp_servers ?? []} />
+                <McpServersPanel
+                  id={id}
+                  initialMcpServers={data.personality.mcp_servers ?? []}
+                  initialMcpPolicy={data.mcpPolicy}
+                />
               ),
             },
             {
@@ -1681,14 +1690,102 @@ function DuplicateModal({
 }
 
 // ---------------------------------------------------------------------------
-// MCP servers panel — checkbox list of all configured MCP servers.
-// Saves via personalities.update({ mcp_servers: [...] }).
+// MCP servers panel — checkbox list of all configured MCP servers, each with
+// a per-server tool checklist (loaded from the personality's mcp.yaml).
+// Saves via personalities.update({ mcp_servers, mcp_tools }).
 // ---------------------------------------------------------------------------
 
-function McpServersPanel({ id, initialMcpServers }: { id: string; initialMcpServers: string[] }) {
+// Per-server tool selection state held in the parent so Save can build the
+// `mcp_tools` payload. `tools` is the set of discovered tool names; `null`
+// means tools have not been discovered yet (or the server is unreachable).
+type ServerToolState = {
+  /** All bare tool names the server exposes, or null when undiscovered. */
+  tools: string[] | null;
+  /** Currently-checked bare tool names. */
+  selected: Set<string>;
+};
+
+// A server with no `tools` entry in mcp.yaml = all tools allowed.
+function initialSelectionFor(serverName: string, policy: McpPolicy | null): string[] | undefined {
+  return policy?.servers?.[serverName]?.tools;
+}
+
+function ServerToolChecklist({
+  personalityId,
+  serverName,
+  state,
+  onDiscovered,
+  onToggle,
+}: {
+  personalityId: string;
+  serverName: string;
+  state: ServerToolState | undefined;
+  onDiscovered: (tools: string[]) => void;
+  onToggle: (toolName: string) => void;
+}) {
+  const toolsQuery = useQuery({
+    queryKey: ['mcp', 'serverTools', personalityId, serverName],
+    queryFn: () => rpc.mcp.serverTools({ personalityId, serverName }),
+  });
+
+  // Lift the discovered tool list into the parent once, when it arrives.
+  useEffect(() => {
+    if (toolsQuery.data && state?.tools == null) {
+      onDiscovered(toolsQuery.data.tools.map((t) => t.name));
+    }
+  }, [toolsQuery.data, state?.tools, onDiscovered]);
+
+  if (toolsQuery.isLoading) {
+    return (
+      <div style={{ paddingLeft: 24, paddingTop: 4 }}>
+        <Spin size="small" />
+      </div>
+    );
+  }
+
+  const available = toolsQuery.data?.available ?? false;
+  const tools = toolsQuery.data?.tools ?? [];
+
+  if (!available || tools.length === 0) {
+    return (
+      <Typography.Text
+        type="secondary"
+        style={{ fontSize: 11, display: 'block', paddingLeft: 24, paddingTop: 2 }}
+      >
+        Tool list unavailable — the server is not connected. All of its tools remain allowed.
+      </Typography.Text>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingLeft: 24, paddingTop: 4 }}>
+      {tools.map((tool) => (
+        <Tag.CheckableTag
+          key={tool.name}
+          checked={state?.selected.has(tool.name) ?? true}
+          onChange={() => onToggle(tool.name)}
+          style={{ padding: '4px 10px', fontSize: 12 }}
+        >
+          {tool.name}
+        </Tag.CheckableTag>
+      ))}
+    </div>
+  );
+}
+
+function McpServersPanel({
+  id,
+  initialMcpServers,
+  initialMcpPolicy,
+}: {
+  id: string;
+  initialMcpServers: string[];
+  initialMcpPolicy: McpPolicy | null;
+}) {
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
   const [attached, setAttached] = useState<Set<string>>(new Set(initialMcpServers));
+  const [toolState, setToolState] = useState<Record<string, ServerToolState>>({});
   const [dirty, setDirty] = useState(false);
 
   const pluginsQuery = useQuery({
@@ -1697,7 +1794,21 @@ function McpServersPanel({ id, initialMcpServers }: { id: string; initialMcpServ
   });
 
   const mut = useMutation({
-    mutationFn: () => rpc.personalities.update({ id, mcp_servers: [...attached] }),
+    mutationFn: () => {
+      const mcpServers = [...attached];
+      // Only servers that are a STRICT subset go into `mcp_tools`. A server
+      // with every discovered tool checked (or undiscovered tools) is
+      // omitted, which records "all tools allowed" in mcp.yaml.
+      const mcpTools: Record<string, string[]> = {};
+      for (const server of mcpServers) {
+        const st = toolState[server];
+        if (!st || st.tools == null) continue;
+        if (st.selected.size < st.tools.length) {
+          mcpTools[server] = st.tools.filter((t) => st.selected.has(t));
+        }
+      }
+      return rpc.personalities.update({ id, mcp_servers: mcpServers, mcp_tools: mcpTools });
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['personalities', 'get', id] });
       qc.invalidateQueries({ queryKey: ['personalities', 'characterSheet', id] });
@@ -1710,6 +1821,29 @@ function McpServersPanel({ id, initialMcpServers }: { id: string; initialMcpServ
   });
 
   const servers = pluginsQuery.data?.mcpServers ?? [];
+
+  // Initialize a server's selection once its tools are discovered: tools
+  // named in mcp.yaml's `tools` list are checked; with no entry, all are.
+  const handleDiscovered = (serverName: string, discovered: string[]) => {
+    setToolState((prev) => {
+      if (prev[serverName]?.tools != null) return prev;
+      const policyTools = initialSelectionFor(serverName, initialMcpPolicy);
+      const selected = new Set(policyTools ?? discovered);
+      return { ...prev, [serverName]: { tools: discovered, selected } };
+    });
+  };
+
+  const handleToggle = (serverName: string, toolName: string) => {
+    setToolState((prev) => {
+      const st = prev[serverName];
+      if (!st) return prev;
+      const selected = new Set(st.selected);
+      if (selected.has(toolName)) selected.delete(toolName);
+      else selected.add(toolName);
+      return { ...prev, [serverName]: { ...st, selected } };
+    });
+    setDirty(true);
+  };
 
   if (pluginsQuery.isLoading) {
     return (
@@ -1737,42 +1871,52 @@ function McpServersPanel({ id, initialMcpServers }: { id: string; initialMcpServ
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Typography.Text type="secondary" style={{ fontSize: 13 }}>
         Check each MCP server this personality can reach. Unchecked servers are invisible to this
-        role.
+        role. For an attached server, deselect tools to narrow what it can call.
       </Typography.Text>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {servers.map((s) => (
-          <Checkbox
-            key={s.name}
-            checked={attached.has(s.name)}
-            onChange={(e) => {
-              const next = new Set(attached);
-              if (e.target.checked) next.add(s.name);
-              else next.delete(s.name);
-              setAttached(next);
-              setDirty(true);
-            }}
-            aria-label={`Enable MCP server ${s.name} for ${id}`}
-          >
-            <span style={{ fontWeight: 500 }}>{s.name}</span>{' '}
-            <Tag bordered={false} style={{ fontSize: 11 }}>
-              {s.transport}
-            </Tag>
-            {s.command ? (
-              <Typography.Text
-                type="secondary"
-                style={{ fontFamily: 'Geist Mono, monospace', fontSize: 11 }}
-              >
-                {s.command}
-              </Typography.Text>
-            ) : s.url ? (
-              <Typography.Text
-                type="secondary"
-                style={{ fontFamily: 'Geist Mono, monospace', fontSize: 11 }}
-              >
-                {s.url}
-              </Typography.Text>
+          <div key={s.name}>
+            <Checkbox
+              checked={attached.has(s.name)}
+              onChange={(e) => {
+                const next = new Set(attached);
+                if (e.target.checked) next.add(s.name);
+                else next.delete(s.name);
+                setAttached(next);
+                setDirty(true);
+              }}
+              aria-label={`Enable MCP server ${s.name} for ${id}`}
+            >
+              <span style={{ fontWeight: 500 }}>{s.name}</span>{' '}
+              <Tag bordered={false} style={{ fontSize: 11 }}>
+                {s.transport}
+              </Tag>
+              {s.command ? (
+                <Typography.Text
+                  type="secondary"
+                  style={{ fontFamily: 'Geist Mono, monospace', fontSize: 11 }}
+                >
+                  {s.command}
+                </Typography.Text>
+              ) : s.url ? (
+                <Typography.Text
+                  type="secondary"
+                  style={{ fontFamily: 'Geist Mono, monospace', fontSize: 11 }}
+                >
+                  {s.url}
+                </Typography.Text>
+              ) : null}
+            </Checkbox>
+            {attached.has(s.name) ? (
+              <ServerToolChecklist
+                personalityId={id}
+                serverName={s.name}
+                state={toolState[s.name]}
+                onDiscovered={(tools) => handleDiscovered(s.name, tools)}
+                onToggle={(toolName) => handleToggle(s.name, toolName)}
+              />
             ) : null}
-          </Checkbox>
+          </div>
         ))}
       </div>
       <Button

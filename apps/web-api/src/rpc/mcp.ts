@@ -41,4 +41,5 @@ export const mcpRouter = {
   list: os.mcp.list.handler(({ context }) => context.mcp.list()),
   delete: os.mcp.delete.handler(({ input, context }) => context.mcp.delete(input)),
   reconnect: os.mcp.reconnect.handler(({ input, context }) => context.mcp.reconnect(input)),
+  serverTools: os.mcp.serverTools.handler(({ input, context }) => context.mcp.serverTools(input)),
 };

@@ -85,3 +85,73 @@ describe('McpService.start — redirectUri thread-through', () => {
     expect(arg).not.toHaveProperty('name');
   });
 });
+
+describe('McpService.serverTools — per-server tool discovery', () => {
+  function makeService(getToolsForPersonality: McpManager['getToolsForPersonality']): McpService {
+    const storage = new InMemoryStorage();
+    const secrets = new InMemorySecretsResolver();
+    const mcpJsonStore = new McpJsonStore(storage);
+    const mcpManager: McpManager = {
+      connect: async () => {},
+      disconnect: async () => {},
+      shutdown: async () => {},
+      getTools: () => [],
+      getToolsForPersonality,
+      listServers: () => [],
+      addServer: async () => {},
+      removeServer: async () => {},
+    } as unknown as McpManager;
+    return new McpService({
+      mcpManager,
+      personalityUpdater: { get: () => undefined, update: async () => undefined },
+      secrets,
+      mcpJsonStore,
+      redirectUri: 'http://default.fallback/oauth/callback',
+    });
+  }
+
+  // Minimal Tool-shaped object — only `name` and `description` are read.
+  function tool(name: string, description?: string) {
+    return { name, description } as unknown as Awaited<
+      ReturnType<McpManager['getToolsForPersonality']>
+    >[number];
+  }
+
+  it('strips the mcp__<server>__ prefix and returns only the named server', async () => {
+    const service = makeService(async () => [
+      tool('mcp__linear__list_issues', 'List issues'),
+      tool('mcp__linear__get_issue', 'Get an issue'),
+      tool('mcp__slack__search_public', 'Search'),
+    ]);
+
+    const result = await service.serverTools({ personalityId: 'p1', serverName: 'linear' });
+
+    expect(result.available).toBe(true);
+    expect(result.tools).toEqual([
+      { name: 'list_issues', description: 'List issues' },
+      { name: 'get_issue', description: 'Get an issue' },
+    ]);
+  });
+
+  it('omits a description equal to the bare tool name', async () => {
+    const service = makeService(async () => [tool('mcp__linear__list_issues', 'list_issues')]);
+    const result = await service.serverTools({ personalityId: 'p1', serverName: 'linear' });
+    expect(result.tools).toEqual([{ name: 'list_issues' }]);
+  });
+
+  it('returns available:false with no tools when the server exposed nothing', async () => {
+    const service = makeService(async () => [tool('mcp__other__x')]);
+    const result = await service.serverTools({ personalityId: 'p1', serverName: 'linear' });
+    expect(result.available).toBe(false);
+    expect(result.tools).toEqual([]);
+  });
+
+  it('returns available:false when discovery throws (server unreachable)', async () => {
+    const service = makeService(async () => {
+      throw new Error('connect failed');
+    });
+    const result = await service.serverTools({ personalityId: 'p1', serverName: 'linear' });
+    expect(result.available).toBe(false);
+    expect(result.tools).toEqual([]);
+  });
+});

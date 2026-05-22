@@ -312,6 +312,48 @@ export function parseMcpYaml(src: string): {
   return { policy, warnings };
 }
 
+/**
+ * Serialize an `McpPolicy` back into `mcp.yaml` text — the inverse of
+ * `parseMcpYaml`. Round-trips both `tools` and `reject_args` so editing a
+ * tool subset never destroys argument-rejection rules.
+ *
+ * A server with no `tools` and no `reject_args` is still emitted (as a bare
+ * `  <name>:` line) so the policy round-trips faithfully. Returns an empty
+ * string when the policy has no servers — callers should treat that as
+ * "delete the file" or "write nothing".
+ */
+export function renderMcpYaml(policy: import('@ethosagent/types').McpPolicy): string {
+  const servers = policy.servers;
+  if (!servers || Object.keys(servers).length === 0) return '';
+
+  const lines: string[] = ['servers:'];
+  for (const serverName of Object.keys(servers)) {
+    const serverPolicy = servers[serverName] ?? {};
+    lines.push(`  ${serverName}:`);
+    if (serverPolicy.tools !== undefined) {
+      lines.push('    tools:');
+      for (const tool of serverPolicy.tools) {
+        lines.push(`      - ${tool}`);
+      }
+    }
+    const rejectArgs = serverPolicy.reject_args;
+    if (rejectArgs !== undefined) {
+      lines.push('    reject_args:');
+      for (const toolName of Object.keys(rejectArgs)) {
+        lines.push(`      ${toolName}:`);
+        const argRules = rejectArgs[toolName] ?? {};
+        for (const argName of Object.keys(argRules)) {
+          lines.push(`        ${argName}:`);
+          for (const value of argRules[argName] ?? []) {
+            lines.push(`          - ${value}`);
+          }
+        }
+      }
+    }
+  }
+  return `${lines.join('\n')}\n`;
+}
+
 // ---------------------------------------------------------------------------
 // FilePersonalityRegistry
 // ---------------------------------------------------------------------------
@@ -614,6 +656,72 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       });
     }
     return refreshed;
+  }
+
+  /**
+   * Write per-server MCP tool subsets into the personality's `mcp.yaml`.
+   *
+   * `subsets` maps a server name to its desired `tools` intent:
+   *  - `string[]` — write an explicit `tools` list (a strict subset, or an
+   *    empty list meaning "no tools allowed").
+   *  - `null` — delete any existing `tools` key for that server, restoring
+   *    the default-allow ("all tools") semantics.
+   *
+   * The existing `mcp.yaml` policy is read first; only each named server's
+   * `tools` key is touched — `reject_args` and any servers absent from
+   * `subsets` are preserved verbatim. A server named in `subsets` that did
+   * not previously exist in the policy is created (with `tools` only) so an
+   * explicit empty subset can be recorded.
+   *
+   * Built-in personalities are read-only — this throws for them, mirroring
+   * `update()`.
+   */
+  async writeMcpToolSubsets(id: string, subsets: Record<string, string[] | null>): Promise<void> {
+    const existing = this.requireMutable(id);
+    const dir = this.dirOf(existing);
+
+    // Start from the on-disk policy so reject_args and untouched servers
+    // survive the round-trip.
+    const current = this.mcpPolicies.get(id);
+    const servers: Record<string, import('@ethosagent/types').McpServerPolicy> = {};
+    if (current?.servers) {
+      for (const [name, policy] of Object.entries(current.servers)) {
+        servers[name] = { ...policy };
+      }
+    }
+
+    for (const [serverName, tools] of Object.entries(subsets)) {
+      const prev = servers[serverName] ?? {};
+      if (tools === null) {
+        // Drop the tools key — but keep the server entry only if it still
+        // carries reject_args; otherwise remove it entirely so the policy
+        // stays minimal.
+        if (prev.reject_args !== undefined) {
+          const { tools: _omit, ...rest } = prev;
+          servers[serverName] = rest;
+        } else {
+          delete servers[serverName];
+        }
+      } else {
+        // Replace only the tools key; carry reject_args forward unchanged.
+        servers[serverName] = { ...prev, tools: [...tools] };
+      }
+    }
+
+    const policy: import('@ethosagent/types').McpPolicy =
+      Object.keys(servers).length > 0 ? { servers } : {};
+    const rendered = renderMcpYaml(policy);
+    const mcpPath = join(dir, 'mcp.yaml');
+    if (rendered === '') {
+      await this.storage.remove(mcpPath).catch(() => {});
+    } else {
+      await this.storage.writeAtomic(mcpPath, rendered);
+    }
+
+    // Invalidate the mtime fingerprint so loadOne re-reads even within the
+    // same millisecond, then refresh so getMcpPolicy reflects the write.
+    this.fingerprintCache.delete(dir);
+    await this.refreshUserDir();
   }
 
   async deletePersonality(id: string): Promise<void> {

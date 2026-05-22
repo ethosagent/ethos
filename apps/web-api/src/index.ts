@@ -374,6 +374,7 @@ function createPassiveMcpManager(): McpManager {
     disconnect: async () => {},
     shutdown: async () => {},
     getTools: () => [],
+    getToolsForPersonality: async () => [],
     listServers: () => [],
     addServer: async () => notConfigured(),
     removeServer: async () => notConfigured(),
