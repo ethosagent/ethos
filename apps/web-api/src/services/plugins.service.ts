@@ -66,5 +66,7 @@ function toWireMcpServer(entry: McpServerConfig): McpServerInfo {
     url: typeof entry.url === 'string' ? entry.url : null,
     auth_status: null,
     created_via: entry.created_via ?? null,
+    mcpResultLimitChars: entry.mcpResultLimitChars ?? null,
+    deprecated: entry.transport === 'sse',
   };
 }

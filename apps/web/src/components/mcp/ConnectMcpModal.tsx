@@ -251,6 +251,15 @@ export function ConnectMcpModal({
                             {server.transport}
                           </Tag>
                         ) : null}
+                        {server.transport === 'sse' ? (
+                          <Tag
+                            color="warning"
+                            bordered={false}
+                            style={{ fontSize: 11, marginLeft: 4 }}
+                          >
+                            deprecated
+                          </Tag>
+                        ) : null}
                       </span>
                     }
                     description={

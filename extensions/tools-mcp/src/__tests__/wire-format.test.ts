@@ -549,6 +549,8 @@ describe('Wire format conformance (Phases 2.3-2.7)', () => {
         url: null,
         auth_status: null,
         created_via: null,
+        deprecated: null,
+        mcpResultLimitChars: null,
       });
       expect(result.success).toBe(true);
     });
@@ -561,6 +563,8 @@ describe('Wire format conformance (Phases 2.3-2.7)', () => {
         url: 'https://mcp.linear.app/mcp',
         auth_status: 'authorized',
         created_via: 'ui',
+        deprecated: null,
+        mcpResultLimitChars: null,
       });
       expect(result.success).toBe(true);
       if (result.success) {

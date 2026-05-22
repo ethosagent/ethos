@@ -30,6 +30,7 @@ export interface McpServerInfo {
 export interface McpServerPolicy {
   tools?: string[];
   reject_args?: Record<string, Record<string, string[]>>;
+  enabled?: boolean;
 }
 
 export interface McpPolicy {

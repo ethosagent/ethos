@@ -48,6 +48,8 @@ describe('PluginsService — MCP server listing', () => {
         url: null,
         auth_status: null,
         created_via: null,
+        deprecated: false,
+        mcpResultLimitChars: null,
       },
       {
         name: 'remote',
@@ -56,6 +58,8 @@ describe('PluginsService — MCP server listing', () => {
         url: 'https://mcp.example/server',
         auth_status: null,
         created_via: null,
+        deprecated: true,
+        mcpResultLimitChars: null,
       },
     ]);
   });

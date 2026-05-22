@@ -17,6 +17,7 @@ import {
 } from 'antd';
 import { useState } from 'react';
 import { AddMcpModal } from '../components/mcp/AddMcpModal';
+import { McpServerActions } from '../components/mcp/McpServerActions';
 import { rpc } from '../rpc';
 
 // Plugins page — global matrix of plugins × personalities.
@@ -363,8 +364,17 @@ function McpTable({ servers }: { servers: McpServerInfo[] }) {
           title: 'Transport',
           dataIndex: 'transport',
           key: 'transport',
-          width: 110,
-          render: (t: string) => <Tag bordered={false}>{t}</Tag>,
+          width: 150,
+          render: (t: string) => (
+            <span>
+              <Tag bordered={false}>{t}</Tag>
+              {t === 'sse' ? (
+                <Tag color="warning" bordered={false} style={{ fontSize: 11, marginLeft: 4 }}>
+                  deprecated
+                </Tag>
+              ) : null}
+            </span>
+          ),
         },
         {
           title: 'Endpoint',
@@ -430,25 +440,33 @@ function McpTable({ servers }: { servers: McpServerInfo[] }) {
         {
           title: '',
           key: 'actions',
-          width: 80,
+          width: 260,
           render: (_, server) => (
-            <Popconfirm
-              title="Remove this server?"
-              description="This removes the server definition and any stored tokens. Personalities that reference it will lose the connection."
-              okText="Remove"
-              okButtonProps={{ danger: true }}
-              onConfirm={() => deleteMut.mutate(server.name)}
-            >
-              <Button
-                size="small"
-                danger
-                loading={
-                  deleteMut.isPending && (deleteMut.variables as string | undefined) === server.name
-                }
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <McpServerActions
+                serverName={server.name}
+                transport={server.transport}
+                authStatus={server.auth_status}
+              />
+              <Popconfirm
+                title="Remove this server?"
+                description="This removes the server definition and any stored tokens. Personalities that reference it will lose the connection."
+                okText="Remove"
+                okButtonProps={{ danger: true }}
+                onConfirm={() => deleteMut.mutate(server.name)}
               >
-                Remove
-              </Button>
-            </Popconfirm>
+                <Button
+                  size="small"
+                  danger
+                  loading={
+                    deleteMut.isPending &&
+                    (deleteMut.variables as string | undefined) === server.name
+                  }
+                >
+                  Remove
+                </Button>
+              </Popconfirm>
+            </div>
           ),
         },
       ]}

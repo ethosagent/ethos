@@ -583,8 +583,9 @@ export class AgentLoop {
     const allowedMcpTools: Record<string, string[]> | undefined = mcpServers
       ? Object.fromEntries(
           Object.entries(mcpServers)
-            .filter(([, v]) => v.tools !== undefined)
+            .filter(([, v]) => v.tools !== undefined || v.enabled === false)
             .map(([k, v]) => {
+              if (v.enabled === false) return [k, []];
               const tools = v.tools;
               return [k, tools ?? []];
             }),

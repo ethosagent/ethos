@@ -1858,17 +1858,44 @@ export function ServerToolChecklist({
   onDiscovered: (tools: string[]) => void;
   onToggle: (toolName: string) => void;
 }) {
+  // Issue 9: paginated tools — accumulate across pages
+  const [allTools, setAllTools] = useState<{ name: string; description?: string }[]>([]);
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const toolsQuery = useQuery({
     queryKey: ['mcp', 'serverTools', personalityId, serverName],
     queryFn: () => rpc.mcp.serverTools({ personalityId, serverName }),
   });
 
+  // Seed allTools from the initial query
+  useEffect(() => {
+    if (toolsQuery.data) {
+      setAllTools(toolsQuery.data.tools);
+      setCursor(toolsQuery.data.nextCursor ?? undefined);
+    }
+  }, [toolsQuery.data]);
+
   // Lift the discovered tool list into the parent once, when it arrives.
   useEffect(() => {
-    if (toolsQuery.data && state?.tools == null) {
-      onDiscovered(toolsQuery.data.tools.map((t) => t.name));
+    if (allTools.length > 0 && state?.tools == null) {
+      onDiscovered(allTools.map((t) => t.name));
     }
-  }, [toolsQuery.data, state?.tools, onDiscovered]);
+  }, [allTools, state?.tools, onDiscovered]);
+
+  const handleLoadMore = async () => {
+    if (!cursor) return;
+    setLoadingMore(true);
+    try {
+      const result = await rpc.mcp.serverTools({ personalityId, serverName, cursor });
+      setAllTools((prev) => [...prev, ...result.tools]);
+      setCursor(result.nextCursor ?? undefined);
+      // Update parent with the full discovered set
+      onDiscovered([...allTools, ...result.tools].map((t) => t.name));
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   if (toolsQuery.isLoading) {
     return (
@@ -1879,9 +1906,8 @@ export function ServerToolChecklist({
   }
 
   const available = toolsQuery.data?.available ?? false;
-  const tools = toolsQuery.data?.tools ?? [];
 
-  if (!available || tools.length === 0) {
+  if (!available || allTools.length === 0) {
     return (
       <Typography.Text
         type="secondary"
@@ -1893,17 +1919,30 @@ export function ServerToolChecklist({
   }
 
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingLeft: 24, paddingTop: 4 }}>
-      {tools.map((tool) => (
-        <Tag.CheckableTag
-          key={tool.name}
-          checked={state?.selected.has(tool.name) ?? true}
-          onChange={() => onToggle(tool.name)}
-          style={{ padding: '4px 10px', fontSize: 12 }}
+    <div style={{ paddingLeft: 24, paddingTop: 4 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {allTools.map((tool) => (
+          <Tag.CheckableTag
+            key={tool.name}
+            checked={state?.selected.has(tool.name) ?? true}
+            onChange={() => onToggle(tool.name)}
+            style={{ padding: '4px 10px', fontSize: 12 }}
+          >
+            {tool.name}
+          </Tag.CheckableTag>
+        ))}
+      </div>
+      {cursor ? (
+        <Button
+          size="small"
+          type="link"
+          loading={loadingMore}
+          onClick={handleLoadMore}
+          style={{ paddingLeft: 0, marginTop: 4 }}
         >
-          {tool.name}
-        </Tag.CheckableTag>
-      ))}
+          Load more tools
+        </Button>
+      ) : null}
     </div>
   );
 }

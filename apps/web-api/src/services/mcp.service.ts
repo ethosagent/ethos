@@ -172,6 +172,8 @@ export class McpService {
           url: typeof c.url === 'string' ? c.url : null,
           auth_status: authStatus,
           created_via: c.created_via ?? null,
+          mcpResultLimitChars: c.mcpResultLimitChars ?? null,
+          deprecated: c.transport === 'sse',
         };
       }),
     );
@@ -205,17 +207,30 @@ export class McpService {
   }
 
   async addServer(input: {
-    url: string;
     name: string;
-    transport: 'streamable-http' | 'sse';
+    transport: 'streamable-http' | 'sse' | 'stdio';
+    url?: string;
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
     token?: string;
+    mcpResultLimitChars?: number;
   }) {
-    try {
-      validateUrl(input.url, { allowLocalhost: true });
-    } catch (err) {
-      const detail =
-        err instanceof SsrfError ? err.message : 'URL points to a private or reserved IP range';
-      return { ok: false as const, code: 'ssrf_blocked' as const, detail };
+    if (input.transport !== 'stdio') {
+      if (!input.url) {
+        return {
+          ok: false as const,
+          code: 'invalid_url' as const,
+          detail: 'URL is required for HTTP transports',
+        };
+      }
+      try {
+        validateUrl(input.url, { allowLocalhost: true });
+      } catch (err) {
+        const detail =
+          err instanceof SsrfError ? err.message : 'URL points to a private or reserved IP range';
+        return { ok: false as const, code: 'ssrf_blocked' as const, detail };
+      }
     }
 
     const existing = await this.mcpJsonStore.get(input.name);
@@ -230,9 +245,18 @@ export class McpService {
     const config: McpServerConfig = {
       name: input.name,
       transport: input.transport,
-      url: input.url,
       created_via: 'ui' as const,
+      ...(input.transport === 'stdio'
+        ? {
+            command: input.command,
+            ...(input.args ? { args: input.args } : {}),
+            ...(input.env ? { env: input.env } : {}),
+          }
+        : { url: input.url }),
       ...(input.token ? { auth: { type: 'bearer' as const } } : {}),
+      ...(input.mcpResultLimitChars !== undefined
+        ? { mcpResultLimitChars: input.mcpResultLimitChars }
+        : {}),
     };
     await this.mcpJsonStore.upsert(input.name, config);
 
@@ -285,13 +309,18 @@ export class McpService {
    * failure and yields no tools — this returns `{ available: false }` so
    * the UI can show a note instead of an empty checklist.
    */
-  async serverTools(input: { personalityId: string; serverName: string }) {
+  async serverTools(input: {
+    personalityId: string;
+    serverName: string;
+    limit?: number;
+    cursor?: string;
+  }) {
     const prefix = `mcp__${input.serverName}__`;
     let all: Awaited<ReturnType<McpManager['getToolsForPersonality']>>;
     try {
       all = await this.mcpManager.getToolsForPersonality(input.personalityId);
     } catch {
-      return { available: false as const, tools: [] };
+      return { available: false as const, tools: [], nextCursor: null };
     }
     const tools = all
       .filter((t) => t.name.startsWith(prefix))
@@ -301,7 +330,118 @@ export class McpService {
           ? { name: bare, description: t.description }
           : { name: bare };
       });
-    return { available: tools.length > 0, tools };
+
+    const pageSize = input.limit ?? 50;
+    const startIdx = input.cursor ? parseInt(input.cursor, 10) : 0;
+    const page = tools.slice(startIdx, startIdx + pageSize);
+    const nextIdx = startIdx + pageSize;
+    const nextCursor = nextIdx < tools.length ? String(nextIdx) : null;
+
+    return { available: tools.length > 0, tools: page, nextCursor };
+  }
+
+  async refreshToken(input: { serverName: string }) {
+    const configs = await this.mcpJsonStore.read();
+    const config = configs.find((c) => c.name === input.serverName);
+    if (!config?.auth || config.auth.type !== 'oauth2') {
+      return { ok: false, expiresAt: null, error: 'Server does not use OAuth2 auth' };
+    }
+    try {
+      const { refreshToken: doRefresh } = await import('@ethosagent/tools-mcp');
+      await doRefresh(input.serverName, config.auth, this.secrets);
+      const expiresAtStr = await this.secrets
+        .get(`mcp/${input.serverName}/expires_at`)
+        .catch(() => null);
+      return { ok: true, expiresAt: expiresAtStr ?? null };
+    } catch (err) {
+      return {
+        ok: false,
+        expiresAt: null,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  async rename(input: { oldName: string; newName: string }) {
+    const existing = await this.mcpJsonStore.get(input.newName);
+    if (existing) {
+      throw new Error(`Server '${input.newName}' already exists`);
+    }
+    const oldConfig = await this.mcpJsonStore.get(input.oldName);
+    if (!oldConfig) {
+      throw new Error(`Server '${input.oldName}' not found`);
+    }
+    const newConfig = { ...oldConfig, name: input.newName };
+    await this.mcpJsonStore.remove(input.oldName);
+    await this.mcpJsonStore.upsert(input.newName, newConfig);
+    try {
+      await this.mcpManager.renameServer(input.oldName, input.newName);
+    } catch {
+      // Manager rename failed but mcp.json is updated — will take effect on restart
+    }
+    return { ok: true as const };
+  }
+
+  async updateToken(input: { serverName: string; token: string }) {
+    await this.secrets.set(`mcp/${input.serverName}/access_token`, input.token);
+    try {
+      await this.mcpManager.updateToken(input.serverName, input.token);
+    } catch {
+      // Token stored; reconnect will use it on next attempt
+    }
+    return { ok: true as const };
+  }
+
+  async scopeStatus(input: { serverName: string }) {
+    const configs = await this.mcpJsonStore.read();
+    const config = configs.find((c) => c.name === input.serverName);
+    if (!config?.auth || config.auth.type !== 'oauth2') {
+      return {
+        outcome: 'inactive' as const,
+        declaredScopes: [] as string[],
+        actualScopes: [] as string[],
+      };
+    }
+    const declaredScopes = config.auth.scopes ?? [];
+    return {
+      outcome: 'unknown' as const,
+      declaredScopes,
+      actualScopes: [] as string[],
+    };
+  }
+
+  async validateConfig(input: {
+    transport: string;
+    url?: string;
+    command?: string;
+    name?: string;
+  }) {
+    const errors: { field: string; message: string }[] = [];
+    if (input.transport === 'stdio') {
+      if (!input.command) {
+        errors.push({ field: 'command', message: 'Required for stdio transport' });
+      }
+    } else {
+      if (!input.url) {
+        errors.push({ field: 'url', message: 'Required for HTTP transports' });
+      } else {
+        try {
+          new URL(input.url);
+        } catch {
+          errors.push({ field: 'url', message: 'Must be a valid URL' });
+        }
+      }
+    }
+    if (input.name) {
+      if (input.name.length > 64) {
+        errors.push({ field: 'name', message: 'Max 64 characters' });
+      }
+      const existingConfig = await this.mcpJsonStore.get(input.name);
+      if (existingConfig) {
+        errors.push({ field: 'name', message: 'Name already taken' });
+      }
+    }
+    return { valid: errors.length === 0, errors };
   }
 
   private async computeAuthStatus(

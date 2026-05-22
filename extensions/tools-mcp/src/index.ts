@@ -112,6 +112,8 @@ export interface McpServerConfig {
   keepaliveSeconds?: number;
   /** Timeout in ms for reconnect attempts. Default 10_000. */
   connectTimeoutMs?: number;
+  /** Max chars returned from a single MCP tool call. Default 50_000. */
+  mcpResultLimitChars?: number;
   /** Auth configuration for servers that require authorization. */
   auth?:
     | {
@@ -688,14 +690,19 @@ export class McpClient {
 // Tool adapter
 // ---------------------------------------------------------------------------
 
-function adaptMcpTool(mcpTool: McpToolDef, serverName: string, client: McpClient): Tool {
+function adaptMcpTool(
+  mcpTool: McpToolDef,
+  serverName: string,
+  client: McpClient,
+  resultLimitChars?: number,
+): Tool {
   return {
     name: `mcp__${serverName}__${mcpTool.name}`,
     description: mcpTool.description ?? mcpTool.name,
     schema: mcpTool.inputSchema,
     toolset: 'mcp',
     outputIsUntrusted: true,
-    maxResultChars: 50_000,
+    maxResultChars: resultLimitChars ?? 50_000,
     capabilities: {
       network: { allowedHosts: ['*'] }, // MCP server may access arbitrary hosts
       process: { allowedBinaries: ['*'] },
@@ -779,7 +786,7 @@ export class McpManager {
       const prefix = `mcp__${client.name}__`;
       const next = this._tools.filter((t) => !t.name.startsWith(prefix));
       for (const t of newTools) {
-        next.push(adaptMcpTool(t, client.name, client));
+        next.push(adaptMcpTool(t, client.name, client, config.mcpResultLimitChars));
       }
       this._tools = next;
     };
@@ -821,7 +828,7 @@ export class McpManager {
       const prefix = `mcp__${client.name}__`;
       const next = this._tools.filter((t) => !t.name.startsWith(prefix));
       for (const t of newTools) {
-        next.push(adaptMcpTool(t, client.name, client));
+        next.push(adaptMcpTool(t, client.name, client, config.mcpResultLimitChars));
       }
       this._tools = next;
     };
@@ -946,7 +953,7 @@ export class McpManager {
         try {
           const mcpTools = await client.listTools();
           for (const t of mcpTools) {
-            tools.push(adaptMcpTool(t, config.name, client));
+            tools.push(adaptMcpTool(t, config.name, client, config.mcpResultLimitChars));
           }
         } catch (err) {
           this.logger.warn(`[ethos] MCP server '${config.name}' listTools failed`, {
@@ -996,7 +1003,7 @@ export class McpManager {
           const mcpTools = await client.listTools();
           toolsByServer.set(client.name, mcpTools);
           for (const t of mcpTools) {
-            pendingTools.push(adaptMcpTool(t, client.name, client));
+            pendingTools.push(adaptMcpTool(t, client.name, client, client.config.mcpResultLimitChars));
           }
         } catch (err) {
           this.logger.warn(`[ethos] MCP server '${client.name}' listTools failed`, {
@@ -1085,7 +1092,9 @@ export class McpManager {
         await client.connect();
         connected = true;
         const mcpTools = await client.listTools();
-        const adapted = mcpTools.map((t) => adaptMcpTool(t, client.name, client));
+        const adapted = mcpTools.map((t) =>
+          adaptMcpTool(t, client.name, client, config.mcpResultLimitChars),
+        );
         // Atomic swap: build a NEW _tools array and assign in one step. A
         // racing getTools() either sees the old reference or the new one.
         this._tools = [...this._tools, ...adapted];
@@ -1158,6 +1167,130 @@ export class McpManager {
         this._stdioClients.delete(name);
       }
       if (this._onToolsChanged) this._onToolsChanged([], removedNames);
+    });
+  }
+
+  /**
+   * Rename a server and reconnect with the updated config. All internal
+   * bookkeeping (tools, clients, maps) is rebuilt atomically.
+   */
+  async renameServer(oldName: string, newName: string): Promise<void> {
+    await this._serialize(async () => {
+      const idx = this._configs.findIndex((c) => c.name === oldName);
+      if (idx === -1) {
+        throw new EthosError({
+          code: 'NOT_FOUND',
+          cause: `MCP server '${oldName}' is not registered`,
+          action: 'Call listServers() to see registered names',
+          details: { name: oldName },
+        });
+      }
+      if (this._clients.some((c) => c.name === newName)) {
+        throw new Error(`MCP server '${newName}' is already registered`);
+      }
+
+      const oldPrefix = `mcp__${oldName}__`;
+      const removedNames = this._tools
+        .filter((t) => t.name.startsWith(oldPrefix))
+        .map((t) => t.name);
+
+      // Disconnect old client
+      const oldClient = this._clients.find((c) => c.name === oldName);
+      if (oldClient) {
+        try {
+          await oldClient.disconnect();
+        } catch {
+          /* best-effort */
+        }
+      }
+
+      // Build new config with updated name
+      const newConfig = { ...this._configs[idx], name: newName };
+      this._configs = this._configs.map((c) => (c.name === oldName ? newConfig : c));
+
+      // Build and connect new client
+      const newClient = this._buildClient(newConfig);
+      let connected = false;
+      try {
+        await newClient.connect();
+        connected = true;
+        const mcpTools = await newClient.listTools();
+        const adapted = mcpTools.map((t) =>
+          adaptMcpTool(t, newName, newClient, newConfig.mcpResultLimitChars),
+        );
+
+        this._tools = [...this._tools.filter((t) => !t.name.startsWith(oldPrefix)), ...adapted];
+        this._clients = this._clients.map((c) => (c.name === oldName ? newClient : c));
+
+        // Re-key oauth map entries
+        for (const [key, c] of this._oauthClients) {
+          if (c.name === oldName) {
+            this._oauthClients.delete(key);
+            const newKey = key.replace(`::${oldName}`, `::${newName}`);
+            this._oauthClients.set(newKey, newClient);
+          }
+        }
+        const stdioClient = this._stdioClients.get(oldName);
+        if (stdioClient) {
+          this._stdioClients.delete(oldName);
+          this._stdioClients.set(newName, newClient);
+        }
+
+        if (this._onToolsChanged) this._onToolsChanged(adapted, removedNames);
+      } catch (err) {
+        if (connected) {
+          try {
+            await newClient.disconnect();
+          } catch {
+            /* ignore */
+          }
+        }
+        throw err;
+      }
+    });
+  }
+
+  /**
+   * Update the stored bearer token for a server and reconnect to pick up
+   * the new credentials.
+   */
+  async updateToken(serverName: string, token: string): Promise<void> {
+    await this._serialize(async () => {
+      const client = this._clients.find((c) => c.name === serverName);
+      if (!client) {
+        throw new EthosError({
+          code: 'NOT_FOUND',
+          cause: `MCP server '${serverName}' is not registered`,
+          action: 'Call listServers() to see registered names',
+          details: { name: serverName },
+        });
+      }
+      if (!this._secrets) {
+        throw new Error('No secrets resolver configured — cannot update token');
+      }
+      await this._secrets.set(mcpTokenSecretRef(serverName), token);
+
+      // Reconnect to pick up new token
+      try {
+        await client.disconnect();
+      } catch {
+        /* best-effort */
+      }
+      const config = this._configs.find((c) => c.name === serverName);
+      if (!config) return;
+      const newClient = this._buildClient(config);
+      try {
+        await newClient.connect();
+        const mcpTools = await newClient.listTools();
+        const prefix = `mcp__${serverName}__`;
+        const adapted = mcpTools.map((t) =>
+          adaptMcpTool(t, serverName, newClient, config.mcpResultLimitChars),
+        );
+        this._tools = [...this._tools.filter((t) => !t.name.startsWith(prefix)), ...adapted];
+        this._clients = this._clients.map((c) => (c.name === serverName ? newClient : c));
+      } catch {
+        // Token updated but reconnect failed — token is stored, will work on next connect
+      }
     });
   }
 
@@ -1235,7 +1368,7 @@ export class McpSessionView {
         await client.connect();
         const mcpTools = await client.listTools();
         for (const t of mcpTools) {
-          const tool = adaptMcpTool(t, config.name, client);
+          const tool = adaptMcpTool(t, config.name, client, config.mcpResultLimitChars);
           this._sessionTools.push({ ...tool, mcpSource: 'client' } as Tool);
         }
         this._sessionClients.push(client);

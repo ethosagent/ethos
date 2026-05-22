@@ -1,6 +1,6 @@
 import type { McpPolicy } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { App as AntApp, Button, Result, Spin, Tag, Typography } from 'antd';
+import { App as AntApp, Button, Result, Spin, Switch, Tag, Tooltip, Typography } from 'antd';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ConnectMcpModal } from '../components/mcp/ConnectMcpModal';
@@ -33,6 +33,9 @@ function McpSection({
   const [dirty, setDirty] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
 
+  // Issue 2: per-server enabled state, derived from mcpPolicy
+  const [enabledMap, setEnabledMap] = useState<Record<string, boolean>>({});
+
   // OAuth flow state
   const [oauthServer, setOauthServer] = useState<string | null>(null);
   const [oauthState, setOauthState] = useState('');
@@ -44,9 +47,22 @@ function McpSection({
     queryFn: () => rpc.mcp.personalityServers({ personalityId }),
   });
 
+  // Issue 2: initialize enabledMap from policy on first load
+  useEffect(() => {
+    if (!data) return;
+    const init: Record<string, boolean> = {};
+    for (const s of data.servers) {
+      const policy = mcpPolicy?.servers?.[s.name];
+      // Default to enabled unless explicitly disabled in mcp.yaml
+      init[s.name] = policy?.enabled !== false;
+    }
+    setEnabledMap(init);
+  }, [data, mcpPolicy]);
+
   const saveMut = useMutation({
     mutationFn: () => {
-      const mcpServers = servers.map((s) => s.name);
+      // Only include enabled servers
+      const mcpServers = servers.filter((s) => enabledMap[s.name] !== false).map((s) => s.name);
       const mcpTools: Record<string, string[]> = {};
       for (const server of mcpServers) {
         const st = toolState[server];
@@ -250,13 +266,34 @@ function McpSection({
         {servers.map((server) => (
           <div
             key={server.name}
-            style={{ borderBottom: '1px solid var(--border-subtle, #2A2A2A)', paddingBottom: 12 }}
+            style={{
+              borderBottom: '1px solid var(--border-subtle, #2A2A2A)',
+              paddingBottom: 12,
+              opacity: enabledMap[server.name] === false ? 0.5 : 1,
+            }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              {/* Issue 2: enable/disable toggle */}
+              <Tooltip title={enabledMap[server.name] === false ? 'Enable server' : 'Disable server'}>
+                <Switch
+                  size="small"
+                  checked={enabledMap[server.name] !== false}
+                  onChange={(checked) => {
+                    setEnabledMap((prev) => ({ ...prev, [server.name]: checked }));
+                    setDirty(true);
+                  }}
+                />
+              </Tooltip>
               <Typography.Text strong>{server.name}</Typography.Text>
               {server.transport ? (
                 <Tag bordered={false} style={{ fontSize: 11 }}>
                   {server.transport}
+                </Tag>
+              ) : null}
+              {/* Issue 7: SSE deprecation tag */}
+              {server.transport === 'sse' ? (
+                <Tag color="warning" bordered={false} style={{ fontSize: 11 }}>
+                  deprecated
                 </Tag>
               ) : null}
               {server.url ? (

@@ -455,6 +455,8 @@ export const McpServerInfoSchema = z.object({
   url: z.string().nullable(),
   auth_status: z.enum(['none', 'authorized', 'expired', 'missing', 'pending']).nullable(),
   created_via: z.enum(['cli', 'ui']).nullable(),
+  mcpResultLimitChars: z.number().int().positive().nullable(),
+  deprecated: z.boolean().nullable(),
 });
 export type McpServerInfo = z.infer<typeof McpServerInfoSchema>;
 
@@ -538,11 +540,17 @@ export const McpDeleteInputSchema = z.object({
 });
 
 export const McpAddServerInputSchema = z.object({
-  url: z.string().url(),
   name: z.string().min(1).max(64),
-  transport: z.enum(['streamable-http', 'sse']),
+  transport: z.enum(['streamable-http', 'sse', 'stdio']),
+  /** Required for streamable-http and sse transports. */
+  url: z.string().url().optional(),
+  /** Required for stdio transport. */
+  command: z.string().min(1).optional(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
   /** If provided, stored as the bearer token for this server. */
   token: z.string().min(1).optional(),
+  mcpResultLimitChars: z.number().int().positive().optional(),
 });
 
 export const McpAddServerOutputSchema = z.discriminatedUnion('ok', [
@@ -576,6 +584,7 @@ export const McpServerPolicySchema = z.object({
   /** Bare tool names the server may expose. Absent = all tools allowed. */
   tools: z.array(z.string()).optional(),
   reject_args: z.record(z.string(), z.record(z.string(), z.array(z.string()))).optional(),
+  enabled: z.boolean().optional(),
 });
 
 export const McpPolicySchema = z.object({
@@ -591,6 +600,8 @@ export const McpServerToolsInputSchema = z.object({
   /** Personality the discovery runs under — OAuth credentials are scoped per personality. */
   personalityId: z.string().min(1),
   serverName: z.string().min(1),
+  limit: z.number().int().min(1).max(500).optional(),
+  cursor: z.string().optional(),
 });
 
 export const McpServerToolsOutputSchema = z.object({
@@ -603,6 +614,7 @@ export const McpServerToolsOutputSchema = z.object({
       description: z.string().optional(),
     }),
   ),
+  nextCursor: z.string().nullable().optional(),
 });
 
 // MCP per-personality server listing — returns the servers attached to a
@@ -619,6 +631,57 @@ export const McpPersonalityServersOutputSchema = z.object({
       transport: z.string().optional(),
       url: z.string().optional(),
       auth_status: z.enum(['authorized', 'expired', 'missing']),
+    }),
+  ),
+});
+
+export const McpRefreshTokenInputSchema = z.object({
+  serverName: z.string().min(1),
+});
+export const McpRefreshTokenOutputSchema = z.object({
+  ok: z.boolean(),
+  expiresAt: z.string().nullable(),
+  error: z.string().optional(),
+});
+
+export const McpRenameInputSchema = z.object({
+  oldName: z.string().min(1),
+  newName: z.string().min(1).max(64),
+});
+export const McpRenameOutputSchema = z.object({
+  ok: z.literal(true),
+});
+
+export const McpUpdateTokenInputSchema = z.object({
+  serverName: z.string().min(1),
+  token: z.string().min(1),
+});
+export const McpUpdateTokenOutputSchema = z.object({
+  ok: z.literal(true),
+});
+
+export const McpScopeStatusInputSchema = z.object({
+  serverName: z.string().min(1),
+});
+export const McpScopeStatusOutputSchema = z.object({
+  outcome: z.enum(['match', 'mismatch', 'inactive', 'no-introspection', 'error', 'unknown']),
+  declaredScopes: z.array(z.string()),
+  actualScopes: z.array(z.string()),
+  error: z.string().optional(),
+});
+
+export const McpValidateConfigInputSchema = z.object({
+  transport: z.enum(['streamable-http', 'sse', 'stdio']),
+  url: z.string().optional(),
+  command: z.string().optional(),
+  name: z.string().optional(),
+});
+export const McpValidateConfigOutputSchema = z.object({
+  valid: z.boolean(),
+  errors: z.array(
+    z.object({
+      field: z.string(),
+      message: z.string(),
     }),
   ),
 });
