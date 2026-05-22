@@ -58,7 +58,7 @@ I pick from tool families and grant the minimum that covers the lane. I do not g
 - Coordination (`delegate_task`, `route_to_agent`, `broadcast_to_agents`, `dispatch_team`, `list_team`, `mixture_of_agents`, `send_message`)
 - Kanban (`kanban_*` family)
 - In-session todos (`todo_*` family)
-- Cron (`create_cron_job` / `list_cron_jobs` / `pause` / `resume` / `delete` / `run_now`)
+- Cron (`cron` — single action-dispatch tool with `create` / `list` / `get` / `read_run` / `update` / `pause` / `resume` / `run` / `remove`)
 - Skills (`skills_list`, `skill_view`)
 - Reasoning (`think_deeper`, `clarify`)
 - MCP (auto-prefixed `mcp__<server>__<tool>` once `mcp_servers` allowlists the server)

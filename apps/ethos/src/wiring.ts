@@ -206,13 +206,11 @@ export async function createAgentLoop(
     profile?: WiringProfile;
     meshRegistryPath?: string;
     /**
-     * Shared CronScheduler so agent-callable cron tools (`create_cron_job`,
-     * `list_cron_jobs`, `pause_cron_job`, `resume_cron_job`,
-     * `delete_cron_job`, `run_cron_job_now`) land in the same store the
-     * operator-driven `ethos cron` CLI uses. Pass the gateway's /
-     * serve's scheduler instance here; the wiring layer registers the
-     * tools on this loop's tool registry only when the personality opts
-     * in via `toolset.yaml`. Omit for ephemeral CLI chat sessions where
+     * Shared CronScheduler so the agent-callable `cron` tool lands in the
+     * same store the operator-driven `ethos cron` CLI uses. Pass the
+     * gateway's / serve's scheduler instance here; the wiring layer
+     * registers the tool only when the personality opts in via
+     * `toolset.yaml`. Omit for ephemeral CLI chat sessions where
      * scheduled work can't persist past process exit.
      */
     cronScheduler?: import('@ethosagent/cron').CronScheduler;

@@ -312,15 +312,23 @@ export async function runGatewayStart(): Promise<void> {
 
   // Cron scheduler — hoisted ABOVE every loop construction so the same
   // instance can be threaded into every createAgentLoop call (which
-  // registers the agent-callable cron tools against it) AND used as the
+  // registers the agent-callable `cron` tool against it) AND used as the
   // firing engine below. The `runJob` closure captures `systemLoop` via
   // a forward-referenced `let`; the scheduler doesn't fire until
   // `.start()` later, by which point `systemLoop` is assigned. This
-  // lets any personality with `create_cron_job` in its toolset register
-  // jobs that land in the same store as operator-created jobs.
+  // lets any personality with `cron` in its toolset register jobs that
+  // land in the same store as operator-created jobs.
   let systemLoop: import('@ethosagent/core').AgentLoop | null = null;
+  let cronPersonalities: Awaited<ReturnType<typeof createPersonalityRegistry>> | null = null;
+  // Forward-reference: filled after the Gateway + adapters are built.
+  let cronDeliverFn:
+    | ((job: import('@ethosagent/cron').CronJob, output: string) => Promise<void>)
+    | null = null;
   const scheduler = new CronScheduler({
     logger: new ConsoleLogger(),
+    deliver: async (job, output) => {
+      if (cronDeliverFn) await cronDeliverFn(job, output);
+    },
     runJob: async (job) => {
       if (!systemLoop) {
         throw new EthosError({
@@ -330,11 +338,22 @@ export async function runGatewayStart(): Promise<void> {
             'This is a wiring bug — the scheduler started before the agent loop was assigned. File an issue.',
         });
       }
+      // Recursion guard: exclude 'cron' from the effective toolset so
+      // cron-spawned sessions cannot schedule further cron jobs.
+      if (!cronPersonalities) {
+        cronPersonalities = await createPersonalityRegistry();
+        await cronPersonalities.loadFromDirectory(join(ethosDir(), 'personalities'));
+      }
+      const pid = job.personalityId;
+      const pers = cronPersonalities.get(pid);
+      const toolsetOverride = pers?.toolset?.filter((t: string) => t !== 'cron');
+
       const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
       let output = '';
       for await (const event of systemLoop.run(job.prompt, {
         sessionKey,
-        personalityId: job.personality ?? config.personality,
+        personalityId: pid,
+        toolsetOverride,
       })) {
         if (event.type === 'text_delta') output += event.text;
       }
@@ -344,8 +363,8 @@ export async function runGatewayStart(): Promise<void> {
 
   // Build one AgentLoop per configured bot. Personality bots use
   // `createAgentLoop`; team bots use `createTeamAgentLoop`. Each loop
-  // receives the shared `scheduler` so its `create_cron_job` etc. land
-  // in the same scheduler store as everything else.
+  // receives the shared `scheduler` so its `cron` tool lands in the
+  // same scheduler store as everything else.
   const { bots, messagingSetters: botMessagingSetters } = await buildGatewayBots(config, scheduler);
 
   // Phase 3: for each team-bound bot, ensure the supervisor is running.
@@ -372,7 +391,7 @@ export async function runGatewayStart(): Promise<void> {
     }
   }
   // System loop used by cron — not bot-bound. Cron jobs route through
-  // their own `job.personality` field, not through the platform bot
+  // their own `job.personalityId` field, not through the platform bot
   // routing table. The scheduler is passed in so agent-callable cron
   // tools register against the same instance the firing engine uses.
   const { loop: systemLoopReady, setMessagingSend: setSystemMessagingSend } = await createAgentLoop(
@@ -542,6 +561,13 @@ export async function runGatewayStart(): Promise<void> {
   for (const setter of botMessagingSetters) {
     setter(gatewayMessagingSend);
   }
+
+  // Wire cron delivery through the gateway's sendTo path so origin-bearing
+  // jobs route output back to the channel they were created from.
+  cronDeliverFn = async (job, output) => {
+    if (!job.origin) return;
+    await gateway.sendTo(job.origin.platform, job.origin.chatId, output);
+  };
 
   // Index bots by botKey so health-check lines can show the binding inline.
   const botByKey = new Map(bots.map((b) => [b.botKey, b]));

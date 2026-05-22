@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@ethosagent/cron": "workspace:*",
+    "@ethosagent/safety-injection": "workspace:*",
     "@ethosagent/types": "workspace:*"
   }
 }

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { AgentLoop } from '@ethosagent/core';
-import { CronScheduler, isValidCronExpression, nextRun } from '@ethosagent/cron';
+import { CronScheduler, isValidSchedule, nextRunForSchedule } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { EthosError } from '@ethosagent/types';
@@ -25,26 +25,35 @@ function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup
   const scheduler = new CronScheduler({
     logger: new ConsoleLogger(),
     runJob: async (job) => {
-      if (job.personality) {
-        if (!personalities) {
-          personalities = await createPersonalityRegistry();
-          await personalities.loadFromDirectory(join(ethosDir(), 'personalities'));
-        }
-        if (!personalities.get(job.personality)) {
-          throw new EthosError({
-            code: 'CRON_PERSONALITY_MISSING',
-            cause: `Personality "${job.personality}" not found for cron job "${job.id}"`,
-            action: `Run 'ethos cron list' to find affected jobs, then update or delete them`,
-          });
-        }
+      if (!personalities) {
+        personalities = await createPersonalityRegistry();
+        await personalities.loadFromDirectory(join(ethosDir(), 'personalities'));
+      }
+      if (!personalities.get(job.personalityId)) {
+        throw new EthosError({
+          code: 'CRON_PERSONALITY_MISSING',
+          cause: `Personality "${job.personalityId}" not found for cron job "${job.id}"`,
+          action: `Run 'ethos cron list' to find affected jobs, then update or delete them`,
+        });
       }
       if (!loop) loop = (await createAgentLoop(config)).loop;
       const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
       let output = '';
 
+      // Recursion guard: exclude 'cron' from the effective toolset so
+      // cron-spawned sessions cannot schedule further cron jobs.
+      if (!personalities) {
+        personalities = await createPersonalityRegistry();
+        await personalities.loadFromDirectory(join(ethosDir(), 'personalities'));
+      }
+      const pid = job.personalityId;
+      const pers = personalities.get(pid);
+      const toolsetOverride = pers?.toolset?.filter((t: string) => t !== 'cron');
+
       for await (const event of loop.run(job.prompt, {
         sessionKey,
-        personalityId: job.personality ?? config.personality,
+        personalityId: pid,
+        toolsetOverride,
       })) {
         if (event.type === 'text_delta') output += event.text;
       }
@@ -70,16 +79,16 @@ export async function runCronCommand(
       try {
         let jobs = await scheduler.listJobs();
         if (filterPersonality) {
-          jobs = jobs.filter((j) => (j.personality ?? config.personality) === filterPersonality);
+          jobs = jobs.filter((j) => j.personalityId === filterPersonality);
         }
         if (jsonMode) {
           writeJson(
             jobs.map((j) => ({
               id: j.id,
               name: j.name,
-              status: j.status === 'paused' ? 'paused' : 'active',
+              status: j.status,
               schedule: j.schedule,
-              personality: j.personality ?? config.personality ?? 'default',
+              personalityId: j.personalityId,
               nextRun: j.nextRunAt ? new Date(j.nextRunAt).toISOString() : null,
               prompt: j.prompt,
             })),
@@ -92,12 +101,14 @@ export async function runCronCommand(
         }
         console.log(`\n${c.bold}Cron jobs:${c.reset}\n`);
         for (const j of jobs) {
-          const status =
-            j.status === 'paused'
-              ? `${c.yellow}⏸ paused${c.reset}`
-              : `${c.green}▶ active${c.reset}`;
+          const statusMap: Record<string, string> = {
+            active: `${c.green}▶ active${c.reset}`,
+            paused: `${c.yellow}⏸ paused${c.reset}`,
+            done: `${c.dim}✓ done${c.reset}`,
+          };
+          const status = statusMap[j.status] ?? j.status;
           const next = j.nextRunAt ? new Date(j.nextRunAt).toLocaleString() : 'not scheduled';
-          const pers = j.personality ?? config.personality ?? 'default';
+          const pers = j.personalityId;
           console.log(`  ${c.bold}${j.name}${c.reset} ${c.dim}(${j.id})${c.reset} — ${status}`);
           console.log(`    Schedule    : ${j.schedule}`);
           console.log(`    Personality : ${pers}`);
@@ -131,17 +142,21 @@ export async function runCronCommand(
           writeJson({
             id: j.id,
             name: j.name,
-            status: j.status === 'paused' ? 'paused' : 'active',
+            status: j.status,
             schedule: j.schedule,
-            personality: j.personality ?? config.personality ?? 'default',
+            personalityId: j.personalityId,
             prompt: j.prompt,
             lastRun: j.lastRunAt ? new Date(j.lastRunAt).toISOString() : null,
           });
           return;
         }
-        const status =
-          j.status === 'paused' ? `${c.yellow}⏸ paused${c.reset}` : `${c.green}▶ active${c.reset}`;
-        const pers = j.personality ?? config.personality ?? 'default';
+        const showStatusMap: Record<string, string> = {
+          active: `${c.green}▶ active${c.reset}`,
+          paused: `${c.yellow}⏸ paused${c.reset}`,
+          done: `${c.dim}✓ done${c.reset}`,
+        };
+        const status = showStatusMap[j.status] ?? j.status;
+        const pers = j.personalityId;
         console.log(`\n${c.bold}${j.name}${c.reset} ${c.dim}(${j.id})${c.reset}`);
         console.log(`  Status      : ${status}`);
         console.log(`  Personality : ${c.cyan}${pers}${c.reset}`);
@@ -161,13 +176,12 @@ export async function runCronCommand(
     }
 
     case 'create': {
-      // ethos cron create --name "..." --schedule "..." --prompt "..." [--personality X] [--deliver Y]
+      // ethos cron create --name "..." --schedule "..." --prompt "..." [--personality X]
       const params = parseFlags(args);
       const name = params.name ?? params.n;
       const schedule = params.schedule ?? params.s;
       const prompt = params.prompt ?? params.p;
       const personality = params.personality;
-      const deliver = params.deliver;
 
       if (!name || !schedule || !prompt) {
         console.log(
@@ -176,9 +190,11 @@ export async function runCronCommand(
         return;
       }
 
-      if (!isValidCronExpression(schedule)) {
-        console.log(`${c.red}Invalid cron expression: "${schedule}"${c.reset}`);
-        console.log(`${c.dim}Example: "0 8 * * 1-5" (weekdays at 8am)${c.reset}`);
+      if (!isValidSchedule(schedule)) {
+        console.log(`${c.red}Invalid schedule: "${schedule}"${c.reset}`);
+        console.log(
+          `${c.dim}Examples: "0 8 * * 1-5" (cron), "30m" (delay), "every 2h" (interval)${c.reset}`,
+        );
         return;
       }
 
@@ -200,13 +216,49 @@ export async function runCronCommand(
           name,
           schedule,
           prompt,
-          personality,
-          deliver,
+          personalityId: personality ?? config.personality,
+          repeat: { kind: 'forever' },
           missedRunPolicy: 'skip',
         });
-        const next = nextRun(schedule);
+        const next = nextRunForSchedule(schedule, new Date());
         console.log(`${c.green}✓ Created "${job.name}" (${job.id})${c.reset}`);
         if (next) console.log(`${c.dim}Next run: ${next.toLocaleString()}${c.reset}`);
+      } finally {
+        cleanup();
+      }
+      break;
+    }
+
+    case 'update': {
+      const id = args[0];
+      if (!id) {
+        console.log(
+          'Usage: ethos cron update <id> [--name "..."] [--schedule "..."] [--prompt "..."]',
+        );
+        return;
+      }
+      const params = parseFlags(args.slice(1));
+      const patch: Record<string, string> = {};
+      if (params.name) patch.name = params.name;
+      if (params.schedule) patch.schedule = params.schedule;
+      if (params.prompt) patch.prompt = params.prompt;
+
+      if (Object.keys(patch).length === 0) {
+        console.log('At least one of --name, --schedule, or --prompt is required');
+        return;
+      }
+
+      const { scheduler, cleanup } = makeScheduler(config);
+      try {
+        const updated = await scheduler.updateJob(id, patch);
+        console.log(`${c.green}✓ Updated "${updated.name}" (${updated.id})${c.reset}`);
+        if (updated.nextRunAt) {
+          console.log(
+            `${c.dim}Next run: ${new Date(updated.nextRunAt).toLocaleString()}${c.reset}`,
+          );
+        }
+      } catch (err) {
+        console.log(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}`);
       } finally {
         cleanup();
       }
@@ -288,7 +340,7 @@ export async function runCronCommand(
 
     default:
       console.log(
-        'Usage: ethos cron [list [--personality <id>] | show <id> | create | pause | resume | delete | run]',
+        'Usage: ethos cron [list [--personality <id>] | show <id> | create | update <id> | pause | resume | delete | run]',
       );
   }
 }

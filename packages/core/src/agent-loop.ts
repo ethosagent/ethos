@@ -331,6 +331,11 @@ export interface RunOptions {
   tierOverride?: import('@ethosagent/types').ModelTierName;
   dryRun?: boolean;
   dryRunMaxToolCalls?: number;
+  /**
+   * Override the personality's toolset for this run. Used by cron to exclude
+   * the `cron` tool from cron-spawned sessions (recursion guard).
+   */
+  toolsetOverride?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -566,7 +571,7 @@ export class AgentLoop {
     };
 
     // Allowed tool names for this personality (undefined = no restriction)
-    const allowedTools = personality.toolset ?? undefined;
+    const allowedTools = opts.toolsetOverride ?? personality.toolset ?? undefined;
     // Per-personality plugin + MCP gate (default-deny: missing field = no access)
     const allowedPlugins = personality.plugins ?? [];
 

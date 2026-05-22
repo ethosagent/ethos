@@ -68,7 +68,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
 
   // Cron scheduler — hoisted ABOVE the agent-loop construction so the
   // same scheduler instance can be threaded into createAgentLoop (registers
-  // agent-callable cron tools against it) AND drive the web Cron tab's
+  // agent-callable `cron` tool against it) AND drive the web Cron tab's
   // firing engine below. The `runJob` closure forward-references `loop`;
   // the scheduler doesn't fire until `.start()` later, by which point
   // `loop` is assigned.
@@ -77,6 +77,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   // closes over a holder so any cron firing before the web surface is
   // ready is a silent no-op for the SSE push.
   let chatService: ChatService | null = null;
+  let cronPersonalities: Awaited<ReturnType<typeof createPersonalityRegistry>> | null = null;
   cronScheduler = new CronScheduler({
     logger: new ConsoleLogger(),
     runJob: async (job) => {
@@ -88,12 +89,23 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
             'This is a wiring bug — the scheduler started before the agent loop was assigned. File an issue.',
         });
       }
+      // Recursion guard: exclude 'cron' from the effective toolset so
+      // cron-spawned sessions cannot schedule further cron jobs.
+      if (!cronPersonalities) {
+        cronPersonalities = await createPersonalityRegistry();
+        await cronPersonalities.loadFromDirectory(join(ethosDir(), 'personalities'));
+      }
+      const pid = job.personalityId;
+      const pers = cronPersonalities.get(pid);
+      const toolsetOverride = pers?.toolset?.filter((t: string) => t !== 'cron');
+
       const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
       const ranAt = new Date().toISOString();
       let output = '';
       for await (const event of loop.run(job.prompt, {
         sessionKey,
-        ...(job.personality ? { personalityId: job.personality } : {}),
+        personalityId: pid,
+        toolsetOverride,
       })) {
         if (event.type === 'text_delta') output += event.text;
       }

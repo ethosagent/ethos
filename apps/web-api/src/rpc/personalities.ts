@@ -61,8 +61,8 @@ export const personalitiesRouter = {
     // Risk #3: warn server-side if cron jobs still reference this personality.
     // They will fail gracefully at trigger time with CRON_PERSONALITY_MISSING.
     const { jobs } = await context.cron.list();
-    const dependent = (jobs as Array<{ personality: string | null; name: string }>).filter(
-      (j) => j.personality === input.id,
+    const dependent = (jobs as Array<{ personalityId: string; name: string }>).filter(
+      (j) => j.personalityId === input.id,
     );
     if (dependent.length > 0) {
       const names = dependent.map((j) => j.name).join(', ');

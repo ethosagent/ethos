@@ -10,8 +10,7 @@ export interface CronCreateInput {
   name: string;
   schedule: string;
   prompt: string;
-  personality?: string;
-  deliver?: string;
+  personalityId: string;
   missedRunPolicy?: 'run-once' | 'skip';
 }
 
@@ -44,8 +43,7 @@ export class CronService {
         name: input.name,
         schedule: input.schedule,
         prompt: input.prompt,
-        ...(input.personality !== undefined && { personality: input.personality }),
-        ...(input.deliver !== undefined && { deliver: input.deliver }),
+        personalityId: input.personalityId,
         missedRunPolicy: input.missedRunPolicy ?? 'skip',
       });
       return { job: toWireJob(job) };
@@ -130,8 +128,8 @@ function toWireJob(job: ExtCronJob): CronJob {
     name: job.name,
     schedule: job.schedule,
     prompt: job.prompt,
-    personality: job.personality ?? null,
-    deliver: job.deliver ?? null,
+    personalityId: job.personalityId,
+    deliver: job.origin?.platform ?? null,
     status: job.status,
     missedRunPolicy: job.missedRunPolicy,
     lastRunAt: job.lastRunAt ?? null,
