@@ -76,8 +76,8 @@ export function McpServerActions({ serverName, transport, authStatus }: Props) {
           </Button>
         </Tooltip>
 
-        {/* Issue 6: Update bearer token */}
-        {transport !== 'stdio' ? (
+        {/* Issue 6: Update bearer token — only for non-OAuth, non-stdio servers */}
+        {transport !== 'stdio' && (!authStatus || authStatus === 'none') ? (
           <Tooltip title="Update bearer token">
             <Button
               size="small"

@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import type { McpAddServerInput } from '@ethosagent/web-contracts';
 import {
   Alert,
   Button,
@@ -64,15 +65,7 @@ export function AddMcpModal({ open, onClose }: Props) {
   });
 
   const addServerMutation = useMutation({
-    mutationFn: (input: {
-      name: string;
-      transport: 'streamable-http' | 'sse' | 'stdio';
-      url?: string;
-      command?: string;
-      args?: string[];
-      token?: string;
-      mcpResultLimitChars?: number;
-    }) => rpc.mcp.addServer(input),
+    mutationFn: (input: McpAddServerInput) => rpc.mcp.addServer(input),
     onSuccess: (result) => {
       if (!result.ok) {
         setStep('error');

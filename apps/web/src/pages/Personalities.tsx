@@ -28,7 +28,7 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { rpc } from '../rpc';
 
@@ -1858,54 +1858,64 @@ export function ServerToolChecklist({
   onDiscovered: (tools: string[]) => void;
   onToggle: (toolName: string) => void;
 }) {
-  // Issue 9: paginated tools — accumulate across pages
+  // Auto-fetch ALL pages on mount so the policy is never based on a partial
+  // discovery. The "Load more" button remains as a UI convenience for
+  // rendering, but onDiscovered is only called once the full set is assembled.
   const [allTools, setAllTools] = useState<{ name: string; description?: string }[]>([]);
-  const [cursor, setCursor] = useState<string | undefined>(undefined);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [displayCount, setDisplayCount] = useState(50);
+  const [loading, setLoading] = useState(true);
+  const [available, setAvailable] = useState(false);
+  const fetchedRef = useRef(false);
 
-  const toolsQuery = useQuery({
-    queryKey: ['mcp', 'serverTools', personalityId, serverName],
-    queryFn: () => rpc.mcp.serverTools({ personalityId, serverName }),
-  });
+  const stableOnDiscovered = useCallback(onDiscovered, [onDiscovered]);
 
-  // Seed allTools from the initial query
   useEffect(() => {
-    if (toolsQuery.data) {
-      setAllTools(toolsQuery.data.tools);
-      setCursor(toolsQuery.data.nextCursor ?? undefined);
-    }
-  }, [toolsQuery.data]);
+    if (fetchedRef.current) return;
+    fetchedRef.current = true;
+    let cancelled = false;
 
-  // Lift the discovered tool list into the parent once, when it arrives.
-  useEffect(() => {
-    if (allTools.length > 0 && state?.tools == null) {
-      onDiscovered(allTools.map((t) => t.name));
-    }
-  }, [allTools, state?.tools, onDiscovered]);
+    async function fetchAllTools() {
+      const collected: { name: string; description?: string }[] = [];
+      let cursor: string | undefined;
+      let serverAvailable = false;
+      do {
+        const result = await rpc.mcp.serverTools({
+          personalityId,
+          serverName,
+          limit: 200,
+          cursor,
+        });
+        if (cancelled) return;
+        serverAvailable = result.available ?? false;
+        collected.push(...result.tools);
+        cursor = result.nextCursor ?? undefined;
+      } while (cursor);
 
-  const handleLoadMore = async () => {
-    if (!cursor) return;
-    setLoadingMore(true);
-    try {
-      const result = await rpc.mcp.serverTools({ personalityId, serverName, cursor });
-      setAllTools((prev) => [...prev, ...result.tools]);
-      setCursor(result.nextCursor ?? undefined);
-      // Update parent with the full discovered set
-      onDiscovered([...allTools, ...result.tools].map((t) => t.name));
-    } finally {
-      setLoadingMore(false);
+      if (!cancelled) {
+        setAvailable(serverAvailable);
+        setAllTools(collected);
+        setLoading(false);
+        if (collected.length > 0) {
+          stableOnDiscovered(collected.map((t) => t.name));
+        }
+      }
     }
-  };
 
-  if (toolsQuery.isLoading) {
+    fetchAllTools().catch(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [personalityId, serverName, stableOnDiscovered]);
+
+  if (loading) {
     return (
       <div style={{ paddingLeft: 24, paddingTop: 4 }}>
         <Spin size="small" />
       </div>
     );
   }
-
-  const available = toolsQuery.data?.available ?? false;
 
   if (!available || allTools.length === 0) {
     return (
@@ -1918,10 +1928,13 @@ export function ServerToolChecklist({
     );
   }
 
+  const visibleTools = allTools.slice(0, displayCount);
+  const hasMore = displayCount < allTools.length;
+
   return (
     <div style={{ paddingLeft: 24, paddingTop: 4 }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-        {allTools.map((tool) => (
+        {visibleTools.map((tool) => (
           <Tag.CheckableTag
             key={tool.name}
             checked={state?.selected.has(tool.name) ?? true}
@@ -1932,15 +1945,14 @@ export function ServerToolChecklist({
           </Tag.CheckableTag>
         ))}
       </div>
-      {cursor ? (
+      {hasMore ? (
         <Button
           size="small"
           type="link"
-          loading={loadingMore}
-          onClick={handleLoadMore}
+          onClick={() => setDisplayCount((n) => n + 50)}
           style={{ paddingLeft: 0, marginTop: 4 }}
         >
-          Load more tools
+          Show more tools ({allTools.length - displayCount} remaining)
         </Button>
       ) : null}
     </div>

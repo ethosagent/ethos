@@ -539,19 +539,30 @@ export const McpDeleteInputSchema = z.object({
   name: z.string(),
 });
 
-export const McpAddServerInputSchema = z.object({
-  name: z.string().min(1).max(64),
-  transport: z.enum(['streamable-http', 'sse', 'stdio']),
-  /** Required for streamable-http and sse transports. */
-  url: z.string().url().optional(),
-  /** Required for stdio transport. */
-  command: z.string().min(1).optional(),
-  args: z.array(z.string()).optional(),
-  env: z.record(z.string(), z.string()).optional(),
-  /** If provided, stored as the bearer token for this server. */
-  token: z.string().min(1).optional(),
-  mcpResultLimitChars: z.number().int().positive().optional(),
-});
+export const McpAddServerInputSchema = z.discriminatedUnion('transport', [
+  z.object({
+    transport: z.literal('streamable-http'),
+    name: z.string().min(1).max(64),
+    url: z.string().url(),
+    token: z.string().min(1).optional(),
+    mcpResultLimitChars: z.number().int().positive().optional(),
+  }),
+  z.object({
+    transport: z.literal('sse'),
+    name: z.string().min(1).max(64),
+    url: z.string().url(),
+    token: z.string().min(1).optional(),
+    mcpResultLimitChars: z.number().int().positive().optional(),
+  }),
+  z.object({
+    transport: z.literal('stdio'),
+    name: z.string().min(1).max(64),
+    command: z.string().min(1),
+    args: z.array(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    mcpResultLimitChars: z.number().int().positive().optional(),
+  }),
+]);
 
 export const McpAddServerOutputSchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(true), serverName: z.string() }),

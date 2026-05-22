@@ -216,21 +216,27 @@ export class McpService {
     token?: string;
     mcpResultLimitChars?: number;
   }) {
-    if (input.transport !== 'stdio') {
-      if (!input.url) {
-        return {
-          ok: false as const,
-          code: 'invalid_url' as const,
-          detail: 'URL is required for HTTP transports',
-        };
-      }
-      try {
-        validateUrl(input.url, { allowLocalhost: true });
-      } catch (err) {
-        const detail =
-          err instanceof SsrfError ? err.message : 'URL points to a private or reserved IP range';
-        return { ok: false as const, code: 'ssrf_blocked' as const, detail };
-      }
+    if (input.transport === 'stdio') {
+      return {
+        ok: false as const,
+        code: 'invalid_url' as const,
+        detail: 'Stdio transport cannot be added via the web API. Use the CLI: ethos mcp add --stdio',
+      };
+    }
+
+    if (!input.url) {
+      return {
+        ok: false as const,
+        code: 'invalid_url' as const,
+        detail: 'URL is required for HTTP transports',
+      };
+    }
+    try {
+      validateUrl(input.url, { allowLocalhost: true });
+    } catch (err) {
+      const detail =
+        err instanceof SsrfError ? err.message : 'URL points to a private or reserved IP range';
+      return { ok: false as const, code: 'ssrf_blocked' as const, detail };
     }
 
     const existing = await this.mcpJsonStore.get(input.name);
@@ -245,14 +251,8 @@ export class McpService {
     const config: McpServerConfig = {
       name: input.name,
       transport: input.transport,
+      url: input.url,
       created_via: 'ui' as const,
-      ...(input.transport === 'stdio'
-        ? {
-            command: input.command,
-            ...(input.args ? { args: input.args } : {}),
-            ...(input.env ? { env: input.env } : {}),
-          }
-        : { url: input.url }),
       ...(input.token ? { auth: { type: 'bearer' as const } } : {}),
       ...(input.mcpResultLimitChars !== undefined
         ? { mcpResultLimitChars: input.mcpResultLimitChars }
@@ -367,22 +367,51 @@ export class McpService {
     if (existing) {
       throw new Error(`Server '${input.newName}' already exists`);
     }
-    const oldConfig = await this.mcpJsonStore.get(input.oldName);
-    if (!oldConfig) {
+    const config = await this.mcpJsonStore.get(input.oldName);
+    if (!config) {
       throw new Error(`Server '${input.oldName}' not found`);
     }
-    const newConfig = { ...oldConfig, name: input.newName };
-    await this.mcpJsonStore.remove(input.oldName);
-    await this.mcpJsonStore.upsert(input.newName, newConfig);
+
+    // Migrate secrets before rename so the new name has valid credentials
+    const secretKeys = await this.secrets.list(`mcp/${input.oldName}/`);
+    for (const key of secretKeys) {
+      const value = await this.secrets.get(key);
+      if (value) {
+        const newKey = key.replace(`mcp/${input.oldName}/`, `mcp/${input.newName}/`);
+        await this.secrets.set(newKey, value);
+      }
+    }
+
+    // Manager rename first — if it fails, secrets are duplicated (harmless) but
+    // mcp.json and runtime stay consistent.
     try {
       await this.mcpManager.renameServer(input.oldName, input.newName);
     } catch {
-      // Manager rename failed but mcp.json is updated — will take effect on restart
+      // Manager may not have this server loaded (e.g. stdio not started).
+      // Proceed with persistence — the rename takes effect on next boot.
     }
+
+    // Persist only after manager succeeds (or is inapplicable)
+    const newConfig = { ...config, name: input.newName };
+    await this.mcpJsonStore.remove(input.oldName);
+    await this.mcpJsonStore.upsert(input.newName, newConfig);
+
+    // Clean up old secret keys after successful persistence
+    for (const key of secretKeys) {
+      await this.secrets.delete(key).catch(() => {});
+    }
+
     return { ok: true as const };
   }
 
   async updateToken(input: { serverName: string; token: string }) {
+    const config = await this.mcpJsonStore.get(input.serverName);
+    if (!config) {
+      throw new Error(`Server '${input.serverName}' not found`);
+    }
+    if (config.auth?.type !== 'bearer') {
+      throw new Error(`Server '${input.serverName}' does not use bearer auth`);
+    }
     await this.secrets.set(`mcp/${input.serverName}/access_token`, input.token);
     try {
       await this.mcpManager.updateToken(input.serverName, input.token);
