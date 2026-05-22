@@ -1,7 +1,7 @@
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CronJob, CronRunResult } from '../index';
 import { CronScheduler, isValidCronExpression, nextRun, nextRunAfter } from '../index';
 
@@ -20,18 +20,22 @@ afterEach(async () => {
   await rm(testDir, { recursive: true, force: true });
 });
 
-function makeScheduler(runJob?: (job: CronJob) => Promise<CronRunResult>) {
+function makeScheduler(opts?: {
+  runJob?: (job: CronJob) => Promise<CronRunResult>;
+  deliver?: (job: CronJob, output: string) => Promise<void>;
+}) {
   return new CronScheduler({
     cronDir: testDir,
     tickIntervalMs: 999_999, // don't auto-tick in tests
     runJob:
-      runJob ??
+      opts?.runJob ??
       (async (job) => ({
         jobId: job.id,
         ranAt: new Date().toISOString(),
         output: `ran: ${job.prompt}`,
         sessionKey: `cron:${job.id}`,
       })),
+    ...(opts?.deliver ? { deliver: opts.deliver } : {}),
   });
 }
 
@@ -86,6 +90,7 @@ describe('CronScheduler', () => {
       name: 'Daily Brief',
       schedule: '0 8 * * *',
       prompt: 'Summarize the news',
+      personalityId: 'researcher',
       missedRunPolicy: 'skip',
     });
 
@@ -104,6 +109,7 @@ describe('CronScheduler', () => {
       name: 'My Job',
       schedule: '0 8 * * *',
       prompt: 'test',
+      personalityId: 'test',
       missedRunPolicy: 'skip',
     });
     await expect(
@@ -111,21 +117,24 @@ describe('CronScheduler', () => {
         name: 'My Job',
         schedule: '0 9 * * *',
         prompt: 'test2',
+        personalityId: 'test',
         missedRunPolicy: 'skip',
       }),
     ).rejects.toThrow('already exists');
   });
 
-  it('rejects invalid cron expressions', async () => {
+  it('rejects invalid schedules', async () => {
     const scheduler = makeScheduler();
     await expect(
       scheduler.createJob({
         name: 'Bad',
         schedule: 'not-cron',
         prompt: 'x',
+        personalityId: 'test',
         missedRunPolicy: 'skip',
+        repeat: { kind: 'forever' },
       }),
-    ).rejects.toThrow('Invalid cron expression');
+    ).rejects.toThrow('Invalid schedule');
   });
 
   it('deletes a job', async () => {
@@ -134,6 +143,7 @@ describe('CronScheduler', () => {
       name: 'To Delete',
       schedule: '0 8 * * *',
       prompt: 'x',
+      personalityId: 'test',
       missedRunPolicy: 'skip',
     });
     await scheduler.deleteJob('to-delete');
@@ -146,6 +156,7 @@ describe('CronScheduler', () => {
       name: 'Pauseable',
       schedule: '0 8 * * *',
       prompt: 'x',
+      personalityId: 'test',
       missedRunPolicy: 'skip',
     });
 
@@ -158,20 +169,23 @@ describe('CronScheduler', () => {
 
   it('runJobNow executes and saves output', async () => {
     const runs: string[] = [];
-    const scheduler = makeScheduler(async (job) => {
-      runs.push(job.id);
-      return {
-        jobId: job.id,
-        ranAt: new Date().toISOString(),
-        output: 'test output',
-        sessionKey: 'k',
-      };
+    const scheduler = makeScheduler({
+      runJob: async (job) => {
+        runs.push(job.id);
+        return {
+          jobId: job.id,
+          ranAt: new Date().toISOString(),
+          output: 'test output',
+          sessionKey: 'k',
+        };
+      },
     });
 
     await scheduler.createJob({
       name: 'Immediate',
       schedule: '0 8 * * *',
       prompt: 'go',
+      personalityId: 'test',
       missedRunPolicy: 'skip',
     });
     const result = await scheduler.runJobNow('immediate');
@@ -192,15 +206,241 @@ describe('CronScheduler', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Repeat policy and updateJob
+// ---------------------------------------------------------------------------
+
+describe('CronScheduler repeat policy', () => {
+  it('defaults to forever for cron schedules', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Cron Forever',
+      schedule: '0 8 * * *',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    expect(job.repeat).toEqual({ kind: 'forever' });
+    expect(job.runCount).toBe(0);
+  });
+
+  it('defaults to once for relative delay schedules', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Delay Once',
+      schedule: '30m',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    expect(job.repeat).toEqual({ kind: 'once' });
+  });
+
+  it('defaults to once for ISO timestamp schedules', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'ISO Once',
+      schedule: '2099-06-01T09:00:00Z',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    expect(job.repeat).toEqual({ kind: 'once' });
+  });
+
+  it('defaults to forever for interval schedules', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Interval Forever',
+      schedule: 'every 2h',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    expect(job.repeat).toEqual({ kind: 'forever' });
+  });
+
+  it('respects explicit repeat override', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Count Job',
+      schedule: '0 8 * * *',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+      repeat: { kind: 'count', maxRuns: 3 },
+    });
+    expect(job.repeat).toEqual({ kind: 'count', maxRuns: 3 });
+  });
+
+  it('once-repeat job retires to done after one tick', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Fire Once',
+      schedule: '0 8 * * *',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'run-once',
+      repeat: { kind: 'once' },
+    });
+
+    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
+    await (scheduler as any).patchJob(job.id, {
+      nextRunAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+
+    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
+    await (scheduler as any).tick();
+
+    const updated = await scheduler.getJob(job.id);
+    expect(updated?.status).toBe('done');
+    expect(updated?.runCount).toBe(1);
+    expect(updated?.nextRunAt).toBeUndefined();
+  });
+
+  it('count-repeat job retires after maxRuns', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Count Two',
+      schedule: '0 8 * * *',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'run-once',
+      repeat: { kind: 'count', maxRuns: 2 },
+    });
+
+    // First tick
+    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
+    await (scheduler as any).patchJob(job.id, {
+      nextRunAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
+    await (scheduler as any).tick();
+
+    let updated = await scheduler.getJob(job.id);
+    expect(updated?.status).toBe('active');
+    expect(updated?.runCount).toBe(1);
+
+    // Second tick
+    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
+    await (scheduler as any).patchJob(job.id, {
+      nextRunAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
+    await (scheduler as any).tick();
+
+    updated = await scheduler.getJob(job.id);
+    expect(updated?.status).toBe('done');
+    expect(updated?.runCount).toBe(2);
+  });
+});
+
+describe('CronScheduler updateJob', () => {
+  it('updates the schedule and recomputes nextRunAt', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Update Me',
+      schedule: '0 8 * * *',
+      prompt: 'old prompt',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+
+    const updated = await scheduler.updateJob(job.id, { schedule: '0 9 * * *' });
+    expect(updated.schedule).toBe('0 9 * * *');
+    expect(updated.nextRunAt).toBeTruthy();
+  });
+
+  it('updates the name', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Old Name',
+      schedule: '0 8 * * *',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+
+    const updated = await scheduler.updateJob(job.id, { name: 'New Name' });
+    expect(updated.name).toBe('New Name');
+  });
+
+  it('updates the prompt', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Prompt Update',
+      schedule: '0 8 * * *',
+      prompt: 'old prompt',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+
+    const updated = await scheduler.updateJob(job.id, { prompt: 'new prompt' });
+    expect(updated.prompt).toBe('new prompt');
+  });
+
+  it('rejects update with no fields', async () => {
+    const scheduler = makeScheduler();
+    await scheduler.createJob({
+      name: 'Empty Update',
+      schedule: '0 8 * * *',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+
+    await expect(scheduler.updateJob('empty-update', {})).rejects.toThrow(
+      'At least one of name, schedule, or prompt is required',
+    );
+  });
+
+  it('rejects update with invalid schedule', async () => {
+    const scheduler = makeScheduler();
+    await scheduler.createJob({
+      name: 'Bad Schedule Update',
+      schedule: '0 8 * * *',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+
+    await expect(
+      scheduler.updateJob('bad-schedule-update', { schedule: 'garbage' }),
+    ).rejects.toThrow('Invalid schedule');
+  });
+
+  it('rejects update for non-existent job', async () => {
+    const scheduler = makeScheduler();
+    await expect(scheduler.updateJob('nope', { name: 'x' })).rejects.toThrow('Job not found');
+  });
+
+  it('switches repeat to once when schedule changes to one-shot', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Cron To Delay',
+      schedule: '0 8 * * *',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    expect(job.repeat.kind).toBe('forever');
+
+    const updated = await scheduler.updateJob(job.id, { schedule: '30m' });
+    expect(updated.repeat.kind).toBe('once');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tick behaviour
 // ---------------------------------------------------------------------------
 
 describe('CronScheduler tick', () => {
   it('skip policy does not run overdue job', async () => {
     const runs: string[] = [];
-    const scheduler = makeScheduler(async (job) => {
-      runs.push(job.id);
-      return { jobId: job.id, ranAt: new Date().toISOString(), output: 'x', sessionKey: 'k' };
+    const scheduler = makeScheduler({
+      runJob: async (job) => {
+        runs.push(job.id);
+        return { jobId: job.id, ranAt: new Date().toISOString(), output: 'x', sessionKey: 'k' };
+      },
     });
 
     // Create a job that was due in the past
@@ -208,6 +448,7 @@ describe('CronScheduler tick', () => {
       name: 'Overdue Skip',
       schedule: '0 8 * * *',
       prompt: 'test',
+      personalityId: 'test',
       missedRunPolicy: 'skip',
     });
 
@@ -232,15 +473,18 @@ describe('CronScheduler tick', () => {
 
   it('run-once policy runs overdue job', async () => {
     const runs: string[] = [];
-    const scheduler = makeScheduler(async (job) => {
-      runs.push(job.id);
-      return { jobId: job.id, ranAt: new Date().toISOString(), output: 'x', sessionKey: 'k' };
+    const scheduler = makeScheduler({
+      runJob: async (job) => {
+        runs.push(job.id);
+        return { jobId: job.id, ranAt: new Date().toISOString(), output: 'x', sessionKey: 'k' };
+      },
     });
 
     const job = await scheduler.createJob({
       name: 'Overdue Run',
       schedule: '0 8 * * *',
       prompt: 'test',
+      personalityId: 'test',
       missedRunPolicy: 'run-once',
     });
 
@@ -257,15 +501,18 @@ describe('CronScheduler tick', () => {
 
   it('paused jobs are not run by tick', async () => {
     const runs: string[] = [];
-    const scheduler = makeScheduler(async (job) => {
-      runs.push(job.id);
-      return { jobId: job.id, ranAt: new Date().toISOString(), output: 'x', sessionKey: 'k' };
+    const scheduler = makeScheduler({
+      runJob: async (job) => {
+        runs.push(job.id);
+        return { jobId: job.id, ranAt: new Date().toISOString(), output: 'x', sessionKey: 'k' };
+      },
     });
 
     const job = await scheduler.createJob({
       name: 'Paused Job',
       schedule: '0 8 * * *',
       prompt: 'test',
+      personalityId: 'test',
       missedRunPolicy: 'run-once',
     });
 
@@ -279,5 +526,314 @@ describe('CronScheduler tick', () => {
     await (scheduler as any).tick();
 
     expect(runs).not.toContain('paused-job');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Job chaining (contextFrom)
+// ---------------------------------------------------------------------------
+
+describe('CronScheduler job chaining', () => {
+  it('prepends referenced job output to prompt at fire time', async () => {
+    const prompts: string[] = [];
+    const scheduler = makeScheduler({
+      runJob: async (job) => {
+        prompts.push(job.prompt);
+        return {
+          jobId: job.id,
+          ranAt: new Date().toISOString(),
+          output: `output of ${job.id}`,
+          sessionKey: 'k',
+        };
+      },
+    });
+
+    // Create a source job and run it so it has output
+    const source = await scheduler.createJob({
+      name: 'Source Job',
+      schedule: '0 8 * * *',
+      prompt: 'source prompt',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    await scheduler.runJobNow(source.id);
+
+    // Create a chained job referencing the source
+    const chained = await scheduler.createJob({
+      name: 'Chained Job',
+      schedule: '0 9 * * *',
+      prompt: 'chained prompt',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+      contextFrom: [source.id],
+    });
+    await scheduler.runJobNow(chained.id);
+
+    // The chained job's prompt should include the source's output
+    const chainedPrompt = prompts.find((p) => p.includes('chained prompt'));
+    expect(chainedPrompt).toContain('Context from "Source Job"');
+    expect(chainedPrompt).toContain(`output of ${source.id}`);
+  });
+
+  it('silently skips references with no runs', async () => {
+    const prompts: string[] = [];
+    const scheduler = makeScheduler({
+      runJob: async (job) => {
+        prompts.push(job.prompt);
+        return {
+          jobId: job.id,
+          ranAt: new Date().toISOString(),
+          output: `output of ${job.id}`,
+          sessionKey: 'k',
+        };
+      },
+    });
+
+    const source = await scheduler.createJob({
+      name: 'Empty Source',
+      schedule: '0 8 * * *',
+      prompt: 'source',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+
+    // Don't run the source — it has no output
+    const chained = await scheduler.createJob({
+      name: 'Chained No Output',
+      schedule: '0 9 * * *',
+      prompt: 'chained',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+      contextFrom: [source.id],
+    });
+
+    // Should not throw — silently skips the empty reference
+    await scheduler.runJobNow(chained.id);
+
+    // The prompt should be just the original (no context prefix)
+    const chainedPrompt = prompts.find((p) => p.includes('chained'));
+    expect(chainedPrompt).toBe('chained');
+  });
+
+  it('rejects contextFrom with non-existent job at create time', async () => {
+    const scheduler = makeScheduler();
+
+    await expect(
+      scheduler.createJob({
+        name: 'Bad Chain',
+        schedule: '0 8 * * *',
+        prompt: 'test',
+        personalityId: 'test',
+        missedRunPolicy: 'skip',
+        contextFrom: ['does-not-exist'],
+      }),
+    ).rejects.toThrow('contextFrom references unknown job');
+  });
+
+  it('resolves contextFrom by job name', async () => {
+    const prompts: string[] = [];
+    const scheduler = makeScheduler({
+      runJob: async (job) => {
+        prompts.push(job.prompt);
+        return {
+          jobId: job.id,
+          ranAt: new Date().toISOString(),
+          output: `output of ${job.id}`,
+          sessionKey: 'k',
+        };
+      },
+    });
+
+    const source = await scheduler.createJob({
+      name: 'Named Source',
+      schedule: '0 8 * * *',
+      prompt: 'source prompt',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    await scheduler.runJobNow(source.id);
+
+    // Reference by name instead of id
+    const chained = await scheduler.createJob({
+      name: 'Chained By Name',
+      schedule: '0 9 * * *',
+      prompt: 'chained prompt',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+      contextFrom: ['Named Source'],
+    });
+    await scheduler.runJobNow(chained.id);
+
+    const chainedPrompt = prompts.find((p) => p.includes('chained prompt'));
+    expect(chainedPrompt).toContain('Context from "Named Source"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Delivery callback
+// ---------------------------------------------------------------------------
+
+describe('CronScheduler delivery', () => {
+  it('does not call deliver when job has no origin', async () => {
+    const deliver = vi.fn();
+    const scheduler = makeScheduler({ deliver });
+
+    await scheduler.createJob({
+      name: 'No Origin',
+      schedule: '0 8 * * *',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    await scheduler.runJobNow('no-origin');
+
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it('calls deliver when job has an origin', async () => {
+    const deliver = vi.fn();
+    const scheduler = makeScheduler({ deliver });
+
+    await scheduler.createJob({
+      name: 'With Origin',
+      schedule: '0 8 * * *',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+      origin: { platform: 'telegram', chatId: '12345' },
+    });
+    await scheduler.runJobNow('with-origin');
+
+    expect(deliver).toHaveBeenCalledOnce();
+    const [job, output] = deliver.mock.calls[0] ?? [];
+    expect(job.id).toBe('with-origin');
+    expect(job.origin).toEqual({ platform: 'telegram', chatId: '12345' });
+    expect(output).toContain('ran: test');
+  });
+
+  it('always writes audit file regardless of origin', async () => {
+    const deliver = vi.fn();
+    const scheduler = makeScheduler({ deliver });
+
+    await scheduler.createJob({
+      name: 'Audit Check',
+      schedule: '0 8 * * *',
+      prompt: 'audit test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+      origin: { platform: 'slack', chatId: 'C999' },
+    });
+    await scheduler.runJobNow('audit-check');
+
+    // Audit file written (listRuns returns entries)
+    const runs = await scheduler.listRuns('audit-check');
+    expect(runs.length).toBeGreaterThan(0);
+
+    // Delivery also called
+    expect(deliver).toHaveBeenCalledOnce();
+  });
+
+  it('delivery failure does not break job execution', async () => {
+    const deliver = vi.fn().mockRejectedValue(new Error('network down'));
+    const scheduler = makeScheduler({ deliver });
+
+    await scheduler.createJob({
+      name: 'Fail Deliver',
+      schedule: '0 8 * * *',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+      origin: { platform: 'telegram', chatId: '999' },
+    });
+
+    // Should not throw despite deliver failure
+    const result = await scheduler.runJobNow('fail-deliver');
+    expect(result.output).toContain('ran: test');
+
+    // Audit file still written
+    const runs = await scheduler.listRuns('fail-deliver');
+    expect(runs.length).toBeGreaterThan(0);
+  });
+
+  it('suppresses delivery when output starts with [SILENT]', async () => {
+    const deliver = vi.fn();
+    const scheduler = makeScheduler({
+      runJob: async (job) => ({
+        jobId: job.id,
+        ranAt: new Date().toISOString(),
+        output: '[SILENT] all green',
+        sessionKey: 'k',
+      }),
+      deliver,
+    });
+
+    await scheduler.createJob({
+      name: 'Silent Job',
+      schedule: '0 8 * * *',
+      prompt: 'check health',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+      origin: { platform: 'telegram', chatId: '123' },
+    });
+    await scheduler.runJobNow('silent-job');
+
+    // Delivery should NOT have been called
+    expect(deliver).not.toHaveBeenCalled();
+
+    // But the audit file should still be written
+    const runs = await scheduler.listRuns('silent-job');
+    expect(runs.length).toBeGreaterThan(0);
+  });
+
+  it('suppresses delivery when output starts with whitespace then [SILENT]', async () => {
+    const deliver = vi.fn();
+    const scheduler = makeScheduler({
+      runJob: async (job) => ({
+        jobId: job.id,
+        ranAt: new Date().toISOString(),
+        output: '  \n[SILENT] all green',
+        sessionKey: 'k',
+      }),
+      deliver,
+    });
+
+    await scheduler.createJob({
+      name: 'Silent Whitespace',
+      schedule: '0 8 * * *',
+      prompt: 'check health',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+      origin: { platform: 'telegram', chatId: '123' },
+    });
+    await scheduler.runJobNow('silent-whitespace');
+
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it('delivers normally when output does not start with [SILENT]', async () => {
+    const deliver = vi.fn();
+    const scheduler = makeScheduler({
+      runJob: async (job) => ({
+        jobId: job.id,
+        ranAt: new Date().toISOString(),
+        output: 'Something is wrong!',
+        sessionKey: 'k',
+      }),
+      deliver,
+    });
+
+    await scheduler.createJob({
+      name: 'Alert Job',
+      schedule: '0 8 * * *',
+      prompt: 'check health',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+      origin: { platform: 'telegram', chatId: '123' },
+    });
+    await scheduler.runJobNow('alert-job');
+
+    expect(deliver).toHaveBeenCalledOnce();
+    const [, output] = deliver.mock.calls[0] ?? [];
+    expect(output).toBe('Something is wrong!');
   });
 });

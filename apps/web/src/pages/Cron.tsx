@@ -64,7 +64,7 @@ export function Cron() {
 
   const allJobs = data?.jobs ?? [];
   const jobs = filterPersonality
-    ? allJobs.filter((j) => j.personality === filterPersonality)
+    ? allJobs.filter((j) => j.personalityId === filterPersonality)
     : allJobs;
 
   return (
@@ -126,9 +126,9 @@ export function Cron() {
           },
           {
             title: 'Personality',
-            dataIndex: 'personality',
+            dataIndex: 'personalityId',
             width: 130,
-            render: (v: string | null) => v ?? '—',
+            render: (v: string) => v,
           },
           {
             title: 'Next run',
@@ -276,7 +276,7 @@ interface CreateForm {
   name: string;
   schedule: string;
   prompt: string;
-  personality?: string;
+  personalityId: string;
 }
 
 function CreateJobModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -295,7 +295,7 @@ function CreateJobModal({ open, onClose }: { open: boolean; onClose: () => void 
         name: input.name,
         schedule: input.schedule,
         prompt: input.prompt,
-        ...(input.personality ? { personality: input.personality } : {}),
+        personalityId: input.personalityId,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['cron', 'list'] });
@@ -365,10 +365,14 @@ function CreateJobModal({ open, onClose }: { open: boolean; onClose: () => void 
           />
         </Form.Item>
 
-        <Form.Item label="Personality (optional)" name="personality">
+        <Form.Item
+          label="Personality"
+          name="personalityId"
+          rules={[{ required: true, message: 'A personality is required' }]}
+        >
           <Select
             allowClear
-            placeholder="Defaults to your active personality"
+            placeholder="Select personality"
             loading={personalities.isLoading}
             options={(personalities.data?.items ?? []).map((p) => ({
               value: p.id,

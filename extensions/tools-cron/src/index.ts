@@ -1,272 +1,439 @@
-import { type CronJob, type CronScheduler, isValidCronExpression, nextRun } from '@ethosagent/cron';
-import type { Tool, ToolResult } from '@ethosagent/types';
+import type {
+  CronJob,
+  CronJobUpdate,
+  CronRunInfo,
+  JobOrigin,
+  RepeatPolicy,
+} from '@ethosagent/cron';
+import { type CronScheduler, isValidSchedule, nextRunForSchedule } from '@ethosagent/cron';
+import { shortPatternCheck } from '@ethosagent/safety-injection';
+import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
+
+// ---------------------------------------------------------------------------
+// Action enum — single dispatch surface for all cron operations
+// ---------------------------------------------------------------------------
+
+type CronAction =
+  | 'create'
+  | 'list'
+  | 'get'
+  | 'read_run'
+  | 'update'
+  | 'pause'
+  | 'resume'
+  | 'run'
+  | 'remove';
 
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createCronTools(scheduler: CronScheduler): Tool[] {
+export function createCronTool(scheduler: CronScheduler): Tool[] {
   return [
-    createJobTool(scheduler),
-    listJobsTool(scheduler),
-    deleteJobTool(scheduler),
-    pauseJobTool(scheduler),
-    resumeJobTool(scheduler),
-    runJobNowTool(scheduler),
-  ];
-}
-
-// ---------------------------------------------------------------------------
-// create_cron_job
-// ---------------------------------------------------------------------------
-
-function createJobTool(scheduler: CronScheduler): Tool {
-  return {
-    name: 'create_cron_job',
-    description:
-      'Schedule a recurring task. The agent will run the given prompt automatically on the cron schedule and save the output.',
-    toolset: 'cron',
-    capabilities: {},
-    schema: {
-      type: 'object',
-      properties: {
-        name: {
-          type: 'string',
-          description: 'Human-readable name for the job (e.g. "Morning Briefing")',
+    {
+      name: 'cron',
+      description:
+        'Manage scheduled recurring tasks. Use the `action` field to create, list, get, read_run, update, pause, resume, run, or remove cron jobs.',
+      toolset: 'cron',
+      capabilities: {},
+      schema: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: [
+              'create',
+              'list',
+              'get',
+              'read_run',
+              'update',
+              'pause',
+              'resume',
+              'run',
+              'remove',
+            ],
+            description: 'The cron operation to perform.',
+          },
+          name: {
+            type: 'string',
+            description: 'Human-readable name for the job (create).',
+          },
+          schedule: {
+            type: 'string',
+            description:
+              'Schedule: cron ("0 8 * * 1-5"), relative delay ("30m"), recurring interval ("every 2h"), or ISO timestamp ("2026-06-01T09:00:00Z"). All cron times are local (create, update).',
+          },
+          prompt: {
+            type: 'string',
+            description: 'The prompt the agent will run on each execution (create, update).',
+          },
+          missed_run_policy: {
+            type: 'string',
+            enum: ['run-once', 'skip'],
+            description:
+              '"run-once" runs the missed job on next start. "skip" waits for the next scheduled time. Default: skip (create).',
+          },
+          context_from: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Job ids/names whose latest output will be prepended as context at run time (optional, create).',
+          },
+          repeat: {
+            type: 'object',
+            description:
+              'Repeat policy: { kind: "forever" | "once" | "count", maxRuns?: number }. Default: forever for cron/interval, once for delays/timestamps (create).',
+            properties: {
+              kind: { type: 'string', enum: ['forever', 'once', 'count'] },
+              maxRuns: { type: 'number' },
+            },
+          },
+          id: {
+            type: 'string',
+            description: 'Job id (get, read_run, update, pause, resume, run, remove).',
+          },
+          at: {
+            type: 'string',
+            description: 'ISO-8601 timestamp of the run to read (read_run).',
+          },
+          personalityId: {
+            type: 'string',
+            description: 'Filter jobs by personality (list).',
+          },
         },
-        schedule: {
-          type: 'string',
-          description:
-            'Standard 5-field cron expression (e.g. "0 8 * * 1-5" for weekdays at 8am). All times are local.',
-        },
-        prompt: { type: 'string', description: 'The prompt the agent will run on each execution' },
-        personality: {
-          type: 'string',
-          description: 'Personality to use (default: current personality)',
-        },
-        deliver: {
-          type: 'string',
-          description: 'Where to deliver the output: "telegram", "cli"',
-        },
-        missed_run_policy: {
-          type: 'string',
-          enum: ['run-once', 'skip'],
-          description:
-            '"run-once" runs the missed job on next start. "skip" waits for the next scheduled time. Default: skip',
-        },
+        required: ['action'],
       },
-      required: ['name', 'schedule', 'prompt'],
-    },
-    async execute(args, ctx): Promise<ToolResult> {
-      const { name, schedule, prompt, personality, deliver, missed_run_policy } = args as {
-        name: string;
-        schedule: string;
-        prompt: string;
-        personality?: string;
-        deliver?: string;
-        missed_run_policy?: 'run-once' | 'skip';
-      };
-
-      if (!name) return { ok: false, error: 'name is required', code: 'input_invalid' };
-      if (!schedule) return { ok: false, error: 'schedule is required', code: 'input_invalid' };
-      if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
-
-      // Personality privilege escalation guard: cron jobs can only run under
-      // the caller's current personality. Reject cross-personality scheduling.
-      const callerPersonality = ctx.personalityId;
-      if (personality && callerPersonality && personality !== callerPersonality) {
-        return {
-          ok: false,
-          error:
-            `Cannot create cron job under personality "${personality}": ` +
-            `caller is running as "${callerPersonality}". ` +
-            'Cron jobs must run under the same personality that creates them.',
-          code: 'input_invalid',
-        };
-      }
-
-      if (!isValidCronExpression(schedule)) {
-        return {
-          ok: false,
-          error: `Invalid cron expression: "${schedule}". Example: "0 8 * * 1-5" for weekdays at 8am.`,
-          code: 'input_invalid',
-        };
-      }
-
-      // Pin the job to the caller's personality when no explicit personality
-      // was requested, so the job never runs under a different personality
-      // than the one that created it.
-      const effectivePersonality = personality ?? callerPersonality;
-
-      try {
-        const job = await scheduler.createJob({
+      async execute(args, ctx): Promise<ToolResult> {
+        const {
+          action,
           name,
           schedule,
           prompt,
-          personality: effectivePersonality,
-          deliver,
-          missedRunPolicy: missed_run_policy ?? 'skip',
-        });
-
-        const next = nextRun(schedule);
-        const nextStr = next ? next.toLocaleString() : 'unknown';
-
-        return {
-          ok: true,
-          value: `✓ Created job "${job.name}" (id: ${job.id})\nSchedule: ${schedule}\nNext run: ${nextStr}`,
+          missed_run_policy,
+          context_from,
+          repeat,
+          id,
+          at,
+          personalityId,
+        } = args as {
+          action: CronAction;
+          name?: string;
+          schedule?: string;
+          prompt?: string;
+          missed_run_policy?: 'run-once' | 'skip';
+          context_from?: string[];
+          repeat?: RepeatPolicy;
+          id?: string;
+          at?: string;
+          personalityId?: string;
         };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-          code: 'execution_failed',
-        };
-      }
-    },
-  };
-}
 
-// ---------------------------------------------------------------------------
-// list_cron_jobs
-// ---------------------------------------------------------------------------
-
-function listJobsTool(scheduler: CronScheduler): Tool {
-  return {
-    name: 'list_cron_jobs',
-    description: 'List all scheduled cron jobs with their status and next run time.',
-    toolset: 'cron',
-    capabilities: {},
-    schema: { type: 'object', properties: {} },
-    async execute(): Promise<ToolResult> {
-      const jobs = await scheduler.listJobs();
-
-      if (jobs.length === 0) {
-        return { ok: true, value: 'No cron jobs scheduled. Use create_cron_job to add one.' };
-      }
-
-      const lines = jobs.map((j) => formatJob(j));
-      return {
-        ok: true,
-        value: `${jobs.length} cron job${jobs.length === 1 ? '' : 's'}:\n\n${lines.join('\n\n')}`,
-      };
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// delete_cron_job
-// ---------------------------------------------------------------------------
-
-function deleteJobTool(scheduler: CronScheduler): Tool {
-  return {
-    name: 'delete_cron_job',
-    description: 'Permanently delete a cron job.',
-    toolset: 'cron',
-    capabilities: {},
-    schema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', description: 'Job id (from list_cron_jobs)' },
+        switch (action) {
+          case 'create':
+            return handleCreate(scheduler, ctx, {
+              name,
+              schedule,
+              prompt,
+              missed_run_policy,
+              context_from,
+              repeat,
+            });
+          case 'list':
+            return handleList(scheduler, { personalityId });
+          case 'get':
+            return handleGet(scheduler, { id });
+          case 'read_run':
+            return handleReadRun(scheduler, { id, at });
+          case 'update':
+            return handleUpdate(scheduler, { id, name, schedule, prompt });
+          case 'pause':
+            return handlePause(scheduler, { id });
+          case 'resume':
+            return handleResume(scheduler, { id });
+          case 'run':
+            return handleRun(scheduler, { id });
+          case 'remove':
+            return handleRemove(scheduler, { id });
+          default:
+            return { ok: false, error: `Unknown action: ${action}`, code: 'input_invalid' };
+        }
       },
-      required: ['id'],
     },
-    async execute(args): Promise<ToolResult> {
-      const { id } = args as { id: string };
-      if (!id) return { ok: false, error: 'id is required', code: 'input_invalid' };
+  ];
+}
 
-      try {
-        await scheduler.deleteJob(id);
-        return { ok: true, value: `✓ Deleted job "${id}"` };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-          code: 'execution_failed',
-        };
-      }
-    },
+/** Backward-compat alias so existing `import { createCronTools }` keeps working. */
+export const createCronTools = createCronTool;
+
+// ---------------------------------------------------------------------------
+// Action handlers
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract a JobOrigin from the tool context when the call originates
+ * from a channel adapter. CLI and web contexts return undefined (file-only).
+ * Gateway session keys follow `${platform}:${botKey}:${chatId}`.
+ */
+function extractOrigin(ctx: { platform: string; sessionKey: string }): JobOrigin | undefined {
+  if (!ctx.platform || ctx.platform === 'cli' || ctx.platform === 'web') return undefined;
+  const parts = ctx.sessionKey.split(':');
+  if (parts.length >= 3) {
+    const chatId = parts[2];
+    if (chatId) return { platform: ctx.platform, chatId };
+  }
+  return undefined;
+}
+
+async function handleCreate(
+  scheduler: CronScheduler,
+  ctx: ToolContext,
+  args: {
+    name?: string;
+    schedule?: string;
+    prompt?: string;
+    missed_run_policy?: 'run-once' | 'skip';
+    context_from?: string[];
+    repeat?: RepeatPolicy;
+  },
+): Promise<ToolResult> {
+  const { name, schedule, prompt, missed_run_policy, context_from, repeat } = args;
+
+  if (!name) return { ok: false, error: 'name is required', code: 'input_invalid' };
+  if (!schedule) return { ok: false, error: 'schedule is required', code: 'input_invalid' };
+  if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
+
+  const callerPersonality = ctx.personalityId;
+  if (!callerPersonality) {
+    return {
+      ok: false,
+      error: 'cron jobs require a personality context',
+      code: 'input_invalid',
+    };
+  }
+
+  if (!isValidSchedule(schedule)) {
+    return {
+      ok: false,
+      error: `Invalid schedule: "${schedule}". Examples: "0 8 * * 1-5" (cron), "30m" (delay), "every 2h" (interval), "2026-06-01T09:00:00Z" (ISO).`,
+      code: 'input_invalid',
+    };
+  }
+
+  // Safety scan: reject prompts that look like injection attempts
+  const safetyResult = shortPatternCheck(prompt);
+  if (safetyResult.containsInstructions) {
+    const reasons = safetyResult.hits.map((h) => h.rule).join(', ');
+    return {
+      ok: false,
+      error: `Prompt rejected by safety scan: ${reasons}`,
+      code: 'input_invalid',
+    };
+  }
+
+  const origin = extractOrigin(ctx);
+
+  try {
+    const job = await scheduler.createJob({
+      name,
+      schedule,
+      prompt,
+      personalityId: callerPersonality,
+      missedRunPolicy: missed_run_policy ?? 'skip',
+      repeat: repeat ?? { kind: 'forever' },
+      ...(origin ? { origin } : {}),
+      ...(context_from ? { contextFrom: context_from } : {}),
+    });
+
+    const next = nextRunForSchedule(schedule, new Date());
+    const nextStr = next ? next.toLocaleString() : 'unknown';
+
+    return {
+      ok: true,
+      value: `✓ Created job "${job.name}" (id: ${job.id})\nSchedule: ${schedule}\nNext run: ${nextStr}`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      code: 'execution_failed',
+    };
+  }
+}
+
+async function handleList(
+  scheduler: CronScheduler,
+  args: { personalityId?: string },
+): Promise<ToolResult> {
+  let jobs = await scheduler.listJobs();
+
+  if (args.personalityId) {
+    jobs = jobs.filter((j) => j.personalityId === args.personalityId);
+  }
+
+  if (jobs.length === 0) {
+    return {
+      ok: true,
+      value: 'No cron jobs scheduled. Use cron({ action: "create", ... }) to add one.',
+    };
+  }
+
+  const lines = jobs.map((j) => formatJob(j));
+  return {
+    ok: true,
+    value: `${jobs.length} cron job${jobs.length === 1 ? '' : 's'}:\n\n${lines.join('\n\n')}`,
   };
 }
 
-// ---------------------------------------------------------------------------
-// pause_cron_job / resume_cron_job
-// ---------------------------------------------------------------------------
+async function handleGet(scheduler: CronScheduler, args: { id?: string }): Promise<ToolResult> {
+  if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
 
-function pauseJobTool(scheduler: CronScheduler): Tool {
+  const job = await scheduler.getJob(args.id);
+  if (!job) return { ok: false, error: `Job not found: ${args.id}`, code: 'input_invalid' };
+
+  let runs: CronRunInfo[] = [];
+  try {
+    runs = await scheduler.listRuns(args.id);
+  } catch {
+    // non-fatal — runs may not exist yet
+  }
+
+  const recentTimestamps = runs.map((r) => r.ranAt);
   return {
-    name: 'pause_cron_job',
-    description: 'Pause a cron job without deleting it. Resumable with resume_cron_job.',
-    toolset: 'cron',
-    capabilities: {},
-    schema: {
-      type: 'object',
-      properties: { id: { type: 'string', description: 'Job id' } },
-      required: ['id'],
-    },
-    async execute(args): Promise<ToolResult> {
-      const { id } = args as { id: string };
-      try {
-        await scheduler.pauseJob(id);
-        return { ok: true, value: `✓ Paused job "${id}"` };
-      } catch (err) {
-        return { ok: false, error: String(err), code: 'execution_failed' };
-      }
-    },
+    ok: true,
+    value: `${formatJob(job)}\n  Recent runs: ${recentTimestamps.length > 0 ? recentTimestamps.join(', ') : 'none'}`,
   };
 }
 
-function resumeJobTool(scheduler: CronScheduler): Tool {
-  return {
-    name: 'resume_cron_job',
-    description: 'Resume a paused cron job.',
-    toolset: 'cron',
-    capabilities: {},
-    schema: {
-      type: 'object',
-      properties: { id: { type: 'string', description: 'Job id' } },
-      required: ['id'],
-    },
-    async execute(args): Promise<ToolResult> {
-      const { id } = args as { id: string };
-      try {
-        await scheduler.resumeJob(id);
-        return { ok: true, value: `✓ Resumed job "${id}"` };
-      } catch (err) {
-        return { ok: false, error: String(err), code: 'execution_failed' };
-      }
-    },
-  };
+async function handleReadRun(
+  scheduler: CronScheduler,
+  args: { id?: string; at?: string },
+): Promise<ToolResult> {
+  if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
+  if (!args.at) return { ok: false, error: 'at is required', code: 'input_invalid' };
+
+  let runs: CronRunInfo[] = [];
+  try {
+    runs = await scheduler.listRuns(args.id);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      code: 'execution_failed',
+    };
+  }
+
+  const match = runs.find((r) => r.ranAt === args.at);
+  if (!match) {
+    return {
+      ok: false,
+      error: `No run found at ${args.at} for job "${args.id}"`,
+      code: 'input_invalid',
+    };
+  }
+
+  try {
+    const output = await scheduler.readRunOutput(match.outputPath);
+    return { ok: true, value: output };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      code: 'execution_failed',
+    };
+  }
 }
 
-// ---------------------------------------------------------------------------
-// run_cron_job_now
-// ---------------------------------------------------------------------------
+async function handleUpdate(
+  scheduler: CronScheduler,
+  args: { id?: string; name?: string; schedule?: string; prompt?: string },
+): Promise<ToolResult> {
+  if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
+  if (!args.name && !args.schedule && !args.prompt) {
+    return {
+      ok: false,
+      error: 'At least one of name, schedule, or prompt is required',
+      code: 'input_invalid',
+    };
+  }
 
-function runJobNowTool(scheduler: CronScheduler): Tool {
-  return {
-    name: 'run_cron_job_now',
-    description: 'Run a cron job immediately, outside its normal schedule.',
-    toolset: 'cron',
-    maxResultChars: 10_000,
-    capabilities: {},
-    schema: {
-      type: 'object',
-      properties: { id: { type: 'string', description: 'Job id' } },
-      required: ['id'],
-    },
-    async execute(args): Promise<ToolResult> {
-      const { id } = args as { id: string };
-      try {
-        const result = await scheduler.runJobNow(id);
-        return {
-          ok: true,
-          value: `✓ Ran job "${id}"\n\nOutput:\n${result.output}`,
-        };
-      } catch (err) {
-        return { ok: false, error: String(err), code: 'execution_failed' };
-      }
-    },
-  };
+  // Safety scan: reject updated prompts that look like injection attempts
+  if (args.prompt) {
+    const safetyResult = shortPatternCheck(args.prompt);
+    if (safetyResult.containsInstructions) {
+      const reasons = safetyResult.hits.map((h) => h.rule).join(', ');
+      return {
+        ok: false,
+        error: `Prompt rejected by safety scan: ${reasons}`,
+        code: 'input_invalid',
+      };
+    }
+  }
+
+  try {
+    const patch: CronJobUpdate = {};
+    if (args.name) patch.name = args.name;
+    if (args.schedule) patch.schedule = args.schedule;
+    if (args.prompt) patch.prompt = args.prompt;
+
+    const updated = await scheduler.updateJob(args.id, patch);
+    return {
+      ok: true,
+      value: `✓ Updated job "${updated.name}" (${updated.id})\nSchedule: ${updated.schedule}${updated.nextRunAt ? `\nNext run: ${new Date(updated.nextRunAt).toLocaleString()}` : ''}`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      code: 'execution_failed',
+    };
+  }
+}
+
+async function handlePause(scheduler: CronScheduler, args: { id?: string }): Promise<ToolResult> {
+  if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
+  try {
+    await scheduler.pauseJob(args.id);
+    return { ok: true, value: `✓ Paused job "${args.id}"` };
+  } catch (err) {
+    return { ok: false, error: String(err), code: 'execution_failed' };
+  }
+}
+
+async function handleResume(scheduler: CronScheduler, args: { id?: string }): Promise<ToolResult> {
+  if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
+  try {
+    await scheduler.resumeJob(args.id);
+    return { ok: true, value: `✓ Resumed job "${args.id}"` };
+  } catch (err) {
+    return { ok: false, error: String(err), code: 'execution_failed' };
+  }
+}
+
+async function handleRun(scheduler: CronScheduler, args: { id?: string }): Promise<ToolResult> {
+  if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
+  try {
+    const result = await scheduler.runJobNow(args.id);
+    return {
+      ok: true,
+      value: `✓ Ran job "${args.id}"\n\nOutput:\n${result.output}`,
+    };
+  } catch (err) {
+    return { ok: false, error: String(err), code: 'execution_failed' };
+  }
+}
+
+async function handleRemove(scheduler: CronScheduler, args: { id?: string }): Promise<ToolResult> {
+  if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
+  try {
+    await scheduler.deleteJob(args.id);
+    return { ok: true, value: `✓ Deleted job "${args.id}"` };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      code: 'execution_failed',
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -274,14 +441,19 @@ function runJobNowTool(scheduler: CronScheduler): Tool {
 // ---------------------------------------------------------------------------
 
 function formatJob(j: CronJob): string {
-  const status = j.status === 'paused' ? '⏸ paused' : '▶ active';
+  const statusMap: Record<string, string> = {
+    active: '▶ active',
+    paused: '⏸ paused',
+    done: '✓ done',
+  };
+  const status = statusMap[j.status] ?? j.status;
   const next = j.nextRunAt ? new Date(j.nextRunAt).toLocaleString() : 'not scheduled';
   const last = j.lastRunAt ? new Date(j.lastRunAt).toLocaleString() : 'never';
   return [
     `**${j.name}** (${j.id})`,
     `  Status:      ${status}`,
     `  Schedule:    ${j.schedule}`,
-    `  Personality: ${j.personality ?? 'default'}`,
+    `  Personality: ${j.personalityId}`,
     `  Next run:    ${next}`,
     `  Last run:    ${last}`,
     `  Missed runs: ${j.missedRunPolicy}`,

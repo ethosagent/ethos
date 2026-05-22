@@ -312,12 +312,12 @@ describe('ClawMigrator cron migration (Phase 3.2)', () => {
     await m.execute(plan);
 
     const raw = await readFile(join(target, 'cron', 'jobs.json'), 'utf-8');
-    const migrated = JSON.parse(raw) as Array<{ id: string; personality: string }>;
+    const migrated = JSON.parse(raw) as Array<{ id: string; personalityId: string }>;
 
     // j1 had no personality → backfilled from the resolved plan personality
-    expect(migrated.find((j) => j.id === 'j1')?.personality).toBe('engineer');
+    expect(migrated.find((j) => j.id === 'j1')?.personalityId).toBe('engineer');
     // j2 already had personality: researcher → preserved unchanged
-    expect(migrated.find((j) => j.id === 'j2')?.personality).toBe('researcher');
+    expect(migrated.find((j) => j.id === 'j2')?.personalityId).toBe('researcher');
   });
 
   it('falls back to resolved personality when OpenClaw config has no personality field', async () => {
@@ -344,8 +344,8 @@ describe('ClawMigrator cron migration (Phase 3.2)', () => {
     await m.execute(plan);
 
     const raw = await readFile(join(target, 'cron', 'jobs.json'), 'utf-8');
-    const migrated = JSON.parse(raw) as Array<{ personality: string }>;
-    expect(migrated[0]?.personality).toBe('researcher');
+    const migrated = JSON.parse(raw) as Array<{ personalityId: string }>;
+    expect(migrated[0]?.personalityId).toBe('researcher');
   });
 
   it('skips cron migration when dest already exists and overwrite is false', async () => {

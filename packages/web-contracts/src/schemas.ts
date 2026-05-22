@@ -177,7 +177,7 @@ export type ProviderEntry = z.infer<typeof ProviderEntrySchema>;
 // "explicitly null".
 // ---------------------------------------------------------------------------
 
-export const JobStatusSchema = z.enum(['active', 'paused']);
+export const JobStatusSchema = z.enum(['active', 'paused', 'done']);
 export type JobStatus = z.infer<typeof JobStatusSchema>;
 
 export const MissedRunPolicySchema = z.enum(['run-once', 'skip']);
@@ -189,8 +189,8 @@ export const CronJobSchema = z.object({
   /** 5-field cron expression e.g. `0 8 * * 1-5`. */
   schedule: z.string(),
   prompt: z.string(),
-  personality: z.string().nullable(),
-  /** Delivery target — `cli` / `telegram` / etc. Null means "store output to disk only". */
+  personalityId: z.string(),
+  /** Delivery target — derived from origin platform. Null means "store output to disk only". */
   deliver: z.string().nullable(),
   status: JobStatusSchema,
   missedRunPolicy: MissedRunPolicySchema,

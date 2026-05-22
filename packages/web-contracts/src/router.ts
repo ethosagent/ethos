@@ -480,8 +480,7 @@ const CronCreateInput = z.object({
   name: z.string().min(1),
   schedule: z.string().min(1),
   prompt: z.string().min(1),
-  personality: z.string().optional(),
-  deliver: z.string().optional(),
+  personalityId: z.string().min(1),
   missedRunPolicy: MissedRunPolicySchema.optional(),
 });
 const CronCreateOutput = z.object({ job: CronJobSchema });

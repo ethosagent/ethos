@@ -406,10 +406,10 @@ export class ClawMigrator {
       return { label: op.label, status: 'failed', reason: 'cron/jobs.json is not valid JSON' };
     }
 
-    // Backfill personality on every job that doesn't already declare one.
+    // Backfill personalityId on every job that doesn't already declare one.
     const backfilled = jobs.map((job) => ({
       ...job,
-      personality: job.personality ?? plan.personality.resolved,
+      personalityId: (job.personalityId ?? job.personality ?? plan.personality.resolved) as string,
     }));
 
     if (this.dryRun) return { label: op.label, status: 'copied' };

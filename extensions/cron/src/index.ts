@@ -4,30 +4,52 @@ import { dirname, join } from 'node:path';
 import { noopLogger } from '@ethosagent/logger';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { Logger, Storage } from '@ethosagent/types';
-import { Cron } from 'croner';
+import { isOneShotSchedule, isValidSchedule, nextRunForSchedule } from './schedule';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type MissedRunPolicy = 'run-once' | 'skip';
-export type JobStatus = 'active' | 'paused';
+export type JobStatus = 'active' | 'paused' | 'done';
+
+export interface RepeatPolicy {
+  kind: 'forever' | 'once' | 'count';
+  /** Required when kind === 'count'. */
+  maxRuns?: number;
+}
+
+/** Origin channel captured at create time; absent means file-only delivery. */
+export interface JobOrigin {
+  platform: string;
+  chatId: string;
+}
 
 export interface CronJob {
   id: string;
   name: string;
-  /** Standard 5-field cron expression e.g. "0 8 * * 1-5" */
+  /** Schedule expression: 5-field cron, relative delay (30m), interval (every 2h), or ISO timestamp. */
   schedule: string;
   prompt: string;
-  personality?: string;
-  /** Delivery target: "telegram", "cli", etc. */
-  deliver?: string;
+  personalityId: string;
+  /** Channel origin captured at create time; absent means file-only. */
+  origin?: JobOrigin;
   status: JobStatus;
   missedRunPolicy: MissedRunPolicy;
+  /** Repeat policy — defaults to 'forever' for cron/interval, 'once' for relative/iso. */
+  repeat: RepeatPolicy;
+  /** Number of times this job has been executed. */
+  runCount: number;
+  /** Last execution error, if any. */
+  lastError?: string;
+  /** Job ids/names whose latest output will be prepended as context at run time. */
+  contextFrom?: string[];
   lastRunAt?: string;
   nextRunAt?: string;
   createdAt: string;
 }
+
+export type CronJobUpdate = Partial<Pick<CronJob, 'name' | 'schedule' | 'prompt'>>;
 
 export interface CronRunResult {
   jobId: string;
@@ -54,6 +76,8 @@ export interface CronSchedulerConfig {
   storage?: Storage;
   /** Logger for tick-time errors. Defaults to a silent NoopLogger. */
   logger?: Logger;
+  /** Optional callback to deliver run output back to the originating channel. */
+  deliver?: (job: CronJob, output: string) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +122,7 @@ export class CronScheduler {
   private readonly tickIntervalMs: number;
   private readonly storage: Storage;
   private readonly logger: Logger;
+  private readonly deliver?: (job: CronJob, output: string) => Promise<void>;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: CronSchedulerConfig) {
@@ -109,6 +134,7 @@ export class CronScheduler {
     this.tickIntervalMs = config.tickIntervalMs ?? 60_000;
     this.storage = config.storage ?? new FsStorage();
     this.logger = config.logger ?? noopLogger;
+    this.deliver = config.deliver;
   }
 
   // ---------------------------------------------------------------------------
@@ -132,24 +158,44 @@ export class CronScheduler {
   // ---------------------------------------------------------------------------
 
   async createJob(
-    params: Omit<CronJob, 'id' | 'createdAt' | 'nextRunAt' | 'status'>,
+    params: Omit<CronJob, 'id' | 'createdAt' | 'nextRunAt' | 'status' | 'runCount' | 'repeat'> & {
+      repeat?: RepeatPolicy;
+    },
   ): Promise<CronJob> {
-    if (!isValidCronExpression(params.schedule)) {
-      throw new Error(`Invalid cron expression: "${params.schedule}"`);
+    if (!params.personalityId) {
+      throw new Error('personalityId is required');
     }
+
+    if (!isValidSchedule(params.schedule)) {
+      throw new Error(`Invalid schedule: "${params.schedule}"`);
+    }
+
+    const now = new Date();
+    const repeat: RepeatPolicy =
+      params.repeat ??
+      (isOneShotSchedule(params.schedule) ? { kind: 'once' } : { kind: 'forever' });
 
     const job: CronJob = {
       ...params,
       id: slugify(params.name),
       status: 'active',
       missedRunPolicy: params.missedRunPolicy ?? 'skip',
-      nextRunAt: nextRun(params.schedule)?.toISOString(),
-      createdAt: new Date().toISOString(),
+      repeat,
+      runCount: 0,
+      nextRunAt: nextRunForSchedule(params.schedule, now)?.toISOString(),
+      createdAt: now.toISOString(),
     };
 
     await this.withJobsLock(async (jobs) => {
       if (jobs.find((j) => j.id === job.id)) {
         throw new Error(`Job with id "${job.id}" already exists`);
+      }
+      if (job.contextFrom && job.contextFrom.length > 0) {
+        for (const ref of job.contextFrom) {
+          if (!jobs.find((j) => j.id === ref || j.name === ref)) {
+            throw new Error(`contextFrom references unknown job: "${ref}"`);
+          }
+        }
       }
       jobs.push(job);
       return jobs;
@@ -180,10 +226,52 @@ export class CronScheduler {
   }
 
   async resumeJob(id: string): Promise<void> {
+    const job = await this.getJob(id);
+    if (!job) throw new Error(`Job not found: ${id}`);
     await this.patchJob(id, {
       status: 'active',
-      nextRunAt: nextRun(await this.getSchedule(id))?.toISOString(),
+      nextRunAt: nextRunForSchedule(
+        job.schedule,
+        new Date(),
+        new Date(job.createdAt),
+      )?.toISOString(),
     });
+  }
+
+  async updateJob(id: string, patch: CronJobUpdate): Promise<CronJob> {
+    if (!patch.name && !patch.schedule && !patch.prompt) {
+      throw new Error('At least one of name, schedule, or prompt is required');
+    }
+
+    let updatedJob: CronJob | undefined;
+
+    await this.withJobsLock(async (jobs) => {
+      const idx = jobs.findIndex((j) => j.id === id);
+      const existing = idx >= 0 ? jobs[idx] : undefined;
+      if (!existing) throw new Error(`Job not found: ${id}`);
+
+      if (patch.schedule) {
+        if (!isValidSchedule(patch.schedule)) {
+          throw new Error(`Invalid schedule: "${patch.schedule}"`);
+        }
+        const nextAt = nextRunForSchedule(patch.schedule, new Date(), new Date(existing.createdAt));
+        existing.schedule = patch.schedule;
+        existing.nextRunAt = nextAt?.toISOString();
+        // Recompute repeat if schedule changed to one-shot and repeat was forever
+        if (isOneShotSchedule(patch.schedule) && existing.repeat.kind === 'forever') {
+          existing.repeat = { kind: 'once' };
+        }
+      }
+      if (patch.name !== undefined) existing.name = patch.name;
+      if (patch.prompt !== undefined) existing.prompt = patch.prompt;
+
+      jobs[idx] = existing;
+      updatedJob = existing;
+      return jobs;
+    });
+
+    if (!updatedJob) throw new Error(`Job not found: ${id}`);
+    return updatedJob;
   }
 
   async runJobNow(id: string): Promise<CronRunResult> {
@@ -243,7 +331,7 @@ export class CronScheduler {
       // Missed run handling
       if (job.missedRunPolicy === 'skip') {
         // Don't run the missed job, just update nextRunAt to the next future time
-        const upcoming = nextRunAfter(job.schedule, now);
+        const upcoming = nextRunForSchedule(job.schedule, now, new Date(job.createdAt));
         await this.patchJob(job.id, { nextRunAt: upcoming?.toISOString() }).catch(() => {});
         continue;
       }
@@ -251,7 +339,7 @@ export class CronScheduler {
       // run-once: claim the job by advancing nextRunAt BEFORE executing.
       // If the patch fails (lock contention, disk error), we skip this tick
       // — better than double-firing because the schedule never advanced.
-      const upcoming = nextRunAfter(job.schedule, now);
+      const upcoming = nextRunForSchedule(job.schedule, now, new Date(job.createdAt));
       try {
         await this.patchJob(job.id, {
           lastRunAt: now.toISOString(),
@@ -266,14 +354,72 @@ export class CronScheduler {
         continue;
       }
 
-      await this.executeJob(job).catch((err) => {
+      try {
+        await this.executeJob(job);
+      } catch (err) {
         this.logger.error(`[cron] Job "${job.id}" failed`, {
           component: 'cron',
           jobId: job.id,
           error: String(err),
         });
-      });
+        await this.patchJob(job.id, {
+          lastError: err instanceof Error ? err.message : String(err),
+        }).catch(() => {});
+        continue;
+      }
+
+      // After successful execution: increment runCount and check retirement
+      const updatedRunCount = (job.runCount ?? 0) + 1;
+      const repeat = job.repeat ?? { kind: 'forever' };
+      const patchData: Partial<CronJob> = { runCount: updatedRunCount };
+
+      if (
+        repeat.kind === 'once' ||
+        (repeat.kind === 'count' &&
+          repeat.maxRuns !== undefined &&
+          updatedRunCount >= repeat.maxRuns)
+      ) {
+        patchData.status = 'done';
+        patchData.nextRunAt = undefined;
+      }
+
+      await this.patchJob(job.id, patchData).catch(() => {});
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Context resolution (job chaining)
+  // ---------------------------------------------------------------------------
+
+  private async resolveContext(job: CronJob): Promise<string> {
+    if (!job.contextFrom || job.contextFrom.length === 0) return '';
+
+    const blocks: string[] = [];
+    for (const ref of job.contextFrom) {
+      const refJob = await this.findJobByIdOrName(ref);
+      if (!refJob) continue;
+
+      const runs = await this.listRuns(refJob.id, 1);
+      if (runs.length === 0) continue;
+
+      const latestRun = runs[0];
+      if (!latestRun) continue;
+      try {
+        const output = await this.readRunOutput(latestRun.outputPath);
+        blocks.push(
+          `--- Context from "${refJob.name}" (${refJob.id}) ---\n${output}\n--- End context ---`,
+        );
+      } catch {
+        // non-fatal — skip this reference
+      }
+    }
+
+    return blocks.length > 0 ? `${blocks.join('\n\n')}\n\n` : '';
+  }
+
+  private async findJobByIdOrName(ref: string): Promise<CronJob | null> {
+    const jobs = await this.readJobs();
+    return jobs.find((j) => j.id === ref || j.name === ref) ?? null;
   }
 
   // ---------------------------------------------------------------------------
@@ -281,13 +427,31 @@ export class CronScheduler {
   // ---------------------------------------------------------------------------
 
   private async executeJob(job: CronJob): Promise<CronRunResult> {
-    const result = await this.runJob(job);
+    const contextPrefix = await this.resolveContext(job);
+    const effectivePrompt = contextPrefix + job.prompt;
+    const result = await this.runJob({ ...job, prompt: effectivePrompt });
 
     // Persist output to ~/.ethos/cron/output/<id>/<timestamp>.md
     const ts = result.ranAt.replace(/[:.]/g, '-').replace('Z', 'Z');
     const outPath = join(this.outputDir, job.id, `${ts}.md`);
     await this.storage.mkdir(dirname(outPath));
     await this.storage.write(outPath, `# ${job.name}\n\n${result.output}\n`);
+
+    // Deliver to originating channel when origin is present
+    if (job.origin && this.deliver) {
+      // Suppress delivery when output starts with [SILENT]
+      if (!/^\s*\[SILENT\]/i.test(result.output)) {
+        try {
+          await this.deliver(job, result.output);
+        } catch (err) {
+          this.logger.error(`[cron] Delivery failed for job "${job.id}"`, {
+            component: 'cron',
+            jobId: job.id,
+            error: String(err),
+          });
+        }
+      }
+    }
 
     return result;
   }
@@ -331,43 +495,37 @@ export class CronScheduler {
       return jobs;
     });
   }
-
-  private async getSchedule(id: string): Promise<string> {
-    const job = await this.getJob(id);
-    if (!job) throw new Error(`Job not found: ${id}`);
-    return job.schedule;
-  }
 }
 
 // ---------------------------------------------------------------------------
-// Cron expression helpers
+// Re-exports from schedule module
 // ---------------------------------------------------------------------------
 
+export type { ParsedSchedule } from './schedule';
+export {
+  isOneShotSchedule,
+  isValidSchedule,
+  nextRunForSchedule,
+  parseSchedule,
+} from './schedule';
+
+// ---------------------------------------------------------------------------
+// Backward-compat helpers — delegate to the new schedule parser
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use `isValidSchedule` — this thin wrapper keeps existing callers working. */
 export function isValidCronExpression(expr: string): boolean {
-  try {
-    new Cron(expr, { maxRuns: 1 });
-    return true;
-  } catch {
-    return false;
-  }
+  return isValidSchedule(expr);
 }
 
-/** Next scheduled run from now. */
+/** @deprecated Use `nextRunForSchedule` — this thin wrapper keeps existing callers working. */
 export function nextRun(schedule: string): Date | null {
-  try {
-    return new Cron(schedule).nextRun() ?? null;
-  } catch {
-    return null;
-  }
+  return nextRunForSchedule(schedule, new Date()) ?? null;
 }
 
-/** Next scheduled run strictly after a given date. */
+/** @deprecated Use `nextRunForSchedule` — this thin wrapper keeps existing callers working. */
 export function nextRunAfter(schedule: string, after: Date): Date | null {
-  try {
-    return new Cron(schedule).nextRun(after) ?? null;
-  } catch {
-    return null;
-  }
+  return nextRunForSchedule(schedule, after) ?? null;
 }
 
 /**
