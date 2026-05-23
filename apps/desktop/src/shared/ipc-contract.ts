@@ -39,10 +39,17 @@ export interface IpcContract {
   };
   'onboarding:complete': { request: OnboardingCompleteRequest; response: { success: boolean } };
   'personalities:list': { request: undefined; response: PersonalityListItem[] };
-  'keychain:set': { request: { key: string; value: string }; response: { success: boolean } };
-  'keychain:get': { request: { key: string }; response: { value: string | null } };
   'health:check': { request: { port: number }; response: { healthy: boolean } };
   'theme:get': { request: undefined; response: 'dark' | 'light' };
 }
 
 export type IpcChannel = keyof IpcContract;
+
+export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
+  'onboarding:state': 'onboarding:state',
+  'onboarding:validateProvider': 'onboarding:validateProvider',
+  'onboarding:complete': 'onboarding:complete',
+  'personalities:list': 'personalities:list',
+  'health:check': 'health:check',
+  'theme:get': 'theme:get',
+};

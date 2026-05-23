@@ -1,14 +1,15 @@
 import { ipcMain } from 'electron';
-import { getKeychainValue, setKeychainValue } from './keychain';
+import { IPC_CHANNELS } from '../shared/ipc-contract';
+import { setKeychainValue } from './keychain';
 import { store } from './store';
 
 export function registerIpcHandlers(): void {
-  ipcMain.handle('onboarding:state', () => {
+  ipcMain.handle(IPC_CHANNELS['onboarding:state'], () => {
     return { configured: store.get('onboardingComplete', false) };
   });
 
   ipcMain.handle(
-    'onboarding:validateProvider',
+    IPC_CHANNELS['onboarding:validateProvider'],
     async (
       _event,
       req: {
@@ -174,7 +175,7 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
-    'onboarding:complete',
+    IPC_CHANNELS['onboarding:complete'],
     async (
       _event,
       req: {
@@ -184,20 +185,33 @@ export function registerIpcHandlers(): void {
         personalityId: string;
       },
     ) => {
-      store.set('provider', req.provider as 'anthropic' | 'openai' | 'ollama');
-      store.set('model', req.model);
-      store.set('personalityId', req.personalityId);
-      store.set('onboardingComplete', true);
+      const validProviders = ['anthropic', 'openai', 'ollama'];
+      const validPersonalities = ['researcher', 'engineer', 'operator', 'coach'];
+
+      if (!validProviders.includes(req.provider)) {
+        return { success: false, error: 'Invalid provider' };
+      }
+      if (!req.model || typeof req.model !== 'string') {
+        return { success: false, error: 'Invalid model' };
+      }
+      if (!validPersonalities.includes(req.personalityId)) {
+        return { success: false, error: 'Invalid personality' };
+      }
 
       if (req.apiKey) {
         await setKeychainValue('api-key', req.apiKey);
       }
 
+      store.set('provider', req.provider as 'anthropic' | 'openai' | 'ollama');
+      store.set('model', req.model);
+      store.set('personalityId', req.personalityId);
+      store.set('onboardingComplete', true);
+
       return { success: true };
     },
   );
 
-  ipcMain.handle('personalities:list', () => {
+  ipcMain.handle(IPC_CHANNELS['personalities:list'], () => {
     return [
       {
         id: 'researcher',
@@ -230,17 +244,7 @@ export function registerIpcHandlers(): void {
     ];
   });
 
-  ipcMain.handle('keychain:set', async (_event, req: { key: string; value: string }) => {
-    await setKeychainValue(req.key, req.value);
-    return { success: true };
-  });
-
-  ipcMain.handle('keychain:get', async (_event, req: { key: string }) => {
-    const value = await getKeychainValue(req.key);
-    return { value };
-  });
-
-  ipcMain.handle('health:check', async (_event, req: { port: number }) => {
+  ipcMain.handle(IPC_CHANNELS['health:check'], async (_event, req: { port: number }) => {
     try {
       const res = await fetch(`http://localhost:${req.port}/health`, {
         signal: AbortSignal.timeout(2000),
@@ -251,7 +255,7 @@ export function registerIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('theme:get', () => {
+  ipcMain.handle(IPC_CHANNELS['theme:get'], () => {
     return store.get('theme', 'dark');
   });
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 interface StepDoneProps {
   provider: string;
@@ -21,48 +21,46 @@ export function StepDone({
 }: StepDoneProps) {
   const [healthState, setHealthState] = useState<HealthState>('starting');
   const [dots, setDots] = useState('');
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const healthRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+  const [retryCount, setRetryCount] = useState(0);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retryCount triggers re-execution on retry
   useEffect(() => {
-    async function completeOnboarding() {
-      if (completedRef.current) return;
-      completedRef.current = true;
+    let healthInterval: ReturnType<typeof setInterval> | null = null;
+    let dotsInterval: ReturnType<typeof setInterval> | null = null;
+    let elapsed = 0;
 
+    async function start() {
       await window.ethos.onboarding.complete({ provider, model, apiKey, personalityId });
 
-      let elapsed = 0;
       const port = 3001;
-
-      healthRef.current = setInterval(async () => {
+      healthInterval = setInterval(async () => {
         elapsed += 500;
         const { healthy } = await window.ethos.health.check({ port });
         if (healthy) {
           setHealthState('ready');
-          if (healthRef.current) clearInterval(healthRef.current);
+          if (healthInterval) clearInterval(healthInterval);
         } else if (elapsed >= 30000) {
           setHealthState('error');
-          if (healthRef.current) clearInterval(healthRef.current);
+          if (healthInterval) clearInterval(healthInterval);
         }
       }, 500);
     }
 
-    completeOnboarding();
+    start();
 
-    intervalRef.current = setInterval(() => {
+    dotsInterval = setInterval(() => {
       setDots((d) => (d.length >= 3 ? '' : `${d}.`));
     }, 400);
 
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (healthRef.current) clearInterval(healthRef.current);
+      if (healthInterval) clearInterval(healthInterval);
+      if (dotsInterval) clearInterval(dotsInterval);
     };
-  }, [provider, model, apiKey, personalityId]);
+  }, [retryCount, provider, model, apiKey, personalityId]);
 
   function retry() {
     setHealthState('starting');
-    completedRef.current = false;
+    setRetryCount((c) => c + 1);
   }
 
   const providerLabel =

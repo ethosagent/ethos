@@ -30,10 +30,6 @@ declare global {
           }>
         >;
       };
-      keychain: {
-        set: (req: { key: string; value: string }) => Promise<{ success: boolean }>;
-        get: (req: { key: string }) => Promise<{ value: string | null }>;
-      };
       health: {
         check: (req: { port: number }) => Promise<{ healthy: boolean }>;
       };

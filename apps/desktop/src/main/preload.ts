@@ -1,25 +1,22 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import { IPC_CHANNELS } from '../shared/ipc-contract';
 
 const api = {
   onboarding: {
-    state: () => ipcRenderer.invoke('onboarding:state'),
+    state: () => ipcRenderer.invoke(IPC_CHANNELS['onboarding:state']),
     validateProvider: (req: { provider: string; apiKey: string; baseUrl?: string }) =>
-      ipcRenderer.invoke('onboarding:validateProvider', req),
+      ipcRenderer.invoke(IPC_CHANNELS['onboarding:validateProvider'], req),
     complete: (req: { provider: string; model: string; apiKey: string; personalityId: string }) =>
-      ipcRenderer.invoke('onboarding:complete', req),
+      ipcRenderer.invoke(IPC_CHANNELS['onboarding:complete'], req),
   },
   personalities: {
-    list: () => ipcRenderer.invoke('personalities:list'),
-  },
-  keychain: {
-    set: (req: { key: string; value: string }) => ipcRenderer.invoke('keychain:set', req),
-    get: (req: { key: string }) => ipcRenderer.invoke('keychain:get', req),
+    list: () => ipcRenderer.invoke(IPC_CHANNELS['personalities:list']),
   },
   health: {
-    check: (req: { port: number }) => ipcRenderer.invoke('health:check', req),
+    check: (req: { port: number }) => ipcRenderer.invoke(IPC_CHANNELS['health:check'], req),
   },
   theme: {
-    get: () => ipcRenderer.invoke('theme:get'),
+    get: () => ipcRenderer.invoke(IPC_CHANNELS['theme:get']),
   },
 };
 
