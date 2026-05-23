@@ -51,6 +51,7 @@ import {
 } from './events/links';
 import { registerMemberEvents } from './events/members';
 import { registerMessageEvents } from './events/messages';
+import { toNativeMarkdown } from './format';
 import { type ClarifyHomeReader, registerHomeEvents, type SessionReader } from './home/handlers';
 import { type ApprovalActionPayload, handleApprovalAction } from './interactions/actions';
 import {
@@ -556,7 +557,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       // sets `replyToId` for outbound today.
       const threadTs = message.threadId;
 
-      const chunks = chunkText(message.text, this.maxMessageLength);
+      const chunks = chunkText(toNativeMarkdown(message.text), this.maxMessageLength);
       const ids: string[] = [];
 
       for (const chunk of chunks) {
@@ -633,7 +634,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
 
   async editMessage(chatId: string, messageId: string, text: string): Promise<DeliveryResult> {
     try {
-      const newChunks = chunkText(text, this.maxMessageLength);
+      const newChunks = chunkText(toNativeMarkdown(text), this.maxMessageLength);
       const existingIds = this.chunkMap.get(messageId) ?? [messageId];
 
       const updatedIds = await reflowChunks(newChunks, existingIds, {

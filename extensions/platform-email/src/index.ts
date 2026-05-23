@@ -8,6 +8,7 @@ import type {
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import * as nodemailer from 'nodemailer';
+import { toNativeMarkdown } from './format';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -132,7 +133,7 @@ export class EmailAdapter implements PlatformAdapter {
         to: thread.to,
         subject: thread.replySubject,
         ...(thread.inReplyTo ? { inReplyTo: thread.inReplyTo, references: thread.inReplyTo } : {}),
-        text: message.text,
+        html: toNativeMarkdown(message.text),
       });
       return { ok: true, messageId: info.messageId };
     } catch (err) {

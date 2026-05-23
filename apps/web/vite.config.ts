@@ -24,6 +24,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@ethosagent/web-contracts': resolve(root, 'packages/web-contracts/src'),
+      '@ethosagent/ui-components': resolve(root, 'packages/ui-components/src'),
     },
   },
   server: {

@@ -16,6 +16,10 @@
       "import": "./src/clarify-surface.ts",
       "types": "./src/clarify-surface.ts"
     },
+    "./format": {
+      "import": "./src/format.ts",
+      "types": "./src/format.ts"
+    },
     "./personality": {
       "import": "./src/blocks/personality.ts",
       "types": "./src/blocks/personality.ts"

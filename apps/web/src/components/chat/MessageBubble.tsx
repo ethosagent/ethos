@@ -1,3 +1,4 @@
+import { ContentRenderer } from '@ethosagent/ui-components';
 import type { AssistantBlock, AssistantTurn, UserMessage } from '../../lib/chat-reducer';
 import { ToolChip } from './ToolChip';
 
@@ -48,10 +49,10 @@ function BlockRenderer({
 }) {
   if (block.kind === 'text') {
     return (
-      <span style={{ whiteSpace: 'pre-wrap' }}>
-        {block.content}
+      <>
+        <ContentRenderer content={block.content} format="markdown" />
         {streamingTail ? <span className="streaming-cursor" aria-hidden="true" /> : null}
-      </span>
+      </>
     );
   }
   return <ToolChip tool={block} />;

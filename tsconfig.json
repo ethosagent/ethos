@@ -30,16 +30,19 @@
       "@ethosagent/platform-discord/clarify-surface": [
         "./extensions/platform-discord/src/clarify-surface"
       ],
+      "@ethosagent/platform-discord/format": ["./extensions/platform-discord/src/format"],
       "@ethosagent/platform-slack": ["./extensions/platform-slack/src"],
       "@ethosagent/platform-slack/validate": ["./extensions/platform-slack/src/validate"],
       "@ethosagent/platform-slack/clarify-surface": [
         "./extensions/platform-slack/src/clarify-surface"
       ],
+      "@ethosagent/platform-slack/format": ["./extensions/platform-slack/src/format"],
       "@ethosagent/platform-telegram": ["./extensions/platform-telegram/src"],
       "@ethosagent/platform-telegram/validate": ["./extensions/platform-telegram/src/validate"],
       "@ethosagent/platform-telegram/clarify-surface": [
         "./extensions/platform-telegram/src/clarify-surface"
       ],
+      "@ethosagent/platform-telegram/format": ["./extensions/platform-telegram/src/format"],
       "@ethosagent/platform-telegram/personality": [
         "./extensions/platform-telegram/src/blocks/personality"
       ],
@@ -71,6 +74,7 @@
       "@ethosagent/tui": ["./apps/tui/src"],
       "@ethosagent/batch-runner": ["./extensions/batch-runner/src"],
       "@ethosagent/platform-email": ["./extensions/platform-email/src"],
+      "@ethosagent/platform-email/format": ["./extensions/platform-email/src/format"],
       "@ethosagent/eval-harness": ["./extensions/eval-harness/src"],
       "@ethosagent/memory-vector": ["./extensions/memory-vector/src"],
       "@ethosagent/skill-evolver": ["./extensions/skill-evolver/src"],
@@ -85,6 +89,7 @@
       "@ethosagent/web-contracts": ["./packages/web-contracts/src"],
       "@ethosagent/sdk": ["./packages/sdk/src"],
       "@ethosagent/design-tokens": ["./packages/design-tokens/src"],
+      "@ethosagent/ui-components": ["./packages/ui-components/src"],
       "@ethosagent/design-tokens/antd": ["./packages/design-tokens/src/antd"],
       "@ethosagent/design-tokens/chalk": ["./packages/design-tokens/src/chalk"],
       "@ethosagent/design-tokens/inline-css": ["./packages/design-tokens/src/inline-css"],

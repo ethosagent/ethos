@@ -198,7 +198,7 @@ describe('EmailAdapter.send', () => {
     const result = await adapter.send(chatId, { text: 'Done!' });
     expect(result.ok).toBe(true);
     expect(transport.sendMail).toHaveBeenCalledWith(
-      expect.objectContaining({ to: 'alice@example.com', text: 'Done!' }),
+      expect.objectContaining({ to: 'alice@example.com', html: '<p>Done!</p>' }),
     );
   });
 

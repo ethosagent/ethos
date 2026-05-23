@@ -25,10 +25,26 @@ import { noopLogger } from '@ethosagent/logger';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import { VectorMemoryProvider } from '@ethosagent/memory-vector';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
+import {
+  platformId as discordId,
+  platformPrompt as discordPrompt,
+} from '@ethosagent/platform-discord/format';
+import {
+  platformId as emailId,
+  platformPrompt as emailPrompt,
+} from '@ethosagent/platform-email/format';
+import {
+  platformId as slackId,
+  platformPrompt as slackPrompt,
+} from '@ethosagent/platform-slack/format';
+import {
+  platformId as telegramId,
+  platformPrompt as telegramPrompt,
+} from '@ethosagent/platform-telegram/format';
 import { PluginLoader } from '@ethosagent/plugin-loader';
 import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { createKvStoreFactory, SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import { createInjectors, UniversalScanner } from '@ethosagent/skills';
+import { createInjectors, PlatformFormattingInjector, UniversalScanner } from '@ethosagent/skills';
 import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
 import { createCryptoStorage } from '@ethosagent/storage-crypto';
 import { FsAttachmentCache, FsStorage, REF_TO_ENV } from '@ethosagent/storage-fs';
@@ -585,6 +601,29 @@ export interface CreateAgentLoopResult {
   setMessagingSend: (fn: MessagingSendFn) => void;
 }
 
+const WEB_PROMPT = `## Output format — Web UI
+
+You are responding in a web application with rich markdown rendering. Follow these rules:
+
+- Use full GitHub-flavoured markdown: **bold**, *italic*, # headers, ## subheaders,
+  bullet lists (- or *), numbered lists, \`inline code\`, \`\`\`code blocks\`\`\`, tables,
+  and horizontal rules (---).
+- Structure multi-part answers with ## headers. Use ### for sub-sections.
+- Use tables for comparisons with 3+ attributes.
+- Code blocks must include the language identifier: \`\`\`typescript.
+- Links: [text](url). Images: ![alt](url) when relevant.
+- Aim for visual hierarchy — readers scan before they read.
+- Length is not constrained by platform. Match depth to complexity.
+- Use > blockquotes for direct quotations or highlighted callouts.`;
+
+const platformPrompts = new Map<string, string>([
+  [slackId, slackPrompt],
+  [telegramId, telegramPrompt],
+  [discordId, discordPrompt],
+  [emailId, emailPrompt],
+  ['web', WEB_PROMPT],
+]);
+
 export async function createAgentLoop(
   config: WiringConfig,
   opts: CreateAgentLoopOptions,
@@ -985,6 +1024,7 @@ export async function createAgentLoop(
     hooks,
   });
   for (const tool of skillTools) tools.register(tool);
+  injectors.unshift(new PlatformFormattingInjector(platformPrompts));
 
   // CLI/TUI/ACP get the synchronous block-and-explain guard. Web replaces it
   // with an interactive approval flow registered after createAgentLoop returns

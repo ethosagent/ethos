@@ -20,6 +20,7 @@ export {
   warnMissingAllowList,
 } from './ingest-filter';
 export { MemoryGuidanceInjector } from './memory-guidance-injector';
+export { PlatformFormattingInjector } from './platform-formatting-injector';
 export { sanitize } from './prompt-injection-guard';
 export {
   applySubstitutions,

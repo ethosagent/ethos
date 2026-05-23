@@ -1,5 +1,24 @@
 import { createHash } from 'node:crypto';
 
+export const platformId = 'telegram';
+
+export const platformPrompt = `## Output format — Telegram
+
+You are replying inside a Telegram chat. Follow these rules:
+
+- Write in short paragraphs (2–4 sentences). Never write walls of text.
+- Use plain Telegram MarkdownV2 syntax: *bold*, _italic_, \`inline code\`, \`\`\`code blocks\`\`\`.
+- Escape special characters: . ! ( ) - = # + with a leading backslash when they appear
+  outside markdown constructs.
+- Use bullet lists (–) for 3+ items. Never use numbered lists unless order genuinely matters.
+- No HTML tags. No horizontal rules. No headers (##, ###).
+- For structured data (tables, comparisons) prefer compact bullet summaries.
+- Keep total reply length under 800 characters for simple questions; up to 2000 for
+  technical answers. Split into follow-up messages rather than dumping a wall at once.
+- End with a clear statement or question. Never trail off.`;
+
+export const toNativeMarkdown = markdownToTelegramHtml;
+
 // ---------------------------------------------------------------------------
 // Markdown → Telegram HTML translator
 //

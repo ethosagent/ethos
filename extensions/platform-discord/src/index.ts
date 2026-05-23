@@ -18,6 +18,7 @@ import type { Binding, ChannelMode } from './config';
 import { DEFAULT_CHANNEL_MODE } from './config';
 import { buildModal, registerInteractionHandler, toActionRowBuilder } from './events/interactions';
 import { registerMessageHandler } from './events/messages';
+import { toNativeMarkdown } from './format';
 import { ChannelOverrideStore } from './store/channel-overrides';
 import { ThreadStateStore } from './store/thread-state';
 import type { DiscordClarifyInteraction } from './types';
@@ -187,7 +188,7 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
         return { ok: false, error: 'Channel not found or not sendable' };
       }
 
-      const chunks = chunkText(message.text, this.maxMessageLength);
+      const chunks = chunkText(toNativeMarkdown(message.text), this.maxMessageLength);
       const ids: string[] = [];
 
       for (const chunk of chunks) {
@@ -231,7 +232,7 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
         return { ok: false, error: 'Channel not found' };
       }
 
-      const newChunks = chunkText(text, this.maxMessageLength);
+      const newChunks = chunkText(toNativeMarkdown(text), this.maxMessageLength);
       const existingIds = this.chunkMap.get(messageId) ?? [messageId];
 
       const updatedIds = await reflowChunks(newChunks, existingIds, {
