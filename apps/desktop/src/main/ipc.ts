@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, ipcMain } from 'electron';
 import { IPC_CHANNELS } from '../shared/ipc-contract';
+import { startBackend } from './backend';
 import { setKeychainValue } from './keychain';
 import { store } from './store';
 
@@ -209,6 +210,9 @@ export function registerIpcHandlers(): void {
       if (!req.model || typeof req.model !== 'string') {
         return { success: false, error: 'Invalid model' };
       }
+      if (!/^[a-zA-Z0-9._:/-]+$/.test(req.model)) {
+        return { success: false, error: 'Invalid model name' };
+      }
       if (!validPersonalities.includes(req.personalityId)) {
         return { success: false, error: 'Invalid personality' };
       }
@@ -281,6 +285,15 @@ export function registerIpcHandlers(): void {
     } catch {
       return { healthy: false };
     }
+  });
+
+  ipcMain.handle(IPC_CHANNELS['backend:start'], (_event, req: { port: number }) => {
+    const port = Number(req.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return { started: false };
+    }
+    startBackend(port);
+    return { started: true };
   });
 
   ipcMain.handle(IPC_CHANNELS['theme:get'], () => {

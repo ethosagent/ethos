@@ -39,6 +39,7 @@ export interface IpcContract {
   };
   'onboarding:complete': { request: OnboardingCompleteRequest; response: { success: boolean } };
   'personalities:list': { request: undefined; response: PersonalityListItem[] };
+  'backend:start': { request: { port: number }; response: { started: boolean } };
   'health:check': { request: { port: number }; response: { healthy: boolean } };
   'theme:get': { request: undefined; response: 'dark' | 'light' };
 }
@@ -50,6 +51,7 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'onboarding:validateProvider': 'onboarding:validateProvider',
   'onboarding:complete': 'onboarding:complete',
   'personalities:list': 'personalities:list',
+  'backend:start': 'backend:start',
   'health:check': 'health:check',
   'theme:get': 'theme:get',
 };

@@ -33,6 +33,7 @@ export function StepDone({
       await window.ethos.onboarding.complete({ provider, model, apiKey, personalityId });
 
       const port = 3001;
+      await window.ethos.backend.start({ port });
       healthInterval = setInterval(async () => {
         elapsed += 500;
         const { healthy } = await window.ethos.health.check({ port });

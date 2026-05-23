@@ -13,6 +13,9 @@ const api = {
   personalities: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS['personalities:list']),
   },
+  backend: {
+    start: (req: { port: number }) => ipcRenderer.invoke(IPC_CHANNELS['backend:start'], req),
+  },
   health: {
     check: (req: { port: number }) => ipcRenderer.invoke(IPC_CHANNELS['health:check'], req),
   },

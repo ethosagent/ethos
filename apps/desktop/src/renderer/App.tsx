@@ -31,6 +31,9 @@ declare global {
           }>
         >;
       };
+      backend: {
+        start: (req: { port: number }) => Promise<{ started: boolean }>;
+      };
       health: {
         check: (req: { port: number }) => Promise<{ healthy: boolean }>;
       };

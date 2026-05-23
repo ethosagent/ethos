@@ -55,7 +55,10 @@ function createWindow(): void {
 app.whenReady().then(() => {
   registerIpcHandlers();
   createWindow();
-  startBackend(3001);
+
+  if (store.get('onboardingComplete', false)) {
+    startBackend(3001);
+  }
 
   if (process.env.NODE_ENV !== 'development') {
     initAutoUpdater();

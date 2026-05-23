@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { app } from 'electron';
 
@@ -8,13 +9,25 @@ export function startBackend(port: number): void {
   if (backendProcess) return;
 
   const isDev = process.env.NODE_ENV === 'development';
-  const entryPath = isDev
-    ? join(app.getAppPath(), '..', '..', 'apps', 'web-api', 'src', 'index.ts')
-    : join(app.getAppPath(), '..', 'web-api', 'index.js');
 
-  const cmd = isDev ? 'tsx' : 'node';
+  let cmd: string;
+  let entryPath: string;
 
-  backendProcess = spawn(cmd, [entryPath], {
+  if (isDev) {
+    entryPath = join(app.getAppPath(), '..', '..', 'apps', 'web-api', 'src', 'index.ts');
+    cmd = 'tsx';
+  } else {
+    entryPath = join(process.resourcesPath, 'web-api', 'index.js');
+    cmd = process.execPath;
+  }
+
+  if (!isDev && !existsSync(entryPath)) {
+    return;
+  }
+
+  const args = isDev ? [entryPath] : ['--', entryPath];
+
+  backendProcess = spawn(cmd, args, {
     env: { ...process.env, PORT: String(port), NODE_ENV: process.env.NODE_ENV || 'production' },
     stdio: 'pipe',
     detached: false,
