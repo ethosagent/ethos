@@ -46,12 +46,14 @@ services:
         model: $$MODEL
         baseUrl: "$$ENDPOINT"
         apiVersion: $$API_VERSION
+        personality: researcher
         EOF
         else
           cat > "$$CONFIG_FILE" <<EOF
         schemaVersion: 1
         provider: $$PROVIDER
         apiKey: "$$API_KEY"
+        personality: researcher
         EOF
         fi
         chmod 600 "$$CONFIG_FILE"
@@ -79,6 +81,7 @@ services:
       - path: ./.env
         required: false
     environment:
+      ETHOS_WEB_HOST: 0.0.0.0
       ETHOS_MODE: ui
       AZURE_API_KEY:
       AZURE_ENDPOINT:

@@ -64,6 +64,7 @@
     "@orpc/contract": "^1.14.3",
     "@orpc/openapi": "^1.14.0",
     "@orpc/server": "^1.14.0",
+    "argon2": "^0.43.0",
     "@types/better-sqlite3": "^7.6.12",
     "better-sqlite3": "^12.9.0",
     "croner": "^9.0.0",

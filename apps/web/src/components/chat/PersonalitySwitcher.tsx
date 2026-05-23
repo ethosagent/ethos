@@ -15,6 +15,8 @@ import { PersonalityMark } from '../ui/PersonalityMark';
 // the personality mark + name + a tiny accent dot so the user picks
 // visually, not by reading the id.
 
+const HIDDEN_FROM_CHAT = new Set(['personality-architect', 'team-architect']);
+
 export interface PersonalitySwitcherProps {
   current: string;
   onSelect: (personalityId: string) => void;
@@ -26,7 +28,7 @@ export function PersonalitySwitcher({ current, onSelect }: PersonalitySwitcherPr
     queryFn: () => rpc.personalities.list({}),
   });
 
-  const personalities = data?.items ?? [];
+  const personalities = (data?.items ?? []).filter((p) => !HIDDEN_FROM_CHAT.has(p.id));
   const items: MenuProps['items'] = personalities.map((p) => ({
     key: p.id,
     label: <PersonalityMenuRow personality={p} active={p.id === current} />,
