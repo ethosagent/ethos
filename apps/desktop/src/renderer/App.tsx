@@ -5,6 +5,7 @@ import { AppProvider } from './state/AppContext';
 declare global {
   interface Window {
     ethos: {
+      platform: string;
       onboarding: {
         state: () => Promise<{ configured: boolean }>;
         validateProvider: (req: {

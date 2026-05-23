@@ -1,4 +1,6 @@
-import { ipcMain } from 'electron';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { app, ipcMain } from 'electron';
 import { IPC_CHANNELS } from '../shared/ipc-contract';
 import { setKeychainValue } from './keychain';
 import { store } from './store';
@@ -21,6 +23,19 @@ export function registerIpcHandlers(): void {
       try {
         if (req.provider === 'ollama') {
           const baseUrl = req.baseUrl || 'http://localhost:11434';
+          const parsed = new URL(baseUrl);
+          const isLoopback =
+            parsed.hostname === 'localhost' ||
+            parsed.hostname === '127.0.0.1' ||
+            parsed.hostname === '::1';
+          if (!isLoopback) {
+            return {
+              valid: false,
+              completionTested: false,
+              error: 'Ollama URL must be localhost',
+              errorCode: 'other' as const,
+            };
+          }
           const res = await fetch(`${baseUrl}/api/tags`);
           if (!res.ok) {
             return {
@@ -202,6 +217,15 @@ export function registerIpcHandlers(): void {
         await setKeychainValue('api-key', req.apiKey);
       }
 
+      const ethosDir = join(app.getPath('home'), '.ethos');
+      mkdirSync(ethosDir, { recursive: true });
+      const configContent = [
+        `provider: ${req.provider}`,
+        `model: ${req.model}`,
+        `personality: ${req.personalityId}`,
+      ].join('\n');
+      writeFileSync(join(ethosDir, 'config.yaml'), `${configContent}\n`);
+
       store.set('provider', req.provider as 'anthropic' | 'openai' | 'ollama');
       store.set('model', req.model);
       store.set('personalityId', req.personalityId);
@@ -245,8 +269,12 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS['health:check'], async (_event, req: { port: number }) => {
+    const port = Number(req.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return { healthy: false };
+    }
     try {
-      const res = await fetch(`http://localhost:${req.port}/health`, {
+      const res = await fetch(`http://localhost:${port}/health`, {
         signal: AbortSignal.timeout(2000),
       });
       return { healthy: res.ok };

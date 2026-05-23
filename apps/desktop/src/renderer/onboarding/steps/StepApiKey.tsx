@@ -188,8 +188,9 @@ export function StepApiKey({ provider, apiKey, onApiKeyChange, onValidated }: St
           color: 'var(--text-tertiary)',
         }}
       >
-        STORED IN {process.platform === 'darwin' ? 'MACOS KEYCHAIN' : 'SYSTEM CREDENTIAL STORE'} ·
-        NEVER WRITTEN TO A FILE
+        STORED IN{' '}
+        {window.ethos.platform === 'darwin' ? 'MACOS KEYCHAIN' : 'SYSTEM CREDENTIAL STORE'} · NEVER
+        WRITTEN TO A FILE
       </p>
     </div>
   );

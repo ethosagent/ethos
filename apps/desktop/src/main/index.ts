@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { app, BrowserWindow, nativeTheme } from 'electron';
 import { initAutoUpdater } from './auto-update';
+import { startBackend, stopBackend } from './backend';
 import { registerIpcHandlers } from './ipc';
 import { store } from './store';
 
@@ -18,7 +19,7 @@ function createWindow(): void {
     resizable: !isOnboarding,
     show: false,
     webPreferences: {
-      preload: join(__dirname, 'preload.js'),
+      preload: join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -54,6 +55,7 @@ function createWindow(): void {
 app.whenReady().then(() => {
   registerIpcHandlers();
   createWindow();
+  startBackend(3001);
 
   if (process.env.NODE_ENV !== 'development') {
     initAutoUpdater();
@@ -68,6 +70,11 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
+    stopBackend();
     app.quit();
   }
+});
+
+app.on('before-quit', () => {
+  stopBackend();
 });

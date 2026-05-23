@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS } from '../shared/ipc-contract';
 
 const api = {
+  platform: process.platform,
   onboarding: {
     state: () => ipcRenderer.invoke(IPC_CHANNELS['onboarding:state']),
     validateProvider: (req: { provider: string; apiKey: string; baseUrl?: string }) =>
