@@ -28,4 +28,16 @@ export const sessionsRouter = {
   update: os.sessions.update.handler(({ input, context }) =>
     context.sessions.update(input.id, { title: input.title }),
   ),
+
+  export: os.sessions.export.handler(({ input, context }) =>
+    context.sessions.export(input.id, input.format),
+  ),
+
+  pin: os.sessions.pin.handler(({ input, context }) =>
+    context.sessions.pin(input.id),
+  ),
+
+  unpin: os.sessions.unpin.handler(({ input, context }) =>
+    context.sessions.unpin(input.id),
+  ),
 };

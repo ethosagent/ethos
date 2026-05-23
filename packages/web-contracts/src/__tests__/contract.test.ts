@@ -24,6 +24,7 @@ describe('entity schemas', () => {
       parentSessionId: null,
       workingDir: '/tmp/proj',
       title: null,
+      pinned: false,
       usage: {
         inputTokens: 0,
         outputTokens: 0,
@@ -52,6 +53,7 @@ describe('entity schemas', () => {
         parentSessionId: null,
         workingDir: null,
         title: null,
+        pinned: false,
         usage: {
           inputTokens: -1, // invalid
           outputTokens: 0,

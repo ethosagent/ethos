@@ -392,6 +392,38 @@ describe('SQLiteSessionStore', () => {
 
     expect(bFirst.turnNumber).toBe(1);
   });
+
+  // -------------------------------------------------------------------------
+  // Session pinning
+  // -------------------------------------------------------------------------
+
+  it('pins and unpins a session', async () => {
+    const session = await store.createSession(baseSession);
+    expect(session.pinned).toBeFalsy();
+
+    await store.updateSession(session.id, { pinned: true });
+    const pinned = await store.getSession(session.id);
+    expect(pinned?.pinned).toBe(true);
+
+    await store.updateSession(session.id, { pinned: false });
+    const unpinned = await store.getSession(session.id);
+    expect(unpinned?.pinned).toBe(false);
+  });
+
+  it('lists pinned sessions before unpinned', async () => {
+    const s1 = await store.createSession({ ...baseSession, key: 'cli:1' });
+    const s2 = await store.createSession({ ...baseSession, key: 'cli:2' });
+    const s3 = await store.createSession({ ...baseSession, key: 'cli:3' });
+
+    await store.updateSession(s1.id, { pinned: true });
+
+    const all = await store.listSessions();
+    expect(all[0]?.id).toBe(s1.id);
+    // Unpinned sessions appear after the pinned one
+    const unpinnedIds = all.slice(1).map((s) => s.id);
+    expect(unpinnedIds).toContain(s2.id);
+    expect(unpinnedIds).toContain(s3.id);
+  });
 });
 
 // -------------------------------------------------------------------------

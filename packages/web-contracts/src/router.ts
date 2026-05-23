@@ -126,6 +126,18 @@ const SessionUpdateInput = z.object({
 });
 const SessionUpdateOutput = z.object({ session: SessionSchema });
 
+const SessionExportInput = z.object({
+  id: z.string(),
+  format: z.enum(['markdown']),
+});
+const SessionExportOutput = z.object({
+  content: z.string(),
+  filename: z.string(),
+});
+
+const SessionPinInput = z.object({ id: z.string() });
+const SessionPinOutput = z.object({ session: SessionSchema });
+
 /** @stable v1 */
 const sessions = {
   list: oc.input(SessionListInput).output(SessionListOutput),
@@ -133,6 +145,9 @@ const sessions = {
   fork: oc.input(SessionForkInput).output(SessionForkOutput),
   delete: oc.input(SessionDeleteInput).output(SessionDeleteOutput),
   update: oc.input(SessionUpdateInput).output(SessionUpdateOutput),
+  export: oc.input(SessionExportInput).output(SessionExportOutput),
+  pin: oc.input(SessionPinInput).output(SessionPinOutput),
+  unpin: oc.input(SessionPinInput).output(SessionPinOutput),
 };
 
 // ---------------------------------------------------------------------------
@@ -422,6 +437,7 @@ const OnboardingValidateProviderOutput = z.object({
   /** Models returned by the provider's catalog endpoint when validation succeeds. */
   models: z.array(z.string()).nullable(),
   error: z.string().nullable(),
+  completionTested: z.boolean(),
 });
 
 const OnboardingCompleteInput = z.object({

@@ -156,6 +156,9 @@ export class SQLiteSessionStore implements SessionStore {
         'ALTER TABLE sessions ADD COLUMN last_compaction_turn INTEGER NOT NULL DEFAULT 0',
       );
     }
+    if (!sessCols.some((c) => c.name === 'pinned')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -230,6 +233,10 @@ export class SQLiteSessionStore implements SessionStore {
       sets.push('metadata = ?');
       values.push(JSON.stringify(patch.metadata));
     }
+    if (patch.pinned !== undefined) {
+      sets.push('pinned = ?');
+      values.push(patch.pinned ? 1 : 0);
+    }
 
     values.push(id);
     this.db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`).run(...values);
@@ -274,7 +281,7 @@ export class SQLiteSessionStore implements SessionStore {
 
     const rows = this.db
       .prepare(
-        `SELECT *, rowid AS _row FROM sessions ${where} ORDER BY updated_at DESC, rowid DESC LIMIT ? OFFSET ?`,
+        `SELECT *, rowid AS _row FROM sessions ${where} ORDER BY pinned DESC, updated_at DESC, rowid DESC LIMIT ? OFFSET ?`,
       )
       .all(...values, limit, offset);
 
@@ -565,6 +572,7 @@ interface SessionRow {
   parent_session_id: string | null;
   working_dir: string | null;
   title: string | null;
+  pinned: number;
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
@@ -626,6 +634,7 @@ function rowToSession(r: SessionRow): Session {
     parentSessionId: r.parent_session_id ?? undefined,
     workingDir: r.working_dir ?? undefined,
     title: r.title ?? undefined,
+    pinned: !!r.pinned,
     usage: {
       inputTokens: r.input_tokens,
       outputTokens: r.output_tokens,

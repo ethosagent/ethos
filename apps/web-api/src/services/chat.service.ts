@@ -48,6 +48,8 @@ export interface ChatServiceOptions {
    * that will never resolve.
    */
   onForget?: (sessionId: string) => void;
+  /** Cheapest/fastest LLM call for housekeeping (title gen, routing). Optional — when absent, auto-title is disabled. */
+  titleFn?: (systemPrompt: string, userMessage: string) => Promise<string>;
 }
 
 export interface ChatSendInput {
@@ -70,6 +72,7 @@ interface InternalEventMap {
 
 export class ChatService {
   private readonly bridges = new Map<string, AgentBridge>();
+  private readonly firstUserMessages = new Map<string, string>();
   private readonly emitter = new EventEmitter<InternalEventMap>();
 
   constructor(private readonly opts: ChatServiceOptions) {
@@ -92,6 +95,10 @@ export class ChatService {
           ...(input.personalityId ? { personalityId: input.personalityId } : {}),
           ...(this.opts.defaults.workingDir ? { workingDir: this.opts.defaults.workingDir } : {}),
         });
+
+    if (!this.firstUserMessages.has(session.id)) {
+      this.firstUserMessages.set(session.id, input.text);
+    }
 
     const bridge = this.getOrCreateBridge(session.id);
     const turnId = randomUUID();
@@ -191,6 +198,7 @@ export class ChatService {
       bridge.abortTurn();
       this.bridges.delete(sessionId);
     }
+    this.firstUserMessages.delete(sessionId);
     this.opts.buffer.clear(sessionId);
     // If approvals are wired, drop any pending requests for this session
     // so the awaiting hook unblocks (`{ decision: 'deny', reason: 'session
@@ -270,9 +278,41 @@ export class ChatService {
       this.append(sessionId, { type: 'dry_run_summary', plan, capped }),
     );
     bridge.on('error', (error, code) => this.append(sessionId, { type: 'error', error, code }));
-    bridge.on('done', (text, turnCount) =>
-      this.append(sessionId, { type: 'done', text, turnCount }),
-    );
+    bridge.on('done', (text, turnCount) => {
+      this.append(sessionId, { type: 'done', text, turnCount });
+      if (turnCount === 1) {
+        void this.tryAutoTitle(sessionId);
+      }
+    });
+  }
+
+  private async tryAutoTitle(sessionId: string): Promise<void> {
+    try {
+      const session = await this.opts.sessions.get(sessionId);
+      if (!session || session.title) return;
+      const firstMessage = this.firstUserMessages.get(sessionId);
+      if (!firstMessage) return;
+      this.firstUserMessages.delete(sessionId);
+      await this.titleSession(sessionId, firstMessage);
+    } catch {
+      // Best-effort
+    }
+  }
+
+  private async titleSession(sessionId: string, firstUserMessage: string): Promise<void> {
+    if (!this.opts.titleFn) return;
+    try {
+      const title = await this.opts.titleFn(
+        'Generate a title for this conversation in 6 words or fewer. Reply with only the title, no punctuation.',
+        firstUserMessage,
+      );
+      const trimmed = title.trim().slice(0, 200);
+      if (trimmed) {
+        await this.opts.sessions.update(sessionId, { title: trimmed });
+      }
+    } catch {
+      // Best-effort — never affect the chat experience.
+    }
   }
 
   private append(sessionId: string, event: SseEvent): void {

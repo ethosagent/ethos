@@ -10,6 +10,7 @@ export interface Session {
   parentSessionId?: string;
   workingDir?: string;
   title?: string;
+  pinned?: boolean;
   usage: SessionUsage;
   createdAt: Date;
   updatedAt: Date;

@@ -4,6 +4,7 @@ import type {
   StoredMessage as WireStoredMessage,
 } from '@ethosagent/web-contracts';
 import type { SessionsRepository } from '../repositories/sessions.repository';
+import { exportFilename, formatAsMarkdown } from './sessions.export';
 
 // Business logic for the `sessions` namespace. Wraps `SessionsRepository`,
 // converts domain entities (Date objects, optional fields) into wire
@@ -66,6 +67,20 @@ export class SessionsService {
     await this.opts.sessions.delete(id);
   }
 
+  async export(
+    id: string,
+    _format: 'markdown',
+  ): Promise<{ content: string; filename: string }> {
+    const session = await this.opts.sessions.get(id);
+    if (!session) throw notFound(id);
+    const messages = await this.opts.sessions.messages(id);
+    const wireSession = toWireSession(session);
+    const wireMessages = messages.map(toWireMessage);
+    const content = formatAsMarkdown(wireSession, wireMessages);
+    const filename = exportFilename(wireSession.title, wireSession.createdAt);
+    return { content, filename };
+  }
+
   async update(id: string, patch: { title: string | null }): Promise<{ session: WireSession }> {
     try {
       await this.opts.sessions.update(id, patch);
@@ -75,6 +90,24 @@ export class SessionsService {
       }
       throw err;
     }
+    const session = await this.opts.sessions.get(id);
+    if (!session) throw notFound(id);
+    return { session: toWireSession(session) };
+  }
+
+  async pin(id: string): Promise<{ session: WireSession }> {
+    const exists = await this.opts.sessions.get(id);
+    if (!exists) throw notFound(id);
+    await this.opts.sessions.update(id, { pinned: true });
+    const session = await this.opts.sessions.get(id);
+    if (!session) throw notFound(id);
+    return { session: toWireSession(session) };
+  }
+
+  async unpin(id: string): Promise<{ session: WireSession }> {
+    const exists = await this.opts.sessions.get(id);
+    if (!exists) throw notFound(id);
+    await this.opts.sessions.update(id, { pinned: false });
     const session = await this.opts.sessions.get(id);
     if (!session) throw notFound(id);
     return { session: toWireSession(session) };
@@ -104,6 +137,7 @@ function toWireSession(s: import('@ethosagent/types').Session): WireSession {
     parentSessionId: s.parentSessionId ?? null,
     workingDir: s.workingDir ?? null,
     title: s.title ?? null,
+    pinned: s.pinned ?? false,
     usage: s.usage,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),

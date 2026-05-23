@@ -38,6 +38,7 @@ import { PlatformsService } from './services/platforms.service';
 import { PluginsService } from './services/plugins.service';
 import { SessionsService } from './services/sessions.service';
 import { SkillsService } from './services/skills.service';
+import { SystemEventBus } from './services/system-event-bus';
 
 // Public entry for `@ethosagent/web-api`. Boot code (`apps/ethos/src/commands/
 // serve.ts`) builds the dependencies it has lying around — a `SessionStore`,
@@ -121,6 +122,8 @@ export interface CreateWebApiOptions {
    * models list reports only personalities + `ethos-default`.
    */
   listTeams?: () => Promise<string[]>;
+  /** Optional title generation function. When provided, ChatService auto-titles new sessions after the first turn. */
+  titleFn?: (systemPrompt: string, userMessage: string) => Promise<string>;
   /** Tool registry for the tools.catalog RPC. */
   toolRegistry?: import('@ethosagent/types').ToolRegistry;
   /** Path to the bundled system skills catalog directory. When set,
@@ -153,6 +156,10 @@ export interface CreateWebApiResult {
    * keep the use to push-event fan-out only.
    */
   chatService: ChatService;
+  /** System-level event bus for broadcasting real-time events (cron
+   *  completions, platform status, session titles, health) to the
+   *  desktop app via `GET /sse/system`. */
+  systemBus: SystemEventBus;
 }
 
 export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
@@ -176,6 +183,8 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const secrets: SecretsResolver =
     opts.secrets ?? new FileSecretsResolver({ dir: join(opts.dataDir, 'secrets'), storage });
   const platformsRepo = new PlatformsRepository({ config: configRepo, secrets });
+
+  const systemBus = new SystemEventBus();
 
   // --- Services (business logic) ---
   const sessionsService = new SessionsService({ sessions: sessionsRepo });
@@ -248,6 +257,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     buffer,
     defaults: opts.chatDefaults,
     onForget: (sessionId) => approvalsService.cancelForSession(sessionId),
+    ...(opts.titleFn ? { titleFn: opts.titleFn } : {}),
   });
   buffer.onReap = (sessionId) => {
     chatService.forget(sessionId);
@@ -333,6 +343,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       completions: completionsService,
       apiKeys: apiKeysService,
       toolRegistry: opts.toolRegistry,
+      systemBus,
     },
     ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),
     ...(opts.secureCookie !== undefined ? { secureCookie: opts.secureCookie } : {}),
@@ -343,7 +354,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     storage,
   });
 
-  return { app, chatService };
+  return { app, chatService, systemBus };
 }
 
 /**

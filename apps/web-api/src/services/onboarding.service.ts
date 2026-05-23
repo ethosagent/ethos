@@ -35,6 +35,7 @@ export interface ValidateProviderResult {
   ok: boolean;
   models: string[] | null;
   error: string | null;
+  completionTested: boolean;
 }
 
 export interface CompleteInput {
@@ -52,7 +53,8 @@ export interface OnboardingServiceOptions {
   fetchFn?: typeof fetch;
 }
 
-const VALIDATE_TIMEOUT_MS = 8_000;
+const MODELS_TIMEOUT_MS = 8_000;
+const COMPLETION_TIMEOUT_MS = 10_000;
 
 export class OnboardingService {
   private readonly fetchFn: typeof fetch;
@@ -77,10 +79,27 @@ export class OnboardingService {
   async validateProvider(input: ValidateProviderInput): Promise<ValidateProviderResult> {
     try {
       const models = await this.fetchModels(input);
-      return { ok: true, models, error: null };
+      if (input.provider === 'ollama') {
+        return { ok: true, models, error: null, completionTested: false };
+      }
+      const chatModel = this.pickChatModel(input.provider, models);
+      if (!chatModel) {
+        return { ok: true, models, error: null, completionTested: false };
+      }
+      try {
+        await this.testCompletion(input, chatModel);
+        return { ok: true, models, error: null, completionTested: true };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const isBillingError = message.includes('no credits');
+        if (isBillingError) {
+          return { ok: false, models, error: message, completionTested: false };
+        }
+        return { ok: true, models, error: null, completionTested: false };
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return { ok: false, models: null, error: message };
+      return { ok: false, models: null, error: message, completionTested: false };
     }
   }
 
@@ -102,6 +121,44 @@ export class OnboardingService {
   }
 
   // ---------------------------------------------------------------------------
+  // Chat model selection
+  // ---------------------------------------------------------------------------
+
+  private pickChatModel(provider: ProviderId, models: string[]): string | null {
+    if (models.length === 0) return null;
+    switch (provider) {
+      case 'anthropic':
+        return models.find((m) => m.startsWith('claude-')) ?? models[0] ?? null;
+      case 'openai':
+        return (
+          models.find(
+            (m) =>
+              m.startsWith('gpt-') ||
+              m.startsWith('o1-') ||
+              m.startsWith('o3-') ||
+              m.startsWith('o4-'),
+          ) ??
+          models[0] ??
+          null
+        );
+      default:
+        return (
+          models.find(
+            (m) =>
+              m.includes('chat') ||
+              m.includes('gpt') ||
+              m.includes('claude') ||
+              m.includes('llama') ||
+              m.includes('mistral') ||
+              m.includes('gemma'),
+          ) ??
+          models[0] ??
+          null
+        );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Provider model-list fetchers
   // ---------------------------------------------------------------------------
 
@@ -112,7 +169,7 @@ export class OnboardingService {
       });
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), VALIDATE_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), MODELS_TIMEOUT_MS);
     try {
       switch (input.provider) {
         case 'anthropic':
@@ -182,5 +239,131 @@ export class OnboardingService {
     if (!res.ok) throw new Error(`ollama returned ${res.status}`);
     const body = (await res.json()) as { models?: Array<{ name?: string }> };
     return (body.models ?? []).map((m) => m.name ?? '').filter(Boolean);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Completion test
+  // ---------------------------------------------------------------------------
+
+  private async testCompletion(input: ValidateProviderInput, model: string): Promise<void> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), COMPLETION_TIMEOUT_MS);
+    try {
+      switch (input.provider) {
+        case 'ollama':
+          return;
+        case 'anthropic':
+          await this.anthropicCompletion(input.apiKey, model, controller.signal);
+          return;
+        default:
+          await this.openAiCompletion(
+            this.resolveBaseUrl(input),
+            input.apiKey,
+            model,
+            controller.signal,
+          );
+          return;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private resolveBaseUrl(input: ValidateProviderInput): string {
+    switch (input.provider) {
+      case 'openrouter':
+        return input.baseUrl ?? 'https://openrouter.ai/api/v1';
+      case 'openai':
+        return input.baseUrl ?? 'https://api.openai.com/v1';
+      case 'openai-compat':
+      case 'azure':
+        return input.baseUrl ?? '';
+      default:
+        return input.baseUrl ?? '';
+    }
+  }
+
+  private async anthropicCompletion(
+    apiKey: string,
+    model: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const res = await this.fetchFn('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+      signal,
+    });
+    if (!res.ok) {
+      throw await this.translateCompletionError(res, 'anthropic');
+    }
+  }
+
+  private async openAiCompletion(
+    baseUrl: string,
+    apiKey: string,
+    model: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+    const res = await this.fetchFn(url, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+      signal,
+    });
+    if (!res.ok) {
+      throw await this.translateCompletionError(res, baseUrl);
+    }
+  }
+
+  private async translateCompletionError(res: Response, provider: string): Promise<Error> {
+    let bodyText = '';
+    try {
+      bodyText = await res.text();
+    } catch {
+      /* ignore */
+    }
+    const lower = bodyText.toLowerCase();
+
+    if (
+      res.status === 402 ||
+      lower.includes('insufficient_quota') ||
+      lower.includes('billing') ||
+      lower.includes('credit')
+    ) {
+      return new Error(
+        "Your API key is valid but your account has no credits. Add credits at your provider's billing page.",
+      );
+    }
+
+    if (
+      res.status === 403 ||
+      lower.includes('model_not_found') ||
+      lower.includes('access_denied')
+    ) {
+      return new Error(
+        'This model is not available on your plan. Try selecting a different model.',
+      );
+    }
+
+    return new Error(
+      `API key validated, but a test message failed: ${provider} returned ${res.status}. You may still proceed, but the agent may not respond.`,
+    );
   }
 }

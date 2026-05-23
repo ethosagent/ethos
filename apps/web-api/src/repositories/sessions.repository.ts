@@ -113,12 +113,17 @@ export class SessionsRepository {
     return this.store.deleteSession(id);
   }
 
-  async update(id: string, patch: { title: string | null }): Promise<void> {
+  async update(id: string, patch: { title?: string | null; pinned?: boolean }): Promise<void> {
     const exists = await this.store.getSession(id);
     if (!exists) throw new Error(`session not found: ${id}`);
-    // updateSession only sets fields that !== undefined; null IS NOT undefined,
-    // so passing null here will set the DB column to NULL (clears the title).
-    await this.store.updateSession(id, { title: patch.title as string | undefined });
+    const updatePatch: Partial<import('@ethosagent/types').Session> = {};
+    if (patch.title !== undefined) {
+      updatePatch.title = patch.title as string | undefined;
+    }
+    if (patch.pinned !== undefined) {
+      updatePatch.pinned = patch.pinned;
+    }
+    await this.store.updateSession(id, updatePatch);
   }
 
   async search(query: string, limit = 20): Promise<SearchResult[]> {

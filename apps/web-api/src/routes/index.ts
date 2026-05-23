@@ -18,6 +18,7 @@ import { openapiRoutes } from './openapi';
 import { mcpRpcPath, rpcRoutes } from './rpc';
 import { sseRoutes } from './sse';
 import { staticRoutes } from './static';
+import { systemSseRoutes } from './system-sse';
 
 // Single place where all sub-routers attach to a Hono app, with the auth +
 // CSRF + error-envelope wiring. `createWebApi` calls this and returns the
@@ -73,6 +74,7 @@ export interface ServiceContainer {
   completions: import('../services/completions.service').CompletionsService;
   apiKeys: import('../services/api-keys.service').ApiKeysService;
   toolRegistry?: import('@ethosagent/types').ToolRegistry;
+  systemBus?: import('../services/system-event-bus').SystemEventBus;
 }
 
 export function createRoutes(opts: CreateRoutesOptions): Hono {
@@ -197,6 +199,9 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     }),
   );
   app.route('/sse', sseRoutes({ chat: opts.services.chat }));
+  if (opts.services.systemBus) {
+    app.route('/sse', systemSseRoutes({ systemBus: opts.services.systemBus }));
+  }
   app.route('/openapi', openapiRoutes({ services: opts.services }));
 
   // OpenAI-compat surface (F1-F4). Self-contained bearer-token auth — does

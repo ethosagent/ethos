@@ -32,6 +32,7 @@ export const SessionSchema = z.object({
   parentSessionId: z.string().nullable(),
   workingDir: z.string().nullable(),
   title: z.string().nullable(),
+  pinned: z.boolean(),
   usage: SessionUsageSchema,
   createdAt: z.string(), // ISO-8601
   updatedAt: z.string(), // ISO-8601
