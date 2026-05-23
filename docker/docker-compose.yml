@@ -1,7 +1,3 @@
-volumes:
-  ethos-data:
-    driver: local
-
 services:
   init:
     image: ethosagent/ethos:latest
@@ -14,7 +10,13 @@ services:
           echo "config.yaml already exists at $$CONFIG_FILE, skipping init."
           exit 0
         fi
-        if [ -n "$$ANTHROPIC_API_KEY" ]; then
+        if [ -n "$$AZURE_API_KEY" ]; then
+          PROVIDER="azure"
+          API_KEY="$$AZURE_API_KEY"
+          ENDPOINT="$${AZURE_ENDPOINT:-}"
+          MODEL="$${AZURE_MODEL:-gpt-4o}"
+          API_VERSION="$${AZURE_API_VERSION:-2024-12-01-preview}"
+        elif [ -n "$$ANTHROPIC_API_KEY" ]; then
           PROVIDER="anthropic"
           API_KEY="$$ANTHROPIC_API_KEY"
         elif [ -n "$$OPENAI_API_KEY" ]; then
@@ -28,31 +30,60 @@ services:
           API_KEY="$$GOOGLE_API_KEY"
         else
           echo "ERROR: No provider API key found." >&2
-          echo "Set one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, GOOGLE_API_KEY" >&2
+          echo "Set one of: AZURE_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, GOOGLE_API_KEY" >&2
           exit 1
         fi
         mkdir -p "$$STATE_DIR"
-        cat > "$$CONFIG_FILE" <<EOF
+        if [ "$$PROVIDER" = "azure" ]; then
+          if [ -z "$$ENDPOINT" ]; then
+            echo "ERROR: AZURE_ENDPOINT is required when using Azure provider." >&2
+            exit 1
+          fi
+          cat > "$$CONFIG_FILE" <<EOF
+        schemaVersion: 1
+        provider: $$PROVIDER
+        apiKey: "$$API_KEY"
+        model: $$MODEL
+        baseUrl: "$$ENDPOINT"
+        apiVersion: $$API_VERSION
+        EOF
+        else
+          cat > "$$CONFIG_FILE" <<EOF
         schemaVersion: 1
         provider: $$PROVIDER
         apiKey: "$$API_KEY"
         EOF
+        fi
         chmod 600 "$$CONFIG_FILE"
         echo "config.yaml created with provider: $$PROVIDER"
+    env_file:
+      - path: ./.env
+        required: false
     environment:
+      - AZURE_API_KEY
+      - AZURE_ENDPOINT
+      - AZURE_MODEL
+      - AZURE_API_VERSION
       - ANTHROPIC_API_KEY
       - OPENAI_API_KEY
       - OPENROUTER_API_KEY
       - GOOGLE_API_KEY
       - ETHOS_STATE_DIR
     volumes:
-      - ethos-data:/home/ethos/.ethos
+      - ../.ethos-state:/home/ethos/.ethos
     restart: "no"
 
   ethos-web:
     image: ethosagent/ethos:latest
+    env_file:
+      - path: ./.env
+        required: false
     environment:
       ETHOS_MODE: ui
+      AZURE_API_KEY:
+      AZURE_ENDPOINT:
+      AZURE_MODEL:
+      AZURE_API_VERSION:
       ANTHROPIC_API_KEY:
       OPENAI_API_KEY:
       OPENROUTER_API_KEY:
@@ -64,7 +95,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ethos-data:/home/ethos/.ethos
+      - ../.ethos-state:/home/ethos/.ethos
     read_only: true
     tmpfs:
       - /tmp
@@ -72,8 +103,15 @@ services:
 
   ethos-gateway:
     image: ethosagent/ethos:latest
+    env_file:
+      - path: ./.env
+        required: false
     environment:
       ETHOS_MODE: gateway
+      AZURE_API_KEY:
+      AZURE_ENDPOINT:
+      AZURE_MODEL:
+      AZURE_API_VERSION:
       ANTHROPIC_API_KEY:
       OPENAI_API_KEY:
       OPENROUTER_API_KEY:
@@ -85,7 +123,7 @@ services:
       init:
         condition: service_completed_successfully
     volumes:
-      - ethos-data:/home/ethos/.ethos
+      - ../.ethos-state:/home/ethos/.ethos
     read_only: true
     tmpfs:
       - /tmp
