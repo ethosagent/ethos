@@ -212,13 +212,28 @@ export function registerIpcHandlers(): void {
             }
             if (!res.ok) {
               let detail = `HTTP ${res.status}`;
-              try { const t = await res.text(); if (t) detail = t; } catch { /* ignore */ }
-              return { valid: false, completionTested: false, error: `Azure request failed: ${detail}`, errorCode: 'other' as const };
+              try {
+                const t = await res.text();
+                if (t) detail = t;
+              } catch {
+                /* ignore */
+              }
+              return {
+                valid: false,
+                completionTested: false,
+                error: `Azure request failed: ${detail}`,
+                errorCode: 'other' as const,
+              };
             }
             return { valid: true, completionTested: true, models: [req.model] };
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            return { valid: false, completionTested: false, error: `Cannot reach Azure endpoint: ${msg}`, errorCode: 'other' as const };
+            return {
+              valid: false,
+              completionTested: false,
+              error: `Cannot reach Azure endpoint: ${msg}`,
+              errorCode: 'other' as const,
+            };
           }
         }
 
@@ -337,6 +352,10 @@ export function registerIpcHandlers(): void {
     }
   });
 
+  ipcMain.handle(IPC_CHANNELS['backend:port'], () => {
+    return store.get('backendPort', 3001);
+  });
+
   ipcMain.handle(IPC_CHANNELS['backend:start'], (_event, req: { port: number }) => {
     const port = Number(req.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -348,5 +367,14 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS['theme:get'], () => {
     return store.get('theme', 'dark');
+  });
+
+  ipcMain.handle(IPC_CHANNELS['advancedMode:get'], () => {
+    return store.get('advancedMode', false);
+  });
+
+  ipcMain.handle(IPC_CHANNELS['advancedMode:set'], (_event, req: { enabled: boolean }) => {
+    store.set('advancedMode', req.enabled);
+    return { ok: true };
   });
 }

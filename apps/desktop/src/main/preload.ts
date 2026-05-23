@@ -5,8 +5,12 @@ const api = {
   platform: process.platform,
   onboarding: {
     state: () => ipcRenderer.invoke(IPC_CHANNELS['onboarding:state']),
-    validateProvider: (req: { provider: string; apiKey: string; baseUrl?: string; model?: string }) =>
-      ipcRenderer.invoke(IPC_CHANNELS['onboarding:validateProvider'], req),
+    validateProvider: (req: {
+      provider: string;
+      apiKey: string;
+      baseUrl?: string;
+      model?: string;
+    }) => ipcRenderer.invoke(IPC_CHANNELS['onboarding:validateProvider'], req),
     complete: (req: { provider: string; model: string; apiKey: string; personalityId: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS['onboarding:complete'], req),
   },
@@ -14,6 +18,7 @@ const api = {
     list: () => ipcRenderer.invoke(IPC_CHANNELS['personalities:list']),
   },
   backend: {
+    getPort: () => ipcRenderer.invoke(IPC_CHANNELS['backend:port']),
     start: (req: { port: number }) => ipcRenderer.invoke(IPC_CHANNELS['backend:start'], req),
   },
   health: {
@@ -21,6 +26,11 @@ const api = {
   },
   theme: {
     get: () => ipcRenderer.invoke(IPC_CHANNELS['theme:get']),
+  },
+  settings: {
+    getAdvancedMode: () => ipcRenderer.invoke(IPC_CHANNELS['advancedMode:get']),
+    setAdvancedMode: (req: { enabled: boolean }) =>
+      ipcRenderer.invoke(IPC_CHANNELS['advancedMode:set'], req),
   },
 };
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { OnboardingShell } from './onboarding/OnboardingShell';
+import { AppShell } from './shell/AppShell';
 import { AppProvider } from './state/AppContext';
 
 declare global {
@@ -33,6 +34,7 @@ declare global {
         >;
       };
       backend: {
+        getPort: () => Promise<number>;
         start: (req: { port: number }) => Promise<{ started: boolean }>;
       };
       health: {
@@ -40,6 +42,10 @@ declare global {
       };
       theme: {
         get: () => Promise<'dark' | 'light'>;
+      };
+      settings: {
+        getAdvancedMode: () => Promise<boolean>;
+        setAdvancedMode: (req: { enabled: boolean }) => Promise<{ ok: boolean }>;
       };
     };
   }
@@ -75,17 +81,7 @@ export function App() {
   }
   return (
     <AppProvider>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100vh',
-          color: 'var(--text-primary)',
-        }}
-      >
-        <p>Chat coming in Phase 2</p>
-      </div>
+      <AppShell />
     </AppProvider>
   );
 }
