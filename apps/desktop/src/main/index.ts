@@ -64,6 +64,13 @@ app.whenReady().then(() => {
     initAutoUpdater();
   }
 
+  nativeTheme.on('updated', () => {
+    if (store.get('theme') === 'system') {
+      const resolved = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+      mainWindow?.webContents.send('theme:changed', resolved);
+    }
+  });
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
