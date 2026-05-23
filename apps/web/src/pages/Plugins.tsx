@@ -7,6 +7,7 @@ import {
   Checkbox,
   Collapse,
   Empty,
+  Popconfirm,
   Skeleton,
   Table,
   Tabs,
@@ -310,10 +311,27 @@ function AttachCell({
 }
 
 // ---------------------------------------------------------------------------
-// MCP Servers tab — read-only
+// MCP Servers tab — with delete action
 // ---------------------------------------------------------------------------
 
 function McpTable({ servers }: { servers: McpServerInfo[] }) {
+  const qc = useQueryClient();
+  const { notification } = AntApp.useApp();
+
+  const deleteMut = useMutation({
+    mutationFn: (name: string) => rpc.mcp.delete({ name }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['plugins'] });
+      qc.invalidateQueries({ queryKey: ['mcp', 'list'] });
+    },
+    onError: (err) => {
+      notification.error({
+        message: 'Delete failed',
+        description: err instanceof Error ? err.message : String(err),
+      });
+    },
+  });
+
   if (servers.length === 0) {
     return (
       <Empty
@@ -327,6 +345,7 @@ function McpTable({ servers }: { servers: McpServerInfo[] }) {
       />
     );
   }
+
   return (
     <Table<McpServerInfo>
       rowKey="name"
@@ -344,7 +363,7 @@ function McpTable({ servers }: { servers: McpServerInfo[] }) {
           title: 'Transport',
           dataIndex: 'transport',
           key: 'transport',
-          width: 120,
+          width: 110,
           render: (t: string) => <Tag bordered={false}>{t}</Tag>,
         },
         {
@@ -368,10 +387,68 @@ function McpTable({ servers }: { servers: McpServerInfo[] }) {
             ),
         },
         {
+          title: 'Auth',
+          key: 'auth',
+          width: 100,
+          render: (_, server) => {
+            const s = server.auth_status;
+            if (!s || s === 'none') return <Tag bordered={false}>none</Tag>;
+            if (s === 'authorized')
+              return (
+                <Tag color="green" bordered={false}>
+                  authorized
+                </Tag>
+              );
+            if (s === 'expired')
+              return (
+                <Tag color="orange" bordered={false}>
+                  expired
+                </Tag>
+              );
+            if (s === 'missing')
+              return (
+                <Tag color="red" bordered={false}>
+                  missing
+                </Tag>
+              );
+            if (s === 'pending')
+              return (
+                <Tag color="blue" bordered={false}>
+                  pending
+                </Tag>
+              );
+            return null;
+          },
+        },
+        {
           title: 'Attached to',
           key: 'attached',
           render: (_: unknown, server: McpServerInfo) => (
             <AttachedPersonalitiesCell serverName={server.name} />
+          ),
+        },
+        {
+          title: '',
+          key: 'actions',
+          width: 80,
+          render: (_, server) => (
+            <Popconfirm
+              title="Remove this server?"
+              description="This removes the server definition and any stored tokens. Personalities that reference it will lose the connection."
+              okText="Remove"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => deleteMut.mutate(server.name)}
+            >
+              <Button
+                size="small"
+                danger
+                loading={
+                  deleteMut.isPending && (deleteMut.variables as string | undefined) === server.name
+                }
+              >
+                Remove
+              </Button>
+            </Popconfirm>
           ),
         },
       ]}

@@ -7,6 +7,7 @@ import {
   McpInstallFlow,
   type McpJsonStore,
   type McpManager,
+  type McpServerConfig,
   type OAuthConfig,
   OAuthDiscoveryError,
   type PersonalityUpdater,
@@ -201,6 +202,45 @@ export class McpService {
     );
 
     return { servers };
+  }
+
+  async addServer(input: {
+    url: string;
+    name: string;
+    transport: 'streamable-http' | 'sse';
+    token?: string;
+  }) {
+    try {
+      validateUrl(input.url, { allowLocalhost: true });
+    } catch (err) {
+      const detail =
+        err instanceof SsrfError ? err.message : 'URL points to a private or reserved IP range';
+      return { ok: false as const, code: 'ssrf_blocked' as const, detail };
+    }
+
+    const existing = await this.mcpJsonStore.get(input.name);
+    if (existing) {
+      return {
+        ok: false as const,
+        code: 'name_taken' as const,
+        detail: `Server '${input.name}' already exists`,
+      };
+    }
+
+    const config: McpServerConfig = {
+      name: input.name,
+      transport: input.transport,
+      url: input.url,
+      created_via: 'ui' as const,
+      ...(input.token ? { auth: { type: 'bearer' as const } } : {}),
+    };
+    await this.mcpJsonStore.upsert(input.name, config);
+
+    if (input.token) {
+      await this.secrets.set(`mcp/${input.name}/access_token`, input.token);
+    }
+
+    return { ok: true as const, serverName: input.name };
   }
 
   async delete(input: { name: string }) {

@@ -17,6 +17,8 @@ import {
   KanbanTaskSchema,
   KanbanTaskStatusSchema,
   KanbanTeamSummarySchema,
+  McpAddServerInputSchema,
+  McpAddServerOutputSchema,
   McpAttachInputSchema,
   McpAttachOutputSchema,
   McpCancelInputSchema,
@@ -708,6 +710,7 @@ const mcp = {
   personalityServers: oc
     .input(McpPersonalityServersInputSchema)
     .output(McpPersonalityServersOutputSchema),
+  addServer: oc.input(McpAddServerInputSchema).output(McpAddServerOutputSchema),
 };
 
 // ---------------------------------------------------------------------------

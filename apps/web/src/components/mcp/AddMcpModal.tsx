@@ -1,11 +1,11 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Modal, Select, Space, Spin, Steps, Typography } from 'antd';
+import { Alert, Button, Input, Modal, Radio, Select, Space, Spin, Steps, Typography } from 'antd';
 import { useState } from 'react';
 import { rpc } from '../../rpc';
 
 type Step = 'preset' | 'connecting' | 'done' | 'error';
 
-// v1 presets — curated list; custom URLs deferred
+// v1 presets — curated list
 const PRESETS = [{ value: 'linear', label: 'Linear', url: 'https://mcp.linear.app/mcp' }];
 
 interface Props {
@@ -19,6 +19,11 @@ export function AddMcpModal({ open, onClose }: Props) {
   const [preset, setPreset] = useState<string | undefined>();
   const [serverName, setServerName] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [mode, setMode] = useState<'preset' | 'custom'>('preset');
+  const [customUrl, setCustomUrl] = useState('');
+  const [customName, setCustomName] = useState('');
+  const [serverType, setServerType] = useState<'oauth' | 'direct'>('oauth');
+  const [bearerToken, setBearerToken] = useState('');
 
   // Start mutation — calls mcp.start to trigger discovery + definition write,
   // then cancels the pending session (we only want the definition, not auth).
@@ -42,12 +47,41 @@ export function AddMcpModal({ open, onClose }: Props) {
     },
   });
 
+  const addServerMutation = useMutation({
+    mutationFn: (input: {
+      url: string;
+      name: string;
+      transport: 'streamable-http';
+      token?: string;
+    }) => rpc.mcp.addServer(input),
+    onSuccess: (result) => {
+      if (!result.ok) {
+        setStep('error');
+        setErrorMsg(('detail' in result ? result.detail : result.code) ?? 'Failed to add server');
+        return;
+      }
+      setServerName(result.serverName);
+      queryClient.invalidateQueries({ queryKey: ['plugins'] });
+      queryClient.invalidateQueries({ queryKey: ['mcp', 'list'] });
+      setStep('done');
+    },
+    onError: (err) => {
+      setStep('error');
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+    },
+  });
+
   // Reset state when modal opens
   const handleOpen = () => {
     setStep('preset');
     setPreset(undefined);
     setServerName('');
     setErrorMsg('');
+    setMode('preset');
+    setCustomUrl('');
+    setCustomName('');
+    setServerType('oauth');
+    setBearerToken('');
   };
 
   const handleClose = () => {
@@ -55,11 +89,32 @@ export function AddMcpModal({ open, onClose }: Props) {
   };
 
   const handleConnect = () => {
-    const selected = PRESETS.find((p) => p.value === preset);
-    if (!selected) return;
     setStep('connecting');
-    startMutation.mutate({ url: selected.url });
+    if (mode === 'preset') {
+      const selected = PRESETS.find((p) => p.value === preset);
+      if (!selected) return;
+      startMutation.mutate({ url: selected.url });
+    } else if (serverType === 'oauth') {
+      startMutation.mutate({
+        url: customUrl.trim(),
+        ...(customName.trim() ? { name: customName.trim() } : {}),
+      });
+    } else {
+      addServerMutation.mutate({
+        url: customUrl.trim(),
+        name: customName.trim(),
+        transport: 'streamable-http',
+        ...(bearerToken.trim() ? { token: bearerToken.trim() } : {}),
+      });
+    }
   };
+
+  const isConnectDisabled =
+    mode === 'preset'
+      ? !preset
+      : serverType === 'direct'
+        ? !customUrl.trim() || !customName.trim()
+        : !customUrl.trim();
 
   const currentStepIndex =
     step === 'preset' ? 0 : step === 'connecting' ? 1 : step === 'done' ? 2 : 1;
@@ -85,17 +140,86 @@ export function AddMcpModal({ open, onClose }: Props) {
 
       {step === 'preset' && (
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <Typography.Text>Choose an MCP server to register:</Typography.Text>
-          <Select
-            placeholder="Select a preset"
-            value={preset}
-            onChange={setPreset}
-            options={PRESETS}
-            style={{ width: '100%' }}
-          />
+          <Typography.Text>How would you like to add a server?</Typography.Text>
+          <Radio.Group
+            value={mode}
+            onChange={(e) => setMode(e.target.value as 'preset' | 'custom')}
+            optionType="button"
+            buttonStyle="solid"
+            style={{ width: '100%', display: 'flex' }}
+          >
+            <Radio.Button value="preset" style={{ flex: 1, textAlign: 'center' }}>
+              Preset
+            </Radio.Button>
+            <Radio.Button value="custom" style={{ flex: 1, textAlign: 'center' }}>
+              Custom URL
+            </Radio.Button>
+          </Radio.Group>
+
+          {mode === 'preset' ? (
+            <Select
+              placeholder="Select a preset"
+              value={preset}
+              onChange={setPreset}
+              options={PRESETS}
+              style={{ width: '100%' }}
+            />
+          ) : (
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Input
+                placeholder="https://mcp.example.com/mcp"
+                value={customUrl}
+                onChange={(e) => setCustomUrl(e.target.value)}
+                allowClear
+              />
+              <Input
+                placeholder="Server name (e.g. my-server)"
+                value={customName}
+                onChange={(e) => setCustomName(e.target.value)}
+                allowClear
+              />
+              <div>
+                <Typography.Text
+                  type="secondary"
+                  style={{ fontSize: 12, display: 'block', marginBottom: 6 }}
+                >
+                  Authentication
+                </Typography.Text>
+                <Radio.Group
+                  value={serverType}
+                  onChange={(e) => setServerType(e.target.value as 'oauth' | 'direct')}
+                  style={{ width: '100%' }}
+                >
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Radio value="oauth">OAuth 2.0 (server handles login flow)</Radio>
+                    <Radio value="direct">Plain HTTP / Bearer token</Radio>
+                  </Space>
+                </Radio.Group>
+              </div>
+              {serverType === 'direct' && (
+                <Input.Password
+                  placeholder="Bearer token (optional)"
+                  value={bearerToken}
+                  onChange={(e) => setBearerToken(e.target.value)}
+                  allowClear
+                />
+              )}
+              {serverType === 'oauth' && (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  The server must support OAuth 2.0 discovery. You'll be redirected to authorize.
+                </Typography.Text>
+              )}
+              {serverType === 'direct' && (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Connects directly without OAuth. If the server requires a token, paste it above.
+                </Typography.Text>
+              )}
+            </Space>
+          )}
+
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Button onClick={handleClose}>Cancel</Button>
-            <Button type="primary" disabled={!preset} onClick={handleConnect}>
+            <Button type="primary" disabled={isConnectDisabled} onClick={handleConnect}>
               Register
             </Button>
           </div>
@@ -106,7 +230,7 @@ export function AddMcpModal({ open, onClose }: Props) {
         <div style={{ textAlign: 'center', padding: '24px 0' }}>
           <Spin size="large" />
           <Typography.Paragraph style={{ marginTop: 16 }}>
-            Discovering OAuth metadata...
+            {serverType === 'direct' ? 'Adding server…' : 'Discovering OAuth metadata…'}
           </Typography.Paragraph>
         </div>
       )}

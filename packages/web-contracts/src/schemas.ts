@@ -535,6 +535,25 @@ export const McpDeleteInputSchema = z.object({
   name: z.string(),
 });
 
+export const McpAddServerInputSchema = z.object({
+  url: z.string().url(),
+  name: z.string().min(1).max(64),
+  transport: z.enum(['streamable-http', 'sse']),
+  /** If provided, stored as the bearer token for this server. */
+  token: z.string().min(1).optional(),
+});
+
+export const McpAddServerOutputSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), serverName: z.string() }),
+  z.object({
+    ok: z.literal(false),
+    code: z.enum(['ssrf_blocked', 'name_taken', 'invalid_url']),
+    detail: z.string().optional(),
+  }),
+]);
+
+export type McpAddServerInput = z.infer<typeof McpAddServerInputSchema>;
+
 export const McpReconnectInputSchema = z.object({
   name: z.string(),
   personalityId: z.string().min(1).optional(),

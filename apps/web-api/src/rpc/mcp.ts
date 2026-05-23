@@ -45,4 +45,5 @@ export const mcpRouter = {
   personalityServers: os.mcp.personalityServers.handler(({ input, context }) =>
     context.mcp.personalityServers(input),
   ),
+  addServer: os.mcp.addServer.handler(({ input, context }) => context.mcp.addServer(input)),
 };
