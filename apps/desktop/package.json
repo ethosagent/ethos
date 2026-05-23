@@ -1,0 +1,31 @@
+{
+  "name": "@ethosagent/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "package": "electron-builder",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ethosagent/design-tokens": "workspace:*",
+    "electron-store": "^10.0.0",
+    "electron-updater": "^6.3.0",
+    "electron-window-state": "^5.0.3",
+    "keytar": "^7.9.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "electron-vite": "^5.0.0",
+    "@electron/notarize": "^2.5.0"
+  }
+}

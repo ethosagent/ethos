@@ -1,0 +1,40 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  font-family: var(--font-display);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  height: 100%;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-full);
+}
+
+::selection {
+  background: rgba(74, 158, 255, 0.2);
+}

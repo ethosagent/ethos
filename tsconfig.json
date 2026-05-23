@@ -116,5 +116,5 @@
     "apps/*/src/**/*",
     "vitest.config.ts"
   ],
-  "exclude": ["node_modules", "**/dist/**", "apps/vscode-extension/**", "apps/web/**"]
+  "exclude": ["node_modules", "**/dist/**", "apps/vscode-extension/**", "apps/web/**", "apps/desktop/**"]
 }
