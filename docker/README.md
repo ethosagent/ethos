@@ -1,74 +1,104 @@
-# docker/
+# Running Ethos with Docker
 
-Reference for the Docker packaging and Compose setup.
+The quickest way to run Ethos on any machine — no Node.js required.
 
-## Files
+## Prerequisites
 
-| File | Purpose |
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac / Windows / Linux)
+
+## Setup
+
+### 1. Copy the example config
+
+```bash
+cd docker
+cp .env.example .env
+```
+
+### 2. Fill in your credentials
+
+Open `docker/.env` and set your values. The full reference is below.
+
+### 3. Start
+
+```bash
+docker compose up
+```
+
+The web UI will be available at **http://localhost:3000**.
+
+To stop: `docker compose down`
+
+---
+
+## Environment variable reference
+
+### Provider (pick one — first found wins)
+
+| Variable | Description |
 |---|---|
-| `Dockerfile` | Multi-stage build: installs `@ethosagent/cli` from npm in a build stage, then copies into a clean `node:24-slim` runtime image. Runs as uid 1000 (`ethos`), exposes port 3000. |
-| `docker-entrypoint.sh` | Reads `ETHOS_MODE` and execs the corresponding Ethos command (`run-all`, `gateway start`, or `serve`). |
-| `.dockerignore` | Excludes `.git`, `node_modules`, `plan/`, `docs/`, tests, and dist from the build context. |
-| `docker-compose.yml` | Three-service Compose stack described below. |
+| `AZURE_API_KEY` | Azure OpenAI API key |
+| `ANTHROPIC_API_KEY` | Anthropic (Claude) API key |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `OPENROUTER_API_KEY` | OpenRouter API key |
+| `GOOGLE_API_KEY` | Google (Gemini) API key |
 
-## Compose services
-
-| Service | Role | Lifecycle |
-|---|---|---|
-| `init` | One-shot bootstrap. Detects the first set provider key, writes `config.yaml` into the `ethos-data` volume. Exits after writing (or immediately if config already exists). | Runs once, `restart: "no"`. |
-| `ethos-web` | Web UI on port 3000. Waits for `init` to complete before starting. Read-only root filesystem. | Always-on, `restart: unless-stopped`. |
-| `ethos-gateway` | Channel gateway (Telegram, Slack, Discord, Email). Activated only with `--profile gateway`. Read-only root filesystem. | Always-on when activated, `restart: unless-stopped`. |
-
-Both `ethos-web` and `ethos-gateway` depend on `init` via `condition: service_completed_successfully`.
-
-## Required env vars
-
-At least one provider API key must be set:
-
-| Variable | Provider |
-|---|---|
-| `ANTHROPIC_API_KEY` | Anthropic (Claude) |
-| `OPENAI_API_KEY` | OpenAI |
-| `OPENROUTER_API_KEY` | OpenRouter |
-| `GOOGLE_API_KEY` | Google (Gemini) |
-
-The `init` service checks them in the order listed above and uses the first one found.
-
-## Optional env vars
+**Azure requires three extra vars:**
 
 | Variable | Default | Description |
 |---|---|---|
-| `ETHOS_STATE_DIR` | `/home/ethos/.ethos` | Path inside the container where Ethos stores config, sessions, and personality data. |
-| `ETHOS_MODE` | `all` | Which process the entrypoint starts. Values: `all` (web + gateway), `ui` (web only), `gateway` (gateway only). Set per-service in the Compose file; override only if you know what you're doing. |
+| `AZURE_ENDPOINT` | — | Your Azure OpenAI endpoint, e.g. `https://my-resource.openai.azure.com` |
+| `AZURE_MODEL` | `gpt-4o` | Deployment name |
+| `AZURE_API_VERSION` | `2024-12-01-preview` | API version |
 
-## Quick start
+**OpenRouter requires one extra var:**
 
-**Web UI only:**
+| Variable | Default | Description |
+|---|---|---|
+| `OPENROUTER_MODEL` | — | Model to use, e.g. `openai/gpt-4o` or `anthropic/claude-3-5-sonnet` |
+
+### Telegram bot (optional)
+
+| Variable | Description |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Token from [@BotFather](https://t.me/BotFather) — create a bot and copy the token |
+| `TELEGRAM_OWNER_ID` | Your Telegram user ID — message [@userinfobot](https://t.me/userinfobot) to get it. **Required when `TELEGRAM_BOT_TOKEN` is set** — prevents unauthorized access to your bot |
+
+### Storage
+
+| Variable | Default | Description |
+|---|---|---|
+| `ETHOS_DATA_DIR` | `../ethos-data` | Where on **your machine** Ethos stores its state (config, secrets, sessions). Can be an absolute path or relative to the `docker/` folder. |
+
+### Agent
+
+| Variable | Default | Description |
+|---|---|---|
+| `ETHOS_PERSONALITY` | `researcher` | Which personality the agent runs as. Run `ethos personality list` to see all options. |
+
+---
+
+## Fresh start / troubleshooting
+
+If something is broken or you want to start completely clean, delete the state directory and restart:
 
 ```bash
-ANTHROPIC_API_KEY=sk-… docker compose -f docker/docker-compose.yml up
+# From the docker/ folder
+rm -rf ../ethos-data          # or wherever ETHOS_DATA_DIR points
+docker compose down
+docker compose up
 ```
 
-**Web UI + gateway:**
+The `init` container will recreate `config.yaml` and all secrets from your `.env` on the next run.
 
-```bash
-ANTHROPIC_API_KEY=sk-… docker compose -f docker/docker-compose.yml --profile gateway up
-```
+---
 
-**Rebuild after version bump:**
+## How it works
 
-```bash
-docker compose -f docker/docker-compose.yml pull && docker compose -f docker/docker-compose.yml up
-```
+Three containers start in order:
 
-## Custom state directory
-
-Set `ETHOS_STATE_DIR` to change where Ethos writes data inside the container. You must also update the volume mount to match:
-
-```yaml
-# In docker-compose.yml, under each service's volumes:
-volumes:
-  - ethos-data:/your/custom/path
-```
-
-Pass the env var to all three services (init, ethos-web, ethos-gateway).
+| Service | Role |
+|---|---|
+| `init` | One-shot bootstrap — reads your credentials from env, writes `config.yaml` and secrets to `ETHOS_DATA_DIR`. Exits immediately if config already exists. |
+| `ethos-web` | Web UI on port 3000. Starts after `init` completes. |
+| `ethos-gateway` | Channel gateway (Telegram, Slack, Discord). Starts after `init` completes. |

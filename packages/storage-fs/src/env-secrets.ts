@@ -7,6 +7,7 @@ import type { SecretRef, SecretsResolver } from '@ethosagent/types';
 
 export const ENV_TO_REF: Record<string, string> = {
   ANTHROPIC_API_KEY: 'providers/anthropic/apiKey',
+  AZURE_API_KEY: 'providers/azure/apiKey',
   OPENAI_API_KEY: 'providers/openai/apiKey',
   OPENROUTER_API_KEY: 'providers/openrouter/apiKey',
   GEMINI_API_KEY: 'providers/gemini/apiKey',

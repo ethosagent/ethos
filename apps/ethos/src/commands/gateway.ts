@@ -544,6 +544,7 @@ export async function runGatewayStart(): Promise<void> {
           defaultPersonality: config.personality,
           adapters: adapterMap,
           resolveUserId,
+          showToolCalls: process.env.ETHOS_CHANNEL_TOOL_CALLS !== 'false',
           ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
           ...(pairingDb ? { pairingDb } : {}),
         })
@@ -552,6 +553,7 @@ export async function runGatewayStart(): Promise<void> {
           attachmentCache,
           adapters: adapterMap,
           resolveUserId,
+          showToolCalls: process.env.ETHOS_CHANNEL_TOOL_CALLS !== 'false',
           ...(clarifyMessageCorrelator ? { clarifyMessageCorrelator } : {}),
           ...(telegramCardReader ? { personalityCardReader: telegramCardReader } : {}),
           ...(telegramGreetingProvider ? { greetingProvider: telegramGreetingProvider } : {}),

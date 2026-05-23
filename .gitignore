@@ -21,4 +21,5 @@ apps/ethos/web
 /plan/
 .gstack/
 .deepsec/
+.ethos-data/
 .ethos-state/

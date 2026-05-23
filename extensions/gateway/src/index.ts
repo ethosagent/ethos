@@ -200,6 +200,12 @@ export interface GatewayConfig {
    */
   outboundDedupTtlMs?: number;
   /**
+   * Send a brief message to the channel whenever a tool call starts, so users
+   * can see what the agent is doing mid-turn. Defaults to `true`. Set to
+   * `false` (or read from `ETHOS_CHANNEL_TOOL_CALLS=false`) to silence.
+   */
+  showToolCalls?: boolean;
+  /**
    * Maximum number of distinct chats kept in memory. The least-recently-used
    * idle chat is evicted (its lane, session key, personality override, and
    * usage stats are forgotten) once this cap is exceeded. Active in-flight
@@ -378,6 +384,8 @@ export class Gateway {
   private readonly pairingDb: Database.Database | undefined;
   /** Observability adapter for audit events. */
   private readonly observability: GatewayObservability | undefined;
+  /** Whether to send a brief channel message on each tool_start event. */
+  private readonly showToolCalls: boolean;
   /** Hook called when the allowlist changes via /allow or /deny. */
   private readonly onAllowlistChange:
     | ((platform: string, userId: string, action: 'add' | 'remove') => void | Promise<void>)
@@ -457,6 +465,7 @@ export class Gateway {
     this.channelFilter = config.channelFilter;
     this.pairingDb = config.pairingDb;
     this.observability = config.observability;
+    this.showToolCalls = config.showToolCalls ?? true;
     this.onAllowlistChange = config.onAllowlistChange;
     this.clarifyCorrelator = config.clarifyMessageCorrelator;
     this.personalityCardReader = config.personalityCardReader;
@@ -1015,6 +1024,11 @@ export class Gateway {
           attachments: message.attachments,
           userId,
         })) {
+          if (event.type === 'tool_start' && this.showToolCalls) {
+            await adapter
+              .send(message.chatId, { text: `⚙ ${event.toolName}`, threadId })
+              .catch(() => {});
+          }
           if (event.type === 'text_delta') responseText += event.text;
           if (event.type === 'usage') {
             const u = this.usageStore.get(laneKey) ?? {
