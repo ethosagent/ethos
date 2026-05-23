@@ -9,8 +9,23 @@ services:
         CONFIG_FILE="$$STATE_DIR/config.yaml"
         ENV_FILE="$$STATE_DIR/.env"
 
+        # Install NSE market data plugin — reinstalls when version changes
+        NSE_PLUGIN_DIR="$$STATE_DIR/plugins/nse-market-data"
+        NSE_PLUGIN_VERSION="0.1.3"
+        _installed=$(node -e "try{process.stdout.write(require('$$NSE_PLUGIN_DIR/node_modules/@ethosagent/tools-nse-market-data/package.json').version)}catch(e){}" 2>/dev/null)
+        if [ "$$_installed" != "$$NSE_PLUGIN_VERSION" ]; then
+          echo "Installing NSE market data plugin $$NSE_PLUGIN_VERSION..."
+          rm -rf "$$NSE_PLUGIN_DIR"
+          mkdir -p "$$NSE_PLUGIN_DIR"
+          printf '%s\n' "{\"name\":\"ethos-plugin-nse-market-data\",\"version\":\"$$NSE_PLUGIN_VERSION\",\"type\":\"module\",\"main\":\"./index.js\",\"ethos\":{\"type\":\"plugin\",\"pluginContractMajor\":2},\"dependencies\":{\"@ethosagent/tools-nse-market-data\":\"$$NSE_PLUGIN_VERSION\"}}" > "$$NSE_PLUGIN_DIR/package.json"
+          printf '%s\n' 'export async function activate(api) { const { createNseMarketDataTools } = await import("@ethosagent/tools-nse-market-data"); for (const tool of createNseMarketDataTools()) api.registerTool(tool); }' > "$$NSE_PLUGIN_DIR/index.js"
+          (cd "$$NSE_PLUGIN_DIR" && npm install --omit=dev --silent)
+          echo "NSE market data plugin $$NSE_PLUGIN_VERSION installed."
+        fi
+
         if [ -f "$$CONFIG_FILE" ]; then
           echo "config.yaml already exists at $$CONFIG_FILE, skipping init."
+          # plugin already installed above; nothing else to do
           exit 0
         fi
 
@@ -107,6 +122,7 @@ services:
         } > "$$CONFIG_FILE"
 
         chmod 600 "$$CONFIG_FILE"
+
         echo "config.yaml created with provider: $$PROVIDER"
     env_file:
       - path: ./.env
