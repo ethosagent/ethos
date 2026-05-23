@@ -26,6 +26,18 @@ const api = {
   theme: {
     get: () => ipcRenderer.invoke(IPC_CHANNELS['theme:get']),
   },
+  navigate: {
+    onSession: (cb: (sessionId: string) => void) => {
+      const listener = (_e: unknown, sessionId: string) => cb(sessionId);
+      ipcRenderer.on('navigate:session', listener);
+      return () => {
+        ipcRenderer.removeListener('navigate:session', listener);
+      };
+    },
+  },
+  chat: {
+    new: () => ipcRenderer.invoke(IPC_CHANNELS['chat:new']),
+  },
 };
 
 contextBridge.exposeInMainWorld('ethos', api);

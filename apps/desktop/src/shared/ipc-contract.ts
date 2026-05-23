@@ -33,6 +33,11 @@ export interface PersonalityListItem {
   isBuiltin: boolean;
 }
 
+export interface ChatSendRequest {
+  message: string;
+  sessionId?: string;
+}
+
 export interface IpcContract {
   'onboarding:state': { request: undefined; response: OnboardingState };
   'onboarding:validateProvider': {
@@ -44,6 +49,9 @@ export interface IpcContract {
   'backend:start': { request: { port: number }; response: { started: boolean } };
   'health:check': { request: { port: number }; response: { healthy: boolean } };
   'theme:get': { request: undefined; response: 'dark' | 'light' };
+  'chat:send': { request: ChatSendRequest; response: { sessionId: string } };
+  'chat:new': { request: undefined; response: undefined };
+  'navigate:session': { request: { sessionId: string }; response: undefined };
 }
 
 export type IpcChannel = keyof IpcContract;
@@ -56,4 +64,7 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'backend:start': 'backend:start',
   'health:check': 'health:check',
   'theme:get': 'theme:get',
+  'chat:send': 'chat:send',
+  'chat:new': 'chat:new',
+  'navigate:session': 'navigate:session',
 };

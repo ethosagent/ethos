@@ -1,0 +1,113 @@
+:root {
+  --bg-base: #0f0f0f;
+  --bg-elevated: #1a1a1a;
+  --bg-overlay: #2a2a2a;
+  --border-subtle: #2a2a2a;
+  --border-strong: #3a3a3a;
+  --text-primary: #e8e8e6;
+  --text-secondary: #9a9a98;
+  --text-tertiary: #6b6b6a;
+
+  --success: #4ade80;
+  --warning: #f59e0b;
+  --error: #f87171;
+  --info: #4a9eff;
+
+  --accent: #94a3b8;
+
+  --motion-fast: 80ms;
+  --motion-default: 180ms;
+  --motion-slow: 240ms;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-full: 9999px;
+
+  --font-display: 'Geist', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  font-family: var(--font-display);
+  font-size: 14px;
+  color: var(--text-primary);
+  background: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100%;
+}
+
+.quick-chat-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.quick-chat-textarea {
+  border: none;
+  outline: none;
+  resize: none;
+  width: 100%;
+  font-family: var(--font-display);
+  font-size: 14px;
+  color: var(--text-primary);
+  background: transparent;
+  padding: 16px;
+}
+
+.quick-chat-textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+.quick-chat-response {
+  padding: 0 16px 16px;
+  overflow-y: auto;
+  flex: 1;
+  max-height: 200px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.quick-chat-footer {
+  padding: 8px 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.quick-chat-open-link {
+  font-size: 12px;
+  color: var(--info);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-display);
+  text-decoration: none;
+}
+
+.quick-chat-open-link:hover {
+  text-decoration: underline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-default: 0ms;
+    --motion-slow: 0ms;
+  }
+}

@@ -300,6 +300,7 @@ export function registerIpcHandlers(): void {
       store.set('personalityId', req.personalityId);
       store.set('onboardingComplete', true);
 
+      app.emit('ethos:onboarding-complete');
       return { success: true };
     },
   );
