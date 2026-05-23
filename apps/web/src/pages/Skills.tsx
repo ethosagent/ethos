@@ -374,11 +374,7 @@ function EditSkillModal({ skill, onClose }: { skill: Skill; onClose: () => void 
           <Spin />
         </div>
       ) : (
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={(values) => updateMut.mutate(values.body)}
-        >
+        <Form form={form} layout="vertical" onFinish={(values) => updateMut.mutate(values.body)}>
           <Form.Item
             label="Body"
             name="body"

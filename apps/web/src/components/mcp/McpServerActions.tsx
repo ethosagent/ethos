@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Button, Input, Modal, Space, Tooltip, message } from 'antd';
+import { Button, Input, Modal, message, Space, Tooltip } from 'antd';
 import { useState } from 'react';
 import { rpc } from '../../rpc';
 
@@ -53,11 +53,7 @@ export function McpServerActions({ serverName, transport, authStatus }: Props) {
         {/* Issue 3: Refresh OAuth token */}
         {authStatus === 'expired' || authStatus === 'authorized' ? (
           <Tooltip title="Refresh OAuth token">
-            <Button
-              size="small"
-              onClick={() => refreshMut.mutate()}
-              loading={refreshMut.isPending}
-            >
+            <Button size="small" onClick={() => refreshMut.mutate()} loading={refreshMut.isPending}>
               Refresh
             </Button>
           </Tooltip>

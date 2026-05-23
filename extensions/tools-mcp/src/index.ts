@@ -1003,7 +1003,9 @@ export class McpManager {
           const mcpTools = await client.listTools();
           toolsByServer.set(client.name, mcpTools);
           for (const t of mcpTools) {
-            pendingTools.push(adaptMcpTool(t, client.name, client, client.config.mcpResultLimitChars));
+            pendingTools.push(
+              adaptMcpTool(t, client.name, client, client.config.mcpResultLimitChars),
+            );
           }
         } catch (err) {
           this.logger.warn(`[ethos] MCP server '${client.name}' listTools failed`, {

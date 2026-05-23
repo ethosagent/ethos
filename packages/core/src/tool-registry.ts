@@ -15,7 +15,8 @@ import { resolveCapabilities } from './capability-resolver';
 import type { CapabilityValidationError } from './capability-validator';
 import { validateRegistration } from './capability-validator';
 
-function needsBackends(caps: ToolCapabilities): boolean {
+function needsBackends(caps: ToolCapabilities | undefined): boolean {
+  if (!caps) return false;
   return !!(
     caps.network ||
     caps.secrets ||

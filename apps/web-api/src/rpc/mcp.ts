@@ -50,12 +50,8 @@ export const mcpRouter = {
     context.mcp.refreshToken(input),
   ),
   rename: os.mcp.rename.handler(({ input, context }) => context.mcp.rename(input)),
-  updateToken: os.mcp.updateToken.handler(({ input, context }) =>
-    context.mcp.updateToken(input),
-  ),
-  scopeStatus: os.mcp.scopeStatus.handler(({ input, context }) =>
-    context.mcp.scopeStatus(input),
-  ),
+  updateToken: os.mcp.updateToken.handler(({ input, context }) => context.mcp.updateToken(input)),
+  scopeStatus: os.mcp.scopeStatus.handler(({ input, context }) => context.mcp.scopeStatus(input)),
   validateConfig: os.mcp.validateConfig.handler(({ input, context }) =>
     context.mcp.validateConfig(input),
   ),

@@ -89,10 +89,7 @@ export class SkillsLibrary {
     }
 
     const userIds = new Set(userSkills.map((s) => s.id));
-    const merged = [
-      ...systemSkills.filter((s) => !userIds.has(s.id)),
-      ...userSkills,
-    ];
+    const merged = [...systemSkills.filter((s) => !userIds.has(s.id)), ...userSkills];
     merged.sort((a, b) => a.name.localeCompare(b.name));
     return merged;
   }

@@ -1,5 +1,5 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { McpAddServerInput } from '@ethosagent/web-contracts';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   Button,

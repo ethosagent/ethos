@@ -274,7 +274,9 @@ function McpSection({
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
               {/* Issue 2: enable/disable toggle */}
-              <Tooltip title={enabledMap[server.name] === false ? 'Enable server' : 'Disable server'}>
+              <Tooltip
+                title={enabledMap[server.name] === false ? 'Enable server' : 'Disable server'}
+              >
                 <Switch
                   size="small"
                   checked={enabledMap[server.name] !== false}

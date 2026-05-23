@@ -220,7 +220,8 @@ export class McpService {
       return {
         ok: false as const,
         code: 'invalid_url' as const,
-        detail: 'Stdio transport cannot be added via the web API. Use the CLI: ethos mcp add --stdio',
+        detail:
+          'Stdio transport cannot be added via the web API. Use the CLI: ethos mcp add --stdio',
       };
     }
 

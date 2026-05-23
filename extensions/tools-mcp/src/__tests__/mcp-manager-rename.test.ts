@@ -199,9 +199,7 @@ describe('McpManager.updateToken', () => {
 
     await mgr.addServer(makeStdioConfig('srv'));
 
-    await expect(mgr.updateToken('srv', 'token')).rejects.toThrow(
-      'No secrets resolver configured',
-    );
+    await expect(mgr.updateToken('srv', 'token')).rejects.toThrow('No secrets resolver configured');
 
     await mgr.disconnect();
   });
