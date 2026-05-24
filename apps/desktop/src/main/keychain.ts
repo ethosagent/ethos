@@ -1,5 +1,5 @@
-import Store from 'electron-store';
 import { safeStorage } from 'electron';
+import Store from 'electron-store';
 
 // safeStorage uses the OS keychain (macOS Keychain, Windows DPAPI, Linux libsecret)
 // to encrypt values. The encrypted buffer is stored in a dedicated keychain.json

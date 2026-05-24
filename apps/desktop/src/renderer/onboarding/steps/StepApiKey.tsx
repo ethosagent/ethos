@@ -19,9 +19,11 @@ function inputField(
   onChange: (v: string) => void,
   opts: { type?: string; placeholder?: string; monospace?: boolean } = {},
 ) {
+  const fieldId = label.toLowerCase().replace(/\s+/g, '-');
   return (
     <div style={{ marginBottom: 12 }}>
       <label
+        htmlFor={fieldId}
         style={{
           display: 'block',
           fontSize: 11,
@@ -35,6 +37,7 @@ function inputField(
         {label}
       </label>
       <input
+        id={fieldId}
         type={opts.type || 'text'}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -157,6 +160,7 @@ export function StepApiKey({
   const apiKeyField = (
     <div style={{ marginBottom: 12 }}>
       <label
+        htmlFor="api-key"
         style={{
           display: 'block',
           fontSize: 11,
@@ -172,6 +176,7 @@ export function StepApiKey({
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <div style={{ position: 'relative', flex: 1 }}>
           <input
+            id="api-key"
             type={showKey ? 'text' : 'password'}
             value={apiKey}
             onChange={(e) => handleApiKeyChange(e.target.value)}
@@ -282,6 +287,7 @@ export function StepApiKey({
         {validated && (
           <div style={{ marginBottom: 12 }}>
             <label
+              htmlFor="anthropic-model"
               style={{
                 display: 'block',
                 fontSize: 11,
@@ -295,6 +301,7 @@ export function StepApiKey({
               Model
             </label>
             <select
+              id="anthropic-model"
               value={selectedModel}
               onChange={(e) => onModelChange(e.target.value)}
               style={{
@@ -336,6 +343,7 @@ export function StepApiKey({
         {validated && (
           <div style={{ marginBottom: 12 }}>
             <label
+              htmlFor="openai-model"
               style={{
                 display: 'block',
                 fontSize: 11,
@@ -349,6 +357,7 @@ export function StepApiKey({
               Model
             </label>
             <select
+              id="openai-model"
               value={selectedModel}
               onChange={(e) => onModelChange(e.target.value)}
               style={{
@@ -419,6 +428,7 @@ export function StepApiKey({
         })}
         <div style={{ marginBottom: 12 }}>
           <label
+            htmlFor="azure-api-key"
             style={{
               display: 'block',
               fontSize: 11,
@@ -433,6 +443,7 @@ export function StepApiKey({
           </label>
           <div style={{ position: 'relative' }}>
             <input
+              id="azure-api-key"
               type={showKey ? 'text' : 'password'}
               value={apiKey}
               onChange={(e) => handleApiKeyChange(e.target.value)}
@@ -481,6 +492,7 @@ export function StepApiKey({
         </div>
         <div style={{ marginBottom: 12 }}>
           <label
+            htmlFor="deployment-name"
             style={{
               display: 'block',
               fontSize: 11,
@@ -495,6 +507,7 @@ export function StepApiKey({
           </label>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input
+              id="deployment-name"
               type="text"
               value={deploymentName}
               onChange={(e) => handleDeploymentChange(e.target.value)}
