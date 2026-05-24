@@ -541,6 +541,15 @@ const CronRunNowOutput = z.object({
   ranAt: z.string(),
 });
 
+const CronUpdateInput = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).optional(),
+  schedule: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
+  personalityId: z.string().min(1).optional(),
+});
+const CronUpdateOutput = z.object({ job: CronJobSchema });
+
 const CronHistoryInput = z.object({
   id: z.string().min(1),
   /** Page size; max 100 to keep payloads bounded. Default 20. */
@@ -553,6 +562,7 @@ const cron = {
   list: oc.output(CronListOutput),
   get: oc.input(CronGetInput).output(CronGetOutput),
   create: oc.input(CronCreateInput).output(CronCreateOutput),
+  update: oc.input(CronUpdateInput).output(CronUpdateOutput),
   delete: oc.input(CronIdOnlyInput).output(CronOkOutput),
   pause: oc.input(CronIdOnlyInput).output(CronOkOutput),
   resume: oc.input(CronIdOnlyInput).output(CronOkOutput),

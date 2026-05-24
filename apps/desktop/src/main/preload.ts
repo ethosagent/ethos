@@ -65,6 +65,13 @@ const api = {
     showMessage: (req: { type?: string; title?: string; message: string; buttons?: string[] }) =>
       ipcRenderer.invoke(IPC_CHANNELS['dialog:showMessage'], req),
   },
+  file: {
+    save: (req: { defaultName: string; content: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS['file:save'], req),
+  },
+  gateway: {
+    platformStatus: () => ipcRenderer.invoke(IPC_CHANNELS['gateway:platformStatus']),
+  },
 };
 
 contextBridge.exposeInMainWorld('ethos', api);

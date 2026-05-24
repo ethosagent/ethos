@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ChatPage } from '../chat/ChatPage';
+import { CronPage } from '../cron/CronPage';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { PersonalitiesPage } from '../personalities/PersonalitiesPage';
 import { SettingsPage } from '../settings/SettingsPage';
@@ -104,6 +105,10 @@ export function AppShell() {
         ) : route === 'personalities' ? (
           <ErrorBoundary label="PersonalitiesPage">
             <PersonalitiesPage />
+          </ErrorBoundary>
+        ) : route === 'cron' ? (
+          <ErrorBoundary label="CronPage">
+            <CronPage />
           </ErrorBoundary>
         ) : (
           <div

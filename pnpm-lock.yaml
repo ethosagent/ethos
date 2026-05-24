@@ -79,6 +79,9 @@ importers:
       '@ethosagent/web-contracts':
         specifier: workspace:*
         version: link:../../packages/web-contracts
+      croner:
+        specifier: ^9.0.0
+        version: 9.1.0
       electron-store:
         specifier: ^10.0.0
         version: 10.1.0
