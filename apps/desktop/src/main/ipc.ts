@@ -6,6 +6,7 @@ import type { RetentionValues } from '../shared/ipc-contract';
 import { IPC_CHANNELS } from '../shared/ipc-contract';
 import { startBackend } from './backend';
 import { getKeychainValue, setKeychainValue } from './keychain';
+import { getLoginItem, setLoginItem } from './login-item';
 import { store } from './store';
 
 const PROVIDER_MODELS: Record<string, string[]> = {
@@ -485,11 +486,12 @@ export function registerIpcHandlers(): void {
       observabilityDays: store.get('observabilityDays', 7),
       autoUpdate: store.get('autoUpdate', true),
       launchAtLogin: store.get('launchAtLogin', false),
+      hasShownLoginItemHint: store.get('hasShownLoginItemHint', false),
       providers: PROVIDER_MODELS,
     };
   });
 
-  ipcMain.handle(IPC_CHANNELS['config:update'], (_event, req: Record<string, unknown>) => {
+  ipcMain.handle(IPC_CHANNELS['config:update'], async (_event, req: Record<string, unknown>) => {
     const validProviders = new Set(['anthropic', 'openai', 'openrouter', 'azure', 'ollama']);
     const validMemory = new Set(['markdown', 'vector']);
     const validApproval = new Set(['manual', 'smart', 'off']);
@@ -556,10 +558,24 @@ export function registerIpcHandlers(): void {
     }
 
     // Boolean fields
-    for (const key of ['contextLayering', 'debugMode', 'autoUpdate', 'launchAtLogin'] as const) {
+    for (const key of [
+      'contextLayering',
+      'debugMode',
+      'autoUpdate',
+      'launchAtLogin',
+      'hasShownLoginItemHint',
+    ] as const) {
       if (req[key] !== undefined) {
         if (typeof req[key] !== 'boolean') return { ok: false, error: `Invalid ${key}` };
         store.set(key, req[key] as boolean);
+      }
+    }
+
+    if (req.launchAtLogin !== undefined && typeof req.launchAtLogin === 'boolean') {
+      try {
+        await setLoginItem(req.launchAtLogin);
+      } catch {
+        // store preference is already saved; OS login item is best-effort
       }
     }
 
@@ -665,4 +681,18 @@ export function registerIpcHandlers(): void {
       return { canceled: result.canceled, filePaths: result.filePaths };
     },
   );
+
+  ipcMain.handle(IPC_CHANNELS['login-item:get'], async () => {
+    return getLoginItem();
+  });
+
+  ipcMain.handle(IPC_CHANNELS['login-item:set'], async (_event, req: { enabled: boolean }) => {
+    try {
+      await setLoginItem(req.enabled);
+      return { ok: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: message };
+    }
+  });
 }

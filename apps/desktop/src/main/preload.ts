@@ -59,6 +59,10 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS['keychain:set'], req),
     preview: (req: { key: string }) => ipcRenderer.invoke(IPC_CHANNELS['keychain:preview'], req),
   },
+  loginItem: {
+    get: () => ipcRenderer.invoke(IPC_CHANNELS['login-item:get']),
+    set: (req: { enabled: boolean }) => ipcRenderer.invoke(IPC_CHANNELS['login-item:set'], req),
+  },
   shell: {
     openExternal: (req: { url: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS['shell:openExternal'], req),

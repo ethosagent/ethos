@@ -2,6 +2,7 @@ import type { ConfigGetResponse } from '../../../shared/ipc-contract';
 import { SectionLabel } from '../../ui/SectionLabel';
 import { SettingRow } from '../../ui/SettingRow';
 import { Toggle } from '../../ui/Toggle';
+import { LaunchAtLoginRow } from '../components/LaunchAtLoginRow';
 
 interface GeneralTabProps {
   config: ConfigGetResponse;
@@ -42,12 +43,7 @@ export function GeneralTab({ config, onRefresh }: GeneralTabProps) {
       <div style={{ marginBottom: 24 }}>
         <SectionLabel>Startup</SectionLabel>
         <div style={{ marginTop: 8 }}>
-          <SettingRow label="Launch at login">
-            <Toggle
-              checked={config.launchAtLogin}
-              onChange={(checked) => handleToggle('launchAtLogin', checked)}
-            />
-          </SettingRow>
+          <LaunchAtLoginRow hasShownHint={config.hasShownLoginItemHint} onRefresh={onRefresh} />
         </div>
       </div>
 

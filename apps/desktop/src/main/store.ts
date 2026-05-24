@@ -26,6 +26,7 @@ export interface AppStoreType {
   observabilityDays: number;
   autoUpdate: boolean;
   launchAtLogin: boolean;
+  hasShownLoginItemHint: boolean;
 }
 
 export const store = new Store<AppStoreType>({
@@ -46,5 +47,6 @@ export const store = new Store<AppStoreType>({
     observabilityDays: 7,
     autoUpdate: true,
     launchAtLogin: false,
+    hasShownLoginItemHint: false,
   },
 });

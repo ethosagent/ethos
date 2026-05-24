@@ -7,6 +7,7 @@ import { registerGlobalShortcuts, unregisterGlobalShortcuts } from './global-sho
 import { registerIpcHandlers } from './ipc';
 import { showMinimizeNotification } from './notifications';
 import { registerQuickChatIpc, showQuickChat } from './quick-chat-window';
+import { isBackgroundMode, logBackgroundStartup } from './startup-mode';
 import { store } from './store';
 import { createTray, destroyTray } from './tray';
 
@@ -16,11 +17,13 @@ let isQuitting = false;
 let desktopActivated = false;
 
 function activateDesktop(): void {
-  if (desktopActivated || !mainWindow || mainWindow.isDestroyed()) return;
+  if (desktopActivated) return;
   desktopActivated = true;
   startBackend(3001);
-  trayInstance = createTray(mainWindow);
-  registerGlobalShortcuts(mainWindow, showQuickChat);
+  trayInstance = createTray(() => mainWindow, createWindow);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    registerGlobalShortcuts(mainWindow, showQuickChat);
+  }
 }
 
 function createWindow(): void {
@@ -78,14 +81,22 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   registerIpcHandlers();
-  createWindow();
 
-  if (mainWindow) {
-    registerQuickChatIpc(mainWindow);
-  }
+  const hidden = isBackgroundMode();
 
-  if (store.get('onboardingComplete', false)) {
+  if (hidden && store.get('onboardingComplete', false)) {
+    logBackgroundStartup();
     activateDesktop();
+  } else {
+    createWindow();
+
+    if (mainWindow) {
+      registerQuickChatIpc(mainWindow);
+    }
+
+    if (store.get('onboardingComplete', false)) {
+      activateDesktop();
+    }
   }
 
   (app as unknown as EventEmitter).on('ethos:onboarding-complete', () => {
