@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChatPage } from '../chat/ChatPage';
 import { ErrorBoundary } from '../ErrorBoundary';
+import { MemoryPage } from '../memory/MemoryPage';
 import { PersonalitiesPage } from '../personalities/PersonalitiesPage';
 import { SettingsPage } from '../settings/SettingsPage';
 import { useAppState } from '../state/AppContext';
@@ -104,6 +105,10 @@ export function AppShell() {
         ) : route === 'personalities' ? (
           <ErrorBoundary label="PersonalitiesPage">
             <PersonalitiesPage />
+          </ErrorBoundary>
+        ) : route === 'memory' ? (
+          <ErrorBoundary label="MemoryPage">
+            <MemoryPage />
           </ErrorBoundary>
         ) : (
           <div
