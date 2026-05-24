@@ -33,33 +33,33 @@ function inputField(
         }}
       >
         {label}
+        <input
+          type={opts.type || 'text'}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={opts.placeholder}
+          style={{
+            width: '100%',
+            height: 36,
+            padding: '0 12px',
+            borderRadius: 'var(--radius-sm)',
+            border: '1px solid var(--border-subtle)',
+            backgroundColor: 'var(--bg-elevated)',
+            color: 'var(--text-primary)',
+            fontFamily: opts.monospace ? 'var(--font-mono)' : 'inherit',
+            fontSize: 13,
+            outline: 'none',
+            boxSizing: 'border-box',
+            transition: 'border-color var(--motion-fast) var(--ease)',
+          }}
+          onFocus={(e) => {
+            e.currentTarget.style.borderColor = 'var(--info)';
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.borderColor = 'var(--border-subtle)';
+          }}
+        />
       </label>
-      <input
-        type={opts.type || 'text'}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={opts.placeholder}
-        style={{
-          width: '100%',
-          height: 36,
-          padding: '0 12px',
-          borderRadius: 'var(--radius-sm)',
-          border: '1px solid var(--border-subtle)',
-          backgroundColor: 'var(--bg-elevated)',
-          color: 'var(--text-primary)',
-          fontFamily: opts.monospace ? 'var(--font-mono)' : 'inherit',
-          fontSize: 13,
-          outline: 'none',
-          boxSizing: 'border-box',
-          transition: 'border-color var(--motion-fast) var(--ease)',
-        }}
-        onFocus={(e) => {
-          e.currentTarget.style.borderColor = 'var(--info)';
-        }}
-        onBlur={(e) => {
-          e.currentTarget.style.borderColor = 'var(--border-subtle)';
-        }}
-      />
     </div>
   );
 }
@@ -168,75 +168,75 @@ export function StepApiKey({
         }}
       >
         API Key
-      </label>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <div style={{ position: 'relative', flex: 1 }}>
-          <input
-            type={showKey ? 'text' : 'password'}
-            value={apiKey}
-            onChange={(e) => handleApiKeyChange(e.target.value)}
-            placeholder="sk-..."
-            style={{
-              width: '100%',
-              height: 36,
-              padding: '0 36px 0 12px',
-              borderRadius: 'var(--radius-sm)',
-              border: '1px solid var(--border-subtle)',
-              backgroundColor: 'var(--bg-elevated)',
-              color: 'var(--text-primary)',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 13,
-              outline: 'none',
-              boxSizing: 'border-box',
-              transition: 'border-color var(--motion-fast) var(--ease)',
-            }}
-            onFocus={(e) => {
-              e.currentTarget.style.borderColor = 'var(--info)';
-            }}
-            onBlur={(e) => {
-              e.currentTarget.style.borderColor = 'var(--border-subtle)';
-            }}
-          />
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ position: 'relative', flex: 1 }}>
+            <input
+              type={showKey ? 'text' : 'password'}
+              value={apiKey}
+              onChange={(e) => handleApiKeyChange(e.target.value)}
+              placeholder="sk-..."
+              style={{
+                width: '100%',
+                height: 36,
+                padding: '0 36px 0 12px',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--border-subtle)',
+                backgroundColor: 'var(--bg-elevated)',
+                color: 'var(--text-primary)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 13,
+                outline: 'none',
+                boxSizing: 'border-box',
+                transition: 'border-color var(--motion-fast) var(--ease)',
+              }}
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = 'var(--info)';
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = 'var(--border-subtle)';
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowKey(!showKey)}
+              style={{
+                position: 'absolute',
+                right: 8,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'none',
+                border: 'none',
+                color: 'var(--text-tertiary)',
+                cursor: 'pointer',
+                fontSize: 14,
+                padding: 4,
+              }}
+              aria-label={showKey ? 'Hide API key' : 'Show API key'}
+            >
+              {showKey ? '🙈' : '👁'}
+            </button>
+          </div>
           <button
             type="button"
-            onClick={() => setShowKey(!showKey)}
+            onClick={validate}
+            disabled={isValidateDisabled()}
             style={{
-              position: 'absolute',
-              right: 8,
-              top: '50%',
-              transform: 'translateY(-50%)',
-              background: 'none',
-              border: 'none',
-              color: 'var(--text-tertiary)',
-              cursor: 'pointer',
+              height: 36,
+              padding: '0 16px',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--border-subtle)',
+              background: 'transparent',
+              color: 'var(--text-primary)',
               fontSize: 14,
-              padding: 4,
+              cursor: isValidateDisabled() ? 'not-allowed' : 'pointer',
+              opacity: isValidateDisabled() ? 0.6 : 1,
+              whiteSpace: 'nowrap',
             }}
-            aria-label={showKey ? 'Hide API key' : 'Show API key'}
           >
-            {showKey ? '🙈' : '👁'}
+            {validationState === 'loading' ? 'Checking...' : 'Validate'}
           </button>
         </div>
-        <button
-          type="button"
-          onClick={validate}
-          disabled={isValidateDisabled()}
-          style={{
-            height: 36,
-            padding: '0 16px',
-            borderRadius: 'var(--radius-sm)',
-            border: '1px solid var(--border-subtle)',
-            background: 'transparent',
-            color: 'var(--text-primary)',
-            fontSize: 14,
-            cursor: isValidateDisabled() ? 'not-allowed' : 'pointer',
-            opacity: isValidateDisabled() ? 0.6 : 1,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {validationState === 'loading' ? 'Checking...' : 'Validate'}
-        </button>
-      </div>
+      </label>
     </div>
   );
 
@@ -293,26 +293,26 @@ export function StepApiKey({
               }}
             >
               Model
+              <select
+                value={selectedModel}
+                onChange={(e) => onModelChange(e.target.value)}
+                style={{
+                  width: '100%',
+                  height: 36,
+                  padding: '0 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-subtle)',
+                  backgroundColor: 'var(--bg-elevated)',
+                  color: 'var(--text-primary)',
+                  fontSize: 13,
+                  outline: 'none',
+                }}
+              >
+                <option value="claude-sonnet-4-20250514">claude-sonnet-4-20250514</option>
+                <option value="claude-opus-4-7">claude-opus-4-7</option>
+                <option value="claude-haiku-4-5-20251001">claude-haiku-4-5-20251001</option>
+              </select>
             </label>
-            <select
-              value={selectedModel}
-              onChange={(e) => onModelChange(e.target.value)}
-              style={{
-                width: '100%',
-                height: 36,
-                padding: '0 12px',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-subtle)',
-                backgroundColor: 'var(--bg-elevated)',
-                color: 'var(--text-primary)',
-                fontSize: 13,
-                outline: 'none',
-              }}
-            >
-              <option value="claude-sonnet-4-20250514">claude-sonnet-4-20250514</option>
-              <option value="claude-opus-4-7">claude-opus-4-7</option>
-              <option value="claude-haiku-4-5-20251001">claude-haiku-4-5-20251001</option>
-            </select>
           </div>
         )}
         {footer}
@@ -347,26 +347,26 @@ export function StepApiKey({
               }}
             >
               Model
+              <select
+                value={selectedModel}
+                onChange={(e) => onModelChange(e.target.value)}
+                style={{
+                  width: '100%',
+                  height: 36,
+                  padding: '0 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-subtle)',
+                  backgroundColor: 'var(--bg-elevated)',
+                  color: 'var(--text-primary)',
+                  fontSize: 13,
+                  outline: 'none',
+                }}
+              >
+                <option value="gpt-4o">gpt-4o</option>
+                <option value="gpt-4o-mini">gpt-4o-mini</option>
+                <option value="o3">o3</option>
+              </select>
             </label>
-            <select
-              value={selectedModel}
-              onChange={(e) => onModelChange(e.target.value)}
-              style={{
-                width: '100%',
-                height: 36,
-                padding: '0 12px',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-subtle)',
-                backgroundColor: 'var(--bg-elevated)',
-                color: 'var(--text-primary)',
-                fontSize: 13,
-                outline: 'none',
-              }}
-            >
-              <option value="gpt-4o">gpt-4o</option>
-              <option value="gpt-4o-mini">gpt-4o-mini</option>
-              <option value="o3">o3</option>
-            </select>
           </div>
         )}
         {footer}
@@ -430,54 +430,54 @@ export function StepApiKey({
             }}
           >
             API Key
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={apiKey}
+                onChange={(e) => handleApiKeyChange(e.target.value)}
+                placeholder="Azure API key"
+                style={{
+                  width: '100%',
+                  height: 36,
+                  padding: '0 36px 0 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-subtle)',
+                  backgroundColor: 'var(--bg-elevated)',
+                  color: 'var(--text-primary)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 13,
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                  transition: 'border-color var(--motion-fast) var(--ease)',
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--info)';
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--border-subtle)';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowKey(!showKey)}
+                style={{
+                  position: 'absolute',
+                  right: 8,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-tertiary)',
+                  cursor: 'pointer',
+                  fontSize: 14,
+                  padding: 4,
+                }}
+                aria-label={showKey ? 'Hide API key' : 'Show API key'}
+              >
+                {showKey ? '🙈' : '👁'}
+              </button>
+            </div>
           </label>
-          <div style={{ position: 'relative' }}>
-            <input
-              type={showKey ? 'text' : 'password'}
-              value={apiKey}
-              onChange={(e) => handleApiKeyChange(e.target.value)}
-              placeholder="Azure API key"
-              style={{
-                width: '100%',
-                height: 36,
-                padding: '0 36px 0 12px',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-subtle)',
-                backgroundColor: 'var(--bg-elevated)',
-                color: 'var(--text-primary)',
-                fontFamily: 'var(--font-mono)',
-                fontSize: 13,
-                outline: 'none',
-                boxSizing: 'border-box',
-                transition: 'border-color var(--motion-fast) var(--ease)',
-              }}
-              onFocus={(e) => {
-                e.currentTarget.style.borderColor = 'var(--info)';
-              }}
-              onBlur={(e) => {
-                e.currentTarget.style.borderColor = 'var(--border-subtle)';
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => setShowKey(!showKey)}
-              style={{
-                position: 'absolute',
-                right: 8,
-                top: '50%',
-                transform: 'translateY(-50%)',
-                background: 'none',
-                border: 'none',
-                color: 'var(--text-tertiary)',
-                cursor: 'pointer',
-                fontSize: 14,
-                padding: 4,
-              }}
-              aria-label={showKey ? 'Hide API key' : 'Show API key'}
-            >
-              {showKey ? '🙈' : '👁'}
-            </button>
-          </div>
         </div>
         <div style={{ marginBottom: 12 }}>
           <label
@@ -492,53 +492,53 @@ export function StepApiKey({
             }}
           >
             Deployment Name
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="text"
+                value={deploymentName}
+                onChange={(e) => handleDeploymentChange(e.target.value)}
+                placeholder="my-gpt4o-deployment"
+                style={{
+                  flex: 1,
+                  height: 36,
+                  padding: '0 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-subtle)',
+                  backgroundColor: 'var(--bg-elevated)',
+                  color: 'var(--text-primary)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 13,
+                  outline: 'none',
+                  transition: 'border-color var(--motion-fast) var(--ease)',
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--info)';
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--border-subtle)';
+                }}
+              />
+              <button
+                type="button"
+                onClick={validate}
+                disabled={isValidateDisabled()}
+                style={{
+                  height: 36,
+                  padding: '0 16px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-subtle)',
+                  background: 'transparent',
+                  color: 'var(--text-primary)',
+                  fontSize: 14,
+                  cursor: isValidateDisabled() ? 'not-allowed' : 'pointer',
+                  opacity: isValidateDisabled() ? 0.6 : 1,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {validationState === 'loading' ? 'Checking...' : 'Validate'}
+              </button>
+            </div>
           </label>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
-              type="text"
-              value={deploymentName}
-              onChange={(e) => handleDeploymentChange(e.target.value)}
-              placeholder="my-gpt4o-deployment"
-              style={{
-                flex: 1,
-                height: 36,
-                padding: '0 12px',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-subtle)',
-                backgroundColor: 'var(--bg-elevated)',
-                color: 'var(--text-primary)',
-                fontFamily: 'var(--font-mono)',
-                fontSize: 13,
-                outline: 'none',
-                transition: 'border-color var(--motion-fast) var(--ease)',
-              }}
-              onFocus={(e) => {
-                e.currentTarget.style.borderColor = 'var(--info)';
-              }}
-              onBlur={(e) => {
-                e.currentTarget.style.borderColor = 'var(--border-subtle)';
-              }}
-            />
-            <button
-              type="button"
-              onClick={validate}
-              disabled={isValidateDisabled()}
-              style={{
-                height: 36,
-                padding: '0 16px',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-subtle)',
-                background: 'transparent',
-                color: 'var(--text-primary)',
-                fontSize: 14,
-                cursor: isValidateDisabled() ? 'not-allowed' : 'pointer',
-                opacity: isValidateDisabled() ? 0.6 : 1,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {validationState === 'loading' ? 'Checking...' : 'Validate'}
-            </button>
-          </div>
         </div>
         {validationStatus}
         {validated && (
