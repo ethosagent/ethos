@@ -5,6 +5,7 @@ import { ErrorBoundary } from '../ErrorBoundary';
 import { McpPage } from '../mcp/McpPage';
 import { MemoryPage } from '../memory/MemoryPage';
 import { PersonalitiesPage } from '../personalities/PersonalitiesPage';
+import { PlatformsPage } from '../platforms/PlatformsPage';
 import { SettingsPage } from '../settings/SettingsPage';
 import { useAppState } from '../state/AppContext';
 import { AppSidebar } from './AppSidebar';
@@ -120,6 +121,10 @@ export function AppShell() {
         ) : route === 'cron' ? (
           <ErrorBoundary label="CronPage">
             <CronPage />
+          </ErrorBoundary>
+        ) : route === 'platforms' ? (
+          <ErrorBoundary label="PlatformsPage">
+            <PlatformsPage />
           </ErrorBoundary>
         ) : (
           <div

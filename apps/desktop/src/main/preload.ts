@@ -87,6 +87,21 @@ const api = {
   gateway: {
     platformStatus: () => ipcRenderer.invoke(IPC_CHANNELS['gateway:platformStatus']),
   },
+  platformTest: {
+    telegram: (req: { token: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS['platform:testTelegram'], req),
+    discord: (req: { token: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS['platform:testDiscord'], req),
+    imap: (req: { host: string; port: number; user: string; password: string; tls: boolean }) =>
+      ipcRenderer.invoke(IPC_CHANNELS['platform:testImap'], req),
+    smtp: (req: {
+      host: string;
+      port: number;
+      user: string;
+      password: string;
+      starttls: boolean;
+    }) => ipcRenderer.invoke(IPC_CHANNELS['platform:testSmtp'], req),
+  },
 };
 
 contextBridge.exposeInMainWorld('ethos', api);

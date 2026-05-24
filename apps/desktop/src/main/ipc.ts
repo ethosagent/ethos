@@ -7,6 +7,7 @@ import type { RetentionValues } from '../shared/ipc-contract';
 import { IPC_CHANNELS } from '../shared/ipc-contract';
 import { startBackend } from './backend';
 import { getKeychainValue, setKeychainValue } from './keychain';
+import { testDiscord, testImap, testSmtp, testTelegram } from './platform-validator';
 import { store } from './store';
 
 const PROVIDER_MODELS: Record<string, string[]> = {
@@ -681,5 +682,27 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS['gateway:platformStatus'], async () => {
     return { telegram: false, slack: false, discord: false };
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS['platform:testTelegram'],
+    async (_event, req: { token: string }) => {
+      return testTelegram(req.token);
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS['platform:testDiscord'],
+    async (_event, req: { token: string }) => {
+      return testDiscord(req.token);
+    },
+  );
+
+  ipcMain.handle(IPC_CHANNELS['platform:testImap'], async (_event, req) => {
+    return testImap(req);
+  });
+
+  ipcMain.handle(IPC_CHANNELS['platform:testSmtp'], async (_event, req) => {
+    return testSmtp(req);
   });
 }
