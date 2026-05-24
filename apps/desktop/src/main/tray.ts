@@ -1,6 +1,12 @@
 import path from 'node:path';
 import type { BrowserWindow, NativeImage } from 'electron';
 import { app, Menu, nativeImage, Tray } from 'electron';
+import {
+  checkForUpdates,
+  getPendingUpdateVersion,
+  onUpdateReady,
+  quitAndInstall,
+} from './auto-update';
 
 function getIconDir(): string {
   if (app.isPackaged) {
@@ -55,25 +61,40 @@ export function setTrayState(trayInstance: Tray, state: TrayState): void {
   trayInstance.setImage(icons[state]());
 }
 
-export function createTray(getWindow: () => BrowserWindow | null, ensureWindow: () => void): Tray {
-  if (tray) {
-    return tray;
-  }
+let cachedGetWindow: (() => BrowserWindow | null) | null = null;
+let cachedEnsureWindow: (() => void) | null = null;
 
-  tray = new Tray(icons.idle());
-  tray.setToolTip('Ethos');
+function buildContextMenu(): Menu {
+  const getWindow = cachedGetWindow;
+  const ensureWindow = cachedEnsureWindow;
 
   function showWindow(): void {
-    const win = getWindow();
+    const win = getWindow?.();
     if (win && !win.isDestroyed()) {
       win.show();
       win.focus();
     } else {
-      ensureWindow();
+      ensureWindow?.();
     }
   }
 
-  const contextMenu = Menu.buildFromTemplate([
+  const pendingVersion = getPendingUpdateVersion();
+
+  const updateItem = pendingVersion
+    ? {
+        label: `Restart to update to v${pendingVersion}`,
+        click: () => {
+          quitAndInstall();
+        },
+      }
+    : {
+        label: 'Check for updates',
+        click: () => {
+          checkForUpdates();
+        },
+      };
+
+  return Menu.buildFromTemplate([
     {
       label: 'Open Ethos',
       click: showWindow,
@@ -81,25 +102,18 @@ export function createTray(getWindow: () => BrowserWindow | null, ensureWindow: 
     {
       label: 'New chat',
       click: () => {
-        const win = getWindow();
+        const win = getWindow?.();
         if (win && !win.isDestroyed()) {
           win.show();
           win.focus();
           win.webContents.send('chat:new');
         } else {
-          ensureWindow();
+          ensureWindow?.();
         }
       },
     },
     { type: 'separator' },
-    {
-      label: 'Check for updates',
-      click: async () => {
-        const updaterPkg = await import('electron-updater');
-        const { autoUpdater } = updaterPkg;
-        autoUpdater.checkForUpdates();
-      },
-    },
+    updateItem,
     { type: 'separator' },
     {
       label: 'Quit Ethos',
@@ -108,11 +122,41 @@ export function createTray(getWindow: () => BrowserWindow | null, ensureWindow: 
       },
     },
   ]);
+}
 
-  tray.setContextMenu(contextMenu);
+export function rebuildTrayMenu(): void {
+  if (tray) {
+    tray.setContextMenu(buildContextMenu());
+  }
+}
+
+export function createTray(getWindow: () => BrowserWindow | null, ensureWindow: () => void): Tray {
+  if (tray) {
+    return tray;
+  }
+
+  cachedGetWindow = getWindow;
+  cachedEnsureWindow = ensureWindow;
+
+  tray = new Tray(icons.idle());
+  tray.setToolTip('Ethos');
+
+  tray.setContextMenu(buildContextMenu());
+
+  onUpdateReady(() => {
+    rebuildTrayMenu();
+  });
 
   if (process.platform === 'darwin') {
-    tray.on('click', showWindow);
+    tray.on('click', () => {
+      const win = getWindow();
+      if (win && !win.isDestroyed()) {
+        win.show();
+        win.focus();
+      } else {
+        ensureWindow();
+      }
+    });
   }
 
   return tray;

@@ -48,6 +48,24 @@ pm2 start ecosystem.config.js && pm2 save && pm2 startup
 
 Native Windows is not a primary target. Use WSL2 (Ubuntu 22.04 or 24.04). Node 24+ inside the WSL distro; `~/.ethos/` lives in the Linux home, not the Windows mount.
 
+## Installing the desktop app on macOS
+
+Since the app is unsigned and unnotarized, macOS will block it on first open:
+
+> "Ethos" cannot be opened because Apple cannot verify it is free from malware.
+
+**Option A — right-click method (easier):**
+1. Open the `.dmg` and drag Ethos to Applications
+2. Right-click `Ethos.app` in your Applications folder
+3. Click **Open**
+4. Click **Open** again in the dialog that appears
+5. The app opens. This only needs to be done once.
+
+**Option B — terminal (if Option A doesn't work on macOS 15+):**
+```sh
+xattr -dr com.apple.quarantine /Applications/Ethos.app
+```
+
 ## Getting started
 
 ```bash

@@ -1,0 +1,91 @@
+name: build-desktop
+
+# Build and publish the Electron desktop app to GitHub Releases.
+#
+# Usage:
+#   1. Ensure the npm release for this version is already published (run the
+#      `release` workflow first if needed).
+#   2. GitHub → Actions → build-desktop → Run workflow → enter version (e.g. 0.0.1)
+#
+# The workflow tags the commit, creates a draft GitHub Release, builds
+# platform-specific artifacts on macOS and Windows, uploads them via
+# electron-builder, then marks the release as non-draft.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 0.0.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write    # push the tag + create/update the GitHub Release
+
+concurrency:
+  group: build-desktop
+  cancel-in-progress: false   # never overlap desktop builds
+
+jobs:
+  tag-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create and push tag
+        run: |
+          git tag "v${{ inputs.version }}"
+          git push origin "v${{ inputs.version }}"
+
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ inputs.version }}" \
+            --title "v${{ inputs.version }}" \
+            --generate-notes \
+            --draft
+
+  build:
+    needs: tag-release
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: ./.github/actions/setup
+
+      - name: Set package version
+        shell: bash
+        run: |
+          cd apps/desktop
+          npm pkg set version="${{ inputs.version }}"
+
+      - name: Rebuild native modules for Electron
+        shell: bash
+        run: npx electron-rebuild -f -w better-sqlite3
+
+      - name: Build renderer + main
+        run: pnpm --filter @ethosagent/desktop build
+
+      - name: Package and publish artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm --filter @ethosagent/desktop package -- --publish always
+
+  finalize-release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Mark release as non-draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "v${{ inputs.version }}" --draft=false
