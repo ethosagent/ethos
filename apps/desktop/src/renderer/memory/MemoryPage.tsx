@@ -4,6 +4,8 @@ import { useAppState } from '../state/AppContext';
 import { MemoryPanel } from './MemoryPanel';
 import { SessionMemoryContext } from './SessionMemoryContext';
 
+type DirtyPanels = Record<string, boolean>;
+
 interface PersonalityOption {
   id: string;
   name: string;
@@ -25,7 +27,13 @@ export function MemoryPage() {
   const [showExplainer, setShowExplainer] = useState(
     () => localStorage.getItem(EXPLAINER_KEY) !== 'true',
   );
-  const panelsRef = useRef<HTMLDivElement>(null);
+  const [dirtyPanels, setDirtyPanels] = useState<DirtyPanels>({});
+  const dirtyPanelsRef = useRef(dirtyPanels);
+  dirtyPanelsRef.current = dirtyPanels;
+
+  const handleDirtyChange = useCallback((store: string, isDirty: boolean) => {
+    setDirtyPanels((prev) => ({ ...prev, [store]: isDirty }));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,22 +68,13 @@ export function MemoryPage() {
     const newId = e.target.value;
 
     // Check for unsaved changes before switching
-    if (panelsRef.current) {
-      const panels = panelsRef.current.querySelectorAll('[data-memory-panel]');
-      for (const panel of panels) {
-        const typedPanel = panel as HTMLElement & {
-          __isDirty?: () => boolean;
-          __label?: string;
-        };
-        if (typedPanel.__isDirty?.()) {
-          const panelLabel = typedPanel.__label ?? 'a panel';
-          const confirmed = window.confirm(
-            `You have unsaved changes in ${panelLabel}. Discard changes?`,
-          );
-          if (!confirmed) return;
-          break;
-        }
-      }
+    const dirtyEntry = Object.entries(dirtyPanelsRef.current).find(([, d]) => d);
+    if (dirtyEntry) {
+      const panelLabel = dirtyEntry[0] === 'memory' ? 'PROJECT MEMORY' : 'USER PROFILE';
+      const confirmed = window.confirm(
+        `You have unsaved changes in ${panelLabel}. Discard changes?`,
+      );
+      if (!confirmed) return;
     }
 
     setActiveId(newId);
@@ -84,14 +83,8 @@ export function MemoryPage() {
   // Guard against navigation away with unsaved changes
   useEffect(() => {
     function handleBeforeUnload(e: BeforeUnloadEvent) {
-      if (!panelsRef.current) return;
-      const panels = panelsRef.current.querySelectorAll('[data-memory-panel]');
-      for (const panel of panels) {
-        const typedPanel = panel as HTMLElement & { __isDirty?: () => boolean };
-        if (typedPanel.__isDirty?.()) {
-          e.preventDefault();
-          return;
-        }
+      if (Object.values(dirtyPanelsRef.current).some(Boolean)) {
+        e.preventDefault();
       }
     }
 
@@ -214,7 +207,6 @@ export function MemoryPage() {
       {/* Panels row */}
       {activeId && (
         <div
-          ref={panelsRef}
           style={{
             display: 'flex',
             gap: 24,
@@ -227,12 +219,14 @@ export function MemoryPage() {
             store="memory"
             personalityId={activeId}
             emptyText="No project memory yet."
+            onDirtyChange={handleDirtyChange}
           />
           <MemoryPanel
             label="USER PROFILE"
             store="user"
             personalityId={activeId}
             emptyText="No user profile yet. Add information about yourself to help the agent personalize responses."
+            onDirtyChange={handleDirtyChange}
           />
         </div>
       )}

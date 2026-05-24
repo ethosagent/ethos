@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { SectionLabel } from '../ui/SectionLabel';
 import { MemoryEditor } from './MemoryEditor';
 import { MemoryView } from './MemoryView';
@@ -9,6 +9,7 @@ interface MemoryPanelProps {
   store: 'memory' | 'user';
   personalityId: string;
   emptyText: string;
+  onDirtyChange?: (store: string, isDirty: boolean) => void;
 }
 
 type Mode = 'view' | 'edit';
@@ -73,30 +74,36 @@ function SkeletonLoader() {
   );
 }
 
-export function MemoryPanel({ label, store, personalityId, emptyText }: MemoryPanelProps) {
+export function MemoryPanel({
+  label,
+  store,
+  personalityId,
+  emptyText,
+  onDirtyChange,
+}: MemoryPanelProps) {
   const { content, modifiedAt, loading, error, reload, save } = useMemory(store, personalityId);
   const [mode, setMode] = useState<Mode>('view');
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
-  const dirtyRef = useRef(false);
+  const [dirty, setDirty] = useState(false);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset edit state when personality changes
   useEffect(() => {
     setMode('view');
     setDraft('');
-    dirtyRef.current = false;
+    setDirty(false);
   }, [personalityId]);
 
   const handleEdit = useCallback(() => {
     setDraft(content);
     setMode('edit');
-    dirtyRef.current = false;
+    setDirty(false);
   }, [content]);
 
   const handleCancel = useCallback(() => {
     setDraft('');
     setMode('view');
-    dirtyRef.current = false;
+    setDirty(false);
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -105,35 +112,27 @@ export function MemoryPanel({ label, store, personalityId, emptyText }: MemoryPa
     setSaving(false);
     if (ok) {
       setMode('view');
-      dirtyRef.current = false;
+      setDirty(false);
     }
   }, [draft, save]);
 
   const handleDraftChange = useCallback((value: string) => {
     setDraft(value);
-    dirtyRef.current = true;
+    setDirty(true);
   }, []);
 
-  const isDirty = useCallback(() => dirtyRef.current && mode === 'edit', [mode]);
+  const isDirty = mode === 'edit' && dirty;
+
+  useEffect(() => {
+    onDirtyChange?.(store, isDirty);
+  }, [store, isDirty, onDirtyChange]);
 
   const relativeTime = useRelativeTime(modifiedAt);
   const displayContent = mode === 'edit' ? draft : content;
   const words = wordCount(displayContent);
 
-  // Expose dirty check for parent
-  const panelRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = panelRef.current;
-    if (el) {
-      (el as HTMLDivElement & { __isDirty?: () => boolean }).__isDirty = isDirty;
-      (el as HTMLDivElement & { __label?: string }).__label = label;
-    }
-  }, [isDirty, label]);
-
   return (
     <div
-      ref={panelRef}
-      data-memory-panel={store}
       style={{
         flex: 1,
         display: 'flex',

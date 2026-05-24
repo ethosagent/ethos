@@ -30,6 +30,7 @@ export function useMemory(store: 'memory' | 'user', personalityId: string | null
     error: null,
   });
 
+  const requestIdRef = useRef(0);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -40,30 +41,32 @@ export function useMemory(store: 'memory' | 'user', personalityId: string | null
 
   const load = useCallback(async () => {
     if (!personalityId) return;
+    const thisRequest = ++requestIdRef.current;
     setMemState((s) => ({ ...s, loading: true, error: null }));
     try {
       const res = await client.rpc.memory.get({ store, personalityId });
-      if (mountedRef.current) {
-        setMemState({
-          content: res.file.content,
-          modifiedAt: res.file.modifiedAt,
-          loading: false,
-          error: null,
-        });
-      }
+      if (requestIdRef.current !== thisRequest) return;
+      setMemState({
+        content: res.file.content,
+        modifiedAt: res.file.modifiedAt,
+        loading: false,
+        error: null,
+      });
     } catch (err) {
-      if (mountedRef.current) {
-        setMemState((s) => ({
-          ...s,
-          loading: false,
-          error: err instanceof Error ? err.message : 'Failed to load memory',
-        }));
-      }
+      if (requestIdRef.current !== thisRequest) return;
+      setMemState((s) => ({
+        ...s,
+        loading: false,
+        error: err instanceof Error ? err.message : 'Failed to load memory',
+      }));
     }
   }, [client, store, personalityId]);
 
   useEffect(() => {
     load();
+    return () => {
+      requestIdRef.current++;
+    };
   }, [load]);
 
   const save = useCallback(

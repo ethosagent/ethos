@@ -84,7 +84,7 @@ export function SessionMemoryContext() {
             }}
           >
             <span style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>
-              No memory injected into the current session.
+              Session memory inspection is not yet available.
             </span>
           </div>
           <div
@@ -96,7 +96,7 @@ export function SessionMemoryContext() {
               fontFamily: 'var(--font-display)',
             }}
           >
-            Changes to memory take effect at the start of the next conversation.
+            Memory edits above take effect at the start of the next conversation.
           </div>
         </div>
       )}
