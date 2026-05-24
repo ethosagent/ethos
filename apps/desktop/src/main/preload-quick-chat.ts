@@ -3,17 +3,19 @@ import { contextBridge, ipcRenderer } from 'electron';
 const api = {
   platform: process.platform,
   chat: {
-    send: (message: string) => ipcRenderer.invoke('chat:send', message),
+    send: (message: string) => ipcRenderer.invoke('chat:send', { message }),
     onStream: (cb: (chunk: string) => void) => {
-      ipcRenderer.on('chat:stream', (_e: unknown, chunk: string) => cb(chunk));
+      const listener = (_e: unknown, chunk: string) => cb(chunk);
+      ipcRenderer.on('chat:stream', listener);
       return () => {
-        ipcRenderer.removeAllListeners('chat:stream');
+        ipcRenderer.removeListener('chat:stream', listener);
       };
     },
     onDone: (cb: (fullText: string) => void) => {
-      ipcRenderer.on('chat:done', (_e: unknown, text: string) => cb(text));
+      const listener = (_e: unknown, text: string) => cb(text);
+      ipcRenderer.on('chat:done', listener);
       return () => {
-        ipcRenderer.removeAllListeners('chat:done');
+        ipcRenderer.removeListener('chat:done', listener);
       };
     },
   },

@@ -15,7 +15,7 @@ let isQuitting = false;
 let desktopActivated = false;
 
 function activateDesktop(): void {
-  if (desktopActivated || !mainWindow) return;
+  if (desktopActivated || !mainWindow || mainWindow.isDestroyed()) return;
   desktopActivated = true;
   startBackend(3001);
   trayInstance = createTray(mainWindow);
@@ -59,6 +59,10 @@ function createWindow(): void {
     if (trayInstance) showMinimizeNotification(trayInstance);
   });
 
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+
   const isDark = nativeTheme.shouldUseDarkColors;
   if (!store.get('theme')) {
     store.set('theme', isDark ? 'dark' : 'light');
@@ -92,7 +96,7 @@ app.whenReady().then(() => {
   }
 
   app.on('activate', () => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.show();
       mainWindow.focus();
     } else {
@@ -102,7 +106,11 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  // Intentionally empty — tray keeps app alive
+  if (!desktopActivated) {
+    stopBackend();
+    app.quit();
+  }
+  // After activation, tray keeps app alive
 });
 
 app.on('before-quit', () => {

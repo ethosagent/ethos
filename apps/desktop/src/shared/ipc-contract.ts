@@ -50,9 +50,18 @@ export interface IpcContract {
   'health:check': { request: { port: number }; response: { healthy: boolean } };
   'theme:get': { request: undefined; response: 'dark' | 'light' };
   'chat:send': { request: ChatSendRequest; response: { sessionId: string } };
-  'chat:new': { request: undefined; response: undefined };
-  'navigate:session': { request: { sessionId: string }; response: undefined };
 }
+
+/** Main-to-renderer push events (via webContents.send, NOT ipcMain.handle) */
+export interface RendererEvents {
+  'chat:new': undefined;
+  'navigate:session': { sessionId: string };
+}
+
+export const RENDERER_EVENTS = {
+  'chat:new': 'chat:new',
+  'navigate:session': 'navigate:session',
+} as const;
 
 export type IpcChannel = keyof IpcContract;
 
@@ -65,6 +74,4 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'health:check': 'health:check',
   'theme:get': 'theme:get',
   'chat:send': 'chat:send',
-  'chat:new': 'chat:new',
-  'navigate:session': 'navigate:session',
 };

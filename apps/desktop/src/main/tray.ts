@@ -2,13 +2,19 @@ import path from 'node:path';
 import type { BrowserWindow, NativeImage } from 'electron';
 import { app, Menu, nativeImage, Tray } from 'electron';
 
-const ICON_DIR = path.join(__dirname, '..', 'assets', 'tray');
+function getIconDir(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'assets', 'tray');
+  }
+  return path.join(app.getAppPath(), 'assets', 'tray');
+}
 
 function iconPath(baseName: string): string {
+  const dir = getIconDir();
   if (process.platform === 'darwin') {
-    return path.join(ICON_DIR, `${baseName}Template.png`);
+    return path.join(dir, `${baseName}Template.png`);
   }
-  return path.join(ICON_DIR, `${baseName}.png`);
+  return path.join(dir, `${baseName}.png`);
 }
 
 const icons = {
@@ -17,7 +23,7 @@ const icons = {
   error: () => nativeImage.createFromPath(iconPath('Error')),
   thinking: (frame: number): NativeImage => {
     const padded = String(frame).padStart(2, '0');
-    return nativeImage.createFromPath(path.join(ICON_DIR, `Thinking${padded}.png`));
+    return nativeImage.createFromPath(path.join(getIconDir(), `Thinking${padded}.png`));
   },
 };
 

@@ -35,9 +35,6 @@ const api = {
       };
     },
   },
-  chat: {
-    new: () => ipcRenderer.invoke(IPC_CHANNELS['chat:new']),
-  },
 };
 
 contextBridge.exposeInMainWorld('ethos', api);
