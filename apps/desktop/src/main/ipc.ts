@@ -684,19 +684,13 @@ export function registerIpcHandlers(): void {
     return { telegram: false, slack: false, discord: false };
   });
 
-  ipcMain.handle(
-    IPC_CHANNELS['platform:testTelegram'],
-    async (_event, req: { token: string }) => {
-      return testTelegram(req.token);
-    },
-  );
+  ipcMain.handle(IPC_CHANNELS['platform:testTelegram'], async (_event, req: { token: string }) => {
+    return testTelegram(req.token);
+  });
 
-  ipcMain.handle(
-    IPC_CHANNELS['platform:testDiscord'],
-    async (_event, req: { token: string }) => {
-      return testDiscord(req.token);
-    },
-  );
+  ipcMain.handle(IPC_CHANNELS['platform:testDiscord'], async (_event, req: { token: string }) => {
+    return testDiscord(req.token);
+  });
 
   ipcMain.handle(IPC_CHANNELS['platform:testImap'], async (_event, req) => {
     return testImap(req);
