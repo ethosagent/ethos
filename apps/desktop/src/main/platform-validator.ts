@@ -16,7 +16,7 @@ export async function testTelegram(token: string): Promise<TestResult> {
       return { ok: false, error: `HTTP ${res.status}: ${text}` };
     }
     const data = (await res.json()) as { result: { username: string } };
-    return { ok: true, username: `@${data.result.username}` };
+    return { ok: true, username: data.result.username };
   } catch (err) {
     return {
       ok: false,
@@ -62,7 +62,7 @@ export async function testImap(config: {
   if (!config.host || !config.user || !config.port) {
     return { ok: false, error: 'host, port, and user are required' };
   }
-  return { ok: true };
+  return { ok: false, error: 'IMAP testing not yet available — install imapflow to enable' };
 }
 
 // TODO: wire nodemailer/smtp once dependency is installed
@@ -76,5 +76,5 @@ export async function testSmtp(config: {
   if (!config.host || !config.user || !config.port) {
     return { ok: false, error: 'host, port, and user are required' };
   }
-  return { ok: true };
+  return { ok: false, error: 'SMTP testing not yet available — install nodemailer to enable' };
 }
