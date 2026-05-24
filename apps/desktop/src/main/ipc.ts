@@ -689,6 +689,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS['login-item:set'], async (_event, req: { enabled: boolean }) => {
     try {
       await setLoginItem(req.enabled);
+      store.set('launchAtLogin', req.enabled);
       return { ok: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

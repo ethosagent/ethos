@@ -55,21 +55,24 @@ function desktopFilePath(): string {
   return join(configDir, 'autostart', 'ethos.desktop');
 }
 
-const DESKTOP_ENTRY = `[Desktop Entry]
+function desktopEntryContent(): string {
+  const escaped = process.execPath.replace(/"/g, '\\"');
+  return `[Desktop Entry]
 Type=Application
 Name=Ethos
-Exec=${process.execPath} --hidden
+Exec="${escaped}" --hidden
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
 `;
+}
 
 async function setLoginItemLinux(enabled: boolean): Promise<void> {
   const filePath = desktopFilePath();
 
   if (enabled) {
     await fs.mkdir(join(filePath, '..'), { recursive: true });
-    await fs.writeFile(filePath, DESKTOP_ENTRY, 'utf-8');
+    await fs.writeFile(filePath, desktopEntryContent(), 'utf-8');
   } else {
     try {
       await fs.unlink(filePath);
