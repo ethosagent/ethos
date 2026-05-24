@@ -119,17 +119,24 @@ export interface IpcContract {
     request: RetentionValues;
     response: { ok: boolean; freedBytes?: number; error?: string };
   };
+  'shell:openExternal': { request: { url: string }; response: { ok: boolean } };
+  'dialog:showOpenDialog': {
+    request: { properties: string[] };
+    response: { canceled: boolean; filePaths: string[] };
+  };
 }
 
 /** Main-to-renderer push events (via webContents.send, NOT ipcMain.handle) */
 export interface RendererEvents {
   'chat:new': undefined;
   'navigate:session': { sessionId: string };
+  'oauth:callback': { code: string; state: string };
 }
 
 export const RENDERER_EVENTS = {
   'chat:new': 'chat:new',
   'navigate:session': 'navigate:session',
+  'oauth:callback': 'oauth:callback',
 } as const;
 
 export type IpcChannel = keyof IpcContract;
@@ -154,4 +161,6 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'shell:openConfigFolder': 'shell:openConfigFolder',
   'export:data': 'export:data',
   'retention:prune': 'retention:prune',
+  'shell:openExternal': 'shell:openExternal',
+  'dialog:showOpenDialog': 'dialog:showOpenDialog',
 };

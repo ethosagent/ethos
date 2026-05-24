@@ -68,6 +68,17 @@ declare global {
         set: (req: { key: string; value: string }) => Promise<{ ok: boolean }>;
         preview: (req: { key: string }) => Promise<{ preview: string | null }>;
       };
+      shell: {
+        openExternal: (req: { url: string }) => Promise<{ ok: boolean }>;
+      };
+      dialog: {
+        showOpenDialog: (req: {
+          properties: string[];
+        }) => Promise<{ canceled: boolean; filePaths: string[] }>;
+      };
+      oauth: {
+        onCallback: (cb: (data: { code: string; state: string }) => void) => () => void;
+      };
     };
   }
 }

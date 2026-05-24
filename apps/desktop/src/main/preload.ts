@@ -59,6 +59,23 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS['keychain:set'], req),
     preview: (req: { key: string }) => ipcRenderer.invoke(IPC_CHANNELS['keychain:preview'], req),
   },
+  shell: {
+    openExternal: (req: { url: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS['shell:openExternal'], req),
+  },
+  dialog: {
+    showOpenDialog: (req: { properties: string[] }) =>
+      ipcRenderer.invoke(IPC_CHANNELS['dialog:showOpenDialog'], req),
+  },
+  oauth: {
+    onCallback: (cb: (data: { code: string; state: string }) => void) => {
+      const listener = (_e: unknown, data: { code: string; state: string }) => cb(data);
+      ipcRenderer.on('oauth:callback', listener);
+      return () => {
+        ipcRenderer.removeListener('oauth:callback', listener);
+      };
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld('ethos', api);

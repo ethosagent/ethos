@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChatPage } from '../chat/ChatPage';
 import { ErrorBoundary } from '../ErrorBoundary';
+import { McpPage } from '../mcp/McpPage';
 import { SettingsPage } from '../settings/SettingsPage';
 import { useAppState } from '../state/AppContext';
 import { AppSidebar } from './AppSidebar';
@@ -12,6 +13,7 @@ type ShellRoute =
   | 'cron'
   | 'platforms'
   | 'skills'
+  | 'mcp'
   | 'settings'
   | 'batch-eval'
   | 'kanban'
@@ -99,6 +101,10 @@ export function AppShell() {
         ) : route === 'chat' ? (
           <ErrorBoundary label="ChatPage">
             <ChatPage />
+          </ErrorBoundary>
+        ) : route === 'mcp' ? (
+          <ErrorBoundary label="McpPage">
+            <McpPage />
           </ErrorBoundary>
         ) : (
           <div

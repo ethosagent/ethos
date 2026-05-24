@@ -609,4 +609,26 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS['retention:prune'], (_event, _req: RetentionValues) => {
     return { ok: true, freedBytes: 0 };
   });
+
+  ipcMain.handle(IPC_CHANNELS['shell:openExternal'], async (_event, req: { url: string }) => {
+    if (!req.url.startsWith('https://')) {
+      return { ok: false };
+    }
+    await shell.openExternal(req.url);
+    return { ok: true };
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS['dialog:showOpenDialog'],
+    async (_event, req: { properties: string[] }) => {
+      const win = BrowserWindow.getFocusedWindow();
+      if (!win) return { canceled: true, filePaths: [] };
+      const allowed = new Set(['openFile', 'openDirectory', 'multiSelections']);
+      const validated = req.properties.filter((p) => allowed.has(p));
+      const result = await dialog.showOpenDialog(win, {
+        properties: validated as Array<'openFile' | 'openDirectory' | 'multiSelections'>,
+      });
+      return { canceled: result.canceled, filePaths: result.filePaths };
+    },
+  );
 }
