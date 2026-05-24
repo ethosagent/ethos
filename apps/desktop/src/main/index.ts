@@ -1,3 +1,4 @@
+import type { EventEmitter } from 'node:events';
 import { join } from 'node:path';
 import { app, BrowserWindow, nativeTheme, type Tray } from 'electron';
 import { initAutoUpdater } from './auto-update';
@@ -87,7 +88,7 @@ app.whenReady().then(() => {
     activateDesktop();
   }
 
-  app.on('ethos:onboarding-complete' as string, () => {
+  (app as unknown as EventEmitter).on('ethos:onboarding-complete', () => {
     activateDesktop();
   });
 

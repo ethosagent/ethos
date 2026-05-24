@@ -1,3 +1,4 @@
+import type { EventEmitter } from 'node:events';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, ipcMain } from 'electron';
@@ -300,7 +301,7 @@ export function registerIpcHandlers(): void {
       store.set('personalityId', req.personalityId);
       store.set('onboardingComplete', true);
 
-      app.emit('ethos:onboarding-complete');
+      (app as unknown as EventEmitter).emit('ethos:onboarding-complete');
       return { success: true };
     },
   );
