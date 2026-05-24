@@ -59,6 +59,12 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS['keychain:set'], req),
     preview: (req: { key: string }) => ipcRenderer.invoke(IPC_CHANNELS['keychain:preview'], req),
   },
+  dialog: {
+    showOpen: (req: { properties: string[] }) =>
+      ipcRenderer.invoke(IPC_CHANNELS['dialog:showOpen'], req),
+    showMessage: (req: { type?: string; title?: string; message: string; buttons?: string[] }) =>
+      ipcRenderer.invoke(IPC_CHANNELS['dialog:showMessage'], req),
+  },
 };
 
 contextBridge.exposeInMainWorld('ethos', api);

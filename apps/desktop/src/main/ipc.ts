@@ -609,4 +609,38 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS['retention:prune'], (_event, _req: RetentionValues) => {
     return { ok: true, freedBytes: 0 };
   });
+
+  ipcMain.handle(
+    IPC_CHANNELS['dialog:showOpen'],
+    async (_event: unknown, req: { properties: string[] }) => {
+      const allowed = new Set(['openDirectory', 'openFile', 'multiSelections']);
+      const properties = req.properties.filter((p) => allowed.has(p)) as Array<
+        'openDirectory' | 'openFile' | 'multiSelections'
+      >;
+      const result = await dialog.showOpenDialog({ properties });
+      return { canceled: result.canceled, filePaths: result.filePaths };
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS['dialog:showMessage'],
+    async (
+      _event: unknown,
+      req: { type?: string; title?: string; message: string; buttons?: string[] },
+    ) => {
+      const allowedTypes = new Set(['none', 'info', 'error', 'question', 'warning']);
+      const type =
+        req.type && allowedTypes.has(req.type)
+          ? (req.type as 'none' | 'info' | 'error' | 'question' | 'warning')
+          : undefined;
+      const buttons = req.buttons ? req.buttons.slice(0, 4) : undefined;
+      const result = await dialog.showMessageBox({
+        type,
+        title: req.title,
+        message: req.message,
+        buttons,
+      });
+      return { response: result.response };
+    },
+  );
 }

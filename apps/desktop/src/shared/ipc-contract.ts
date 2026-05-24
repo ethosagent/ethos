@@ -119,6 +119,14 @@ export interface IpcContract {
     request: RetentionValues;
     response: { ok: boolean; freedBytes?: number; error?: string };
   };
+  'dialog:showOpen': {
+    request: { properties: string[] };
+    response: { canceled: boolean; filePaths: string[] };
+  };
+  'dialog:showMessage': {
+    request: { type?: string; title?: string; message: string; buttons?: string[] };
+    response: { response: number };
+  };
 }
 
 /** Main-to-renderer push events (via webContents.send, NOT ipcMain.handle) */
@@ -154,4 +162,6 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'shell:openConfigFolder': 'shell:openConfigFolder',
   'export:data': 'export:data',
   'retention:prune': 'retention:prune',
+  'dialog:showOpen': 'dialog:showOpen',
+  'dialog:showMessage': 'dialog:showMessage',
 };

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChatPage } from '../chat/ChatPage';
 import { ErrorBoundary } from '../ErrorBoundary';
+import { PersonalitiesPage } from '../personalities/PersonalitiesPage';
 import { SettingsPage } from '../settings/SettingsPage';
 import { useAppState } from '../state/AppContext';
 import { AppSidebar } from './AppSidebar';
@@ -99,6 +100,10 @@ export function AppShell() {
         ) : route === 'chat' ? (
           <ErrorBoundary label="ChatPage">
             <ChatPage />
+          </ErrorBoundary>
+        ) : route === 'personalities' ? (
+          <ErrorBoundary label="PersonalitiesPage">
+            <PersonalitiesPage />
           </ErrorBoundary>
         ) : (
           <div
