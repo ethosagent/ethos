@@ -39,7 +39,7 @@ export function formatAsMarkdown(
     }
   }
 
-  return lines.join('\n').trimEnd() + '\n';
+  return `${lines.join('\n').trimEnd()}\n`;
 }
 
 export function slugify(text: string): string {

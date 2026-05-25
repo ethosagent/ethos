@@ -1,4 +1,6 @@
+import type { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { describe, expect, it, vi } from 'vitest';
+import type { ConfigRepository } from '../../repositories/config.repository';
 import { OnboardingService } from '../onboarding.service';
 
 function mockFetch(responses: Array<{ status: number; body: unknown }>) {
@@ -17,8 +19,8 @@ function mockFetch(responses: Array<{ status: number; body: unknown }>) {
 
 function makeService(fetchFn: typeof fetch) {
   return new OnboardingService({
-    config: { read: async () => null, update: async () => {} } as any,
-    personalities: { get: () => null } as any,
+    config: { read: async () => null, update: async () => {} } as unknown as ConfigRepository,
+    personalities: { get: () => null } as unknown as FilePersonalityRegistry,
     fetchFn,
   });
 }
@@ -29,7 +31,7 @@ describe('validateProvider completion test', () => {
       { status: 200, body: { data: [{ id: 'claude-sonnet-4-20250514' }] } },
       { status: 200, body: { content: [{ text: 'h' }] } },
     ]);
-    const svc = makeService(fetchFn as any);
+    const svc = makeService(fetchFn as unknown as typeof fetch);
     const result = await svc.validateProvider({
       provider: 'anthropic',
       apiKey: 'sk-test',
@@ -44,7 +46,7 @@ describe('validateProvider completion test', () => {
       { status: 200, body: { data: [{ id: 'gpt-4' }] } },
       { status: 402, body: { error: { message: 'insufficient_quota' } } },
     ]);
-    const svc = makeService(fetchFn as any);
+    const svc = makeService(fetchFn as unknown as typeof fetch);
     const result = await svc.validateProvider({
       provider: 'openai',
       apiKey: 'sk-test',
@@ -56,10 +58,8 @@ describe('validateProvider completion test', () => {
   });
 
   it('skips completion test for ollama', async () => {
-    const fetchFn = mockFetch([
-      { status: 200, body: { models: [{ name: 'llama3' }] } },
-    ]);
-    const svc = makeService(fetchFn as any);
+    const fetchFn = mockFetch([{ status: 200, body: { models: [{ name: 'llama3' }] } }]);
+    const svc = makeService(fetchFn as unknown as typeof fetch);
     const result = await svc.validateProvider({
       provider: 'ollama',
       apiKey: '',
@@ -75,7 +75,7 @@ describe('validateProvider completion test', () => {
       { status: 200, body: { data: [{ id: 'claude-opus-4-7' }] } },
       { status: 403, body: { error: { message: 'access_denied' } } },
     ]);
-    const svc = makeService(fetchFn as any);
+    const svc = makeService(fetchFn as unknown as typeof fetch);
     const result = await svc.validateProvider({
       provider: 'anthropic',
       apiKey: 'sk-test',
@@ -100,7 +100,7 @@ describe('validateProvider completion test', () => {
       },
       { status: 200, body: { choices: [{ message: { content: 'h' } }] } },
     ]);
-    const svc = makeService(fetchFn as any);
+    const svc = makeService(fetchFn as unknown as typeof fetch);
     const result = await svc.validateProvider({
       provider: 'openai',
       apiKey: 'sk-test',
@@ -117,7 +117,7 @@ describe('validateProvider completion test', () => {
       { status: 200, body: { data: [{ id: 'gpt-4' }] } },
       { status: 402, body: { error: { message: 'insufficient_quota' } } },
     ]);
-    const svc = makeService(fetchFn as any);
+    const svc = makeService(fetchFn as unknown as typeof fetch);
     const result = await svc.validateProvider({
       provider: 'openai',
       apiKey: 'sk-test',

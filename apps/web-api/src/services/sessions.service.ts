@@ -67,10 +67,7 @@ export class SessionsService {
     await this.opts.sessions.delete(id);
   }
 
-  async export(
-    id: string,
-    _format: 'markdown',
-  ): Promise<{ content: string; filename: string }> {
+  async export(id: string, _format: 'markdown'): Promise<{ content: string; filename: string }> {
     const session = await this.opts.sessions.get(id);
     if (!session) throw notFound(id);
     const messages = await this.opts.sessions.messages(id);

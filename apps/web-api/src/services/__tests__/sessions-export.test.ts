@@ -124,8 +124,6 @@ describe('exportFilename', () => {
   });
 
   it('uses untitled when no title', () => {
-    expect(exportFilename(null, '2025-05-23T10:00:00.000Z')).toBe(
-      'ethos-untitled-2025-05-23.md',
-    );
+    expect(exportFilename(null, '2025-05-23T10:00:00.000Z')).toBe('ethos-untitled-2025-05-23.md');
   });
 });
