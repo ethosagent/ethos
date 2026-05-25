@@ -41,6 +41,9 @@ export interface UseChatResult {
    *  before the user types anything. */
   currentSessionId: string | null;
   sendMessage: (text: string) => Promise<void>;
+  /** Steer the running turn. Returns true if accepted, false if the turn
+   *  already ended or the RPC failed. */
+  steerMessage: (text: string) => Promise<boolean>;
   /**
    * Switch the in-flight session to a new id (e.g. after a fork). Wipes
    * local state synchronously so old messages don't linger while the
@@ -174,6 +177,19 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     [currentSessionId, personalityId, onSessionCreated],
   );
 
+  const steerMessage = useCallback(
+    async (text: string): Promise<boolean> => {
+      if (!currentSessionId) return false;
+      try {
+        const res = await rpc.chat.steer({ sessionId: currentSessionId, text });
+        return res.ok;
+      } catch {
+        return false;
+      }
+    },
+    [currentSessionId],
+  );
+
   const switchSession = useCallback((sessionId: string) => {
     dispatch({ kind: 'action', action: { type: 'reset' } });
     setCurrentSessionId(sessionId);
@@ -185,5 +201,5 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     historyLoadedFor.current = null;
   }, []);
 
-  return { state, currentSessionId, sendMessage, switchSession, resetSession };
+  return { state, currentSessionId, sendMessage, steerMessage, switchSession, resetSession };
 }

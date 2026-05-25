@@ -1,4 +1,5 @@
 import { createEthosClient } from '@ethosagent/sdk';
+import { TurnStatusBar } from '@ethosagent/ui-components';
 import type { SseEvent, StoredMessage } from '@ethosagent/web-contracts';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppState } from '../state/AppContext';
@@ -32,6 +33,9 @@ export function ChatPage() {
   const [pendingClarify, setPendingClarify] = useState<ClarifyState | null>(null);
   const [usage, setUsage] = useState<UsageState | null>(null);
   const [streaming, setStreaming] = useState(false);
+  const [turnStartedAt, setTurnStartedAt] = useState<number | null>(null);
+  const [currentOp, setCurrentOp] = useState<string | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
 
@@ -75,6 +79,14 @@ export function ChatPage() {
     lastStreamEventAtRef.current !== null &&
     Date.now() - lastStreamEventAtRef.current > 30_000;
 
+  useEffect(() => {
+    if (!turnStartedAt) return;
+    const id = setInterval(() => {
+      setElapsedMs(Date.now() - turnStartedAt);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [turnStartedAt]);
+
   // SSE event handler
   const handleSSEEvent = useCallback(
     (event: SseEvent) => {
@@ -100,6 +112,7 @@ export function ChatPage() {
             });
             return next;
           });
+          setCurrentOp(`⚙ ${event.toolName}`);
           break;
 
         case 'tool_progress':
@@ -133,6 +146,7 @@ export function ChatPage() {
             }
             return next;
           });
+          setCurrentOp('\u{1F4AD} Thinking…');
           break;
 
         case 'usage':
@@ -164,6 +178,9 @@ export function ChatPage() {
           setToolCalls(new Map());
           setStreaming(false);
           setError(null);
+          setTurnStartedAt(null);
+          setCurrentOp(null);
+          setElapsedMs(0);
           break;
         }
 
@@ -171,6 +188,9 @@ export function ChatPage() {
           lastStreamEventAtRef.current = null;
           setError(event.error);
           setStreaming(false);
+          setTurnStartedAt(null);
+          setCurrentOp(null);
+          setElapsedMs(0);
           break;
 
         case 'tool.approval_required':
@@ -197,6 +217,12 @@ export function ChatPage() {
 
         case 'clarify.resolved':
           setPendingClarify(null);
+          break;
+
+        case 'run_start':
+          setTurnStartedAt(Date.now());
+          setCurrentOp('\u{1F4AD} Thinking…');
+          setElapsedMs(0);
           break;
 
         default:
@@ -255,10 +281,26 @@ export function ChatPage() {
     };
   }, [activeSessionId, client, setActivePersonalityId]);
 
-  // Send message
+  // Send message (or steer if streaming)
   const handleSend = useCallback(
     async (text: string) => {
-      // Add optimistic user message
+      if (streaming) {
+        // Steer: redirect the running turn
+        try {
+          const res = await client.rpc.chat.steer({
+            sessionId: activeSessionId ?? '',
+            text,
+          });
+          if (res.ok) {
+            return; // steer accepted
+          }
+          // Turn ended between submit and RPC — fall through to normal send
+        } catch {
+          // Fall through to normal send
+        }
+      }
+
+      // Normal send path
       const userMsg: StoredMessage = {
         id: `user-${Date.now()}`,
         sessionId: activeSessionId ?? '',
@@ -271,7 +313,6 @@ export function ChatPage() {
       };
       setMessages((prev) => [...prev, userMsg]);
 
-      // Clear previous stream state
       setStreamingText('');
       setStreamingThinking('');
       setToolCalls(new Map());
@@ -288,7 +329,6 @@ export function ChatPage() {
           userId: desktopUserId ?? undefined,
         });
 
-        // If this was a new session, set the active session and refresh list
         if (!activeSessionId) {
           setActiveSessionId(res.sessionId);
           sessionList.refresh();
@@ -301,7 +341,15 @@ export function ChatPage() {
         setStreaming(false);
       }
     },
-    [activeSessionId, activePersonalityId, client, setActiveSessionId, sessionList, desktopUserId],
+    [
+      activeSessionId,
+      activePersonalityId,
+      client,
+      setActiveSessionId,
+      sessionList,
+      desktopUserId,
+      streaming,
+    ],
   );
 
   // Abort
@@ -383,6 +431,9 @@ export function ChatPage() {
     setSessionTitle(null);
     setPendingApproval(null);
     setPendingClarify(null);
+    setTurnStartedAt(null);
+    setCurrentOp(null);
+    setElapsedMs(0);
   }, [setActiveSessionId]);
 
   // Select session
@@ -398,6 +449,9 @@ export function ChatPage() {
       setStreaming(false);
       setPendingApproval(null);
       setPendingClarify(null);
+      setTurnStartedAt(null);
+      setCurrentOp(null);
+      setElapsedMs(0);
     },
     [activeSessionId, setActiveSessionId],
   );
@@ -578,6 +632,8 @@ export function ChatPage() {
           error={error}
         />
 
+        <TurnStatusBar isStreaming={streaming} currentOp={currentOp} elapsedMs={elapsedMs} />
+
         {isStalled ? (
           <div className="chat-stall-notice">Still working — this is taking longer than usual…</div>
         ) : null}
@@ -587,6 +643,7 @@ export function ChatPage() {
           onAbort={handleAbort}
           streaming={streaming}
           personalityName={activePersonalityId ?? undefined}
+          steerMode={streaming}
         />
       </div>
     </div>

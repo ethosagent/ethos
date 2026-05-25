@@ -156,6 +156,13 @@ export const DryRunSummaryEventSchema = z.object({
   capped: z.number().int().nonnegative(),
 });
 
+export const RunStartEventSchema = z.object({
+  type: z.literal('run_start'),
+  provider: z.string(),
+  model: z.string(),
+  source: z.enum(['team-coordinator', 'team-personality', 'personality', 'global']),
+});
+
 export const ProtocolUpgradeRequiredEventSchema = z.object({
   type: z.literal('protocol.upgrade_required'),
   serverVersion: z.string(),
@@ -185,6 +192,7 @@ export const SseEventSchema = z.discriminatedUnion('type', [
   MeshChangedEventSchema,
   EvolveSkillPendingEventSchema,
   DryRunSummaryEventSchema,
+  RunStartEventSchema,
   ProtocolUpgradeRequiredEventSchema,
 ]);
 export type SseEvent = z.infer<typeof SseEventSchema>;

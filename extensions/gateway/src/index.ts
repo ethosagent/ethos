@@ -1,3 +1,4 @@
+import { InMemorySteerSink } from '@ethosagent/agent-bridge';
 import type { AgentLoop } from '@ethosagent/core';
 import { stripAnsiEscapes } from '@ethosagent/core';
 import type { ChannelFilterConfig } from '@ethosagent/safety-channel';
@@ -14,6 +15,7 @@ import type {
   ClarifyResponse,
   InboundMessage,
   PlatformAdapter,
+  SteerSink,
 } from '@ethosagent/types';
 import type Database from 'better-sqlite3';
 import { MessageDedupCache } from './dedup';
@@ -348,6 +350,18 @@ export class Gateway {
   private readonly outboundDedup: MessageDedupCache;
   /** Active turns by laneKey — used by graceful shutdown to notify users. */
   private readonly activeTurns = new Map<string, { adapter: PlatformAdapter; chatId: string }>();
+  /** Active steer sinks by laneKey — inbound messages during a turn push here. */
+  private readonly activeSinks = new Map<string, SteerSink>();
+  /** Live status message per lane — edited in place during tool execution. */
+  private readonly activeStatusMessages = new Map<
+    string,
+    {
+      messageId: string;
+      adapter: PlatformAdapter;
+      chatId: string;
+      threadId?: string;
+    }
+  >();
   /**
    * Routing for an in-flight turn, keyed by `sessionKey`. Populated when the
    * turn is enqueued (where `adapter`, `chatId`, and `threadId` are all in
@@ -950,6 +964,14 @@ export class Gateway {
       return;
     }
 
+    // --- Auto-steer: if a turn is already running, push into its steer sink ---
+    const activeSink = this.activeSinks.get(laneKey);
+    if (activeSink) {
+      activeSink.push(text);
+      await adapter.send(message.chatId, { text: '↩ noted', threadId }).catch(() => {});
+      return;
+    }
+
     // --- Agent turn ---
 
     await lane.enqueue(async (signal) => {
@@ -965,6 +987,10 @@ export class Gateway {
 
       // Track this turn so graceful shutdown can notify the user (P1-1).
       this.activeTurns.set(laneKey, { adapter, chatId: message.chatId });
+
+      const steerSink = new InMemorySteerSink();
+      this.activeSinks.set(laneKey, steerSink);
+
       // Record routing keyed by `sessionKey` so the `session_start` hook
       // (which runs inside `loop.run()` below and is the only place the
       // `sessionId` is known) can complete the `sessionId → routing` bridge.
@@ -1032,11 +1058,50 @@ export class Gateway {
           abortSignal: signal,
           attachments: message.attachments,
           userId,
+          steerSink,
         })) {
+          if (event.type === 'run_start' && this.showToolCalls && adapter.canEditMessage) {
+            const existing = this.activeStatusMessages.get(laneKey);
+            if (existing) {
+              await existing.adapter
+                .editMessage?.(existing.chatId, existing.messageId, '💭 Thinking…')
+                .catch(() => {});
+            } else {
+              const sent = await adapter
+                .send(message.chatId, { text: '💭 Thinking…', threadId })
+                .catch(() => null);
+              if (sent?.messageId) {
+                this.activeStatusMessages.set(laneKey, {
+                  messageId: sent.messageId,
+                  adapter,
+                  chatId: message.chatId,
+                  threadId,
+                });
+              }
+            }
+          }
+
           if (event.type === 'tool_start' && this.showToolCalls) {
-            await adapter
-              .send(message.chatId, { text: `⚙ ${event.toolName}`, threadId })
-              .catch(() => {});
+            const status = this.activeStatusMessages.get(laneKey);
+            if (status) {
+              await status.adapter
+                .editMessage?.(status.chatId, status.messageId, `⚙ ${event.toolName}…`)
+                .catch(() => {});
+            } else {
+              await adapter
+                .send(message.chatId, { text: `⚙ ${event.toolName}`, threadId })
+                .catch(() => {});
+            }
+          }
+
+          if (event.type === 'tool_end' && this.showToolCalls) {
+            const status = this.activeStatusMessages.get(laneKey);
+            if (status) {
+              const dur = `${(event.durationMs / 1000).toFixed(1)}s`;
+              await status.adapter
+                .editMessage?.(status.chatId, status.messageId, `⚙ ${event.toolName} ✓ · ${dur}`)
+                .catch(() => {});
+            }
           }
           if (event.type === 'text_delta') responseText += event.text;
           if (event.type === 'usage') {
@@ -1060,6 +1125,12 @@ export class Gateway {
         if (signal.aborted) {
           // /stop or shutdown — caller already notified the user.
         } else if (errored) {
+          const errStatus = this.activeStatusMessages.get(laneKey);
+          if (errStatus) {
+            await errStatus.adapter
+              .editMessage?.(errStatus.chatId, errStatus.messageId, '⚠ Stopped')
+              .catch(() => {});
+          }
           // Surface error explicitly so users don't mistake a partial answer
           // for a complete one. Aborts (code === 'aborted') are silent above.
           const note =
@@ -1092,6 +1163,14 @@ export class Gateway {
       } finally {
         clearInterval(typingTimer);
         this.activeTurns.delete(laneKey);
+        this.activeSinks.delete(laneKey);
+
+        const status = this.activeStatusMessages.get(laneKey);
+        if (status) {
+          await status.adapter.editMessage?.(status.chatId, status.messageId, '').catch(() => {});
+          this.activeStatusMessages.delete(laneKey);
+        }
+
         // Tear down the approval-routing bridge for this turn. An approval
         // fires *during* the turn (the hook awaits, the turn is paused), so
         // the maps are guaranteed populated for the whole pending window.
@@ -1141,6 +1220,8 @@ export class Gateway {
     this.lanes.clear();
     this.sessionKeys.clear();
     this.activeTurns.clear();
+    this.activeStatusMessages.clear();
+    this.activeSinks.clear();
     this.sessionRouting.clear();
     this.approvalRoutes.clear();
     this.sessionIdByKey.clear();

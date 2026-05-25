@@ -83,6 +83,10 @@ export interface ChatState {
   /** Wall-clock ms of the most recent streaming event (text_delta, tool_start, tool_end).
    *  Null when not streaming. Used to detect stall in the UI. */
   lastStreamEventAt: number | null;
+  /** Current operation label for the turn status bar. */
+  currentOp: string | null;
+  /** Wall-clock timestamp when the current turn started. Null when idle. */
+  turnStartedAt: number | null;
 }
 
 export const initialChatState: ChatState = {
@@ -93,6 +97,8 @@ export const initialChatState: ChatState = {
   isStreaming: false,
   error: null,
   lastStreamEventAt: null,
+  currentOp: null,
+  turnStartedAt: null,
 };
 
 /**
@@ -168,6 +174,7 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
         isStreaming: true,
         error: null,
         lastStreamEventAt: now,
+        currentOp: `⚙ ${event.toolName}`,
       };
     }
 
@@ -182,7 +189,9 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
         durationMs: event.durationMs,
         ...(event.result !== undefined ? { result: event.result } : {}),
       }));
-      return updated ? { ...updated, lastStreamEventAt: now } : state;
+      return updated
+        ? { ...updated, lastStreamEventAt: now, currentOp: '\u{1F4AD} Thinking…' }
+        : state;
     }
 
     case 'done': {
@@ -191,14 +200,28 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
       // already in history), don't append anything — the dedupe defense
       // below guards against double-rendering on page refresh.
       if (!state.currentTurn || state.currentTurn.blocks.length === 0) {
-        return { ...state, currentTurn: null, isStreaming: false, lastStreamEventAt: null };
+        return {
+          ...state,
+          currentTurn: null,
+          isStreaming: false,
+          lastStreamEventAt: null,
+          currentOp: null,
+          turnStartedAt: null,
+        };
       }
 
       // Replay defense: if the most recent message in history matches
       // this turn's text content + tool ids, drop the live copy.
       const last = state.messages[state.messages.length - 1];
       if (last?.role === 'assistant' && turnsMatch(last, state.currentTurn)) {
-        return { ...state, currentTurn: null, isStreaming: false, lastStreamEventAt: null };
+        return {
+          ...state,
+          currentTurn: null,
+          isStreaming: false,
+          lastStreamEventAt: null,
+          currentOp: null,
+          turnStartedAt: null,
+        };
       }
 
       return {
@@ -207,6 +230,8 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
         currentTurn: null,
         isStreaming: false,
         lastStreamEventAt: null,
+        currentOp: null,
+        turnStartedAt: null,
       };
     }
 
@@ -218,6 +243,8 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
         isStreaming: false,
         error: event.error,
         lastStreamEventAt: null,
+        currentOp: null,
+        turnStartedAt: null,
       };
     }
 
@@ -292,6 +319,9 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
       };
     }
 
+    case 'run_start':
+      return { ...state, turnStartedAt: now, currentOp: '\u{1F4AD} Thinking…' };
+
     case 'thinking_delta':
     case 'tool_progress':
     case 'usage':
@@ -322,6 +352,8 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
         isStreaming: false,
         error: null,
         lastStreamEventAt: null,
+        currentOp: null,
+        turnStartedAt: null,
       };
     }
 

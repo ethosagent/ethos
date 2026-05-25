@@ -6,9 +6,16 @@ interface ComposerProps {
   onAbort: () => void;
   streaming: boolean;
   personalityName?: string;
+  steerMode?: boolean;
 }
 
-export function Composer({ onSend, onAbort, streaming, personalityName }: ComposerProps) {
+export function Composer({
+  onSend,
+  onAbort,
+  streaming,
+  personalityName,
+  steerMode,
+}: ComposerProps) {
   const [text, setText] = useState('');
   const [showSlash, setShowSlash] = useState(false);
   const [slashFilter, setSlashFilter] = useState('');
@@ -32,10 +39,10 @@ export function Composer({ onSend, onAbort, streaming, personalityName }: Compos
 
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
-    if (!trimmed || streaming) return;
+    if (!trimmed || (!steerMode && streaming)) return;
     onSend(trimmed);
     setText('');
-  }, [text, streaming, onSend]);
+  }, [text, streaming, steerMode, onSend]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -78,7 +85,11 @@ export function Composer({ onSend, onAbort, streaming, personalityName }: Compos
     setSlashFilter('');
   }, []);
 
-  const placeholder = personalityName ? `Message ${personalityName}...` : 'Message...';
+  const placeholder = steerMode
+    ? 'Steer the agent...'
+    : personalityName
+      ? `Message ${personalityName}...`
+      : 'Message...';
 
   return (
     <div
@@ -139,29 +150,53 @@ export function Composer({ onSend, onAbort, streaming, personalityName }: Compos
         </span>
 
         {streaming ? (
-          <button
-            type="button"
-            onClick={onAbort}
-            style={{
-              height: 28,
-              minWidth: 60,
-              borderRadius: 'var(--radius-sm)',
-              background: 'var(--accent)',
-              color: 'var(--bg-base)',
-              border: 'none',
-              fontFamily: 'var(--font-display)',
-              fontSize: 13,
-              fontWeight: 500,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 4,
-            }}
-          >
-            <span style={{ fontSize: 10 }}>■</span>
-            Stop
-          </button>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {steerMode && (
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={!text.trim()}
+                style={{
+                  height: 28,
+                  minWidth: 60,
+                  borderRadius: 'var(--radius-sm)',
+                  background: text.trim() ? 'var(--accent)' : 'var(--bg-overlay)',
+                  color: text.trim() ? 'var(--bg-base)' : 'var(--text-tertiary)',
+                  border: 'none',
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  cursor: text.trim() ? 'pointer' : 'default',
+                  opacity: text.trim() ? 1 : 0.5,
+                }}
+              >
+                Steer
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onAbort}
+              style={{
+                height: 28,
+                minWidth: 60,
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--accent)',
+                color: 'var(--bg-base)',
+                border: 'none',
+                fontFamily: 'var(--font-display)',
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 4,
+              }}
+            >
+              <span style={{ fontSize: 10 }}>■</span>
+              Stop
+            </button>
+          </div>
         ) : (
           <button
             type="button"
