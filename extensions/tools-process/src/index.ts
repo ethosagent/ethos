@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { BoundaryError, type Tool, type ToolResult } from '@ethosagent/types';
-import { buildLogFiles, compilePatterns, watchLogs } from './watcher';
 import {
   DEFAULT_LOG_LINES,
   listProcesses,
@@ -20,6 +19,7 @@ import {
   withRegistryLock,
 } from './registry';
 import { spawnDetached } from './spawn';
+import { buildLogFiles, compilePatterns, watchLogs } from './watcher';
 
 // Default per-personality concurrency cap. The plan calls the cap
 // "configurable" and floats a per-personality config field — but
