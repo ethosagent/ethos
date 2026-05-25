@@ -5,8 +5,12 @@ const api = {
   platform: process.platform,
   onboarding: {
     state: () => ipcRenderer.invoke(IPC_CHANNELS['onboarding:state']),
-    validateProvider: (req: { provider: string; apiKey: string; baseUrl?: string; model?: string }) =>
-      ipcRenderer.invoke(IPC_CHANNELS['onboarding:validateProvider'], req),
+    validateProvider: (req: {
+      provider: string;
+      apiKey: string;
+      baseUrl?: string;
+      model?: string;
+    }) => ipcRenderer.invoke(IPC_CHANNELS['onboarding:validateProvider'], req),
     complete: (req: { provider: string; model: string; apiKey: string; personalityId: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS['onboarding:complete'], req),
   },

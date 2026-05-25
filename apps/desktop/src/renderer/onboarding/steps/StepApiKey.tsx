@@ -17,11 +17,12 @@ function inputField(
   label: string,
   value: string,
   onChange: (v: string) => void,
-  opts: { type?: string; placeholder?: string; monospace?: boolean } = {},
+  opts: { type?: string; placeholder?: string; monospace?: boolean; id?: string } = {},
 ) {
   return (
     <div style={{ marginBottom: 12 }}>
       <label
+        htmlFor={opts.id}
         style={{
           display: 'block',
           fontSize: 11,
@@ -35,6 +36,7 @@ function inputField(
         {label}
       </label>
       <input
+        id={opts.id}
         type={opts.type || 'text'}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -157,6 +159,7 @@ export function StepApiKey({
   const apiKeyField = (
     <div style={{ marginBottom: 12 }}>
       <label
+        htmlFor="api-key-input"
         style={{
           display: 'block',
           fontSize: 11,
@@ -172,6 +175,7 @@ export function StepApiKey({
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <div style={{ position: 'relative', flex: 1 }}>
           <input
+            id="api-key-input"
             type={showKey ? 'text' : 'password'}
             value={apiKey}
             onChange={(e) => handleApiKeyChange(e.target.value)}
@@ -282,6 +286,7 @@ export function StepApiKey({
         {validated && (
           <div style={{ marginBottom: 12 }}>
             <label
+              htmlFor="model-select"
               style={{
                 display: 'block',
                 fontSize: 11,
@@ -295,6 +300,7 @@ export function StepApiKey({
               Model
             </label>
             <select
+              id="model-select"
               value={selectedModel}
               onChange={(e) => onModelChange(e.target.value)}
               style={{
@@ -336,6 +342,7 @@ export function StepApiKey({
         {validated && (
           <div style={{ marginBottom: 12 }}>
             <label
+              htmlFor="model-select"
               style={{
                 display: 'block',
                 fontSize: 11,
@@ -349,6 +356,7 @@ export function StepApiKey({
               Model
             </label>
             <select
+              id="model-select"
               value={selectedModel}
               onChange={(e) => onModelChange(e.target.value)}
               style={{
@@ -392,6 +400,7 @@ export function StepApiKey({
             {inputField('Model', selectedModel, onModelChange, {
               placeholder: 'openai/gpt-4o',
               monospace: true,
+              id: 'openrouter-model',
             })}
             <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: -4 }}>
               Use any model ID from openrouter.ai/models
@@ -416,9 +425,11 @@ export function StepApiKey({
         </p>
         {inputField('Resource URL', baseUrl, handleBaseUrlChange, {
           placeholder: 'https://my-resource.openai.azure.com',
+          id: 'azure-resource-url',
         })}
         <div style={{ marginBottom: 12 }}>
           <label
+            htmlFor="azure-api-key"
             style={{
               display: 'block',
               fontSize: 11,
@@ -433,6 +444,7 @@ export function StepApiKey({
           </label>
           <div style={{ position: 'relative' }}>
             <input
+              id="azure-api-key"
               type={showKey ? 'text' : 'password'}
               value={apiKey}
               onChange={(e) => handleApiKeyChange(e.target.value)}
@@ -481,6 +493,7 @@ export function StepApiKey({
         </div>
         <div style={{ marginBottom: 12 }}>
           <label
+            htmlFor="azure-deployment"
             style={{
               display: 'block',
               fontSize: 11,
@@ -495,6 +508,7 @@ export function StepApiKey({
           </label>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input
+              id="azure-deployment"
               type="text"
               value={deploymentName}
               onChange={(e) => handleDeploymentChange(e.target.value)}

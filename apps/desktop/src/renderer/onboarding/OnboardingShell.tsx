@@ -15,7 +15,6 @@ export function OnboardingShell({ onComplete }: OnboardingShellProps) {
   const [provider, setProvider] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [validated, setValidated] = useState(false);
-  const [models, setModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [personalityId, setPersonalityId] = useState<string | null>(null);
@@ -53,9 +52,8 @@ export function OnboardingShell({ onComplete }: OnboardingShellProps) {
     setBaseUrl('');
   }
 
-  function handleValidated(modelList: string[]) {
+  function handleValidated(_modelList: string[]) {
     setValidated(true);
-    setModels(modelList);
   }
 
   const personalityName = personalityId
