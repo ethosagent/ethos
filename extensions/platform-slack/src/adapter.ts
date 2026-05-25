@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { deriveBotKey } from '@ethosagent/core';
 import { noopLogger } from '@ethosagent/logger';
 import type {
+  AdapterCapabilities,
   ApprovalCapableAdapter,
   ApprovalDecisionEvent,
   Attachment,
@@ -114,9 +115,9 @@ const SKIP_EXTS = new Set([
 ]);
 
 export interface SlackAdapterConfig {
-  /** Bot token (xoxb-...) */
+  /** Bot token (xoxb-...). */
   botToken: string;
-  /** App-level token for socket mode (xapp-...) */
+  /** App-level token for socket mode (xapp-...). */
   appToken: string;
   /** Signing secret from Slack app config */
   signingSecret: string;
@@ -173,11 +174,31 @@ export interface SlackAdapterConfig {
 export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   readonly id: string;
   readonly displayName = 'Slack';
-  readonly canSendTyping = false;
+  get canSendTyping(): boolean {
+    // Before the first probe, report true so the gateway attempts the call.
+    // After probing, report the actual runtime result.
+    return !this.typingProbed || this.typingAvailable;
+  }
   readonly canEditMessage = true;
   readonly canReact = true;
   readonly canSendFiles = false;
   readonly maxMessageLength = 3000;
+
+  get capabilities(): AdapterCapabilities {
+    return {
+      platform: 'slack',
+      typing: this.typingAvailable,
+      editDetection: true,
+      replyToThreading: false,
+      persistence: true,
+      channelModes: true,
+      homeView: true,
+      joinGreeting: true,
+      roleBasedApprovals: false,
+      outboundFiles: false,
+      webhookMode: false,
+    };
+  }
 
   readonly botKey: string;
   readonly binding: Binding | undefined;
@@ -221,6 +242,10 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
 
   private readonly logger: Logger;
 
+  /** Whether the Slack workspace supports the unofficial typing indicator API. */
+  private typingAvailable = false;
+  private typingProbed = false;
+
   /** Emoji name (no colons) for the inbound-receipt reaction. */
   private readonly receiptReaction: string;
   /**
@@ -240,6 +265,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       socketMode: true,
     });
     this.client = this.app.client;
+
     this.botKey = config.botKey ?? deriveBotKey(config.botToken);
     this.id = `slack:${this.botKey}`;
     this.binding = config.binding;
@@ -537,6 +563,27 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
 
   async stop(): Promise<void> {
     await this.app.stop();
+  }
+
+  async sendTyping(chatId: string): Promise<void> {
+    if (!this.canSendTyping) return;
+    try {
+      await (
+        this.app.client as unknown as {
+          apiCall: (method: string, opts: Record<string, unknown>) => Promise<unknown>;
+        }
+      ).apiCall('conversations.setTypingIndicator', {
+        channel: chatId,
+        typing: true,
+      });
+      if (!this.typingProbed) {
+        this.typingProbed = true;
+        this.typingAvailable = true;
+      }
+    } catch {
+      this.typingProbed = true;
+      this.typingAvailable = false;
+    }
   }
 
   onMessage(handler: (message: InboundMessage) => void): void {

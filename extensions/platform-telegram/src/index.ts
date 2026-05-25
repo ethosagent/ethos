@@ -1,5 +1,7 @@
+import { join } from 'node:path';
 import { deriveBotKey } from '@ethosagent/core';
 import type {
+  AdapterCapabilities,
   ApprovalCapableAdapter,
   ApprovalDecisionEvent,
   Attachment,
@@ -8,9 +10,14 @@ import type {
   InboundMessage,
   OutboundMessage,
   PlatformAdapter,
+  Storage,
 } from '@ethosagent/types';
-import { Bot, InlineKeyboard } from 'grammy';
+import { Bot, InlineKeyboard, webhookCallback } from 'grammy';
+import { type ChannelMode, DEFAULT_CHANNEL_MODE } from './config';
 import { chunkHash, markdownToTelegramHtml } from './format';
+import { shouldRespond } from './routing/channel-mode';
+import { ChannelOverrideStore } from './store/channel-overrides';
+import { ThreadStateStore } from './store/thread-state';
 
 // ---------------------------------------------------------------------------
 // Clarify interactive shapes — used by the Telegram clarify surface to post
@@ -253,6 +260,39 @@ export interface TelegramAdapterConfig {
    * Telegram HTML. `'plain'` skips translation and HTML escaping entirely.
    */
   parseMode?: 'html' | 'plain';
+  /**
+   * Storage backend for JSONL-based persistence (channel overrides,
+   * thread state). When omitted, no persistence is available — the
+   * adapter operates statelessly.
+   */
+  storage?: Storage;
+  /**
+   * Base directory name under the Storage root for Telegram data files.
+   * Default `'telegram'`. The final path is `<telegramDir>/<botKey>/`.
+   */
+  telegramDir?: string;
+  /**
+   * Default channel mode for groups. Per-channel overrides take precedence.
+   * Default `'mention_only'`.
+   */
+  defaultChannelMode?: ChannelMode;
+  /**
+   * Enable webhook mode instead of long-polling. Requires `webhookUrl`.
+   * When enabled, the adapter registers the webhook with Telegram and
+   * exposes a `webhook` getter for the host app to mount on an HTTP route.
+   */
+  useWebhook?: boolean;
+  /**
+   * Public URL that Telegram should POST updates to. Required when
+   * `useWebhook` is true.
+   */
+  webhookUrl?: string;
+  /**
+   * Secret token for webhook request verification. When set, Telegram sends
+   * this value in the `X-Telegram-Bot-Api-Secret-Token` header; the adapter
+   * validates it before processing updates. Required when `useWebhook` is true.
+   */
+  webhookSecretToken?: string;
 }
 
 export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter {
@@ -264,9 +304,22 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
   readonly canSendFiles = false;
   readonly maxMessageLength = 4096;
 
+  get capabilities(): AdapterCapabilities {
+    return {
+      platform: 'telegram',
+      typing: true,
+      editDetection: true,
+      replyToThreading: true,
+      persistence: !!this.channelOverrides,
+      channelModes: !!this.channelOverrides,
+      webhookMode: !!this.config.useWebhook,
+    };
+  }
+
   readonly botKey: string;
   private readonly bot: Bot;
   private readonly cache: AttachmentCache;
+  private readonly config: TelegramAdapterConfig;
   private readonly dropPendingUpdates: boolean;
   private readonly identity: TelegramAdapterConfig['identity'];
   private readonly receiptReaction: string;
@@ -284,10 +337,18 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
   private readonly editWindowMs: number;
   /** Anti-thrashing debounce timers for edited_message, keyed by messageId. */
   private readonly editDebounce = new Map<string, ReturnType<typeof setTimeout>>();
+  /** JSONL-backed channel mode overrides (Gap 4). */
+  private readonly channelOverrides?: ChannelOverrideStore;
+  /** JSONL-backed thread-follow tracking (Gap 4). */
+  private readonly threadState?: ThreadStateStore;
+  /** Webhook callback for external HTTP server wiring (Gap 6). */
+  // biome-ignore lint/suspicious/noExplicitAny: grammy's webhookCallback returns an Express-typed handler
+  private webhookCb?: (...args: any[]) => any;
 
   constructor(config: TelegramAdapterConfig) {
     this.bot = new Bot(config.token);
     this.cache = config.cache;
+    this.config = config;
     this.dropPendingUpdates = config.dropPendingUpdates ?? true;
     this.botKey = config.botKey ?? deriveBotKey(config.token);
     this.identity = config.identity;
@@ -299,6 +360,13 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
     // stand in) and see `telegram:<key>` — the shape is identical, the
     // value carries the routing identity.
     this.id = `telegram:${this.botKey}`;
+
+    // --- Persistence stores (Gap 4) ---
+    if (config.storage) {
+      const baseDir = join(config.telegramDir ?? 'telegram', this.botKey);
+      this.channelOverrides = new ChannelOverrideStore(config.storage, baseDir);
+      this.threadState = new ThreadStateStore(config.storage, baseDir);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -330,6 +398,10 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
       ])
       .catch(() => {});
 
+    // --- Load persistence stores (Gap 4) ---
+    await this.channelOverrides?.load();
+    await this.threadState?.load();
+
     this.bot.on('message', (ctx) => {
       if (!this.messageHandler) return;
 
@@ -354,21 +426,46 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
       const threadId =
         rawThreadId !== undefined && rawThreadId !== 1 ? String(rawThreadId) : undefined;
 
+      // --- Channel-mode gating (Gap 5) ---
+      const isDm = ctx.chat.type === 'private';
+      const isGroupMention = ctx.message.text?.includes(`@${ctx.me.username}`) ?? false;
+      const chatIdStr = String(chatId);
+      const override = this.channelOverrides?.get(chatIdStr);
+      const channelMode: ChannelMode =
+        override?.mode ?? this.config.defaultChannelMode ?? DEFAULT_CHANNEL_MODE;
+      const hasBotPosted =
+        threadId !== undefined && this.threadState !== undefined
+          ? this.threadState.hasBotPosted(chatIdStr, threadId)
+          : false;
+
+      if (
+        !shouldRespond({
+          isDm,
+          isGroupMention,
+          channelMode,
+          hasBotPosted,
+          messageText: text,
+          regexPattern: override?.regexPattern,
+        })
+      ) {
+        return;
+      }
+
       // --- Reaction on receipt (best-effort, non-blocking) ---
       const reaction = [{ type: 'emoji' as const, emoji: this.receiptReaction as TelegramEmoji }];
       this.bot.api.setMessageReaction(chatId, messageId, reaction).catch(() => {});
-      this.pendingReactions.set(String(chatId), messageId);
+      this.pendingReactions.set(chatIdStr, messageId);
 
       // --- Build initial message (attachments filled async below) ---
       const msg: InboundMessage = {
         platform: 'telegram',
         botKey: this.botKey,
-        chatId: String(chatId),
+        chatId: chatIdStr,
         userId: ctx.from ? String(ctx.from.id) : undefined,
         username: ctx.from?.username,
         text,
-        isDm: ctx.chat.type === 'private',
-        isGroupMention: ctx.message.text?.includes(`@${ctx.me.username}`) ?? false,
+        isDm,
+        isGroupMention,
         messageId: String(messageId),
         threadId,
         replyToId: ctx.message.reply_to_message
@@ -517,20 +614,54 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
       }
     });
 
-    // Non-blocking: bot.start() runs the polling loop in the background.
-    // grammy's start() rejects on init failure (e.g. invalid token → getMe 404)
-    // and on terminal polling errors. Without a .catch() the rejection becomes
-    // an unhandled promise rejection, which Node 24 treats as fatal — killing
-    // the whole gateway and any other adapters running with it. Attach a
-    // handler so a bad Telegram token degrades to a logged warning instead.
-    this.bot.start({ drop_pending_updates: this.dropPendingUpdates }).catch((err) => {
-      const detail = err instanceof Error ? err.message : String(err);
-      console.error(`[telegram] bot polling stopped: ${detail}`);
-    });
+    // --- Start: webhook or long-polling (Gap 6) ---
+    if (this.config.useWebhook && !this.config.webhookUrl) {
+      throw new Error('TelegramAdapter: useWebhook requires webhookUrl to be set');
+    }
+    if (this.config.useWebhook && !this.config.webhookSecretToken) {
+      throw new Error(
+        'TelegramAdapter: useWebhook requires webhookSecretToken for request verification',
+      );
+    }
+    if (this.config.useWebhook && this.config.webhookUrl) {
+      await this.bot.api.setWebhook(this.config.webhookUrl, {
+        secret_token: this.config.webhookSecretToken,
+      });
+      this.webhookCb = webhookCallback(this.bot, 'express', {
+        secretToken: this.config.webhookSecretToken,
+      });
+    } else {
+      // Non-blocking: bot.start() runs the polling loop in the background.
+      // grammy's start() rejects on init failure (e.g. invalid token -> getMe 404)
+      // and on terminal polling errors. Without a .catch() the rejection becomes
+      // an unhandled promise rejection, which Node 24 treats as fatal — killing
+      // the whole gateway and any other adapters running with it. Attach a
+      // handler so a bad Telegram token degrades to a logged warning instead.
+      this.bot.start({ drop_pending_updates: this.dropPendingUpdates }).catch((err) => {
+        const detail = err instanceof Error ? err.message : String(err);
+        console.error(`[telegram] bot polling stopped: ${detail}`);
+      });
+    }
   }
 
   async stop(): Promise<void> {
-    await this.bot.stop();
+    if (this.config.useWebhook) {
+      await this.bot.api.deleteWebhook().catch(() => {});
+    } else {
+      await this.bot.stop();
+    }
+  }
+
+  /**
+   * Webhook callback for external HTTP server wiring (Gap 6).
+   * Returns an Express-compatible middleware when webhook mode is enabled,
+   * `undefined` when polling. The host app mounts it on a route:
+   * ```ts
+   * app.post('/telegram/webhook', adapter.webhook);
+   * ```
+   */
+  get webhook(): ((...args: any[]) => any) | undefined {
+    return this.webhookCb;
   }
 
   onMessage(handler: (message: InboundMessage) => void): void {
@@ -622,20 +753,40 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
     for (let i = 0; i < chunks.length; i++) {
       const raw = chunks[i];
       const body = useHtml ? markdownToTelegramHtml(raw) : raw;
-      const parseOpt = useHtml ? 'HTML' : undefined;
+      const parseOpt = useHtml ? ('HTML' as const) : undefined;
+
+      const baseOpts = {
+        ...(parseOpt ? { parse_mode: parseOpt } : {}),
+        ...threadOpt,
+      };
+      const replyOpts = message.replyToId
+        ? { ...baseOpts, reply_parameters: { message_id: Number(message.replyToId) } }
+        : baseOpts;
 
       try {
-        const sent = await this.bot.api.sendMessage(Number(chatId), body, {
-          ...(parseOpt ? { parse_mode: parseOpt } : {}),
-          reply_parameters: message.replyToId
-            ? { message_id: Number(message.replyToId) }
-            : undefined,
-          ...threadOpt,
-        });
+        const sent = await this.bot.api.sendMessage(Number(chatId), body, replyOpts);
         ids.push(String(sent.message_id));
       } catch (err) {
-        // HTML/Markdown parse errors — retry as plain text (observable fallback)
-        if (String(err).includes('parse')) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+
+        // --- Gap 8: deleted reply crash fix ---
+        // If the message we're replying to was deleted, retry without reply_parameters.
+        if (
+          message.replyToId &&
+          (errMsg.includes('message to be replied not found') ||
+            errMsg.includes('replied message not found'))
+        ) {
+          try {
+            const sent = await this.bot.api.sendMessage(Number(chatId), body, baseOpts);
+            ids.push(String(sent.message_id));
+          } catch (retryErr) {
+            return {
+              ok: false,
+              error: retryErr instanceof Error ? retryErr.message : String(retryErr),
+            };
+          }
+        } else if (errMsg.includes('parse')) {
+          // HTML/Markdown parse errors — retry as plain text (observable fallback)
           console.warn(
             `[telegram] HTML parse fallback chunk=${i + 1}/${totalChunks} hash=${chunkHash(raw)}`,
           );
@@ -644,10 +795,7 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
             .catch(() => null);
           if (sent) ids.push(String(sent.message_id));
         } else {
-          return {
-            ok: false,
-            error: err instanceof Error ? err.message : String(err),
-          };
+          return { ok: false, error: errMsg };
         }
       }
     }
@@ -657,6 +805,11 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
     if (trackedMsgId !== undefined) {
       this.bot.api.setMessageReaction(Number(chatId), trackedMsgId, []).catch(() => {});
       this.pendingReactions.delete(chatId);
+    }
+
+    // --- Track thread state for thread_follow mode (Gap 4) ---
+    if (message.threadId && this.threadState) {
+      void this.threadState.recordPost(chatId, message.threadId);
     }
 
     this.rememberChunkIds(ids);

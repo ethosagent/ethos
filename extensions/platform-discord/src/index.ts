@@ -1,5 +1,6 @@
 import { deriveBotKey } from '@ethosagent/core';
 import type {
+  AdapterCapabilities,
   ApprovalCapableAdapter,
   ApprovalDecisionEvent,
   AttachmentCache,
@@ -17,7 +18,7 @@ import { COMMAND_DEFINITIONS, dispatch } from './commands';
 import type { Binding, ChannelMode } from './config';
 import { DEFAULT_CHANNEL_MODE } from './config';
 import { buildModal, registerInteractionHandler, toActionRowBuilder } from './events/interactions';
-import { registerMessageHandler } from './events/messages';
+import { registerEditHandler, registerMessageHandler } from './events/messages';
 import { toNativeMarkdown } from './format';
 import { ChannelOverrideStore } from './store/channel-overrides';
 import { ThreadStateStore } from './store/thread-state';
@@ -29,6 +30,7 @@ export type { DiscordAdapterConfig };
 
 interface DiscordAdapterConfig {
   token: string;
+  /** @deprecated Use `defaultChannelMode` instead. */
   mentionOnly?: boolean;
   botKey?: string;
   receiptReaction?: string;
@@ -58,6 +60,11 @@ interface DiscordAdapterConfig {
    * - `'allow_any'`: any channel member may approve (explicit opt-in to open).
    */
   approvalPolicy?: 'role_gate' | 'allow_any';
+  /**
+   * When enabled, `sendTyping()` posts a short "Thinking..." placeholder
+   * message that is deleted when the real response is sent. Default: false.
+   */
+  postThinkingPlaceholder?: boolean;
 }
 
 export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
@@ -68,11 +75,27 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   readonly canReact = true;
   readonly canSendFiles = false;
   readonly maxMessageLength = 2000;
+
+  get capabilities(): AdapterCapabilities {
+    return {
+      platform: 'discord',
+      typing: true,
+      editDetection: true,
+      replyToThreading: true,
+      persistence: true,
+      channelModes: true,
+      homeView: true,
+      joinGreeting: false,
+      roleBasedApprovals: true,
+      outboundFiles: false,
+      webhookMode: false,
+    };
+  }
+
   readonly botKey: string;
 
   private readonly client: Client;
   private readonly token: string;
-  private readonly mentionOnly: boolean;
   private readonly receiptReaction: string;
   private readonly cache?: AttachmentCache;
   private readonly applicationId?: string;
@@ -81,6 +104,7 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   private readonly defaultChannelMode: ChannelMode;
   private readonly approvalRoleIds: string[];
   private readonly approvalPolicy: 'role_gate' | 'allow_any';
+  private readonly postThinkingPlaceholder: boolean;
 
   private readonly threadState?: ThreadStateStore;
   private readonly channelOverrides?: ChannelOverrideStore;
@@ -96,10 +120,11 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   /** Receipt reactions pending clearing, keyed by inbound messageId → channelId. Bounded FIFO. */
   private readonly pendingReactions = new Map<string, string>();
   private readonly pendingReactionsMax = 256;
+  /** Thinking placeholder messages keyed by chatId → messageId. */
+  private readonly thinkingMessages = new Map<string, string>();
 
   constructor(config: DiscordAdapterConfig) {
     this.token = config.token;
-    this.mentionOnly = config.mentionOnly ?? true;
     this.receiptReaction = config.receiptReaction ?? '👀';
     this.botKey = config.botKey ?? deriveBotKey(config.token);
     this.id = `discord:${this.botKey}`;
@@ -107,9 +132,19 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     this.applicationId = config.applicationId;
     this.registerCommandsTo = config.registerCommandsTo;
     this.binding = config.binding ?? { type: 'personality', name: 'default' };
-    this.defaultChannelMode = config.defaultChannelMode ?? DEFAULT_CHANNEL_MODE;
     this.approvalRoleIds = config.approvalRoleIds ?? [];
     this.approvalPolicy = config.approvalPolicy ?? 'role_gate';
+    this.postThinkingPlaceholder = config.postThinkingPlaceholder ?? false;
+
+    // Gap 9: derive defaultChannelMode from deprecated mentionOnly when
+    // the caller hasn't set defaultChannelMode explicitly.
+    if (config.defaultChannelMode !== undefined) {
+      this.defaultChannelMode = config.defaultChannelMode;
+    } else if (config.mentionOnly !== undefined) {
+      this.defaultChannelMode = config.mentionOnly ? 'mention_only' : 'all';
+    } else {
+      this.defaultChannelMode = DEFAULT_CHANNEL_MODE;
+    }
 
     if (config.storage) {
       const dir = config.discordDir ?? 'discord';
@@ -133,24 +168,26 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     await this.threadState?.load();
     await this.channelOverrides?.load();
 
-    registerMessageHandler({
+    const messageCtx = {
       client: this.client,
       botKey: this.botKey,
-      mentionOnly: this.mentionOnly,
       defaultChannelMode: this.defaultChannelMode,
       receiptReaction: this.receiptReaction,
       cache: this.cache,
       channelOverrides: this.channelOverrides,
       threadState: this.threadState,
-      onMessage: (msg) => this.messageHandler?.(msg),
-      onReceipt: (channelId, messageId) => {
+      onMessage: (msg: InboundMessage) => this.messageHandler?.(msg),
+      onReceipt: (channelId: string, messageId: string) => {
         if (this.pendingReactions.size >= this.pendingReactionsMax) {
           const oldest = this.pendingReactions.keys().next().value;
           if (oldest !== undefined) this.pendingReactions.delete(oldest);
         }
         this.pendingReactions.set(messageId, channelId);
       },
-    });
+    };
+
+    registerMessageHandler(messageCtx);
+    registerEditHandler(messageCtx);
 
     registerInteractionHandler(this.client, {
       pendingInteractions: this.pendingInteractions,
@@ -182,6 +219,8 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
 
   async send(chatId: string, message: OutboundMessage): Promise<DeliveryResult> {
     try {
+      await this.clearThinkingPlaceholder(chatId);
+
       const targetId = message.threadId ?? chatId;
       const channel = await this.client.channels.fetch(targetId);
       if (!channel || !('send' in channel)) {
@@ -220,6 +259,16 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
         // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
         await (channel as any).sendTyping();
       }
+      if (this.postThinkingPlaceholder && channel && 'send' in channel) {
+        if (!this.thinkingMessages.has(chatId)) {
+          // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
+          const placeholder = await (channel as any).send({
+            content: 'Thinking…',
+            allowedMentions: { parse: [] },
+          });
+          this.thinkingMessages.set(chatId, String(placeholder.id));
+        }
+      }
     } catch {
       // ignore
     }
@@ -227,6 +276,8 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
 
   async editMessage(chatId: string, messageId: string, text: string): Promise<DeliveryResult> {
     try {
+      await this.clearThinkingPlaceholder(chatId);
+
       const channel = await this.client.channels.fetch(chatId);
       if (!channel || !('messages' in channel) || !('send' in channel)) {
         return { ok: false, error: 'Channel not found' };
@@ -526,6 +577,22 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     }
   }
 
+  private async clearThinkingPlaceholder(chatId: string): Promise<void> {
+    const placeholderId = this.thinkingMessages.get(chatId);
+    if (!placeholderId) return;
+    this.thinkingMessages.delete(chatId);
+    try {
+      const channel = await this.client.channels.fetch(chatId);
+      if (channel && 'messages' in channel) {
+        // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
+        const msg = await (channel as any).messages.fetch(placeholderId);
+        await msg.delete();
+      }
+    } catch {
+      // Best-effort cleanup
+    }
+  }
+
   private async clearReceiptReaction(chatId: string): Promise<void> {
     // Find all pending reactions belonging to this channel and clear them.
     const toClear: string[] = [];
@@ -561,3 +628,17 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     this.chunkMap.set(primary, ids);
   }
 }
+
+export const capabilities: AdapterCapabilities = {
+  platform: 'discord',
+  typing: true,
+  editDetection: true,
+  replyToThreading: true,
+  persistence: true,
+  channelModes: true,
+  homeView: true,
+  joinGreeting: false,
+  roleBasedApprovals: true,
+  outboundFiles: false,
+  webhookMode: false,
+};

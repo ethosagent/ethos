@@ -526,7 +526,11 @@ describe('3.2 — Forum-mode topic isolation', () => {
   beforeEach(resetMocks);
 
   it('sets threadId from message_thread_id when not General topic', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = new TelegramAdapter({
+      token: '1:fake-token',
+      cache,
+      defaultChannelMode: 'all',
+    });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -550,7 +554,11 @@ describe('3.2 — Forum-mode topic isolation', () => {
   });
 
   it('leaves threadId undefined for General topic (id 1)', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = new TelegramAdapter({
+      token: '1:fake-token',
+      cache,
+      defaultChannelMode: 'all',
+    });
     await adapter.start();
 
     const captured: InboundMessage[] = [];

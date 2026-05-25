@@ -6,7 +6,11 @@
 // keeping `index.ts` a thin barrel makes it easy to refactor internals
 // without rippling through every consumer.
 
-export type { ApprovalCapableAdapter, ApprovalDecisionEvent } from '@ethosagent/types';
+export type {
+  AdapterCapabilities,
+  ApprovalCapableAdapter,
+  ApprovalDecisionEvent,
+} from '@ethosagent/types';
 export type { SlackAdapterConfig } from './adapter';
 export { SlackAdapter } from './adapter';
 export {

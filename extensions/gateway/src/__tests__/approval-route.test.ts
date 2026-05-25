@@ -54,6 +54,7 @@ function makeFakeAdapter(): PlatformAdapter {
   return {
     id: 'slack:bot-1',
     displayName: 'Slack',
+    capabilities: { platform: 'test' },
     canSendTyping: false,
     canEditMessage: true,
     canReact: false,
