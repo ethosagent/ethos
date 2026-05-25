@@ -3,9 +3,10 @@ export interface OnboardingState {
 }
 
 export interface ValidateProviderRequest {
-  provider: 'anthropic' | 'openai' | 'ollama';
+  provider: 'anthropic' | 'openai' | 'openrouter' | 'azure';
   apiKey: string;
   baseUrl?: string;
+  model?: string;
 }
 
 export interface ValidateProviderResponse {
@@ -17,10 +18,11 @@ export interface ValidateProviderResponse {
 }
 
 export interface OnboardingCompleteRequest {
-  provider: 'anthropic' | 'openai' | 'ollama';
+  provider: 'anthropic' | 'openai' | 'openrouter' | 'azure';
   model: string;
   apiKey: string;
   personalityId: string;
+  baseUrl?: string;
 }
 
 export interface PersonalityListItem {

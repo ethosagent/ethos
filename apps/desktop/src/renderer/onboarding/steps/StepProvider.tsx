@@ -29,11 +29,16 @@ export function StepProvider({ selectedProvider, onSelectProvider }: StepProvide
           onSelect={() => onSelectProvider('openai')}
         />
         <ProviderRow
-          name="Ollama"
-          description="Local models, fully private"
-          selected={selectedProvider === 'ollama'}
-          onSelect={() => onSelectProvider('ollama')}
-          badge={{ label: 'No API key needed', variant: 'info' }}
+          name="OpenRouter"
+          description="150+ models via one API"
+          selected={selectedProvider === 'openrouter'}
+          onSelect={() => onSelectProvider('openrouter')}
+        />
+        <ProviderRow
+          name="Azure OpenAI"
+          description="Azure-hosted OpenAI models"
+          selected={selectedProvider === 'azure'}
+          onSelect={() => onSelectProvider('azure')}
         />
       </div>
     </div>

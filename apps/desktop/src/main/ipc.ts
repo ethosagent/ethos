@@ -16,44 +16,13 @@ export function registerIpcHandlers(): void {
     async (
       _event,
       req: {
-        provider: 'anthropic' | 'openai' | 'ollama';
+        provider: 'anthropic' | 'openai' | 'openrouter' | 'azure';
         apiKey: string;
         baseUrl?: string;
+        model?: string;
       },
     ) => {
       try {
-        if (req.provider === 'ollama') {
-          const baseUrl = req.baseUrl || 'http://localhost:11434';
-          const parsed = new URL(baseUrl);
-          const isLoopback =
-            parsed.hostname === 'localhost' ||
-            parsed.hostname === '127.0.0.1' ||
-            parsed.hostname === '::1';
-          if (!isLoopback) {
-            return {
-              valid: false,
-              completionTested: false,
-              error: 'Ollama URL must be localhost',
-              errorCode: 'other' as const,
-            };
-          }
-          const res = await fetch(`${baseUrl}/api/tags`);
-          if (!res.ok) {
-            return {
-              valid: false,
-              completionTested: false,
-              error: 'Cannot reach Ollama',
-              errorCode: 'other' as const,
-            };
-          }
-          const data = (await res.json()) as { models?: Array<{ name: string }> };
-          return {
-            valid: true,
-            completionTested: false,
-            models: (data.models || []).map((m: { name: string }) => m.name),
-          };
-        }
-
         if (req.provider === 'anthropic') {
           const modelsRes = await fetch('https://api.anthropic.com/v1/models', {
             headers: {
@@ -172,6 +141,87 @@ export function registerIpcHandlers(): void {
           return { valid: true, completionTested: true, models: ['gpt-4o', 'gpt-4o-mini', 'o3'] };
         }
 
+        if (req.provider === 'openrouter') {
+          const base = 'https://openrouter.ai/api/v1';
+          const modelsRes = await fetch(`${base}/models`, {
+            headers: { Authorization: `Bearer ${req.apiKey}` },
+          });
+          if (modelsRes.status === 401) {
+            return {
+              valid: false,
+              completionTested: false,
+              error: 'API key invalid — check and re-enter.',
+              errorCode: 'invalid_key' as const,
+            };
+          }
+          const completionRes = await fetch(`${base}/chat/completions`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${req.apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: req.model || 'openai/gpt-4o-mini',
+              max_tokens: 1,
+              messages: [{ role: 'user', content: 'hi' }],
+            }),
+          });
+          if (completionRes.status === 402 || completionRes.status === 429) {
+            return {
+              valid: true,
+              completionTested: false,
+              error: 'Your API key is valid but your account has no credits.',
+              errorCode: 'no_credits' as const,
+            };
+          }
+          return { valid: true, completionTested: completionRes.ok, models: [] };
+        }
+
+        if (req.provider === 'azure') {
+          if (!req.baseUrl || !req.model) {
+            return {
+              valid: false,
+              completionTested: false,
+              error: 'Resource URL and deployment name are required.',
+              errorCode: 'other' as const,
+            };
+          }
+          const baseUrl = req.baseUrl.replace(/\/$/, '');
+          const endpoint = `${baseUrl}/openai/deployments/${req.model}/chat/completions?api-version=2024-10-21`;
+          try {
+            const res = await fetch(endpoint, {
+              method: 'POST',
+              headers: { 'api-key': req.apiKey, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                messages: [{ role: 'user', content: 'hi' }],
+                max_tokens: 1,
+              }),
+            });
+            if (res.status === 401 || res.status === 403) {
+              return {
+                valid: false,
+                completionTested: false,
+                error: 'API key invalid — check and re-enter.',
+                errorCode: 'invalid_key' as const,
+              };
+            }
+            if (res.status === 404) {
+              return {
+                valid: false,
+                completionTested: false,
+                error: 'Deployment not found — check the resource URL and deployment name.',
+                errorCode: 'other' as const,
+              };
+            }
+            if (!res.ok) {
+              let detail = `HTTP ${res.status}`;
+              try { const t = await res.text(); if (t) detail = t; } catch { /* ignore */ }
+              return { valid: false, completionTested: false, error: `Azure request failed: ${detail}`, errorCode: 'other' as const };
+            }
+            return { valid: true, completionTested: true, models: [req.model] };
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { valid: false, completionTested: false, error: `Cannot reach Azure endpoint: ${msg}`, errorCode: 'other' as const };
+          }
+        }
+
         return {
           valid: false,
           completionTested: false,
@@ -201,7 +251,7 @@ export function registerIpcHandlers(): void {
         personalityId: string;
       },
     ) => {
-      const validProviders = ['anthropic', 'openai', 'ollama'];
+      const validProviders = ['anthropic', 'openai', 'openrouter', 'azure'];
       const validPersonalities = ['researcher', 'engineer', 'operator', 'coach'];
 
       if (!validProviders.includes(req.provider)) {
@@ -230,7 +280,7 @@ export function registerIpcHandlers(): void {
       ].join('\n');
       writeFileSync(join(ethosDir, 'config.yaml'), `${configContent}\n`);
 
-      store.set('provider', req.provider as 'anthropic' | 'openai' | 'ollama');
+      store.set('provider', req.provider as 'anthropic' | 'openai' | 'openrouter' | 'azure');
       store.set('model', req.model);
       store.set('personalityId', req.personalityId);
       store.set('onboardingComplete', true);

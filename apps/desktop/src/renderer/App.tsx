@@ -9,9 +9,10 @@ declare global {
       onboarding: {
         state: () => Promise<{ configured: boolean }>;
         validateProvider: (req: {
-          provider: string;
+          provider: 'anthropic' | 'openai' | 'openrouter' | 'azure';
           apiKey: string;
           baseUrl?: string;
+          model?: string;
         }) => Promise<unknown>;
         complete: (req: {
           provider: string;
@@ -51,11 +52,15 @@ export function App() {
 
   useEffect(() => {
     async function init() {
-      const theme = await window.ethos.theme.get();
-      document.documentElement.setAttribute('data-theme', theme);
-
-      const { configured } = await window.ethos.onboarding.state();
-      setRoute(configured ? 'chat' : 'onboarding');
+      try {
+        const theme = await window.ethos.theme.get();
+        document.documentElement.setAttribute('data-theme', theme);
+        const { configured } = await window.ethos.onboarding.state();
+        setRoute(configured ? 'chat' : 'onboarding');
+      } catch (err) {
+        console.error('[App] init failed — preload not ready?', err);
+        setRoute('onboarding');
+      }
     }
     init();
   }, []);

@@ -65,7 +65,13 @@ export function StepDone({
   }
 
   const providerLabel =
-    provider === 'anthropic' ? 'Anthropic' : provider === 'openai' ? 'OpenAI' : 'Ollama';
+    provider === 'anthropic'
+      ? 'Anthropic'
+      : provider === 'openai'
+        ? 'OpenAI'
+        : provider === 'openrouter'
+          ? 'OpenRouter'
+          : 'Azure OpenAI';
 
   return (
     <div>

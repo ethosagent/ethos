@@ -1,4 +1,6 @@
-import { autoUpdater } from 'electron-updater';
+import updaterPkg from 'electron-updater';
+
+const { autoUpdater } = updaterPkg;
 
 export function initAutoUpdater(): void {
   autoUpdater.autoDownload = false;

@@ -21,7 +21,7 @@ services:
               echo "Installing plugin $$pkg_name@$$pkg_ver..."
               rm -rf "$$dir" && mkdir -p "$$dir"
               printf '%s\n' "{\"name\":\"ethos-plugin-$$slug\",\"version\":\"0.1.0\",\"type\":\"module\",\"main\":\"./index.js\",\"ethos\":{\"type\":\"plugin\",\"pluginContractMajor\":2},\"dependencies\":{\"$$pkg_name\":\"$$pkg_ver\"}}" > "$$dir/package.json"
-              printf '%s\n' "export async function activate(api) { const { createTools } = await import('$$pkg_name'); for (const t of createTools()) api.registerTool(t); }" > "$$dir/index.js"
+              printf '%s\n' "export async function activate(api) { const mod = await import('$$pkg_name'); const fn = mod.createTools ?? Object.values(mod).find(v => typeof v === 'function' && v.name.toLowerCase().includes('tool')); if (typeof fn === 'function') for (const t of fn()) api.registerTool(t); }" > "$$dir/index.js"
               (cd "$$dir" && npm install --omit=dev --silent)
               echo "Plugin $$pkg_name@$$pkg_ver installed."
             fi

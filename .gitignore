@@ -23,3 +23,4 @@ apps/ethos/web
 .deepsec/
 ethos-data/
 .ethos-data/
+apps/desktop/dist-electron/

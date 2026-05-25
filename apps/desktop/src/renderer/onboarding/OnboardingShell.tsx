@@ -16,6 +16,8 @@ export function OnboardingShell({ onComplete }: OnboardingShellProps) {
   const [apiKey, setApiKey] = useState('');
   const [validated, setValidated] = useState(false);
   const [models, setModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
   const [personalityId, setPersonalityId] = useState<string | null>(null);
   const [direction, setDirection] = useState<'forward' | 'back'>('forward');
 
@@ -24,7 +26,7 @@ export function OnboardingShell({ onComplete }: OnboardingShellProps) {
       case 0:
         return provider !== null;
       case 1:
-        return provider === 'ollama' ? validated : validated && apiKey.trim().length > 0;
+        return validated && selectedModel.trim().length > 0;
       case 2:
         return personalityId !== null;
       default:
@@ -41,6 +43,14 @@ export function OnboardingShell({ onComplete }: OnboardingShellProps) {
   function back() {
     setDirection('back');
     setCurrentStep((s) => Math.max(s - 1, 0));
+  }
+
+  function handleProviderSelect(id: string) {
+    setProvider(id);
+    setApiKey('');
+    setValidated(false);
+    setSelectedModel('');
+    setBaseUrl('');
   }
 
   function handleValidated(modelList: string[]) {
@@ -123,7 +133,7 @@ export function OnboardingShell({ onComplete }: OnboardingShellProps) {
         style={{
           width: 520,
           flex: 1,
-          overflow: 'hidden',
+          overflowY: 'auto',
           position: 'relative',
         }}
       >
@@ -134,16 +144,21 @@ export function OnboardingShell({ onComplete }: OnboardingShellProps) {
           }}
         >
           {currentStep === 0 && (
-            <StepProvider selectedProvider={provider} onSelectProvider={setProvider} />
+            <StepProvider selectedProvider={provider} onSelectProvider={handleProviderSelect} />
           )}
           {currentStep === 1 && provider && (
             <StepApiKey
               provider={provider}
               apiKey={apiKey}
+              baseUrl={baseUrl}
+              selectedModel={selectedModel}
               onApiKeyChange={(k) => {
                 setApiKey(k);
                 setValidated(false);
+                setSelectedModel('');
               }}
+              onBaseUrlChange={setBaseUrl}
+              onModelChange={setSelectedModel}
               onValidated={handleValidated}
             />
           )}
@@ -159,7 +174,7 @@ export function OnboardingShell({ onComplete }: OnboardingShellProps) {
               personalityId={personalityId}
               personalityName={personalityName}
               apiKey={apiKey}
-              model={models[0] || 'default'}
+              model={selectedModel}
               onReady={onComplete}
             />
           )}
