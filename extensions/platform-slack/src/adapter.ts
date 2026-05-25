@@ -63,6 +63,7 @@ import {
   handleClarifyModalSubmission,
 } from './interactions/clarify';
 import { type RawSlackFile, resolveChannelMode } from './routing/triage';
+import { BackfillStateStore } from './store/backfill-state';
 import { ChannelOverrideStore } from './store/channel-overrides';
 import { ThreadStateStore } from './store/thread-state';
 
@@ -185,6 +186,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
 
   private readonly app: App;
   private readonly client: App['client'];
+  private readonly backfillState: BackfillStateStore | undefined;
   private readonly channelOverrides: ChannelOverrideStore | undefined;
   private readonly threadState: ThreadStateStore | undefined;
   private readonly memory: MemoryReader | undefined;
@@ -260,6 +262,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
 
     if (config.storage) {
       const slackDir = config.slackDir ?? join(homeEthosDir(), 'slack');
+      this.backfillState = new BackfillStateStore(config.storage, slackDir, this.botKey);
       this.channelOverrides = new ChannelOverrideStore(config.storage, slackDir, this.botKey);
       this.threadState = new ThreadStateStore(config.storage, slackDir, this.botKey);
     }
@@ -271,6 +274,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
 
   async start(): Promise<void> {
     // Hydrate persistent state before we accept events.
+    await this.backfillState?.load();
     await this.channelOverrides?.load();
     await this.threadState?.load();
 
@@ -298,6 +302,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
         defaultChannelMode: this.defaultChannelMode,
         channelOverrides: this.channelOverrides,
         threadState: this.threadState,
+        backfillState: this.backfillState,
       },
       {
         onEnvelope: (msg) => {

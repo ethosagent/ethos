@@ -65,6 +65,13 @@ export interface InboundMessage {
    * overload this one.
    */
   threadId?: string;
+  /**
+   * Recent message history from the platform channel/thread, formatted as
+   * plain text by the adapter. Present only on the first message the bot
+   * processes in a given lane (channel or thread). The gateway prepends
+   * this to the user text so the LLM has ambient channel context.
+   */
+  priorContext?: string;
   raw: unknown;
 }
 

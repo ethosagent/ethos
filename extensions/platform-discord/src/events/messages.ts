@@ -3,6 +3,7 @@ import type { Client, Message } from 'discord.js';
 import type { ChannelMode } from '../config';
 import type { TriageContext } from '../routing/triage';
 import { triageMessage } from '../routing/triage';
+import type { BackfillStateStore } from '../store/backfill-state';
 import type { ChannelOverrideStore } from '../store/channel-overrides';
 import type { ThreadStateStore } from '../store/thread-state';
 
@@ -24,6 +25,7 @@ interface MessageContext {
   cache?: AttachmentCache;
   channelOverrides?: ChannelOverrideStore;
   threadState?: ThreadStateStore;
+  backfillState?: BackfillStateStore;
   onMessage: (msg: InboundMessage) => void;
   onReceipt: (channelId: string, messageId: string) => void;
 }
@@ -80,6 +82,21 @@ export function registerMessageHandler(ctx: MessageContext): void {
     }
     if (message.mentions.repliedUser?.id) {
       envelope.replyToUserId = message.mentions.repliedUser.id;
+    }
+
+    // Channel history backfill — first encounter in this lane
+    if (ctx.backfillState) {
+      const bfChatId = isThread
+        ? (message.channel.parentId ?? message.channelId)
+        : message.channelId;
+      const bfThreadId = isThread ? message.channelId : undefined;
+      if (!ctx.backfillState.hasDone(bfChatId, bfThreadId)) {
+        const priorContext = await fetchChannelHistory(message);
+        await ctx.backfillState.mark(bfChatId, bfThreadId);
+        if (priorContext) {
+          envelope.priorContext = priorContext;
+        }
+      }
     }
 
     // Receipt reaction (best-effort, non-blocking)
@@ -172,4 +189,36 @@ async function downloadAttachments(
   }
 
   return results;
+}
+
+const BACKFILL_FETCH_LIMIT = 50;
+const BACKFILL_INCLUDE_LIMIT = 40;
+const BACKFILL_CHAR_LIMIT = 4000;
+
+async function fetchChannelHistory(message: Message): Promise<string | undefined> {
+  try {
+    const fetched = await message.channel.messages.fetch({
+      limit: BACKFILL_FETCH_LIMIT,
+      before: message.id,
+    });
+    if (fetched.size === 0) return undefined;
+
+    const lines = [...fetched.values()]
+      .reverse()
+      .filter((m) => m.content.trim() && !m.author.bot)
+      .slice(-BACKFILL_INCLUDE_LIMIT)
+      .map((m) => `${m.author.username}: ${m.content.trim()}`)
+      .join('\n');
+
+    if (!lines) return undefined;
+
+    const trimmed =
+      lines.length > BACKFILL_CHAR_LIMIT
+        ? `[... earlier messages omitted]\n${lines.slice(-BACKFILL_CHAR_LIMIT)}`
+        : lines;
+
+    return `[Recent channel history — ${fetched.size} messages before bot joined]\n\n${trimmed}`;
+  } catch {
+    return undefined;
+  }
 }

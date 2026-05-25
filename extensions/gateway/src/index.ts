@@ -992,7 +992,16 @@ export class Gateway {
         // the pattern check below is telemetry-only (monitoring/alerting),
         // not a gate for wrapping.
         const wrapped = wrapUntrusted({ content: text, toolName: 'channel_message' });
-        const loopText = wrapped.content;
+
+        // Channel history backfill — prepend prior context on first encounter.
+        // priorContext is channel history (user-generated) and must be wrapped
+        // as untrusted to prevent prompt injection from old messages.
+        const contextPrefix = message.priorContext
+          ? wrapUntrusted({ content: message.priorContext, toolName: 'channel_history' }).content +
+            '\n\n---\n\n'
+          : '';
+
+        const loopText = contextPrefix ? `${contextPrefix}${wrapped.content}` : wrapped.content;
 
         // Telemetry: record when known injection patterns or template tokens
         // are detected, for monitoring/alerting. Not a trust gate.

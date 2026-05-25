@@ -19,6 +19,7 @@ import { DEFAULT_CHANNEL_MODE } from './config';
 import { buildModal, registerInteractionHandler, toActionRowBuilder } from './events/interactions';
 import { registerMessageHandler } from './events/messages';
 import { toNativeMarkdown } from './format';
+import { BackfillStateStore } from './store/backfill-state';
 import { ChannelOverrideStore } from './store/channel-overrides';
 import { ThreadStateStore } from './store/thread-state';
 import type { DiscordClarifyInteraction } from './types';
@@ -84,6 +85,7 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
 
   private readonly threadState?: ThreadStateStore;
   private readonly channelOverrides?: ChannelOverrideStore;
+  private readonly backfillState?: BackfillStateStore;
 
   private messageHandler?: (message: InboundMessage) => void;
   private clarifyInteractionHandler?: (raw: DiscordClarifyInteraction) => void;
@@ -115,6 +117,7 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       const dir = config.discordDir ?? 'discord';
       this.threadState = new ThreadStateStore(config.storage, dir, this.botKey);
       this.channelOverrides = new ChannelOverrideStore(config.storage, dir, this.botKey);
+      this.backfillState = new BackfillStateStore(config.storage, dir, this.botKey);
     }
 
     this.client = new Client({
@@ -132,6 +135,7 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   async start(): Promise<void> {
     await this.threadState?.load();
     await this.channelOverrides?.load();
+    await this.backfillState?.load();
 
     registerMessageHandler({
       client: this.client,
@@ -142,6 +146,7 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       cache: this.cache,
       channelOverrides: this.channelOverrides,
       threadState: this.threadState,
+      backfillState: this.backfillState,
       onMessage: (msg) => this.messageHandler?.(msg),
       onReceipt: (channelId, messageId) => {
         if (this.pendingReactions.size >= this.pendingReactionsMax) {

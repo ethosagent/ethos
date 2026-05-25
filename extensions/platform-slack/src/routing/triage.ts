@@ -4,6 +4,7 @@
 
 import type { InboundMessage } from '@ethosagent/types';
 import { type ChannelMode, DEFAULT_CHANNEL_MODE } from '../config';
+import type { BackfillStateStore } from '../store/backfill-state';
 import type { ChannelOverrideStore } from '../store/channel-overrides';
 import type { ThreadStateStore } from '../store/thread-state';
 import { shouldRespond } from './channel-mode';
@@ -14,6 +15,7 @@ export interface TriageContext {
   defaultChannelMode: ChannelMode;
   channelOverrides?: ChannelOverrideStore;
   threadState?: ThreadStateStore;
+  backfillState?: BackfillStateStore;
 }
 
 /** Subset of a Slack file object attached to a `file_share` message. */
