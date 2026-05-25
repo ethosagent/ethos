@@ -1,10 +1,14 @@
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { type InstalledPluginManifest, scanInstalledPlugins } from '@ethosagent/plugin-loader';
+import {
+  type InstalledPluginManifest,
+  type PluginLoader,
+  scanInstalledPlugins,
+} from '@ethosagent/plugin-loader';
 import { loadMcpConfig, type McpServerConfig } from '@ethosagent/tools-mcp';
 import type { Storage } from '@ethosagent/types';
-import type { McpServerInfo, PluginInfo } from '@ethosagent/web-contracts';
+import type { CredentialKeyInfo, McpServerInfo, PluginInfo } from '@ethosagent/web-contracts';
 
 function spawnNpm(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -35,6 +39,8 @@ export interface PluginsServiceOptions {
   dataDir: string;
   /** Working dir for the optional project-level scan. */
   workingDir?: string;
+  /** Plugin loader instance for credential management. */
+  pluginLoader?: PluginLoader;
 }
 
 export class PluginsService {
@@ -49,6 +55,31 @@ export class PluginsService {
   async uninstall(pluginId: string): Promise<void> {
     const dir = join(this.opts.dataDir, 'plugins');
     await spawnNpm(['uninstall', '--prefix', dir, pluginId]);
+  }
+
+  async setCredential(pluginId: string, key: string, value: string): Promise<void> {
+    if (!this.opts.pluginLoader) throw new Error('Plugin loader not available');
+    await this.opts.pluginLoader.setCredential(pluginId, key, value);
+  }
+
+  async getCredentialMeta(pluginId: string, key: string): Promise<{ updatedAt: string } | null> {
+    if (!this.opts.pluginLoader) return null;
+    return this.opts.pluginLoader.getCredentialMeta(pluginId, key);
+  }
+
+  async listCredentialKeys(pluginId: string): Promise<CredentialKeyInfo[]> {
+    if (!this.opts.pluginLoader) return [];
+    const keys = await this.opts.pluginLoader.listCredentialKeys(pluginId);
+    return keys.map((k) => ({
+      key: k.key,
+      label: k.label,
+      type: k.type,
+      description: k.description ?? null,
+      refreshHint: k.refreshHint ?? null,
+      required: k.required ?? null,
+      isSet: k.isSet,
+      updatedAt: k.updatedAt,
+    }));
   }
 
   async list(): Promise<{ plugins: PluginInfo[]; mcpServers: McpServerInfo[] }> {

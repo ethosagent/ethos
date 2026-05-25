@@ -11,10 +11,19 @@ import type {
   PersonalityConfig,
   PersonalityRegistry,
   PlatformAdapterFactory,
+  Storage,
   Tool,
   ToolRegistry,
   VoidHooks,
 } from '@ethosagent/types';
+
+// ---------------------------------------------------------------------------
+// CredentialStorage — Storage + synchronous existence check
+// ---------------------------------------------------------------------------
+
+export interface CredentialStorage extends Storage {
+  existsSync(path: string): boolean;
+}
 
 // ---------------------------------------------------------------------------
 // Plugin module shape — what every plugin file must export
@@ -69,6 +78,20 @@ export interface EthosPluginApi {
   /** Register a platform adapter factory. Teams opt in via `channels:` block
    *  in their manifest. */
   registerPlatformAdapter(name: string, factory: PlatformAdapterFactory): void;
+
+  /** Check whether a secret exists (synchronous). */
+  hasSecret(key: string): boolean;
+
+  /** Read a secret value. Returns null if the secret doesn't exist or no
+   *  credential storage is configured. */
+  getSecret(key: string): Promise<string | null>;
+
+  /** Write a secret value + metadata. Throws if no credential storage is
+   *  configured. */
+  setSecret(key: string, value: string): Promise<void>;
+
+  /** Register a handler called after `setSecret`. Returns an unsubscribe fn. */
+  onCredentialUpdate(handler: (key: string) => void | Promise<void>): () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,10 +134,19 @@ export class PluginApiImpl implements EthosPluginApi {
   private readonly registeredTools: string[] = [];
   private readonly registeredInjectors: ContextInjector[] = [];
   private readonly registeredPersonalities: string[] = [];
+  private readonly credentialStorage: CredentialStorage | null;
+  private readonly credentialBasePath: string | null;
+  private readonly credentialUpdateHandlers: Array<(key: string) => void | Promise<void>> = [];
 
-  constructor(pluginId: string, registries: PluginRegistries) {
+  constructor(
+    pluginId: string,
+    registries: PluginRegistries,
+    credentialOpts?: { storage: CredentialStorage; basePath: string },
+  ) {
     this.pluginId = pluginId;
     this.registries = registries;
+    this.credentialStorage = credentialOpts?.storage ?? null;
+    this.credentialBasePath = credentialOpts?.basePath ?? null;
   }
 
   registerTool(tool: Tool): void {
@@ -188,6 +220,50 @@ export class PluginApiImpl implements EthosPluginApi {
     this.registries.platformAdapters.set(name, factory);
   }
 
+  // ---- Credential methods ------------------------------------------------
+
+  private credPath(key: string): string {
+    return `${this.credentialBasePath}/credentials/${key}`;
+  }
+
+  hasSecret(key: string): boolean {
+    if (!this.credentialStorage || !this.credentialBasePath) return false;
+    return this.credentialStorage.existsSync(this.credPath(key));
+  }
+
+  async getSecret(key: string): Promise<string | null> {
+    if (!this.credentialStorage || !this.credentialBasePath) return null;
+    return this.credentialStorage.read(this.credPath(key));
+  }
+
+  async setSecret(key: string, value: string): Promise<void> {
+    if (!this.credentialStorage || !this.credentialBasePath) {
+      throw new Error(`Plugin "${this.pluginId}" has no credential storage configured`);
+    }
+    const dir = `${this.credentialBasePath}/credentials`;
+    await this.credentialStorage.mkdir(dir);
+    await this.credentialStorage.writeAtomic(this.credPath(key), value);
+    await this.credentialStorage.writeAtomic(
+      `${this.credPath(key)}.meta`,
+      JSON.stringify({ updatedAt: new Date().toISOString() }),
+    );
+    await this.fireCredentialUpdate(key);
+  }
+
+  onCredentialUpdate(handler: (key: string) => void | Promise<void>): () => void {
+    this.credentialUpdateHandlers.push(handler);
+    return () => {
+      const idx = this.credentialUpdateHandlers.indexOf(handler);
+      if (idx >= 0) this.credentialUpdateHandlers.splice(idx, 1);
+    };
+  }
+
+  private async fireCredentialUpdate(key: string): Promise<void> {
+    for (const handler of this.credentialUpdateHandlers) {
+      await handler(key);
+    }
+  }
+
   /** Remove everything this plugin registered. Called by PluginLoader.unload(). */
   cleanup(): void {
     // Hooks — HookRegistry tracks by pluginId
@@ -206,6 +282,9 @@ export class PluginApiImpl implements EthosPluginApi {
     }
 
     // Personalities — no unregister method; they stay (harmless)
+
+    // Credential update handlers
+    this.credentialUpdateHandlers.length = 0;
   }
 }
 
@@ -223,6 +302,7 @@ export type {
   ModifyingHooks,
   PersonalityConfig,
   PromptContext,
+  Storage,
   Tool,
   ToolContext,
   ToolResult,

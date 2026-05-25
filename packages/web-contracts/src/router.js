@@ -7,6 +7,7 @@ import {
   BatchRunInfoSchema,
   BotBindingSchema,
   ChannelPlatformFilterSchema,
+  CredentialKeyInfoSchema,
   CronJobSchema,
   CronRunSchema,
   EvalRunInfoSchema,
@@ -652,11 +653,35 @@ const PluginsInstallInput = z.object({ packageSpec: z.string().min(1) });
 const PluginsInstallOutput = z.object({ ok: z.literal(true) });
 const PluginsUninstallInput = z.object({ pluginId: z.string().min(1) });
 const PluginsUninstallOutput = z.object({ ok: z.literal(true) });
+const PluginsSetCredentialInput = z.object({
+  pluginId: z.string().min(1),
+  key: z.string().min(1),
+  value: z.string(),
+});
+const PluginsSetCredentialOutput = z.object({ ok: z.literal(true) });
+const PluginsGetCredentialMetaInput = z.object({
+  pluginId: z.string().min(1),
+  key: z.string().min(1),
+});
+const PluginsGetCredentialMetaOutput = z.object({
+  updatedAt: z.string().nullable(),
+});
+const PluginsListCredentialKeysInput = z.object({
+  pluginId: z.string().min(1),
+});
+const PluginsListCredentialKeysOutput = z.object({
+  keys: z.array(CredentialKeyInfoSchema),
+});
 /** @experimental */
 const plugins = {
   list: oc.output(PluginsListOutput),
   install: oc.input(PluginsInstallInput).output(PluginsInstallOutput),
   uninstall: oc.input(PluginsUninstallInput).output(PluginsUninstallOutput),
+  setCredential: oc.input(PluginsSetCredentialInput).output(PluginsSetCredentialOutput),
+  getCredentialMeta: oc.input(PluginsGetCredentialMetaInput).output(PluginsGetCredentialMetaOutput),
+  listCredentialKeys: oc
+    .input(PluginsListCredentialKeysInput)
+    .output(PluginsListCredentialKeysOutput),
 };
 // ---------------------------------------------------------------------------
 // MCP install flow (v1 — OAuth UI)

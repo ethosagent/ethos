@@ -5,7 +5,9 @@ import {
   DefaultPersonalityRegistry,
   DefaultToolRegistry,
 } from '@ethosagent/core';
+import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
+import type { CredentialStorage } from '../index';
 import { PluginApiImpl } from '../index';
 import { createTestRuntime, mockLLM, mockTool } from '../testing';
 import { defineTool, err, ok } from '../tool-helpers';
@@ -328,5 +330,100 @@ describe('PluginApiImpl.registerMemoryProvider', () => {
     expect(() => api.registerMemoryProvider('other/backend', factory)).toThrow(
       /cannot register memory provider/,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Credential methods
+// ---------------------------------------------------------------------------
+
+async function makeCredentialApi(): Promise<{ api: PluginApiImpl; storage: InMemoryStorage }> {
+  const storage = new InMemoryStorage();
+  await storage.mkdir('/test');
+  await storage.mkdir('/test/credentials');
+  const api = new PluginApiImpl('test-plugin', makeRegistries(), {
+    storage: storage as CredentialStorage,
+    basePath: '/test',
+  });
+  return { api, storage };
+}
+
+describe('credential methods', () => {
+  it('hasSecret returns false before setSecret, true after', async () => {
+    const { api } = await makeCredentialApi();
+    expect(api.hasSecret('api-key')).toBe(false);
+    await api.setSecret('api-key', 'sk-123');
+    expect(api.hasSecret('api-key')).toBe(true);
+  });
+
+  it('getSecret returns null before setSecret, the value after', async () => {
+    const { api } = await makeCredentialApi();
+    expect(await api.getSecret('token')).toBeNull();
+    await api.setSecret('token', 'abc');
+    expect(await api.getSecret('token')).toBe('abc');
+  });
+
+  it('setSecret writes value and .meta file', async () => {
+    const { api, storage } = await makeCredentialApi();
+    await api.setSecret('db-pass', 's3cret');
+
+    expect(await storage.read('/test/credentials/db-pass')).toBe('s3cret');
+
+    const meta = await storage.read('/test/credentials/db-pass.meta');
+    expect(meta).not.toBeNull();
+    const parsed = JSON.parse(meta as string);
+    expect(parsed.updatedAt).toBeDefined();
+    expect(typeof parsed.updatedAt).toBe('string');
+  });
+
+  it('setSecret fires onCredentialUpdate handlers', async () => {
+    const { api } = await makeCredentialApi();
+    const updates: string[] = [];
+    api.onCredentialUpdate(async (key) => {
+      updates.push(key);
+    });
+
+    await api.setSecret('key1', 'val1');
+    await api.setSecret('key2', 'val2');
+    expect(updates).toEqual(['key1', 'key2']);
+  });
+
+  it('onCredentialUpdate returns working unsubscribe function', async () => {
+    const { api } = await makeCredentialApi();
+    const updates: string[] = [];
+    const unsub = api.onCredentialUpdate(async (key) => {
+      updates.push(key);
+    });
+
+    await api.setSecret('a', '1');
+    unsub();
+    await api.setSecret('b', '2');
+
+    expect(updates).toEqual(['a']);
+  });
+
+  it('cleanup clears credential update handlers', async () => {
+    const { api } = await makeCredentialApi();
+    const updates: string[] = [];
+    api.onCredentialUpdate(async (key) => {
+      updates.push(key);
+    });
+
+    await api.setSecret('before', 'x');
+    api.cleanup();
+    await api.setSecret('after', 'y');
+
+    expect(updates).toEqual(['before']);
+  });
+
+  it('hasSecret/getSecret return false/null when no credential storage configured', async () => {
+    const api = new PluginApiImpl('no-creds', makeRegistries());
+    expect(api.hasSecret('anything')).toBe(false);
+    expect(await api.getSecret('anything')).toBeNull();
+  });
+
+  it('setSecret throws when no credential storage configured', async () => {
+    const api = new PluginApiImpl('no-creds', makeRegistries());
+    await expect(api.setSecret('key', 'val')).rejects.toThrow(/no credential storage configured/);
   });
 });

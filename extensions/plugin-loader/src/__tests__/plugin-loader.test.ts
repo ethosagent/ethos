@@ -8,6 +8,8 @@ import {
   DefaultPersonalityRegistry,
   DefaultToolRegistry,
 } from '@ethosagent/core';
+import type { CredentialStorage } from '@ethosagent/plugin-sdk';
+import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { ContextInjector, Logger } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PluginLoader } from '../index';
@@ -192,6 +194,209 @@ export async function deactivate() {}
 
     expect(registries.tools.get('flat_tool')).toBeDefined();
     expect(registries.tools.get('scoped_tool')).toBeDefined();
+  });
+
+  // --- Credential management -------------------------------------------------
+
+  describe('credential methods', () => {
+    it('setCredential throws for an unknown plugin id', async () => {
+      const registries = makeRegistries();
+      const credStorage = new InMemoryStorage();
+      const loader = new PluginLoader(registries, {
+        credentialStorage: credStorage as CredentialStorage,
+        dataDir: testDir,
+      });
+
+      await expect(loader.setCredential('nonexistent', 'API_KEY', 'secret')).rejects.toThrow(
+        'Plugin "nonexistent" is not loaded',
+      );
+    });
+
+    it('setCredential writes credential and meta files via PluginApiImpl', async () => {
+      const registries = makeRegistries();
+      const credStorage = new InMemoryStorage();
+      const loader = new PluginLoader(registries, {
+        credentialStorage: credStorage as CredentialStorage,
+        dataDir: '/test-data',
+      });
+
+      await writePlugin(testDir, 'cred-test', 'export async function activate(api) {}');
+      await loader.loadFromDirectory(testDir);
+      expect(loader.isLoaded('cred-test')).toBe(true);
+
+      await loader.setCredential('cred-test', 'API_KEY', 'my-secret-value');
+
+      // Verify the credential file was written
+      const credValue = await credStorage.read('/test-data/plugins/cred-test/credentials/API_KEY');
+      expect(credValue).toBe('my-secret-value');
+
+      // Verify the meta file was written
+      const metaRaw = await credStorage.read(
+        '/test-data/plugins/cred-test/credentials/API_KEY.meta',
+      );
+      expect(metaRaw).not.toBeNull();
+      const meta = JSON.parse(metaRaw ?? '');
+      expect(meta.updatedAt).toBeDefined();
+    });
+
+    it('getCredentialMeta returns null for unset credential', async () => {
+      const registries = makeRegistries();
+      const credStorage = new InMemoryStorage();
+      const loader = new PluginLoader(registries, {
+        credentialStorage: credStorage as CredentialStorage,
+        dataDir: '/test-data',
+      });
+
+      const meta = await loader.getCredentialMeta('some-plugin', 'MISSING_KEY');
+      expect(meta).toBeNull();
+    });
+
+    it('getCredentialMeta returns updatedAt after setCredential', async () => {
+      const registries = makeRegistries();
+      const credStorage = new InMemoryStorage();
+      const loader = new PluginLoader(registries, {
+        credentialStorage: credStorage as CredentialStorage,
+        dataDir: '/test-data',
+      });
+
+      await writePlugin(testDir, 'meta-test', 'export async function activate(api) {}');
+      await loader.loadFromDirectory(testDir);
+
+      await loader.setCredential('meta-test', 'TOKEN', 'abc123');
+
+      const meta = await loader.getCredentialMeta('meta-test', 'TOKEN');
+      expect(meta).not.toBeNull();
+      expect(meta?.updatedAt).toBeDefined();
+      // Should be a valid ISO date string
+      expect(Number.isNaN(Date.parse(meta?.updatedAt ?? ''))).toBe(false);
+    });
+
+    it('clearCredential removes credential and meta files', async () => {
+      const registries = makeRegistries();
+      const credStorage = new InMemoryStorage();
+      const loader = new PluginLoader(registries, {
+        credentialStorage: credStorage as CredentialStorage,
+        dataDir: '/test-data',
+      });
+
+      await writePlugin(testDir, 'clear-test', 'export async function activate(api) {}');
+      await loader.loadFromDirectory(testDir);
+
+      await loader.setCredential('clear-test', 'SECRET', 'value');
+
+      // Verify they exist
+      expect(await credStorage.exists('/test-data/plugins/clear-test/credentials/SECRET')).toBe(
+        true,
+      );
+      expect(
+        await credStorage.exists('/test-data/plugins/clear-test/credentials/SECRET.meta'),
+      ).toBe(true);
+
+      await loader.clearCredential('clear-test', 'SECRET');
+
+      expect(await credStorage.exists('/test-data/plugins/clear-test/credentials/SECRET')).toBe(
+        false,
+      );
+      expect(
+        await credStorage.exists('/test-data/plugins/clear-test/credentials/SECRET.meta'),
+      ).toBe(false);
+    });
+
+    it('listCredentialKeys merges manifest declarations with storage state', async () => {
+      const registries = makeRegistries();
+      const credStorage = new InMemoryStorage();
+      const loader = new PluginLoader(registries, {
+        credentialStorage: credStorage as CredentialStorage,
+        dataDir: '/test-data',
+      });
+
+      // Write a plugin with credential declarations in package.json
+      const pluginDir = join(testDir, 'list-test');
+      await mkdir(pluginDir, { recursive: true });
+      await writeFile(
+        join(pluginDir, 'package.json'),
+        JSON.stringify({
+          name: 'list-test',
+          version: '1.0.0',
+          ethos: {
+            type: 'plugin',
+            credentials: [
+              {
+                key: 'API_KEY',
+                label: 'API Key',
+                type: 'secret',
+                description: 'Main API key',
+                required: true,
+              },
+              {
+                key: 'WORKSPACE',
+                label: 'Workspace ID',
+                type: 'text',
+              },
+            ],
+          },
+        }),
+      );
+      await writeFile(join(pluginDir, 'index.ts'), 'export async function activate(api) {}');
+
+      await loader.loadFromDirectory(testDir);
+
+      // Set only one of the declared credentials
+      await loader.setCredential('list-test', 'API_KEY', 'secret-value');
+
+      // Also write an undeclared credential directly to credStorage
+      await credStorage.mkdir('/test-data/plugins/list-test/credentials');
+      await credStorage.write(
+        '/test-data/plugins/list-test/credentials/EXTRA_TOKEN',
+        'extra-value',
+      );
+      await credStorage.write(
+        '/test-data/plugins/list-test/credentials/EXTRA_TOKEN.meta',
+        JSON.stringify({ updatedAt: '2026-01-01T00:00:00.000Z' }),
+      );
+
+      const keys = await loader.listCredentialKeys('list-test');
+
+      // Should have 3 entries: API_KEY (declared+set), WORKSPACE (declared+unset), EXTRA_TOKEN (undeclared+set)
+      expect(keys).toHaveLength(3);
+
+      const apiKey = keys.find((k) => k.key === 'API_KEY');
+      expect(apiKey).toBeDefined();
+      expect(apiKey?.isSet).toBe(true);
+      expect(apiKey?.label).toBe('API Key');
+      expect(apiKey?.type).toBe('secret');
+      expect(apiKey?.description).toBe('Main API key');
+      expect(apiKey?.required).toBe(true);
+      expect(apiKey?.updatedAt).toBeDefined();
+
+      const workspace = keys.find((k) => k.key === 'WORKSPACE');
+      expect(workspace).toBeDefined();
+      expect(workspace?.isSet).toBe(false);
+      expect(workspace?.label).toBe('Workspace ID');
+      expect(workspace?.updatedAt).toBeNull();
+
+      const extra = keys.find((k) => k.key === 'EXTRA_TOKEN');
+      expect(extra).toBeDefined();
+      expect(extra?.isSet).toBe(true);
+      expect(extra?.label).toBe('EXTRA_TOKEN');
+      expect(extra?.type).toBe('text');
+      expect(extra?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    it('listCredentialKeys returns empty array for plugin with no credentials', async () => {
+      const registries = makeRegistries();
+      const credStorage = new InMemoryStorage();
+      const loader = new PluginLoader(registries, {
+        credentialStorage: credStorage as CredentialStorage,
+        dataDir: '/test-data',
+      });
+
+      await writePlugin(testDir, 'no-creds', 'export async function activate(api) {}');
+      await loader.loadFromDirectory(testDir);
+
+      const keys = await loader.listCredentialKeys('no-creds');
+      expect(keys).toHaveLength(0);
+    });
   });
 
   // --- Phase 30.6 — plugin contract version gate ---------------------------

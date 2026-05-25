@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { CredentialDeclaration } from '../index';
 import {
   checkPluginContractMajor,
   isEthosPlugin,
@@ -131,5 +132,75 @@ describe('normalizeExternalPluginCompatibility', () => {
     const result = normalizeExternalPluginCompatibility('2.0.0', '1.5.0');
     expect(result.compatible).toBe(false);
     expect(result.reason).toBeDefined();
+  });
+});
+
+describe('credentials validation', () => {
+  const base = {
+    name: 'ethos-plugin-creds',
+    version: '1.0.0',
+    description: 'Plugin with credentials',
+    main: 'index.js',
+    ethos: { type: 'plugin' as const },
+  };
+
+  const validCred: CredentialDeclaration = {
+    key: 'API_KEY',
+    label: 'API Key',
+    type: 'secret',
+    description: 'The API key for the service',
+    refreshHint: 'weekly',
+    required: true,
+  };
+
+  it('accepts valid credentials array', () => {
+    const result = validatePluginPackageJson({
+      ...base,
+      ethos: { ...base.ethos, credentials: [validCred] },
+    });
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('rejects credential with invalid key', () => {
+    const result = validatePluginPackageJson({
+      ...base,
+      ethos: {
+        ...base.ethos,
+        credentials: [{ ...validCred, key: 'bad key!' }],
+      },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('credentials[0].key'))).toBe(true);
+  });
+
+  it('rejects credential with missing label', () => {
+    const result = validatePluginPackageJson({
+      ...base,
+      ethos: {
+        ...base.ethos,
+        credentials: [{ ...validCred, label: '' }],
+      },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('credentials[0].label'))).toBe(true);
+  });
+
+  it('rejects credential with invalid type', () => {
+    const result = validatePluginPackageJson({
+      ...base,
+      ethos: {
+        ...base.ethos,
+        credentials: [{ ...validCred, type: 'password' }],
+      },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('credentials[0].type'))).toBe(true);
+  });
+
+  it('accepts package.json without credentials (backwards compat)', () => {
+    const result = validatePluginPackageJson(base);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
   });
 });

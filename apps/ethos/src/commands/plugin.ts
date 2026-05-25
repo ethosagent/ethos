@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { readdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -72,8 +72,15 @@ export async function runPlugin(args: string[]): Promise<void> {
       break;
     }
 
+    case 'credentials': {
+      await runCredentials(args.slice(1));
+      break;
+    }
+
     default:
-      console.log('Usage: ethos plugin [install <pkg> | remove <pkg> | list]');
+      console.log(
+        'Usage: ethos plugin [install <pkg> | remove <pkg> | list | credentials <pluginId>]',
+      );
   }
 }
 
@@ -324,6 +331,180 @@ function promptConfirm(question: string): Promise<boolean> {
       resolve(ans.trim().toLowerCase() === 'y');
     });
   });
+}
+
+// ---------------------------------------------------------------------------
+// Credentials
+// ---------------------------------------------------------------------------
+
+async function runCredentials(args: string[]): Promise<void> {
+  const pluginId = args[0];
+  if (!pluginId) {
+    console.log(
+      'Usage: ethos plugin credentials <pluginId> [--list | --set KEY[=VALUE] | --clear KEY]',
+    );
+    process.exit(1);
+  }
+
+  const flag = args[1] ?? '--list';
+  const dataDir = join(homedir(), '.ethos');
+  const credDir = join(dataDir, 'plugins', pluginId, 'credentials');
+
+  switch (flag) {
+    case '--list': {
+      await listCredentials(pluginId, credDir);
+      break;
+    }
+    case '--set': {
+      const keyArg = args[2];
+      if (!keyArg) {
+        console.log('Usage: ethos plugin credentials <pluginId> --set KEY[=VALUE]');
+        process.exit(1);
+      }
+      await setCredential(pluginId, credDir, keyArg);
+      break;
+    }
+    case '--clear': {
+      const key = args[2];
+      if (!key) {
+        console.log('Usage: ethos plugin credentials <pluginId> --clear KEY');
+        process.exit(1);
+      }
+      await clearCredential(credDir, key);
+      break;
+    }
+    default:
+      console.log(
+        'Usage: ethos plugin credentials <pluginId> [--list | --set KEY[=VALUE] | --clear KEY]',
+      );
+      process.exit(1);
+  }
+}
+
+async function readPluginCredentialDeclarations(
+  pluginId: string,
+): Promise<Array<{ key: string; label: string; type: string; refreshHint?: string }>> {
+  const dir = pluginsDir();
+  const candidates = [
+    join(dir, pluginId, 'package.json'),
+    join(dir, 'node_modules', pluginId, 'package.json'),
+  ];
+
+  for (const pkgPath of candidates) {
+    try {
+      const raw = JSON.parse(await readFile(pkgPath, 'utf-8')) as Record<string, unknown>;
+      const ethosField = raw.ethos as Record<string, unknown> | undefined;
+      if (ethosField && Array.isArray(ethosField.credentials)) {
+        return ethosField.credentials as Array<{
+          key: string;
+          label: string;
+          type: string;
+          refreshHint?: string;
+        }>;
+      }
+    } catch {
+      // package.json not found at this candidate path
+    }
+  }
+  return [];
+}
+
+async function listCredentials(pluginId: string, credDir: string): Promise<void> {
+  const declared = await readPluginCredentialDeclarations(pluginId);
+
+  let entries: string[] = [];
+  try {
+    entries = (await readdir(credDir)).filter((name) => !name.endsWith('.meta'));
+  } catch {
+    // credentials dir doesn't exist yet
+  }
+
+  const allKeys = new Set([...declared.map((d) => d.key), ...entries]);
+
+  if (allKeys.size === 0) {
+    console.log(`\n${c.dim}No credentials declared or set for ${pluginId}.${c.reset}`);
+    return;
+  }
+
+  console.log();
+  for (const key of allKeys) {
+    const isSet = entries.includes(key);
+    let detail = `${c.dim}not set${c.reset}`;
+
+    if (isSet) {
+      try {
+        const metaRaw = await readFile(join(credDir, `${key}.meta`), 'utf-8');
+        const meta = JSON.parse(metaRaw) as { updatedAt?: string };
+        if (meta.updatedAt) {
+          const ageMs = Date.now() - new Date(meta.updatedAt).getTime();
+          const ageH = Math.floor(ageMs / (1000 * 60 * 60));
+          detail = `${c.green}set${c.reset}  ${c.dim}updated ${ageH}h ago${c.reset}`;
+          const decl = declared.find((d) => d.key === key);
+          if (decl?.refreshHint === 'daily' && ageH > 20) {
+            detail += `  ${c.yellow}-- daily rotation due${c.reset}`;
+          } else if (decl?.refreshHint === 'weekly' && ageH > 144) {
+            detail += `  ${c.yellow}-- weekly rotation due${c.reset}`;
+          }
+        } else {
+          detail = `${c.green}set${c.reset}`;
+        }
+      } catch {
+        detail = `${c.green}set${c.reset}`;
+      }
+    }
+
+    console.log(`  ${c.cyan}${key}${c.reset}  ${detail}`);
+  }
+  console.log();
+}
+
+async function setCredential(pluginId: string, credDir: string, keyArg: string): Promise<void> {
+  const eqIdx = keyArg.indexOf('=');
+  let key: string;
+  let value: string;
+
+  if (eqIdx >= 0) {
+    key = keyArg.slice(0, eqIdx);
+    value = keyArg.slice(eqIdx + 1);
+  } else {
+    key = keyArg;
+    value = await promptSecret(`Enter value for ${key}: `);
+  }
+
+  if (!/^[a-zA-Z0-9_-]+$/.test(key)) {
+    console.error(
+      `${c.red}Invalid key "${key}" -- must be alphanumeric, underscores, hyphens.${c.reset}`,
+    );
+    process.exit(1);
+  }
+
+  await mkdir(credDir, { recursive: true });
+
+  await writeFile(join(credDir, key), value, { mode: 0o600 });
+  await writeFile(
+    join(credDir, `${key}.meta`),
+    JSON.stringify({ updatedAt: new Date().toISOString() }),
+    { mode: 0o600 },
+  );
+
+  console.log(`${c.green}✓${c.reset} Credential ${c.cyan}${key}${c.reset} saved for ${pluginId}.`);
+}
+
+function promptSecret(prompt: string): Promise<string> {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(prompt, (answer) => {
+      rl.close();
+      resolve(answer);
+    });
+  });
+}
+
+async function clearCredential(credDir: string, key: string): Promise<void> {
+  await rm(join(credDir, key), { force: true }).catch(() => {});
+  await rm(join(credDir, `${key}.meta`), { force: true }).catch(() => {});
+
+  console.log(`${c.green}✓${c.reset} Credential ${c.cyan}${key}${c.reset} cleared.`);
 }
 
 // ---------------------------------------------------------------------------

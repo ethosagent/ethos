@@ -1,3 +1,4 @@
+import { existsSync as fsExistsSync } from 'node:fs';
 import {
   appendFile,
   chmod,
@@ -118,5 +119,11 @@ export class FsStorage {
   }
   async chmod(path, mode) {
     await chmod(path, mode);
+  }
+  /** Synchronous existence check. Not on the Storage interface (which is
+   *  async-only) — exists as a concrete-class method for the `hasSecret`
+   *  use case in PluginApiImpl. */
+  existsSync(path) {
+    return fsExistsSync(path);
   }
 }
