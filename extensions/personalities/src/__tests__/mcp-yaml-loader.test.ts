@@ -167,6 +167,29 @@ describe('parseMcpYaml', () => {
     const { warnings } = parseMcpYaml(src);
     expect(warnings).toEqual([]);
   });
+
+  it('parses enabled: false', () => {
+    const src = ['servers:', '  myserver:', '    enabled: false'].join('\n');
+
+    const { policy, warnings } = parseMcpYaml(src);
+    expect(policy.servers?.myserver?.enabled).toBe(false);
+    expect(warnings).toEqual([]);
+  });
+
+  it('parses enabled: true', () => {
+    const src = ['servers:', '  myserver:', '    enabled: true'].join('\n');
+
+    const { policy, warnings } = parseMcpYaml(src);
+    expect(policy.servers?.myserver?.enabled).toBe(true);
+    expect(warnings).toEqual([]);
+  });
+
+  it('enabled: false does not trigger unknown-key warning', () => {
+    const src = ['servers:', '  linear:', '    enabled: false'].join('\n');
+
+    const { warnings } = parseMcpYaml(src);
+    expect(warnings).toEqual([]);
+  });
 });
 
 describe('renderMcpYaml', () => {
@@ -227,6 +250,19 @@ describe('renderMcpYaml', () => {
     expect(rendered).toBe(['servers:', '  linear:', '    tools:', ''].join('\n'));
     const { policy } = parseMcpYaml(rendered);
     expect(policy.servers?.linear?.tools).toEqual([]);
+  });
+
+  it('round-trips enabled: false', () => {
+    const src = ['servers:', '  myserver:', '    enabled: false', ''].join('\n');
+    const { policy } = parseMcpYaml(src);
+    const reparsed = parseMcpYaml(renderMcpYaml(policy));
+    expect(reparsed.policy).toEqual(policy);
+    expect(reparsed.warnings).toEqual([]);
+  });
+
+  it('emits enabled: false when the field is set', () => {
+    const rendered = renderMcpYaml({ servers: { linear: { enabled: false } } });
+    expect(rendered).toContain('    enabled: false');
   });
 });
 
@@ -357,6 +393,29 @@ describe('FilePersonalityRegistry — writeMcpToolSubsets', () => {
     const reg = new FilePersonalityRegistry(undefined, testDir);
     await reg.loadBuiltins();
     await expect(reg.writeMcpToolSubsets('researcher', { linear: ['x'] })).rejects.toThrow();
+  });
+
+  it('preserves enabled when clearing tools with null', async () => {
+    const personalityDir = join(testDir, 'personalities', 'enabled-only');
+    await mkdir(personalityDir, { recursive: true });
+    await writeFile(join(personalityDir, 'config.yaml'), 'name: Enabled Only\n');
+    await writeFile(join(personalityDir, 'SOUL.md'), '# Enabled Only');
+    await writeFile(
+      join(personalityDir, 'mcp.yaml'),
+      ['servers:', '  linear:', '    enabled: false', '    tools:', '      - list_issues'].join(
+        '\n',
+      ),
+    );
+
+    const reg = new FilePersonalityRegistry(undefined, testDir);
+    await reg.loadFromDirectory(join(testDir, 'personalities'));
+
+    await reg.writeMcpToolSubsets('enabled-only', { linear: null });
+
+    const policy = reg.getMcpPolicy('enabled-only');
+    // tools removed, but enabled: false must survive
+    expect(policy?.servers?.linear?.tools).toBeUndefined();
+    expect(policy?.servers?.linear?.enabled).toBe(false);
   });
 });
 

@@ -302,12 +302,19 @@ export function parseMcpYaml(src: string): {
         continue;
       }
 
+      const enabledMatch = sline.match(/^\s{4}enabled:\s*(true|false)\s*$/);
+      if (enabledMatch) {
+        serverPolicy.enabled = enabledMatch[1] === 'true';
+        i++;
+        continue;
+      }
+
       // Non-blank, non-comment line at indent 4 that isn't tools: or reject_args:.
       // Unknown key — possible typo; the key's content is silently dropped.
       const unknownKeyMatch = sline.match(/^\s{4}(\w[\w-]*):/);
       const keyName = unknownKeyMatch ? unknownKeyMatch[1] : sline.trim();
       warnings.push(
-        `line ${i + 1}: unknown key "${keyName}" under server "${serverName}" (expected "tools" or "reject_args")`,
+        `line ${i + 1}: unknown key "${keyName}" under server "${serverName}" (expected "tools", "reject_args", or "enabled")`,
       );
       i++;
     }
@@ -336,6 +343,9 @@ export function renderMcpYaml(policy: import('@ethosagent/types').McpPolicy): st
   for (const serverName of Object.keys(servers)) {
     const serverPolicy = servers[serverName] ?? {};
     lines.push(`  ${serverName}:`);
+    if (serverPolicy.enabled !== undefined) {
+      lines.push(`    enabled: ${serverPolicy.enabled}`);
+    }
     if (serverPolicy.tools !== undefined) {
       lines.push('    tools:');
       for (const tool of serverPolicy.tools) {
@@ -697,7 +707,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         // Drop the tools key — but keep the server entry only if it still
         // carries reject_args; otherwise remove it entirely so the policy
         // stays minimal.
-        if (prev.reject_args !== undefined) {
+        if (prev.reject_args !== undefined || prev.enabled !== undefined) {
           const { tools: _omit, ...rest } = prev;
           servers[serverName] = rest;
         } else {

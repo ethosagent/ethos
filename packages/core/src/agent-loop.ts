@@ -1341,6 +1341,32 @@ export class AgentLoop {
 
         const effectiveArgs = beforeResult.args ?? tc.args;
 
+        // MCP enabled policy — short-circuit if the server is disabled for this personality.
+        const enabledError = checkMcpEnabled(this.mcpPolicy, tc.toolName);
+        if (enabledError) {
+          this.observability?.recordSafetyBlock({
+            traceId,
+            code: 'tool_blocked',
+            cause: enabledError,
+          });
+          observe({ type: 'tool_end', toolName: tc.toolName, ok: false });
+          yield {
+            type: 'tool_end',
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            ok: false,
+            durationMs: 0,
+            result: enabledError,
+          };
+          prepped.push({
+            toolCallId: tc.toolCallId,
+            name: tc.toolName,
+            args: effectiveArgs,
+            rejected: enabledError,
+          });
+          continue;
+        }
+
         // MCP reject_args policy — checked after hooks so modified args are evaluated.
         const rejectError = checkMcpRejectArgs(this.mcpPolicy, tc.toolName, effectiveArgs);
         if (rejectError) {
@@ -2118,6 +2144,29 @@ export function checkMcpRejectArgs(
     if (typeof value === 'string' && forbiddenValues.includes(value)) {
       return `MCP policy: argument '${argName}' value '${value}' is rejected for tool '${bareTool}' on server '${server}'`;
     }
+  }
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// MCP enabled policy — standalone so it can be tested without constructing
+// a full AgentLoop.  Returns an error string when the tool's server has
+// enabled === false in the personality's mcp.yaml, undefined otherwise.
+// ---------------------------------------------------------------------------
+export function checkMcpEnabled(
+  mcpPolicy: import('@ethosagent/types').McpPolicy | undefined,
+  toolName: string,
+): string | undefined {
+  const servers = mcpPolicy?.servers;
+  if (!servers || !toolName.startsWith('mcp__')) return undefined;
+
+  const firstSep = toolName.indexOf('__');
+  const secondSep = toolName.indexOf('__', firstSep + 2);
+  if (secondSep === -1) return undefined;
+
+  const server = toolName.slice(firstSep + 2, secondSep);
+  if (servers[server]?.enabled === false) {
+    return `MCP policy: server '${server}' is disabled for this personality`;
   }
   return undefined;
 }
