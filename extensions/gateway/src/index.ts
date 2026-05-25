@@ -1,4 +1,3 @@
-import { InMemorySteerSink } from '@ethosagent/agent-bridge';
 import type { AgentLoop } from '@ethosagent/core';
 import { stripAnsiEscapes } from '@ethosagent/core';
 import type { ChannelFilterConfig } from '@ethosagent/safety-channel';
@@ -967,8 +966,10 @@ export class Gateway {
     // --- Auto-steer: if a turn is already running, push into its steer sink ---
     const activeSink = this.activeSinks.get(laneKey);
     if (activeSink) {
-      activeSink.push(text);
-      await adapter.send(message.chatId, { text: '↩ noted', threadId }).catch(() => {});
+      const accepted = activeSink.push(text);
+      if (accepted) {
+        await adapter.send(message.chatId, { text: '↩ noted', threadId }).catch(() => {});
+      }
       return;
     }
 
@@ -988,7 +989,7 @@ export class Gateway {
       // Track this turn so graceful shutdown can notify the user (P1-1).
       this.activeTurns.set(laneKey, { adapter, chatId: message.chatId });
 
-      const steerSink = new InMemorySteerSink();
+      const steerSink = createSteerSink();
       this.activeSinks.set(laneKey, steerSink);
 
       // Record routing keyed by `sessionKey` so the `session_start` hook
@@ -1319,4 +1320,23 @@ export class Gateway {
       this.usageStore.delete(evictedKey);
     }
   }
+}
+
+function createSteerSink(cap = 32): SteerSink {
+  const queue: string[] = [];
+  return {
+    push(text: string): boolean {
+      if (queue.length >= cap) return false;
+      queue.push(text);
+      return true;
+    },
+    drain(): string[] {
+      if (queue.length === 0) return [];
+      const out = queue.splice(0);
+      return out;
+    },
+    depth(): number {
+      return queue.length;
+    },
+  };
 }
