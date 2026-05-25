@@ -17,6 +17,6 @@
     "@ethosagent/logger": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "yaml": "^2.7.1",
-    "zod": "^4.3.6"
+    "zod": "^4.4.3"
   }
 }

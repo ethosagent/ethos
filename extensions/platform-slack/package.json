@@ -29,6 +29,6 @@
     "@ethosagent/logger": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@slack/bolt": "^3.21.0",
-    "zod": "^4.3.6"
+    "zod": "^4.4.3"
   }
 }
