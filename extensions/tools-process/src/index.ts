@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { closeSync, type FSWatcher, fstatSync, openSync, readSync, watch } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { BoundaryError, type Tool, type ToolResult } from '@ethosagent/types';
+import { buildLogFiles, compilePatterns, watchLogs } from './watcher';
 import {
   DEFAULT_LOG_LINES,
   listProcesses,
@@ -467,262 +467,32 @@ function makeProcessWatch(dataDir: string): Tool {
         };
       }
 
-      const compiled: Array<{ raw: string; re: RegExp | null }> = [];
-      for (const p of patterns) {
-        if (p.startsWith('/') && p.endsWith('/') && p.length > 1) {
-          try {
-            compiled.push({ raw: p, re: new RegExp(p.slice(1, -1)) });
-          } catch {
-            return {
-              ok: false,
-              error: `INVALID_PATTERN: "${p}" is not a valid regex`,
-              code: 'input_invalid',
-            };
-          }
-        } else {
-          compiled.push({ raw: p, re: null });
-        }
+      const result = compilePatterns(patterns);
+      if ('error' in result) {
+        return { ok: false, error: result.error, code: 'input_invalid' };
       }
 
-      const streamFilter = streams ?? 'both';
-      const logFiles: Array<{ path: string; label: 'stdout' | 'stderr' }> = [];
-      if (streamFilter === 'stdout' || streamFilter === 'both') {
-        logFiles.push({ path: join(dataDir, 'processes', id, 'stdout.log'), label: 'stdout' });
-      }
-      if (streamFilter === 'stderr' || streamFilter === 'both') {
-        logFiles.push({ path: join(dataDir, 'processes', id, 'stderr.log'), label: 'stderr' });
-      }
-
-      const stopFirst = stop_on_first_match !== false;
-      const timeoutMs = (timeout_s ?? 60) * 1000;
-      const startTime = Date.now();
-
-      type Match = {
-        pattern: string;
-        line: string;
-        stream: 'stdout' | 'stderr';
-        elapsed_ms: number;
-      };
-      const matches: Match[] = [];
-
-      return new Promise<ToolResult>((resolve) => {
-        let resolved = false;
-        const watchers: FSWatcher[] = [];
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        let livenessInterval: ReturnType<typeof setInterval> | undefined;
-
-        const offsets = new Map<string, number>();
-        const pending = new Map<string, string>();
-        for (const lf of logFiles) {
-          offsets.set(lf.path, 0);
-        }
-
-        function closeAll() {
-          for (const w of watchers) {
-            try {
-              w.close();
-            } catch {
-              // already closed
-            }
-          }
-          watchers.length = 0;
-          if (timer !== undefined) {
-            clearTimeout(timer);
-            timer = undefined;
-          }
-          if (livenessInterval !== undefined) {
-            clearInterval(livenessInterval);
-            livenessInterval = undefined;
-          }
-        }
-
-        function finish(result: ToolResult) {
-          if (resolved) return;
-          resolved = true;
-          closeAll();
-          resolve(result);
-        }
-
-        function flushPending() {
-          for (const lf of logFiles) {
-            const rem = pending.get(lf.path) ?? '';
-            if (rem.length === 0) continue;
-            pending.set(lf.path, '');
-            for (const pat of compiled) {
-              const hit = pat.re ? pat.re.test(rem) : rem.includes(pat.raw);
-              if (hit) {
-                const m: Match = {
-                  pattern: pat.raw,
-                  line: rem,
-                  stream: lf.label,
-                  elapsed_ms: Date.now() - startTime,
-                };
-                matches.push(m);
-                ctx.emit({
-                  type: 'progress',
-                  toolName: 'process_watch',
-                  message: `[${lf.label}] ${rem}`,
-                  audience: 'user',
-                });
-                if (stopFirst) {
-                  finish({
-                    ok: true,
-                    value: JSON.stringify({ matched: true, matches }),
-                  });
-                  return;
-                }
-                break;
-              }
-            }
-            if (resolved) return;
-          }
-        }
-
-        function checkLiveness() {
-          if (resolved) return;
-          if (!isAlive(entry.pid)) {
-            for (const lf of logFiles) {
-              readNewLines(lf.path, lf.label);
-              if (resolved) return;
-            }
-            flushPending();
-            if (resolved) return;
-            const current = loadRegistry(dataDir)[id];
-            finish({
-              ok: true,
-              value: JSON.stringify({
-                matched: matches.length > 0,
-                ...(matches.length > 0 && { matches }),
-                process_exited: true,
-                exit_code: current?.exitCode,
-              }),
-            });
-          }
-        }
-
-        function readNewLines(filePath: string, label: 'stdout' | 'stderr') {
-          let fd: number;
-          try {
-            fd = openSync(filePath, 'r');
-          } catch {
-            return;
-          }
-          try {
-            const fileSize = fstatSync(fd).size;
-            const offset = offsets.get(filePath) ?? 0;
-            if (fileSize > offset) {
-              const len = fileSize - offset;
-              const buf = Buffer.alloc(len);
-              readSync(fd, buf, 0, len, offset);
-              offsets.set(filePath, fileSize);
-
-              const raw = (pending.get(filePath) ?? '') + buf.toString('utf8');
-              const parts = raw.split('\n');
-              const remainder = parts.pop() ?? '';
-              pending.set(filePath, remainder);
-              const lines = parts;
-
-              for (const line of lines) {
-                for (const pat of compiled) {
-                  const hit = pat.re ? pat.re.test(line) : line.includes(pat.raw);
-                  if (hit) {
-                    const m: Match = {
-                      pattern: pat.raw,
-                      line,
-                      stream: label,
-                      elapsed_ms: Date.now() - startTime,
-                    };
-                    matches.push(m);
-                    ctx.emit({
-                      type: 'progress',
-                      toolName: 'process_watch',
-                      message: `[${label}] ${line}`,
-                      audience: 'user',
-                    });
-                    if (stopFirst) {
-                      finish({
-                        ok: true,
-                        value: JSON.stringify({
-                          matched: true,
-                          matches,
-                        }),
-                      });
-                      return;
-                    }
-                    break;
-                  }
-                }
-                if (resolved) return;
-              }
-            }
-          } finally {
-            closeSync(fd);
-          }
-        }
-
-        for (const lf of logFiles) {
-          readNewLines(lf.path, lf.label);
-          if (resolved) return;
-        }
-
-        for (const lf of logFiles) {
-          try {
-            const watcher = watch(lf.path, { persistent: false }, (event) => {
-              if (resolved) return;
-              if (ctx.abortSignal.aborted) {
-                finish({ ok: true, value: JSON.stringify({ matched: false }) });
-                return;
-              }
-              if (event === 'rename') {
-                offsets.set(lf.path, 0);
-              }
-              if (event === 'change' || event === 'rename') {
-                readNewLines(lf.path, lf.label);
-              }
-            });
-            watchers.push(watcher);
-          } catch {
-            // log file may not exist yet — not fatal
-          }
-        }
-
-        for (const lf of logFiles) {
-          readNewLines(lf.path, lf.label);
-          if (resolved) return;
-        }
-
-        livenessInterval = setInterval(() => {
-          if (resolved) return;
-          for (const lf of logFiles) {
-            readNewLines(lf.path, lf.label);
-            if (resolved) return;
-          }
-          checkLiveness();
-        }, WAIT_POLL_MS);
-
-        timer = setTimeout(() => {
-          finish({
-            ok: true,
-            value: JSON.stringify({
-              matched: matches.length > 0,
-              ...(matches.length > 0 && { matches }),
-              timed_out: true,
-            }),
+      const logFiles = buildLogFiles(dataDir, id, streams ?? 'both');
+      const watchResult = await watchLogs({
+        id,
+        pid: entry.pid,
+        dataDir,
+        logFiles,
+        compiled: result.compiled,
+        stopFirst: stop_on_first_match !== false,
+        timeoutMs: (timeout_s ?? 60) * 1000,
+        abortSignal: ctx.abortSignal,
+        onMatch: (m) => {
+          ctx.emit({
+            type: 'progress',
+            toolName: 'process_watch',
+            message: `[${m.stream}] ${m.line}`,
+            audience: 'user',
           });
-        }, timeoutMs);
-
-        if (ctx.abortSignal.aborted) {
-          finish({ ok: true, value: JSON.stringify({ matched: false }) });
-          return;
-        }
-        ctx.abortSignal.addEventListener(
-          'abort',
-          () => {
-            finish({ ok: true, value: JSON.stringify({ matched: false }) });
-          },
-          { once: true },
-        );
+        },
       });
+
+      return { ok: true, value: JSON.stringify(watchResult) };
     },
   };
 }
