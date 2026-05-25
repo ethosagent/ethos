@@ -953,17 +953,275 @@ describe('sequential start/stop cycles', () => {
 });
 
 describe('createProcessTools', () => {
-  it('returns 5 tools', () => {
-    expect(tools).toHaveLength(5);
+  it('returns 6 tools', () => {
+    expect(tools).toHaveLength(6);
   });
 
   it('returns tools with distinct names', () => {
     const names = tools.map((t) => t.name);
-    expect(new Set(names).size).toBe(5);
+    expect(new Set(names).size).toBe(6);
     expect(names).toContain('process_start');
     expect(names).toContain('process_list');
     expect(names).toContain('process_logs');
     expect(names).toContain('process_stop');
     expect(names).toContain('process_wait');
+    expect(names).toContain('process_watch');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// process_watch
+// ---------------------------------------------------------------------------
+
+describe('process_watch', () => {
+  it('returns PROCESS_NOT_FOUND for a non-existent id', async () => {
+    const watch = getTool(tools, 'process_watch');
+    const result = await watch.execute(
+      { id: 'does-not-exist', patterns: ['hello'] },
+      makeCtx(workDir),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('PROCESS_NOT_FOUND');
+      expect(result.code).toBe('execution_failed');
+    }
+  });
+
+  it('returns immediately for an already-exited process', async () => {
+    const id = 'exited-watch';
+    const registry = loadRegistry(dataDir);
+    registry[id] = {
+      id,
+      name: 'done',
+      pid: 12345,
+      command: 'echo hi',
+      cwd: workDir,
+      status: 'exited',
+      exitCode: 42,
+      startedAt: new Date().toISOString(),
+      lastTouchedAt: new Date().toISOString(),
+      started_by: 'test',
+    };
+    saveRegistry(dataDir, registry);
+
+    const watch = getTool(tools, 'process_watch');
+    const result = await watch.execute({ id, patterns: ['hello'] }, makeCtx(workDir));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const data = JSON.parse(result.value);
+    expect(data.matched).toBe(false);
+    expect(data.process_exited).toBe(true);
+    expect(data.exit_code).toBe(42);
+  });
+
+  it('matches a substring pattern from stdout', async () => {
+    const start = getTool(tools, 'process_start');
+    const watch = getTool(tools, 'process_watch');
+
+    const startResult = await start.execute(
+      { command: 'echo "listening on port 3000"' },
+      makeCtx(workDir),
+    );
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+    const { id } = JSON.parse(startResult.value) as { id: string };
+
+    const result = await watch.execute(
+      { id, patterns: ['listening on port'], timeout_s: 5 },
+      makeCtx(workDir),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const data = JSON.parse(result.value);
+    expect(data.matched).toBe(true);
+    expect(data.matches).toHaveLength(1);
+    expect(data.matches[0].pattern).toBe('listening on port');
+    expect(data.matches[0].line).toContain('listening on port 3000');
+    expect(data.matches[0].stream).toBe('stdout');
+    expect(data.matches[0].elapsed_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it('matches a regex pattern', async () => {
+    const start = getTool(tools, 'process_start');
+    const watch = getTool(tools, 'process_watch');
+
+    const startResult = await start.execute(
+      { command: 'echo "error TS2345: something"' },
+      makeCtx(workDir),
+    );
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+    const { id } = JSON.parse(startResult.value) as { id: string };
+
+    const result = await watch.execute(
+      { id, patterns: ['/error TS\\d+/'], timeout_s: 5 },
+      makeCtx(workDir),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const data = JSON.parse(result.value);
+    expect(data.matched).toBe(true);
+    expect(data.matches).toHaveLength(1);
+    expect(data.matches[0].pattern).toBe('/error TS\\d+/');
+    expect(data.matches[0].line).toContain('error TS2345');
+  });
+
+  it('returns timed_out when no pattern matches within timeout', async () => {
+    const start = getTool(tools, 'process_start');
+    const watch = getTool(tools, 'process_watch');
+
+    const startResult = await start.execute({ command: 'sleep 30' }, makeCtx(workDir));
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+    const { id, pid } = JSON.parse(startResult.value) as { id: string; pid: number };
+
+    const result = await watch.execute(
+      { id, patterns: ['will-never-match'], timeout_s: 0.5 },
+      makeCtx(workDir),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const data = JSON.parse(result.value);
+    expect(data.matched).toBe(false);
+    expect(data.timed_out).toBe(true);
+
+    process.kill(pid, 'SIGKILL');
+  });
+
+  it('collects multiple matches with stop_on_first_match: false', async () => {
+    const start = getTool(tools, 'process_start');
+    const watch = getTool(tools, 'process_watch');
+
+    const startResult = await start.execute(
+      { command: 'echo "match-A"; echo "match-B"; echo "match-C"' },
+      makeCtx(workDir),
+    );
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+    const { id } = JSON.parse(startResult.value) as { id: string };
+
+    const result = await watch.execute(
+      { id, patterns: ['match-'], stop_on_first_match: false, timeout_s: 5 },
+      makeCtx(workDir),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const data = JSON.parse(result.value);
+    expect(data.matched).toBe(true);
+    expect(data.matches.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('returns process_exited when process exits before matching', async () => {
+    const start = getTool(tools, 'process_start');
+    const watch = getTool(tools, 'process_watch');
+
+    const startResult = await start.execute(
+      { command: 'echo "nothing relevant"; exit 0' },
+      makeCtx(workDir),
+    );
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+    const { id } = JSON.parse(startResult.value) as { id: string };
+
+    const result = await watch.execute(
+      { id, patterns: ['will-not-match'], timeout_s: 5 },
+      makeCtx(workDir),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const data = JSON.parse(result.value);
+    expect(data.matched).toBe(false);
+    expect(data.process_exited).toBe(true);
+  });
+
+  it('resolves with matched: false on abort signal', async () => {
+    const start = getTool(tools, 'process_start');
+    const watch = getTool(tools, 'process_watch');
+
+    const startResult = await start.execute({ command: 'sleep 30' }, makeCtx(workDir));
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+    const { id, pid } = JSON.parse(startResult.value) as { id: string; pid: number };
+
+    const ac = new AbortController();
+    const ctx = { ...makeCtx(workDir), abortSignal: ac.signal };
+
+    setTimeout(() => ac.abort(), 200);
+
+    const result = await watch.execute({ id, patterns: ['never-match'], timeout_s: 30 }, ctx);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const data = JSON.parse(result.value);
+    expect(data.matched).toBe(false);
+
+    process.kill(pid, 'SIGKILL');
+  });
+
+  it('streams filter: watching only stdout does not pick up stderr matches', async () => {
+    const start = getTool(tools, 'process_start');
+    const watch = getTool(tools, 'process_watch');
+
+    const startResult = await start.execute(
+      { command: 'echo "stderr-marker" >&2; echo "stdout-marker"' },
+      makeCtx(workDir),
+    );
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+    const { id } = JSON.parse(startResult.value) as { id: string };
+
+    const result = await watch.execute(
+      { id, patterns: ['stderr-marker'], streams: 'stdout', timeout_s: 3 },
+      makeCtx(workDir),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const data = JSON.parse(result.value);
+    expect(data.matched).toBe(false);
+  });
+
+  it('maxResultChars is 4096', () => {
+    expect(getTool(tools, 'process_watch').maxResultChars).toBe(4096);
+  });
+
+  it('returns input_invalid for a malformed regex pattern', async () => {
+    const start = getTool(tools, 'process_start');
+    const watch = getTool(tools, 'process_watch');
+
+    const startResult = await start.execute({ command: 'sleep 30' }, makeCtx(workDir));
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+    const { id, pid } = JSON.parse(startResult.value) as { id: string; pid: number };
+
+    const result = await watch.execute({ id, patterns: ['/[invalid/'] }, makeCtx(workDir));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('INVALID_PATTERN');
+      expect(result.code).toBe('input_invalid');
+    }
+
+    process.kill(pid, 'SIGKILL');
+  });
+
+  it('handles output split across multiple writes', async () => {
+    const start = getTool(tools, 'process_start');
+    const watch = getTool(tools, 'process_watch');
+
+    const startResult = await start.execute(
+      { command: 'printf "partial-"; sleep 0.3; echo "complete"' },
+      makeCtx(workDir),
+    );
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+    const { id } = JSON.parse(startResult.value) as { id: string };
+
+    const result = await watch.execute(
+      { id, patterns: ['partial-complete'], timeout_s: 5 },
+      makeCtx(workDir),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const data = JSON.parse(result.value);
+    expect(data.matched).toBe(true);
+    expect(data.matches[0].line).toContain('partial-complete');
   });
 });
