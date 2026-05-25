@@ -2,6 +2,7 @@ import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppState } from '../../state/AppContext';
 import { PersonalityBindingRow } from '../../ui/PersonalityBindingRow';
+import { AccessControlSection } from '../components/AccessControlSection';
 import { BotRow } from '../components/BotRow';
 import { TokenInput } from '../components/TokenInput';
 
@@ -224,6 +225,8 @@ export function SlackDrawer({ onBotChange }: SlackDrawerProps) {
           )}
         </div>
       </div>
+
+      <AccessControlSection platform="slack" client={client} />
 
       <div
         style={{

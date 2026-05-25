@@ -2,6 +2,7 @@ import { deriveBotKey } from '@ethosagent/core';
 import type { SecretsResolver } from '@ethosagent/types';
 import type {
   BotBinding,
+  ChannelPlatformFilter,
   PlatformId,
   PlatformStatus,
   SlackAppEntry,
@@ -431,6 +432,55 @@ export class PlatformsRepository {
     if (Object.keys(newPassthrough).length > 0) {
       await this.opts.config.update({ passthrough: newPassthrough });
     }
+  }
+
+  async getChannelFilter(platform: string): Promise<ChannelPlatformFilter> {
+    const passthrough = await this.passthrough();
+    const enabled = passthrough[`channel_filter.${platform}.enable`];
+    const ownerUserId = passthrough[`channel_filter.${platform}.ownerUserId`] ?? '';
+    const allowlistRaw = passthrough[`channel_filter.${platform}.recipientAllowlist`] ?? '';
+    return {
+      enabled: enabled !== 'false',
+      ownerUserId,
+      allowlist: allowlistRaw
+        ? allowlistRaw
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [],
+    };
+  }
+
+  async setChannelFilter(
+    platform: string,
+    filter: ChannelPlatformFilter,
+  ): Promise<ChannelPlatformFilter> {
+    const prefix = `channel_filter.${platform}`;
+    const patch: Record<string, string> = {};
+    const toDelete: string[] = [];
+
+    if (!filter.enabled) {
+      patch[`${prefix}.enable`] = 'false';
+    } else {
+      toDelete.push(`${prefix}.enable`);
+    }
+
+    if (filter.ownerUserId.trim()) {
+      patch[`${prefix}.ownerUserId`] = filter.ownerUserId.trim();
+    } else {
+      toDelete.push(`${prefix}.ownerUserId`);
+    }
+
+    const cleaned = filter.allowlist.map((s) => s.trim()).filter(Boolean);
+    if (cleaned.length > 0) {
+      patch[`${prefix}.recipientAllowlist`] = cleaned.join(',');
+    } else {
+      toDelete.push(`${prefix}.recipientAllowlist`);
+    }
+
+    if (Object.keys(patch).length > 0) await this.opts.config.update({ passthrough: patch });
+    if (toDelete.length > 0) await this.opts.config.deletePassthroughKeys(toDelete);
+    return this.getChannelFilter(platform);
   }
 
   private statusFor(id: PlatformId, passthrough: Record<string, string>): PlatformStatus {

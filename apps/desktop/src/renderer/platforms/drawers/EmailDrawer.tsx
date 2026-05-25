@@ -3,6 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useAppState } from '../../state/AppContext';
 import { PersonalityBindingRow } from '../../ui/PersonalityBindingRow';
 import { Toggle } from '../../ui/Toggle';
+import { AccessControlSection } from '../components/AccessControlSection';
 import { TokenInput } from '../components/TokenInput';
 
 interface EmailDrawerProps {
@@ -437,6 +438,8 @@ export function EmailDrawer({ onBotChange }: EmailDrawerProps) {
       </button>
 
       {saveError && <div style={{ fontSize: 12, color: 'var(--error)' }}>{saveError}</div>}
+
+      <AccessControlSection platform="email" client={client} />
 
       <div
         style={{
