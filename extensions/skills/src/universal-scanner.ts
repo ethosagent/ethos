@@ -142,6 +142,17 @@ export class UniversalScanner {
     return pool;
   }
 
+  /**
+   * Add extra community-tier sources after construction. Called by wiring
+   * after plugin loading to inject plugin-declared skill directories into
+   * the live scanner without rebuilding it.
+   */
+  addExtraSources(sources: ScanSource[]): void {
+    for (const s of sources) {
+      this.sources.push(withTier(s, 'community'));
+    }
+  }
+
   private async discoverFiles(dir: string): Promise<string[]> {
     let entries: Awaited<ReturnType<Storage['listEntries']>>;
     try {

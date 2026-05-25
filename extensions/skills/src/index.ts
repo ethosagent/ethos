@@ -88,6 +88,7 @@ export function createInjectors(
   injectors: import('@ethosagent/types').ContextInjector[];
   tools: Tool[];
   skillsInjector: SkillsInjector;
+  scanner: UniversalScanner;
 } {
   const scanner = new UniversalScanner({
     extraSources: config.extraSources,
@@ -109,5 +110,6 @@ export function createInjectors(
     injectors: [skillsInjector, fileContext, new MemoryGuidanceInjector()],
     tools: [new GetSkillTool(scanner) as Tool],
     skillsInjector,
+    scanner,
   };
 }

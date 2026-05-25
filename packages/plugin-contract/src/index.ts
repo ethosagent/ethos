@@ -21,6 +21,7 @@ export interface EthosPluginPackageJson {
      */
     pluginContractMajor?: number;
     id?: string;
+    skills_dir?: string;
   };
 }
 

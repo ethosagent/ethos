@@ -61,6 +61,7 @@ export class PluginLoader {
   private readonly storage: Storage;
   private readonly logger: Logger;
   private readonly apis = new Map<string, PluginApiImpl>();
+  private readonly pluginSkillSources: { label: string; dir: string }[] = [];
   private readonly plugins = new Map<string, EthosPlugin>();
   private readonly compatCallbacks: OpenClawCompatCallbacks;
 
@@ -117,6 +118,18 @@ export class PluginLoader {
   async loadFromPluginDir(dir: string, pluginId?: string): Promise<void> {
     const id = pluginId ?? dir.split('/').pop() ?? 'unknown';
 
+    // Read package.json once — used for skills_dir discovery, contract check, and permissions.
+    const pkgSrc = await this.storage.read(join(dir, 'package.json'));
+    const pkgJson = pkgSrc ? (JSON.parse(pkgSrc) as Record<string, unknown>) : {};
+
+    // Skills-dir: any package declaring ethos.skills_dir contributes skills
+    // without needing an activate() entry point.
+    const ethosField = pkgJson.ethos as Record<string, unknown> | undefined;
+    const skillsDirRel = ethosField?.skills_dir;
+    if (typeof skillsDirRel === 'string') {
+      this.pluginSkillSources.push({ label: id, dir: resolve(dir, skillsDirRel) });
+    }
+
     // Phase 30.6 — gate on declared plugin contract major *before* importing.
     // We don't want a stale plugin's top-level code to run if its contract
     // declaration is incompatible.
@@ -126,14 +139,11 @@ export class PluginLoader {
       return;
     }
 
-    // Resolve entry point
+    // Resolve entry point — skills-only packages (no activate()) stop here.
     const entry = await resolveEntry(this.storage, dir);
     if (!entry) return;
 
     // Safety scan the entire plugin source tree before executing any code.
-    // Reading package.json again here (small file) to extract declared permissions.
-    const pkgSrc = await this.storage.read(join(dir, 'package.json'));
-    const pkgJson = pkgSrc ? (JSON.parse(pkgSrc) as Record<string, unknown>) : {};
     const permissions = readPluginPermissions(pkgJson);
     const tier = deriveTier(dir);
     const scanResult = await scanPluginTree(this.storage, dir, permissions);
@@ -207,6 +217,19 @@ export class PluginLoader {
         const src = await this.storage.read(pkgPath);
         if (!src) continue;
         const raw = JSON.parse(src);
+
+        // Skills-dir: any package declaring ethos.skills_dir contributes skills.
+        const ethosNm = (raw as Record<string, unknown>).ethos as
+          | Record<string, unknown>
+          | undefined;
+        const skillsDirNm = ethosNm?.skills_dir;
+        if (typeof skillsDirNm === 'string') {
+          this.pluginSkillSources.push({
+            label: name,
+            dir: resolve(join(nmDir, name), String(skillsDirNm)),
+          });
+        }
+
         const isEthos = isEthosPlugin(raw);
         const isOpenClaw = isOpenClawPackageJson(raw);
         if (!isEthos && !isOpenClaw) continue;
@@ -286,6 +309,11 @@ export class PluginLoader {
   /** Check if a plugin is loaded. */
   isLoaded(pluginId: string): boolean {
     return this.plugins.has(pluginId);
+  }
+
+  /** Skill source directories declared by loaded packages via `ethos.skills_dir`. */
+  getPluginSkillSources(): { label: string; dir: string }[] {
+    return [...this.pluginSkillSources];
   }
 
   // ---------------------------------------------------------------------------

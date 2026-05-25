@@ -969,7 +969,11 @@ export async function createAgentLoop(
     tools.register(tool);
   }
 
-  const { injectors, tools: skillTools } = createInjectors(personalities, {
+  const {
+    injectors,
+    tools: skillTools,
+    scanner: skillScanner,
+  } = createInjectors(personalities, {
     // Skipped at info level: a personality whose toolset lacks tools a
     // bundled skill requires is the common, expected case (e.g. the
     // personality-architect interviewer doesn't have read_file/terminal,
@@ -1070,6 +1074,15 @@ export async function createAgentLoop(
     { storage: new FsStorage(), logger: log },
   );
   await pluginLoader.loadAll();
+
+  // Merge skill dirs declared by plugins/tools into the live injector scanner
+  // and the boot-time skill pool (for MCP passthrough + design tools).
+  const pluginSkillSources = pluginLoader.getPluginSkillSources();
+  if (pluginSkillSources.length > 0) {
+    skillScanner.addExtraSources(pluginSkillSources);
+    const pluginSkillPool = await new UniversalScanner({ sources: pluginSkillSources }).scan();
+    for (const [k, v] of pluginSkillPool) skillPool.set(k, v);
+  }
 
   // -------------------------------------------------------------------------
   // Resolve LLM and memory AFTER plugin loading so plugin-contributed
