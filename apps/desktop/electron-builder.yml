@@ -1,0 +1,25 @@
+appId: com.ethos.desktop
+productName: Ethos
+directories:
+  output: dist-electron
+files:
+  - dist/main/**
+  - dist/preload/**
+  - dist/renderer/**
+  - node_modules/**
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+    - target: zip
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  hardenedRuntime: true
+win:
+  target: nsis
+  signingHashAlgorithms: [sha256]
+linux:
+  target: AppImage
+publish:
+  provider: github
+  releaseType: release

@@ -17,7 +17,7 @@
     "test": "vitest run",
     "test:concurrent": "vitest run --pool=threads extensions/team-supervisor/src/__tests__/concurrent extensions/agent-mesh/src/__tests__/concurrent",
     "test:watch": "vitest",
-    "typecheck": "pnpm exec tsc --noEmit -p tsconfig.json && pnpm --filter @ethosagent/web typecheck",
+    "typecheck": "pnpm exec tsc --noEmit -p tsconfig.json && pnpm --filter @ethosagent/web typecheck && pnpm --filter @ethosagent/desktop typecheck",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
