@@ -1,5 +1,6 @@
 import type { EventEmitter } from 'node:events';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron';
 import type { RetentionValues } from '../shared/ipc-contract';
@@ -665,4 +666,20 @@ export function registerIpcHandlers(): void {
       return { canceled: result.canceled, filePaths: result.filePaths };
     },
   );
+
+  ipcMain.handle(
+    IPC_CHANNELS['file:save'],
+    async (_event, req: { defaultName: string; content: string }) => {
+      const { canceled, filePath } = await dialog.showSaveDialog({
+        defaultPath: req.defaultName,
+      });
+      if (canceled || !filePath) return { ok: false };
+      await writeFile(filePath, req.content, 'utf-8');
+      return { ok: true, path: filePath };
+    },
+  );
+
+  ipcMain.handle(IPC_CHANNELS['gateway:platformStatus'], async () => {
+    return { telegram: false, slack: false, discord: false };
+  });
 }

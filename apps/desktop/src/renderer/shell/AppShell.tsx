@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ChatPage } from '../chat/ChatPage';
+import { CronPage } from '../cron/CronPage';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { McpPage } from '../mcp/McpPage';
 import { MemoryPage } from '../memory/MemoryPage';
@@ -115,6 +116,10 @@ export function AppShell() {
         ) : route === 'memory' ? (
           <ErrorBoundary label="MemoryPage">
             <MemoryPage />
+          </ErrorBoundary>
+        ) : route === 'cron' ? (
+          <ErrorBoundary label="CronPage">
+            <CronPage />
           </ErrorBoundary>
         ) : (
           <div

@@ -132,6 +132,14 @@ export interface IpcContract {
     request: { properties: string[] };
     response: { canceled: boolean; filePaths: string[] };
   };
+  'file:save': {
+    request: { defaultName: string; content: string };
+    response: { ok: boolean; path?: string; error?: string };
+  };
+  'gateway:platformStatus': {
+    request: undefined;
+    response: { telegram: boolean; slack: boolean; discord: boolean };
+  };
 }
 
 /** Main-to-renderer push events (via webContents.send, NOT ipcMain.handle) */
@@ -173,4 +181,6 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'dialog:showMessage': 'dialog:showMessage',
   'shell:openExternal': 'shell:openExternal',
   'dialog:showOpenDialog': 'dialog:showOpenDialog',
+  'file:save': 'file:save',
+  'gateway:platformStatus': 'gateway:platformStatus',
 };

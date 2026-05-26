@@ -60,6 +60,24 @@ export class CronService {
     }
   }
 
+  async update(
+    id: string,
+    patch: { name?: string; schedule?: string; prompt?: string },
+  ): Promise<{ job: CronJob }> {
+    try {
+      const updated = await this.opts.scheduler.updateJob(id, patch);
+      return { job: toWireJob(updated) };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/not found/i.test(message)) throw notFound(id);
+      throw new EthosError({
+        code: 'CRON_INVALID',
+        cause: message,
+        action: 'Check the schedule expression and that the job exists.',
+      });
+    }
+  }
+
   async delete(id: string): Promise<void> {
     try {
       await this.opts.scheduler.deleteJob(id);

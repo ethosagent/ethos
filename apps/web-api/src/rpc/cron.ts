@@ -19,6 +19,14 @@ export const cronRouter = {
     }),
   ),
 
+  update: os.cron.update.handler(({ input, context }) =>
+    context.cron.update(input.id, {
+      ...(input.name !== undefined && { name: input.name }),
+      ...(input.schedule !== undefined && { schedule: input.schedule }),
+      ...(input.prompt !== undefined && { prompt: input.prompt }),
+    }),
+  ),
+
   delete: os.cron.delete.handler(async ({ input, context }) => {
     await context.cron.delete(input.id);
     return { ok: true as const };
