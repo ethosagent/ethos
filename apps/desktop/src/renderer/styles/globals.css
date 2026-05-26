@@ -39,6 +39,16 @@ body {
   background: rgba(74, 158, 255, 0.2);
 }
 
+input,
+textarea {
+  caret-color: var(--info);
+}
+
+@keyframes status-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.85); }
+}
+
 .chat-stall-notice {
   margin: 0 16px 8px;
   padding: 8px 12px;

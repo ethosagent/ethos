@@ -73,15 +73,23 @@ export function SessionsPanel({
             width: '100%',
             height: 32,
             borderRadius: 'var(--radius-sm)',
-            background: 'var(--bg-overlay)',
-            border: 'none',
+            background: 'rgba(74, 158, 255, 0.15)',
+            border: '1px solid rgba(74, 158, 255, 0.3)',
             fontFamily: 'var(--font-display)',
-            fontSize: 14,
+            fontSize: 13,
             fontWeight: 500,
-            color: 'var(--text-primary)',
+            color: 'var(--info)',
             cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
           }}
         >
+          <svg width={12} height={12} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+            <line x1="6" y1="1" x2="6" y2="11"/>
+            <line x1="1" y1="6" x2="11" y2="6"/>
+          </svg>
           New chat
         </button>
       </div>

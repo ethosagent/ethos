@@ -29,6 +29,17 @@
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+[data-theme="light"] {
+  --bg-base: #fafaf7;
+  --bg-elevated: #ffffff;
+  --bg-overlay: #f0f0ec;
+  --border-subtle: #e8e8e4;
+  --border-strong: #d0d0cc;
+  --text-primary: #1a1a1a;
+  --text-secondary: #6b6b6a;
+  --text-tertiary: #94948f;
+}
+
 *,
 *::before,
 *::after {
@@ -67,6 +78,7 @@ body {
   color: var(--text-primary);
   background: transparent;
   padding: 16px;
+  caret-color: var(--info);
 }
 
 .quick-chat-textarea::placeholder {

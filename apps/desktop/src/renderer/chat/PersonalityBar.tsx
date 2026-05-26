@@ -10,6 +10,7 @@ interface PersonalityBarProps {
   onNewSession: () => void;
   onForkSession: () => void;
   streaming: boolean;
+  currentOp?: string | null;
   showSessionsButton?: boolean;
   onToggleSessions?: () => void;
 }
@@ -28,6 +29,7 @@ export function PersonalityBar({
   onNewSession,
   onForkSession,
   streaming,
+  currentOp,
   showSessionsButton,
   onToggleSessions,
 }: PersonalityBarProps) {
@@ -160,10 +162,12 @@ export function PersonalityBar({
               width: 28,
               height: 28,
               borderRadius: '50%',
-              background: 'var(--bg-overlay)',
+              background: 'rgba(74, 158, 255, 0.2)',
+              border: '1.5px solid var(--info)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              flexShrink: 0,
             }}
           >
             <span
@@ -171,7 +175,7 @@ export function PersonalityBar({
                 fontFamily: 'var(--font-display)',
                 fontSize: 11,
                 fontWeight: 600,
-                color: 'var(--text-secondary)',
+                color: 'var(--info)',
               }}
             >
               {getInitials(personalityId)}
@@ -306,6 +310,38 @@ export function PersonalityBar({
           </button>
         )}
       </div>
+
+      {currentOp && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+            padding: '2px 8px',
+            borderRadius: 'var(--radius-full)',
+            background: 'var(--bg-overlay)',
+            fontSize: 11,
+            fontFamily: 'var(--font-mono)',
+            color: 'var(--text-secondary)',
+            flexShrink: 0,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <svg
+            width={11}
+            height={11}
+            viewBox="0 0 11 11"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.3}
+            strokeLinecap="round"
+          >
+            <circle cx="5.5" cy="5.5" r="1.5"/>
+            <path d="M5.5 1v1.2M5.5 8.8V10M1 5.5h1.2M8.8 5.5H10M2.2 2.2l.85.85M7.95 7.95l.85.85M2.2 8.8l.85-.85M7.95 3.05l.85-.85"/>
+          </svg>
+          {currentOp}
+        </div>
+      )}
 
       <div style={{ position: 'relative' }}>
         <button

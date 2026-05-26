@@ -142,9 +142,13 @@ export function SessionRow({
           height: 36,
           padding: '0 10px',
           cursor: 'pointer',
-          background: !active && hovered ? 'var(--bg-overlay)' : 'transparent',
+          background: active
+            ? 'rgba(74, 158, 255, 0.12)'
+            : hovered
+              ? 'var(--ethos-hover)'
+              : 'transparent',
           border: 'none',
-          borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
+          borderLeft: active ? '2px solid var(--info)' : '2px solid transparent',
           width: '100%',
           textAlign: 'left',
           font: 'inherit',

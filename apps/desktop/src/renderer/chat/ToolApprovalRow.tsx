@@ -112,7 +112,7 @@ export function ToolApprovalRow({
             borderRadius: 'var(--radius-sm)',
             background: 'transparent',
             color: 'var(--error)',
-            border: 'none',
+            border: '1px solid var(--error)',
             padding: '0 14px',
             fontSize: 13,
             fontWeight: 500,

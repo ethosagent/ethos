@@ -614,6 +614,7 @@ export function ChatPage() {
           streaming={streaming}
           showSessionsButton={isNarrow}
           onToggleSessions={() => setShowSessionsPanel((v) => !v)}
+          currentOp={currentOp}
         />
 
         <ChatThread

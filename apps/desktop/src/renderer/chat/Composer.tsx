@@ -127,6 +127,7 @@ export function Composer({
           fontSize: 14,
           color: 'var(--text-primary)',
           lineHeight: '22px',
+          caretColor: 'var(--info)',
           padding: '6px 0',
         }}
       />
@@ -142,7 +143,7 @@ export function Composer({
         <span
           style={{
             fontFamily: 'var(--font-display)',
-            fontSize: 12,
+            fontSize: 11,
             color: 'var(--text-tertiary)',
           }}
         >
@@ -160,8 +161,8 @@ export function Composer({
                   height: 28,
                   minWidth: 60,
                   borderRadius: 'var(--radius-sm)',
-                  background: text.trim() ? 'var(--accent)' : 'var(--bg-overlay)',
-                  color: text.trim() ? 'var(--bg-base)' : 'var(--text-tertiary)',
+                  background: text.trim() ? 'var(--info)' : 'var(--bg-overlay)',
+                  color: text.trim() ? '#ffffff' : 'var(--text-tertiary)',
                   border: 'none',
                   fontFamily: 'var(--font-display)',
                   fontSize: 13,
@@ -206,8 +207,8 @@ export function Composer({
               height: 28,
               minWidth: 60,
               borderRadius: 'var(--radius-sm)',
-              background: text.trim() ? 'var(--accent)' : 'var(--bg-overlay)',
-              color: text.trim() ? 'var(--bg-base)' : 'var(--text-tertiary)',
+              background: text.trim() ? 'var(--info)' : 'var(--bg-overlay)',
+              color: text.trim() ? '#ffffff' : 'var(--text-tertiary)',
               border: 'none',
               fontFamily: 'var(--font-display)',
               fontSize: 13,
