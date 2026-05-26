@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ChatPage } from '../chat/ChatPage';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { McpPage } from '../mcp/McpPage';
+import { MemoryPage } from '../memory/MemoryPage';
 import { PersonalitiesPage } from '../personalities/PersonalitiesPage';
 import { SettingsPage } from '../settings/SettingsPage';
 import { useAppState } from '../state/AppContext';
@@ -110,6 +111,10 @@ export function AppShell() {
         ) : route === 'mcp' ? (
           <ErrorBoundary label="McpPage">
             <McpPage />
+          </ErrorBoundary>
+        ) : route === 'memory' ? (
+          <ErrorBoundary label="MemoryPage">
+            <MemoryPage />
           </ErrorBoundary>
         ) : (
           <div
