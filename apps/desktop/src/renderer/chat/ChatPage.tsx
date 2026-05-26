@@ -14,7 +14,7 @@ const CLIENT_ID = crypto.randomUUID();
 
 export function ChatPage() {
   const { state, setActiveSessionId } = useAppState();
-  const { port, activeSessionId, activePersonalityId } = state;
+  const { port, activeSessionId, activePersonalityId, desktopUserId } = state;
 
   const baseUrl = `http://localhost:${port}`;
 
@@ -248,6 +248,7 @@ export function ChatPage() {
           sessionId: activeSessionId ?? undefined,
           clientId: CLIENT_ID,
           personalityId: activePersonalityId ?? undefined,
+          userId: desktopUserId ?? undefined,
         });
 
         // If this was a new session, set the active session and refresh list
@@ -261,7 +262,7 @@ export function ChatPage() {
         setStreaming(false);
       }
     },
-    [activeSessionId, activePersonalityId, client, setActiveSessionId, sessionList],
+    [activeSessionId, activePersonalityId, client, setActiveSessionId, sessionList, desktopUserId],
   );
 
   // Abort

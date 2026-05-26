@@ -211,6 +211,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   const apiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
 
   const identityMap = new IdentityMap({ storage: new FsStorage(), dataDir: dir });
+  await identityMap.resolve('desktop', 'desktop', 'Desktop');
 
   // System skills catalog: packaged at <pkg>/skills/ in production,
   // at <repo>/skills/ in dev. Env var overrides both.

@@ -8,6 +8,7 @@ interface MemoryPanelProps {
   label: string;
   store: 'memory' | 'user';
   personalityId: string;
+  userId?: string;
   emptyText: string;
   onDirtyChange?: (store: string, isDirty: boolean) => void;
 }
@@ -78,21 +79,26 @@ export function MemoryPanel({
   label,
   store,
   personalityId,
+  userId,
   emptyText,
   onDirtyChange,
 }: MemoryPanelProps) {
-  const { content, modifiedAt, loading, error, reload, save } = useMemory(store, personalityId);
+  const { content, modifiedAt, loading, error, reload, save } = useMemory(
+    store,
+    personalityId,
+    userId,
+  );
   const [mode, setMode] = useState<Mode>('view');
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset edit state when personality changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset edit state when selection changes
   useEffect(() => {
     setMode('view');
     setDraft('');
     setDirty(false);
-  }, [personalityId]);
+  }, [personalityId, userId]);
 
   const handleEdit = useCallback(() => {
     setDraft(content);

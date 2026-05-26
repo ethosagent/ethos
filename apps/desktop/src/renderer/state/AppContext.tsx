@@ -5,6 +5,7 @@ interface AppState {
   activePersonalityId: string | null;
   activeSessionId: string | null;
   advancedMode: boolean;
+  desktopUserId: string | null;
 }
 
 interface AppContextValue {
@@ -13,6 +14,7 @@ interface AppContextValue {
   setActivePersonalityId: (id: string | null) => void;
   setActiveSessionId: (id: string | null) => void;
   setAdvancedMode: (enabled: boolean) => void;
+  setDesktopUserId: (id: string | null) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -23,6 +25,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     activePersonalityId: null,
     activeSessionId: null,
     advancedMode: false,
+    desktopUserId: null,
   });
 
   const setPort = useCallback((port: number) => setState((s) => ({ ...s, port })), []);
@@ -38,10 +41,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (enabled: boolean) => setState((s) => ({ ...s, advancedMode: enabled })),
     [],
   );
+  const setDesktopUserId = useCallback(
+    (id: string | null) => setState((s) => ({ ...s, desktopUserId: id })),
+    [],
+  );
 
   return (
     <AppContext.Provider
-      value={{ state, setPort, setActivePersonalityId, setActiveSessionId, setAdvancedMode }}
+      value={{
+        state,
+        setPort,
+        setActivePersonalityId,
+        setActiveSessionId,
+        setAdvancedMode,
+        setDesktopUserId,
+      }}
     >
       {children}
     </AppContext.Provider>

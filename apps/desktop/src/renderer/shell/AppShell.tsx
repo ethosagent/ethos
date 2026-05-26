@@ -1,3 +1,4 @@
+import { createEthosClient } from '@ethosagent/sdk';
 import { useEffect, useState } from 'react';
 import { ChatPage } from '../chat/ChatPage';
 import { CronPage } from '../cron/CronPage';
@@ -27,7 +28,7 @@ type ShellRoute =
   | 'api-keys';
 
 export function AppShell() {
-  const { setPort, setAdvancedMode } = useAppState();
+  const { setPort, setAdvancedMode, setDesktopUserId } = useAppState();
   const [route, setRoute] = useState<ShellRoute>('chat');
   const [healthy, setHealthy] = useState(false);
 
@@ -76,6 +77,21 @@ export function AppShell() {
             } catch {
               // best-effort — existing cookie may still be valid
             }
+            // Resolve the desktop user's internal userId (seeded by serve.ts on startup).
+            // Used by ChatPage (to scope USER.md writes) and MemoryPage (user dropdown).
+            try {
+              const sdkClient = createEthosClient({
+                baseUrl: `http://localhost:${resolvedPort}`,
+                fetch: globalThis.fetch,
+              });
+              const usersRes = await sdkClient.rpc.memory.listUsers({});
+              const desktop = usersRes.users.find(
+                (u: { platform: string }) => u.platform === 'desktop',
+              );
+              if (desktop) setDesktopUserId(desktop.userId);
+            } catch {
+              // best-effort
+            }
             setHealthy(true);
           }
         } catch {
@@ -90,7 +106,7 @@ export function AppShell() {
     return () => {
       cleanupPromise.then((cleanup) => cleanup?.());
     };
-  }, [setPort, setAdvancedMode]);
+  }, [setPort, setAdvancedMode, setDesktopUserId]);
 
   if (!healthy) {
     return (

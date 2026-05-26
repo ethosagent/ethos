@@ -57,6 +57,7 @@ export interface ChatSendInput {
   clientId: string;
   text: string;
   personalityId?: string;
+  userId?: string;
   dryRun?: boolean;
 }
 
@@ -110,6 +111,7 @@ export class ChatService {
       .send(input.text, {
         sessionKey: session.key,
         ...(input.personalityId ? { personalityId: input.personalityId } : {}),
+        ...(input.userId ? { userId: input.userId } : {}),
         ...(input.dryRun ? { dryRun: true } : {}),
       })
       .catch((err) => {

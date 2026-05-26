@@ -14,7 +14,11 @@ interface UseMemoryReturn extends MemoryState {
   save: (content: string) => Promise<boolean>;
 }
 
-export function useMemory(store: 'memory' | 'user', personalityId: string | null): UseMemoryReturn {
+export function useMemory(
+  store: 'memory' | 'user',
+  personalityId: string | null,
+  userId?: string | null,
+): UseMemoryReturn {
   const { state } = useAppState();
   const { port } = state;
 
@@ -44,7 +48,11 @@ export function useMemory(store: 'memory' | 'user', personalityId: string | null
     const thisRequest = ++requestIdRef.current;
     setMemState((s) => ({ ...s, loading: true, error: null }));
     try {
-      const res = await client.rpc.memory.get({ store, personalityId });
+      const res = await client.rpc.memory.get({
+        store,
+        personalityId,
+        ...(userId ? { userId } : {}),
+      });
       if (requestIdRef.current !== thisRequest) return;
       setMemState({
         content: res.file.content,
@@ -60,7 +68,7 @@ export function useMemory(store: 'memory' | 'user', personalityId: string | null
         error: err instanceof Error ? err.message : 'Failed to load memory',
       }));
     }
-  }, [client, store, personalityId]);
+  }, [client, store, personalityId, userId]);
 
   useEffect(() => {
     load();
@@ -73,7 +81,12 @@ export function useMemory(store: 'memory' | 'user', personalityId: string | null
     async (content: string): Promise<boolean> => {
       if (!personalityId) return false;
       try {
-        const res = await client.rpc.memory.write({ store, content, personalityId });
+        const res = await client.rpc.memory.write({
+          store,
+          content,
+          personalityId,
+          ...(userId ? { userId } : {}),
+        });
         if (mountedRef.current) {
           setMemState({
             content: res.file.content,
@@ -93,7 +106,7 @@ export function useMemory(store: 'memory' | 'user', personalityId: string | null
         return false;
       }
     },
-    [client, store, personalityId],
+    [client, store, personalityId, userId],
   );
 
   return {
