@@ -22,14 +22,12 @@ describe('sd-notify', () => {
     let server;
     const socketPath = join(tmpdir(), `ethos-sd-notify-test-${process.pid}-${Date.now()}.sock`);
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: unix_dgram not in TS types
       server = createSocket('unix_dgram');
     } catch {
       return;
     }
     try {
       await new Promise((resolve, reject) => {
-        // biome-ignore lint/suspicious/noExplicitAny: unix_dgram bind overload not in TS types
         server.bind(socketPath, () => resolve());
         server.once('error', reject);
       });

@@ -112,8 +112,7 @@ export default function HomePanel({
               padding: '6px 12px',
               fontSize: 12,
               fontWeight: activeTab === i ? 500 : 400,
-              color:
-                activeTab === i ? 'var(--info, #4a9eff)' : 'var(--text-secondary, #9a9a98)',
+              color: activeTab === i ? 'var(--info, #4a9eff)' : 'var(--text-secondary, #9a9a98)',
               background: 'none',
               border: 'none',
               borderBottom:

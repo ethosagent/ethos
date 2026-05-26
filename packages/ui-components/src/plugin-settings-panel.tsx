@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+
 interface PluginCredentialSchema {
   ref: string;
   label: string;
@@ -39,7 +40,7 @@ export function PluginSettingsPanel({
   setCredential,
   credentialPreview,
   requestOAuth,
-  theme,
+  theme: _theme,
 }: PluginSettingsPanelProps) {
   return (
     <div
@@ -149,7 +150,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function CredentialRow({
   credential,
-  getCredential,
+  getCredential: _getCredential,
   setCredential,
   credentialPreview,
   requestOAuth,
@@ -166,7 +167,9 @@ function CredentialRow({
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    credentialPreview(credential.ref).then(setPreview).catch(() => {});
+    credentialPreview(credential.ref)
+      .then(setPreview)
+      .catch(() => {});
   }, [credential.ref, credentialPreview]);
 
   const handleSave = useCallback(async () => {
@@ -196,15 +199,11 @@ function CredentialRow({
         }}
       >
         <div>
-          <div style={{ fontSize: 13, fontWeight: 500 }}>
-            {credential.label}
-          </div>
+          <div style={{ fontSize: 13, fontWeight: 500 }}>{credential.label}</div>
           <div
             style={{
               fontSize: 11,
-              color: preview
-                ? 'var(--success, #4ade80)'
-                : 'var(--text-tertiary, #6b6b6a)',
+              color: preview ? 'var(--success, #4ade80)' : 'var(--text-tertiary, #6b6b6a)',
             }}
           >
             {preview ?? 'Not connected'}
@@ -250,9 +249,7 @@ function CredentialRow({
         }}
       >
         <div>
-          <div style={{ fontSize: 13, fontWeight: 500 }}>
-            {credential.label}
-          </div>
+          <div style={{ fontSize: 13, fontWeight: 500 }}>{credential.label}</div>
           {!editing && (
             <div
               style={{
