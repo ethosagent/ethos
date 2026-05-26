@@ -30,6 +30,7 @@ export function registerIpcHandlers(): void {
               'x-api-key': req.apiKey,
               'anthropic-version': '2023-06-01',
             },
+            signal: AbortSignal.timeout(15000),
           });
           if (modelsRes.status === 401) {
             return {
@@ -60,6 +61,7 @@ export function registerIpcHandlers(): void {
               max_tokens: 1,
               messages: [{ role: 'user', content: 'hi' }],
             }),
+            signal: AbortSignal.timeout(15000),
           });
 
           if (completionRes.status === 402) {
@@ -98,6 +100,7 @@ export function registerIpcHandlers(): void {
         if (req.provider === 'openai') {
           const modelsRes = await fetch('https://api.openai.com/v1/models', {
             headers: { Authorization: `Bearer ${req.apiKey}` },
+            signal: AbortSignal.timeout(15000),
           });
           if (modelsRes.status === 401) {
             return {
@@ -119,6 +122,7 @@ export function registerIpcHandlers(): void {
               max_tokens: 1,
               messages: [{ role: 'user', content: 'hi' }],
             }),
+            signal: AbortSignal.timeout(15000),
           });
 
           if (completionRes.status === 402 || completionRes.status === 429) {
@@ -146,6 +150,7 @@ export function registerIpcHandlers(): void {
           const base = 'https://openrouter.ai/api/v1';
           const modelsRes = await fetch(`${base}/models`, {
             headers: { Authorization: `Bearer ${req.apiKey}` },
+            signal: AbortSignal.timeout(15000),
           });
           if (modelsRes.status === 401) {
             return {
@@ -163,6 +168,7 @@ export function registerIpcHandlers(): void {
               max_tokens: 1,
               messages: [{ role: 'user', content: 'hi' }],
             }),
+            signal: AbortSignal.timeout(15000),
           });
           if (completionRes.status === 402 || completionRes.status === 429) {
             return {
@@ -194,6 +200,7 @@ export function registerIpcHandlers(): void {
                 messages: [{ role: 'user', content: 'hi' }],
                 max_tokens: 1,
               }),
+              signal: AbortSignal.timeout(15000),
             });
             if (res.status === 401 || res.status === 403) {
               return {

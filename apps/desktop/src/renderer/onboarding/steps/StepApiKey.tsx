@@ -129,29 +129,34 @@ export function StepApiKey({
       req.model = deploymentName;
     }
 
-    const result = (await window.ethos.onboarding.validateProvider(req)) as {
-      valid: boolean;
-      completionTested: boolean;
-      error?: string;
-      models?: string[];
-    };
+    try {
+      const result = (await window.ethos.onboarding.validateProvider(req)) as {
+        valid: boolean;
+        completionTested: boolean;
+        error?: string;
+        models?: string[];
+      };
 
-    if (result.valid) {
-      setValidationState('success');
-      const models = result.models || [];
-      onValidated(models);
-      // Pre-select the first model for providers that return a list
-      if (provider === 'anthropic') {
-        onModelChange('claude-sonnet-4-20250514');
-      } else if (provider === 'openai') {
-        onModelChange('gpt-4o');
-      } else if (provider === 'azure') {
-        onModelChange(deploymentName);
+      if (result.valid) {
+        setValidationState('success');
+        const models = result.models || [];
+        onValidated(models);
+        // Pre-select the first model for providers that return a list
+        if (provider === 'anthropic') {
+          onModelChange('claude-sonnet-4-20250514');
+        } else if (provider === 'openai') {
+          onModelChange('gpt-4o');
+        } else if (provider === 'azure') {
+          onModelChange(deploymentName);
+        }
+        // OpenRouter: model is typed by the user, no pre-select
+      } else {
+        setValidationState('error');
+        setErrorMessage(result.error || 'Validation failed');
       }
-      // OpenRouter: model is typed by the user, no pre-select
-    } else {
+    } catch (err) {
       setValidationState('error');
-      setErrorMessage(result.error || 'Validation failed');
+      setErrorMessage(err instanceof Error ? err.message : 'Validation failed');
     }
   }
 
