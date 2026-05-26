@@ -609,5 +609,4 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS['retention:prune'], (_event, _req: RetentionValues) => {
     return { ok: true, freedBytes: 0 };
   });
-
 }
