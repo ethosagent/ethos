@@ -15,6 +15,6 @@
   },
   "dependencies": {
     "@ethosagent/types": "workspace:*",
-    "openai": "^6.37.0"
+    "openai": "^6.39.0"
   }
 }

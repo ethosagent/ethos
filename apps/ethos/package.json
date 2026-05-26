@@ -59,7 +59,7 @@
   "dependencies": {
     "@ethosagent/core": "workspace:*",
     "@ethosagent/types": "workspace:*",
-    "@anthropic-ai/sdk": "^0.96.0",
+    "@anthropic-ai/sdk": "^0.98.0",
     "@aws-sdk/client-secrets-manager": "^3.800.0",
     "@hono/node-server": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -73,7 +73,7 @@
     "gray-matter": "^4.0.3",
     "hono": "^4.12.15",
     "ink": "^7.0.0",
-    "openai": "^6.37.0",
+    "openai": "^6.39.0",
     "pino": "^10.3.1",
     "react": "19.2.6",
     "ws": "^8.20.0",
