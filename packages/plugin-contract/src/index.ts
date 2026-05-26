@@ -34,6 +34,7 @@ export interface EthosPluginPackageJson {
     credentials?: CredentialDeclaration[];
     dependencies?: string[];
     priority?: number;
+    ui_bundle?: string;
   };
 }
 

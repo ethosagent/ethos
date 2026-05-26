@@ -24,6 +24,7 @@ const DEFAULT_ITEMS: NavItem[] = [
   { id: 'platforms', label: 'Platforms', icon: '⭐' },
   { id: 'skills', label: 'Skills', icon: '⚡' },
   { id: 'mcp', label: 'MCP', icon: '⬡' },
+  { id: 'plugins', label: 'Plugins', icon: '◈' },
   { id: 'settings', label: 'Settings', icon: '⚙' },
 ];
 

@@ -13,6 +13,7 @@ import { McpPage } from '../mcp/McpPage';
 import { MemoryPage } from '../memory/MemoryPage';
 import { PersonalitiesPage } from '../personalities/PersonalitiesPage';
 import { PlatformsPage } from '../platforms/PlatformsPage';
+import { PluginsPage } from '../plugins/PluginsPage';
 import { SettingsPage } from '../settings/SettingsPage';
 import { SkillsPage } from '../skills/SkillsPage';
 import { useAppState } from '../state/AppContext';
@@ -31,6 +32,7 @@ type ShellRoute =
   | 'platforms'
   | 'skills'
   | 'mcp'
+  | 'plugins'
   | 'settings'
   | 'batch-eval'
   | 'kanban'
@@ -252,6 +254,10 @@ export function AppShell() {
           ) : route === 'mcp' ? (
             <ErrorBoundary label="McpPage">
               <McpPage />
+            </ErrorBoundary>
+          ) : route === 'plugins' ? (
+            <ErrorBoundary label="PluginsPage">
+              <PluginsPage />
             </ErrorBoundary>
           ) : route === 'memory' ? (
             <ErrorBoundary label="MemoryPage">

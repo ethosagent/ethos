@@ -759,6 +759,30 @@ const PluginsListCredentialKeysOutput = z.object({
   keys: z.array(CredentialKeyInfoSchema),
 });
 
+const PluginsGetPageSpecInput = z.object({ pluginId: z.string().min(1) });
+const PluginsGetPageSpecOutput = z.object({
+  spec: z
+    .object({
+      title: z.string(),
+      icon: z.string().optional(),
+      sections: z.array(z.record(z.string(), z.unknown())),
+      showInSidebar: z.boolean().optional(),
+    })
+    .nullable(),
+});
+
+const PluginsInvokeToolForPageInput = z.object({
+  pluginId: z.string().min(1),
+  toolName: z.string().min(1),
+  args: z.record(z.string(), z.unknown()).optional(),
+});
+const PluginsInvokeToolForPageOutput = z.object({
+  ok: z.boolean(),
+  value: z.string(),
+  structured: z.record(z.string(), z.unknown()).optional(),
+  error: z.string().optional(),
+});
+
 /** @experimental */
 const plugins = {
   list: oc.output(PluginsListOutput),
@@ -769,6 +793,8 @@ const plugins = {
   listCredentialKeys: oc
     .input(PluginsListCredentialKeysInput)
     .output(PluginsListCredentialKeysOutput),
+  getPageSpec: oc.input(PluginsGetPageSpecInput).output(PluginsGetPageSpecOutput),
+  invokeToolForPage: oc.input(PluginsInvokeToolForPageInput).output(PluginsInvokeToolForPageOutput),
 };
 
 // ---------------------------------------------------------------------------

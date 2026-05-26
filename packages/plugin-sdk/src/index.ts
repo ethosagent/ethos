@@ -17,6 +17,8 @@ import type {
   PlatformAdapterFactory,
   PluginHealthCheck,
   PluginMonitorDef,
+  PluginPageSpec,
+  PluginRendererSpec,
   PostTurnEvaluator,
   Storage,
   Tool,
@@ -218,6 +220,12 @@ export interface EthosPluginApi {
   /** Register a health check for this plugin (v2.2 diagnostics). */
   registerHealthCheck(check: PluginHealthCheck): void;
 
+  /** Register a plugin page (v2.3 — plugin UI). */
+  registerPluginPage(spec: PluginPageSpec): void;
+
+  /** Register a custom renderer (v2.3 — plugin UI). */
+  registerRenderer(spec: PluginRendererSpec): void;
+
   /** Diagnostics emitter for structured logging and metrics (v2.2). */
   readonly diagnostics: DiagnosticsEmitter;
 }
@@ -274,6 +282,10 @@ export interface PluginRegistries {
    *  Wiring provides this so monitors can make LLM calls without the plugin-sdk
    *  depending on core. */
   llmFactory?: () => import('@ethosagent/types').SimpleCompletion;
+  /** v2.3 — Plugin-registered pages. One page per plugin. */
+  pluginPages?: Map<string, PluginPageSpec>;
+  /** v2.3 — Plugin-registered renderers. Keyed by renderer type. */
+  renderers?: Map<string, PluginRendererSpec>;
 }
 
 // ---------------------------------------------------------------------------
@@ -295,6 +307,7 @@ export class PluginApiImpl implements EthosPluginApi {
   private readonly eventUnsubscribers: Array<() => void> = [];
   private readonly monitorRunner = new PluginMonitorRunner();
   private readonly healthChecks: PluginHealthCheck[] = [];
+  private registeredRendererTypes: string[] = [];
   private oauthConfig?: OAuthConfig;
 
   constructor(
@@ -584,6 +597,29 @@ export class PluginApiImpl implements EthosPluginApi {
     this.healthChecks.push(check);
   }
 
+  registerPluginPage(spec: PluginPageSpec): void {
+    if (!this.registries.pluginPages) {
+      this.registries.pluginPages = new Map();
+    }
+    this.registries.pluginPages.set(this.pluginId, spec);
+  }
+
+  registerRenderer(spec: PluginRendererSpec): void {
+    if (!this.registries.renderers) {
+      this.registries.renderers = new Map();
+    }
+    const existing = this.registries.renderers.get(spec.type);
+    if (existing && !this.registeredRendererTypes.includes(spec.type)) {
+      throw new Error(
+        `Plugin "${this.pluginId}" cannot register renderer type "${spec.type}": already registered by another plugin.`,
+      );
+    }
+    this.registries.renderers.set(spec.type, spec);
+    if (!this.registeredRendererTypes.includes(spec.type)) {
+      this.registeredRendererTypes.push(spec.type);
+    }
+  }
+
   getHealthChecks(): PluginHealthCheck[] {
     return this.healthChecks;
   }
@@ -652,6 +688,15 @@ export class PluginApiImpl implements EthosPluginApi {
     // Diagnostics
     this.registries.diagnostics?.clearPlugin(this.pluginId);
     this.healthChecks.length = 0;
+
+    // v2.3 — Plugin pages
+    this.registries.pluginPages?.delete(this.pluginId);
+
+    // v2.3 — Renderers
+    for (const type of this.registeredRendererTypes) {
+      this.registries.renderers?.delete(type);
+    }
+    this.registeredRendererTypes.length = 0;
   }
 }
 
@@ -673,6 +718,8 @@ export type {
   PersonalityConfig,
   PluginHealthCheck,
   PluginMonitorDef,
+  PluginPageSpec,
+  PluginRendererSpec,
   PostTurnEvaluator,
   PostTurnEvaluatorPayload,
   PromptContext,

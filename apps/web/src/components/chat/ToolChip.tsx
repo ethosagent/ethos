@@ -50,6 +50,11 @@ function ToolChipDetail({ tool }: { tool: ToolBlock }) {
       </ToolChipSection>
       {tool.result !== undefined ? (
         <ToolChipSection label={tool.status === 'failed' ? 'error' : 'result'}>
+          {/* Phase 2 (plugin-framework-v2-3): inline renderer hook.
+              When a tool result contains `structured._type` matching a
+              registered plugin renderer, render the declarative template
+              here instead of (or alongside) the raw pre block. For now,
+              all results fall through to the default pre renderer. */}
           <pre>{tool.result}</pre>
         </ToolChipSection>
       ) : tool.status === 'running' ? (

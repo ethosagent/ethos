@@ -22,4 +22,16 @@ export const pluginsRouter = {
     const keys = await context.plugins.listCredentialKeys(input.pluginId);
     return { keys };
   }),
+  getPageSpec: os.plugins.getPageSpec.handler(async ({ context, input }) => {
+    const spec = await context.plugins.getPageSpec(input.pluginId);
+    return { spec: spec ?? null };
+  }),
+  invokeToolForPage: os.plugins.invokeToolForPage.handler(async ({ context, input }) => {
+    return context.plugins.invokeToolForPage(
+      input.pluginId,
+      input.toolName,
+      input.args,
+      context.toolRegistry,
+    );
+  }),
 };

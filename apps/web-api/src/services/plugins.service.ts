@@ -7,7 +7,7 @@ import {
   scanInstalledPlugins,
 } from '@ethosagent/plugin-loader';
 import { loadMcpConfig, type McpServerConfig } from '@ethosagent/tools-mcp';
-import type { Storage } from '@ethosagent/types';
+import type { PluginPageSpec, Storage, ToolRegistry } from '@ethosagent/types';
 import type { CredentialKeyInfo, McpServerInfo, PluginInfo } from '@ethosagent/web-contracts';
 
 function spawnNpm(args: string[]): Promise<void> {
@@ -41,6 +41,14 @@ export interface PluginsServiceOptions {
   workingDir?: string;
   /** Plugin loader instance for credential management. */
   pluginLoader?: PluginLoader;
+  /** v2.3 — Plugin page registry. When present, getPageSpec can look up pages. */
+  pluginPages?: Map<string, PluginPageSpec>;
+  /**
+   * v2.3 — Tool ownership map. Maps tool name to the pluginId that registered it.
+   * Used by invokeToolForPage to verify the tool is owned by the requesting plugin,
+   * preventing a plugin from declaring another plugin's tool in its page spec.
+   */
+  pluginToolOwnership?: Map<string, string>;
 }
 
 export class PluginsService {
@@ -96,6 +104,83 @@ export class PluginsService {
       .map(toWireMcpServer)
       .sort((a, b) => a.name.localeCompare(b.name));
     return { plugins: manifests.map(toWirePlugin), mcpServers };
+  }
+
+  async getPageSpec(pluginId: string): Promise<PluginPageSpec | null> {
+    return this.opts.pluginPages?.get(pluginId) ?? null;
+  }
+
+  async invokeToolForPage(
+    pluginId: string,
+    toolName: string,
+    args?: Record<string, unknown>,
+    toolRegistry?: ToolRegistry,
+  ): Promise<{ ok: boolean; value: string; structured?: Record<string, unknown>; error?: string }> {
+    // Verify the tool is declared in this plugin's page spec to prevent
+    // arbitrary tool execution through the page endpoint.
+    const spec = this.opts.pluginPages?.get(pluginId);
+    if (!spec) {
+      return { ok: false, value: '', error: `No page spec registered for plugin "${pluginId}"` };
+    }
+    const allowedTools = new Set<string>();
+    for (const section of spec.sections) {
+      if ('toolName' in section && typeof section.toolName === 'string') {
+        allowedTools.add(section.toolName);
+      }
+    }
+    if (!allowedTools.has(toolName)) {
+      return {
+        ok: false,
+        value: '',
+        error: `Tool "${toolName}" is not declared in plugin "${pluginId}" page spec`,
+      };
+    }
+    // Verify the tool is owned by the requesting plugin. A plugin's page spec
+    // can only reference tools that the same plugin registered — not tools from
+    // other plugins or built-in tools.
+    const ownerPluginId = this.opts.pluginToolOwnership?.get(toolName);
+    if (ownerPluginId !== pluginId) {
+      return {
+        ok: false,
+        value: '',
+        error: `Tool "${toolName}" is not owned by plugin "${pluginId}"`,
+      };
+    }
+    if (!toolRegistry) {
+      return { ok: false, value: '', error: 'Tool registry not available' };
+    }
+    const tool = toolRegistry.get(toolName);
+    if (!tool) {
+      return { ok: false, value: '', error: `Tool "${toolName}" not found` };
+    }
+    const MAX_PAGE_RESULT_CHARS = 80_000;
+    try {
+      const result = await tool.execute(args ?? {}, {
+        sessionId: `page:${pluginId}`,
+        sessionKey: `page:${pluginId}`,
+        platform: 'web-page',
+        workingDir: this.opts.dataDir,
+        currentTurn: 0,
+        messageCount: 0,
+        abortSignal: AbortSignal.timeout(30_000),
+        emit: () => {},
+        resultBudgetChars: MAX_PAGE_RESULT_CHARS,
+      });
+      if (result.ok) {
+        const value =
+          result.value.length > MAX_PAGE_RESULT_CHARS
+            ? `${result.value.slice(0, MAX_PAGE_RESULT_CHARS)}\n[truncated]`
+            : result.value;
+        return {
+          ok: true,
+          value,
+          ...(result.structured ? { structured: result.structured } : {}),
+        };
+      }
+      return { ok: false, value: '', error: result.error };
+    } catch (err) {
+      return { ok: false, value: '', error: err instanceof Error ? err.message : String(err) };
+    }
   }
 }
 

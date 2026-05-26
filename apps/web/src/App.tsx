@@ -21,6 +21,7 @@ import { Onboarding } from './pages/Onboarding';
 import { Personalities } from './pages/Personalities';
 import { PersonalityCreate } from './pages/PersonalityCreate';
 import { PersonalityDetail } from './pages/PersonalityDetail';
+import { PluginPage } from './pages/PluginPage';
 import { Plugins } from './pages/Plugins';
 import { Sessions } from './pages/Sessions';
 import { Settings } from './pages/Settings';
@@ -122,6 +123,7 @@ export function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/memory" element={<Memory />} />
           <Route path="/plugins" element={<Plugins />} />
+          <Route path="/plugins/:pluginId" element={<PluginPage />} />
           <Route path="/communications" element={<Communications />} />
           <Route path="/personalities" element={<Personalities />} />
           <Route path="/personalities/:id" element={<PersonalityDetail />} />

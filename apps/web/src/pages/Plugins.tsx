@@ -17,6 +17,7 @@ import {
   Typography,
 } from 'antd';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AddMcpModal } from '../components/mcp/AddMcpModal';
 import { McpServerActions } from '../components/mcp/McpServerActions';
 import { rpc } from '../rpc';
@@ -213,6 +214,7 @@ function PluginsTable({
   plugins: PluginInfo[];
   personalities: import('@ethosagent/web-contracts').Personality[];
 }) {
+  const navigate = useNavigate();
   const personalityCols = personalities.map((pers) => ({
     title: <span style={{ fontSize: 12 }}>{pers.name}</span>,
     key: pers.id,
@@ -245,6 +247,21 @@ function PluginsTable({
           ),
         },
         ...personalityCols,
+        {
+          title: '',
+          key: 'page',
+          width: 100,
+          render: (_: unknown, p: PluginInfo) =>
+            p.pluginContractMajor != null && p.pluginContractMajor >= 2 ? (
+              <Button
+                size="small"
+                type="link"
+                onClick={() => navigate(`/plugins/${encodeURIComponent(p.id)}`)}
+              >
+                View Page
+              </Button>
+            ) : null,
+        },
       ]}
     />
   );
@@ -261,6 +278,7 @@ function PluginsAccordion({
   plugins: PluginInfo[];
   personalities: import('@ethosagent/web-contracts').Personality[];
 }) {
+  const navigate = useNavigate();
   return (
     <Collapse
       accordion={false}
@@ -285,6 +303,16 @@ function PluginsAccordion({
                 <span>{pers.name}</span>
               </div>
             ))}
+            {plugin.pluginContractMajor != null && plugin.pluginContractMajor >= 2 ? (
+              <Button
+                size="small"
+                type="link"
+                style={{ alignSelf: 'flex-start', marginTop: 4 }}
+                onClick={() => navigate(`/plugins/${encodeURIComponent(plugin.id)}`)}
+              >
+                View Page
+              </Button>
+            ) : null}
           </div>
         ),
       }))}

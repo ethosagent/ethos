@@ -1146,6 +1146,8 @@ export async function createAgentLoop(
     // CLI doesn't). Plugins read it via api.getBaseUrl() for OAuth callbacks
     // and webhook endpoints.
     baseUrl: config.baseUrl,
+    pluginPages: new Map(),
+    renderers: new Map(),
     // v2.2 — llmFactory is set after LLM resolution (below). Monitors only
     // start after full wiring, so lazy assignment is safe.
   };
