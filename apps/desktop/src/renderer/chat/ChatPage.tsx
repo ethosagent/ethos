@@ -451,6 +451,19 @@ export function ChatPage() {
     [activeSessionId, client, sessionList, handleNewChat],
   );
 
+  // Export session
+  const handleExportSession = useCallback(
+    async (id: string) => {
+      try {
+        const res = await client.rpc.sessions.export({ id, format: 'markdown' });
+        await window.ethos.file.save({ defaultName: res.filename, content: res.content });
+      } catch {
+        // best-effort
+      }
+    },
+    [client],
+  );
+
   return (
     <div style={{ display: 'flex', height: '100vh', width: '100%' }}>
       {showPanel && (
@@ -466,6 +479,7 @@ export function ChatPage() {
           hasMore={sessionList.hasMore}
           onRenameSession={handleRenameSession}
           onForkSession={(id) => handleForkSession(id)}
+          onExportSession={handleExportSession}
           onDeleteSession={handleDeleteSession}
         />
       )}

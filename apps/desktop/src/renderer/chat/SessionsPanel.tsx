@@ -14,6 +14,7 @@ interface SessionsPanelProps {
   hasMore: boolean;
   onRenameSession: (id: string, title: string) => void;
   onForkSession: (id: string) => void;
+  onExportSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
 }
 
@@ -29,6 +30,7 @@ export function SessionsPanel({
   hasMore,
   onRenameSession,
   onForkSession,
+  onExportSession,
   onDeleteSession,
 }: SessionsPanelProps) {
   const listRef = useRef<HTMLDivElement>(null);
@@ -133,6 +135,7 @@ export function SessionsPanel({
             onSelect={() => onSelectSession(s.id)}
             onRename={(title) => onRenameSession(s.id, title)}
             onFork={() => onForkSession(s.id)}
+            onExport={() => onExportSession(s.id)}
             onDelete={() => onDeleteSession(s.id)}
           />
         ))}

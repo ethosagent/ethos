@@ -24,7 +24,7 @@ const SEARCH_DEBOUNCE_MS = 400;
 export function Sessions() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { notification } = AntApp.useApp();
+  const { notification, message } = AntApp.useApp();
 
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -101,6 +101,22 @@ export function Sessions() {
         description: err instanceof Error ? err.message : String(err),
         placement: 'topRight',
       });
+    },
+  });
+
+  const exportMut = useMutation({
+    mutationFn: (id: string) => rpc.sessions.export({ id, format: 'markdown' }),
+    onSuccess: (data) => {
+      const blob = new Blob([data.content], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = data.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+    onError: () => {
+      void message.error('Could not export session');
     },
   });
 
@@ -278,6 +294,7 @@ export function Sessions() {
                       setEditingValue(row.title ?? '');
                     }}
                     onFork={() => forkMut.mutate(row.id)}
+                    onExport={() => exportMut.mutate(row.id)}
                     onDelete={() => deleteMut.mutate(row.id)}
                     deleting={deleteMut.isPending && deleteMut.variables === row.id}
                   />
@@ -308,15 +325,25 @@ interface RowActionsProps {
   onOpen: () => void;
   onRename: () => void;
   onFork: () => void;
+  onExport: () => void;
   onDelete: () => void;
   deleting: boolean;
 }
 
-function RowActions({ id, onOpen, onRename, onFork, onDelete, deleting }: RowActionsProps) {
+function RowActions({
+  id,
+  onOpen,
+  onRename,
+  onFork,
+  onExport,
+  onDelete,
+  deleting,
+}: RowActionsProps) {
   const items: MenuProps['items'] = [
     { key: 'open', label: 'Open' },
     { key: 'rename', label: 'Rename' },
     { key: 'fork', label: 'Fork' },
+    { key: 'export', label: 'Export as Markdown' },
     {
       key: 'delete',
       label: (
@@ -353,6 +380,7 @@ function RowActions({ id, onOpen, onRename, onFork, onDelete, deleting }: RowAct
             if (key === 'open') onOpen();
             else if (key === 'rename') onRename();
             else if (key === 'fork') onFork();
+            else if (key === 'export') onExport();
             // delete handled by the Popconfirm inside the menu item
           },
         }}

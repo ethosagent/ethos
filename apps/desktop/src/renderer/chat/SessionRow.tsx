@@ -7,6 +7,7 @@ interface SessionRowProps {
   onSelect: () => void;
   onRename: (title: string) => void;
   onFork: () => void;
+  onExport: () => void;
   onDelete: () => void;
 }
 
@@ -36,6 +37,7 @@ export function SessionRow({
   onSelect,
   onRename,
   onFork,
+  onExport,
   onDelete,
 }: SessionRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -90,6 +92,11 @@ export function SessionRow({
     setMenuOpen(false);
     onDelete();
   }, [onDelete]);
+
+  const handleExport = useCallback(() => {
+    setMenuOpen(false);
+    onExport();
+  }, [onExport]);
 
   // Focus input when renaming
   useEffect(() => {
@@ -209,6 +216,7 @@ export function SessionRow({
           {[
             { label: 'Rename', action: handleRenameStart },
             { label: 'Fork', action: handleFork },
+            { label: 'Export', action: handleExport },
             { label: 'Delete', action: handleDeleteConfirm },
           ].map((item) => (
             <button
