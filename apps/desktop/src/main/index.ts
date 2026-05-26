@@ -77,6 +77,11 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '..', 'renderer', 'index.html'));
   }
+
+  registerQuickChatIpc(mainWindow);
+  if (desktopActivated) {
+    registerGlobalShortcuts(mainWindow, showQuickChat);
+  }
 }
 
 app.whenReady().then(() => {
@@ -89,11 +94,6 @@ app.whenReady().then(() => {
     activateDesktop();
   } else {
     createWindow();
-
-    if (mainWindow) {
-      registerQuickChatIpc(mainWindow);
-    }
-
     if (store.get('onboardingComplete', false)) {
       activateDesktop();
     }
