@@ -7,6 +7,7 @@ import { MemoryPage } from '../memory/MemoryPage';
 import { PersonalitiesPage } from '../personalities/PersonalitiesPage';
 import { PlatformsPage } from '../platforms/PlatformsPage';
 import { SettingsPage } from '../settings/SettingsPage';
+import { SkillsPage } from '../skills/SkillsPage';
 import { useAppState } from '../state/AppContext';
 import { AppSidebar } from './AppSidebar';
 
@@ -138,6 +139,10 @@ export function AppShell() {
         ) : route === 'platforms' ? (
           <ErrorBoundary label="PlatformsPage">
             <PlatformsPage />
+          </ErrorBoundary>
+        ) : route === 'skills' ? (
+          <ErrorBoundary label="SkillsPage">
+            <SkillsPage />
           </ErrorBoundary>
         ) : (
           <div
