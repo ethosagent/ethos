@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { ConfigGetResponse } from '../../../shared/ipc-contract';
 import { SectionLabel } from '../../ui/SectionLabel';
 import { SettingRow } from '../../ui/SettingRow';
@@ -24,6 +25,75 @@ const DEFAULTS: Record<string, unknown> = {
   autoUpdate: true,
   launchAtLogin: false,
 };
+
+function DataDirRow() {
+  const [currentPath, setCurrentPath] = useState<string | null>(null);
+  const [restartNotice, setRestartNotice] = useState(false);
+
+  useEffect(() => {
+    window.ethos.settings.getDataDir().then((res: { path: string }) => setCurrentPath(res.path));
+  }, []);
+
+  async function handleChange() {
+    const result = await window.ethos.dialog.showOpenDialog({ properties: ['openDirectory'] });
+    if (result.canceled || result.filePaths.length === 0) return;
+    const newPath = result.filePaths[0];
+    await window.ethos.settings.setDataDir({ path: newPath });
+    setCurrentPath(newPath);
+    setRestartNotice(true);
+  }
+
+  return (
+    <div>
+      <SettingRow label="Data directory">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              color: 'var(--text-tertiary)',
+              maxWidth: 220,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {currentPath ?? '—'}
+          </span>
+          <button
+            type="button"
+            onClick={handleChange}
+            style={{
+              height: 28,
+              padding: '0 12px',
+              borderRadius: 4,
+              border: '1px solid var(--border-subtle)',
+              backgroundColor: 'transparent',
+              color: 'var(--text-primary)',
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+          >
+            Change…
+          </button>
+        </div>
+      </SettingRow>
+      {restartNotice && (
+        <div
+          style={{
+            fontSize: 11,
+            color: 'var(--text-tertiary)',
+            marginTop: 4,
+            marginLeft: 160,
+            paddingBottom: 8,
+          }}
+        >
+          Restart the app to apply this change.
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function GeneralTab({ config, onRefresh }: GeneralTabProps) {
   async function handleToggle(field: string, value: boolean) {
@@ -86,6 +156,7 @@ export function GeneralTab({ config, onRefresh }: GeneralTabProps) {
       <div style={{ marginBottom: 24 }}>
         <SectionLabel>Data</SectionLabel>
         <div style={{ marginTop: 8 }}>
+          <DataDirRow />
           <SettingRow label="Config files">
             <button
               type="button"

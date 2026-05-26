@@ -363,6 +363,33 @@ export function ChatPage() {
     [activeSessionId, setActiveSessionId],
   );
 
+  // Subscribe to system events so session titles update in the sidebar
+  // and PersonalityBar without requiring a manual refresh.
+  useEffect(() => {
+    const url = `http://localhost:${port}/sse/system`;
+    const source = new EventSource(url, { withCredentials: true });
+
+    source.onmessage = (raw) => {
+      try {
+        const data = JSON.parse(raw.data as string) as {
+          type: string;
+          sessionId?: string;
+          title?: string;
+        };
+        if (data.type === 'session.titled' && data.sessionId && data.title) {
+          sessionList.refresh();
+          if (data.sessionId === activeSessionId) {
+            setSessionTitle(data.title);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    return () => source.close();
+  }, [port, activeSessionId, sessionList]);
+
   // Session title change
   const handleTitleChange = useCallback(
     async (title: string) => {

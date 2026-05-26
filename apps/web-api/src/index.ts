@@ -258,6 +258,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     defaults: opts.chatDefaults,
     onForget: (sessionId) => approvalsService.cancelForSession(sessionId),
     ...(opts.titleFn ? { titleFn: opts.titleFn } : {}),
+    systemBus,
   });
   buffer.onReap = (sessionId) => {
     chatService.forget(sessionId);

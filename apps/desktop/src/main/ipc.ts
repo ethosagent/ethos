@@ -26,6 +26,12 @@ function maskApiKey(value: string): string {
 
 const ALLOWED_KEYCHAIN_KEYS = new Set(['api-key']);
 
+function getEthosDir(): string {
+  const saved = store.get('dataDir');
+  if (saved) return saved;
+  return join(app.getPath('home'), '.ethos');
+}
+
 export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS['onboarding:state'], () => {
     return { configured: store.get('onboardingComplete', false) };
@@ -313,7 +319,7 @@ export function registerIpcHandlers(): void {
         await setKeychainValue('api-key', req.apiKey);
       }
 
-      const ethosDir = join(app.getPath('home'), '.ethos');
+      const ethosDir = getEthosDir();
       mkdirSync(ethosDir, { recursive: true });
 
       if (req.apiKey) {
@@ -404,7 +410,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS['backend:authToken'], () => {
     try {
-      const tokenPath = join(app.getPath('home'), '.ethos', 'web-token');
+      const tokenPath = join(getEthosDir(), 'web-token');
       const token = readFileSync(tokenPath, 'utf-8').trim();
       return token || null;
     } catch {
@@ -611,7 +617,7 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS['shell:openConfigFolder'], async () => {
-    const ethosDir = join(app.getPath('home'), '.ethos');
+    const ethosDir = getEthosDir();
     await shell.openPath(ethosDir);
     return { ok: true };
   });
@@ -739,5 +745,15 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS['platform:testSmtp'], async (_event, req) => {
     return testSmtp(req);
+  });
+
+  ipcMain.handle(IPC_CHANNELS['settings:getDataDir'], () => {
+    return { path: getEthosDir() };
+  });
+
+  ipcMain.handle(IPC_CHANNELS['settings:setDataDir'], (_event, req: { path: string }) => {
+    if (!req.path || typeof req.path !== 'string') return { ok: false };
+    store.set('dataDir', req.path);
+    return { ok: true, restartRequired: true };
   });
 }

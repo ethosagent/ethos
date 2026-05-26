@@ -27,6 +27,7 @@ export interface AppStoreType {
   autoUpdate: boolean;
   launchAtLogin: boolean;
   hasShownLoginItemHint: boolean;
+  dataDir?: string;
 }
 
 export const store = new Store<AppStoreType>({

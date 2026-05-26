@@ -9,6 +9,7 @@ import type { AgentLoop } from '@ethosagent/core';
 import { EthosError } from '@ethosagent/types';
 import type { SseEvent } from '@ethosagent/web-contracts';
 import type { SessionsRepository } from '../repositories/sessions.repository';
+import type { SystemEventBus } from './system-event-bus';
 
 // Chat orchestrator. The one place that touches `AgentBridge` per the spec
 // (architecture rule #6). Three jobs:
@@ -50,6 +51,8 @@ export interface ChatServiceOptions {
   onForget?: (sessionId: string) => void;
   /** Cheapest/fastest LLM call for housekeeping (title gen, routing). Optional — when absent, auto-title is disabled. */
   titleFn?: (systemPrompt: string, userMessage: string) => Promise<string>;
+  /** System-level event bus for broadcasting real-time events. When provided, a `session.titled` event is emitted after auto-titling. */
+  systemBus?: SystemEventBus;
 }
 
 export interface ChatSendInput {
@@ -311,6 +314,7 @@ export class ChatService {
       const trimmed = title.trim().slice(0, 200);
       if (trimmed) {
         await this.opts.sessions.update(sessionId, { title: trimmed });
+        this.opts.systemBus?.emitSystem({ type: 'session.titled', sessionId, title: trimmed });
       }
     } catch {
       // Best-effort — never affect the chat experience.

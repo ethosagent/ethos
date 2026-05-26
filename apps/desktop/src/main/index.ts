@@ -85,6 +85,12 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // Seed dataDir from --dir CLI arg (takes precedence; saved for subsequent launches)
+  const dirFlagIdx = process.argv.indexOf('--dir');
+  if (dirFlagIdx !== -1 && process.argv[dirFlagIdx + 1]) {
+    store.set('dataDir', process.argv[dirFlagIdx + 1]);
+  }
+
   registerIpcHandlers();
 
   const hidden = isBackgroundMode();

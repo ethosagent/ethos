@@ -45,6 +45,9 @@ const api = {
       traceLogDays: number;
       observabilityDays: number;
     }) => ipcRenderer.invoke(IPC_CHANNELS['retention:prune'], req),
+    getDataDir: () => ipcRenderer.invoke(IPC_CHANNELS['settings:getDataDir']),
+    setDataDir: (req: { path: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS['settings:setDataDir'], req),
   },
   navigate: {
     onSession: (cb: (sessionId: string) => void) => {

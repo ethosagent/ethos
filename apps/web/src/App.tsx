@@ -7,6 +7,7 @@ import { RightDrawer } from './components/RightDrawer';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { usePushEventToasts } from './hooks/usePushEventToasts';
+import { useSessionTitleSync } from './hooks/useSessionTitleSync';
 import { Activity } from './pages/Activity';
 import { Batch } from './pages/Batch';
 import { Chat } from './pages/Chat';
@@ -50,6 +51,7 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   useOnboardingRedirect();
   usePushEventToasts();
+  useSessionTitleSync();
 
   // Auto-collapse sidebar / hide drawer when crossing the compact
   // breakpoint. We don't *force* state on every resize tick — just

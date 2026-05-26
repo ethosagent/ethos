@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { app } from 'electron';
+import { store } from './store';
 
 let backendProcess: ChildProcess | null = null;
 
@@ -38,7 +39,12 @@ export function startBackend(port: number): void {
       tsx,
       ['src/index.ts', 'serve', '--web-port', String(port), '--port', String(port + 1)],
       {
-        env: { ...process.env, NODE_ENV: 'development', PATH: spawnPath },
+        env: {
+          ...process.env,
+          NODE_ENV: 'development',
+          PATH: spawnPath,
+          ...(store.get('dataDir') ? { ETHOS_STATE_DIR: store.get('dataDir') } : {}),
+        },
         cwd: ethosAppDir,
         stdio: 'pipe',
         detached: false,
@@ -61,7 +67,11 @@ export function startBackend(port: number): void {
       process.execPath,
       ['--', entryPath, 'serve', '--web-port', String(port), '--port', String(port + 1)],
       {
-        env: { ...process.env, NODE_ENV: 'production' },
+        env: {
+          ...process.env,
+          NODE_ENV: 'production',
+          ...(store.get('dataDir') ? { ETHOS_STATE_DIR: store.get('dataDir') } : {}),
+        },
         stdio: 'pipe',
         detached: false,
       },

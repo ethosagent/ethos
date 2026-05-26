@@ -161,6 +161,11 @@ export interface IpcContract {
     request: { host: string; port: number; user: string; password: string; starttls: boolean };
     response: { ok: boolean; error?: string };
   };
+  'settings:getDataDir': { request: undefined; response: { path: string } };
+  'settings:setDataDir': {
+    request: { path: string };
+    response: { ok: boolean; restartRequired: boolean };
+  };
 }
 
 /** Main-to-renderer push events (via webContents.send, NOT ipcMain.handle) */
@@ -211,4 +216,6 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'platform:testDiscord': 'platform:testDiscord',
   'platform:testImap': 'platform:testImap',
   'platform:testSmtp': 'platform:testSmtp',
+  'settings:getDataDir': 'settings:getDataDir',
+  'settings:setDataDir': 'settings:setDataDir',
 };
