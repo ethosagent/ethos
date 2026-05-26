@@ -15,22 +15,29 @@ export function TopBar({ drawerOpen, onToggleDrawer }: TopBarProps) {
   const { data, error, isLoading } = useQuery({
     queryKey: ['config'],
     queryFn: () => rpc.config.get(),
-    // 30s staleTime is fine — config changes are rare and Settings tab
-    // (v1) will invalidate explicitly on update.
   });
+
+  const statusState: 'connected' | 'connecting' | 'offline' = isLoading
+    ? 'connecting'
+    : error
+      ? 'offline'
+      : 'connected';
+
+  const label = isLoading
+    ? 'connecting…'
+    : error
+      ? 'offline'
+      : data
+        ? `${data.provider} · ${data.model}`
+        : '—';
 
   return (
     <header className="topbar">
       <span className="topbar-brand">Ethos</span>
       <div className="topbar-right">
         <span className="topbar-status">
-          {isLoading
-            ? 'connecting…'
-            : error
-              ? 'offline'
-              : data
-                ? `${data.provider} · ${data.model}`
-                : '—'}
+          <span className={`status-dot status-dot--${statusState}`} aria-hidden="true" />
+          <span className="status-label">{label}</span>
         </span>
         <button
           type="button"
@@ -40,7 +47,6 @@ export function TopBar({ drawerOpen, onToggleDrawer }: TopBarProps) {
           aria-pressed={drawerOpen}
           title={drawerOpen ? 'Hide activity (⌘.)' : 'Show activity (⌘.)'}
         >
-          {/* Stack-of-lines glyph — denotes the live stream pane */}
           <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
             <rect x="2" y="3" width="10" height="1.5" rx="0.5" fill="currentColor" />
             <rect x="2" y="6.25" width="10" height="1.5" rx="0.5" fill="currentColor" />

@@ -70,11 +70,7 @@ export function PersonalityCreate() {
           </Typography.Text>
         </div>
 
-        <MessageList
-          messages={state.messages}
-          currentTurn={state.currentTurn}
-          emptyHint="The architect will guide you through creating a new personality. Say hello to begin."
-        />
+        <MessageList messages={state.messages} currentTurn={state.currentTurn} />
 
         {isComplete ? (
           <Result

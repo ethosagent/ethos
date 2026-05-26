@@ -1,5 +1,5 @@
 import { personalityAccent } from '@ethosagent/design-tokens';
-import { Button, Input } from 'antd';
+import { Input } from 'antd';
 import { type KeyboardEvent, useState } from 'react';
 
 // Sticky composer at the bottom of the chat surface. Three keyboard
@@ -43,26 +43,36 @@ export function Composer({ personalityId, disabled, onSend, placeholder }: Compo
 
   return (
     <div className="composer">
-      <Input.TextArea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder ?? 'Send a message…'}
-        autoSize={{ minRows: 1, maxRows: 8 }}
-        // The accent caret is the load-bearing detail. Inline style is
-        // the only way Antd's TextArea exposes it.
-        style={{ caretColor: accent, fontSize: 14, lineHeight: 1.5 }}
-        disabled={disabled}
-      />
-      <Button
-        type="primary"
-        onClick={handleSend}
-        disabled={disabled || text.trim() === ''}
-        // Antd's `colorPrimary` token already carries the accent thanks
-        // to the per-personality ConfigProvider wrapper. No override here.
-      >
-        Send
-      </Button>
+      <div className="composer-inner">
+        <div className="composer-card">
+          <Input.TextArea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder ?? 'Send a message…'}
+            autoSize={{ minRows: 1, maxRows: 8 }}
+            style={{ caretColor: accent, fontSize: 14, lineHeight: 1.5 }}
+            disabled={disabled}
+          />
+          <button
+            type="button"
+            className="composer-send-btn"
+            onClick={handleSend}
+            disabled={disabled || text.trim() === ''}
+            aria-label="Send message"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path
+                d="M3 8h10M9 4l4 4-4 4"
+                stroke="white"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

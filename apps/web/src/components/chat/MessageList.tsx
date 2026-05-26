@@ -10,10 +10,11 @@ export interface MessageListProps {
   messages: ChatMessage[];
   /** In-flight assistant turn rendered at the tail of the list. */
   currentTurn: AssistantTurn | null;
-  emptyHint?: string;
+  personalityId?: string;
+  model?: string;
 }
 
-export function MessageList({ messages, currentTurn, emptyHint }: MessageListProps) {
+export function MessageList({ messages, currentTurn, personalityId, model }: MessageListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const pinnedToBottomRef = useRef(true);
 
@@ -36,11 +37,7 @@ export function MessageList({ messages, currentTurn, emptyHint }: MessageListPro
   }, [messages.length, currentTurn]);
 
   if (messages.length === 0 && !currentTurn) {
-    return (
-      <div className="message-list-empty">
-        <span>{emptyHint ?? 'Start the conversation. Tools, files, and skills come along.'}</span>
-      </div>
-    );
+    return <EmptyState personalityId={personalityId} model={model} />;
   }
 
   // Derived "thinking" state: the user just sent a message, no SSE event
@@ -79,5 +76,54 @@ function ThinkingBubble() {
         <span className="thinking-dot" />
       </div>
     </div>
+  );
+}
+
+const DEFAULT_PILLS = [
+  'Explore a topic',
+  'Explain this file',
+  'Search memory',
+  'Run a skill',
+] as const;
+
+function EmptyState({ personalityId, model }: { personalityId?: string; model?: string }) {
+  return (
+    <div className="message-list-empty">
+      <PersonalityMark />
+      {personalityId ? <div className="empty-state-name">{personalityId}</div> : null}
+      {model ? <div className="empty-state-model">{model}</div> : null}
+      <div className="empty-state-tagline">Ready to help.</div>
+      <div className="empty-state-pills">
+        {DEFAULT_PILLS.map((p) => (
+          <button key={p} type="button" className="empty-state-pill">
+            {p}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PersonalityMark() {
+  return (
+    <svg
+      className="empty-state-mark"
+      width="48"
+      height="48"
+      viewBox="0 0 48 48"
+      fill="none"
+      aria-hidden="true"
+    >
+      <rect width="48" height="48" rx="7.68" fill="#4A9EFF" opacity="0.133" />
+      <rect x="0" y="0" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.93" />
+      <rect x="38.4" y="0" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.93" />
+      <rect x="9.6" y="9.6" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.81" />
+      <rect x="28.8" y="9.6" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.81" />
+      <rect x="19.2" y="19.2" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.55" />
+      <rect x="9.6" y="28.8" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.68" />
+      <rect x="28.8" y="28.8" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.68" />
+      <rect x="0" y="38.4" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.55" />
+      <rect x="38.4" y="38.4" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.55" />
+    </svg>
   );
 }
