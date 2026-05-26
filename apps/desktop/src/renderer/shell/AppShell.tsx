@@ -3,6 +3,11 @@ import { useEffect, useState } from 'react';
 import { ChatPage } from '../chat/ChatPage';
 import { CronPage } from '../cron/CronPage';
 import { ErrorBoundary } from '../ErrorBoundary';
+import { ApiKeysPage } from '../lab/api-keys/ApiKeysPage';
+import { BatchPage } from '../lab/batch/BatchPage';
+import { KanbanPage } from '../lab/kanban/KanbanPage';
+import { MeshPage } from '../lab/mesh/MeshPage';
+import { ObservabilityPage } from '../lab/observability/ObservabilityPage';
 import { McpPage } from '../mcp/McpPage';
 import { MemoryPage } from '../memory/MemoryPage';
 import { PersonalitiesPage } from '../personalities/PersonalitiesPage';
@@ -160,20 +165,27 @@ export function AppShell() {
           <ErrorBoundary label="SkillsPage">
             <SkillsPage />
           </ErrorBoundary>
-        ) : (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: '100%',
-              color: 'var(--text-tertiary)',
-              fontSize: 14,
-            }}
-          >
-            {route.charAt(0).toUpperCase() + route.slice(1).replace(/-/g, ' ')} — coming soon
-          </div>
-        )}
+        ) : route === 'batch-eval' ? (
+          <ErrorBoundary label="BatchPage">
+            <BatchPage />
+          </ErrorBoundary>
+        ) : route === 'kanban' ? (
+          <ErrorBoundary label="KanbanPage">
+            <KanbanPage />
+          </ErrorBoundary>
+        ) : route === 'observability' ? (
+          <ErrorBoundary label="ObservabilityPage">
+            <ObservabilityPage />
+          </ErrorBoundary>
+        ) : route === 'mesh' ? (
+          <ErrorBoundary label="MeshPage">
+            <MeshPage />
+          </ErrorBoundary>
+        ) : route === 'api-keys' ? (
+          <ErrorBoundary label="ApiKeysPage">
+            <ApiKeysPage />
+          </ErrorBoundary>
+        ) : null}
       </div>
     </div>
   );
