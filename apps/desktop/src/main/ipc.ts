@@ -610,12 +610,4 @@ export function registerIpcHandlers(): void {
     return { ok: true, freedBytes: 0 };
   });
 
-  ipcMain.handle(IPC_CHANNELS['advancedMode:get'], () => {
-    return store.get('advancedMode', false);
-  });
-
-  ipcMain.handle(IPC_CHANNELS['advancedMode:set'], (_event, req: { enabled: boolean }) => {
-    store.set('advancedMode', req.enabled);
-    return { ok: true };
-  });
 }
