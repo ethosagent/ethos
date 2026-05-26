@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { app, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import { IPC_CHANNELS } from '../shared/ipc-contract';
 import { startBackend } from './backend';
 import { setKeychainValue } from './keychain';
@@ -258,7 +258,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS['onboarding:complete'],
     async (
-      _event,
+      event,
       req: {
         provider: string;
         model: string;
@@ -288,17 +288,35 @@ export function registerIpcHandlers(): void {
 
       const ethosDir = join(app.getPath('home'), '.ethos');
       mkdirSync(ethosDir, { recursive: true });
-      const configContent = [
+
+      if (req.apiKey) {
+        const secretsDir = join(ethosDir, 'secrets');
+        mkdirSync(secretsDir, { recursive: true });
+        writeFileSync(join(secretsDir, 'api-key'), `${req.apiKey}\n`, { mode: 0o600 });
+      }
+
+      const lines = [
+        'schemaVersion: 1',
         `provider: ${req.provider}`,
         `model: ${req.model}`,
         `personality: ${req.personalityId}`,
-      ].join('\n');
-      writeFileSync(join(ethosDir, 'config.yaml'), `${configContent}\n`);
+      ];
+      if (req.apiKey) {
+        lines.push('apiKey: ${secrets:api-key}');
+      }
+      writeFileSync(join(ethosDir, 'config.yaml'), `${lines.join('\n')}\n`);
 
       store.set('provider', req.provider as 'anthropic' | 'openai' | 'openrouter' | 'azure');
       store.set('model', req.model);
       store.set('personalityId', req.personalityId);
       store.set('onboardingComplete', true);
+
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (win) {
+        win.setResizable(true);
+        win.setSize(1200, 800);
+        win.center();
+      }
 
       return { success: true };
     },
@@ -343,10 +361,10 @@ export function registerIpcHandlers(): void {
       return { healthy: false };
     }
     try {
-      const res = await fetch(`http://localhost:${port}/health`, {
+      const res = await fetch(`http://localhost:${port}/healthz`, {
         signal: AbortSignal.timeout(2000),
       });
-      return { healthy: res.ok };
+      return { healthy: res.status < 600 };
     } catch {
       return { healthy: false };
     }

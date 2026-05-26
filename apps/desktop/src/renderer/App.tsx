@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ErrorBoundary } from './ErrorBoundary';
 import { OnboardingShell } from './onboarding/OnboardingShell';
 import { AppShell } from './shell/AppShell';
 import { AppProvider } from './state/AppContext';
@@ -81,7 +82,9 @@ export function App() {
   }
   return (
     <AppProvider>
-      <AppShell />
+      <ErrorBoundary label="AppShell">
+        <AppShell />
+      </ErrorBoundary>
     </AppProvider>
   );
 }

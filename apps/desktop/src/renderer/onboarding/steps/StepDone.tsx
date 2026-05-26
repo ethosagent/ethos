@@ -40,7 +40,7 @@ export function StepDone({
         if (healthy) {
           setHealthState('ready');
           if (healthInterval) clearInterval(healthInterval);
-        } else if (elapsed >= 30000) {
+        } else if (elapsed >= 90000) {
           setHealthState('error');
           if (healthInterval) clearInterval(healthInterval);
         }

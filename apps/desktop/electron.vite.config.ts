@@ -26,6 +26,12 @@ export default defineConfig({
   },
   renderer: {
     plugins: [react()],
+    define: {
+      'process.env': '{}',
+      'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
+      'process.platform': JSON.stringify(process.platform),
+      'process.version': JSON.stringify(process.version),
+    },
     build: {
       outDir: 'dist/renderer',
     },

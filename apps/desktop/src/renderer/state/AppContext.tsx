@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useContext, useState } from 'react';
+import { createContext, type ReactNode, useCallback, useContext, useState } from 'react';
 
 interface AppState {
   port: number;
@@ -25,12 +25,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     advancedMode: false,
   });
 
-  const setPort = (port: number) => setState((s) => ({ ...s, port }));
-  const setActivePersonalityId = (id: string | null) =>
-    setState((s) => ({ ...s, activePersonalityId: id }));
-  const setActiveSessionId = (id: string | null) =>
-    setState((s) => ({ ...s, activeSessionId: id }));
-  const setAdvancedMode = (enabled: boolean) => setState((s) => ({ ...s, advancedMode: enabled }));
+  const setPort = useCallback((port: number) => setState((s) => ({ ...s, port })), []);
+  const setActivePersonalityId = useCallback(
+    (id: string | null) => setState((s) => ({ ...s, activePersonalityId: id })),
+    [],
+  );
+  const setActiveSessionId = useCallback(
+    (id: string | null) => setState((s) => ({ ...s, activeSessionId: id })),
+    [],
+  );
+  const setAdvancedMode = useCallback(
+    (enabled: boolean) => setState((s) => ({ ...s, advancedMode: enabled })),
+    [],
+  );
 
   return (
     <AppContext.Provider
