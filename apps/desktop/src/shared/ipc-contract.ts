@@ -145,6 +145,22 @@ export interface IpcContract {
   'backend:authToken': { request: undefined; response: string | null };
   'login-item:get': { request: undefined; response: boolean };
   'login-item:set': { request: { enabled: boolean }; response: { ok: boolean; error?: string } };
+  'platform:testTelegram': {
+    request: { token: string };
+    response: { ok: boolean; username?: string; error?: string };
+  };
+  'platform:testDiscord': {
+    request: { token: string };
+    response: { ok: boolean; username?: string; error?: string };
+  };
+  'platform:testImap': {
+    request: { host: string; port: number; user: string; password: string; tls: boolean };
+    response: { ok: boolean; error?: string };
+  };
+  'platform:testSmtp': {
+    request: { host: string; port: number; user: string; password: string; starttls: boolean };
+    response: { ok: boolean; error?: string };
+  };
 }
 
 /** Main-to-renderer push events (via webContents.send, NOT ipcMain.handle) */
@@ -191,4 +207,8 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'backend:authToken': 'backend:authToken',
   'login-item:get': 'login-item:get',
   'login-item:set': 'login-item:set',
+  'platform:testTelegram': 'platform:testTelegram',
+  'platform:testDiscord': 'platform:testDiscord',
+  'platform:testImap': 'platform:testImap',
+  'platform:testSmtp': 'platform:testSmtp',
 };
