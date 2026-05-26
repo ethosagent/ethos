@@ -373,27 +373,15 @@ function PluginListRow({
       </div>
       <div style={{ display: 'flex', gap: 6 }}>
         {plugin.hasHomePanel && (
-          <button
-            type="button"
-            onClick={onOpenHome}
-            style={rowButtonStyle}
-          >
+          <button type="button" onClick={onOpenHome} style={rowButtonStyle}>
             Home
           </button>
         )}
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          style={rowButtonStyle}
-        >
+        <button type="button" onClick={onOpenSettings} style={rowButtonStyle}>
           Settings
         </button>
         {hasPage && (
-          <button
-            type="button"
-            onClick={onOpen}
-            style={rowButtonStyle}
-          >
+          <button type="button" onClick={onOpen} style={rowButtonStyle}>
             Open page
           </button>
         )}

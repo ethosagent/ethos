@@ -20,7 +20,10 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AddMcpModal } from '../components/mcp/AddMcpModal';
 import { McpServerActions } from '../components/mcp/McpServerActions';
-import { PluginSettingsDrawer, type PluginCredentialSchema } from '../components/PluginSettingsDrawer';
+import {
+  type PluginCredentialSchema,
+  PluginSettingsDrawer,
+} from '../components/PluginSettingsDrawer';
 import { client, rpc } from '../rpc';
 
 function InstallPluginSection() {
@@ -96,12 +99,16 @@ export function Plugins() {
   const [settingsPluginId, setSettingsPluginId] = useState<string | null>(null);
 
   const settingsPlugin = settingsPluginId
-    ? (pluginsData?.plugins ?? []).find((p) => p.id === settingsPluginId) ?? null
+    ? ((pluginsData?.plugins ?? []).find((p) => p.id === settingsPluginId) ?? null)
     : null;
 
   const { data: credKeysData } = useQuery({
     queryKey: ['plugins', 'credentialKeys', settingsPluginId],
-    queryFn: () => rpc.plugins.listCredentialKeys({ pluginId: settingsPluginId! }),
+    queryFn: () => {
+      const id = settingsPluginId;
+      if (!id) return { keys: [] };
+      return rpc.plugins.listCredentialKeys({ pluginId: id });
+    },
     enabled: Boolean(settingsPluginId),
   });
 
@@ -234,9 +241,17 @@ function PluginsMatrix({
         />
       ) : null}
       {narrow ? (
-        <PluginsAccordion plugins={plugins} personalities={personalities} onSettingsOpen={onSettingsOpen} />
+        <PluginsAccordion
+          plugins={plugins}
+          personalities={personalities}
+          onSettingsOpen={onSettingsOpen}
+        />
       ) : (
-        <PluginsTable plugins={plugins} personalities={personalities} onSettingsOpen={onSettingsOpen} />
+        <PluginsTable
+          plugins={plugins}
+          personalities={personalities}
+          onSettingsOpen={onSettingsOpen}
+        />
       )}
     </div>
   );
@@ -367,10 +382,7 @@ function PluginsAccordion({
                   View Page
                 </Button>
               ) : null}
-              <Button
-                size="small"
-                onClick={() => onSettingsOpen(plugin.id)}
-              >
+              <Button size="small" onClick={() => onSettingsOpen(plugin.id)}>
                 Settings
               </Button>
             </div>

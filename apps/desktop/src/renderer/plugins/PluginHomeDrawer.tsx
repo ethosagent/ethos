@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
 import type { PluginPanelProps } from '@ethosagent/types';
+import { useEffect, useState } from 'react';
 
 interface PluginHomeDrawerProps {
   pluginId: string;

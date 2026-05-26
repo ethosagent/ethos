@@ -1,5 +1,5 @@
-import { PluginSettingsPanel } from '@ethosagent/ui-components';
 import type { PluginCredentialSchema } from '@ethosagent/types';
+import { PluginSettingsPanel } from '@ethosagent/ui-components';
 
 interface PluginSettingsDrawerProps {
   pluginId: string;

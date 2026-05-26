@@ -166,12 +166,38 @@ export interface IpcContract {
     request: { path: string };
     response: { ok: boolean; restartRequired: boolean };
   };
-  'plugin:list': { request: undefined; response: { plugins: Array<{ id: string; name: string; version: string; description: string | null; hasHomePanel?: boolean }> } };
-  'plugin:getCredential': { request: { pluginId: string; ref: string }; response: { value: string | null } };
-  'plugin:setCredential': { request: { pluginId: string; ref: string; value: string }; response: { ok: boolean } };
-  'plugin:credentialPreview': { request: { pluginId: string; ref: string }; response: { preview: string | null } };
-  'plugin:requestOAuth': { request: { pluginId: string; oauthRef: string }; response: { ok: boolean } };
-  'plugin:executeTool': { request: { pluginId: string; toolName: string; args: Record<string, unknown> }; response: { ok: boolean; value?: string; error?: string; code?: string } };
+  'plugin:list': {
+    request: undefined;
+    response: {
+      plugins: Array<{
+        id: string;
+        name: string;
+        version: string;
+        description: string | null;
+        hasHomePanel?: boolean;
+      }>;
+    };
+  };
+  'plugin:getCredential': {
+    request: { pluginId: string; ref: string };
+    response: { value: string | null };
+  };
+  'plugin:setCredential': {
+    request: { pluginId: string; ref: string; value: string };
+    response: { ok: boolean };
+  };
+  'plugin:credentialPreview': {
+    request: { pluginId: string; ref: string };
+    response: { preview: string | null };
+  };
+  'plugin:requestOAuth': {
+    request: { pluginId: string; oauthRef: string };
+    response: { ok: boolean };
+  };
+  'plugin:executeTool': {
+    request: { pluginId: string; toolName: string; args: Record<string, unknown> };
+    response: { ok: boolean; value?: string; error?: string; code?: string };
+  };
 }
 
 /** Main-to-renderer push events (via webContents.send, NOT ipcMain.handle) */
