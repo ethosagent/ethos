@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ErrorBoundary } from './ErrorBoundary';
+import type { ConfigGetResponse } from '../shared/ipc-contract';
 import { OnboardingShell } from './onboarding/OnboardingShell';
 import { AppShell } from './shell/AppShell';
 import { AppProvider } from './state/AppContext';
@@ -8,6 +9,7 @@ declare global {
   interface Window {
     ethos: {
       platform: string;
+      port: number;
       onboarding: {
         state: () => Promise<{ configured: boolean }>;
         validateProvider: (req: {
@@ -47,6 +49,24 @@ declare global {
       settings: {
         getAdvancedMode: () => Promise<boolean>;
         setAdvancedMode: (req: { enabled: boolean }) => Promise<{ ok: boolean }>;
+        setTheme: (req: { theme: 'dark' | 'light' | 'system' }) => Promise<{ ok: boolean }>;
+        getConfig: () => Promise<ConfigGetResponse>;
+        updateConfig: (req: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
+        openConfigFolder: () => Promise<{ ok: boolean }>;
+        exportData: () => Promise<{
+          ok: boolean;
+          path?: string;
+          error?: string;
+        }>;
+        pruneRetention: (req: {
+          retentionDays: number;
+          traceLogDays: number;
+          observabilityDays: number;
+        }) => Promise<{ ok: boolean; freedBytes?: number; error?: string }>;
+      };
+      keychain: {
+        set: (req: { key: string; value: string }) => Promise<{ ok: boolean }>;
+        preview: (req: { key: string }) => Promise<{ preview: string | null }>;
       };
     };
   }

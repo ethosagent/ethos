@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChatPage } from '../chat/ChatPage';
 import { ErrorBoundary } from '../ErrorBoundary';
+import { SettingsPage } from '../settings/SettingsPage';
 import { useAppState } from '../state/AppContext';
 import { AppSidebar } from './AppSidebar';
 
@@ -93,7 +94,9 @@ export function AppShell() {
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       <AppSidebar route={route} onNavigate={(r) => setRoute(r as ShellRoute)} />
       <div style={{ flex: 1, overflow: 'auto' }}>
-        {route === 'chat' ? (
+        {route === 'settings' ? (
+          <SettingsPage />
+        ) : route === 'chat' ? (
           <ErrorBoundary label="ChatPage">
             <ChatPage />
           </ErrorBoundary>

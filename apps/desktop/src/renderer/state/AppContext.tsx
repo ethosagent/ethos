@@ -19,7 +19,7 @@ const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>({
-    port: 3001,
+    port: (typeof window !== 'undefined' && window.ethos?.port) || 3001,
     activePersonalityId: null,
     activeSessionId: null,
     advancedMode: false,
