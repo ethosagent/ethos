@@ -83,8 +83,17 @@ function safeReduce(r: ToolResultReducer, result: ToolResult, ctx: ToolReducerCo
   }
 }
 
+const DEFAULT_CACHE_TTL_MS = 300_000;
+const MAX_CACHE_ENTRIES = 1000;
+
+interface CacheEntry {
+  result: ToolResult;
+  expiresAt: number | null;
+}
+
 export class DefaultToolRegistry implements ToolRegistry {
   private readonly tools = new Map<string, ToolEntry>();
+  private readonly resultCache = new Map<string, CacheEntry>();
   private readonly backends?: CapabilityBackends;
   private readonly reducers?: ToolResultReducerRegistry;
   private readonly transport: ToolTransport;
@@ -106,6 +115,36 @@ export class DefaultToolRegistry implements ToolRegistry {
         backends,
         () => this.turnLiveCtx,
       );
+  }
+
+  private cacheGet(tool: Tool, args: unknown, ctx: ToolContext): ToolResult | null {
+    if (!tool.cache) return null;
+    const opts = tool.cache === true ? {} : tool.cache;
+    const keyPart = opts.keyFn ? opts.keyFn(args) : JSON.stringify(args);
+    const key = `${tool.name}:${ctx.sessionId}:${ctx.personalityId ?? ''}:${keyPart}`;
+    const entry = this.resultCache.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt !== null && Date.now() > entry.expiresAt) {
+      this.resultCache.delete(key);
+      return null;
+    }
+    return entry.result;
+  }
+
+  private cacheSet(tool: Tool, args: unknown, result: ToolResult, ctx: ToolContext): void {
+    if (!tool.cache) return;
+    const opts = tool.cache === true ? {} : tool.cache;
+    const keyPart = opts.keyFn ? opts.keyFn(args) : JSON.stringify(args);
+    const key = `${tool.name}:${ctx.sessionId}:${ctx.personalityId ?? ''}:${keyPart}`;
+    const ttl = opts.ttlMs ?? DEFAULT_CACHE_TTL_MS;
+    const expiresAt = Date.now() + ttl;
+    this.resultCache.set(key, { result, expiresAt });
+    if (this.resultCache.size > MAX_CACHE_ENTRIES) {
+      const oldest = this.resultCache.keys().next().value;
+      if (oldest !== undefined) {
+        this.resultCache.delete(oldest);
+      }
+    }
   }
 
   register(tool: Tool, opts?: { pluginId?: string }): void {
@@ -223,12 +262,50 @@ export class DefaultToolRegistry implements ToolRegistry {
   // Runs all tool calls in parallel. Results are returned in input order.
   // Budget is split evenly across parallel calls; each result is post-trimmed to budget.
   // allowedTools + filterOpts enforce tool access at execution time (belt-and-suspenders).
+  private async applyFilters(
+    filters: import('@ethosagent/types').ToolInvocationFilter[],
+    tool: Tool,
+    args: unknown,
+    ctx: ToolContext,
+    meta: { toolName: string; toolCallId: string },
+    execute: () => Promise<ToolResult>,
+  ): Promise<ToolResult> {
+    const matching = filters.filter(
+      (f) =>
+        (!f.toolName ||
+          (Array.isArray(f.toolName)
+            ? f.toolName.includes(meta.toolName)
+            : f.toolName === meta.toolName)) &&
+        (!f.toolset || tool.toolset === f.toolset),
+    );
+
+    let shortCircuit: ToolResult | null = null;
+    for (const f of matching) {
+      if (f.before) {
+        const r = await f.before(args, ctx, meta);
+        if (r !== null) {
+          shortCircuit = r;
+          break;
+        }
+      }
+    }
+
+    let result = shortCircuit ?? (await execute());
+
+    for (const f of matching) {
+      if (f.after) result = await f.after(result, ctx, meta);
+    }
+
+    return result;
+  }
+
   async executeParallel(
     calls: Array<{ toolCallId: string; name: string; args: unknown }>,
     ctx: ToolContext,
     allowedTools?: string[],
     filterOpts?: ToolFilterOpts,
     turnAttachments?: import('@ethosagent/types').Attachment[],
+    filters?: import('@ethosagent/types').ToolInvocationFilter[],
   ): Promise<Array<{ toolCallId: string; name: string; result: ToolResult }>> {
     const perCallBudget = Math.floor(ctx.resultBudgetChars / Math.max(calls.length, 1));
 
@@ -295,6 +372,12 @@ export class DefaultToolRegistry implements ToolRegistry {
           };
         }
 
+        // v2: result cache — check before executing
+        const cached = this.cacheGet(entry.tool, call.args, ctx);
+        if (cached) {
+          return { toolCallId: call.toolCallId, name: call.name, result: cached };
+        }
+
         // Fail closed: tools that declare real capabilities require wired backends.
         // capabilities: {} (empty) is opt-in to the framework path without needing backends.
         if (needsBackends(entry.tool.capabilities) && !this.backends) {
@@ -343,7 +426,17 @@ export class DefaultToolRegistry implements ToolRegistry {
             dryRun: ctx.dryRun,
           };
 
-          const rawResult = await this.transport.execute(request, ctx.abortSignal);
+          const rawResult =
+            filters && filters.length > 0
+              ? await this.applyFilters(
+                  filters,
+                  entry.tool,
+                  call.args,
+                  ctx,
+                  { toolName: call.name, toolCallId: call.toolCallId },
+                  () => this.transport.execute(request, ctx.abortSignal),
+                )
+              : await this.transport.execute(request, ctx.abortSignal);
           // Apply reducer before budget trim so budget sees post-reduced text
           const reducer = this.reducers?.get(call.name);
           const result = reducer
@@ -360,6 +453,8 @@ export class DefaultToolRegistry implements ToolRegistry {
               } as ToolResult,
             };
           }
+          // v2: cache the result if applicable
+          this.cacheSet(entry.tool, call.args, result, ctx);
           return { toolCallId: call.toolCallId, name: call.name, result };
         } catch (err) {
           return {

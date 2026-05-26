@@ -13,7 +13,7 @@ import {
   type EthosPluginPackageJson,
   isEthosPlugin,
 } from '@ethosagent/plugin-contract';
-import type { EthosPlugin, PluginRegistries } from '@ethosagent/plugin-sdk';
+import type { EthosPlugin, PluginRegistries, PluginRouteEntry } from '@ethosagent/plugin-sdk';
 import { type CredentialStorage, PluginApiImpl } from '@ethosagent/plugin-sdk';
 import {
   canInstall,
@@ -42,6 +42,10 @@ export interface InstalledPluginManifest {
   dialect: 'ethos' | 'openclaw';
   /** Credential declarations from the plugin's `ethos.credentials` manifest field. */
   credentials: CredentialDeclaration[];
+  /** Activation status — set after activate() runs. */
+  status?: 'loaded' | 'failed';
+  /** Error message when status is 'failed'. */
+  error?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -65,6 +69,8 @@ export interface PluginLoaderOptions {
    *  under `<dataDir>/plugins/<pluginId>/credentials/`. Defaults to
    *  `$HOME/.ethos`. Override in tests with a temporary directory. */
   dataDir?: string;
+  /** Called when a plugin registers an HTTP route. */
+  onRouteRegistered?: (entry: PluginRouteEntry) => void;
 }
 
 export class PluginLoader {
@@ -78,6 +84,9 @@ export class PluginLoader {
   private readonly credentialStorage: CredentialStorage;
   private readonly dataDir: string;
   private readonly manifests = new Map<string, EthosPluginPackageJson>();
+  private readonly onRouteRegistered?: (entry: PluginRouteEntry) => void;
+  private readonly loadedManifests = new Map<string, InstalledPluginManifest>();
+  private readonly pluginPaths = new Map<string, string>();
 
   constructor(registries: PluginRegistries, opts: PluginLoaderOptions = {}) {
     this.registries = registries;
@@ -89,6 +98,7 @@ export class PluginLoader {
     this.compatCallbacks = {
       onPlatformAdapter: opts.onPlatformAdapterRegistered,
     };
+    this.onRouteRegistered = opts.onRouteRegistered;
   }
 
   // ---------------------------------------------------------------------------
@@ -146,6 +156,7 @@ export class PluginLoader {
     // Store manifest for credential declaration lookups
     if (pkgSrc) {
       this.manifests.set(id, pkgJson as unknown as EthosPluginPackageJson);
+      this.pluginPaths.set(id, dir);
     }
 
     // Skills-dir: any package declaring ethos.skills_dir contributes skills
@@ -322,6 +333,7 @@ export class PluginLoader {
         const declaredId = ethosNm?.id as string | undefined;
         const pluginId = declaredId ?? name.replace(/^@[^/]+\//, '');
         this.manifests.set(pluginId, raw as EthosPluginPackageJson);
+        this.pluginPaths.set(pluginId, join(nmDir, name));
         await this.activatePlugin(pluginId, mod);
       } catch {
         // skip
@@ -371,6 +383,11 @@ export class PluginLoader {
   /** Skill source directories declared by loaded packages via `ethos.skills_dir`. */
   getPluginSkillSources(): { label: string; dir: string }[] {
     return [...this.pluginSkillSources];
+  }
+
+  /** Return all loaded/failed plugin manifests with status info. */
+  listManifests(): InstalledPluginManifest[] {
+    return [...this.loadedManifests.values()];
   }
 
   // ---------------------------------------------------------------------------
@@ -483,7 +500,49 @@ export class PluginLoader {
   // Internal
   // ---------------------------------------------------------------------------
 
+  /** Record activation status for a plugin in the loadedManifests map. */
+  private trackManifestStatus(
+    id: string,
+    status: 'loaded' | 'failed',
+    error?: string,
+    dialect: 'ethos' | 'openclaw' = 'ethos',
+  ): void {
+    const pkgJson = this.manifests.get(id);
+    const path = this.pluginPaths.get(id) ?? '';
+    const source: 'user' | 'project' | 'npm' = path.includes('node_modules') ? 'npm' : 'user';
+    const entry: InstalledPluginManifest = {
+      id,
+      name: pkgJson?.name ?? id,
+      version: pkgJson?.version ?? '0.0.0',
+      description: pkgJson?.description ?? null,
+      source,
+      path,
+      pluginContractMajor: pkgJson?.ethos?.pluginContractMajor ?? null,
+      dialect,
+      credentials: pkgJson?.ethos?.credentials ?? [],
+      status,
+      error,
+    };
+    this.loadedManifests.set(id, entry);
+  }
+
   private async activatePlugin(id: string, mod: unknown): Promise<void> {
+    // Validate declared dependencies are loaded before activation
+    const manifest = this.manifests.get(id);
+    const deps = manifest?.ethos?.dependencies;
+    if (Array.isArray(deps)) {
+      for (const dep of deps) {
+        if (typeof dep === 'string' && !this.plugins.has(dep)) {
+          this.logger.warn(
+            `[plugin-loader] Plugin "${id}" requires "${dep}" but it is not loaded — skipping`,
+            { component: 'plugin-loader', pluginId: id },
+          );
+          this.trackManifestStatus(id, 'failed', `Missing dependency: ${dep}`);
+          return;
+        }
+      }
+    }
+
     // Try OpenClaw dialect first — register(api) export pattern
     const openclawRegister = extractOpenClawRegister(mod);
     if (openclawRegister && !isPluginModule(mod)) {
@@ -519,10 +578,12 @@ export class PluginLoader {
         pluginId: id,
         error: String(err),
       });
+      this.trackManifestStatus(id, 'failed', String(err));
       api.cleanup();
       return;
     }
 
+    this.trackManifestStatus(id, 'loaded');
     this.apis.set(id, api);
     this.plugins.set(id, mod);
   }
@@ -556,6 +617,52 @@ export class PluginLoader {
       activate: async () => {},
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Dependency ordering + priority sort
+// ---------------------------------------------------------------------------
+
+/**
+ * Topological sort of plugin manifests by dependency order, with priority
+ * tie-breaking. Throws on circular dependencies.
+ */
+export function topologicalSort<
+  T extends { id: string; dependencies?: string[]; priority?: number },
+>(manifests: T[]): T[] {
+  const graph = new Map<string, string[]>();
+  const ids = new Set(manifests.map((m) => m.id));
+
+  for (const m of manifests) {
+    graph.set(
+      m.id,
+      (m.dependencies ?? []).filter((d) => ids.has(d)),
+    );
+  }
+
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+  const order: string[] = [];
+
+  function visit(id: string): void {
+    if (visited.has(id)) return;
+    if (visiting.has(id)) {
+      throw new Error(`Circular plugin dependency detected: ${[...visiting, id].join(' → ')}`);
+    }
+    visiting.add(id);
+    const deps = graph.get(id) ?? [];
+    for (const dep of deps) visit(dep);
+    visiting.delete(id);
+    visited.add(id);
+    order.push(id);
+  }
+
+  // Sort by priority (descending) before visiting so that ties are broken by priority
+  const sorted = [...manifests].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+  for (const m of sorted) visit(m.id);
+
+  const idxMap = new Map(order.map((id, i) => [id, i]));
+  return [...manifests].sort((a, b) => (idxMap.get(a.id) ?? 0) - (idxMap.get(b.id) ?? 0));
 }
 
 // ---------------------------------------------------------------------------

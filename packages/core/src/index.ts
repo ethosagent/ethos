@@ -34,6 +34,7 @@ export {
   estimateMessageTokens,
   estimateTokens,
 } from './context-engines/token-estimator';
+export { ContextStore } from './context-store';
 export { InMemorySessionStore } from './defaults/in-memory-session';
 export type { InMemoryToolContextOptions } from './defaults/in-memory-tool-context';
 export { makeTestToolContext } from './defaults/in-memory-tool-context';

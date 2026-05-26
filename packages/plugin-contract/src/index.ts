@@ -32,6 +32,8 @@ export interface EthosPluginPackageJson {
     id?: string;
     skills_dir?: string;
     credentials?: CredentialDeclaration[];
+    dependencies?: string[];
+    priority?: number;
   };
 }
 
@@ -99,6 +101,21 @@ export function validatePluginPackageJson(raw: unknown): ValidationResult {
 
   if (!pkg.main && !pkg.exports) {
     warnings.push('No "main" or "exports" field — the plugin entry point may not resolve');
+  }
+
+  if (ethos?.dependencies && Array.isArray(ethos.dependencies)) {
+    const id = ethos.id as string | undefined;
+    if (id && (ethos.dependencies as string[]).includes(id)) {
+      warnings.push(`ethos.dependencies contains the plugin's own id ("${id}")`);
+    }
+  }
+  if (
+    ethos?.priority !== undefined &&
+    (!ethos?.dependencies ||
+      !Array.isArray(ethos.dependencies) ||
+      (ethos.dependencies as unknown[]).length === 0)
+  ) {
+    warnings.push('ethos.priority is set without dependencies — likely a mistake');
   }
 
   return { valid: errors.length === 0, errors, warnings };

@@ -39,6 +39,7 @@ import { buildAttachmentAnnotation } from './attachment-annotation';
 import type { ClarifyBridge } from './clarify/clarify-bridge';
 import { DefaultContextEngineRegistry } from './context-engines/registry';
 import { estimateMessagesTokens, estimateTokens } from './context-engines/token-estimator';
+import { ContextStore } from './context-store';
 import { InMemorySessionStore } from './defaults/in-memory-session';
 import { NoopMemoryProvider } from './defaults/noop-memory';
 import { DefaultPersonalityRegistry } from './defaults/noop-personality';
@@ -75,6 +76,10 @@ export const KNOWN_AGENT_EVENT_TYPES = [
   'context_meta',
   'run_start',
   'dry_run_summary',
+  'tool_approval_required',
+  'tool_approval_response',
+  'evaluators_complete',
+  'credential_required',
 ] as const;
 
 export type KnownAgentEventType = (typeof KNOWN_AGENT_EVENT_TYPES)[number];
@@ -157,6 +162,23 @@ export type AgentEvent =
       type: 'dry_run_summary';
       plan: DryRunToolPlan[];
       capped: number;
+    }
+  | { type: 'tool_approval_required'; toolCallId: string; toolName: string; args: unknown }
+  | { type: 'tool_approval_response'; toolCallId: string; approved: boolean; reason?: string }
+  | {
+      type: 'evaluators_complete';
+      results: Array<{ name: string; pass: boolean; reason?: string; score?: number }>;
+    }
+  | {
+      type: 'credential_required';
+      pluginId: string;
+      credentialKey: string;
+      kind: 'oauth' | 'api_key' | 'text';
+      label: string;
+      description?: string;
+      authUrl?: string;
+      sessionKey: string;
+      pendingUserMessage: string;
     };
 
 // ---------------------------------------------------------------------------
@@ -392,6 +414,8 @@ export class AgentLoop {
     string,
     Map<string, { mtimeMs: number; readAtTurn: number }>
   >();
+  /** v2: per-run key/value store threaded into ToolContext for plugin communication. */
+  private readonly contextStore = new ContextStore();
 
   constructor(config: AgentLoopConfig) {
     this.llm = config.llm;
@@ -1241,6 +1265,9 @@ export class AgentLoop {
         this.sessionReadMtimes.set(sessionKey, sessionMtimes);
       }
 
+      // v2: clear per-run context store so plugins start fresh each run
+      this.contextStore.clear();
+
       const toolCtxBase = {
         sessionId,
         sessionKey,
@@ -1273,6 +1300,7 @@ export class AgentLoop {
         readMtimes: sessionMtimes,
         ...(scopedStorage ? { storage: scopedStorage } : {}),
         ...(personality.safety?.network ? { networkPolicy: personality.safety.network } : {}),
+        ...this.contextStore.asContextMethods(),
       };
 
       // Run before_tool_call hooks; build exec list with effective args
@@ -1406,6 +1434,19 @@ export class AgentLoop {
           obsConfig,
         });
         spanIds.set(tc.toolCallId, spanId ?? '');
+        // v2: requiresApproval gate
+        const reqApprovalTool = this.tools.get(tc.toolName);
+        if (reqApprovalTool?.requiresApproval) {
+          yield {
+            type: 'tool_approval_required',
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            args: effectiveArgs,
+          };
+          // Auto-approve when no approval surface is wired.
+          // Full approval flow (claiming hook + UI response) is v2.2 scope.
+        }
+
         observe({ type: 'tool_start', toolName: tc.toolName, args: effectiveArgs });
         yield {
           type: 'tool_start',
@@ -1448,6 +1489,48 @@ export class AgentLoop {
             )
           : [];
       const execResultMap = new Map(execResults.map((r) => [r.toolCallId, r]));
+
+      // v2: returnDirect — skip LLM synthesis if a returnDirect tool succeeded
+      const directResult = execResults.find((r) => {
+        const t = this.tools.get(r.name);
+        return r.result.ok && t?.returnDirect;
+      });
+      if (directResult?.result.ok) {
+        // Persist tool results for history fidelity
+        for (const p of prepped) {
+          const execResult = execResultMap.get(p.toolCallId);
+          const result: ToolResult = p.rejected
+            ? { ok: false as const, error: p.rejected, code: 'execution_failed' as const }
+            : (execResult?.result ?? {
+                ok: false as const,
+                error: 'Tool result missing',
+                code: 'execution_failed' as const,
+              });
+          await this.session.appendMessage({
+            sessionId,
+            role: 'tool_result',
+            content: result.ok ? result.value : result.error,
+            toolCallId: p.toolCallId,
+            toolName: p.name,
+          });
+        }
+        // Emit tool_end for all completed tools
+        for (const r of execResults) {
+          yield {
+            type: 'tool_end',
+            toolCallId: r.toolCallId,
+            toolName: r.name,
+            ok: r.result.ok,
+            durationMs: Date.now() - startedAt,
+            result: r.result.ok ? r.result.value : r.result.error,
+          };
+        }
+        fullText = directResult.result.value;
+        if (traceId) this.observability?.endTrace(traceId, 'ok');
+        this.observability?.flush();
+        yield { type: 'done', text: fullText, turnCount };
+        return;
+      }
 
       // Dry-run plan collection — record every executed tool call and track the cap.
       if (opts.dryRun) {

@@ -42,6 +42,7 @@ import {
   platformPrompt as telegramPrompt,
 } from '@ethosagent/platform-telegram/format';
 import { PluginLoader } from '@ethosagent/plugin-loader';
+import { PluginEventBus, type PluginRouteEntry } from '@ethosagent/plugin-sdk';
 import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { createKvStoreFactory, SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { createInjectors, PlatformFormattingInjector, UniversalScanner } from '@ethosagent/skills';
@@ -89,11 +90,13 @@ import type {
   MemoryContext,
   MemoryEntryRef,
   MemoryProvider,
+  PostTurnEvaluator,
   PromptContext,
   RequestDumpStore,
   SecretsResolver,
   SessionStore,
   Storage,
+  ToolInvocationFilter,
   ToolRegistry,
 } from '@ethosagent/types';
 import { resolveKanbanDbPath } from './kanban-path';
@@ -1103,6 +1106,10 @@ export async function createAgentLoop(
   // injectors into the same registries the AgentLoop uses; the personality
   // gate (allowedPlugins) decides which actually fire per turn.
   const injectorPluginIds = new Map<ContextInjector, string>();
+  const pluginFilters: ToolInvocationFilter[] = [];
+  const pluginEvaluators: PostTurnEvaluator[] = [];
+  const pluginRoutes: PluginRouteEntry[] = [];
+  const pluginEventBus = new PluginEventBus();
   const pluginLoader = new PluginLoader(
     {
       tools,
@@ -1113,6 +1120,10 @@ export async function createAgentLoop(
       contextEngines,
       llmProviders,
       memoryProviders,
+      filters: pluginFilters,
+      evaluators: pluginEvaluators,
+      routes: pluginRoutes,
+      eventBus: pluginEventBus,
     },
     { storage: new FsStorage(), logger: log },
   );

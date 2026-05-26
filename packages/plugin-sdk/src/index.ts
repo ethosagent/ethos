@@ -11,8 +11,10 @@ import type {
   PersonalityConfig,
   PersonalityRegistry,
   PlatformAdapterFactory,
+  PostTurnEvaluator,
   Storage,
   Tool,
+  ToolInvocationFilter,
   ToolRegistry,
   VoidHooks,
 } from '@ethosagent/types';
@@ -23,6 +25,82 @@ import type {
 
 export interface CredentialStorage extends Storage {
   existsSync(path: string): boolean;
+}
+
+// ---------------------------------------------------------------------------
+// HTTP route types — plugin-registered API endpoints
+// ---------------------------------------------------------------------------
+
+export interface PluginHttpRequest {
+  method: string;
+  path: string;
+  headers: Record<string, string>;
+  body: Record<string, unknown> | string;
+  query: Record<string, string>;
+}
+
+export interface PluginHttpResponse {
+  status?: number;
+  body: unknown;
+  headers?: Record<string, string>;
+}
+
+export interface PluginRouteEntry {
+  pluginId: string;
+  method: string;
+  path: string;
+  handler: (req: PluginHttpRequest) => Promise<PluginHttpResponse>;
+}
+
+// ---------------------------------------------------------------------------
+// PluginEventBus — lightweight pub/sub for inter-plugin communication
+// ---------------------------------------------------------------------------
+
+export class PluginEventBus {
+  private readonly handlers = new Map<string, Set<(payload: unknown) => void>>();
+
+  emit(event: string, payload: unknown): void {
+    const set = this.handlers.get(event);
+    if (set) {
+      for (const h of set) {
+        // Fail-open: handler errors must not block other handlers or the emitter.
+        // Matches the void-hook execution model in HookRegistry.
+        try {
+          h(payload);
+        } catch {
+          /* fail-open by design */
+        }
+      }
+    }
+  }
+
+  on(event: string, handler: (payload: unknown) => void): () => void {
+    if (!this.handlers.has(event)) this.handlers.set(event, new Set());
+    const set = this.handlers.get(event);
+    if (set) set.add(handler);
+    return () => this.handlers.get(event)?.delete(handler);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// OAuth types — shape declared in v2.1; implementation deferred to v2.2
+// ---------------------------------------------------------------------------
+
+export interface OAuthConfig {
+  buildAuthUrl(opts: { redirectUri: string; state: string }): string;
+  exchangeCode(
+    code: string,
+    redirectUri: string,
+  ): Promise<{ accessToken: string; refreshToken?: string }>;
+}
+
+export interface OAuthCoordinator {
+  beginFlow(opts: {
+    pluginId: string;
+    sessionKey: string;
+    config: OAuthConfig;
+    pendingUserMessage: string;
+  }): string;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,6 +170,31 @@ export interface EthosPluginApi {
 
   /** Register a handler called after `setSecret`. Returns an unsubscribe fn. */
   onCredentialUpdate(handler: (key: string) => void | Promise<void>): () => void;
+
+  /** Register a tool invocation filter (v2). */
+  registerToolFilter(filter: ToolInvocationFilter): void;
+
+  /** Register a post-turn evaluator (v2). */
+  registerEvaluator(evaluator: PostTurnEvaluator): void;
+
+  /** Register an HTTP route served by the host. */
+  registerRoute(opts: {
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+    path: string;
+    handler: (req: PluginHttpRequest) => Promise<PluginHttpResponse>;
+  }): void;
+
+  /** Emit an event on the shared event bus. */
+  emit(event: string, payload: unknown): void;
+
+  /** Subscribe to an event on the shared event bus. Returns an unsubscribe fn. */
+  on(event: string, handler: (payload: unknown) => void): () => void;
+
+  /** Register an OAuth config for this plugin (v2.2 implementation). */
+  registerOAuth(config: OAuthConfig): void;
+
+  /** Return the host's base URL, if configured. */
+  getBaseUrl(): string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +224,23 @@ export interface PluginRegistries {
   memoryProviders: MemoryProviderRegistry;
   /** Platform adapter registry. Maps adapter names to factories. */
   platformAdapters?: Map<string, PlatformAdapterFactory>;
+  /** v2 — Tool invocation filters. Plugins register filters that can
+   *  approve/deny/modify tool calls before execution. */
+  filters?: ToolInvocationFilter[];
+  /** v2 — Post-turn evaluators. Plugins register evaluators that run
+   *  after the LLM turn to check output quality or trigger follow-ups. */
+  evaluators?: PostTurnEvaluator[];
+  /** v2 — Plugin-registered HTTP routes. The host serves these. */
+  routes?: PluginRouteEntry[];
+  /** Called when a plugin registers a new HTTP route. */
+  onRouteRegistered?: (entry: PluginRouteEntry) => void;
+  /** v2 — Shared event bus for inter-plugin communication. */
+  eventBus?: PluginEventBus;
+  /** v2 — OAuth coordinator. When present, plugins can register OAuth
+   *  configs and the host will drive the auth flow. */
+  oauthCoordinator?: OAuthCoordinator;
+  /** v2 — Host base URL for building callback URLs, webhook endpoints, etc. */
+  baseUrl?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +257,10 @@ export class PluginApiImpl implements EthosPluginApi {
   private readonly credentialStorage: CredentialStorage | null;
   private readonly credentialBasePath: string | null;
   private readonly credentialUpdateHandlers: Array<(key: string) => void | Promise<void>> = [];
+  private readonly registeredFilters: ToolInvocationFilter[] = [];
+  private readonly registeredEvaluators: PostTurnEvaluator[] = [];
+  private readonly eventUnsubscribers: Array<() => void> = [];
+  private oauthConfig?: OAuthConfig;
 
   constructor(
     pluginId: string,
@@ -264,6 +388,70 @@ export class PluginApiImpl implements EthosPluginApi {
     }
   }
 
+  // ---- v2 registration methods --------------------------------------------
+
+  registerToolFilter(filter: ToolInvocationFilter): void {
+    if (!this.registries.filters) {
+      throw new Error(`Plugin "${this.pluginId}": host did not expose a filters registry.`);
+    }
+    this.registries.filters.push(filter);
+    this.registeredFilters.push(filter);
+  }
+
+  registerEvaluator(evaluator: PostTurnEvaluator): void {
+    if (!this.registries.evaluators) {
+      throw new Error(`Plugin "${this.pluginId}": host did not expose an evaluators registry.`);
+    }
+    this.registries.evaluators.push(evaluator);
+    this.registeredEvaluators.push(evaluator);
+  }
+
+  registerRoute(opts: {
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+    path: string;
+    handler: (req: PluginHttpRequest) => Promise<PluginHttpResponse>;
+  }): void {
+    if (!this.registries.routes) {
+      throw new Error(`Plugin "${this.pluginId}": host did not expose a route registry.`);
+    }
+    if (!opts.path.startsWith('/')) {
+      throw new Error(
+        `Plugin "${this.pluginId}": route path must start with "/", got "${opts.path}"`,
+      );
+    }
+    const entry: PluginRouteEntry = {
+      pluginId: this.pluginId,
+      method: opts.method ?? 'POST',
+      path: opts.path,
+      handler: opts.handler,
+    };
+    this.registries.routes.push(entry);
+    this.registries.onRouteRegistered?.(entry);
+  }
+
+  emit(event: string, payload: unknown): void {
+    this.registries.eventBus?.emit(event, payload);
+  }
+
+  on(event: string, handler: (payload: unknown) => void): () => void {
+    const unsub = this.registries.eventBus?.on(event, handler) ?? (() => {});
+    this.eventUnsubscribers.push(unsub);
+    return unsub;
+  }
+
+  registerOAuth(config: OAuthConfig): void {
+    this.oauthConfig = config;
+  }
+
+  getBaseUrl(): string | undefined {
+    return this.registries.baseUrl;
+  }
+
+  /** Internal — used by AgentLoop for pre-turn credential check. */
+  getOAuthConfig(): OAuthConfig | undefined {
+    return this.oauthConfig;
+  }
+
   /** Remove everything this plugin registered. Called by PluginLoader.unload(). */
   cleanup(): void {
     // Hooks — HookRegistry tracks by pluginId
@@ -285,6 +473,29 @@ export class PluginApiImpl implements EthosPluginApi {
 
     // Credential update handlers
     this.credentialUpdateHandlers.length = 0;
+
+    // v2 — Filters
+    for (const f of this.registeredFilters) {
+      const idx = this.registries.filters?.indexOf(f) ?? -1;
+      if (idx >= 0) this.registries.filters?.splice(idx, 1);
+    }
+
+    // v2 — Evaluators
+    for (const e of this.registeredEvaluators) {
+      const idx = this.registries.evaluators?.indexOf(e) ?? -1;
+      if (idx >= 0) this.registries.evaluators?.splice(idx, 1);
+    }
+
+    // v2 — Routes
+    if (this.registries.routes) {
+      const keep = this.registries.routes.filter((r) => r.pluginId !== this.pluginId);
+      this.registries.routes.length = 0;
+      this.registries.routes.push(...keep);
+    }
+
+    // v2 — Event bus subscriptions
+    for (const unsub of this.eventUnsubscribers) unsub();
+    this.eventUnsubscribers.length = 0;
   }
 }
 
@@ -301,10 +512,15 @@ export type {
   MemoryProviderFactoryContext,
   ModifyingHooks,
   PersonalityConfig,
+  PostTurnEvaluator,
+  PostTurnEvaluatorPayload,
   PromptContext,
   Storage,
   Tool,
   ToolContext,
+  ToolInvocationFilter,
   ToolResult,
   VoidHooks,
 } from '@ethosagent/types';
+
+export { ContextStore } from './context-registry';

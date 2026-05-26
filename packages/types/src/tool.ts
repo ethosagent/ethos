@@ -126,6 +126,13 @@ export interface ToolContext {
   scopedProcess?: import('./tool-capabilities').ScopedProcess;
   attachments?: import('./tool-capabilities').ScopedAttachments;
   dryRun?: boolean;
+  getContext?: <T>(key: string) => T | undefined;
+  setContext?: <T>(key: string, value: T) => void;
+}
+
+export interface CacheOptions {
+  ttlMs?: number;
+  keyFn?: (args: unknown) => string;
 }
 
 export interface Tool<TArgs = unknown> {
@@ -154,6 +161,12 @@ export interface Tool<TArgs = unknown> {
    * memory files or the agent's own tool listing).
    */
   outputIsUntrusted?: boolean;
+  requiresApproval?: boolean;
+  returnDirect?: boolean;
+  outputSchema?: Record<string, unknown>;
+  cache?: boolean | CacheOptions;
+  preferredModel?: string;
+  strict?: boolean;
 }
 
 /**
@@ -226,6 +239,7 @@ export interface ToolRegistry {
     allowedTools?: string[],
     filterOpts?: ToolFilterOpts,
     turnAttachments?: import('./platform').Attachment[],
+    filters?: import('./tool-filter').ToolInvocationFilter[],
   ): Promise<Array<{ toolCallId: string; name: string; result: ToolResult }>>;
   toDefinitions(
     allowedTools?: string[],

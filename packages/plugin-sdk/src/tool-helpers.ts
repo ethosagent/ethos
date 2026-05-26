@@ -28,6 +28,12 @@ export interface ToolDefinition<TArgs = unknown> {
   maxResultChars?: number;
   capabilities?: import('@ethosagent/types').ToolCapabilities;
   isAvailable?: () => boolean;
+  requiresApproval?: boolean;
+  returnDirect?: boolean;
+  outputSchema?: Record<string, unknown>;
+  cache?: boolean | import('@ethosagent/types').CacheOptions;
+  preferredModel?: string;
+  strict?: boolean;
   execute: (args: TArgs, ctx: ToolContext) => Promise<ToolResult>;
 }
 
@@ -47,4 +53,22 @@ export interface ToolDefinition<TArgs = unknown> {
  */
 export function defineTool<TArgs = unknown>(def: ToolDefinition<TArgs>): Tool<TArgs> {
   return { capabilities: {}, ...def } as Tool<TArgs>;
+}
+
+/** Wrap a tool definition to require user approval before execution. */
+export function needsApproval<TArgs>(def: ToolDefinition<TArgs>): ToolDefinition<TArgs> {
+  return { ...def, requiresApproval: true };
+}
+
+/** Wrap a tool definition to enable result caching. */
+export function withCache<TArgs>(
+  def: ToolDefinition<TArgs>,
+  opts?: import('@ethosagent/types').CacheOptions,
+): ToolDefinition<TArgs> {
+  return { ...def, cache: opts ?? true };
+}
+
+/** Wrap a tool definition so its result is returned directly to the user. */
+export function withReturnDirect<TArgs>(def: ToolDefinition<TArgs>): ToolDefinition<TArgs> {
+  return { ...def, returnDirect: true };
 }

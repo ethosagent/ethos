@@ -4,6 +4,7 @@
 export * from './clarify';
 export * from './context-engine';
 export * from './errors';
+export * from './evaluator';
 export * from './hooks';
 export * from './id-validation';
 export * from './injector';
@@ -27,6 +28,7 @@ export * from './team';
 export * from './todo';
 export * from './tool';
 export * from './tool-capabilities';
+export * from './tool-filter';
 export type {
   ToolReducerContext,
   ToolResultReducer,
