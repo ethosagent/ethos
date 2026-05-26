@@ -19,6 +19,7 @@ const DEFAULT_ITEMS: NavItem[] = [
   { id: 'cron', label: 'Cron', icon: '⏰' },
   { id: 'platforms', label: 'Platforms', icon: '⭐' },
   { id: 'skills', label: 'Skills', icon: '⚡' },
+  { id: 'mcp', label: 'MCP', icon: '⬡' },
   { id: 'settings', label: 'Settings', icon: '⚙' },
 ];
 

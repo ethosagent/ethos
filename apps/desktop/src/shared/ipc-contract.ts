@@ -127,17 +127,24 @@ export interface IpcContract {
     request: { type?: string; title?: string; message: string; buttons?: string[] };
     response: { response: number };
   };
+  'shell:openExternal': { request: { url: string }; response: { ok: boolean } };
+  'dialog:showOpenDialog': {
+    request: { properties: string[] };
+    response: { canceled: boolean; filePaths: string[] };
+  };
 }
 
 /** Main-to-renderer push events (via webContents.send, NOT ipcMain.handle) */
 export interface RendererEvents {
   'chat:new': undefined;
   'navigate:session': { sessionId: string };
+  'oauth:callback': { code: string; state: string };
 }
 
 export const RENDERER_EVENTS = {
   'chat:new': 'chat:new',
   'navigate:session': 'navigate:session',
+  'oauth:callback': 'oauth:callback',
 } as const;
 
 export type IpcChannel = keyof IpcContract;
@@ -164,4 +171,6 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'retention:prune': 'retention:prune',
   'dialog:showOpen': 'dialog:showOpen',
   'dialog:showMessage': 'dialog:showMessage',
+  'shell:openExternal': 'shell:openExternal',
+  'dialog:showOpenDialog': 'dialog:showOpenDialog',
 };
