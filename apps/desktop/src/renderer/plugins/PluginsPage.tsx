@@ -2,6 +2,8 @@ import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppState } from '../state/AppContext';
 import { SectionLabel } from '../ui/SectionLabel';
+import { PluginHomeDrawer } from './PluginHomeDrawer';
+import { PluginSettingsDrawer } from './PluginSettingsDrawer';
 
 // ---------------------------------------------------------------------------
 // Types mirroring web-contracts schemas
@@ -15,6 +17,7 @@ interface PluginInfo {
   source: 'user' | 'project' | 'npm';
   path: string;
   pluginContractMajor: number | null;
+  hasHomePanel?: boolean;
 }
 
 interface PageSection {
@@ -62,6 +65,8 @@ export function PluginsPage() {
   const [pageSpecs, setPageSpecs] = useState<Map<string, PageSpec>>(new Map());
   const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [homeDrawerPlugin, setHomeDrawerPlugin] = useState<PluginInfo | null>(null);
+  const [settingsDrawerPlugin, setSettingsDrawerPlugin] = useState<PluginInfo | null>(null);
 
   // Fetch plugin list
   useEffect(() => {
@@ -209,6 +214,8 @@ export function PluginsPage() {
                     plugin={plugin}
                     hasPage={pageSpecs.has(plugin.id)}
                     onOpen={() => setSelectedPluginId(plugin.id)}
+                    onOpenHome={() => setHomeDrawerPlugin(plugin)}
+                    onOpenSettings={() => setSettingsDrawerPlugin(plugin)}
                   />
                 ))}
               </div>
@@ -216,6 +223,28 @@ export function PluginsPage() {
           </div>
         )}
       </div>
+
+      {homeDrawerPlugin && (
+        <PluginHomeDrawer
+          pluginId={homeDrawerPlugin.id}
+          pluginPath={homeDrawerPlugin.path}
+          theme="dark"
+          onClose={() => setHomeDrawerPlugin(null)}
+        />
+      )}
+
+      {settingsDrawerPlugin && (
+        <PluginSettingsDrawer
+          pluginId={settingsDrawerPlugin.id}
+          name={settingsDrawerPlugin.name}
+          version={settingsDrawerPlugin.version}
+          description={settingsDrawerPlugin.description ?? undefined}
+          credentials={[]}
+          tools={[]}
+          theme="dark"
+          onClose={() => setSettingsDrawerPlugin(null)}
+        />
+      )}
     </div>
   );
 }
@@ -310,10 +339,14 @@ function PluginListRow({
   plugin,
   hasPage,
   onOpen,
+  onOpenHome,
+  onOpenSettings,
 }: {
   plugin: PluginInfo;
   hasPage: boolean;
   onOpen: () => void;
+  onOpenHome: () => void;
+  onOpenSettings: () => void;
 }) {
   return (
     <div
@@ -338,27 +371,47 @@ function PluginListRow({
           {plugin.id}@{plugin.version} · {plugin.source}
         </span>
       </div>
-      {hasPage && (
+      <div style={{ display: 'flex', gap: 6 }}>
+        {plugin.hasHomePanel && (
+          <button
+            type="button"
+            onClick={onOpenHome}
+            style={rowButtonStyle}
+          >
+            Home
+          </button>
+        )}
         <button
           type="button"
-          onClick={onOpen}
-          style={{
-            height: 24,
-            padding: '0 8px',
-            borderRadius: 'var(--radius-sm)',
-            border: '1px solid var(--border-subtle)',
-            background: 'transparent',
-            color: 'var(--text-secondary)',
-            fontSize: 11,
-            cursor: 'pointer',
-          }}
+          onClick={onOpenSettings}
+          style={rowButtonStyle}
         >
-          Open page
+          Settings
         </button>
-      )}
+        {hasPage && (
+          <button
+            type="button"
+            onClick={onOpen}
+            style={rowButtonStyle}
+          >
+            Open page
+          </button>
+        )}
+      </div>
     </div>
   );
 }
+
+const rowButtonStyle: React.CSSProperties = {
+  height: 24,
+  padding: '0 8px',
+  borderRadius: 'var(--radius-sm)',
+  border: '1px solid var(--border-subtle)',
+  background: 'transparent',
+  color: 'var(--text-secondary)',
+  fontSize: 11,
+  cursor: 'pointer',
+};
 
 // ---------------------------------------------------------------------------
 // Plugin page view — renders a plugin's page spec sections
