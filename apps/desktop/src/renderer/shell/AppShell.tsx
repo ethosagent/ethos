@@ -33,9 +33,10 @@ type ShellRoute =
   | 'api-keys';
 
 export function AppShell() {
-  const { setPort, setAdvancedMode, setDesktopUserId } = useAppState();
+  const { setPort, setAdvancedMode, setDesktopUserId, setLastTitledSession } = useAppState();
   const [route, setRoute] = useState<ShellRoute>('chat');
   const [healthy, setHealthy] = useState(false);
+  const [resolvedPort, setResolvedPort] = useState(3001);
 
   useEffect(() => {
     async function bootstrap() {
@@ -55,6 +56,7 @@ export function AppShell() {
         // fallback to default
       }
       setPort(resolvedPort);
+      setResolvedPort(resolvedPort);
 
       // Start the backend
       try {
@@ -112,6 +114,28 @@ export function AppShell() {
       cleanupPromise.then((cleanup) => cleanup?.());
     };
   }, [setPort, setAdvancedMode, setDesktopUserId]);
+
+  useEffect(() => {
+    if (!healthy) return;
+    const source = new EventSource(`http://localhost:${resolvedPort}/sse/system`, {
+      withCredentials: true,
+    });
+    source.onmessage = (raw) => {
+      try {
+        const data = JSON.parse(raw.data as string) as {
+          type: string;
+          sessionId?: string;
+          title?: string;
+        };
+        if (data.type === 'session.titled' && data.sessionId && data.title) {
+          setLastTitledSession({ sessionId: data.sessionId, title: data.title });
+        }
+      } catch {
+        // ignore
+      }
+    };
+    return () => source.close();
+  }, [healthy, resolvedPort, setLastTitledSession]);
 
   if (!healthy) {
     return (

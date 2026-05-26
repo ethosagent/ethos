@@ -14,7 +14,7 @@ const CLIENT_ID = crypto.randomUUID();
 
 export function ChatPage() {
   const { state, setActiveSessionId } = useAppState();
-  const { port, activeSessionId, activePersonalityId, desktopUserId } = state;
+  const { port, activeSessionId, activePersonalityId, desktopUserId, lastTitledSession } = state;
 
   const baseUrl = `http://localhost:${port}`;
 
@@ -363,32 +363,14 @@ export function ChatPage() {
     [activeSessionId, setActiveSessionId],
   );
 
-  // Subscribe to system events so session titles update in the sidebar
-  // and PersonalityBar without requiring a manual refresh.
+  // React to system session.titled events propagated from the app-shell-level SSE connection.
   useEffect(() => {
-    const url = `http://localhost:${port}/sse/system`;
-    const source = new EventSource(url, { withCredentials: true });
-
-    source.onmessage = (raw) => {
-      try {
-        const data = JSON.parse(raw.data as string) as {
-          type: string;
-          sessionId?: string;
-          title?: string;
-        };
-        if (data.type === 'session.titled' && data.sessionId && data.title) {
-          sessionList.refresh();
-          if (data.sessionId === activeSessionId) {
-            setSessionTitle(data.title);
-          }
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    return () => source.close();
-  }, [port, activeSessionId, sessionList]);
+    if (!lastTitledSession) return;
+    sessionList.refresh();
+    if (lastTitledSession.sessionId === activeSessionId) {
+      setSessionTitle(lastTitledSession.title);
+    }
+  }, [lastTitledSession, activeSessionId, sessionList]);
 
   // Session title change
   const handleTitleChange = useCallback(

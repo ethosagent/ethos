@@ -6,6 +6,7 @@ interface AppState {
   activeSessionId: string | null;
   advancedMode: boolean;
   desktopUserId: string | null;
+  lastTitledSession: { sessionId: string; title: string } | null;
 }
 
 interface AppContextValue {
@@ -15,6 +16,7 @@ interface AppContextValue {
   setActiveSessionId: (id: string | null) => void;
   setAdvancedMode: (enabled: boolean) => void;
   setDesktopUserId: (id: string | null) => void;
+  setLastTitledSession: (event: { sessionId: string; title: string } | null) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -26,6 +28,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     activeSessionId: null,
     advancedMode: false,
     desktopUserId: null,
+    lastTitledSession: null,
   });
 
   const setPort = useCallback((port: number) => setState((s) => ({ ...s, port })), []);
@@ -45,6 +48,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (id: string | null) => setState((s) => ({ ...s, desktopUserId: id })),
     [],
   );
+  const setLastTitledSession = useCallback(
+    (event: { sessionId: string; title: string } | null) =>
+      setState((s) => ({ ...s, lastTitledSession: event })),
+    [],
+  );
 
   return (
     <AppContext.Provider
@@ -55,6 +63,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setActiveSessionId,
         setAdvancedMode,
         setDesktopUserId,
+        setLastTitledSession,
       }}
     >
       {children}
