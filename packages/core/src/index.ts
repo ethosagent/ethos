@@ -63,6 +63,8 @@ export { stripAnsiEscapes } from './sanitize-output';
 export type { SecretsBackend } from './scoped';
 export { ScopedFetchImpl, ScopedFsImpl, ScopedProcessImpl, ScopedSecretsImpl } from './scoped';
 export { applyTemporalDecay, parseTemporalBound, toJournalKey } from './temporal';
+export { SimpleCompletionImpl } from './simple-completion';
+export { DefaultNotificationRouter } from './notification-router';
 export { DefaultToolResultReducerRegistry } from './tool-reducer-registry';
 export { DefaultToolRegistry } from './tool-registry';
 export { SsrfError, type ValidateUrlOptions, validateUrl } from './url-validator';

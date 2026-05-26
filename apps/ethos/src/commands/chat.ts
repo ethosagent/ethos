@@ -20,6 +20,7 @@ import { SpinnerState } from '../lib/spinner';
 import { renderStatusBar, type Threshold } from '../lib/status-bar';
 import { formatToolFeedLine } from '../lib/tool-feed';
 import { isVerbosity, nextVerbosity, projectEvent, type Verbosity } from '../lib/verbosity';
+import type { NotificationAdapter } from '@ethosagent/types';
 import { resolveActiveLoop, startEvolverCron, startNightlyPrune } from '../wiring';
 import { runPairingCommand } from './pairing-commands';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
@@ -175,7 +176,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       );
     });
   }
-  const { loop, personalityId, displayName } = await resolveActiveLoop(config);
+  const { loop, personalityId, displayName, notificationRouter } = await resolveActiveLoop(config);
 
   // FW-14 — build the shared slash command registry. FW-15 and FW-16 extend it.
   const registry = buildBaseRegistry();
@@ -242,8 +243,24 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
 
   const bgRunner = new BackgroundRunner({ maxConcurrent: config.backgroundMaxConcurrent ?? 4 });
 
+  const sessionKey = opts.resumeSessionKey ?? `cli:${basename(process.cwd())}`;
+
+  // v2.2 — Register a CLI NotificationAdapter so plugin monitors can deliver
+  // messages to the interactive terminal session.
+  const cliAdapter: NotificationAdapter = {
+    async send(message) {
+      console.log(`\n[notification] ${message}`);
+    },
+    async injectUserMessage(message) {
+      // Print the notification; actual input injection requires readline
+      // integration which is deferred to a future iteration.
+      console.log(`\n[notification] ${message}`);
+    },
+  };
+  notificationRouter.register(sessionKey, cliAdapter);
+
   const state: ChatState = {
-    sessionKey: opts.resumeSessionKey ?? `cli:${basename(process.cwd())}`,
+    sessionKey,
     personalityId,
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     contextTokens: 0,
@@ -325,6 +342,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   });
 
   rl.on('close', async () => {
+    notificationRouter.deregister(state.sessionKey);
     if (config.displayResumeHint !== false && !opts.noResumeHint) {
       try {
         const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
@@ -389,6 +407,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       await grantQuickCommandConsent(ethosDir());
     },
     attachmentCache,
+    notificationRouter,
+    cliAdapter,
   };
 
   // Switch from blocking rl.question to event-driven rl.on('line') so mid-turn
@@ -858,6 +878,8 @@ interface SlashHandlerContext {
   isQuickConsentGiven: () => boolean;
   grantConsent: () => Promise<void>;
   attachmentCache: import('@ethosagent/types').AttachmentCache;
+  notificationRouter: import('@ethosagent/types').NotificationRouter;
+  cliAdapter: NotificationAdapter;
 }
 
 async function handleSlashCommand(
@@ -910,7 +932,9 @@ async function handleSlashCommand(
     case 'new':
     case 'reset':
       loop.resetSessionCost(state.sessionKey);
+      ctx.notificationRouter.deregister(state.sessionKey);
       state.sessionKey = `cli:${basename(process.cwd())}:${Date.now()}`;
+      ctx.notificationRouter.register(state.sessionKey, ctx.cliAdapter);
       state.contextTokens = 0;
       state.startedAt = Date.now();
       out(`${c.dim}[new session started]${c.reset}\n`);

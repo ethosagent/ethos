@@ -7,12 +7,14 @@ import {
   DefaultHookRegistry,
   DefaultLLMProviderRegistry,
   DefaultMemoryProviderRegistry,
+  DefaultNotificationRouter,
   DefaultToolRegistry,
   DefaultToolResultReducerRegistry,
   EagerPrefetchPolicy,
   FileClarifyStore,
   LastWriteWinsPolicy,
   LazyOnDemandPolicy,
+  SimpleCompletionImpl,
   type SummarizerFn,
   validateUrl,
 } from '@ethosagent/core';
@@ -42,7 +44,7 @@ import {
   platformPrompt as telegramPrompt,
 } from '@ethosagent/platform-telegram/format';
 import { PluginLoader } from '@ethosagent/plugin-loader';
-import { PluginEventBus, type PluginRouteEntry } from '@ethosagent/plugin-sdk';
+import { DiagnosticStore, OAuthCoordinatorImpl, PluginEventBus, type PluginRouteEntry } from '@ethosagent/plugin-sdk';
 import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { createKvStoreFactory, SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { createInjectors, PlatformFormattingInjector, UniversalScanner } from '@ethosagent/skills';
@@ -605,6 +607,12 @@ export interface CreateAgentLoopResult {
   /** Set by the web-api chat service to receive SSE notifications when the
    *  improvement fork proposes a new skill candidate. */
   setOnSkillProposed?: (fn: (skillId: string, personalityId: string) => void) => void;
+  /** v2.2 — Notification router for registering per-session adapters.
+   *  CLI/TUI/web-api register a NotificationAdapter on this router so plugin
+   *  monitors can deliver messages to the active surface. */
+  notificationRouter: import('@ethosagent/types').NotificationRouter;
+  /** v2.2 — Plugin loader instance for health checks and diagnostics. */
+  pluginLoader: PluginLoader;
 }
 
 const WEB_PROMPT = `## Output format — Web UI
@@ -1110,21 +1118,34 @@ export async function createAgentLoop(
   const pluginEvaluators: PostTurnEvaluator[] = [];
   const pluginRoutes: PluginRouteEntry[] = [];
   const pluginEventBus = new PluginEventBus();
+  const oauthCoordinator = new OAuthCoordinatorImpl();
+  const notificationRouter = new DefaultNotificationRouter();
+  const pluginDiagnostics = new DiagnosticStore();
+  const pluginRegistries: import('@ethosagent/plugin-sdk').PluginRegistries = {
+    tools,
+    hooks,
+    injectors,
+    injectorPluginIds,
+    personalities,
+    contextEngines,
+    llmProviders,
+    memoryProviders,
+    filters: pluginFilters,
+    evaluators: pluginEvaluators,
+    routes: pluginRoutes,
+    eventBus: pluginEventBus,
+    oauthCoordinator,
+    notificationRouter,
+    diagnostics: pluginDiagnostics,
+    // v2.2 — baseUrl provided by host at runtime (Desktop/Web-API set this;
+    // CLI doesn't). Plugins read it via api.getBaseUrl() for OAuth callbacks
+    // and webhook endpoints.
+    baseUrl: config.baseUrl,
+    // v2.2 — llmFactory is set after LLM resolution (below). Monitors only
+    // start after full wiring, so lazy assignment is safe.
+  };
   const pluginLoader = new PluginLoader(
-    {
-      tools,
-      hooks,
-      injectors,
-      injectorPluginIds,
-      personalities,
-      contextEngines,
-      llmProviders,
-      memoryProviders,
-      filters: pluginFilters,
-      evaluators: pluginEvaluators,
-      routes: pluginRoutes,
-      eventBus: pluginEventBus,
-    },
+    pluginRegistries,
     { storage: new FsStorage(), logger: log },
   );
   await pluginLoader.loadAll();
@@ -1144,6 +1165,20 @@ export async function createAgentLoop(
   // -------------------------------------------------------------------------
 
   const llm = await createLLMFromRegistry(llmProviders, config, log);
+
+  // v2.2 — wire llmFactory now that the LLM provider is resolved. Monitors
+  // call this lazily when they need LLM access, so it's always available by
+  // the time a monitor starts.
+  pluginRegistries.llmFactory = () =>
+    new SimpleCompletionImpl(llm, config.model, ({ input, output }) => {
+      pluginDiagnostics.pushMetric({
+        pluginId: 'framework',
+        name: 'monitor_llm_usage',
+        value: output,
+        labels: { type: 'output_tokens', input_tokens: String(input) },
+        timestamp: new Date().toISOString(),
+      });
+    });
 
   const session = new SQLiteSessionStore(join(dataDir, 'sessions.db'));
   const memoryName = config.memory ?? 'markdown';
@@ -1322,6 +1357,21 @@ export async function createAgentLoop(
     ...(opts.observability ? { observability: opts.observability } : {}),
     ...(requestDumpStore ? { requestDumpStore } : {}),
     ...(activeMcpPolicy ? { mcpPolicy: activeMcpPolicy } : {}),
+    onToolMetric: (metric) => {
+      pluginDiagnostics.pushEvent({
+        pluginId: metric.pluginId,
+        level: 'info',
+        message: 'tool_invocation',
+        timestamp: new Date().toISOString(),
+        data: {
+          toolName: metric.toolName,
+          ok: metric.ok,
+          durationMs: metric.durationMs,
+        },
+        sessionId: metric.sessionId,
+        turnId: metric.turnId,
+      });
+    },
     options: {
       platform: profile,
       workingDir,
@@ -1359,6 +1409,8 @@ export async function createAgentLoop(
     setOnSkillProposed: (fn: (skillId: string, personalityId: string) => void) => {
       onSkillProposedFn = fn;
     },
+    notificationRouter,
+    pluginLoader,
   };
 }
 

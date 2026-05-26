@@ -193,6 +193,11 @@ export class DefaultToolRegistry implements ToolRegistry {
     return this.getAvailable().filter((t) => t.toolset === toolset);
   }
 
+  /** v2.2 — Return the plugin id that registered a tool, if any. */
+  getPluginId(name: string): string | undefined {
+    return this.tools.get(name)?.pluginId;
+  }
+
   toDefinitions(allowedTools?: string[], filterOpts?: ToolFilterOpts) {
     const entries = [...this.tools.values()].filter(
       (e) => !e.tool.isAvailable || e.tool.isAvailable(),

@@ -2,15 +2,21 @@ import type {
   ContextEngine,
   ContextEngineRegistry,
   ContextInjector,
+  DiagnosticsEmitter,
   HookRegistry,
   LLMProviderFactory,
   LLMProviderRegistry,
   MemoryProviderFactory,
   MemoryProviderRegistry,
   ModifyingHooks,
+  NotificationRouter,
+  NotifyOptions,
+  OAuthConfig,
   PersonalityConfig,
   PersonalityRegistry,
   PlatformAdapterFactory,
+  PluginHealthCheck,
+  PluginMonitorDef,
   PostTurnEvaluator,
   Storage,
   Tool,
@@ -18,6 +24,8 @@ import type {
   ToolRegistry,
   VoidHooks,
 } from '@ethosagent/types';
+import { DiagnosticStore } from './diagnostic-store';
+import { PluginMonitorRunner } from './monitor-runner';
 
 // ---------------------------------------------------------------------------
 // CredentialStorage — Storage + synchronous existence check
@@ -83,16 +91,8 @@ export class PluginEventBus {
 }
 
 // ---------------------------------------------------------------------------
-// OAuth types — shape declared in v2.1; implementation deferred to v2.2
+// OAuth types — OAuthConfig moved to @ethosagent/types; coordinator stays here
 // ---------------------------------------------------------------------------
-
-export interface OAuthConfig {
-  buildAuthUrl(opts: { redirectUri: string; state: string }): string;
-  exchangeCode(
-    code: string,
-    redirectUri: string,
-  ): Promise<{ accessToken: string; refreshToken?: string }>;
-}
 
 export interface OAuthCoordinator {
   beginFlow(opts: {
@@ -100,7 +100,14 @@ export interface OAuthCoordinator {
     sessionKey: string;
     config: OAuthConfig;
     pendingUserMessage: string;
+    redirectUri: string;
   }): string;
+  handleCallback(
+    code: string,
+    state: string,
+    notificationRouter: import('@ethosagent/types').NotificationRouter,
+  ): Promise<void>;
+  cancelAll(pluginId: string): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +202,24 @@ export interface EthosPluginApi {
 
   /** Return the host's base URL, if configured. */
   getBaseUrl(): string | undefined;
+
+  /** Register a monitor definition (v2.2). */
+  registerMonitor(def: PluginMonitorDef): void;
+
+  /** Start a registered monitor by name. */
+  startMonitor(name: string, params?: Record<string, unknown>): void;
+
+  /** Stop a running monitor by name. */
+  stopMonitor(name: string): void;
+
+  /** Send a notification through the notification router (v2.2). */
+  notify(opts: NotifyOptions): Promise<void>;
+
+  /** Register a health check for this plugin (v2.2 diagnostics). */
+  registerHealthCheck(check: PluginHealthCheck): void;
+
+  /** Diagnostics emitter for structured logging and metrics (v2.2). */
+  readonly diagnostics: DiagnosticsEmitter;
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +266,14 @@ export interface PluginRegistries {
   oauthCoordinator?: OAuthCoordinator;
   /** v2 — Host base URL for building callback URLs, webhook endpoints, etc. */
   baseUrl?: string;
+  /** v2.2 — Notification router for monitor → surface delivery. */
+  notificationRouter?: NotificationRouter;
+  /** v2.2 — Diagnostic event/metric store for plugin health and telemetry. */
+  diagnostics?: DiagnosticStore;
+  /** v2.2 — Factory for creating SimpleCompletion instances for monitors.
+   *  Wiring provides this so monitors can make LLM calls without the plugin-sdk
+   *  depending on core. */
+  llmFactory?: () => import('@ethosagent/types').SimpleCompletion;
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +293,8 @@ export class PluginApiImpl implements EthosPluginApi {
   private readonly registeredFilters: ToolInvocationFilter[] = [];
   private readonly registeredEvaluators: PostTurnEvaluator[] = [];
   private readonly eventUnsubscribers: Array<() => void> = [];
+  private readonly monitorRunner = new PluginMonitorRunner();
+  private readonly healthChecks: PluginHealthCheck[] = [];
   private oauthConfig?: OAuthConfig;
 
   constructor(
@@ -447,6 +482,113 @@ export class PluginApiImpl implements EthosPluginApi {
     return this.registries.baseUrl;
   }
 
+  // ---- v2.2 monitor + notification methods --------------------------------
+
+  registerMonitor(def: PluginMonitorDef): void {
+    this.monitorRunner.registerDef(def);
+  }
+
+  startMonitor(name: string, params?: Record<string, unknown>): void {
+    const store = new Map<string, string>();
+    this.diagnostics.info(
+      'Monitor started with ephemeral kvStore — data will not persist across restarts',
+      { monitorName: name },
+    );
+    const llm = this.registries.llmFactory?.();
+    this.monitorRunner.start(name, params ?? {}, {
+      pluginId: this.pluginId,
+      notify: (opts) => this.notify(opts),
+      getSecret: (key) => this.getSecret(key),
+      kvStore: {
+        get: async (k) => store.get(k) ?? null,
+        set: async (k, v) => { store.set(k, v); },
+        delete: async (k) => { store.delete(k); },
+        list: async (prefix) => [...store.keys()].filter((k) => k.startsWith(prefix)),
+      },
+      emit: (event, payload) => this.emit(event, payload),
+      diagnostics: this.diagnostics,
+      llm,
+    });
+  }
+
+  stopMonitor(name: string): void {
+    this.monitorRunner.stop(name);
+  }
+
+  async notify(opts: NotifyOptions): Promise<void> {
+    if (!this.registries.notificationRouter) {
+      this.diagnostics.warn(
+        'notify() called but no NotificationRouter is configured — message dropped',
+        { sessionKey: opts.sessionKey },
+      );
+      return;
+    }
+    await this.registries.notificationRouter.route(this.pluginId, opts);
+  }
+
+  // ---- v2.2 diagnostics methods --------------------------------------------
+
+  readonly diagnostics: DiagnosticsEmitter = {
+    debug: (message, data) => {
+      this.registries.diagnostics?.pushEvent({
+        pluginId: this.pluginId,
+        level: 'debug',
+        message,
+        timestamp: new Date().toISOString(),
+        data,
+      });
+    },
+    info: (message, data) => {
+      this.registries.diagnostics?.pushEvent({
+        pluginId: this.pluginId,
+        level: 'info',
+        message,
+        timestamp: new Date().toISOString(),
+        data,
+      });
+    },
+    warn: (message, data) => {
+      this.registries.diagnostics?.pushEvent({
+        pluginId: this.pluginId,
+        level: 'warn',
+        message,
+        timestamp: new Date().toISOString(),
+        data,
+      });
+    },
+    error: (message, data) => {
+      this.registries.diagnostics?.pushEvent({
+        pluginId: this.pluginId,
+        level: 'error',
+        message,
+        timestamp: new Date().toISOString(),
+        data,
+      });
+    },
+    metric: (name, value, labels) => {
+      this.registries.diagnostics?.pushMetric({
+        pluginId: this.pluginId,
+        name,
+        value,
+        labels,
+        timestamp: new Date().toISOString(),
+      });
+    },
+  };
+
+  registerHealthCheck(check: PluginHealthCheck): void {
+    this.healthChecks.push(check);
+  }
+
+  getHealthChecks(): PluginHealthCheck[] {
+    return this.healthChecks;
+  }
+
+  /** v2.2 — Return names of monitors that have crashed. */
+  getCrashedMonitors(): string[] {
+    return this.monitorRunner.getCrashedMonitors();
+  }
+
   /** Internal — used by AgentLoop for pre-turn credential check. */
   getOAuthConfig(): OAuthConfig | undefined {
     return this.oauthConfig;
@@ -454,6 +596,9 @@ export class PluginApiImpl implements EthosPluginApi {
 
   /** Remove everything this plugin registered. Called by PluginLoader.unload(). */
   cleanup(): void {
+    // Monitors
+    this.monitorRunner.stopAll();
+
     // Hooks — HookRegistry tracks by pluginId
     this.registries.hooks.unregisterPlugin(this.pluginId);
 
@@ -496,6 +641,13 @@ export class PluginApiImpl implements EthosPluginApi {
     // v2 — Event bus subscriptions
     for (const unsub of this.eventUnsubscribers) unsub();
     this.eventUnsubscribers.length = 0;
+
+    // OAuth
+    this.registries.oauthCoordinator?.cancelAll(this.pluginId);
+
+    // Diagnostics
+    this.registries.diagnostics?.clearPlugin(this.pluginId);
+    this.healthChecks.length = 0;
   }
 }
 
@@ -505,13 +657,18 @@ export class PluginApiImpl implements EthosPluginApi {
 
 export type {
   ContextInjector,
+  DiagnosticsEmitter,
   InjectionResult,
   LLMProviderFactory,
   LLMProviderFactoryContext,
   MemoryProviderFactory,
   MemoryProviderFactoryContext,
   ModifyingHooks,
+  NotifyOptions,
+  OAuthConfig,
   PersonalityConfig,
+  PluginHealthCheck,
+  PluginMonitorDef,
   PostTurnEvaluator,
   PostTurnEvaluatorPayload,
   PromptContext,
@@ -523,4 +680,6 @@ export type {
   VoidHooks,
 } from '@ethosagent/types';
 
+export { DiagnosticStore } from './diagnostic-store';
 export { ContextStore } from './context-registry';
+export { OAuthCoordinatorImpl } from './oauth-coordinator';

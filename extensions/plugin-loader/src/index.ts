@@ -24,7 +24,7 @@ import {
   type TrustTier,
 } from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
-import type { Logger, PlatformAdapter, Storage } from '@ethosagent/types';
+import type { HealthCheckResult, Logger, PlatformAdapter, Storage } from '@ethosagent/types';
 
 export interface InstalledPluginManifest {
   /** The plugin's id — `ethos.id` if declared, else `name`. */
@@ -388,6 +388,76 @@ export class PluginLoader {
   /** Return all loaded/failed plugin manifests with status info. */
   listManifests(): InstalledPluginManifest[] {
     return [...this.loadedManifests.values()];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Health checks
+  // ---------------------------------------------------------------------------
+
+  /** Run health checks for one or all plugins. Results sorted by severity. */
+  async runHealthChecks(pluginId?: string): Promise<
+    Array<{
+      pluginId: string;
+      checkName: string;
+      description: string;
+      result: HealthCheckResult;
+    }>
+  > {
+    const results: Array<{
+      pluginId: string;
+      checkName: string;
+      description: string;
+      result: HealthCheckResult;
+    }> = [];
+
+    const targets = pluginId
+      ? [this.apis.get(pluginId)].filter(Boolean)
+      : [...this.apis.values()];
+
+    for (const api of targets) {
+      if (!api) continue;
+      const checks = api.getHealthChecks();
+      for (const check of checks) {
+        const start = performance.now();
+        let result: HealthCheckResult;
+        try {
+          result = await Promise.race([
+            check.run(),
+            new Promise<HealthCheckResult>((_, reject) =>
+              setTimeout(() => reject(new Error('Health check timed out after 5000ms')), 5000),
+            ),
+          ]);
+        } catch (err) {
+          result = { status: 'error', message: err instanceof Error ? err.message : String(err) };
+        }
+        result.durationMs = performance.now() - start;
+        results.push({
+          pluginId: api.pluginId,
+          checkName: check.name,
+          description: check.description,
+          result,
+        });
+      }
+
+      // v2.2 — synthetic health checks for crashed monitors
+      const crashedMonitors = api.getCrashedMonitors();
+      for (const monitorName of crashedMonitors) {
+        results.push({
+          pluginId: api.pluginId,
+          checkName: `monitor:${monitorName}`,
+          description: `Monitor '${monitorName}' runtime status`,
+          result: {
+            status: 'error',
+            message: `Monitor crashed — see: ethos doctor ${api.pluginId} --logs --level error`,
+          },
+        });
+      }
+    }
+
+    return results.sort((a, b) => {
+      const order = { error: 0, warn: 1, ok: 2 };
+      return order[a.result.status] - order[b.result.status];
+    });
   }
 
   // ---------------------------------------------------------------------------

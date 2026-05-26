@@ -225,7 +225,23 @@ async function checkAwsSecrets(
   }
 }
 
-export async function runDoctor(args: string[] = []): Promise<void> {
+export interface DoctorOptions {
+  /** v2.2 — Optional plugin loader for running plugin health checks.
+   *  When provided (e.g. from a running gateway), doctor displays plugin
+   *  health alongside the standard checks. */
+  pluginLoader?: {
+    runHealthChecks(): Promise<
+      Array<{
+        pluginId: string;
+        checkName: string;
+        description: string;
+        result: { status: 'ok' | 'warn' | 'error'; message: string; durationMs?: number };
+      }>
+    >;
+  };
+}
+
+export async function runDoctor(args: string[] = [], options?: DoctorOptions): Promise<void> {
   if (args.includes('--recent-errors')) {
     runRecentErrorsReport();
     return;
@@ -457,6 +473,38 @@ export async function runDoctor(args: string[] = []): Promise<void> {
     }
   }
   console.log('');
+
+  // -------------------------------------------------------------------------
+  // Plugin health checks (v2.2)
+  // -------------------------------------------------------------------------
+
+  if (options?.pluginLoader) {
+    console.log(`${c.bold}Plugin Health Checks${c.reset}`);
+    try {
+      const results = await options.pluginLoader.runHealthChecks();
+      if (results.length === 0) {
+        console.log(`  ${c.dim}–  No plugin health checks registered.${c.reset}`);
+      } else {
+        for (const r of results) {
+          const icon =
+            r.result.status === 'ok'
+              ? `${c.green}✓${c.reset}`
+              : r.result.status === 'warn'
+                ? `${c.yellow}⚠${c.reset}`
+                : `${c.red}✗${c.reset}`;
+          const duration =
+            r.result.durationMs != null ? ` ${c.dim}(${Math.round(r.result.durationMs)}ms)${c.reset}` : '';
+          console.log(`  ${icon}  ${r.pluginId}/${r.checkName}${duration}`);
+          console.log(`      ${c.dim}${r.result.message}${c.reset}`);
+        }
+      }
+    } catch (err) {
+      console.log(
+        `  ${c.yellow}⚠${c.reset}  ${c.dim}Plugin health checks failed: ${err instanceof Error ? err.message : String(err)}${c.reset}`,
+      );
+    }
+    console.log('');
+  }
 
   // -------------------------------------------------------------------------
   // Verdict

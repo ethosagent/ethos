@@ -128,6 +128,7 @@ export interface ToolContext {
   dryRun?: boolean;
   getContext?: <T>(key: string) => T | undefined;
   setContext?: <T>(key: string, value: T) => void;
+  llm?: import('./plugin-llm').SimpleCompletion;
 }
 
 export interface CacheOptions {
@@ -233,6 +234,8 @@ export interface ToolRegistry {
   get(name: string): Tool | undefined;
   getAvailable(): Tool[];
   getForToolset(toolset: string): Tool[];
+  /** v2.2 — Return the plugin id that registered a tool, if any. */
+  getPluginId?(name: string): string | undefined;
   executeParallel(
     calls: Array<{ toolCallId: string; name: string; args: unknown }>,
     ctx: ToolContext,
