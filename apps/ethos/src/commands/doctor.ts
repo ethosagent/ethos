@@ -493,7 +493,9 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
                 ? `${c.yellow}⚠${c.reset}`
                 : `${c.red}✗${c.reset}`;
           const duration =
-            r.result.durationMs != null ? ` ${c.dim}(${Math.round(r.result.durationMs)}ms)${c.reset}` : '';
+            r.result.durationMs != null
+              ? ` ${c.dim}(${Math.round(r.result.durationMs)}ms)${c.reset}`
+              : '';
           console.log(`  ${icon}  ${r.pluginId}/${r.checkName}${duration}`);
           console.log(`      ${c.dim}${r.result.message}${c.reset}`);
         }

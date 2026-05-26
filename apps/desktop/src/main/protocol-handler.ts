@@ -1,6 +1,6 @@
-import { app, type BrowserWindow } from 'electron';
-import type { NotificationRouter } from '@ethosagent/types';
 import type { OAuthCoordinator } from '@ethosagent/plugin-sdk';
+import type { NotificationRouter } from '@ethosagent/types';
+import { app, type BrowserWindow } from 'electron';
 
 interface ProtocolHandlerDeps {
   getMainWindow: () => BrowserWindow | null;
@@ -27,7 +27,12 @@ function handleProtocolUrl(url: string, deps: ProtocolHandlerDeps) {
   const state = parsed.searchParams.get('state');
   if (!code || !state) return;
 
-  if (parsed.host === 'oauth' && parsed.pathname === '/callback' && deps.oauthCoordinator && deps.notificationRouter) {
+  if (
+    parsed.host === 'oauth' &&
+    parsed.pathname === '/callback' &&
+    deps.oauthCoordinator &&
+    deps.notificationRouter
+  ) {
     deps.oauthCoordinator.handleCallback(code, state, deps.notificationRouter).catch(() => {
       // fail-open: OAuth callback errors are surfaced by the coordinator
     });

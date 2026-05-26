@@ -86,7 +86,7 @@ export function authRoutes(opts: AuthRoutesOptions) {
       }
       await opts.oauthCoordinator.handleCallback(code, state, opts.notificationRouter);
       return c.html('<html><body>Connected — you can close this tab.</body></html>');
-    } catch (err) {
+    } catch {
       return c.html('<html><body>OAuth connection failed. Please try again.</body></html>', 400);
     }
   });

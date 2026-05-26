@@ -44,7 +44,12 @@ import {
   platformPrompt as telegramPrompt,
 } from '@ethosagent/platform-telegram/format';
 import { PluginLoader } from '@ethosagent/plugin-loader';
-import { DiagnosticStore, OAuthCoordinatorImpl, PluginEventBus, type PluginRouteEntry } from '@ethosagent/plugin-sdk';
+import {
+  DiagnosticStore,
+  OAuthCoordinatorImpl,
+  PluginEventBus,
+  type PluginRouteEntry,
+} from '@ethosagent/plugin-sdk';
 import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { createKvStoreFactory, SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { createInjectors, PlatformFormattingInjector, UniversalScanner } from '@ethosagent/skills';
