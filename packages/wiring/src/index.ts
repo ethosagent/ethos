@@ -1149,10 +1149,10 @@ export async function createAgentLoop(
     // v2.2 — llmFactory is set after LLM resolution (below). Monitors only
     // start after full wiring, so lazy assignment is safe.
   };
-  const pluginLoader = new PluginLoader(
-    pluginRegistries,
-    { storage: new FsStorage(), logger: log },
-  );
+  const pluginLoader = new PluginLoader(pluginRegistries, {
+    storage: new FsStorage(),
+    logger: log,
+  });
   await pluginLoader.loadAll();
 
   // Merge skill dirs declared by plugins/tools into the live injector scanner
