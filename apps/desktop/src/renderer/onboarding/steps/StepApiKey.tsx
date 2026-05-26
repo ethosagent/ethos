@@ -19,10 +19,11 @@ function inputField(
   onChange: (v: string) => void,
   opts: { type?: string; placeholder?: string; monospace?: boolean; id?: string } = {},
 ) {
+  const fieldId = label.toLowerCase().replace(/\s+/g, '-');
   return (
     <div style={{ marginBottom: 12 }}>
       <label
-        htmlFor={opts.id}
+        htmlFor={opts.id || fieldId}
         style={{
           display: 'block',
           fontSize: 11,
@@ -36,7 +37,7 @@ function inputField(
         {label}
       </label>
       <input
-        id={opts.id}
+        id={opts.id || fieldId}
         type={opts.type || 'text'}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -159,7 +160,7 @@ export function StepApiKey({
   const apiKeyField = (
     <div style={{ marginBottom: 12 }}>
       <label
-        htmlFor="api-key-input"
+        htmlFor="api-key"
         style={{
           display: 'block',
           fontSize: 11,
@@ -175,7 +176,7 @@ export function StepApiKey({
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <div style={{ position: 'relative', flex: 1 }}>
           <input
-            id="api-key-input"
+            id="api-key"
             type={showKey ? 'text' : 'password'}
             value={apiKey}
             onChange={(e) => handleApiKeyChange(e.target.value)}
@@ -286,7 +287,7 @@ export function StepApiKey({
         {validated && (
           <div style={{ marginBottom: 12 }}>
             <label
-              htmlFor="model-select"
+              htmlFor="anthropic-model"
               style={{
                 display: 'block',
                 fontSize: 11,
@@ -300,7 +301,7 @@ export function StepApiKey({
               Model
             </label>
             <select
-              id="model-select"
+              id="anthropic-model"
               value={selectedModel}
               onChange={(e) => onModelChange(e.target.value)}
               style={{
@@ -342,7 +343,7 @@ export function StepApiKey({
         {validated && (
           <div style={{ marginBottom: 12 }}>
             <label
-              htmlFor="model-select"
+              htmlFor="openai-model"
               style={{
                 display: 'block',
                 fontSize: 11,
@@ -356,7 +357,7 @@ export function StepApiKey({
               Model
             </label>
             <select
-              id="model-select"
+              id="openai-model"
               value={selectedModel}
               onChange={(e) => onModelChange(e.target.value)}
               style={{

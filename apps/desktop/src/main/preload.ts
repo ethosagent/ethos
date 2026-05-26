@@ -18,6 +18,7 @@ const api = {
     list: () => ipcRenderer.invoke(IPC_CHANNELS['personalities:list']),
   },
   backend: {
+    getPort: () => ipcRenderer.invoke(IPC_CHANNELS['backend:port']),
     start: (req: { port: number }) => ipcRenderer.invoke(IPC_CHANNELS['backend:start'], req),
   },
   health: {
@@ -25,6 +26,11 @@ const api = {
   },
   theme: {
     get: () => ipcRenderer.invoke(IPC_CHANNELS['theme:get']),
+  },
+  settings: {
+    getAdvancedMode: () => ipcRenderer.invoke(IPC_CHANNELS['advancedMode:get']),
+    setAdvancedMode: (req: { enabled: boolean }) =>
+      ipcRenderer.invoke(IPC_CHANNELS['advancedMode:set'], req),
   },
 };
 

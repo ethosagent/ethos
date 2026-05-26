@@ -352,6 +352,10 @@ export function registerIpcHandlers(): void {
     }
   });
 
+  ipcMain.handle(IPC_CHANNELS['backend:port'], () => {
+    return store.get('backendPort', 3001);
+  });
+
   ipcMain.handle(IPC_CHANNELS['backend:start'], (_event, req: { port: number }) => {
     const port = Number(req.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -363,5 +367,14 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS['theme:get'], () => {
     return store.get('theme', 'dark');
+  });
+
+  ipcMain.handle(IPC_CHANNELS['advancedMode:get'], () => {
+    return store.get('advancedMode', false);
+  });
+
+  ipcMain.handle(IPC_CHANNELS['advancedMode:set'], (_event, req: { enabled: boolean }) => {
+    store.set('advancedMode', req.enabled);
+    return { ok: true };
   });
 }
