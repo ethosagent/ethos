@@ -60,6 +60,7 @@ export interface ConfigGetResponse {
   observabilityDays: number;
   autoUpdate: boolean;
   launchAtLogin: boolean;
+  hasShownLoginItemHint: boolean;
   providers: Record<string, string[]>;
 }
 
@@ -82,6 +83,7 @@ export interface ConfigUpdateRequest {
   observabilityDays?: number;
   autoUpdate?: boolean;
   launchAtLogin?: boolean;
+  hasShownLoginItemHint?: boolean;
 }
 
 export interface RetentionValues {
@@ -141,6 +143,8 @@ export interface IpcContract {
     response: { telegram: boolean; slack: boolean; discord: boolean };
   };
   'backend:authToken': { request: undefined; response: string | null };
+  'login-item:get': { request: undefined; response: boolean };
+  'login-item:set': { request: { enabled: boolean }; response: { ok: boolean; error?: string } };
 }
 
 /** Main-to-renderer push events (via webContents.send, NOT ipcMain.handle) */
@@ -185,4 +189,6 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'file:save': 'file:save',
   'gateway:platformStatus': 'gateway:platformStatus',
   'backend:authToken': 'backend:authToken',
+  'login-item:get': 'login-item:get',
+  'login-item:set': 'login-item:set',
 };

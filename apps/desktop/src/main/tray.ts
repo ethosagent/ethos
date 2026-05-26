@@ -55,7 +55,7 @@ export function setTrayState(trayInstance: Tray, state: TrayState): void {
   trayInstance.setImage(icons[state]());
 }
 
-export function createTray(mainWindow: BrowserWindow): Tray {
+export function createTray(getWindow: () => BrowserWindow | null, ensureWindow: () => void): Tray {
   if (tray) {
     return tray;
   }
@@ -63,20 +63,32 @@ export function createTray(mainWindow: BrowserWindow): Tray {
   tray = new Tray(icons.idle());
   tray.setToolTip('Ethos');
 
+  function showWindow(): void {
+    const win = getWindow();
+    if (win && !win.isDestroyed()) {
+      win.show();
+      win.focus();
+    } else {
+      ensureWindow();
+    }
+  }
+
   const contextMenu = Menu.buildFromTemplate([
     {
       label: 'Open Ethos',
-      click: () => {
-        mainWindow.show();
-        mainWindow.focus();
-      },
+      click: showWindow,
     },
     {
       label: 'New chat',
       click: () => {
-        mainWindow.show();
-        mainWindow.focus();
-        mainWindow.webContents.send('chat:new');
+        const win = getWindow();
+        if (win && !win.isDestroyed()) {
+          win.show();
+          win.focus();
+          win.webContents.send('chat:new');
+        } else {
+          ensureWindow();
+        }
       },
     },
     { type: 'separator' },
@@ -100,10 +112,7 @@ export function createTray(mainWindow: BrowserWindow): Tray {
   tray.setContextMenu(contextMenu);
 
   if (process.platform === 'darwin') {
-    tray.on('click', () => {
-      mainWindow.show();
-      mainWindow.focus();
-    });
+    tray.on('click', showWindow);
   }
 
   return tray;
