@@ -27,11 +27,13 @@ export class PluginMonitorRunner {
       .run(params, runCtx)
       .then(() => {
         if (!controller.signal.aborted) {
+          this.running.delete(name);
           this.statuses.set(name, 'stopped');
         }
       })
       .catch((err) => {
         if (!controller.signal.aborted) {
+          this.running.delete(name);
           this.statuses.set(name, 'crashed');
           ctx.diagnostics?.error('monitor_crashed', {
             monitorName: name,
