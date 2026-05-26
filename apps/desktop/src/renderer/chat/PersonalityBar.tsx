@@ -328,6 +328,7 @@ export function PersonalityBar({
           }}
         >
           <svg
+            aria-hidden="true"
             width={11}
             height={11}
             viewBox="0 0 11 11"
@@ -336,8 +337,8 @@ export function PersonalityBar({
             strokeWidth={1.3}
             strokeLinecap="round"
           >
-            <circle cx="5.5" cy="5.5" r="1.5"/>
-            <path d="M5.5 1v1.2M5.5 8.8V10M1 5.5h1.2M8.8 5.5H10M2.2 2.2l.85.85M7.95 7.95l.85.85M2.2 8.8l.85-.85M7.95 3.05l.85-.85"/>
+            <circle cx="5.5" cy="5.5" r="1.5" />
+            <path d="M5.5 1v1.2M5.5 8.8V10M1 5.5h1.2M8.8 5.5H10M2.2 2.2l.85.85M7.95 7.95l.85.85M2.2 8.8l.85-.85M7.95 3.05l.85-.85" />
           </svg>
           {currentOp}
         </div>

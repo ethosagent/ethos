@@ -20,7 +20,7 @@ const DEFAULT_ITEMS: NavItem[] = [
     id: 'chat',
     label: 'Chat',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <path d="M15 2H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3l3 3 3-3h3a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1Z"/>
       </svg>
     ),
@@ -29,7 +29,7 @@ const DEFAULT_ITEMS: NavItem[] = [
     id: 'personalities',
     label: 'Personalities',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <circle cx="9" cy="6" r="3"/>
         <path d="M2 16c0-3.314 3.134-6 7-6s7 2.686 7 6"/>
       </svg>
@@ -39,7 +39,7 @@ const DEFAULT_ITEMS: NavItem[] = [
     id: 'memory',
     label: 'Memory',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <path d="M9 3C7 3 5.5 4 5 5.5c-.8.1-2.5.8-2.5 2.5S4 10 5 10c-.2.6-.3 1.3 0 2 .3.7 1 1 1.5 1H9m0-10c2 0 3.5 1 4 2.5.8.1 2.5.8 2.5 2.5S14 10 13 10c.2.6.3 1.3 0 2-.3.7-1 1-1.5 1H9m0-10v10"/>
       </svg>
     ),
@@ -48,7 +48,7 @@ const DEFAULT_ITEMS: NavItem[] = [
     id: 'cron',
     label: 'Cron',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <circle cx="9" cy="9" r="7"/>
         <polyline points="9,5 9,9 12,11"/>
       </svg>
@@ -58,7 +58,7 @@ const DEFAULT_ITEMS: NavItem[] = [
     id: 'activity',
     label: 'Activity',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <rect x="2" y="11" width="3" height="5" rx="1"/>
         <rect x="7.5" y="7" width="3" height="9" rx="1"/>
         <rect x="13" y="3" width="3" height="13" rx="1"/>
@@ -69,7 +69,7 @@ const DEFAULT_ITEMS: NavItem[] = [
     id: 'platforms',
     label: 'Platforms',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <circle cx="9" cy="9" r="7"/>
         <path d="M2 9h14M9 2c-2 2-3 4.5-3 7s1 5 3 7M9 2c2 2 3 4.5 3 7s-1 5-3 7"/>
       </svg>
@@ -79,7 +79,7 @@ const DEFAULT_ITEMS: NavItem[] = [
     id: 'skills',
     label: 'Skills',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <polyline points="11,2 6,10 10,10 7,16 13,7 9,7 11,2"/>
       </svg>
     ),
@@ -88,7 +88,7 @@ const DEFAULT_ITEMS: NavItem[] = [
     id: 'mcp',
     label: 'MCP',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <polygon points="9,2 15.5,5.5 15.5,12.5 9,16 2.5,12.5 2.5,5.5"/>
         <line x1="9" y1="6" x2="9" y2="12"/>
         <line x1="6" y1="7.5" x2="12" y2="10.5"/>
@@ -100,7 +100,7 @@ const DEFAULT_ITEMS: NavItem[] = [
     id: 'plugins',
     label: 'Plugins',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <path d="M6 2v4M12 2v4M5 6h8l-1 5a3 3 0 0 1-6 0L5 6Z"/>
         <line x1="9" y1="11" x2="9" y2="16"/>
       </svg>
@@ -110,7 +110,7 @@ const DEFAULT_ITEMS: NavItem[] = [
     id: 'settings',
     label: 'Settings',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <circle cx="9" cy="9" r="2.5"/>
         <path d="M9 1.5v2M9 14.5v2M1.5 9h2M14.5 9h2M3.4 3.4l1.4 1.4M13.2 13.2l1.4 1.4M3.4 14.6l1.4-1.4M13.2 4.8l1.4-1.4"/>
       </svg>
@@ -123,7 +123,7 @@ const ADVANCED_ITEMS: NavItem[] = [
     id: 'batch-eval',
     label: 'Batch / Eval',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="2" width="12" height="14" rx="1.5"/>
         <line x1="6" y1="7" x2="12" y2="7"/>
         <line x1="6" y1="10" x2="12" y2="10"/>
@@ -135,7 +135,7 @@ const ADVANCED_ITEMS: NavItem[] = [
     id: 'kanban',
     label: 'Kanban',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <rect x="1" y="2" width="4" height="8" rx="1"/>
         <rect x="7" y="2" width="4" height="11" rx="1"/>
         <rect x="13" y="2" width="4" height="6" rx="1"/>
@@ -146,7 +146,7 @@ const ADVANCED_ITEMS: NavItem[] = [
     id: 'observability',
     label: 'Observability',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <path d="M1 11 L5 7 L9 9 L13 5 L17 8"/>
         <circle cx="17" cy="8" r="1.2" fill="currentColor" stroke="none"/>
       </svg>
@@ -156,7 +156,7 @@ const ADVANCED_ITEMS: NavItem[] = [
     id: 'mesh',
     label: 'Mesh',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round">
         <circle cx="4" cy="9" r="2"/>
         <circle cx="14" cy="4" r="2"/>
         <circle cx="14" cy="14" r="2"/>
@@ -169,7 +169,7 @@ const ADVANCED_ITEMS: NavItem[] = [
     id: 'api-keys',
     label: 'API Keys',
     icon: (
-      <svg width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg aria-hidden="true" width={18} height={18} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <circle cx="7" cy="8" r="4"/>
         <line x1="10.8" y1="11" x2="17" y2="16"/>
         <line x1="14" y1="13.5" x2="15.5" y2="12"/>
@@ -286,7 +286,7 @@ export function AppSidebar({
           aria-label="Toggle activity drawer"
           title="Activity drawer"
         >
-          <svg width={16} height={16} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round">
+          <svg aria-hidden="true" width={16} height={16} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round">
             <line x1="2" y1="4" x2="14" y2="4"/>
             <line x1="2" y1="8" x2="14" y2="8"/>
             <line x1="2" y1="12" x2="14" y2="12"/>
