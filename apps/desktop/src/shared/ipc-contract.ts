@@ -140,6 +140,7 @@ export interface IpcContract {
     request: undefined;
     response: { telegram: boolean; slack: boolean; discord: boolean };
   };
+  'backend:authToken': { request: undefined; response: string | null };
 }
 
 /** Main-to-renderer push events (via webContents.send, NOT ipcMain.handle) */
@@ -183,4 +184,5 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'dialog:showOpenDialog': 'dialog:showOpenDialog',
   'file:save': 'file:save',
   'gateway:platformStatus': 'gateway:platformStatus',
+  'backend:authToken': 'backend:authToken',
 };

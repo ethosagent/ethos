@@ -60,8 +60,21 @@ export function AppShell() {
         try {
           const { healthy: isHealthy } = await window.ethos.health.check({ port: resolvedPort });
           if (isHealthy) {
-            setHealthy(true);
             clearInterval(poll);
+            // Exchange the backend auth token to set the ethos_auth cookie.
+            // Without this, all /rpc/* and /sse/* calls fail with 401.
+            try {
+              const token = await window.ethos.backend.getAuthToken();
+              if (token) {
+                await fetch(
+                  `http://localhost:${resolvedPort}/auth/exchange?t=${encodeURIComponent(token)}`,
+                  { credentials: 'include', redirect: 'follow' },
+                );
+              }
+            } catch {
+              // best-effort — existing cookie may still be valid
+            }
+            setHealthy(true);
           }
         } catch {
           // Not ready yet

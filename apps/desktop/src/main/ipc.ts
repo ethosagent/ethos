@@ -1,5 +1,5 @@
 import type { EventEmitter } from 'node:events';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron';
@@ -398,6 +398,16 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS['backend:port'], () => {
     return store.get('backendPort', 3001);
+  });
+
+  ipcMain.handle(IPC_CHANNELS['backend:authToken'], () => {
+    try {
+      const tokenPath = join(app.getPath('home'), '.ethos', 'web-token');
+      const token = readFileSync(tokenPath, 'utf-8').trim();
+      return token || null;
+    } catch {
+      return null;
+    }
   });
 
   ipcMain.handle(IPC_CHANNELS['backend:start'], (_event, req: { port: number }) => {
