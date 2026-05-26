@@ -14,13 +14,13 @@ export default defineConfig({
     build: {
       outDir: 'dist/preload',
       rollupOptions: {
+        input: {
+          index: 'src/main/preload.ts',
+          'quick-chat': 'src/main/preload-quick-chat.ts',
+        },
         output: {
           format: 'cjs',
-          entryFileNames: 'index.js',
         },
-      },
-      lib: {
-        entry: 'src/main/preload.ts',
       },
     },
   },
@@ -34,6 +34,12 @@ export default defineConfig({
     },
     build: {
       outDir: 'dist/renderer',
+      rollupOptions: {
+        input: {
+          index: 'src/renderer/index.html',
+          'quick-chat': 'src/renderer/quick-chat.html',
+        },
+      },
     },
   },
 });

@@ -9,6 +9,8 @@ export interface AppStoreType {
   personalityId?: string;
   backendPort: number;
   windowBounds?: { x: number; y: number; width: number; height: number };
+  hasShownMinimizeHint?: boolean;
+  hasShownHotkeyConflict?: boolean;
 }
 
 export const store = new Store<AppStoreType>({

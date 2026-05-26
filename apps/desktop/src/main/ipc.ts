@@ -1,3 +1,4 @@
+import type { EventEmitter } from 'node:events';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, ipcMain } from 'electron';
@@ -318,7 +319,7 @@ export function registerIpcHandlers(): void {
         win.setSize(1200, 800);
         win.center();
       }
-
+      (app as unknown as EventEmitter).emit('ethos:onboarding-complete');
       return { success: true };
     },
   );

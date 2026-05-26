@@ -1,11 +1,27 @@
+import type { EventEmitter } from 'node:events';
 import { join } from 'node:path';
-import { app, BrowserWindow, nativeTheme } from 'electron';
+import { app, BrowserWindow, nativeTheme, type Tray } from 'electron';
 import { initAutoUpdater } from './auto-update';
 import { startBackend, stopBackend } from './backend';
+import { registerGlobalShortcuts, unregisterGlobalShortcuts } from './global-shortcut';
 import { registerIpcHandlers } from './ipc';
+import { showMinimizeNotification } from './notifications';
+import { registerQuickChatIpc, showQuickChat } from './quick-chat-window';
 import { store } from './store';
+import { createTray, destroyTray } from './tray';
 
 let mainWindow: BrowserWindow | null = null;
+let trayInstance: Tray | null = null;
+let isQuitting = false;
+let desktopActivated = false;
+
+function activateDesktop(): void {
+  if (desktopActivated || !mainWindow || mainWindow.isDestroyed()) return;
+  desktopActivated = true;
+  startBackend(3001);
+  trayInstance = createTray(mainWindow);
+  registerGlobalShortcuts(mainWindow, showQuickChat);
+}
 
 function createWindow(): void {
   const bounds = store.get('windowBounds');
@@ -30,10 +46,18 @@ function createWindow(): void {
     mainWindow?.show();
   });
 
-  mainWindow.on('close', () => {
-    if (mainWindow && !store.get('onboardingComplete', false)) return;
+  mainWindow.on('close', (event: { preventDefault(): void }) => {
+    if (isQuitting) return;
+    if (!store.get('onboardingComplete', false)) return; // allow close during onboarding
+    event.preventDefault();
     const b = mainWindow?.getBounds();
     if (b) store.set('windowBounds', b);
+    if (process.platform === 'darwin') {
+      app.hide();
+    } else {
+      mainWindow?.hide();
+    }
+    if (trayInstance) showMinimizeNotification(trayInstance);
   });
 
   mainWindow.on('closed', () => {
@@ -56,28 +80,43 @@ app.whenReady().then(() => {
   registerIpcHandlers();
   createWindow();
 
-  if (store.get('onboardingComplete', false)) {
-    startBackend(3001);
+  if (mainWindow) {
+    registerQuickChatIpc(mainWindow);
   }
+
+  if (store.get('onboardingComplete', false)) {
+    activateDesktop();
+  }
+
+  (app as unknown as EventEmitter).on('ethos:onboarding-complete', () => {
+    activateDesktop();
+  });
 
   if (process.env.NODE_ENV !== 'development') {
     initAutoUpdater();
   }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.focus();
+    } else {
       createWindow();
     }
   });
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (!desktopActivated) {
     stopBackend();
     app.quit();
   }
+  // After activation, tray keeps app alive
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
   stopBackend();
+  unregisterGlobalShortcuts();
+  destroyTray();
 });

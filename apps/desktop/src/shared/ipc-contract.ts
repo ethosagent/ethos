@@ -33,6 +33,11 @@ export interface PersonalityListItem {
   isBuiltin: boolean;
 }
 
+export interface ChatSendRequest {
+  message: string;
+  sessionId?: string;
+}
+
 export interface IpcContract {
   'onboarding:state': { request: undefined; response: OnboardingState };
   'onboarding:validateProvider': {
@@ -47,7 +52,19 @@ export interface IpcContract {
   'theme:get': { request: undefined; response: 'dark' | 'light' };
   'advancedMode:get': { request: undefined; response: boolean };
   'advancedMode:set': { request: { enabled: boolean }; response: { ok: boolean } };
+  'chat:send': { request: ChatSendRequest; response: { sessionId: string } };
 }
+
+/** Main-to-renderer push events (via webContents.send, NOT ipcMain.handle) */
+export interface RendererEvents {
+  'chat:new': undefined;
+  'navigate:session': { sessionId: string };
+}
+
+export const RENDERER_EVENTS = {
+  'chat:new': 'chat:new',
+  'navigate:session': 'navigate:session',
+} as const;
 
 export type IpcChannel = keyof IpcContract;
 
@@ -62,4 +79,5 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'theme:get': 'theme:get',
   'advancedMode:get': 'advancedMode:get',
   'advancedMode:set': 'advancedMode:set',
+  'chat:send': 'chat:send',
 };

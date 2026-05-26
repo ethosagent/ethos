@@ -32,6 +32,15 @@ const api = {
     setAdvancedMode: (req: { enabled: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS['advancedMode:set'], req),
   },
+  navigate: {
+    onSession: (cb: (sessionId: string) => void) => {
+      const listener = (_e: unknown, sessionId: string) => cb(sessionId);
+      ipcRenderer.on('navigate:session', listener);
+      return () => {
+        ipcRenderer.removeListener('navigate:session', listener);
+      };
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld('ethos', api);
