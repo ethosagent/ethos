@@ -302,6 +302,7 @@ export function registerIpcHandlers(): void {
         `personality: ${req.personalityId}`,
       ];
       if (req.apiKey) {
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: literal YAML secrets ref, not a JS template
         lines.push('apiKey: ${secrets:api-key}');
       }
       writeFileSync(join(ethosDir, 'config.yaml'), `${lines.join('\n')}\n`);

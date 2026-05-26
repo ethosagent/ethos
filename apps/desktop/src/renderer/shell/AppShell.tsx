@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ErrorBoundary } from '../ErrorBoundary';
 import { ChatPage } from '../chat/ChatPage';
+import { ErrorBoundary } from '../ErrorBoundary';
 import { useAppState } from '../state/AppContext';
 import { AppSidebar } from './AppSidebar';
 
