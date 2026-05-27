@@ -329,6 +329,44 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     label: 'FireFunction v2',
     contextWindow: 8_192,
   },
+  // Codex (OpenAI device auth)
+  {
+    providerId: 'codex',
+    modelId: 'gpt-5.4',
+    label: 'frontier, complex work',
+    contextWindow: 200_000,
+  },
+  {
+    providerId: 'codex',
+    modelId: 'gpt-5.4-mini',
+    label: 'compact, cost-efficient',
+    contextWindow: 200_000,
+    default: true,
+  },
+  {
+    providerId: 'codex',
+    modelId: 'gpt-5.3-codex',
+    label: 'code-specialized',
+    contextWindow: 200_000,
+  },
+  {
+    providerId: 'codex',
+    modelId: 'gpt-5.2-codex',
+    label: 'code-specialized, prior gen',
+    contextWindow: 200_000,
+  },
+  {
+    providerId: 'codex',
+    modelId: 'gpt-5.1-codex-max',
+    label: 'max context, prior gen',
+    contextWindow: 200_000,
+  },
+  {
+    providerId: 'codex',
+    modelId: 'gpt-5.1-codex-mini',
+    label: 'compact, prior gen',
+    contextWindow: 200_000,
+  },
 ];
 
 export function getModelsForProvider(providerId: string): ModelCatalogEntry[] {

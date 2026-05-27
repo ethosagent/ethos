@@ -27,6 +27,7 @@
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/llm-anthropic": "workspace:*",
     "@ethosagent/llm-azure": "workspace:*",
+    "@ethosagent/llm-codex": "workspace:*",
     "@ethosagent/observability-sqlite": "workspace:*",
     "@ethosagent/request-dump": "workspace:*",
     "@ethosagent/llm-openai-compat": "workspace:*",

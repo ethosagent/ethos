@@ -22,6 +22,7 @@ import type { CronScheduler } from '@ethosagent/cron';
 import { autonomyTier, KanbanStore, type TrustPolicy } from '@ethosagent/kanban-store';
 import { AnthropicProvider, AuthRotatingProvider } from '@ethosagent/llm-anthropic';
 import { AzureOpenAIProvider } from '@ethosagent/llm-azure';
+import { CodexProvider, ensureValidToken } from '@ethosagent/llm-codex';
 import { OpenAICompatProvider } from '@ethosagent/llm-openai-compat';
 import { noopLogger } from '@ethosagent/logger';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
@@ -338,6 +339,15 @@ function createSingleProvider(cfg: {
       apiKey: cfg.apiKey,
       endpoint: cfg.baseUrl,
       apiVersion: cfg.apiVersion ?? AZURE_DEFAULT_API_VERSION,
+    });
+  }
+  if (cfg.provider === 'codex') {
+    return new CodexProvider({
+      model: cfg.model,
+      getAccessToken: async () => {
+        const creds = await ensureValidToken(globalThis.fetch);
+        return creds.accessToken;
+      },
     });
   }
   return new OpenAICompatProvider({
@@ -698,6 +708,15 @@ export async function createAgentLoop(
       apiKey,
       endpoint: cfg.baseUrl as string,
       apiVersion: (cfg.apiVersion as string) ?? AZURE_DEFAULT_API_VERSION,
+    });
+  });
+  llmProviders.register('codex', async ({ config: cfg }) => {
+    return new CodexProvider({
+      model: cfg.model as string,
+      getAccessToken: async () => {
+        const creds = await ensureValidToken(globalThis.fetch);
+        return creds.accessToken;
+      },
     });
   });
   const openaiCompatFactory = async ({ config: cfg, secrets }: LLMProviderFactoryContext) => {

@@ -11,6 +11,7 @@
       "@ethosagent/llm-anthropic": ["./extensions/llm-anthropic/src"],
       "@ethosagent/llm-azure": ["./extensions/llm-azure/src"],
       "@ethosagent/llm-openai-compat": ["./extensions/llm-openai-compat/src"],
+      "@ethosagent/llm-codex": ["./extensions/llm-codex/src"],
       "@ethosagent/memory-markdown": ["./extensions/memory-markdown/src"],
       "@ethosagent/personalities": ["./extensions/personalities/src"],
       "@ethosagent/session-sqlite": ["./extensions/session-sqlite/src"],

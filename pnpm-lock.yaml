@@ -741,6 +741,12 @@ importers:
         specifier: ^6.37.0
         version: 6.39.1(ws@8.21.0)(zod@4.4.3)
 
+  extensions/llm-codex:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/llm-openai-compat:
     dependencies:
       '@ethosagent/types':
@@ -1428,6 +1434,9 @@ importers:
       '@ethosagent/llm-azure':
         specifier: workspace:*
         version: link:../../extensions/llm-azure
+      '@ethosagent/llm-codex':
+        specifier: workspace:*
+        version: link:../../extensions/llm-codex
       '@ethosagent/llm-openai-compat':
         specifier: workspace:*
         version: link:../../extensions/llm-openai-compat

@@ -31,6 +31,14 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     signupUrl: 'https://platform.openai.com',
   },
   {
+    id: 'codex',
+    label: 'OpenAI Codex',
+    description: 'Codex models via OpenAI account — experimental, device code auth',
+    authType: 'api-key',
+    costType: 'api-billing',
+    signupUrl: 'https://openai.com',
+  },
+  {
     id: 'openrouter',
     label: 'OpenRouter',
     description: '200+ models behind one key — try any provider',
