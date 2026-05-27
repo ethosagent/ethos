@@ -20,6 +20,7 @@ export interface WhatsAppAdapterConfig {
   defaultMode?: 'all' | 'mention_only';
   allowedJids?: string[];
   cache?: AttachmentCache;
+  onQr?: (qr: string | null) => void;
 }
 
 export class WhatsAppAdapter implements PlatformAdapter {
@@ -87,6 +88,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
           } catch {
             console.log('[whatsapp] QR code:', update.qr);
           }
+          if (this.config.onQr) this.config.onQr(update.qr);
         }
 
         if (update.connection === 'close') {
@@ -100,6 +102,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
         if (update.connection === 'open') {
           this.botJid = sock.user?.id ?? '';
           console.log(`[whatsapp] Connected as ${this.botJid}`);
+          if (this.config.onQr) this.config.onQr(null);
         }
       },
     );

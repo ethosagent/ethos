@@ -428,3 +428,4 @@ function createPassiveMcpManager(): McpManager {
 export { WebTokenRepository } from './repositories/web-token.repository';
 export type { DangerPredicate, DangerReason } from './services/approval-hook';
 export { type ChatDefaults, ChatService } from './services/chat.service';
+export { setWhatsAppQr } from './routes/setup-whatsapp';

@@ -1301,6 +1301,9 @@ export async function buildAdapters(
             defaultMode: waCfg.default_mode ?? 'mention_only',
             allowedJids: waCfg.allowed_jids,
             cache: waCache,
+            onQr: (qr) => {
+              import('@ethosagent/web-api').then((m) => m.setWhatsAppQr(qr)).catch(() => {});
+            },
           }),
         );
       }
