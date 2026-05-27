@@ -21,6 +21,8 @@ export interface BridgeOptions {
   queueCap?: number;
   /** Text buffer flush cadence in ms (default 16, ~60fps). */
   flushIntervalMs?: number;
+  /** Max ms to wait for a turn to complete before emitting TIMEOUT (default 5 min). */
+  turnTimeoutMs?: number;
 }
 
 interface BridgeEventMap {
@@ -63,6 +65,7 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
   private queue: QueuedSend[] = [];
   private readonly queueCap: number;
   private readonly flushIntervalMs: number;
+  private readonly turnTimeoutMs: number;
   // Clarify registrations are held on the bridge, not on the loop's
   // ClarifyBridge directly, so they survive `replaceLoop`: each rebuilt loop
   // gets a fresh ClarifyBridge that must be re-bound to the surface.
@@ -74,6 +77,7 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
     this.loop = loop;
     this.queueCap = options.queueCap ?? 10;
     this.flushIntervalMs = options.flushIntervalMs ?? 16;
+    this.turnTimeoutMs = options.turnTimeoutMs ?? 5 * 60 * 1000;
   }
 
   get isRunning(): boolean {
@@ -188,6 +192,26 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
 
   private async runTurn(input: string, opts: BridgeOpts): Promise<void> {
     this.controller = new AbortController();
+    let timedOut = false;
+
+    // Stall guard: if no done/error arrives within turnTimeoutMs, emit an error
+    // from outside the suspended for-await loop and unblock the bridge.
+    const timeoutHandle = setTimeout(() => {
+      if (!this.controller) return; // turn already finished normally
+      timedOut = true;
+      this.flushText();
+      this.emit(
+        'error',
+        `Agent did not complete within ${Math.round(this.turnTimeoutMs / 60_000)} minutes — turn abandoned.`,
+        'TIMEOUT',
+      );
+      this.controller.abort();
+      this.controller = null;
+      this.emit('idle');
+      const next = this.queue.shift();
+      if (next) void this.runTurn(next.input, next.opts);
+    }, this.turnTimeoutMs);
+
     try {
       for await (const event of this.loop.run(input, {
         ...opts,
@@ -198,6 +222,7 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
             this.bufferText(event.text);
             break;
           case 'done':
+            clearTimeout(timeoutHandle);
             this.flushText();
             this.emit('done', event.text, event.turnCount);
             break;
@@ -224,6 +249,7 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
             this.emit('usage', event.inputTokens, event.outputTokens, event.estimatedCostUsd);
             break;
           case 'error':
+            clearTimeout(timeoutHandle);
             this.flushText();
             this.emit('error', event.error, event.code);
             break;
@@ -236,19 +262,26 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
         }
       }
     } catch (err) {
+      clearTimeout(timeoutHandle);
       this.flushText();
-      if (!this.controller?.signal.aborted) {
+      if (timedOut) {
+        // Timeout handler already emitted the error and cleaned up bridge state.
+      } else if (!this.controller?.signal.aborted) {
         this.emit('error', err instanceof Error ? err.message : String(err), 'UNKNOWN');
       }
+      // user-initiated abort: stay silent (deliberate behavior, not an error).
     } finally {
-      this.flushText();
-      this.controller = null;
-      this.emit('idle');
-      // Drain the queue head — async, doesn't block the original send promise.
-      const next = this.queue.shift();
-      if (next) {
-        void this.runTurn(next.input, next.opts);
+      clearTimeout(timeoutHandle);
+      if (!timedOut) {
+        // Normal path: timeout handler didn't fire, do normal cleanup.
+        this.flushText();
+        this.controller = null;
+        this.emit('idle');
+        const next = this.queue.shift();
+        if (next) void this.runTurn(next.input, next.opts);
       }
+      // If timedOut: timeout handler already nulled controller, emitted idle, and
+      // drained the queue. Don't double-process.
     }
   }
 

@@ -38,3 +38,14 @@ body {
 ::selection {
   background: rgba(74, 158, 255, 0.2);
 }
+
+.chat-stall-notice {
+  margin: 0 16px 8px;
+  padding: 8px 12px;
+  background: rgba(255, 200, 50, 0.08);
+  border: 1px solid rgba(255, 200, 50, 0.25);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  text-align: center;
+}

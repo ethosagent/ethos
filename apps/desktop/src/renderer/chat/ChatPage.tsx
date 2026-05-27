@@ -59,11 +59,28 @@ export function ChatPage() {
     }
   }, [state.activePersonalityId, setActivePersonalityId]);
 
+  // Stall detection: track the last time an SSE event arrived
+  const lastStreamEventAtRef = useRef<number | null>(null);
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!streaming) return;
+    lastStreamEventAtRef.current = lastStreamEventAtRef.current ?? Date.now();
+    const id = setInterval(() => setTick((n) => n + 1), 5_000);
+    return () => clearInterval(id);
+  }, [streaming]);
+
+  const isStalled =
+    streaming &&
+    lastStreamEventAtRef.current !== null &&
+    Date.now() - lastStreamEventAtRef.current > 30_000;
+
   // SSE event handler
   const handleSSEEvent = useCallback(
     (event: SseEvent) => {
       switch (event.type) {
         case 'text_delta':
+          lastStreamEventAtRef.current = Date.now();
           setStreaming(true);
           setStreamingText((prev) => prev + event.text);
           break;
@@ -73,6 +90,7 @@ export function ChatPage() {
           break;
 
         case 'tool_start':
+          lastStreamEventAtRef.current = Date.now();
           setToolCalls((prev) => {
             const next = new Map(prev);
             next.set(event.toolCallId, {
@@ -100,6 +118,7 @@ export function ChatPage() {
           break;
 
         case 'tool_end':
+          lastStreamEventAtRef.current = Date.now();
           setToolCalls((prev) => {
             const next = new Map(prev);
             const existing = next.get(event.toolCallId);
@@ -125,6 +144,7 @@ export function ChatPage() {
           break;
 
         case 'done': {
+          lastStreamEventAtRef.current = null;
           const finalText = streamingTextRef.current;
           if (finalText) {
             const assistantMsg: StoredMessage = {
@@ -148,6 +168,7 @@ export function ChatPage() {
         }
 
         case 'error':
+          lastStreamEventAtRef.current = null;
           setError(event.error);
           setStreaming(false);
           break;
@@ -275,6 +296,7 @@ export function ChatPage() {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[chat] send error:', msg);
+        lastStreamEventAtRef.current = null;
         setError(msg);
         setStreaming(false);
       }
@@ -555,6 +577,10 @@ export function ChatPage() {
           onRetry={handleRetry}
           error={error}
         />
+
+        {isStalled ? (
+          <div className="chat-stall-notice">Still working — this is taking longer than usual…</div>
+        ) : null}
 
         <Composer
           onSend={handleSend}

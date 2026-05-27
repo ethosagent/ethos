@@ -1636,6 +1636,17 @@ body,
   font-size: 13px;
 }
 
+.chat-stall-notice {
+  margin: 0 16px 8px;
+  padding: 8px 12px;
+  background: rgba(255, 200, 50, 0.08);
+  border: 1px solid rgba(255, 200, 50, 0.25);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--ethos-text-dim);
+  text-align: center;
+}
+
 /* Approval modal — anchored under the personality bar, NOT centered.
    DESIGN.md: "the agent itself is asking permission, so the modal slides
    down from where the agent's face lives". Slide-down 180ms, accent

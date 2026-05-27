@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, ConfigProvider } from 'antd';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ApprovalModal } from '../components/chat/ApprovalModal';
 import { ClarifyCard } from '../components/chat/ClarifyCard';
@@ -125,6 +125,20 @@ export function Chat() {
     setSearchParams(next, { replace: true });
   }, [personalityParam, searchParams, setSearchParams, setOverride]);
 
+  // Periodically re-render while streaming so the stall indicator can
+  // compare lastStreamEventAt to the current wall clock.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!state.isStreaming) return;
+    const id = setInterval(() => setTick((n) => n + 1), 5_000);
+    return () => clearInterval(id);
+  }, [state.isStreaming]);
+
+  const isStalled =
+    state.isStreaming &&
+    state.lastStreamEventAt !== null &&
+    Date.now() - state.lastStreamEventAt > 30_000;
+
   // Render the head of the queue. Multiple back-to-back approvals are
   // rare in practice (the agent loop awaits each tool sequentially), but
   // the queue model means we don't have to special-case "second approval
@@ -207,6 +221,11 @@ export function Chat() {
           {state.error ? (
             <div className="chat-error" role="alert">
               {state.error}
+            </div>
+          ) : null}
+          {isStalled ? (
+            <div className="chat-stall-notice" role="status">
+              Still working — this is taking longer than usual…
             </div>
           ) : null}
           <Composer
