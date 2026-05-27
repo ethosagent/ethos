@@ -4,7 +4,7 @@ import { dirname, join, relative } from 'node:path';
 import { createInterface } from 'node:readline';
 import { canInstall, deriveTier, scanPluginCode, scanSkillMd } from '@ethosagent/safety-scanner';
 import { UniversalScanner } from '@ethosagent/skills';
-import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
+import { bundledSkillsSource } from '@ethosagent/skills-library';
 import { isSafePathSegment } from '@ethosagent/storage-fs';
 import { EthosError } from '@ethosagent/types';
 import { ethosDir } from '../config';
@@ -165,7 +165,7 @@ async function removeSkill(slug) {
 async function listSkills(args = []) {
   const jsonMode = args.includes('--json');
   const pool = await new UniversalScanner({
-    trustedFirstPartySources: [bundledCodingSkillsSource()],
+    trustedFirstPartySources: [bundledSkillsSource()],
   }).scan();
   const bySource = new Map();
   for (const skill of pool.values()) {

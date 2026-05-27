@@ -45,7 +45,7 @@ import { DiagnosticStore, OAuthCoordinatorImpl, PluginEventBus } from '@ethosage
 import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { createKvStoreFactory, SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { createInjectors, PlatformFormattingInjector, UniversalScanner } from '@ethosagent/skills';
-import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
+import { bundledSkillsSource } from '@ethosagent/skills-library';
 import { createCryptoStorage } from '@ethosagent/storage-crypto';
 import { FsAttachmentCache, FsStorage, REF_TO_ENV } from '@ethosagent/storage-fs';
 import { createBrowserTools } from '@ethosagent/tools-browser';
@@ -605,7 +605,7 @@ export async function createAgentLoop(config, opts) {
   // ingest filter cannot contribute passthrough. Passthrough is then applied
   // only to MCP servers the personality is allowed to reach (mcp_servers
   // allowlist), not globally to every server.
-  const codingBundleSource = bundledCodingSkillsSource();
+  const codingBundleSource = bundledSkillsSource();
   const skillPool = await new UniversalScanner({
     trustedFirstPartySources: [codingBundleSource],
   }).scan();

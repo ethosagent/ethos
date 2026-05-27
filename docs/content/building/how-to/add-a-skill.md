@@ -35,7 +35,7 @@ Ethos scans these paths at startup. Pick the one that matches the skill's scope.
 | `~/.claude/skills/<name>/SKILL.md` | `claude-code` | Ethos AND Claude Code. Best for cross-framework skills. |
 | `~/.ethos/personalities/<id>/skills/<name>/SKILL.md` | per-personality | Only the named personality. Always loads, bypasses the filter. |
 
-`extensions/skills-coding/data/<name>/SKILL.md` is the bundled location; it ships inside the framework and is read-only at runtime. Add new skills under one of the user paths.
+`skills/data/<category>/<name>/SKILL.md` is the bundled location; it ships inside the framework and is read-only at runtime. Add new skills under one of the user paths.
 
 ### 2. Write the SKILL.md file
 

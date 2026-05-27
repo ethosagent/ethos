@@ -208,7 +208,7 @@ ethos personality mcp engineer            # list current attachments
 
 The personality registry watches `config.yaml`'s mtime and reloads on the next turn — no daemon restart needed.
 
-See also the [`native-mcp`](https://github.com/MiteshSharma/ethos/blob/main/extensions/skills-coding/data/native-mcp/SKILL.md) bundled skill for the operator workflow this reference is the schema for.
+See also the [`native-mcp`](https://github.com/MiteshSharma/ethos/blob/main/skills/data/framework/native-mcp/SKILL.md) bundled skill for the operator workflow this reference is the schema for.
 
 ## Tool naming {#tool-naming}
 
@@ -316,7 +316,7 @@ First connect opens a browser for the PKCE flow. Tokens land at `~/.ethos/person
 
 - [Set up MCP for a personality](../how-to/set-up-mcp-for-a-personality.md) — step-by-step walkthrough of the two-step CLI flow and the web OAuth path.
 - [Use Ethos as an MCP server](../how-to/use-as-mcp-server.md) — the inverse: serving personalities to Claude Desktop, Cursor, Continue, Zed.
-- [`native-mcp`](https://github.com/MiteshSharma/ethos/blob/main/extensions/skills-coding/data/native-mcp/SKILL.md) — bundled skill that wraps the operator workflow.
+- [`native-mcp`](https://github.com/MiteshSharma/ethos/blob/main/skills/data/framework/native-mcp/SKILL.md) — bundled skill that wraps the operator workflow.
 - [Config field reference](config-yaml.md) — `~/.ethos/config.yaml` and the `${secrets:<ref>}` pattern.
 - [Personality config](personality-yaml.md) — the `mcp_servers:` attachment list.
 - [`tools-mcp` source](https://github.com/MiteshSharma/ethos/blob/main/extensions/tools-mcp/src/index.ts) — `McpServerConfig` interface.

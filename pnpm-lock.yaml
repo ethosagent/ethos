@@ -246,9 +246,9 @@ importers:
       '@ethosagent/skills':
         specifier: workspace:*
         version: link:../../extensions/skills
-      '@ethosagent/skills-coding':
+      '@ethosagent/skills-library':
         specifier: workspace:*
-        version: link:../../extensions/skills-coding
+        version: link:../../skills
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
@@ -1001,19 +1001,6 @@ importers:
         specifier: ^4.0.3
         version: 4.0.3
 
-  extensions/skills-coding:
-    dependencies:
-      '@ethosagent/skills':
-        specifier: workspace:*
-        version: link:../skills
-      '@ethosagent/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-    devDependencies:
-      gray-matter:
-        specifier: ^4.0.3
-        version: 4.0.3
-
   extensions/storage-crypto:
     dependencies:
       '@ethosagent/types':
@@ -1498,9 +1485,9 @@ importers:
       '@ethosagent/skills':
         specifier: workspace:*
         version: link:../../extensions/skills
-      '@ethosagent/skills-coding':
+      '@ethosagent/skills-library':
         specifier: workspace:*
-        version: link:../../extensions/skills-coding
+        version: link:../../skills
       '@ethosagent/storage-crypto':
         specifier: workspace:*
         version: link:../../extensions/storage-crypto
@@ -1574,6 +1561,19 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.29.0(zod@4.4.3)
+
+  skills:
+    dependencies:
+      '@ethosagent/skills':
+        specifier: workspace:*
+        version: link:../extensions/skills
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../packages/types
+    devDependencies:
+      gray-matter:
+        specifier: ^4.0.3
+        version: 4.0.3
 
 packages:
 

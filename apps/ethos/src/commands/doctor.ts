@@ -18,7 +18,7 @@ import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { UniversalScanner } from '@ethosagent/skills';
-import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
+import { bundledSkillsSource } from '@ethosagent/skills-library';
 import type { Skill } from '@ethosagent/types';
 import { type EthosConfig, ethosDir, readRawConfig } from '../config';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
@@ -806,7 +806,7 @@ function isOnPath(bin: string): boolean {
 async function checkSkillPrerequisites(): Promise<SkillPrereqIssue[]> {
   const issues: SkillPrereqIssue[] = [];
   const pool = await new UniversalScanner({
-    trustedFirstPartySources: [bundledCodingSkillsSource()],
+    trustedFirstPartySources: [bundledSkillsSource()],
   }).scan();
 
   for (const skill of pool.values()) {

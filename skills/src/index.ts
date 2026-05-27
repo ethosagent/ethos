@@ -1,0 +1,29 @@
+import { join } from 'node:path';
+import type { ScanSource } from '@ethosagent/skills';
+
+export function bundledSkillsSource(): ScanSource {
+  return {
+    label: 'ethos-bundled',
+    dir: join(import.meta.dirname, '..', 'data'),
+  };
+}
+
+export const BUNDLED_SKILL_IDS = [
+  'software-development/plan',
+  'software-development/writing-plans',
+  'software-development/spike',
+  'software-development/tdd',
+  'software-development/code-review',
+  'software-development/systematic-debugging',
+  'software-development/coding-agent',
+  'software-development/subagent-driven-development',
+  'software-development/requesting-code-review',
+  'github/github-auth',
+  'github/github-code-review',
+  'github/github-pr-workflow',
+  'framework/ethos-skill-authoring',
+  'framework/native-mcp',
+  'framework/codebase-inspection',
+] as const;
+
+export type BundledSkillId = (typeof BUNDLED_SKILL_IDS)[number];

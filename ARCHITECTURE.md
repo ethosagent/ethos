@@ -217,7 +217,11 @@ boundary cannot be optional or runtime-injectable.
 
 **Pattern C — Content bundle.**
 An extension that ships static content (skills, prompts, manifests)
-depends on the loader extension that interprets that content.
+depends on the loader extension that interprets that content. The
+root-level `skills/` package (`@ethosagent/skills-library`) is the
+bundled skill library, organized into category folders
+(`software-development/`, `github/`, `framework/`).
+`~/.ethos/skills/` is the user's own skill directory.
 
 **Pattern D — Protocol bridge.**
 An extension that adapts an external protocol depends on the contract

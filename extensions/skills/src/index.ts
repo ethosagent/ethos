@@ -61,7 +61,7 @@ export interface InjectorConfig {
   extraSources?: ScanSource[];
   /**
    * First-party extension point — skill sources that ship inside Ethos
-   * itself (e.g. `@ethosagent/skills-coding`'s bundled `data/` directory).
+   * itself (e.g. `@ethosagent/skills-library`'s bundled `data/` directory).
    * Gated at `trusted-repo` so legitimate mentions of `bash`, `gh`, `curl`,
    * etc. don't block. Reserved for in-repo callers; user config goes via
    * `extraSources`.
