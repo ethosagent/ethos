@@ -138,6 +138,9 @@ async function loadAdapterModule<T>(modulePath: string, label: string): Promise<
       case '@ethosagent/platform-discord/clarify-surface':
         mod = await import('@ethosagent/platform-discord/clarify-surface');
         break;
+      case '@ethosagent/platform-whatsapp':
+        mod = await import('@ethosagent/platform-whatsapp');
+        break;
       default:
         throw new EthosError({
           code: 'INTERNAL',
@@ -262,6 +265,7 @@ export async function runGatewayStart(): Promise<void> {
     (config.slackBotToken && config.slackAppToken && config.slackSigningSecret) ||
     (config.telegram?.bots.length ?? 0) > 0 ||
     (config.slack?.apps.length ?? 0) > 0 ||
+    (config.whatsapp?.length ?? 0) > 0 ||
     hasEmailConfig;
 
   if (!hasAnyPlatform) {
@@ -277,7 +281,7 @@ export async function runGatewayStart(): Promise<void> {
   // no `defaultBotKey` to fall back on (defaultBotKey only fires for
   // single-bot deployments). Warn at boot so operators know.
   const multiBotConfigured =
-    (config.telegram?.bots.length ?? 0) + (config.slack?.apps.length ?? 0) > 1;
+    (config.telegram?.bots.length ?? 0) + (config.slack?.apps.length ?? 0) + (config.whatsapp?.length ?? 0) > 1;
   const legacyAdapterConfigured =
     !!config.discordToken ||
     !!(config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost);
@@ -1274,6 +1278,32 @@ export async function buildAdapters(
           smtpPort: config.emailSmtpPort ?? 587,
         }),
       );
+    }
+  }
+
+  if ((config.whatsapp?.length ?? 0) > 0) {
+    const mod = await loadAdapter<typeof import('@ethosagent/platform-whatsapp')>(
+      '@ethosagent/platform-whatsapp',
+      'WhatsApp',
+    );
+    if (mod) {
+      let waCache = attachmentCache;
+      if (!waCache) {
+        const { FsAttachmentCache } = await import('@ethosagent/storage-fs');
+        waCache = new FsAttachmentCache(getStorage(), join(ethosDir(), 'cache', 'attachments'));
+      }
+
+      for (const waCfg of config.whatsapp ?? []) {
+        adapters.push(
+          new mod.WhatsAppAdapter({
+            id: waCfg.id,
+            sessionDir: waCfg.session_dir ?? join(ethosDir(), 'whatsapp'),
+            defaultMode: waCfg.default_mode ?? 'mention_only',
+            allowedJids: waCfg.allowed_jids,
+            cache: waCache,
+          }),
+        );
+      }
     }
   }
 

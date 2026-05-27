@@ -124,6 +124,13 @@ export interface TeamRuntimeConfig {
   autoStop?: boolean;
 }
 
+export interface WhatsAppConfig {
+  id?: string;
+  session_dir?: string;
+  default_mode?: 'all' | 'mention_only';
+  allowed_jids?: string[];
+}
+
 export interface ProviderConfig {
   provider: string;
   apiKey: string;
@@ -275,6 +282,7 @@ export interface EthosConfig {
   slack?: { apps: SlackAppConfig[] };
   /** Per-team runtime knobs. Keyed by team manifest name (same identifier rules). */
   teams?: Record<string, TeamRuntimeConfig>;
+  whatsapp?: WhatsAppConfig[];
   // Email platform
   emailImapHost?: string;
   emailImapPort?: number;
