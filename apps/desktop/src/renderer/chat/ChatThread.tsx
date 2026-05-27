@@ -17,6 +17,7 @@ interface ChatThreadProps {
   onDeny: (approvalId: string) => void;
   onClarifyRespond: (requestId: string, answer: string) => void;
   onRetry: () => void;
+  error?: string | null;
 }
 
 export function ChatThread({
@@ -32,6 +33,7 @@ export function ChatThread({
   onDeny,
   onClarifyRespond,
   onRetry,
+  error,
 }: ChatThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -90,6 +92,43 @@ export function ChatThread({
           onRetry={onRetry}
           usage={usage ?? undefined}
         />
+      )}
+
+      {!streaming && error && (
+        <div
+          style={{
+            margin: '8px 0',
+            padding: '10px 14px',
+            backgroundColor: 'color-mix(in srgb, var(--error) 10%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--error) 30%, transparent)',
+            borderRadius: 'var(--radius-sm)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <span style={{ fontSize: 13, color: 'var(--error)', fontFamily: 'var(--font-display)' }}>
+            {error}
+          </span>
+          <button
+            type="button"
+            onClick={onRetry}
+            style={{
+              fontSize: 12,
+              fontFamily: 'var(--font-display)',
+              color: 'var(--error)',
+              background: 'none',
+              border: '1px solid var(--error)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '3px 10px',
+              cursor: 'pointer',
+              flexShrink: 0,
+            }}
+          >
+            Retry
+          </button>
+        </div>
       )}
 
       {!streaming && messages.length === 0 && (

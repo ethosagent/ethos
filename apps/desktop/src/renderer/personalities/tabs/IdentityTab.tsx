@@ -77,37 +77,42 @@ export function IdentityTab({ personality, isNew, onChange, port }: IdentityTabP
             fontWeight: 600,
             fontFamily: 'var(--font-display)',
             color: 'var(--text-primary)',
-            background: 'transparent',
-            border: 'none',
-            borderBottom: '2px solid transparent',
+            backgroundColor: 'var(--bg-elevated)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 4,
             outline: 'none',
-            padding: '4px 0',
+            padding: '4px 12px',
             width: '100%',
-            transition: 'border-color var(--motion-fast) var(--ease)',
           }}
           onFocus={(e) => {
-            e.target.style.borderBottomColor = 'var(--accent)';
+            e.target.style.border = '1px solid var(--accent)';
           }}
           onBlur={(e) => {
-            e.target.style.borderBottomColor = 'transparent';
+            e.target.style.border = '1px solid var(--border-subtle)';
           }}
         />
 
-        <span
+        <div
           style={{
-            fontFamily: 'var(--font-mono)',
             fontSize: 12,
             color: 'var(--text-tertiary)',
+            fontFamily: 'var(--font-mono)',
+            marginTop: -12,
           }}
         >
           id: {isNew ? toId(personality.name) || '...' : personality.id}
-        </span>
+          {isNew && (
+            <span style={{ marginLeft: 8, fontFamily: 'var(--font-display)', fontStyle: 'italic' }}>
+              (auto-generated from name)
+            </span>
+          )}
+        </div>
 
         <input
           type="text"
           value={personality.description ?? ''}
           onChange={(e) => onChange({ description: e.target.value })}
-          placeholder="One-line description..."
+          placeholder="e.g. A focused agent for research and summarization"
           style={{
             fontSize: 14,
             height: 36,
@@ -120,6 +125,10 @@ export function IdentityTab({ personality, isNew, onChange, port }: IdentityTabP
             width: '100%',
           }}
         />
+
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: -14 }}>
+          e.g. "A focused research assistant for academic papers and summaries"
+        </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div
@@ -154,7 +163,9 @@ export function IdentityTab({ personality, isNew, onChange, port }: IdentityTabP
             value={personality.soulMd}
             onChange={(e) => onChange({ soulMd: e.target.value })}
             onKeyDown={handleSoulMdKeyDown}
-            placeholder="Write in first person. Describe who you are, how you think, what makes you unique..."
+            placeholder={
+              'I am [name]. I [core purpose]. I speak [style]...\n\nWrite in first person. Tab key inserts 2 spaces.'
+            }
             style={{
               fontFamily: 'var(--font-mono)',
               fontSize: 13,
@@ -188,6 +199,9 @@ export function IdentityTab({ personality, isNew, onChange, port }: IdentityTabP
             tags={personality.capabilities ?? []}
             onChange={(tags) => onChange({ tags })}
           />
+          <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+            e.g. research, writing, analysis — press Enter or comma to add a tag
+          </div>
         </div>
       </div>
 

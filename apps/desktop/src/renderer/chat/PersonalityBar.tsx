@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createEthosClient } from '@ethosagent/sdk';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 interface PersonalityBarProps {
   personalityId: string | null;
+  port: number;
+  onSwitchPersonality: (id: string | null) => void;
   sessionTitle: string | null;
   onTitleChange: (title: string) => void;
   onNewSession: () => void;
@@ -18,6 +21,8 @@ function getInitials(id: string | null): string {
 
 export function PersonalityBar({
   personalityId,
+  port,
+  onSwitchPersonality,
   sessionTitle,
   onTitleChange,
   onNewSession,
@@ -29,8 +34,23 @@ export function PersonalityBar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
+  const [personalities, setPersonalities] = useState<Array<{ id: string; name: string }>>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const client = useMemo(
+    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
+    [port],
+  );
+
+  useEffect(() => {
+    client.rpc.personalities
+      .list({})
+      .then((res: { items: Array<{ id: string; name: string }> }) => setPersonalities(res.items))
+      .catch(() => {});
+  }, [client]);
 
   const titleText = sessionTitle ?? 'New session';
 
@@ -63,7 +83,6 @@ export function PersonalityBar({
     }
   }, [editingTitle]);
 
-  // Close menu on outside click
   useEffect(() => {
     if (!menuOpen) return;
     function handleClick(e: MouseEvent) {
@@ -74,6 +93,17 @@ export function PersonalityBar({
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setPickerOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [pickerOpen]);
 
   return (
     <div
@@ -89,7 +119,6 @@ export function PersonalityBar({
         flexShrink: 0,
       }}
     >
-      {/* Sessions toggle (narrow) */}
       {showSessionsButton && onToggleSessions && (
         <button
           type="button"
@@ -109,45 +138,115 @@ export function PersonalityBar({
         </button>
       )}
 
-      {/* Personality mark */}
-      <div
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: '50%',
-          background: 'var(--bg-overlay)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-        }}
-      >
-        <span
+      <div style={{ position: 'relative' }}>
+        <button
+          type="button"
+          onClick={() => setPickerOpen((v) => !v)}
           style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 11,
-            fontWeight: 600,
-            color: 'var(--text-secondary)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: '2px 4px',
+            borderRadius: 'var(--radius-sm)',
+            flexShrink: 0,
           }}
+          aria-label="Switch personality"
         >
-          {getInitials(personalityId)}
-        </span>
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: '50%',
+              background: 'var(--bg-overlay)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <span
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: 11,
+                fontWeight: 600,
+                color: 'var(--text-secondary)',
+              }}
+            >
+              {getInitials(personalityId)}
+            </span>
+          </div>
+          <span
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 14,
+              fontWeight: 500,
+              color: 'var(--text-primary)',
+            }}
+          >
+            {personalities.find((p) => p.id === personalityId)?.name ?? personalityId ?? 'Default'}
+          </span>
+          <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>▾</span>
+        </button>
+
+        {pickerOpen && (
+          <div
+            ref={pickerRef}
+            style={{
+              position: 'absolute',
+              top: 36,
+              left: 0,
+              zIndex: 30,
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              overflow: 'hidden',
+              minWidth: 180,
+              maxHeight: 240,
+              overflowY: 'auto',
+            }}
+          >
+            {personalities.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => {
+                  onSwitchPersonality(p.id);
+                  setPickerOpen(false);
+                }}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  padding: '7px 14px',
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 13,
+                  color: p.id === personalityId ? 'var(--accent)' : 'var(--text-primary)',
+                  cursor: 'pointer',
+                  background: 'transparent',
+                  border: 'none',
+                  textAlign: 'left',
+                  fontWeight: p.id === personalityId ? 500 : 400,
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.background = 'var(--bg-overlay)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.background = 'transparent';
+                }}
+              >
+                {p.name}
+              </button>
+            ))}
+            {personalities.length === 0 && (
+              <div style={{ padding: '8px 14px', fontSize: 12, color: 'var(--text-tertiary)' }}>
+                No personalities
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Personality name */}
-      <span
-        style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: 14,
-          fontWeight: 500,
-          color: 'var(--text-primary)',
-          flexShrink: 0,
-        }}
-      >
-        {personalityId ?? 'Default'}
-      </span>
-
-      {/* Model name placeholder */}
       <span
         style={{
           fontFamily: 'var(--font-mono)',
@@ -159,7 +258,6 @@ export function PersonalityBar({
         {''}
       </span>
 
-      {/* Spacer */}
       <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 0 }}>
         {editingTitle ? (
           <input
@@ -209,7 +307,6 @@ export function PersonalityBar({
         )}
       </div>
 
-      {/* Menu button */}
       <div style={{ position: 'relative' }}>
         <button
           type="button"

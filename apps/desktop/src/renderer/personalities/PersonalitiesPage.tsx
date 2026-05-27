@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppState } from '../state/AppContext';
 import { PersonalityEditor } from './PersonalityEditor';
 import { PersonalityList } from './PersonalityList';
+import { PersonalityWizard } from './PersonalityWizard';
 
 interface PersonalityListItem {
   id: string;
@@ -23,6 +24,7 @@ export function PersonalitiesPage() {
   const [personalities, setPersonalities] = useState<PersonalityListItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [isNew, setIsNew] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   const loadList = useCallback(async () => {
     try {
@@ -56,9 +58,16 @@ export function PersonalitiesPage() {
     setActiveId(null);
   }, []);
 
-  const handleSaved = useCallback(() => {
-    loadList();
-  }, [loadList]);
+  const handleSaved = useCallback(
+    (savedId?: string) => {
+      loadList();
+      if (savedId) {
+        setActiveId(savedId);
+        setIsNew(false);
+      }
+    },
+    [loadList],
+  );
 
   const handleDeleted = useCallback(() => {
     setActiveId(null);
@@ -73,6 +82,7 @@ export function PersonalitiesPage() {
         activeId={activeId}
         onSelect={handleSelect}
         onNew={handleNew}
+        onWizard={() => setWizardOpen(true)}
       />
       <PersonalityEditor
         personalityId={activeId}
@@ -81,6 +91,18 @@ export function PersonalitiesPage() {
         onSaved={handleSaved}
         onDeleted={handleDeleted}
       />
+      {wizardOpen && (
+        <PersonalityWizard
+          port={port}
+          onClose={() => setWizardOpen(false)}
+          onCreated={(id) => {
+            setWizardOpen(false);
+            loadList();
+            setActiveId(id);
+            setIsNew(false);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -146,19 +146,29 @@ export function ApiKeyUpdateFlow({ provider, onKeyUpdated }: ApiKeyUpdateFlowPro
       </div>
 
       {stored && (
-        <div
-          style={{
-            marginTop: 8,
-            display: 'inline-block',
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11,
-            color: 'var(--success)',
-            backgroundColor: 'var(--bg-overlay)',
-            padding: '2px 8px',
-            borderRadius: 4,
-          }}
-        >
-          Stored in keychain
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div
+            style={{
+              display: 'inline-block',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              color: 'var(--success)',
+              backgroundColor: 'var(--bg-overlay)',
+              padding: '2px 8px',
+              borderRadius: 4,
+            }}
+          >
+            Stored — restarting backend...
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              color: 'var(--text-tertiary)',
+              fontFamily: 'var(--font-display)',
+            }}
+          >
+            Chat will be available again in a few seconds.
+          </div>
         </div>
       )}
     </div>

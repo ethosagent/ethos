@@ -16,6 +16,8 @@ interface SessionsPanelProps {
   onForkSession: (id: string) => void;
   onExportSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
+  onPinSession: (id: string) => void;
+  onUnpinSession: (id: string) => void;
 }
 
 export function SessionsPanel({
@@ -32,6 +34,8 @@ export function SessionsPanel({
   onForkSession,
   onExportSession,
   onDeleteSession,
+  onPinSession,
+  onUnpinSession,
 }: SessionsPanelProps) {
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -44,6 +48,8 @@ export function SessionsPanel({
     }
   }, [hasMore, loadMore]);
 
+  const pinned = sessions.filter((s) => s.pinned);
+  const unpinned = sessions.filter((s) => !s.pinned);
   const isEmpty = sessions.length === 0 && !loading;
 
   return (
@@ -127,7 +133,53 @@ export function SessionsPanel({
 
       {/* Session list */}
       <div ref={listRef} onScroll={handleScroll} style={{ flex: 1, overflowY: 'auto' }}>
-        {sessions.map((s) => (
+        {pinned.length > 0 && (
+          <>
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                color: 'var(--text-tertiary)',
+                padding: '8px 10px 2px',
+                fontFamily: 'var(--font-display)',
+              }}
+            >
+              Pinned
+            </div>
+            {pinned.map((s) => (
+              <SessionRow
+                key={s.id}
+                session={s}
+                active={s.id === activeSessionId}
+                onSelect={() => onSelectSession(s.id)}
+                onRename={(title) => onRenameSession(s.id, title)}
+                onFork={() => onForkSession(s.id)}
+                onExport={() => onExportSession(s.id)}
+                onDelete={() => onDeleteSession(s.id)}
+                onPin={() => onPinSession(s.id)}
+                onUnpin={() => onUnpinSession(s.id)}
+              />
+            ))}
+            {unpinned.length > 0 && (
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  color: 'var(--text-tertiary)',
+                  padding: '8px 10px 2px',
+                  fontFamily: 'var(--font-display)',
+                }}
+              >
+                Recent
+              </div>
+            )}
+          </>
+        )}
+        {unpinned.map((s) => (
           <SessionRow
             key={s.id}
             session={s}
@@ -137,6 +189,8 @@ export function SessionsPanel({
             onFork={() => onForkSession(s.id)}
             onExport={() => onExportSession(s.id)}
             onDelete={() => onDeleteSession(s.id)}
+            onPin={() => onPinSession(s.id)}
+            onUnpin={() => onUnpinSession(s.id)}
           />
         ))}
 

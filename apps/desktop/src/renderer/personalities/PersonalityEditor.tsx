@@ -1,20 +1,25 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import type { McpPolicy, Personality } from '@ethosagent/web-contracts';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { CharacterSheetTab } from './tabs/CharacterSheetTab';
 import { IdentityTab } from './tabs/IdentityTab';
 import { MCPTab } from './tabs/MCPTab';
 import { ModelTab } from './tabs/ModelTab';
+import { PluginsTab } from './tabs/PluginsTab';
 import { SafetyTab } from './tabs/SafetyTab';
+import { SkillsTab } from './tabs/SkillsTab';
 import { ToolsTab } from './tabs/ToolsTab';
 
-type TabId = 'identity' | 'model' | 'tools' | 'mcp' | 'safety';
+type TabId = 'identity' | 'model' | 'tools' | 'plugins' | 'mcp' | 'safety' | 'skills' | 'sheet';
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'identity', label: 'Identity' },
-  { id: 'model', label: 'Model' },
   { id: 'tools', label: 'Tools' },
+  { id: 'model', label: 'Model' },
   { id: 'mcp', label: 'MCP' },
   { id: 'safety', label: 'Safety' },
+  { id: 'skills', label: 'Skills' },
+  { id: 'plugins', label: 'Plugins' },
 ];
 
 interface ModelTierConfig {
@@ -31,6 +36,7 @@ interface EditorDraft {
   tags: string[];
   model: string | ModelTierConfig | null;
   toolset: string[];
+  plugins: string[];
   mcpServers: string[];
   mcpTools: Record<string, string[]>;
   approvalMode: string;
@@ -41,7 +47,7 @@ interface PersonalityEditorProps {
   personalityId: string | null;
   isNew: boolean;
   port: number;
-  onSaved: () => void;
+  onSaved: (savedId?: string) => void;
   onDeleted: () => void;
 }
 
@@ -54,6 +60,7 @@ function emptyDraft(): EditorDraft {
     tags: [],
     model: null,
     toolset: [],
+    plugins: [],
     mcpServers: [],
     mcpTools: {},
     approvalMode: 'inherit',
@@ -83,6 +90,7 @@ function personalityToDraft(
     tags: p.capabilities ?? [],
     model: p.model,
     toolset: p.toolset ?? [],
+    plugins: p.plugins ?? [],
     mcpServers: p.mcp_servers ?? [],
     mcpTools,
     approvalMode: 'inherit',
@@ -111,6 +119,7 @@ export function PersonalityEditor({
   const [originalDraft, setOriginalDraft] = useState<EditorDraft>(emptyDraft());
   const [loading, setLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [duplicateInput, setDuplicateInput] = useState<string | null>(null);
 
   useEffect(() => {
@@ -156,9 +165,22 @@ export function PersonalityEditor({
 
   const updateDraft = useCallback((changes: Partial<EditorDraft>) => {
     setDraft((prev) => ({ ...prev, ...changes }));
+    setSaveError(null);
   }, []);
 
   const handleSave = useCallback(async () => {
+    // Client-side validation before calling the API
+    if (isNew) {
+      if (!draft.name.trim()) {
+        setSaveError('Name is required');
+        return;
+      }
+      const idRegex = /^[a-z0-9_-]+$/;
+      if (!draft.id || !idRegex.test(draft.id)) {
+        setSaveError('Name must contain at least one letter or number (used to generate the ID)');
+        return;
+      }
+    }
     setSaveStatus('saving');
     try {
       if (isNew) {
@@ -170,6 +192,7 @@ export function PersonalityEditor({
           toolset: draft.toolset,
           soulMd: draft.soulMd,
           capabilities: draft.tags.length > 0 ? draft.tags : undefined,
+          plugins: draft.plugins.length > 0 ? draft.plugins : undefined,
           mcp_servers: draft.mcpServers.length > 0 ? draft.mcpServers : undefined,
           fs_reach:
             draft.fsReach.read.length > 0 || draft.fsReach.write.length > 0
@@ -189,6 +212,8 @@ export function PersonalityEditor({
           updatePayload.model = draft.model ?? undefined;
         if (JSON.stringify(draft.toolset) !== JSON.stringify(originalDraft.toolset))
           updatePayload.toolset = draft.toolset;
+        if (JSON.stringify(draft.plugins) !== JSON.stringify(originalDraft.plugins))
+          updatePayload.plugins = draft.plugins;
         if (JSON.stringify(draft.tags) !== JSON.stringify(originalDraft.tags))
           updatePayload.capabilities = draft.tags;
         if (JSON.stringify(draft.mcpServers) !== JSON.stringify(originalDraft.mcpServers))
@@ -207,10 +232,15 @@ export function PersonalityEditor({
       }
       setSaveStatus('saved');
       setOriginalDraft(draft);
-      onSaved();
+      if (isNew) {
+        onSaved(draft.id);
+      } else {
+        onSaved();
+      }
       setTimeout(() => setSaveStatus('idle'), 2000);
-    } catch {
+    } catch (err) {
       setSaveStatus('idle');
+      setSaveError(err instanceof Error ? err.message : 'Save failed. Check the console.');
     }
   }, [isNew, draft, originalDraft, client, onSaved]);
 
@@ -300,6 +330,27 @@ export function PersonalityEditor({
           flexShrink: 0,
         }}
       >
+        {!isNew && personalityId && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('sheet')}
+            style={{
+              background: 'none',
+              border: 'none',
+              borderBottom:
+                activeTab === 'sheet' ? '2px solid var(--accent)' : '2px solid transparent',
+              padding: '0 16px',
+              cursor: 'pointer',
+              fontSize: 14,
+              fontWeight: activeTab === 'sheet' ? 500 : 400,
+              color: activeTab === 'sheet' ? 'var(--text-primary)' : 'var(--text-secondary)',
+              transition:
+                'color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease)',
+            }}
+          >
+            Character Sheet
+          </button>
+        )}
         {TABS.map((tab) => (
           <button
             key={tab.id}
@@ -361,6 +412,13 @@ export function PersonalityEditor({
             port={port}
           />
         )}
+        {activeTab === 'plugins' && (
+          <PluginsTab
+            plugins={draft.plugins}
+            onChange={(next) => updateDraft({ plugins: next })}
+            port={port}
+          />
+        )}
         {activeTab === 'mcp' && (
           <MCPTab
             mcpServers={draft.mcpServers}
@@ -386,6 +444,12 @@ export function PersonalityEditor({
               updateDraft(mapped);
             }}
           />
+        )}
+        {activeTab === 'skills' && (
+          <SkillsTab personalityId={isNew ? null : personalityId} port={port} />
+        )}
+        {activeTab === 'sheet' && !isNew && personalityId && (
+          <CharacterSheetTab personalityId={personalityId} port={port} />
         )}
       </div>
 
@@ -477,6 +541,22 @@ export function PersonalityEditor({
                 Duplicate
               </button>
             ))}
+          {saveError && (
+            <span
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: 12,
+                color: 'var(--error)',
+                maxWidth: 300,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                marginRight: 8,
+              }}
+            >
+              {saveError}
+            </span>
+          )}
           <button
             type="button"
             onClick={handleSave}

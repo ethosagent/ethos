@@ -1,5 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityPage } from '../activity/ActivityPage';
 import { ChatPage } from '../chat/ChatPage';
 import { CronPage } from '../cron/CronPage';
 import { ErrorBoundary } from '../ErrorBoundary';
@@ -16,12 +17,17 @@ import { SettingsPage } from '../settings/SettingsPage';
 import { SkillsPage } from '../skills/SkillsPage';
 import { useAppState } from '../state/AppContext';
 import { AppSidebar } from './AppSidebar';
+import { CommandPalette } from './CommandPalette';
+import { RightDrawer } from './RightDrawer';
+import { type Toast, ToastContainer } from './ToastContainer';
+import { useDrawerStream } from './useDrawerStream';
 
 type ShellRoute =
   | 'chat'
   | 'personalities'
   | 'memory'
   | 'cron'
+  | 'activity'
   | 'platforms'
   | 'skills'
   | 'mcp'
@@ -33,10 +39,20 @@ type ShellRoute =
   | 'api-keys';
 
 export function AppShell() {
-  const { setPort, setAdvancedMode, setDesktopUserId, setLastTitledSession } = useAppState();
+  const { setPort, setAdvancedMode, setDesktopUserId, setLastTitledSession, setActiveSessionId } =
+    useAppState();
   const [route, setRoute] = useState<ShellRoute>('chat');
   const [healthy, setHealthy] = useState(false);
+  const [backendConnected, setBackendConnected] = useState(false);
   const [resolvedPort, setResolvedPort] = useState(3001);
+
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // Must be called unconditionally (React hooks rule). Returns empty state when
+  // no activeSessionId is set.
+  const drawerState = useDrawerStream();
 
   useEffect(() => {
     async function bootstrap() {
@@ -100,6 +116,7 @@ export function AppShell() {
               // best-effort
             }
             setHealthy(true);
+            setBackendConnected(true);
           }
         } catch {
           // Not ready yet
@@ -114,6 +131,20 @@ export function AppShell() {
       cleanupPromise.then((cleanup) => cleanup?.());
     };
   }, [setPort, setAdvancedMode, setDesktopUserId]);
+
+  useEffect(() => {
+    if (!healthy) return;
+    const check = async () => {
+      try {
+        const { healthy: ok } = await window.ethos.health.check({ port: resolvedPort });
+        setBackendConnected(ok);
+      } catch {
+        setBackendConnected(false);
+      }
+    };
+    const id = setInterval(check, 30_000);
+    return () => clearInterval(id);
+  }, [healthy, resolvedPort]);
 
   useEffect(() => {
     if (!healthy) return;
@@ -137,6 +168,48 @@ export function AppShell() {
     return () => source.close();
   }, [healthy, resolvedPort, setLastTitledSession]);
 
+  // Toast generation: fire a toast for each new notification that arrives in the drawer.
+  const prevNotifCountRef = useRef(0);
+  useEffect(() => {
+    const count = drawerState.notifications.length;
+    if (count > prevNotifCountRef.current) {
+      const newest = drawerState.notifications[0];
+      if (newest) {
+        const id = `toast-${Date.now()}`;
+        setToasts((prev) => [...prev, { id, message: newest.summary, kind: 'info' as const }]);
+      }
+    }
+    prevNotifCountRef.current = count;
+  }, [drawerState.notifications]);
+
+  // ⌘K / Ctrl+K global handler
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+      if (e.key === 'Escape' && paletteOpen) {
+        setPaletteOpen(false);
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [paletteOpen]);
+
+  const handleNewChatFromPalette = useCallback(() => {
+    setRoute('chat');
+    setActiveSessionId(null);
+  }, [setActiveSessionId]);
+
+  const handleSelectSessionFromPalette = useCallback(
+    (id: string) => {
+      setRoute('chat');
+      setActiveSessionId(id);
+    },
+    [setActiveSessionId],
+  );
+
   if (!healthy) {
     return (
       <div
@@ -156,61 +229,93 @@ export function AppShell() {
   }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-      <AppSidebar route={route} onNavigate={(r) => setRoute(r as ShellRoute)} />
-      <div style={{ flex: 1, overflow: 'auto' }}>
-        {route === 'settings' ? (
-          <SettingsPage />
-        ) : route === 'chat' ? (
-          <ErrorBoundary label="ChatPage">
-            <ChatPage />
-          </ErrorBoundary>
-        ) : route === 'personalities' ? (
-          <ErrorBoundary label="PersonalitiesPage">
-            <PersonalitiesPage />
-          </ErrorBoundary>
-        ) : route === 'mcp' ? (
-          <ErrorBoundary label="McpPage">
-            <McpPage />
-          </ErrorBoundary>
-        ) : route === 'memory' ? (
-          <ErrorBoundary label="MemoryPage">
-            <MemoryPage />
-          </ErrorBoundary>
-        ) : route === 'cron' ? (
-          <ErrorBoundary label="CronPage">
-            <CronPage />
-          </ErrorBoundary>
-        ) : route === 'platforms' ? (
-          <ErrorBoundary label="PlatformsPage">
-            <PlatformsPage />
-          </ErrorBoundary>
-        ) : route === 'skills' ? (
-          <ErrorBoundary label="SkillsPage">
-            <SkillsPage />
-          </ErrorBoundary>
-        ) : route === 'batch-eval' ? (
-          <ErrorBoundary label="BatchPage">
-            <BatchPage />
-          </ErrorBoundary>
-        ) : route === 'kanban' ? (
-          <ErrorBoundary label="KanbanPage">
-            <KanbanPage />
-          </ErrorBoundary>
-        ) : route === 'observability' ? (
-          <ErrorBoundary label="ObservabilityPage">
-            <ObservabilityPage />
-          </ErrorBoundary>
-        ) : route === 'mesh' ? (
-          <ErrorBoundary label="MeshPage">
-            <MeshPage />
-          </ErrorBoundary>
-        ) : route === 'api-keys' ? (
-          <ErrorBoundary label="ApiKeysPage">
-            <ApiKeysPage />
-          </ErrorBoundary>
-        ) : null}
+    <>
+      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+        <AppSidebar
+          route={route}
+          onNavigate={(r) => setRoute(r as ShellRoute)}
+          drawerOpen={drawerOpen}
+          onToggleDrawer={() => setDrawerOpen((v) => !v)}
+          backendConnected={backendConnected}
+        />
+        <div style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
+          {route === 'settings' ? (
+            <SettingsPage />
+          ) : route === 'chat' ? (
+            <ErrorBoundary label="ChatPage">
+              <ChatPage />
+            </ErrorBoundary>
+          ) : route === 'personalities' ? (
+            <ErrorBoundary label="PersonalitiesPage">
+              <PersonalitiesPage />
+            </ErrorBoundary>
+          ) : route === 'mcp' ? (
+            <ErrorBoundary label="McpPage">
+              <McpPage />
+            </ErrorBoundary>
+          ) : route === 'memory' ? (
+            <ErrorBoundary label="MemoryPage">
+              <MemoryPage />
+            </ErrorBoundary>
+          ) : route === 'cron' ? (
+            <ErrorBoundary label="CronPage">
+              <CronPage />
+            </ErrorBoundary>
+          ) : route === 'platforms' ? (
+            <ErrorBoundary label="PlatformsPage">
+              <PlatformsPage />
+            </ErrorBoundary>
+          ) : route === 'skills' ? (
+            <ErrorBoundary label="SkillsPage">
+              <SkillsPage />
+            </ErrorBoundary>
+          ) : route === 'batch-eval' ? (
+            <ErrorBoundary label="BatchPage">
+              <BatchPage />
+            </ErrorBoundary>
+          ) : route === 'kanban' ? (
+            <ErrorBoundary label="KanbanPage">
+              <KanbanPage />
+            </ErrorBoundary>
+          ) : route === 'observability' ? (
+            <ErrorBoundary label="ObservabilityPage">
+              <ObservabilityPage />
+            </ErrorBoundary>
+          ) : route === 'mesh' ? (
+            <ErrorBoundary label="MeshPage">
+              <MeshPage />
+            </ErrorBoundary>
+          ) : route === 'api-keys' ? (
+            <ErrorBoundary label="ApiKeysPage">
+              <ApiKeysPage />
+            </ErrorBoundary>
+          ) : route === 'activity' ? (
+            <ErrorBoundary label="ActivityPage">
+              <ActivityPage />
+            </ErrorBoundary>
+          ) : null}
+        </div>
+        {drawerOpen && (
+          <RightDrawer
+            state={drawerState}
+            onNavigate={(r) => setRoute(r as ShellRoute)}
+            onClose={() => setDrawerOpen(false)}
+          />
+        )}
       </div>
-    </div>
+      <CommandPalette
+        open={paletteOpen}
+        port={resolvedPort}
+        onClose={() => setPaletteOpen(false)}
+        onNavigate={(r) => setRoute(r as ShellRoute)}
+        onSelectSession={handleSelectSessionFromPalette}
+        onNewChat={handleNewChatFromPalette}
+        onToggleDrawer={() => setDrawerOpen((v) => !v)}
+      />
+      <ToastContainer
+        toasts={toasts}
+        onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))}
+      />
+    </>
   );
 }

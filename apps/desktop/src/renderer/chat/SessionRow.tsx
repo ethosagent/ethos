@@ -9,6 +9,8 @@ interface SessionRowProps {
   onFork: () => void;
   onExport: () => void;
   onDelete: () => void;
+  onPin: () => void;
+  onUnpin: () => void;
 }
 
 function formatRelativeTime(iso: string): string {
@@ -39,6 +41,8 @@ export function SessionRow({
   onFork,
   onExport,
   onDelete,
+  onPin,
+  onUnpin,
 }: SessionRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -167,22 +171,29 @@ export function SessionRow({
             }}
           />
         ) : (
-          <span
-            style={{
-              flex: 1,
-              fontFamily: 'var(--font-display)',
-              fontSize: 13,
-              fontWeight: 400,
-              color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              maxWidth: 160,
-              minWidth: 0,
-            }}
-          >
-            {title}
-          </span>
+          <>
+            {session.pinned && (
+              <span style={{ fontSize: 10, color: 'var(--accent)', marginRight: 4, flexShrink: 0 }}>
+                ★
+              </span>
+            )}
+            <span
+              style={{
+                flex: 1,
+                fontFamily: 'var(--font-display)',
+                fontSize: 13,
+                fontWeight: 400,
+                color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                maxWidth: 160,
+                minWidth: 0,
+              }}
+            >
+              {title}
+            </span>
+          </>
         )}
         <span
           style={{
@@ -214,6 +225,14 @@ export function SessionRow({
           }}
         >
           {[
+            {
+              label: session.pinned ? 'Unpin' : 'Pin',
+              action: () => {
+                setMenuOpen(false);
+                if (session.pinned) onUnpin();
+                else onPin();
+              },
+            },
             { label: 'Rename', action: handleRenameStart },
             { label: 'Fork', action: handleFork },
             { label: 'Export', action: handleExport },

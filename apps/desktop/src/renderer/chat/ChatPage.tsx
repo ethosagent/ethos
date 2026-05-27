@@ -13,7 +13,7 @@ import { useSSEStream } from './useSSEStream';
 const CLIENT_ID = crypto.randomUUID();
 
 export function ChatPage() {
-  const { state, setActiveSessionId } = useAppState();
+  const { state, setActiveSessionId, setActivePersonalityId } = useAppState();
   const { port, activeSessionId, activePersonalityId, desktopUserId, lastTitledSession } = state;
 
   const baseUrl = `http://localhost:${port}`;
@@ -32,7 +32,7 @@ export function ChatPage() {
   const [pendingClarify, setPendingClarify] = useState<ClarifyState | null>(null);
   const [usage, setUsage] = useState<UsageState | null>(null);
   const [streaming, setStreaming] = useState(false);
-  const [_error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
 
   // Layout state
@@ -51,6 +51,13 @@ export function ChatPage() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('ethos:lastPersonalityId');
+    if (saved && !state.activePersonalityId) {
+      setActivePersonalityId(saved);
+    }
+  }, [state.activePersonalityId, setActivePersonalityId]);
 
   // SSE event handler
   const handleSSEEvent = useCallback(
@@ -187,6 +194,12 @@ export function ChatPage() {
     baseUrl,
     sessionId: activeSessionId,
     onEvent: handleSSEEvent,
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[sse] connection error:', msg, err);
+      // Only surface if we were actually streaming — avoids false positives on reconnect
+      setError((prev) => prev ?? (streaming ? `Connection error: ${msg}` : null));
+    },
   });
 
   // Load session history when activeSessionId changes
@@ -205,6 +218,9 @@ export function ChatPage() {
         if (cancelled) return;
         setMessages(res.messages);
         setSessionTitle(res.session.title);
+        if (res.session.personalityId) {
+          setActivePersonalityId(res.session.personalityId);
+        }
       } catch {
         if (cancelled) return;
         setMessages([]);
@@ -216,7 +232,7 @@ export function ChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeSessionId, client]);
+  }, [activeSessionId, client, setActivePersonalityId]);
 
   // Send message
   const handleSend = useCallback(
@@ -258,6 +274,7 @@ export function ChatPage() {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        console.error('[chat] send error:', msg);
         setError(msg);
         setStreaming(false);
       }
@@ -375,8 +392,8 @@ export function ChatPage() {
   // Session title change
   const handleTitleChange = useCallback(
     async (title: string) => {
-      if (!activeSessionId) return;
       setSessionTitle(title);
+      if (!activeSessionId) return;
       try {
         await client.rpc.sessions.update({ id: activeSessionId, title });
         sessionList.refresh();
@@ -433,6 +450,40 @@ export function ChatPage() {
     [activeSessionId, client, sessionList, handleNewChat],
   );
 
+  const handleSwitchPersonality = useCallback(
+    (id: string | null) => {
+      setActivePersonalityId(id);
+      if (id) localStorage.setItem('ethos:lastPersonalityId', id);
+      else localStorage.removeItem('ethos:lastPersonalityId');
+    },
+    [setActivePersonalityId],
+  );
+
+  // Pin / unpin session
+  const handlePinSession = useCallback(
+    async (id: string) => {
+      try {
+        await client.rpc.sessions.pin({ id });
+        sessionList.refresh();
+      } catch {
+        // best-effort
+      }
+    },
+    [client, sessionList],
+  );
+
+  const handleUnpinSession = useCallback(
+    async (id: string) => {
+      try {
+        await client.rpc.sessions.unpin({ id });
+        sessionList.refresh();
+      } catch {
+        // best-effort
+      }
+    },
+    [client, sessionList],
+  );
+
   // Export session
   const handleExportSession = useCallback(
     async (id: string) => {
@@ -463,6 +514,8 @@ export function ChatPage() {
           onForkSession={(id) => handleForkSession(id)}
           onExportSession={handleExportSession}
           onDeleteSession={handleDeleteSession}
+          onPinSession={handlePinSession}
+          onUnpinSession={handleUnpinSession}
         />
       )}
 
@@ -476,6 +529,8 @@ export function ChatPage() {
       >
         <PersonalityBar
           personalityId={activePersonalityId}
+          port={port}
+          onSwitchPersonality={handleSwitchPersonality}
           sessionTitle={sessionTitle}
           onTitleChange={handleTitleChange}
           onNewSession={handleNewChat}
@@ -498,6 +553,7 @@ export function ChatPage() {
           onDeny={handleDeny}
           onClarifyRespond={handleClarifyRespond}
           onRetry={handleRetry}
+          error={error}
         />
 
         <Composer

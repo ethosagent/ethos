@@ -14,6 +14,7 @@ interface PersonalityListProps {
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onWizard?: () => void;
 }
 
 export function PersonalityList({
@@ -21,6 +22,7 @@ export function PersonalityList({
   activeId,
   onSelect,
   onNew,
+  onWizard,
 }: PersonalityListProps) {
   const [search, setSearch] = useState('');
 
@@ -60,22 +62,44 @@ export function PersonalityList({
         <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }}>
           Personalities
         </span>
-        <button
-          type="button"
-          onClick={onNew}
-          style={{
-            height: 28,
-            padding: '0 10px',
-            backgroundColor: 'transparent',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 4,
-            fontSize: 12,
-            color: 'var(--text-secondary)',
-            cursor: 'pointer',
-          }}
-        >
-          New
-        </button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {onWizard && (
+            <button
+              type="button"
+              onClick={onWizard}
+              style={{
+                height: 28,
+                padding: '0 10px',
+                backgroundColor: 'var(--accent)',
+                border: 'none',
+                borderRadius: 4,
+                fontSize: 12,
+                color: '#fff',
+                cursor: 'pointer',
+                fontFamily: 'var(--font-display)',
+                fontWeight: 500,
+              }}
+            >
+              Create with AI ✦
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onNew}
+            style={{
+              height: 28,
+              padding: '0 10px',
+              backgroundColor: 'transparent',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 4,
+              fontSize: 12,
+              color: 'var(--text-secondary)',
+              cursor: 'pointer',
+            }}
+          >
+            New
+          </button>
+        </div>
       </div>
 
       <div style={{ padding: '0 8px 8px', flexShrink: 0 }}>

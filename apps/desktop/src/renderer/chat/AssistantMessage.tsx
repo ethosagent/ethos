@@ -75,6 +75,38 @@ const markdownComponents: Components = {
   },
 };
 
+function ThinkingDots() {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        gap: 3,
+        alignItems: 'center',
+      }}
+    >
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          style={{
+            width: 4,
+            height: 4,
+            borderRadius: '50%',
+            backgroundColor: 'var(--text-tertiary)',
+            display: 'inline-block',
+            animation: `thinking-dot 1.2s ease-in-out ${i * 0.2}s infinite`,
+          }}
+        />
+      ))}
+      <style>{`
+        @keyframes thinking-dot {
+          0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+          40% { opacity: 1; transform: scale(1); }
+        }
+      `}</style>
+    </span>
+  );
+}
+
 export function AssistantMessage({
   content,
   thinking,
@@ -145,7 +177,22 @@ export function AssistantMessage({
         </div>
       )}
 
-      {!content && streaming && <StreamCursor />}
+      {!content && streaming && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '4px 0',
+            color: 'var(--text-tertiary)',
+            fontFamily: 'var(--font-display)',
+            fontSize: 13,
+          }}
+        >
+          <span>Thinking</span>
+          <ThinkingDots />
+        </div>
+      )}
 
       {error && (
         <div

@@ -4,6 +4,9 @@ import { useAppState } from '../state/AppContext';
 interface AppSidebarProps {
   route: string;
   onNavigate: (route: string) => void;
+  drawerOpen: boolean;
+  onToggleDrawer: () => void;
+  backendConnected: boolean;
 }
 
 interface NavItem {
@@ -17,6 +20,7 @@ const DEFAULT_ITEMS: NavItem[] = [
   { id: 'personalities', label: 'Personalities', icon: '☺' },
   { id: 'memory', label: 'Memory', icon: '☁' },
   { id: 'cron', label: 'Cron', icon: '⏰' },
+  { id: 'activity', label: 'Activity', icon: '◎' },
   { id: 'platforms', label: 'Platforms', icon: '⭐' },
   { id: 'skills', label: 'Skills', icon: '⚡' },
   { id: 'mcp', label: 'MCP', icon: '⬡' },
@@ -31,7 +35,13 @@ const ADVANCED_ITEMS: NavItem[] = [
   { id: 'api-keys', label: 'API Keys', icon: '⚿' },
 ];
 
-export function AppSidebar({ route, onNavigate }: AppSidebarProps) {
+export function AppSidebar({
+  route,
+  onNavigate,
+  drawerOpen,
+  onToggleDrawer,
+  backendConnected,
+}: AppSidebarProps) {
   const { state } = useAppState();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
@@ -62,6 +72,54 @@ export function AppSidebar({ route, onNavigate }: AppSidebarProps) {
           onHover={setHoveredId}
         />
       ))}
+
+      <div style={{ marginTop: 'auto', paddingBottom: 8 }}>
+        <div
+          style={{
+            width: 40,
+            height: 24,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+          }}
+          title={backendConnected ? 'Backend connected' : 'Backend disconnected'}
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              backgroundColor: backendConnected ? 'var(--success)' : 'var(--error)',
+              display: 'block',
+              boxShadow: backendConnected
+                ? '0 0 0 2px color-mix(in srgb, var(--success) 25%, transparent)'
+                : '0 0 0 2px color-mix(in srgb, var(--error) 25%, transparent)',
+            }}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={onToggleDrawer}
+          style={{
+            width: 40,
+            height: 40,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            border: 'none',
+            borderRadius: 'var(--radius-sm)',
+            background: drawerOpen ? 'var(--bg-overlay)' : 'transparent',
+            color: drawerOpen ? 'var(--accent)' : 'var(--text-tertiary)',
+            fontSize: 18,
+            cursor: 'pointer',
+          }}
+          aria-label="Toggle activity drawer"
+          title="Activity drawer"
+        >
+          ◉
+        </button>
+      </div>
 
       {state.advancedMode && (
         <>

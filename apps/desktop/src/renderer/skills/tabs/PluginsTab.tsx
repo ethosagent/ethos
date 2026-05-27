@@ -20,7 +20,12 @@ interface PluginsTabProps {
 export function PluginsTab({ port }: PluginsTabProps) {
   const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [explainerDismissed, setExplainerDismissed] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const [packageSpec, setPackageSpec] = useState('');
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const [installSuccess, setInstallSuccess] = useState<string | null>(null);
 
   const client = useMemo(
     () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
@@ -28,6 +33,8 @@ export function PluginsTab({ port }: PluginsTabProps) {
   );
 
   useEffect(() => {
+    // refreshKey is intentionally read to re-trigger this effect after install.
+    void refreshKey;
     let stale = false;
     client.rpc.plugins
       .list({})
@@ -38,17 +45,25 @@ export function PluginsTab({ port }: PluginsTabProps) {
     return () => {
       stale = true;
     };
-  }, [client]);
+  }, [client, refreshKey]);
 
-  const handleCopy = async () => {
+  async function handleInstall() {
+    const spec = packageSpec.trim();
+    if (!spec) return;
+    setInstalling(true);
+    setInstallError(null);
+    setInstallSuccess(null);
     try {
-      await navigator.clipboard.writeText('ethos plugin install <package-name>');
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // best-effort
+      await client.rpc.plugins.install({ packageSpec: spec });
+      setInstallSuccess(`${spec} installed successfully.`);
+      setPackageSpec('');
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      setInstallError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setInstalling(false);
     }
-  };
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -95,11 +110,7 @@ export function PluginsTab({ port }: PluginsTabProps) {
                 No plugins installed.
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-                Run{' '}
-                <code style={{ fontFamily: 'var(--font-mono)' }}>
-                  ethos plugin install &lt;name&gt;
-                </code>{' '}
-                in a terminal to add plugins.
+                Use the install form below to add plugins.
               </div>
             </div>
           ) : (
@@ -129,43 +140,54 @@ export function PluginsTab({ port }: PluginsTabProps) {
         }}
       >
         <SectionLabel>INSTALL A PLUGIN</SectionLabel>
-        <div
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 12,
-            backgroundColor: 'var(--bg-overlay)',
-            borderRadius: 'var(--radius-md)',
-            padding: 12,
-            marginTop: 8,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}
-        >
-          <span style={{ color: 'var(--text-primary)' }}>
-            ethos plugin install &lt;package-name&gt;
-          </span>
-          <button
-            type="button"
-            onClick={handleCopy}
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <input
+            type="text"
+            placeholder="Package spec, e.g. @scope/my-plugin@1.0.0"
+            value={packageSpec}
+            onChange={(e) => setPackageSpec(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleInstall()}
+            disabled={installing}
             style={{
-              background: 'none',
+              flex: 1,
+              height: 30,
+              padding: '0 8px',
+              fontSize: 12,
               border: '1px solid var(--border-subtle)',
               borderRadius: 'var(--radius-sm)',
-              height: 24,
-              padding: '0 8px',
-              cursor: 'pointer',
+              backgroundColor: 'var(--bg-overlay)',
+              color: 'var(--text-primary)',
+              outline: 'none',
+            }}
+          />
+          <button
+            type="button"
+            onClick={handleInstall}
+            disabled={installing || !packageSpec.trim()}
+            style={{
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-sm)',
+              height: 30,
+              padding: '0 12px',
+              cursor: installing || !packageSpec.trim() ? 'not-allowed' : 'pointer',
               fontSize: 12,
-              color: copied ? 'var(--success)' : 'var(--text-secondary)',
+              color: 'var(--text-primary)',
+              backgroundColor: 'var(--bg-overlay)',
               flexShrink: 0,
+              opacity: installing || !packageSpec.trim() ? 0.5 : 1,
             }}
           >
-            {copied ? 'Copied ✓' : 'Copy'}
+            {installing ? 'Installing…' : 'Install'}
           </button>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>
-          Restart Ethos after installing to load the new plugin.
-        </div>
+        {installError && (
+          <div style={{ fontSize: 12, color: 'var(--error)', marginTop: 6 }}>{installError}</div>
+        )}
+        {installSuccess && (
+          <div style={{ fontSize: 12, color: 'var(--success)', marginTop: 6 }}>
+            {installSuccess}
+          </div>
+        )}
       </div>
     </div>
   );

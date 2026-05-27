@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron';
 import type { RetentionValues } from '../shared/ipc-contract';
 import { IPC_CHANNELS } from '../shared/ipc-contract';
-import { startBackend } from './backend';
+import { restartBackend, startBackend } from './backend';
 import { getKeychainValue, setKeychainValue } from './keychain';
 import { getLoginItem, setLoginItem } from './login-item';
 import { testDiscord, testImap, testSmtp, testTelegram } from './platform-validator';
@@ -469,6 +469,19 @@ export function registerIpcHandlers(): void {
         return { ok: false };
       }
       await setKeychainValue(req.key, req.value);
+
+      // For the API key, also sync to ~/.ethos/secrets/api-key so the
+      // backend subprocess (which uses FileSecretsResolver) picks it up,
+      // then restart the backend to load the new key.
+      if (req.key === 'api-key') {
+        const ethosDir = getEthosDir();
+        const secretsDir = join(ethosDir, 'secrets');
+        mkdirSync(secretsDir, { recursive: true });
+        writeFileSync(join(secretsDir, 'api-key'), `${req.value}\n`, { mode: 0o600 });
+        const port = store.get('backendPort', 3001) as number;
+        restartBackend(port);
+      }
+
       return { ok: true };
     },
   );
