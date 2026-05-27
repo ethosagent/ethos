@@ -1,9 +1,10 @@
 // Raw node:fs is an allowed exception here (same as session-sqlite and memory-vector).
 // Baileys' useMultiFileAuthState manages its own file layout for auth credentials and pre-keys.
-// See CLAUDE.md "Allowed exceptions" — session persistence backends that manage their own WAL/file
-// format are exempt from the Storage abstraction.
+// See CLAUDE.md "Allowed exceptions" — session persistence backends
+// that manage their own WAL/file format are exempt from the Storage
+// abstraction.
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { mkdirSync, existsSync } from 'node:fs';
 
 export interface SessionStoreConfig {
   sessionDir: string;

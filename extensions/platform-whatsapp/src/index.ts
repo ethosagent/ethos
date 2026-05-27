@@ -1,17 +1,17 @@
 import type {
-  PlatformAdapter,
+  AdapterCapabilities,
+  AttachmentCache,
+  DeliveryResult,
   InboundMessage,
   OutboundMessage,
-  DeliveryResult,
-  AttachmentCache,
-  AdapterCapabilities,
+  PlatformAdapter,
 } from '@ethosagent/types';
-import {
-  parseInboundMessage,
-  hasMedia,
-  type RawWhatsAppMessage,
-} from './message-parser';
 import { downloadMedia } from './media';
+import {
+  type RawWhatsAppMessage,
+  hasMedia,
+  parseInboundMessage,
+} from './message-parser';
 import { resolveSessionDir } from './session-store';
 
 export interface WhatsAppAdapterConfig {
@@ -76,7 +76,8 @@ export class WhatsAppAdapter implements PlatformAdapter {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // biome-ignore lint/suspicious/noExplicitAny: Baileys ConnectionState type varies across versions
+    // biome-ignore lint/suspicious/noExplicitAny: Baileys
+    // ConnectionState type varies across versions
     sock.ev.on('connection.update', (update: any) => {
       if (update.qr) {
         import('qrcode-terminal')
@@ -151,8 +152,13 @@ export class WhatsAppAdapter implements PlatformAdapter {
             const att = await downloadMedia(
               msg,
               async (m) => {
-                // biome-ignore lint/suspicious/noExplicitAny: Baileys downloadMediaMessage signature varies across versions
-                const buffer = await (downloadMediaMessage as any)(m, 'buffer', {});
+                // biome-ignore lint/suspicious/noExplicitAny: Baileys
+                // downloadMediaMessage signature varies across versions
+                const buffer = await (downloadMediaMessage as any)(
+                  m,
+                  'buffer',
+                  {},
+                );
                 return Buffer.from(buffer);
               },
               this.config.cache,

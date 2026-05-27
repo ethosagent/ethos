@@ -1,4 +1,4 @@
-import type { AttachmentCache, Attachment } from '@ethosagent/types';
+import type { Attachment, AttachmentCache } from '@ethosagent/types';
 import type { RawWhatsAppMessage } from './message-parser';
 import { getMediaMeta } from './message-parser';
 
