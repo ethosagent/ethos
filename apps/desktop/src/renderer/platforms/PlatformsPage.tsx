@@ -8,7 +8,7 @@ import { SlackDrawer } from './drawers/SlackDrawer';
 import { TelegramDrawer } from './drawers/TelegramDrawer';
 import { PlatformRow } from './PlatformRow';
 
-type PlatformId = 'telegram' | 'slack' | 'discord' | 'email';
+type PlatformId = 'telegram' | 'slack' | 'discord' | 'email' | 'whatsapp';
 
 interface PlatformState {
   id: PlatformId;
@@ -21,9 +21,10 @@ const platformMeta: Record<PlatformId, { icon: string; name: string }> = {
   slack: { icon: '#', name: 'Slack' },
   discord: { icon: '🎮', name: 'Discord' },
   email: { icon: '✉', name: 'Email' },
+  whatsapp: { icon: '📱', name: 'WhatsApp' },
 };
 
-const platformOrder: PlatformId[] = ['telegram', 'slack', 'discord', 'email'];
+const platformOrder: PlatformId[] = ['telegram', 'slack', 'discord', 'email', 'whatsapp'];
 
 export function PlatformsPage() {
   const { state } = useAppState();

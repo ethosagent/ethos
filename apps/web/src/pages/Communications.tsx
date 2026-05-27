@@ -497,7 +497,7 @@ function SlackPanel() {
 // ---------------------------------------------------------------------------
 
 interface PlatformShape {
-  id: 'discord' | 'email';
+  id: 'discord' | 'email' | 'whatsapp';
   label: string;
   fields: ReadonlyArray<{
     name: string;
@@ -534,6 +534,16 @@ const LEGACY_PLATFORMS: ReadonlyArray<PlatformShape> = [
       { name: 'smtpHost', label: 'SMTP host', placeholder: 'smtp.example.com', secret: false },
       { name: 'smtpPort', label: 'SMTP port', placeholder: '587', secret: false },
     ],
+  },
+  {
+    id: 'whatsapp',
+    label: 'WhatsApp',
+    fields: [
+      { name: 'phoneNumberId', label: 'Phone number ID', placeholder: '1234567890', secret: false },
+      { name: 'accessToken', label: 'Access token', secret: true, helper: 'Permanent token from Meta Business dashboard.' },
+      { name: 'verifyToken', label: 'Webhook verify token', secret: false, placeholder: 'my-verify-token' },
+    ],
+    helpUrl: 'https://developers.facebook.com/docs/whatsapp/cloud-api/get-started',
   },
 ];
 
@@ -660,6 +670,7 @@ const PLATFORM_HINTS: Record<string, string> = {
   slack: 'Open your Slack profile → click the … menu → "Copy member ID".',
   discord: 'Enable Developer Mode → right-click your name → "Copy User ID".',
   email: "Use the sender's full email address (globs supported: *@example.com).",
+  whatsapp: 'Your WhatsApp phone number in E.164 format (e.g., +14155551234).',
 };
 
 function AccessControlSection({ platform }: { platform: string }) {
