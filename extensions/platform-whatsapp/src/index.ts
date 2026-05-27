@@ -59,11 +59,8 @@ export class WhatsAppAdapter implements PlatformAdapter {
     });
 
     const baileys = await import('@whiskeysockets/baileys');
-    const {
-      default: makeWASocket,
-      useMultiFileAuthState,
-      DisconnectReason,
-    } = baileys;
+    const makeWASocket = baileys.makeWASocket ?? baileys.default;
+    const { useMultiFileAuthState, DisconnectReason } = baileys;
 
     const { state, saveCreds } =
       await useMultiFileAuthState(sessionDir);
@@ -71,6 +68,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
     const sock = makeWASocket({
       auth: state,
       printQRInTerminal: true,
+      getMessage: async () => undefined,
     });
 
     sock.ev.on('creds.update', saveCreds);
