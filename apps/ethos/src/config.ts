@@ -128,7 +128,7 @@ export interface WhatsAppConfig {
   id?: string;
   session_dir?: string;
   default_mode?: 'all' | 'mention_only';
-  allowed_jids?: string[];
+  allowed_numbers?: string[];
 }
 
 export interface ProviderConfig {

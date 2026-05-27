@@ -6,7 +6,10 @@ export function SetupWhatsApp() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const source = new EventSource('/setup/whatsapp');
+    // Extract botId from the URL path: /setup/whatsapp/:botId
+    const segments = window.location.pathname.split('/');
+    const botId = segments[segments.length - 1] || 'default';
+    const source = new EventSource(`/setup/whatsapp/${botId}`);
 
     source.onmessage = (event) => {
       try {
@@ -60,20 +63,29 @@ export function SetupWhatsApp() {
         Scan this QR code with WhatsApp on your phone.
       </p>
       {qr ? (
-        <div
-          style={{
-            display: 'inline-block',
-            padding: 24,
-            background: '#ffffff',
-            borderRadius: 12,
-          }}
-        >
-          <img
-            src={`https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(qr)}`}
-            alt="WhatsApp QR Code"
-            width={256}
-            height={256}
-          />
+        <div>
+          <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 16 }}>
+            A QR code has been printed in your terminal. Scan it with WhatsApp.
+          </p>
+          <p style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+            If you cannot access the terminal, copy this pairing code:
+          </p>
+          <code
+            style={{
+              display: 'block',
+              marginTop: 8,
+              padding: '8px 12px',
+              background: 'var(--bg-overlay)',
+              borderRadius: 'var(--radius-sm, 4px)',
+              fontSize: 11,
+              fontFamily: 'var(--font-mono, monospace)',
+              color: 'var(--text-secondary)',
+              wordBreak: 'break-all',
+              userSelect: 'all',
+            }}
+          >
+            {qr}
+          </code>
         </div>
       ) : (
         <p style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>

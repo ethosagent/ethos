@@ -38,6 +38,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
 
   readonly botKey: string;
   private sock: unknown = null;
+  private reconnecting = false;
   private messageHandler?: (message: InboundMessage) => void;
   private botJid = '';
   private readonly config: WhatsAppAdapterConfig;
@@ -45,11 +46,13 @@ export class WhatsAppAdapter implements PlatformAdapter {
 
   constructor(config: WhatsAppAdapterConfig) {
     this.config = config;
-    this.botKey = config.id ?? `wa-${Date.now()}`;
+    this.botKey = config.id ?? `wa-${config.sessionDir.replace(/[^a-zA-Z0-9]/g, '').slice(-16)}`;
     this.id = `whatsapp:${this.botKey}`;
   }
 
   async start(): Promise<void> {
+    if (this.reconnecting) return;
+
     const sessionDir = resolveSessionDir({
       sessionDir: this.config.sessionDir,
       botKey: this.botKey,
@@ -82,12 +85,15 @@ export class WhatsAppAdapter implements PlatformAdapter {
         qr?: string;
       }) => {
         if (update.qr) {
-          try {
-            const qrterm = require('qrcode-terminal');
-            qrterm.generate(update.qr, { small: true });
-          } catch {
-            console.log('[whatsapp] QR code:', update.qr);
-          }
+          import('qrcode-terminal')
+            .then((qrterm) => {
+              const gen = qrterm.default?.generate ?? qrterm.generate;
+              gen(update.qr, { small: true });
+            })
+            .catch(() => {
+              console.log('[whatsapp] Scan this QR in WhatsApp:');
+              console.log(update.qr);
+            });
           if (this.config.onQr) this.config.onQr(update.qr);
         }
 
@@ -95,7 +101,12 @@ export class WhatsAppAdapter implements PlatformAdapter {
           const code =
             update.lastDisconnect?.error?.output?.statusCode;
           if (code !== DisconnectReason.loggedOut) {
-            this.start();
+            this.reconnecting = true;
+            this.sock = null;
+            setTimeout(() => {
+              this.reconnecting = false;
+              this.start();
+            }, 3000);
           }
         }
 
@@ -122,18 +133,13 @@ export class WhatsAppAdapter implements PlatformAdapter {
           const jid = msg.key.remoteJid ?? '';
           const isDm = !jid.endsWith('@g.us');
 
-          if (this.config.allowedJids && isDm) {
-            const normalized = jid.replace(
-              '@s.whatsapp.net',
-              '',
-            );
-            if (
-              !this.config.allowedJids.some((j) =>
-                normalized.includes(j.replace('+', '')),
-              )
-            ) {
-              continue;
-            }
+          if (this.config.allowedJids) {
+            const number = jid.split('@')[0];
+            const matched = this.config.allowedJids.some((allowed) => {
+              const normalizedAllowed = allowed.replace(/[^0-9]/g, '');
+              return number === normalizedAllowed;
+            });
+            if (!matched) continue;
           }
 
           if (!isDm && this.config.defaultMode === 'mention_only') {

@@ -220,9 +220,10 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     );
   }
 
-  // WhatsApp QR-pairing SSE stream. Unauthenticated — the user is in the
-  // setup flow before auth is configured. Must be before the static SPA
-  // mount (which owns `/*`).
+  // WhatsApp QR-pairing SSE stream. Gated behind auth — the QR string is
+  // a live WhatsApp account-linking credential and must not be publicly
+  // accessible. Must be before the static SPA mount (which owns `/*`).
+  app.use('/setup/whatsapp/*', authMiddleware({ tokens: opts.tokens }));
   app.route('/setup/whatsapp', setupWhatsAppRoutes());
 
   // Static SPA mount (must be LAST — it owns `/*` so any unmatched path

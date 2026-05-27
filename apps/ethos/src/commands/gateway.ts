@@ -430,7 +430,13 @@ export async function runGatewayStart(): Promise<void> {
   // surface's `getSessionRouting` closes over a mutable holder filled in
   // right after Gateway construction — necessary because the surface and the
   // Gateway each need a reference to the other.
-  const adapters = await buildAdapters(config, loadAdapterModule, attachmentCache);
+  const adapters = await buildAdapters(config, loadAdapterModule, attachmentCache, {
+    onWhatsAppQr: (botId, qr) => {
+      import('@ethosagent/web-api')
+        .then((m) => m.setWhatsAppQr(botId, qr))
+        .catch(() => {});
+    },
+  });
 
   let gatewayRef: Gateway | null = null;
   const telegramClarifySurfaces = await buildTelegramClarifySurfaces(
@@ -1155,6 +1161,7 @@ export async function buildAdapters(
   config: EthosConfig,
   loadAdapter: AdapterModuleLoader,
   attachmentCache?: import('@ethosagent/types').AttachmentCache,
+  opts?: { onWhatsAppQr?: (botId: string, qr: string | null) => void },
 ): Promise<PlatformAdapter[]> {
   config = applyPlatformShim(config).config;
   const adapters: PlatformAdapter[] = [];
@@ -1294,16 +1301,15 @@ export async function buildAdapters(
       }
 
       for (const waCfg of config.whatsapp ?? []) {
+        const onQrCb = opts?.onWhatsAppQr;
         adapters.push(
           new mod.WhatsAppAdapter({
             id: waCfg.id,
             sessionDir: waCfg.session_dir ?? join(ethosDir(), 'whatsapp'),
             defaultMode: waCfg.default_mode ?? 'mention_only',
-            allowedJids: waCfg.allowed_jids,
+            allowedJids: waCfg.allowed_numbers,
             cache: waCache,
-            onQr: (qr) => {
-              import('@ethosagent/web-api').then((m) => m.setWhatsAppQr(qr)).catch(() => {});
-            },
+            onQr: onQrCb ? (qr) => onQrCb(waCfg.id ?? 'default', qr) : undefined,
           }),
         );
       }

@@ -3,31 +3,36 @@ import { streamSSE } from 'hono/streaming';
 
 // SSE endpoint for WhatsApp QR-code pairing.
 //
-// GET /setup/whatsapp streams QR strings as they rotate and a final
+// GET /setup/whatsapp/:botId streams QR strings as they rotate and a final
 // `{ paired: true }` event when the device links successfully.
 //
-// The WhatsApp adapter calls `setWhatsAppQr(qr)` on each new QR from
-// Baileys, and `setWhatsAppQr(null)` once pairing completes.
+// The WhatsApp adapter calls `setWhatsAppQr(botId, qr)` on each new QR from
+// Baileys, and `setWhatsAppQr(botId, null)` once pairing completes.
 
 type Listener = (data: string) => void;
 
-let currentQr: string | null = null;
-const listeners = new Set<Listener>();
+const qrState = new Map<string, string | null>();
+const listeners = new Map<string, Set<Listener>>();
 
-export function setWhatsAppQr(qr: string | null): void {
-  currentQr = qr;
+export function setWhatsAppQr(botId: string, qr: string | null): void {
+  qrState.set(botId, qr);
   const payload = qr
     ? JSON.stringify({ qr })
     : JSON.stringify({ paired: true });
-  for (const listener of listeners) {
-    listener(payload);
+  const subs = listeners.get(botId);
+  if (subs) {
+    for (const listener of subs) {
+      listener(payload);
+    }
   }
 }
 
 export function setupWhatsAppRoutes() {
   const app = new Hono();
 
-  app.get('/', async (c) => {
+  app.get('/:botId', async (c) => {
+    const botId = c.req.param('botId');
+
     return streamSSE(c, async (stream) => {
       let seq = 0;
 
@@ -36,11 +41,22 @@ export function setupWhatsAppRoutes() {
         void stream.writeSSE({ id: String(seq), data });
       };
 
+      let subs = listeners.get(botId);
+      if (!subs) {
+        subs = new Set();
+        listeners.set(botId, subs);
+      }
+
       stream.onAbort(() => {
-        listeners.delete(handler);
+        const set = listeners.get(botId);
+        if (set) {
+          set.delete(handler);
+          if (set.size === 0) listeners.delete(botId);
+        }
       });
 
       // Replay current QR immediately so late-joining clients see it.
+      const currentQr = qrState.get(botId) ?? null;
       if (currentQr) {
         seq++;
         void stream.writeSSE({
@@ -49,10 +65,12 @@ export function setupWhatsAppRoutes() {
         });
       }
 
-      listeners.add(handler);
+      subs.add(handler);
 
-      // Block forever — onAbort is the only way out.
-      await new Promise<void>(() => {});
+      // Block until the client disconnects — onAbort is the only way out.
+      await new Promise<void>((resolve) => {
+        stream.onAbort(() => resolve());
+      });
     });
   });
 
