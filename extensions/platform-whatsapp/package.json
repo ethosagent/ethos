@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@ethosagent/types": "workspace:*",
-    "@whiskeysockets/baileys": "^6.7.16",
+    "@whiskeysockets/baileys": "7.0.0-rc13",
     "qrcode-terminal": "^0.12.0"
   }
 }
