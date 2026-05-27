@@ -23,6 +23,7 @@ const srcAliases = {
   '@ethosagent/tools-file': resolve('./extensions/tools-file/src'),
   '@ethosagent/tools-mcp': resolve('./extensions/tools-mcp/src'),
   '@ethosagent/agent-bridge': resolve('./packages/agent-bridge/src'),
+  '@ethosagent/plugin-loader': resolve('./extensions/plugin-loader/src'),
 };
 
 export default defineConfig({

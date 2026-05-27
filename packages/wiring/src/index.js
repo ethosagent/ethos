@@ -844,6 +844,14 @@ export async function createAgentLoop(config, opts) {
     logger: log,
   });
   await pluginLoader.loadAll();
+
+  if (activePerson.plugins?.length) {
+    const personalityDir = join(dataDir, 'personalities', activePerson.id);
+    await pluginLoader.resolveFromLockfile(personalityDir, activePerson.plugins, {
+      autoInstall: config.pluginsAutoInstall ?? true,
+    });
+  }
+
   // Merge skill dirs declared by plugins/tools into the live injector scanner
   // and the boot-time skill pool (for MCP passthrough + design tools).
   const pluginSkillSources = pluginLoader.getPluginSkillSources();

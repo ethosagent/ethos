@@ -3,12 +3,14 @@ import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { type PluginLockEntry, readLockfile, writeLockfile } from '@ethosagent/plugin-loader';
 import {
   canInstall,
   type PluginScanPermissions,
   type ScanFinding,
   scanPluginCode,
 } from '@ethosagent/safety-scanner';
+import type { Storage } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 import { writeJson } from '../json-output';
 
@@ -510,6 +512,37 @@ async function clearCredential(credDir: string, key: string): Promise<void> {
 // ---------------------------------------------------------------------------
 // List
 // ---------------------------------------------------------------------------
+
+export async function updatePersonalityPluginConfig(
+  storage: Storage,
+  personalityDir: string,
+  pluginId: string,
+  entry: PluginLockEntry,
+): Promise<void> {
+  const lockfile = await readLockfile(storage, personalityDir);
+  lockfile[pluginId] = entry;
+  await writeLockfile(storage, personalityDir, lockfile);
+
+  const configPath = join(personalityDir, 'config.yaml');
+  const configContent = await storage.read(configPath);
+  if (!configContent) return;
+
+  const lines = configContent.split('\n');
+  const pluginsIdx = lines.findIndex((l) => l.startsWith('plugins:'));
+
+  if (pluginsIdx >= 0) {
+    const existing = lines[pluginsIdx].replace('plugins:', '').trim();
+    const ids = existing ? existing.split(/\s+/) : [];
+    if (!ids.includes(pluginId)) {
+      ids.push(pluginId);
+      lines[pluginsIdx] = `plugins: ${ids.join(' ')}`;
+    }
+  } else {
+    lines.push(`plugins: ${pluginId}`);
+  }
+
+  await storage.write(configPath, lines.join('\n'));
+}
 
 async function listPlugins(args: string[] = []): Promise<void> {
   const jsonMode = args.includes('--json');
