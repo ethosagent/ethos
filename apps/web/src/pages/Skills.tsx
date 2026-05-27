@@ -11,6 +11,7 @@ import {
   Modal,
   Popconfirm,
   Spin,
+  Switch,
   Table,
   Tabs,
   Tag,
@@ -499,6 +500,14 @@ function EvolverConfigForm() {
         extra="A new-skill candidate needs at least this many high-scoring sample tasks."
       >
         <InputNumber min={0} step={1} style={{ width: '100%' }} />
+      </Form.Item>
+      <Form.Item
+        label="Auto-approve evolved skills"
+        name="autoApprove"
+        valuePropName="checked"
+        extra="When enabled, proposed skills are promoted directly to the live library without manual review."
+      >
+        <Switch />
       </Form.Item>
       <Form.Item>
         <Button type="primary" htmlType="submit" loading={updateMut.isPending}>

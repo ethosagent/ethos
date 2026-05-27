@@ -7,6 +7,7 @@ export const DEFAULT_EVOLVE_CONFIG = {
   newSkillPatternThreshold: 0.8,
   minRunsBeforeEvolve: 10,
   minPatternCount: 3,
+  autoApprove: false,
 };
 // Cap how many high-score zero-skill tasks we hand to the LLM in one prompt.
 // Large bundles dilute the signal and bloat tokens; 20 is enough to spot a
@@ -57,6 +58,7 @@ export async function loadEvolveConfig(path, storage = defaultStorage) {
       parsed.newSkillPatternThreshold ?? DEFAULT_EVOLVE_CONFIG.newSkillPatternThreshold,
     minRunsBeforeEvolve: parsed.minRunsBeforeEvolve ?? DEFAULT_EVOLVE_CONFIG.minRunsBeforeEvolve,
     minPatternCount: parsed.minPatternCount ?? DEFAULT_EVOLVE_CONFIG.minPatternCount,
+    autoApprove: parsed.autoApprove ?? DEFAULT_EVOLVE_CONFIG.autoApprove,
   };
 }
 function summarizeTasks(records) {

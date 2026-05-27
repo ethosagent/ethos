@@ -259,6 +259,7 @@ export const EvolveConfigSchema = z.object({
   newSkillPatternThreshold: z.number().min(0).max(1),
   minRunsBeforeEvolve: z.number().int().nonnegative(),
   minPatternCount: z.number().int().nonnegative(),
+  autoApprove: z.boolean(),
 });
 export type EvolveConfigWire = z.infer<typeof EvolveConfigSchema>;
 

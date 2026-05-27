@@ -950,7 +950,12 @@ export async function createAgentLoop(config, opts) {
   // transcript and proposes memory updates or new skills when the
   // active personality opts in via `skill_evolution.enabled`.
   let onSkillProposedFn;
-  const { ImprovementFork } = await import('@ethosagent/skill-evolver');
+  let onSkillAppliedFn;
+  const { ImprovementFork, loadEvolveConfig: loadEvolveConfigFn } = await import(
+    '@ethosagent/skill-evolver'
+  );
+  const evolveConfigPath = join(dataDir, 'evolve-config.json');
+  const wiringStorage = new FsStorage();
   const improvementFork = new ImprovementFork({
     hooks,
     runtime: {
@@ -961,12 +966,35 @@ export async function createAgentLoop(config, opts) {
     },
     personalities,
     dataDir,
-    storage: new FsStorage(),
+    storage: wiringStorage,
     onSkillProposed: (skillId, personalityId) => {
       onSkillProposedFn?.(skillId, personalityId);
     },
+    autoApprove: () => {
+      return autoApproveCache;
+    },
+    onSkillApplied: (skillId, personalityId) => {
+      onSkillAppliedFn?.(skillId, personalityId);
+    },
   });
   improvementFork.register();
+  let autoApproveCache = false;
+  (async () => {
+    try {
+      const cfg = await loadEvolveConfigFn(evolveConfigPath, wiringStorage);
+      autoApproveCache = cfg.autoApprove;
+    } catch {
+      // Non-fatal — keep the default.
+    }
+  })();
+  hooks.registerVoid('agent_done', async () => {
+    try {
+      const cfg = await loadEvolveConfigFn(evolveConfigPath, wiringStorage);
+      autoApproveCache = cfg.autoApprove;
+    } catch {
+      // Non-fatal.
+    }
+  });
   // Ch.6a — In-process watcher. Built with the default rule set
   // (rate-limit + token-budget + compounding-error + suspicious-
   // sequence). When an observability writer is wired, watcher
@@ -1083,6 +1111,9 @@ export async function createAgentLoop(config, opts) {
     },
     setOnSkillProposed: (fn) => {
       onSkillProposedFn = fn;
+    },
+    setOnSkillApplied: (fn) => {
+      onSkillAppliedFn = fn;
     },
     notificationRouter,
     pluginLoader,

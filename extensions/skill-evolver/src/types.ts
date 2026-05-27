@@ -3,6 +3,7 @@ export interface EvolveConfig {
   newSkillPatternThreshold: number;
   minRunsBeforeEvolve: number;
   minPatternCount: number;
+  autoApprove: boolean;
 }
 
 export interface EvalRecord {

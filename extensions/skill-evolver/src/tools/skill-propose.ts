@@ -11,7 +11,7 @@ export function createSkillProposeTool(opts: {
   storage: Storage;
   pendingDir: string;
   now?: () => number;
-  onProposed?: () => void;
+  onProposed?: (skillId: string) => void;
 }): Tool<SkillProposeArgs> {
   const now = opts.now ?? (() => Date.now());
 
@@ -69,7 +69,7 @@ export function createSkillProposeTool(opts: {
 
       await opts.storage.mkdir(opts.pendingDir);
       await opts.storage.write(join(opts.pendingDir, filename), header + args.content);
-      opts.onProposed?.();
+      opts.onProposed?.(id);
       return { ok: true, value: `Skill candidate "${id}" written to pending queue for review.` };
     },
   };

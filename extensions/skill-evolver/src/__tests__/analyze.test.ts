@@ -78,6 +78,20 @@ describe('loadEvolveConfig', () => {
     expect(cfg.rewriteThreshold).toBe(0.5);
     expect(cfg.minRunsBeforeEvolve).toBe(DEFAULT_EVOLVE_CONFIG.minRunsBeforeEvolve);
   });
+
+  it('round-trips autoApprove field', async () => {
+    const path = join(testDir, 'evolve-config.json');
+    await writeFile(path, JSON.stringify({ autoApprove: true }), 'utf-8');
+    const cfg = await loadEvolveConfig(path);
+    expect(cfg.autoApprove).toBe(true);
+  });
+
+  it('defaults autoApprove to false when missing', async () => {
+    const path = join(testDir, 'evolve-config.json');
+    await writeFile(path, JSON.stringify({ rewriteThreshold: 0.7 }), 'utf-8');
+    const cfg = await loadEvolveConfig(path);
+    expect(cfg.autoApprove).toBe(false);
+  });
 });
 
 describe('analyzeEvalOutput', () => {

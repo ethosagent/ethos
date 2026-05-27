@@ -215,6 +215,7 @@ export const EvolveConfigSchema = z.object({
   newSkillPatternThreshold: z.number().min(0).max(1),
   minRunsBeforeEvolve: z.number().int().nonnegative(),
   minPatternCount: z.number().int().nonnegative(),
+  autoApprove: z.boolean(),
 });
 export const EvolverRunSchema = z.object({
   /** ISO-8601 of when the run completed. */

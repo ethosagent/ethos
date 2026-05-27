@@ -186,6 +186,14 @@ export function createWebApi(opts) {
       proposedAt: new Date().toISOString(),
     });
   });
+  opts.setOnSkillApplied?.((skillId, personalityId) => {
+    chatService.broadcastAll({
+      type: 'evolve.skill_applied',
+      skillId,
+      personalityId,
+      appliedAt: new Date().toISOString(),
+    });
+  });
   // Register the web `before_tool_call` hook on the loop. CLI/TUI/ACP
   // profiles get the synchronous terminal guard from `@ethosagent/wiring`;
   // the web profile skips that registration so this hook is the sole
