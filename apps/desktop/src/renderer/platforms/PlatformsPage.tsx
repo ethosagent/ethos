@@ -6,6 +6,7 @@ import { DiscordDrawer } from './drawers/DiscordDrawer';
 import { EmailDrawer } from './drawers/EmailDrawer';
 import { SlackDrawer } from './drawers/SlackDrawer';
 import { TelegramDrawer } from './drawers/TelegramDrawer';
+import { WhatsAppDrawer } from './drawers/WhatsAppDrawer';
 import { PlatformRow } from './PlatformRow';
 
 type PlatformId = 'telegram' | 'slack' | 'discord' | 'email' | 'whatsapp';
@@ -186,6 +187,13 @@ export function PlatformsPage() {
         onClose={() => setActiveDrawer(null)}
       >
         <EmailDrawer onBotChange={reload} />
+      </DrawerShell>
+      <DrawerShell
+        open={activeDrawer === 'whatsapp'}
+        title="WhatsApp"
+        onClose={() => setActiveDrawer(null)}
+      >
+        <WhatsAppDrawer onBotChange={reload} />
       </DrawerShell>
     </div>
   );
