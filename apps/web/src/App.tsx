@@ -140,7 +140,7 @@ export function App() {
           <Route path="/setup/memory" element={<Onboarding startAtStep="memory" />} />
           <Route path="/setup/personality" element={<Onboarding startAtStep="personality" />} />
           <Route path="/setup/messaging" element={<Onboarding startAtStep="messaging" />} />
-          <Route path="/setup/whatsapp" element={<SetupWhatsApp />} />
+          <Route path="/setup/whatsapp/:botId" element={<SetupWhatsApp />} />
           <Route path="/signing-in" element={<SigningIn />} />
           <Route path="/oauth/callback" element={<OAuthCallback />} />
           <Route path="*" element={<Navigate to="/chat" replace />} />

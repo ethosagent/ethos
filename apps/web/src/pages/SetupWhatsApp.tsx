@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
 
 export function SetupWhatsApp() {
+  const { botId = 'default' } = useParams();
   const [qr, setQr] = useState<string | null>(null);
   const [paired, setPaired] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Extract botId from the URL path: /setup/whatsapp/:botId
-    const segments = window.location.pathname.split('/');
-    const botId = segments[segments.length - 1] || 'default';
     const source = new EventSource(`/setup/whatsapp/${botId}`);
 
     source.onmessage = (event) => {
@@ -31,7 +30,7 @@ export function SetupWhatsApp() {
     };
 
     return () => source.close();
-  }, []);
+  }, [botId]);
 
   if (paired) {
     return (

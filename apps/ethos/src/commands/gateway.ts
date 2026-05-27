@@ -1300,6 +1300,12 @@ export async function buildAdapters(
         waCache = new FsAttachmentCache(getStorage(), join(ethosDir(), 'cache', 'attachments'));
       }
 
+      const waIds = (config.whatsapp ?? []).map((c, i) => c.id ?? `wa-idx-${i}`);
+      const dupes = waIds.filter((id, i) => waIds.indexOf(id) !== i);
+      if (dupes.length > 0) {
+        console.warn(`[whatsapp] Duplicate bot IDs detected: ${dupes.join(', ')}. Each WhatsApp config must have a unique id.`);
+      }
+
       for (const waCfg of config.whatsapp ?? []) {
         const onQrCb = opts?.onWhatsAppQr;
         adapters.push(

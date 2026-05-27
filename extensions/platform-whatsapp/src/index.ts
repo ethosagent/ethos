@@ -39,6 +39,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
   readonly botKey: string;
   private sock: unknown = null;
   private reconnecting = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private messageHandler?: (message: InboundMessage) => void;
   private botJid = '';
   private readonly config: WhatsAppAdapterConfig;
@@ -89,8 +90,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
               gen(update.qr, { small: true });
             })
             .catch(() => {
-              console.log('[whatsapp] Scan this QR in WhatsApp:');
-              console.log(update.qr);
+              // qrcode-terminal unavailable; printQRInTerminal handles it
             });
           if (this.config.onQr) this.config.onQr(update.qr);
         }
@@ -101,7 +101,8 @@ export class WhatsAppAdapter implements PlatformAdapter {
           if (code !== DisconnectReason.loggedOut) {
             this.reconnecting = true;
             this.sock = null;
-            setTimeout(() => {
+            this.reconnectTimer = setTimeout(() => {
+              this.reconnectTimer = null;
               this.reconnecting = false;
               this.start();
             }, 3000);
@@ -110,7 +111,6 @@ export class WhatsAppAdapter implements PlatformAdapter {
 
         if (update.connection === 'open') {
           this.botJid = sock.user?.id ?? '';
-          console.log(`[whatsapp] Connected as ${this.botJid}`);
           if (this.config.onQr) this.config.onQr(null);
         }
       },
@@ -212,6 +212,11 @@ export class WhatsAppAdapter implements PlatformAdapter {
   }
 
   async stop(): Promise<void> {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.reconnecting = false;
     if (this.sock) {
       const sock = this.sock as {
         end: (reason?: unknown) => void;

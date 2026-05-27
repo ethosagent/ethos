@@ -55,6 +55,10 @@ export function setupWhatsAppRoutes() {
         }
       });
 
+      // Register listener BEFORE replaying current state to avoid missing
+      // a QR rotation between replay and subscribe.
+      subs.add(handler);
+
       // Replay current QR immediately so late-joining clients see it.
       const currentQr = qrState.get(botId) ?? null;
       if (currentQr) {
@@ -64,8 +68,6 @@ export function setupWhatsAppRoutes() {
           data: JSON.stringify({ qr: currentQr }),
         });
       }
-
-      subs.add(handler);
 
       // Block until the client disconnects — onAbort is the only way out.
       await new Promise<void>((resolve) => {
