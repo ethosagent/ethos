@@ -124,7 +124,8 @@ export class WhatsAppAdapter implements PlatformAdapter {
         const isDm = !jid.endsWith('@g.us');
 
         if (this.config.allowedJids) {
-          const number = jid.split('@')[0];
+          const checkJid = isDm ? jid : (msg.key.participant ?? '');
+          const number = checkJid.split('@')[0].replace(/[^0-9]/g, '');
           const matched = this.config.allowedJids.some((allowed) => {
             const normalizedAllowed = allowed.replace(/[^0-9]/g, '');
             return number === normalizedAllowed;

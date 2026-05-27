@@ -12,7 +12,11 @@ export interface RawWhatsAppMessage {
     conversation?: string;
     extendedTextMessage?: {
       text?: string;
-      contextInfo?: { quotedMessage?: unknown; stanzaId?: string };
+      contextInfo?: {
+        quotedMessage?: unknown;
+        stanzaId?: string;
+        mentionedJid?: string[];
+      };
     };
     imageMessage?: {
       mimetype?: string;
@@ -46,8 +50,11 @@ export function parseInboundMessage(
   const isDm = !jid.endsWith('@g.us');
   const text = extractText(msg);
   const botNumber = botJid.split('@')[0].split(':')[0];
-  const isGroupMention =
-    !isDm && text.includes(`@${botNumber}`);
+  const mentionedJids = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
+  const isGroupMention = !isDm && (
+    (mentionedJids && mentionedJids.some((j) => j.split('@')[0].split(':')[0] === botNumber)) ||
+    text.includes(`@${botNumber}`)
+  );
 
   const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
 

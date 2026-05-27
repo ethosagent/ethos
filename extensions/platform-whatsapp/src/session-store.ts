@@ -6,13 +6,17 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+function sanitizeBotKey(key: string): string {
+  return key.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
 export interface SessionStoreConfig {
   sessionDir: string;
   botKey: string;
 }
 
 export function resolveSessionDir(config: SessionStoreConfig): string {
-  const dir = join(config.sessionDir, config.botKey);
+  const dir = join(config.sessionDir, sanitizeBotKey(config.botKey));
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
