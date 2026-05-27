@@ -497,7 +497,7 @@ function SlackPanel() {
 // ---------------------------------------------------------------------------
 
 interface PlatformShape {
-  id: 'discord' | 'email' | 'whatsapp';
+  id: 'discord' | 'email';
   label: string;
   fields: ReadonlyArray<{
     name: string;
@@ -535,17 +535,31 @@ const LEGACY_PLATFORMS: ReadonlyArray<PlatformShape> = [
       { name: 'smtpPort', label: 'SMTP port', placeholder: '587', secret: false },
     ],
   },
-  {
-    id: 'whatsapp',
-    label: 'WhatsApp',
-    fields: [
-      { name: 'phoneNumberId', label: 'Phone number ID', placeholder: '1234567890', secret: false },
-      { name: 'accessToken', label: 'Access token', secret: true, helper: 'Permanent token from Meta Business dashboard.' },
-      { name: 'verifyToken', label: 'Webhook verify token', secret: false, placeholder: 'my-verify-token' },
-    ],
-    helpUrl: 'https://developers.facebook.com/docs/whatsapp/cloud-api/get-started',
-  },
 ];
+
+function WhatsAppPanel() {
+  return (
+    <Card
+      size="small"
+      title="WhatsApp (Baileys)"
+      extra={
+        <Typography.Link href="https://github.com/WhiskeySockets/Baileys" target="_blank" rel="noreferrer">
+          Baileys docs ↗
+        </Typography.Link>
+      }
+      style={{ maxWidth: 640 }}
+    >
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        WhatsApp uses QR-code pairing via Baileys. No Cloud API credentials are needed.
+      </Typography.Paragraph>
+      <Button type="primary" href="/setup/whatsapp/default">
+        Set up WhatsApp
+      </Button>
+
+      <AccessControlSection platform="whatsapp" />
+    </Card>
+  );
+}
 
 function LegacyPlatformPanel({
   shape,
@@ -840,6 +854,7 @@ export function Communications() {
         items={[
           { key: 'telegram', label: 'Telegram', children: <TelegramPanel /> },
           { key: 'slack', label: 'Slack', children: <SlackPanel /> },
+          { key: 'whatsapp', label: 'WhatsApp', children: <WhatsAppPanel /> },
           ...LEGACY_PLATFORMS.map((shape) => {
             const status = statusById.get(shape.id);
             return {

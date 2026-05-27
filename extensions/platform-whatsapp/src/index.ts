@@ -82,8 +82,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
       if (update.qr) {
         import('qrcode-terminal')
           .then((qrterm) => {
-            const gen = qrterm.default?.generate ?? qrterm.generate;
-            gen(update.qr, { small: true });
+            qrterm.generate(update.qr, { small: true });
           })
           .catch(() => {
             // qrcode-terminal unavailable; printQRInTerminal handles it

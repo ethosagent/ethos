@@ -112,7 +112,7 @@ export function WhatsAppDrawer({ onBotChange }: WhatsAppDrawerProps) {
           <div style={{ marginTop: 8, color: 'var(--text-tertiary)' }}>
             Or visit the web setup page at{' '}
             <code style={{ fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-              http://localhost:{state.port}/setup/whatsapp
+              http://localhost:{state.port}/setup/whatsapp/default
             </code>
           </div>
         </div>
