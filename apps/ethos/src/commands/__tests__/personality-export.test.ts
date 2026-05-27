@@ -210,6 +210,63 @@ describe('personality export — path traversal defense', () => {
 // Test group 6: tar roundtrip with cron/jobs.json
 // ---------------------------------------------------------------------------
 
+// Tests archive format only; collectPersonalityEntries is module-private.
+describe('personality export — plugins.lock inclusion', () => {
+  it('plugins.lock appears in export archive', () => {
+    const lockContent = [
+      'plugins:',
+      '  tools-zerodha:',
+      '    package: "@ethos-plugins/tools-zerodha"',
+      '    version: "1.4.2"',
+      '    registry: "https://registry.npmjs.org"',
+      '    integrity: "sha512-abc123"',
+      '',
+    ].join('\n');
+
+    const entries: Entry[] = [
+      { relPath: 'personalities/demo/SOUL.md', content: Buffer.from('# Demo') },
+      {
+        relPath: 'personalities/demo/config.yaml',
+        content: Buffer.from('name: demo\nplugins: tools-zerodha'),
+      },
+      { relPath: 'personalities/demo/toolset.yaml', content: Buffer.from('- read_file') },
+      { relPath: 'personalities/demo/plugins.lock', content: Buffer.from(lockContent) },
+    ];
+
+    const tar = buildTar(entries);
+    const parsed = parseTar(tar);
+    const paths = parsed.map(([p]) => p);
+    expect(paths).toContain('personalities/demo/plugins.lock');
+  });
+
+  it('plugins.lock roundtrips through tar correctly', () => {
+    const lockContent = [
+      'plugins:',
+      '  my-plugin:',
+      '    package: "@ethos-plugins/my-plugin"',
+      '    version: "2.0.0"',
+      '    registry: "https://npm.corp.internal"',
+      '    integrity: "sha512-xyz"',
+      '',
+    ].join('\n');
+
+    const entries: Entry[] = [
+      { relPath: 'personalities/demo/plugins.lock', content: Buffer.from(lockContent) },
+    ];
+    const tar = buildTar(entries);
+    const parsed = parseTar(tar);
+    const lockEntry = parsed.find(([p]) => p === 'personalities/demo/plugins.lock');
+    expect(lockEntry).toBeDefined();
+    if (lockEntry) {
+      expect(lockEntry[1].toString()).toBe(lockContent);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test group 7: tar roundtrip with cron/jobs.json
+// ---------------------------------------------------------------------------
+
 describe('backup — cron/jobs.json inclusion', () => {
   it('cron/jobs.json roundtrips through tar correctly', () => {
     const cronContent = JSON.stringify([{ name: 'daily', schedule: '0 0 * * *' }]);
