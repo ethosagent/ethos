@@ -7,6 +7,7 @@ import {
   Checkbox,
   Collapse,
   Empty,
+  Input,
   Popconfirm,
   Skeleton,
   Table,
@@ -19,6 +20,48 @@ import { useState } from 'react';
 import { AddMcpModal } from '../components/mcp/AddMcpModal';
 import { McpServerActions } from '../components/mcp/McpServerActions';
 import { rpc } from '../rpc';
+
+function InstallPluginSection() {
+  const { notification } = AntApp.useApp();
+  const qc = useQueryClient();
+  const [packageSpec, setPackageSpec] = useState('');
+
+  const mut = useMutation({
+    mutationFn: (spec: string) => rpc.plugins.install({ packageSpec: spec }),
+    onSuccess: () => {
+      notification.success({ message: 'Plugin installed' });
+      setPackageSpec('');
+      qc.invalidateQueries({ queryKey: ['plugins', 'list'] });
+    },
+    onError: (err) => {
+      notification.error({
+        message: 'Install failed',
+        description: err instanceof Error ? err.message : String(err),
+      });
+    },
+  });
+
+  return (
+    <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <Input
+        placeholder="Package spec, e.g. @scope/my-plugin@1.0.0"
+        value={packageSpec}
+        onChange={(e) => setPackageSpec(e.target.value)}
+        onPressEnter={() => packageSpec.trim() && mut.mutate(packageSpec.trim())}
+        disabled={mut.isPending}
+        style={{ flex: 1 }}
+      />
+      <Button
+        type="primary"
+        loading={mut.isPending}
+        disabled={!packageSpec.trim()}
+        onClick={() => mut.mutate(packageSpec.trim())}
+      >
+        Install
+      </Button>
+    </div>
+  );
+}
 
 // Plugins page — global matrix of plugins × personalities.
 //
@@ -63,6 +106,7 @@ export function Plugins() {
 
   return (
     <div className="plugins-tab">
+      <InstallPluginSection />
       <Tabs
         activeKey={activeTab}
         onChange={setActiveTab}

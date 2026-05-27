@@ -1,7 +1,27 @@
+import { spawn } from 'node:child_process';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { type InstalledPluginManifest, scanInstalledPlugins } from '@ethosagent/plugin-loader';
 import { loadMcpConfig, type McpServerConfig } from '@ethosagent/tools-mcp';
 import type { Storage } from '@ethosagent/types';
 import type { McpServerInfo, PluginInfo } from '@ethosagent/web-contracts';
+
+function spawnNpm(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('npm', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    const stderrChunks: Buffer[] = [];
+    proc.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        const stderr = Buffer.concat(stderrChunks).toString().trim();
+        reject(new Error(stderr || `npm exited with code ${code}`));
+      }
+    });
+    proc.on('error', reject);
+  });
+}
 
 // Plugins service — composes the plugin manifest scan
 // (~/.ethos/plugins/<id>/) and the MCP config (~/.ethos/mcp.json).
@@ -19,6 +39,17 @@ export interface PluginsServiceOptions {
 
 export class PluginsService {
   constructor(private readonly opts: PluginsServiceOptions) {}
+
+  async install(packageSpec: string): Promise<void> {
+    const dir = join(this.opts.dataDir, 'plugins');
+    await mkdir(dir, { recursive: true });
+    await spawnNpm(['install', '--prefix', dir, '--ignore-scripts', '--no-audit', packageSpec]);
+  }
+
+  async uninstall(pluginId: string): Promise<void> {
+    const dir = join(this.opts.dataDir, 'plugins');
+    await spawnNpm(['uninstall', '--prefix', dir, pluginId]);
+  }
 
   async list(): Promise<{ plugins: PluginInfo[]; mcpServers: McpServerInfo[] }> {
     const [manifests, mcpRaw] = await Promise.all([

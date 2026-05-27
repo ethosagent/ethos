@@ -20,6 +20,7 @@ import {
   type PluginScanPermissions,
   type ScanFinding,
   scanPluginCode,
+  type TrustTier,
 } from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { Logger, PlatformAdapter, Storage } from '@ethosagent/types';
@@ -98,12 +99,16 @@ export class PluginLoader {
    * Silently skips directories that don't look like plugins.
    */
   async loadFromDirectory(dir: string): Promise<void> {
+    // Packages the user intentionally placed in ~/.ethos/plugins/ are treated as
+    // trusted-repo — the user made an explicit install decision.
+    const isUserPluginsDir = dir === join(homedir(), '.ethos', 'plugins');
+    const tierOverride: TrustTier | undefined = isUserPluginsDir ? 'trusted-repo' : undefined;
     const entries = await this.storage.listEntries(dir);
     for (const entry of entries) {
       if (!entry.isDir) continue;
       const pluginDir = join(dir, entry.name);
       try {
-        await this.loadFromPluginDir(pluginDir, entry.name);
+        await this.loadFromPluginDir(pluginDir, entry.name, tierOverride);
       } catch {
         // skip broken plugins
       }
@@ -115,7 +120,7 @@ export class PluginLoader {
    * either `plugin.yaml` or `package.json` (with ethos.type=plugin),
    * and an `index.ts` or `index.js` that exports `activate`.
    */
-  async loadFromPluginDir(dir: string, pluginId?: string): Promise<void> {
+  async loadFromPluginDir(dir: string, pluginId?: string, tierOverride?: TrustTier): Promise<void> {
     const id = pluginId ?? dir.split('/').pop() ?? 'unknown';
 
     // Read package.json once — used for skills_dir discovery, contract check, and permissions.
@@ -145,7 +150,7 @@ export class PluginLoader {
 
     // Safety scan the entire plugin source tree before executing any code.
     const permissions = readPluginPermissions(pkgJson);
-    const tier = deriveTier(dir);
+    const tier = tierOverride ?? deriveTier(dir);
     const scanResult = await scanPluginTree(this.storage, dir, permissions);
     const decision = canInstall(scanResult, tier);
     if (!decision.allowed) {
@@ -183,30 +188,54 @@ export class PluginLoader {
    * are scanned in order.
    */
   async loadFromNodeModules(dir?: string): Promise<void> {
-    const dirs = dir
-      ? [dir]
-      : [resolve('node_modules'), join(homedir(), '.ethos', 'plugins', 'node_modules')];
+    const pluginsNmDir = join(homedir(), '.ethos', 'plugins', 'node_modules');
+    const dirs = dir ? [dir] : [resolve('node_modules'), pluginsNmDir];
     for (const nmDir of dirs) {
-      await this.scanNodeModulesDir(nmDir);
+      await this.scanNodeModulesDir(nmDir, { allowAll: nmDir === pluginsNmDir });
     }
   }
 
-  private async scanNodeModulesDir(nmDir: string): Promise<void> {
+  private async scanNodeModulesDir(
+    nmDir: string,
+    opts: { allowAll?: boolean } = {},
+  ): Promise<void> {
     const entries = await this.storage.list(nmDir);
     if (entries.length === 0) return;
 
     // listEntries returns scope dirs (e.g. `@ethos-plugins`) without their packages,
     // so scoped names need a second list to surface `@ethos-plugins/foo`.
     const candidates: string[] = [];
-    for (const entry of entries) {
-      if (entry.startsWith('ethos-plugin-')) {
-        candidates.push(entry);
-        continue;
+    if (opts.allowAll) {
+      // User's intentional plugin install dir — pick up ALL packages regardless of name/scope.
+      for (const entry of entries) {
+        if (entry === 'node_modules' || entry === '.bin') continue;
+        if (entry.startsWith('@')) {
+          const scopedEntries = await this.storage.list(join(nmDir, entry));
+          for (const sub of scopedEntries) {
+            candidates.push(`${entry}/${sub}`);
+          }
+        } else {
+          candidates.push(entry);
+        }
       }
-      if (entry === '@ethos-plugins') {
-        const scopedEntries = await this.storage.list(join(nmDir, entry));
-        for (const sub of scopedEntries) {
-          candidates.push(`${entry}/${sub}`);
+    } else {
+      // Project node_modules — keep strict name filter for performance.
+      for (const entry of entries) {
+        if (entry.startsWith('ethos-plugin-')) {
+          candidates.push(entry);
+          continue;
+        }
+        if (entry === '@ethos-plugins') {
+          const scopedEntries = await this.storage.list(join(nmDir, entry));
+          for (const sub of scopedEntries) {
+            candidates.push(`${entry}/${sub}`);
+          }
+        }
+        if (entry === '@ethosagent') {
+          const scopedEntries = await this.storage.list(join(nmDir, entry));
+          for (const sub of scopedEntries) {
+            candidates.push(`${entry}/${sub}`);
+          }
         }
       }
     }
@@ -252,8 +281,9 @@ export class PluginLoader {
         if (!entry) continue;
 
         // Safety scan the entire npm package source tree before executing any code.
+        // User plugins dir is treated as trusted-repo — user made a deliberate install decision.
         const permissions = readPluginPermissions(raw as Record<string, unknown>);
-        const tier = deriveTier(name);
+        const tier: TrustTier = opts.allowAll ? 'trusted-repo' : deriveTier(name);
         const scanResult = await scanPluginTree(this.storage, join(nmDir, name), permissions);
         const decision = canInstall(scanResult, tier);
         if (!decision.allowed) {
@@ -265,7 +295,12 @@ export class PluginLoader {
         }
 
         const mod = await import(entry);
-        await this.activatePlugin(name, mod);
+        // Use ethos.id if declared, otherwise strip @scope/ so the plugin ID
+        // matches what users write in personality config.yaml (e.g. `tools-nse-market-data`
+        // not `@ethosagent/tools-nse-market-data`).
+        const declaredId = ethosNm?.id as string | undefined;
+        const pluginId = declaredId ?? name.replace(/^@[^/]+\//, '');
+        await this.activatePlugin(pluginId, mod);
       } catch {
         // skip
       }
@@ -546,7 +581,8 @@ function toInstalledPluginManifest(
   source: 'user' | 'project',
   pluginDir: string,
 ): InstalledPluginManifest {
-  const dialect: 'ethos' | 'openclaw' = manifest.ethos?.type === 'plugin' ? 'ethos' : 'openclaw';
+  const dialect: 'ethos' | 'openclaw' =
+    isOpenClawPackageJson(manifest) && !manifest.ethos ? 'openclaw' : 'ethos';
   const id =
     dialect === 'ethos'
       ? (manifest.ethos?.id ?? manifest.name)
@@ -577,8 +613,8 @@ async function readManifest(
   } catch {
     return null;
   }
-  // Accept Ethos plugins (ethos.type = 'plugin') or OpenClaw plugins (openclaw block present)
-  if (parsed.ethos?.type !== 'plugin' && !isOpenClawPackageJson(parsed)) return null;
+  // Accept any package with an ethos field, or OpenClaw plugins (openclaw block present)
+  if (!parsed.ethos && !isOpenClawPackageJson(parsed)) return null;
   return parsed;
 }
 

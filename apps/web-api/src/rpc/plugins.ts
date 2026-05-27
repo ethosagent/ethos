@@ -1,7 +1,13 @@
 import { os } from './context';
 
-// Thin RPC shell for the plugins namespace.
-
 export const pluginsRouter = {
   list: os.plugins.list.handler(({ context }) => context.plugins.list()),
+  install: os.plugins.install.handler(async ({ context, input }) => {
+    await context.plugins.install(input.packageSpec);
+    return { ok: true as const };
+  }),
+  uninstall: os.plugins.uninstall.handler(async ({ context, input }) => {
+    await context.plugins.uninstall(input.pluginId);
+    return { ok: true as const };
+  }),
 };

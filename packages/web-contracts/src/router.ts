@@ -705,11 +705,11 @@ const platforms = {
 };
 
 // ---------------------------------------------------------------------------
-// Plugins + MCP (v1 — read-only inventory)
+// Plugins + MCP (v1)
 //
 // Returns the union of installed plugins (discovered in user / project
-// / npm dirs) and configured MCP servers. CRUD is out of scope for v1
-// — the CLI (`ethos plugin install / add-mcp`) remains the editor.
+// / npm dirs) and configured MCP servers. install/uninstall delegate to
+// npm under the hood (same as the CLI's `ethos plugin install / remove`).
 // ---------------------------------------------------------------------------
 
 const PluginsListOutput = z.object({
@@ -717,9 +717,16 @@ const PluginsListOutput = z.object({
   mcpServers: z.array(McpServerInfoSchema),
 });
 
+const PluginsInstallInput = z.object({ packageSpec: z.string().min(1) });
+const PluginsInstallOutput = z.object({ ok: z.literal(true) });
+const PluginsUninstallInput = z.object({ pluginId: z.string().min(1) });
+const PluginsUninstallOutput = z.object({ ok: z.literal(true) });
+
 /** @experimental */
 const plugins = {
   list: oc.output(PluginsListOutput),
+  install: oc.input(PluginsInstallInput).output(PluginsInstallOutput),
+  uninstall: oc.input(PluginsUninstallInput).output(PluginsUninstallOutput),
 };
 
 // ---------------------------------------------------------------------------
