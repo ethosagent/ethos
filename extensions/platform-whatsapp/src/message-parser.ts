@@ -2,7 +2,7 @@ import type { Attachment, InboundMessage } from '@ethosagent/types';
 
 export interface RawWhatsAppMessage {
   key: {
-    remoteJid: string;
+    remoteJid: string | null | undefined;
     fromMe: boolean;
     id: string;
     participant?: string;

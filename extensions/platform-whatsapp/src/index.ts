@@ -63,7 +63,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
 
     const baileys = await import('@whiskeysockets/baileys');
     const makeWASocket = baileys.makeWASocket ?? baileys.default;
-    const { useMultiFileAuthState, DisconnectReason } = baileys;
+    const { useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = baileys;
 
     const { state, saveCreds } =
       await useMultiFileAuthState(sessionDir);
@@ -76,139 +76,122 @@ export class WhatsAppAdapter implements PlatformAdapter {
 
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on(
-      'connection.update',
-      (update: {
-        connection?: string;
-        lastDisconnect?: {
-          error?: { output?: { statusCode?: number } };
-        };
-        qr?: string;
-      }) => {
-        if (update.qr) {
-          import('qrcode-terminal')
-            .then((qrterm) => {
-              const gen = qrterm.default?.generate ?? qrterm.generate;
-              gen(update.qr, { small: true });
-            })
-            .catch(() => {
-              // qrcode-terminal unavailable; printQRInTerminal handles it
-            });
-          if (this.config.onQr) this.config.onQr(update.qr);
+    // biome-ignore lint/suspicious/noExplicitAny: Baileys ConnectionState type varies across versions
+    sock.ev.on('connection.update', (update: any) => {
+      if (update.qr) {
+        import('qrcode-terminal')
+          .then((qrterm) => {
+            const gen = qrterm.default?.generate ?? qrterm.generate;
+            gen(update.qr, { small: true });
+          })
+          .catch(() => {
+            // qrcode-terminal unavailable; printQRInTerminal handles it
+          });
+        if (this.config.onQr) this.config.onQr(update.qr);
+      }
+
+      if (update.connection === 'close') {
+        const code =
+          update.lastDisconnect?.error?.output?.statusCode;
+        if (code !== DisconnectReason.loggedOut && !this.stopped) {
+          this.reconnecting = true;
+          this.sock = null;
+          this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            this.reconnecting = false;
+            this.start();
+          }, 3000);
+        }
+      }
+
+      if (update.connection === 'open') {
+        this.botJid = sock.user?.id ?? '';
+        if (this.config.onQr) this.config.onQr(null);
+      }
+    });
+
+    // biome-ignore lint/suspicious/noExplicitAny: Baileys WAMessage type varies across versions
+    sock.ev.on('messages.upsert', async (upsert: any) => {
+      if (upsert.type !== 'notify') return;
+      const messages = upsert.messages as RawWhatsAppMessage[];
+
+      for (const msg of messages) {
+        if (!this.messageHandler) continue;
+        if (msg.key.fromMe) continue;
+
+        const jid = msg.key.remoteJid ?? '';
+        const isDm = !jid.endsWith('@g.us');
+
+        if (this.config.allowedJids) {
+          const number = jid.split('@')[0];
+          const matched = this.config.allowedJids.some((allowed) => {
+            const normalizedAllowed = allowed.replace(/[^0-9]/g, '');
+            return number === normalizedAllowed;
+          });
+          if (!matched) continue;
         }
 
-        if (update.connection === 'close') {
-          const code =
-            update.lastDisconnect?.error?.output?.statusCode;
-          if (code !== DisconnectReason.loggedOut && !this.stopped) {
-            this.reconnecting = true;
-            this.sock = null;
-            this.reconnectTimer = setTimeout(() => {
-              this.reconnectTimer = null;
-              this.reconnecting = false;
-              this.start();
-            }, 3000);
-          }
+        if (!isDm && this.config.defaultMode === 'mention_only') {
+          const text =
+            msg.message?.conversation ??
+            msg.message?.extendedTextMessage?.text ??
+            '';
+          const botNumber = this.botJid
+            .split('@')[0]
+            .split(':')[0];
+          if (!text.includes(`@${botNumber}`)) continue;
         }
 
-        if (update.connection === 'open') {
-          this.botJid = sock.user?.id ?? '';
-          if (this.config.onQr) this.config.onQr(null);
-        }
-      },
-    );
-
-    sock.ev.on(
-      'messages.upsert',
-      async (upsert: {
-        messages: RawWhatsAppMessage[];
-        type: string;
-      }) => {
-        if (upsert.type !== 'notify') return;
-
-        for (const msg of upsert.messages) {
-          if (!this.messageHandler) continue;
-          if (msg.key.fromMe) continue;
-
-          const jid = msg.key.remoteJid ?? '';
-          const isDm = !jid.endsWith('@g.us');
-
-          if (this.config.allowedJids) {
-            const number = jid.split('@')[0];
-            const matched = this.config.allowedJids.some((allowed) => {
-              const normalizedAllowed = allowed.replace(/[^0-9]/g, '');
-              return number === normalizedAllowed;
-            });
-            if (!matched) continue;
-          }
-
-          if (!isDm && this.config.defaultMode === 'mention_only') {
-            const text =
-              msg.message?.conversation ??
-              msg.message?.extendedTextMessage?.text ??
-              '';
-            const botNumber = this.botJid
-              .split('@')[0]
-              .split(':')[0];
-            if (!text.includes(`@${botNumber}`)) continue;
-          }
-
-          let attachments:
-            | import('@ethosagent/types').Attachment[]
-            | undefined;
-          if (hasMedia(msg) && this.config.cache) {
-            const sessionKey = `whatsapp:${this.botKey}:${jid}`;
-            try {
-              const att = await downloadMedia(
-                msg,
-                async (m) => {
-                  const stream = await (
-                    sock as {
-                      downloadMediaMessage: (
-                        m: unknown,
-                      ) => Promise<Buffer>;
-                    }
-                  ).downloadMediaMessage(m);
-                  return stream;
-                },
-                this.config.cache,
-                sessionKey,
-              );
-              if (att) attachments = [att];
-            } catch {
-              // best-effort media download
-            }
-          }
-
-          const parsed = parseInboundMessage(
-            msg,
-            this.botJid,
-            this.botKey,
-            attachments,
-          );
-          if (!parsed) continue;
-
-          // Receipt reaction
+        let attachments:
+          | import('@ethosagent/types').Attachment[]
+          | undefined;
+        if (hasMedia(msg) && this.config.cache) {
+          const sessionKey = `whatsapp:${this.botKey}:${jid}`;
           try {
-            await (
-              sock as {
-                sendMessage: (
-                  jid: string,
-                  content: unknown,
-                ) => Promise<unknown>;
-              }
-            ).sendMessage(jid, {
-              react: { text: '\u{1F440}', key: msg.key },
-            });
-            this.pendingReactions.set(jid, msg.key.id ?? '');
+            const att = await downloadMedia(
+              msg,
+              async (m) => {
+                // biome-ignore lint/suspicious/noExplicitAny: Baileys downloadMediaMessage signature varies across versions
+                const buffer = await (downloadMediaMessage as any)(m, 'buffer', {});
+                return Buffer.from(buffer);
+              },
+              this.config.cache,
+              sessionKey,
+            );
+            if (att) attachments = [att];
           } catch {
-            // best-effort reaction
+            // best-effort media download
           }
-
-          this.messageHandler(parsed);
         }
-      },
-    );
+
+        const parsed = parseInboundMessage(
+          msg,
+          this.botJid,
+          this.botKey,
+          attachments,
+        );
+        if (!parsed) continue;
+
+        // Receipt reaction
+        try {
+          await (
+            sock as {
+              sendMessage: (
+                jid: string,
+                content: unknown,
+              ) => Promise<unknown>;
+            }
+          ).sendMessage(jid, {
+            react: { text: '\u{1F440}', key: msg.key },
+          });
+          this.pendingReactions.set(jid, msg.key.id ?? '');
+        } catch {
+          // best-effort reaction
+        }
+
+        this.messageHandler(parsed);
+      }
+    });
 
     this.sock = sock;
   }
