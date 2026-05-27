@@ -1300,10 +1300,21 @@ export async function buildAdapters(
         waCache = new FsAttachmentCache(getStorage(), join(ethosDir(), 'cache', 'attachments'));
       }
 
-      const waIds = (config.whatsapp ?? []).map((c, i) => c.id ?? `wa-idx-${i}`);
-      const dupes = waIds.filter((id, i) => waIds.indexOf(id) !== i);
-      if (dupes.length > 0) {
-        console.warn(`[whatsapp] Duplicate bot IDs detected: ${dupes.join(', ')}. Each WhatsApp config must have a unique id.`);
+      const waConfigs = config.whatsapp ?? [];
+      if (waConfigs.length > 1) {
+        const missingIds = waConfigs.filter((c) => !c.id);
+        if (missingIds.length > 0) {
+          throw new Error(
+            `[whatsapp] Multiple WhatsApp configs require explicit 'id' fields. ${missingIds.length} config(s) are missing an id.`,
+          );
+        }
+        const ids = waConfigs.map((c) => c.id);
+        const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
+        if (dupes.length > 0) {
+          throw new Error(
+            `[whatsapp] Duplicate WhatsApp bot IDs: ${dupes.join(', ')}. Each config must have a unique id.`,
+          );
+        }
       }
 
       for (const waCfg of config.whatsapp ?? []) {

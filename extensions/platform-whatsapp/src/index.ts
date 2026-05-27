@@ -39,6 +39,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
   readonly botKey: string;
   private sock: unknown = null;
   private reconnecting = false;
+  private stopped = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private messageHandler?: (message: InboundMessage) => void;
   private botJid = '';
@@ -53,6 +54,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
 
   async start(): Promise<void> {
     if (this.reconnecting) return;
+    this.stopped = false;
 
     const sessionDir = resolveSessionDir({
       sessionDir: this.config.sessionDir,
@@ -98,7 +100,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
         if (update.connection === 'close') {
           const code =
             update.lastDisconnect?.error?.output?.statusCode;
-          if (code !== DisconnectReason.loggedOut) {
+          if (code !== DisconnectReason.loggedOut && !this.stopped) {
             this.reconnecting = true;
             this.sock = null;
             this.reconnectTimer = setTimeout(() => {
@@ -212,6 +214,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

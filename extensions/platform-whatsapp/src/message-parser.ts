@@ -45,8 +45,9 @@ export function parseInboundMessage(
   const jid = msg.key.remoteJid ?? '';
   const isDm = !jid.endsWith('@g.us');
   const text = extractText(msg);
+  const botNumber = botJid.split('@')[0].split(':')[0];
   const isGroupMention =
-    !isDm && text.includes(`@${botJid.split('@')[0]}`);
+    !isDm && text.includes(`@${botNumber}`);
 
   const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
 
