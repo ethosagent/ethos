@@ -57,46 +57,50 @@ export function PersonalityBar({
     <div className="personality-bar">
       <div className="personality-bar-stripe" style={{ background: accent }} />
       <div className="personality-bar-content">
-        <PersonalityMark personalityId={personalityId} size={32} />
-        <div className="personality-bar-text">
-          <span className="personality-bar-name">{displayName}</span>
-          {model ? <span className="personality-bar-model">{model}</span> : null}
+        <div className="personality-bar-left">
+          <PersonalityMark personalityId={personalityId} size={32} />
+          <div className="personality-bar-identity">
+            <span className="personality-bar-name">{displayName}</span>
+            {model ? <span className="personality-bar-model">{model}</span> : null}
+          </div>
+        </div>
+
+        <div className="personality-bar-center">
           {sessionTitle !== undefined || editing ? (
-            <div className="personality-bar-session-title">
-              {editing ? (
-                <Input
-                  size="small"
-                  value={editValue}
-                  autoFocus
-                  onChange={(e) => setEditValue(e.target.value)}
-                  onPressEnter={commitEdit}
-                  onBlur={commitEdit}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') setEditing(false);
-                  }}
-                  style={{ fontSize: 12 }}
-                />
-              ) : (
-                <>
-                  <span className="personality-bar-session-name">
-                    {sessionTitle ?? 'Untitled session'}
-                  </span>
-                  {onRenameSession ? (
-                    <button
-                      type="button"
-                      className="personality-bar-rename"
-                      onClick={startEdit}
-                      aria-label="Rename session"
-                      title="Rename session"
-                    >
-                      <PencilIcon />
-                    </button>
-                  ) : null}
-                </>
-              )}
-            </div>
+            editing ? (
+              <Input
+                size="small"
+                value={editValue}
+                autoFocus
+                onChange={(e) => setEditValue(e.target.value)}
+                onPressEnter={commitEdit}
+                onBlur={commitEdit}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setEditing(false);
+                }}
+                style={{ fontSize: 13, textAlign: 'center', maxWidth: 320 }}
+              />
+            ) : (
+              <div className="personality-bar-session-title">
+                <span className="personality-bar-session-name">
+                  {sessionTitle ?? 'Untitled session'}
+                </span>
+                {onRenameSession ? (
+                  <button
+                    type="button"
+                    className="personality-bar-rename"
+                    onClick={startEdit}
+                    aria-label="Rename session"
+                    title="Rename session"
+                  >
+                    <PencilIcon />
+                  </button>
+                ) : null}
+              </div>
+            )
           ) : null}
         </div>
+
         <div className="personality-bar-actions">
           <button
             type="button"

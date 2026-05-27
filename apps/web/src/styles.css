@@ -1349,11 +1349,26 @@ body,
   padding: 10px 16px;
 }
 
-.personality-bar-text {
+.personality-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.personality-bar-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 16px;
+}
+
+.personality-bar-identity {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  flex: 1;
 }
 
 .personality-bar-name {
@@ -1373,17 +1388,18 @@ body,
 .personality-bar-session-title {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
+  max-width: 400px;
 }
 
 .personality-bar-session-name {
-  font-size: 12px;
-  color: var(--ethos-text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ethos-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
   min-width: 0;
 }
 
@@ -1400,11 +1416,14 @@ body,
   color: var(--ethos-text-dim);
   cursor: pointer;
   flex-shrink: 0;
-  transition: color 80ms cubic-bezier(0.16, 1, 0.3, 1);
+  opacity: 0.4;
+  transition:
+    color 80ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 80ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.personality-bar-rename:hover {
-  color: var(--ethos-text);
+.personality-bar-session-title:hover .personality-bar-rename {
+  opacity: 1;
 }
 
 .personality-bar-rename:focus-visible {

@@ -95,6 +95,20 @@ export function Chat() {
     if (sessionParam) setLastSessionId(sessionParam);
   }, [sessionParam]);
 
+  // When navigating to a different session, reset the personality override
+  // so we don't bleed the previous session's manual switch into the new one.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally session-key only
+  useEffect(() => {
+    setOverride(null);
+  }, [sessionParam]);
+
+  // Restore the personality that was last used with this session.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setOverride is a stable useState setter
+  useEffect(() => {
+    const stored = sessionQuery.data?.session.personalityId;
+    if (stored) setOverride(stored);
+  }, [sessionQuery.data?.session.personalityId]);
+
   // Consume `?personality=<id>` deep-links from the command palette.
   // Sets the per-session override and strips the param so Back doesn't
   // re-trigger the switch. The override state owns this flow — we
