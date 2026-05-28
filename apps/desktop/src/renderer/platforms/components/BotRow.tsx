@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { StatusDot } from '../../ui/StatusDot';
 
 interface BotRowProps {
@@ -26,25 +27,43 @@ export function BotRow({
 }: BotRowProps) {
   const [hovered, setHovered] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
+
+  const handleMenuToggle = useCallback(() => {
+    if (menuAnchorRef.current) {
+      const rect = menuAnchorRef.current.getBoundingClientRect();
+      setMenuPos({
+        top: rect.bottom + 4,
+        right: window.innerWidth - rect.right,
+      });
+    }
+    setMenuOpen((v) => !v);
+  }, []);
+
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
 
   const handleMenuAction = useCallback(
     (action: 'edit' | 'remove') => {
-      setMenuOpen(false);
+      closeMenu();
       if (action === 'edit') onEdit?.();
       else onRemove?.();
     },
-    [onEdit, onRemove],
+    [closeMenu, onEdit, onRemove],
   );
+
+  // Close menu on scroll so it doesn't drift from its anchor
+  useEffect(() => {
+    if (!menuOpen) return;
+    window.addEventListener('scroll', closeMenu, true);
+    return () => window.removeEventListener('scroll', closeMenu, true);
+  }, [menuOpen, closeMenu]);
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: hover state for visual feedback
     <div
       onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => {
-        setHovered(false);
-        setMenuOpen(false);
-      }}
+      onMouseLeave={() => setHovered(false)}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -60,6 +79,10 @@ export function BotRow({
           fontSize: 13,
           color: 'var(--text-primary)',
           flexShrink: 0,
+          maxWidth: 140,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
         }}
       >
         {username}
@@ -89,13 +112,23 @@ export function BotRow({
         </span>
       </div>
 
-      <StatusDot color={statusColor[status]} size={6} />
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 500,
+          color: statusColor[status],
+          whiteSpace: 'nowrap',
+          flexShrink: 0,
+        }}
+      >
+        {status === 'connected' ? '● Connected' : status === 'error' ? '● Error' : '● Disconnected'}
+      </span>
 
-      {hovered && (onEdit || onRemove) && (
+      {(hovered || menuOpen) && (onEdit || onRemove) && (
         <button
           ref={menuAnchorRef}
           type="button"
-          onClick={() => setMenuOpen((v) => !v)}
+          onClick={handleMenuToggle}
           style={{
             background: 'none',
             border: 'none',
@@ -111,59 +144,71 @@ export function BotRow({
         </button>
       )}
 
-      {menuOpen && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 40,
-            right: 16,
-            backgroundColor: 'var(--bg-elevated)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 4,
-            zIndex: 10,
-            minWidth: 140,
-          }}
-        >
-          {onEdit && (
-            <button
-              type="button"
-              onClick={() => handleMenuAction('edit')}
+      {menuOpen &&
+        menuPos &&
+        createPortal(
+          <>
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop to dismiss menu */}
+            <div
+              style={{ position: 'fixed', inset: 0, zIndex: 9999 }}
+              onClick={closeMenu}
+              onKeyDown={closeMenu}
+            />
+            <div
               style={{
-                display: 'block',
-                width: '100%',
-                textAlign: 'left',
-                background: 'none',
-                border: 'none',
-                padding: '8px 12px',
-                fontSize: 13,
-                color: 'var(--text-primary)',
-                cursor: 'pointer',
+                position: 'fixed',
+                top: menuPos.top,
+                right: menuPos.right,
+                backgroundColor: 'var(--bg-elevated)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 4,
+                zIndex: 10000,
+                minWidth: 140,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
               }}
             >
-              Edit binding
-            </button>
-          )}
-          {onRemove && (
-            <button
-              type="button"
-              onClick={() => handleMenuAction('remove')}
-              style={{
-                display: 'block',
-                width: '100%',
-                textAlign: 'left',
-                background: 'none',
-                border: 'none',
-                padding: '8px 12px',
-                fontSize: 13,
-                color: 'var(--error)',
-                cursor: 'pointer',
-              }}
-            >
-              Remove bot
-            </button>
-          )}
-        </div>
-      )}
+              {onEdit && (
+                <button
+                  type="button"
+                  onClick={() => handleMenuAction('edit')}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
+                    background: 'none',
+                    border: 'none',
+                    padding: '8px 12px',
+                    fontSize: 13,
+                    color: 'var(--text-primary)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Edit token
+                </button>
+              )}
+              {onRemove && (
+                <button
+                  type="button"
+                  onClick={() => handleMenuAction('remove')}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
+                    background: 'none',
+                    border: 'none',
+                    padding: '8px 12px',
+                    fontSize: 13,
+                    color: 'var(--error)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Remove bot
+                </button>
+              )}
+            </div>
+          </>,
+          document.body,
+        )}
     </div>
   );
 }

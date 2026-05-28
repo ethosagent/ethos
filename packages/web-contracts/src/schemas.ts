@@ -405,6 +405,7 @@ export const TelegramBotEntrySchema = z.object({
   botKey: z.string(),
   /** True when the token is stored in config (tokens never cross the wire). */
   tokenConfigured: z.boolean(),
+  username: z.string().optional(),
   bind: BotBindingSchema,
 });
 export type TelegramBotEntry = z.infer<typeof TelegramBotEntrySchema>;

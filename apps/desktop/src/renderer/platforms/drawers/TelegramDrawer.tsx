@@ -9,6 +9,7 @@ import { TokenInput } from '../components/TokenInput';
 interface TelegramBot {
   botKey: string;
   tokenConfigured: boolean;
+  username?: string;
   bind: { type: 'personality' | 'team'; name: string };
 }
 
@@ -38,6 +39,14 @@ export function TelegramDrawer({ onBotChange }: TelegramDrawerProps) {
   const [personalityId, setPersonalityId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+
+  const [editingBotKey, setEditingBotKey] = useState<string | null>(null);
+  const [replaceToken, setReplaceToken] = useState('');
+  const [replaceValidatedUsername, setReplaceValidatedUsername] = useState<string | null>(null);
+  const [replaceValidating, setReplaceValidating] = useState(false);
+  const [replaceValidationError, setReplaceValidationError] = useState<string | null>(null);
+  const [replacing, setReplacing] = useState(false);
+  const [replaceError, setReplaceError] = useState<string | null>(null);
 
   const loadBots = useCallback(async () => {
     try {
@@ -80,6 +89,7 @@ export function TelegramDrawer({ onBotChange }: TelegramDrawerProps) {
       await client.rpc.platforms.botsAddTelegram({
         token: token.trim(),
         bind: { type: 'personality', name: personalityId },
+        username: validatedUsername ?? undefined,
       });
       setToken('');
       setValidatedUsername(null);
@@ -106,6 +116,53 @@ export function TelegramDrawer({ onBotChange }: TelegramDrawerProps) {
     [client, loadBots, onBotChange],
   );
 
+  const handleReplaceValidate = useCallback(async () => {
+    if (!replaceToken.trim()) return;
+    setReplaceValidating(true);
+    setReplaceValidationError(null);
+    setReplaceValidatedUsername(null);
+    try {
+      // biome-ignore lint/suspicious/noExplicitAny: Electron preload bridge
+      const result = await (window as any).ethos.platformTest.telegram({
+        token: replaceToken.trim(),
+      });
+      if (result.ok && result.username) {
+        setReplaceValidatedUsername(result.username);
+      } else {
+        setReplaceValidationError(result.error ?? 'Validation failed');
+      }
+    } catch (err) {
+      setReplaceValidationError(err instanceof Error ? err.message : 'Validation failed');
+    } finally {
+      setReplaceValidating(false);
+    }
+  }, [replaceToken]);
+
+  const handleReplace = useCallback(async () => {
+    if (!editingBotKey || !replaceValidatedUsername) return;
+    const bot = bots.find((b) => b.botKey === editingBotKey);
+    if (!bot) return;
+    setReplacing(true);
+    setReplaceError(null);
+    try {
+      await client.rpc.platforms.botsRemoveTelegram({ botKey: editingBotKey });
+      await client.rpc.platforms.botsAddTelegram({
+        token: replaceToken.trim(),
+        bind: bot.bind,
+        username: replaceValidatedUsername,
+      });
+      setEditingBotKey(null);
+      setReplaceToken('');
+      setReplaceValidatedUsername(null);
+      await loadBots();
+      onBotChange?.();
+    } catch (err) {
+      setReplaceError(err instanceof Error ? err.message : 'Failed to replace token');
+    } finally {
+      setReplacing(false);
+    }
+  }, [client, editingBotKey, replaceToken, replaceValidatedUsername, bots, loadBots, onBotChange]);
+
   const canConnect = validatedUsername !== null && personalityId !== null && !connecting;
 
   return (
@@ -117,22 +174,147 @@ export function TelegramDrawer({ onBotChange }: TelegramDrawerProps) {
             style={{
               border: '1px solid var(--border-subtle)',
               borderRadius: 4,
-              overflow: 'hidden',
             }}
           >
             {bots.map((bot) => (
               <BotRow
                 key={bot.botKey}
-                username={bot.botKey}
+                username={bot.username ? `@${bot.username}` : bot.botKey.slice(0, 12)}
                 personalityName={bot.bind.name}
                 personalityAccent="var(--accent)"
                 status={bot.tokenConfigured ? 'connected' : 'disconnected'}
+                onEdit={() => {
+                  setEditingBotKey(bot.botKey);
+                  setReplaceToken('');
+                  setReplaceValidatedUsername(null);
+                  setReplaceValidationError(null);
+                  setReplaceError(null);
+                }}
                 onRemove={() => handleRemove(bot.botKey)}
               />
             ))}
           </div>
         </div>
       )}
+
+      {editingBotKey &&
+        (() => {
+          const editingBot = bots.find((b) => b.botKey === editingBotKey);
+          return (
+            <div>
+              <div style={microLabel}>REPLACE TOKEN</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>
+                Replacing token for{' '}
+                <strong>
+                  {editingBot?.username ? `@${editingBot.username}` : editingBotKey.slice(0, 12)}
+                </strong>{' '}
+                → {editingBot?.bind.name}
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <TokenInput
+                    value={replaceToken}
+                    onChange={(v) => {
+                      setReplaceToken(v);
+                      setReplaceValidatedUsername(null);
+                      setReplaceValidationError(null);
+                    }}
+                    placeholder="New bot token"
+                    disabled={replaceValidating}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleReplaceValidate}
+                  disabled={!replaceToken.trim() || replaceValidating}
+                  style={{
+                    height: 28,
+                    borderRadius: 4,
+                    border: '1px solid var(--border-subtle)',
+                    background: 'none',
+                    color: 'var(--text-secondary)',
+                    fontSize: 12,
+                    padding: '0 12px',
+                    cursor: !replaceToken.trim() || replaceValidating ? 'not-allowed' : 'pointer',
+                    opacity: !replaceToken.trim() || replaceValidating ? 0.5 : 1,
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  {replaceValidating ? 'Validating...' : 'Validate'}
+                </button>
+              </div>
+
+              {replaceValidatedUsername && (
+                <div
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 12,
+                    color: 'var(--success)',
+                    marginBottom: 12,
+                  }}
+                >
+                  Bot: @{replaceValidatedUsername} ✓
+                </div>
+              )}
+              {replaceValidationError && (
+                <div style={{ fontSize: 12, color: 'var(--error)', marginBottom: 12 }}>
+                  {replaceValidationError}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingBotKey(null);
+                    setReplaceToken('');
+                    setReplaceValidatedUsername(null);
+                  }}
+                  style={{
+                    flex: 1,
+                    height: 36,
+                    borderRadius: 4,
+                    border: '1px solid var(--border-subtle)',
+                    background: 'none',
+                    color: 'var(--text-secondary)',
+                    fontSize: 13,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleReplace}
+                  disabled={!replaceValidatedUsername || replacing}
+                  style={{
+                    flex: 1,
+                    height: 36,
+                    borderRadius: 4,
+                    border: 'none',
+                    backgroundColor:
+                      replaceValidatedUsername && !replacing
+                        ? 'var(--accent)'
+                        : 'var(--bg-elevated)',
+                    color: replaceValidatedUsername && !replacing ? '#fff' : 'var(--text-tertiary)',
+                    fontSize: 13,
+                    fontWeight: 500,
+                    cursor: replaceValidatedUsername && !replacing ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  {replacing ? 'Replacing...' : 'Replace token'}
+                </button>
+              </div>
+              {replaceError && (
+                <div style={{ fontSize: 12, color: 'var(--error)', marginTop: 8 }}>
+                  {replaceError}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
       <div>
         <div style={microLabel}>ADD BOT</div>

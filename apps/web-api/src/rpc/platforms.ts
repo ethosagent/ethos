@@ -14,7 +14,7 @@ export const platformsRouter = {
   ),
 
   botsAddTelegram: os.platforms.botsAddTelegram.handler(({ input, context }) =>
-    context.platforms.addTelegramBot(input.token, input.bind),
+    context.platforms.addTelegramBot(input.token, input.bind, input.username),
   ),
 
   botsRemoveTelegram: os.platforms.botsRemoveTelegram.handler(({ input, context }) =>

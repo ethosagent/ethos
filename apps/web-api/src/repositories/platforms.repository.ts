@@ -103,7 +103,22 @@ export class PlatformsRepository {
 
   async listStatus(): Promise<PlatformStatus[]> {
     const passthrough = await this.passthrough();
-    return ALL_PLATFORM_IDS.map((id) => this.statusFor(id, passthrough));
+    return ALL_PLATFORM_IDS.map((id) => {
+      const status = this.statusFor(id, passthrough);
+      // Multi-bot platforms: also configured when indexed bot entries exist,
+      // even when the legacy single-token key is absent.
+      if (id === 'telegram' && !status.configured) {
+        if (Object.keys(passthrough).some((k) => k.startsWith('telegram.bots.'))) {
+          return { ...status, configured: true };
+        }
+      }
+      if (id === 'slack' && !status.configured) {
+        if (Object.keys(passthrough).some((k) => k.startsWith('slack.apps.'))) {
+          return { ...status, configured: true };
+        }
+      }
+      return status;
+    });
   }
 
   async getStatus(id: PlatformId): Promise<PlatformStatus> {
@@ -227,6 +242,7 @@ export class PlatformsRepository {
         botKey,
         tokenConfigured: token.length > 0,
         bind: { type: bindType, name: bindName },
+        username: fields.username,
       });
     }
     // Legacy single-bot shim — mirrors applyPlatformShim() in
@@ -247,7 +263,11 @@ export class PlatformsRepository {
     return result;
   }
 
-  async addTelegramBot(token: string, bind: BotBinding): Promise<TelegramBotEntry> {
+  async addTelegramBot(
+    token: string,
+    bind: BotBinding,
+    username?: string,
+  ): Promise<TelegramBotEntry> {
     const passthrough = await this.passthrough();
     const byIndex = this.parseTelegramIndices(passthrough);
     const nextIndex = byIndex.size > 0 ? Math.max(...byIndex.keys()) + 1 : 0;
@@ -260,9 +280,10 @@ export class PlatformsRepository {
         [`telegram.bots.${nextIndex}.token`]: `\${secrets:${secretRef}}`,
         [`telegram.bots.${nextIndex}.bind.type`]: bind.type,
         [`telegram.bots.${nextIndex}.bind.name`]: bind.name,
+        ...(username ? { [`telegram.bots.${nextIndex}.username`]: username } : {}),
       },
     });
-    return { botKey, tokenConfigured: true, bind };
+    return { botKey, tokenConfigured: true, bind, username };
   }
 
   async removeTelegramBot(botKey: string): Promise<void> {

@@ -1,0 +1,113 @@
+import { isEthosError } from '@ethosagent/types';
+import { describe, expect, it } from 'vitest';
+import { SessionsService } from '../../services/sessions.service';
+
+function makeService(repoOverrides = {}) {
+  const defaults = {
+    list: async () => ({ sessions: [], nextCursor: null }),
+    get: async () => null,
+    messages: async () => [],
+    delete: async () => {},
+    fork: async () => {
+      throw new Error('not stubbed');
+    },
+    search: async () => [],
+    update: async () => {},
+  };
+  const repo = { ...defaults, ...repoOverrides };
+  return new SessionsService({ sessions: repo });
+}
+const aSession = {
+  id: 'sess_1',
+  key: 'cli:proj',
+  platform: 'cli',
+  model: 'claude-opus-4',
+  provider: 'anthropic',
+  personalityId: 'researcher',
+  parentSessionId: undefined,
+  workingDir: '/tmp/proj',
+  title: undefined,
+  usage: {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    estimatedCostUsd: 0,
+    apiCallCount: 0,
+    compactionCount: 0,
+  },
+  createdAt: new Date('2026-04-01T00:00:00Z'),
+  updatedAt: new Date('2026-04-02T00:00:00Z'),
+};
+describe('SessionsService', () => {
+  it('list passes default limit=50 when input.limit is omitted', async () => {
+    let captured;
+    const service = makeService({
+      list: async (opts) => {
+        captured = opts;
+        return { sessions: [], nextCursor: null };
+      },
+    });
+    await service.list({});
+    expect(captured?.limit).toBe(50);
+  });
+  it('list converts Date fields to ISO strings on the wire', async () => {
+    const service = makeService({
+      list: async () => ({ sessions: [aSession], nextCursor: null }),
+    });
+    const result = await service.list({});
+    expect(result.items[0]?.createdAt).toBe('2026-04-01T00:00:00.000Z');
+    expect(result.items[0]?.updatedAt).toBe('2026-04-02T00:00:00.000Z');
+  });
+  it('get throws SESSION_NOT_FOUND when the repository returns null', async () => {
+    const service = makeService({ get: async () => null });
+    try {
+      await service.get('missing');
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(isEthosError(err)).toBe(true);
+      if (isEthosError(err)) expect(err.code).toBe('SESSION_NOT_FOUND');
+    }
+  });
+  it('delete throws SESSION_NOT_FOUND before deleting unknown id', async () => {
+    let deleted = false;
+    const service = makeService({
+      get: async () => null,
+      delete: async () => {
+        deleted = true;
+      },
+    });
+    await expect(service.delete('missing')).rejects.toMatchObject({ code: 'SESSION_NOT_FOUND' });
+    expect(deleted).toBe(false);
+  });
+  it('fork rethrows non-not-found errors verbatim', async () => {
+    const boom = new Error('disk full');
+    const service = makeService({ fork: async () => Promise.reject(boom) });
+    await expect(service.fork('sess_1')).rejects.toBe(boom);
+  });
+  it('fork translates `session not found:<id>` repo errors into SESSION_NOT_FOUND', async () => {
+    const service = makeService({
+      fork: async () => Promise.reject(new Error('session not found: sess_x')),
+    });
+    await expect(service.fork('sess_x')).rejects.toMatchObject({ code: 'SESSION_NOT_FOUND' });
+  });
+  it('update returns the updated session on success', async () => {
+    const updated = { ...aSession, title: 'Renamed' };
+    const service = makeService({
+      get: async () => updated,
+      update: async (_id, _patch) => {},
+    });
+    const result = await service.update('sess_1', { title: 'Renamed' });
+    expect(result.session.title).toBe('Renamed');
+  });
+  it('update throws SESSION_NOT_FOUND when the session does not exist', async () => {
+    const service = makeService({
+      update: async () => {
+        throw new Error('session not found: x');
+      },
+    });
+    await expect(service.update('x', { title: 'x' })).rejects.toMatchObject({
+      code: 'SESSION_NOT_FOUND',
+    });
+  });
+});

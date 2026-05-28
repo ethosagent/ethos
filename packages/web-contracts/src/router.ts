@@ -682,6 +682,7 @@ const platforms = {
       z.object({
         token: z.string().min(1),
         bind: BotBindingSchema,
+        username: z.string().optional(),
       }),
     )
     .output(z.object({ bot: TelegramBotEntrySchema })),

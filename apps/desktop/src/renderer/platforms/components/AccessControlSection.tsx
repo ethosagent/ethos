@@ -241,43 +241,44 @@ export function AccessControlSection({ platform, client }: AccessControlSectionP
               </button>
             </div>
           </div>
+        </div>
+      )}
 
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            style={{
-              width: '100%',
-              height: 36,
-              borderRadius: 4,
-              border: 'none',
-              backgroundColor: 'var(--accent)',
-              color: '#fff',
-              fontSize: 13,
-              fontWeight: 500,
-              cursor: saving ? 'not-allowed' : 'pointer',
-              opacity: saving ? 0.7 : 1,
-            }}
-          >
-            {saving ? 'Saving...' : 'Save access control'}
-          </button>
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={saving}
+        style={{
+          width: '100%',
+          height: 36,
+          borderRadius: 4,
+          border: 'none',
+          backgroundColor: 'var(--accent)',
+          color: '#fff',
+          fontSize: 13,
+          fontWeight: 500,
+          cursor: saving ? 'not-allowed' : 'pointer',
+          opacity: saving ? 0.7 : 1,
+          marginTop: 12,
+        }}
+      >
+        {saving ? 'Saving...' : 'Save access control'}
+      </button>
 
-          {saveError && <div style={{ fontSize: 12, color: 'var(--error)' }}>{saveError}</div>}
+      {saveError && <div style={{ fontSize: 12, color: 'var(--error)' }}>{saveError}</div>}
 
-          {saved && (
-            <div
-              style={{
-                fontSize: 12,
-                color: 'var(--text-secondary)',
-                backgroundColor: 'var(--bg-elevated)',
-                borderRadius: 8,
-                padding: 12,
-                lineHeight: 1.5,
-              }}
-            >
-              Restart the gateway (or re-run <code>ethos serve</code>) to apply changes.
-            </div>
-          )}
+      {saved && (
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--text-secondary)',
+            backgroundColor: 'var(--bg-elevated)',
+            borderRadius: 8,
+            padding: 12,
+            lineHeight: 1.5,
+          }}
+        >
+          Restart the gateway (or re-run <code>ethos serve</code>) to apply changes.
         </div>
       )}
     </div>

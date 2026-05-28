@@ -41,8 +41,12 @@ export class PlatformsService {
     return { bots: await this.opts.repo.listTelegramBots() };
   }
 
-  async addTelegramBot(token: string, bind: BotBinding): Promise<{ bot: TelegramBotEntry }> {
-    return { bot: await this.opts.repo.addTelegramBot(token, bind) };
+  async addTelegramBot(
+    token: string,
+    bind: BotBinding,
+    username?: string,
+  ): Promise<{ bot: TelegramBotEntry }> {
+    return { bot: await this.opts.repo.addTelegramBot(token, bind, username) };
   }
 
   async removeTelegramBot(botKey: string): Promise<{ ok: true }> {

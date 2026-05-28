@@ -1,0 +1,187 @@
+import { describe, expect, it, vi } from 'vitest';
+import { AgentBridge } from '../agent-bridge';
+
+async function* makeEventStream(events) {
+  for (const e of events) {
+    // Yield to microtasks between events so concurrent send() calls during
+    // a turn actually see this.controller != null in the bridge.
+    await Promise.resolve();
+    yield e;
+  }
+}
+describe('AgentBridge', () => {
+  it('throttles text_delta to 16ms batches', async () => {
+    vi.useFakeTimers();
+    const loop = {
+      run: vi.fn(() =>
+        makeEventStream([
+          { type: 'text_delta', text: 'Hello' },
+          { type: 'text_delta', text: ' World' },
+          { type: 'done', text: 'Hello World', turnCount: 1 },
+        ]),
+      ),
+    };
+    const bridge = new AgentBridge(loop);
+    const textDeltas = [];
+    bridge.on('text_delta', (t) => textDeltas.push(t));
+    const sendPromise = bridge.send('hi', {});
+    // Before timer fires, no text_delta emitted (buffered)
+    expect(textDeltas).toHaveLength(0);
+    // Advance timer past 16ms — flush fires
+    await vi.advanceTimersByTimeAsync(20);
+    await sendPromise;
+    // Both deltas should be flushed before done
+    expect(textDeltas.join('')).toBe('Hello World');
+    vi.useRealTimers();
+  });
+  it('emits done with full text after flush', async () => {
+    const loop = {
+      run: vi.fn(() =>
+        makeEventStream([
+          { type: 'text_delta', text: 'Hi' },
+          { type: 'done', text: 'Hi', turnCount: 1 },
+        ]),
+      ),
+    };
+    const bridge = new AgentBridge(loop);
+    const doneTexts = [];
+    bridge.on('done', (text) => doneTexts.push(text));
+    await bridge.send('hello', {});
+    expect(doneTexts).toEqual(['Hi']);
+  });
+  it('emits idle after turn regardless of error', async () => {
+    const loop = {
+      run: vi.fn(() => makeEventStream([{ type: 'error', error: 'boom', code: 'ERR' }])),
+    };
+    const bridge = new AgentBridge(loop);
+    let idleFired = false;
+    bridge.on('idle', () => {
+      idleFired = true;
+    });
+    bridge.on('error', () => {}); // prevent unhandled-error throw
+    await bridge.send('x', {});
+    expect(idleFired).toBe(true);
+  });
+  it('abortTurn cancels the running turn', async () => {
+    let aborted = false;
+    const loop = {
+      run: vi.fn((_text, opts) => {
+        opts.abortSignal?.addEventListener('abort', () => {
+          aborted = true;
+        });
+        return makeEventStream([]);
+      }),
+    };
+    const bridge = new AgentBridge(loop);
+    const sendPromise = bridge.send('test', {});
+    bridge.abortTurn();
+    await sendPromise;
+    expect(aborted).toBe(true);
+  });
+  // ---------------------------------------------------------------------------
+  // Clarify registration survives replaceLoop
+  // ---------------------------------------------------------------------------
+  it('re-binds the clarify presenter onto the new loop after replaceLoop', () => {
+    const makeFakeClarify = () => {
+      const calls = { presenters: [], resolvedListeners: 0 };
+      return {
+        calls,
+        bridge: {
+          setPresenter: (p) => calls.presenters.push(p),
+          onResolved: () => {
+            calls.resolvedListeners += 1;
+            return () => {};
+          },
+        },
+      };
+    };
+    const c1 = makeFakeClarify();
+    const loop1 = { clarifyBridge: c1.bridge };
+    const bridge = new AgentBridge(loop1);
+    const presenter = vi.fn();
+    bridge.setClarifyPresenter(presenter);
+    bridge.onClarifyResolved(() => {});
+    expect(c1.calls.presenters).toEqual([presenter]);
+    expect(c1.calls.resolvedListeners).toBe(1);
+    // A model switch rebuilds the loop with a fresh ClarifyBridge.
+    const c2 = makeFakeClarify();
+    const loop2 = { clarifyBridge: c2.bridge };
+    bridge.replaceLoop(loop2);
+    // The new loop's ClarifyBridge gets the same presenter + listener, so
+    // clarify keeps working instead of degrading to CLARIFY_NO_SURFACE.
+    expect(c2.calls.presenters).toEqual([presenter]);
+    expect(c2.calls.resolvedListeners).toBe(1);
+  });
+  // ---------------------------------------------------------------------------
+  // Concurrent-send queue (eng-review finding 1.3)
+  // ---------------------------------------------------------------------------
+  it('queues a second send while a turn is running and processes both in order', async () => {
+    const calls = [];
+    const loop = {
+      run: vi.fn((text) => {
+        calls.push(text);
+        return makeEventStream([{ type: 'done', text, turnCount: 1 }]);
+      }),
+    };
+    const bridge = new AgentBridge(loop);
+    const queuedFor = [];
+    bridge.on('queued', (input) => queuedFor.push(input));
+    // Wait until two `idle` events fire (one per turn).
+    let idleCount = 0;
+    const bothIdle = new Promise((resolve) => {
+      bridge.on('idle', () => {
+        idleCount += 1;
+        if (idleCount === 2) resolve();
+      });
+    });
+    void bridge.send('first', {});
+    void bridge.send('second', {});
+    await bothIdle;
+    expect(loop.run).toHaveBeenCalledTimes(2);
+    expect(calls).toEqual(['first', 'second']);
+    expect(queuedFor).toEqual(['second']);
+  });
+  it('rejects with BUSY when the queue is at capacity', async () => {
+    const loop = {
+      run: vi.fn(() => makeEventStream([{ type: 'done', text: '', turnCount: 1 }])),
+    };
+    const bridge = new AgentBridge(loop, { queueCap: 1 });
+    const errors = [];
+    bridge.on('error', (msg, code) => errors.push({ msg, code }));
+    bridge.on('queued', () => {});
+    void bridge.send('first', {}); // running
+    void bridge.send('second', {}); // queued (cap=1)
+    void bridge.send('third', {}); // rejected (cap exceeded)
+    // wait one microtask round so the synchronous queue checks above resolve
+    await new Promise((r) => setTimeout(r, 0));
+    expect(errors).toHaveLength(1);
+    expect(errors[0].code).toBe('BUSY');
+  });
+  it('clearQueue drops pending sends without affecting the in-flight turn', async () => {
+    const calls = [];
+    const loop = {
+      run: vi.fn((text) => {
+        calls.push(text);
+        return makeEventStream([{ type: 'done', text, turnCount: 1 }]);
+      }),
+    };
+    const bridge = new AgentBridge(loop);
+    let idleSeen = 0;
+    const firstIdle = new Promise((resolve) => {
+      bridge.on('idle', () => {
+        idleSeen += 1;
+        if (idleSeen === 1) resolve();
+      });
+    });
+    void bridge.send('first', {});
+    void bridge.send('queued-but-dropped', {});
+    expect(bridge.queueDepth).toBe(1);
+    const dropped = bridge.clearQueue();
+    expect(dropped).toBe(1);
+    expect(bridge.queueDepth).toBe(0);
+    await firstIdle;
+    // Only the first turn ran; queued one was dropped before it could fire.
+    expect(loop.run).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(['first']);
+  });
+});

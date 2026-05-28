@@ -1,0 +1,63 @@
+import { apiKeysRouter } from './api-keys';
+import { batchRouter } from './batch';
+import { chatRouter } from './chat';
+import { clarifyRouter } from './clarify';
+import { configRouter } from './config';
+import { cronRouter } from './cron';
+import { evalRouter } from './eval';
+import { evolverRouter } from './evolver';
+import { kanbanRouter } from './kanban';
+import { mcpRouter } from './mcp';
+import { memoryRouter } from './memory';
+import { meshRouter } from './mesh';
+import { metaRouter } from './meta';
+import { onboardingRouter } from './onboarding';
+import { personalitiesRouter } from './personalities';
+import { platformsRouter } from './platforms';
+import { pluginsRouter } from './plugins';
+import { sessionsRouter } from './sessions';
+import { skillsRouter } from './skills';
+import { toolsRouter } from './tools';
+// Top-level oRPC router. Each namespace lives in its own file (one
+// `os.<namespace>.<method>.handler(...)` per procedure); this file only
+// composes them.
+//
+// Namespaces in place:
+//   • sessions      — list / get / fork / delete
+//   • chat          — send / abort (SSE handles the streamed response)
+//   • personalities — list / get (read-only — full lifecycle in v1)
+//   • config        — get with redacted apiKey / update
+//   • onboarding    — state / validateProvider / complete
+//   • tools         — approve / deny (resolves pending approvals; the
+//                     `before_tool_call` hook + SSE handle the request side)
+//   • cron          — proactive pillar (v0.5)
+//   • skills        — library CRUD over ~/.ethos/skills/*.md (v0.5)
+//   • evolver       — config + approval queue + run history (v0.5)
+//   • mesh          — list live mesh agents + route test (v0.5)
+//   • memory        — read/write MEMORY.md + USER.md (v1)
+//   • plugins       — list installed plugins + configured MCP servers (v1)
+//   • platforms     — Telegram/Slack/Discord/Email connection state + setup (v1)
+//   • batch         — Lab: BatchRunner submissions + progress (v1)
+//   • eval          — Lab: EvalRunner submissions + scoring (v1)
+export const apiRouter = {
+  sessions: sessionsRouter,
+  chat: chatRouter,
+  personalities: personalitiesRouter,
+  config: configRouter,
+  onboarding: onboardingRouter,
+  tools: toolsRouter,
+  clarify: clarifyRouter,
+  cron: cronRouter,
+  skills: skillsRouter,
+  evolver: evolverRouter,
+  mesh: meshRouter,
+  memory: memoryRouter,
+  plugins: pluginsRouter,
+  mcp: mcpRouter,
+  platforms: platformsRouter,
+  batch: batchRouter,
+  eval: evalRouter,
+  kanban: kanbanRouter,
+  apiKeys: apiKeysRouter,
+  meta: metaRouter,
+};

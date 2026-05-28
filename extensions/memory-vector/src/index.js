@@ -1,0 +1,400 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
+import Database from 'better-sqlite3';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+const TOP_K = 5;
+const EMBED_DIM = 384;
+/** Maximum size in bytes for any single memory key's content. */
+const MAX_MEMORY_BYTES = 512 * 1024; // 512KB per key
+let _pipeline = null;
+let _pipelinePromise = null;
+async function getDefaultEmbedder() {
+  if (_pipeline) return _pipeline;
+  if (!_pipelinePromise) {
+    _pipelinePromise = (async () => {
+      const { pipeline } = await import('@xenova/transformers');
+      // biome-ignore lint/suspicious/noExplicitAny: @xenova/transformers pipeline return type is not exported
+      _pipeline = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+      return _pipeline;
+    })();
+  }
+  return _pipelinePromise;
+}
+// ---------------------------------------------------------------------------
+// Cosine similarity (pure float arithmetic)
+// ---------------------------------------------------------------------------
+function cosine(a, b) {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  return na === 0 || nb === 0 ? 0 : dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+// ---------------------------------------------------------------------------
+// VectorMemoryProvider
+// ---------------------------------------------------------------------------
+export class VectorMemoryProvider {
+  db;
+  dir;
+  topK;
+  embedFn;
+  storage;
+  // Per-key mutex to prevent concurrent read-modify-write races in sync().
+  // Two concurrent sync() calls for the same scope+key could both read the same
+  // content, each append their own addition, then the second upsert overwrites
+  // the first's append. The promise-chain mutex serializes per-key operations.
+  locks = new Map();
+  async withLock(key, fn) {
+    const prev = this.locks.get(key) ?? Promise.resolve();
+    let resolve;
+    const next = new Promise((r) => {
+      resolve = r;
+    });
+    this.locks.set(key, next);
+    await prev;
+    try {
+      await fn();
+    } finally {
+      if (resolve) resolve();
+      if (this.locks.get(key) === next) this.locks.delete(key);
+    }
+  }
+  constructor(config = {}) {
+    this.dir = config.dir ?? join(homedir(), '.ethos');
+    this.topK = config.topK ?? TOP_K;
+    this.embedFn = config.embedFn;
+    this.storage = config.storage ?? new FsStorage();
+    this.db = new Database(join(this.dir, 'memory.db'));
+    this.db.pragma('journal_mode = WAL');
+    this.migrate();
+  }
+  migrate() {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS memory_entries (
+        scope_id    TEXT NOT NULL,
+        key         TEXT NOT NULL,
+        content     TEXT NOT NULL,
+        embedding   BLOB NOT NULL,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL,
+        PRIMARY KEY (scope_id, key)
+      ) STRICT;
+    `);
+    this.migrateLegacyChunks();
+  }
+  /**
+   * Migrate rows from the legacy `memory_chunks` schema (one row per
+   * embedded chunk, keyed by an auto-increment `id` and grouped by
+   * `store` ∈ {'memory', 'user'}) into the new `memory_entries`
+   * schema (one row per key, scoped by `scope_id`).
+   *
+   * Strategy:
+   *  - Each legacy row becomes a `memory_entries` row in scope `global`
+   *    with key `legacy-<store>-<id>` (deterministic so the migration
+   *    is idempotent and safe to re-run if interrupted).
+   *  - The chunk's existing embedding is preserved — re-embedding 1000s
+   *    of chunks on every cold start would be a latency cliff.
+   *  - The legacy table is dropped only after every row migrates.
+   *
+   * Skip when the table doesn't exist (fresh install) or has no rows.
+   */
+  migrateLegacyChunks() {
+    const tableExists = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memory_chunks'")
+      .get();
+    if (!tableExists) return;
+    const rows = this.db
+      .prepare(
+        'SELECT id, store, content, embedding, created_at FROM memory_chunks ORDER BY id ASC',
+      )
+      .all();
+    if (rows.length === 0) {
+      this.db.exec('DROP TABLE memory_chunks');
+      return;
+    }
+    const insert = this.db.prepare(`INSERT OR IGNORE INTO memory_entries
+       (scope_id, key, content, embedding, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`);
+    const tx = this.db.transaction(() => {
+      for (const row of rows) {
+        const key = `legacy-${row.store}-${row.id}`;
+        insert.run('global', key, row.content, row.embedding, row.created_at, row.created_at);
+      }
+      this.db.exec('DROP TABLE memory_chunks');
+    });
+    tx();
+  }
+  // ---------------------------------------------------------------------------
+  // MemoryProvider interface
+  // ---------------------------------------------------------------------------
+  async prefetch(_ctx) {
+    // Vector stores are not bulk-read at prefetch time — callers use
+    // `search` with the live query instead. Returning null lets AgentLoop
+    // skip the memory injection step cleanly.
+    return null;
+  }
+  async read(key, ctx) {
+    const row = this.db
+      .prepare(
+        'SELECT scope_id, key, content, created_at, updated_at FROM memory_entries WHERE scope_id = ? AND key = ?',
+      )
+      .get(ctx.scopeId, key);
+    if (!row) return null;
+    return {
+      key: row.key,
+      content: row.content,
+      metadata: { lastUpdatedAt: Date.parse(row.updated_at) },
+    };
+  }
+  async search(query, ctx, opts) {
+    const limit = opts?.limit ?? this.topK;
+    const mode = opts?.mode ?? 'semantic';
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    if (mode === 'keyword') return this.keywordSearch(trimmed, ctx, limit);
+    if (mode === 'hybrid') return this.hybridSearch(trimmed, ctx, limit);
+    return this.semanticSearch(trimmed, ctx, limit);
+  }
+  async sync(updates, ctx) {
+    if (updates.length === 0) return;
+    for (const update of updates) {
+      const lockKey = `${ctx.scopeId}:${update.key}`;
+      await this.withLock(lockKey, async () => {
+        switch (update.action) {
+          case 'add': {
+            // Read existing content, append new, then upsert
+            const existing = this.db
+              .prepare('SELECT content FROM memory_entries WHERE scope_id = ? AND key = ?')
+              .get(ctx.scopeId, update.key);
+            let combined = existing ? `${existing.content}\n${update.content}` : update.content;
+            if (combined.length > MAX_MEMORY_BYTES) {
+              const trimmed = combined.slice(combined.length - MAX_MEMORY_BYTES);
+              const firstNewline = trimmed.indexOf('\n');
+              combined = firstNewline > 0 ? trimmed.slice(firstNewline + 1) : trimmed;
+            }
+            await this.upsert(ctx.scopeId, update.key, combined);
+            break;
+          }
+          case 'replace': {
+            if (!update.content.trim()) {
+              this.db
+                .prepare('DELETE FROM memory_entries WHERE scope_id = ? AND key = ?')
+                .run(ctx.scopeId, update.key);
+            } else {
+              await this.upsert(ctx.scopeId, update.key, update.content);
+            }
+            break;
+          }
+          case 'remove': {
+            const match = update.substringMatch;
+            if (!match) break;
+            const existing = this.db
+              .prepare('SELECT content FROM memory_entries WHERE scope_id = ? AND key = ?')
+              .get(ctx.scopeId, update.key);
+            if (!existing) break;
+            const filtered = existing.content
+              .split('\n')
+              .filter((line) => !line.includes(match))
+              .join('\n');
+            if (!filtered.trim()) {
+              this.db
+                .prepare('DELETE FROM memory_entries WHERE scope_id = ? AND key = ?')
+                .run(ctx.scopeId, update.key);
+            } else {
+              await this.upsert(ctx.scopeId, update.key, filtered);
+            }
+            break;
+          }
+          case 'delete': {
+            this.db
+              .prepare('DELETE FROM memory_entries WHERE scope_id = ? AND key = ?')
+              .run(ctx.scopeId, update.key);
+            break;
+          }
+        }
+      });
+    }
+  }
+  async list(ctx, opts) {
+    const limit = opts?.limit;
+    const sql =
+      'SELECT key, content, updated_at FROM memory_entries WHERE scope_id = ? ORDER BY created_at ASC, key ASC' +
+      (limit !== undefined ? ' LIMIT ?' : '');
+    const stmt = this.db.prepare(sql);
+    const rows = limit !== undefined ? stmt.all(ctx.scopeId, limit) : stmt.all(ctx.scopeId);
+    return rows.map((row) => {
+      const ref = { key: row.key };
+      ref.metadata = { lastUpdatedAt: Date.parse(row.updated_at) };
+      if (opts?.withSummaries) {
+        const para = firstParagraph(row.content);
+        if (para) ref.summary = para;
+      }
+      return ref;
+    });
+  }
+  // ---------------------------------------------------------------------------
+  // Manual memory management (called by CLI)
+  // ---------------------------------------------------------------------------
+  /**
+   * Insert a free-form text entry with an auto-generated key. Used by the
+   * `ethos memory add` CLI subcommand where the caller doesn't have a
+   * key namespace of their own.
+   */
+  async add(content, scopeId = 'cli') {
+    const key = `cli-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await this.upsert(scopeId, key, content);
+    return 1;
+  }
+  showRecent(limit = 20) {
+    const rows = this.db
+      .prepare(
+        'SELECT scope_id, key, content, created_at, updated_at FROM memory_entries ORDER BY created_at DESC, rowid DESC LIMIT ?',
+      )
+      .all(limit);
+    return rows.map((r) => ({
+      scopeId: r.scope_id,
+      key: r.key,
+      content: r.content,
+      createdAt: new Date(r.created_at),
+      updatedAt: new Date(r.updated_at),
+    }));
+  }
+  async exportAll(outputPath) {
+    const rows = this.db
+      .prepare(
+        'SELECT scope_id, key, content, created_at FROM memory_entries ORDER BY created_at ASC, key ASC',
+      )
+      .all();
+    if (rows.length === 0) return 0;
+    const lines = [`# Memory Export — ${new Date().toISOString()}`, ''];
+    for (const row of rows) {
+      lines.push(`## [${row.scope_id}] ${row.key} (${row.created_at.slice(0, 16)})`);
+      lines.push('');
+      lines.push(row.content);
+      lines.push('');
+    }
+    await this.storage.write(outputPath, lines.join('\n'));
+    return rows.length;
+  }
+  clear() {
+    this.db.prepare('DELETE FROM memory_entries').run();
+  }
+  count() {
+    return this.db.prepare('SELECT COUNT(*) AS n FROM memory_entries').get().n;
+  }
+  // ---------------------------------------------------------------------------
+  // Migration from MEMORY.md / USER.md
+  // ---------------------------------------------------------------------------
+  async migrateFromMarkdown() {
+    if (this.count() > 0) return { migrated: false, memoryChunks: 0, userChunks: 0 };
+    let memoryChunks = 0;
+    let userChunks = 0;
+    let didMigrate = false;
+    const memPath = join(this.dir, 'MEMORY.md');
+    const userPath = join(this.dir, 'USER.md');
+    const memContent = await this.storage.read(memPath);
+    if (memContent?.trim()) {
+      await this.upsert('global', 'MEMORY.md', memContent);
+      memoryChunks = 1;
+      await this.storage.rename(memPath, `${memPath}.bak`);
+      didMigrate = true;
+    }
+    const userContent = await this.storage.read(userPath);
+    if (userContent?.trim()) {
+      await this.upsert('global', 'USER.md', userContent);
+      userChunks = 1;
+      await this.storage.rename(userPath, `${userPath}.bak`);
+      didMigrate = true;
+    }
+    return { migrated: didMigrate, memoryChunks, userChunks };
+  }
+  close() {
+    this.db.close();
+  }
+  // ---------------------------------------------------------------------------
+  // Internal helpers
+  // ---------------------------------------------------------------------------
+  async embed(text) {
+    if (this.embedFn) return this.embedFn(text);
+    const embedder = await getDefaultEmbedder();
+    const result = await embedder(text, { pooling: 'mean', normalize: true });
+    // result.data may be a view into a larger ArrayBuffer — copy to own buffer
+    return new Float32Array(result.data);
+  }
+  async upsert(scopeId, key, content) {
+    const emb = await this.embed(content);
+    const blob = Buffer.from(new Uint8Array(emb.buffer, emb.byteOffset, emb.byteLength));
+    const now = new Date().toISOString();
+    const existing = this.db
+      .prepare('SELECT created_at FROM memory_entries WHERE scope_id = ? AND key = ?')
+      .get(scopeId, key);
+    const createdAt = existing?.created_at ?? now;
+    this.db
+      .prepare(`INSERT INTO memory_entries (scope_id, key, content, embedding, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(scope_id, key) DO UPDATE SET
+           content = excluded.content,
+           embedding = excluded.embedding,
+           updated_at = excluded.updated_at`)
+      .run(scopeId, key, content, blob, createdAt, now);
+  }
+  async semanticSearch(query, ctx, limit) {
+    const queryEmb = await this.embed(query);
+    const rows = this.db
+      .prepare('SELECT key, content, embedding, updated_at FROM memory_entries WHERE scope_id = ?')
+      .all(ctx.scopeId);
+    const scored = rows.map((row) => {
+      const raw = new Uint8Array(row.embedding);
+      const rowEmb = new Float32Array(raw.buffer, raw.byteOffset, EMBED_DIM);
+      return { row, score: cosine(queryEmb, rowEmb) };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, limit).map((s) => ({
+      key: s.row.key,
+      content: s.row.content,
+      metadata: { lastUpdatedAt: Date.parse(s.row.updated_at) },
+    }));
+  }
+  keywordSearch(query, ctx, limit) {
+    const needle = query.toLowerCase();
+    const rows = this.db
+      .prepare('SELECT key, content, updated_at FROM memory_entries WHERE scope_id = ?')
+      .all(ctx.scopeId);
+    const matches = [];
+    for (const row of rows) {
+      if (matches.length >= limit) break;
+      if (row.content.toLowerCase().includes(needle)) {
+        matches.push({
+          key: row.key,
+          content: row.content,
+          metadata: { lastUpdatedAt: Date.parse(row.updated_at) },
+        });
+      }
+    }
+    return matches;
+  }
+  async hybridSearch(query, ctx, limit) {
+    // Union the two result sets, prefer semantic ordering, dedup by key.
+    const sem = await this.semanticSearch(query, ctx, limit);
+    const kw = this.keywordSearch(query, ctx, limit);
+    const merged = new Map();
+    for (const r of sem) merged.set(r.key, r);
+    for (const r of kw) if (!merged.has(r.key)) merged.set(r.key, r);
+    return [...merged.values()].slice(0, limit);
+  }
+}
+function firstParagraph(text) {
+  const para = text
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .find((p) => p.length > 0);
+  return para && para.length > 0 ? para : undefined;
+}
