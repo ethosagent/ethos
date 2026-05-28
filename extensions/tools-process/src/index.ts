@@ -19,6 +19,7 @@ import {
   withRegistryLock,
 } from './registry';
 import { spawnDetached } from './spawn';
+import { buildLogFiles, compilePatterns, watchLogs } from './watcher';
 
 // Default per-personality concurrency cap. The plan calls the cap
 // "configurable" and floats a per-personality config field — but
@@ -385,6 +386,118 @@ function makeProcessWait(dataDir: string): Tool {
 }
 
 // ---------------------------------------------------------------------------
+// process_watch
+// ---------------------------------------------------------------------------
+
+function makeProcessWatch(dataDir: string): Tool {
+  return {
+    name: 'process_watch',
+    description:
+      'Watch a background process log for pattern matches. ' +
+      'Resolves on first match (default), timeout, or process exit.',
+    toolset: 'process',
+    maxResultChars: 4096,
+    outputIsUntrusted: true,
+    capabilities: {
+      process: { allowedBinaries: ['*'] },
+      fs_reach: { read: 'from-personality', write: 'from-personality' },
+      storage: { scope: 'session', kind: 'kv' as const },
+    },
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Process id from process_start' },
+        patterns: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Strings or /regex/ literals to match against each output line',
+        },
+        timeout_s: {
+          type: 'number',
+          description: 'Max seconds to wait (default 60)',
+        },
+        stop_on_first_match: {
+          type: 'boolean',
+          description: 'Resolve immediately on first match (default true)',
+        },
+        streams: {
+          type: 'string',
+          enum: ['stdout', 'stderr', 'both'],
+          description: 'Which streams to watch (default "both")',
+        },
+      },
+      required: ['id', 'patterns'],
+    },
+    async execute(args, ctx): Promise<ToolResult> {
+      const { id, patterns, timeout_s, stop_on_first_match, streams } = args as {
+        id: string;
+        patterns: string[];
+        timeout_s?: number;
+        stop_on_first_match?: boolean;
+        streams?: 'stdout' | 'stderr' | 'both';
+      };
+
+      if (!id) return { ok: false, error: 'id is required', code: 'input_invalid' };
+      if (!patterns || patterns.length === 0) {
+        return {
+          ok: false,
+          error: 'patterns is required and must not be empty',
+          code: 'input_invalid',
+        };
+      }
+
+      const registry = loadRegistry(dataDir);
+      const entry = registry[id];
+      if (!entry) {
+        return {
+          ok: false,
+          error: `PROCESS_NOT_FOUND: process ${id} not found`,
+          code: 'execution_failed',
+        };
+      }
+
+      if (entry.status !== 'running') {
+        return {
+          ok: true,
+          value: JSON.stringify({
+            matched: false,
+            process_exited: true,
+            exit_code: entry.exitCode,
+          }),
+        };
+      }
+
+      const result = compilePatterns(patterns);
+      if ('error' in result) {
+        return { ok: false, error: result.error, code: 'input_invalid' };
+      }
+
+      const logFiles = buildLogFiles(dataDir, id, streams ?? 'both');
+      const watchResult = await watchLogs({
+        id,
+        pid: entry.pid,
+        dataDir,
+        logFiles,
+        compiled: result.compiled,
+        stopFirst: stop_on_first_match !== false,
+        timeoutMs: (timeout_s ?? 60) * 1000,
+        abortSignal: ctx.abortSignal,
+        onMatch: (m) => {
+          ctx.emit({
+            type: 'progress',
+            toolName: 'process_watch',
+            message: `[${m.stream}] ${m.line}`,
+            audience: 'user',
+          });
+        },
+      });
+
+      return { ok: true, value: JSON.stringify(watchResult) };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -403,6 +516,7 @@ export function createProcessTools(dataDir: string, opts?: { capMax?: number }):
     makeProcessLogs(dataDir),
     makeProcessStop(dataDir),
     makeProcessWait(dataDir),
+    makeProcessWatch(dataDir),
   ];
 }
 

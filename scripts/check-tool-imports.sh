@@ -20,7 +20,7 @@ while IFS= read -r file; do
 
   # tools-process internals: plan Q9 allows thin abstractions below ctx.process
   case "$file" in
-    *tools-process/src/spawn.ts|*tools-process/src/operations.ts|*tools-process/src/registry.ts) continue ;;
+    *tools-process/src/spawn.ts|*tools-process/src/operations.ts|*tools-process/src/registry.ts|*tools-process/src/watcher.ts) continue ;;
   esac
 
   # tools-browser/src/sessions.ts: browser launcher reads ETHOS_BROWSER_NO_SANDBOX opt-in at launch
