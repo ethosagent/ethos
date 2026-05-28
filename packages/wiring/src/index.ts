@@ -599,6 +599,9 @@ export interface CreateAgentLoopResult {
    *  Called from gateway.ts after Gateway construction. Scoped to this loop
    *  instance — multiple loops in the same process are independent. */
   setMessagingSend: (fn: MessagingSendFn) => void;
+  /** Set by the web-api chat service to receive SSE notifications when the
+   *  improvement fork proposes a new skill candidate. */
+  setOnSkillProposed?: (fn: (skillId: string, personalityId: string) => void) => void;
 }
 
 const WEB_PROMPT = `## Output format — Web UI
@@ -1209,11 +1212,28 @@ export async function createAgentLoop(
     tools.register(tool);
   }
 
-  // E3 — auto-trigger for skill evolution. Only fires when the active
-  // personality opts in via `skill_evolution.enabled`. Built-ins
-  // (engineer, coordinator) ship with it on; everything else stays off.
-  const { registerSkillEvolutionAutoTrigger } = await import('@ethosagent/skill-evolver');
-  registerSkillEvolutionAutoTrigger({ hooks, personalities, dataDir });
+  // E3 — improvement fork. After every agent turn, analyses the
+  // transcript and proposes memory updates or new skills when the
+  // active personality opts in via `skill_evolution.enabled`.
+  let onSkillProposedFn: ((skillId: string, personalityId: string) => void) | undefined;
+
+  const { ImprovementFork } = await import('@ethosagent/skill-evolver');
+  const improvementFork = new ImprovementFork({
+    hooks,
+    runtime: {
+      llm,
+      model: config.model,
+      memoryProvider: memory,
+      sessionStore: session,
+    },
+    personalities,
+    dataDir,
+    storage: new FsStorage(),
+    onSkillProposed: (skillId, personalityId) => {
+      onSkillProposedFn?.(skillId, personalityId);
+    },
+  });
+  improvementFork.register();
 
   // Ch.6a — In-process watcher. Built with the default rule set
   // (rate-limit + token-budget + compounding-error + suspicious-
@@ -1324,6 +1344,9 @@ export async function createAgentLoop(
     toolRegistry: tools,
     setMessagingSend: (fn: MessagingSendFn) => {
       gatewaySendFn = fn;
+    },
+    setOnSkillProposed: (fn: (skillId: string, personalityId: string) => void) => {
+      onSkillProposedFn = fn;
     },
   };
 }

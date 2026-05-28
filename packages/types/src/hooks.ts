@@ -111,6 +111,8 @@ export interface AgentDonePayload {
   toolNames?: string[];
   /** First user message of the turn — context for skill candidate analysis. */
   initialPrompt?: string;
+  /** Skill markdown filenames active in this turn's system prompt. */
+  activeSkillFiles?: string[];
 }
 
 export interface MessageReceivedPayload {

@@ -955,6 +955,9 @@ importers:
       '@ethosagent/batch-runner':
         specifier: workspace:*
         version: link:../batch-runner
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs

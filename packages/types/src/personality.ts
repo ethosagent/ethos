@@ -250,6 +250,7 @@ export interface PersonalityConfig {
     enabled?: boolean;
     min_tool_calls?: number;
     cooldown_minutes?: number;
+    model?: string;
   };
   /**
    * E5 — Workspace-aware context layering. Controls how the file-context

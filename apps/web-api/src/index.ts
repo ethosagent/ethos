@@ -143,6 +143,13 @@ export interface CreateWebApiOptions {
    * `http://localhost:3000` when omitted.
    */
   webBaseUrl?: string;
+  /**
+   * Setter from `CreateAgentLoopResult.setOnSkillProposed`. When provided,
+   * `createWebApi` registers a callback that broadcasts an
+   * `evolve.skill_pending` SSE event to all connected sessions whenever
+   * the improvement fork proposes a new skill candidate.
+   */
+  setOnSkillProposed?: (fn: (skillId: string, personalityId: string) => void) => void;
 }
 
 export interface CreateWebApiResult {
@@ -305,6 +312,19 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     });
     void clarifyBridge.sweep();
   }
+
+  // E3 — improvement fork SSE. When the wiring layer's setOnSkillProposed
+  // setter is threaded through, register a callback that broadcasts an
+  // `evolve.skill_pending` push event to every connected session. The web
+  // UI picks this up to surface the review-queue badge.
+  opts.setOnSkillProposed?.((skillId, personalityId) => {
+    chatService.broadcastAll({
+      type: 'evolve.skill_pending',
+      skillId,
+      personalityId,
+      proposedAt: new Date().toISOString(),
+    });
+  });
 
   // Register the web `before_tool_call` hook on the loop. CLI/TUI/ACP
   // profiles get the synchronous terminal guard from `@ethosagent/wiring`;

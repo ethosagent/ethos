@@ -753,6 +753,11 @@ export class AgentLoop {
     if (promptCtx.meta && Object.keys(promptCtx.meta).length > 0) {
       yield { type: 'context_meta', data: promptCtx.meta };
     }
+    const rawSkills = promptCtx.meta?.skillFilesUsed;
+    const activeSkillFiles =
+      Array.isArray(rawSkills) && rawSkills.every((s) => typeof s === 'string')
+        ? (rawSkills as string[])
+        : undefined;
 
     // Memory injected last, as context about the user. The snapshot is a
     // list of (key, content) pairs; render USER.md as "About You" first,
@@ -1673,6 +1678,7 @@ export class AgentLoop {
         totalToolCalls,
         toolNames: [...toolNameCounts.keys()],
         initialPrompt: text,
+        activeSkillFiles,
       },
       allowedPlugins,
     );

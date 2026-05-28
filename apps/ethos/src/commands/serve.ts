@@ -67,6 +67,9 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
   let toolRegistry: ToolRegistry | undefined;
   let activeMeshName: string;
   let activePersonality: string;
+  let setOnSkillProposed:
+    | ((fn: (skillId: string, personalityId: string) => void) => void)
+    | undefined;
 
   // Cron scheduler — hoisted ABOVE the agent-loop construction so the
   // same scheduler instance can be threaded into createAgentLoop (registers
@@ -140,6 +143,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     );
     loop = result.loop;
     toolRegistry = result.toolRegistry;
+    setOnSkillProposed = result.setOnSkillProposed;
   } else if (teamFlag) {
     // Chat UX: `ethos serve --team <name>` → run as the team's coordinator.
     const {
@@ -147,6 +151,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
       toolRegistry: teamToolRegistry,
       coordinatorPersonality,
       meshName: teamMesh,
+      setOnSkillProposed: teamSetOnSkillProposed,
     } = await createTeamAgentLoop(config, teamFlag, {
       profile: loopProfile,
       ...(roleFlag ? { role: roleFlag } : {}),
@@ -155,6 +160,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     toolRegistry = teamToolRegistry;
     activeMeshName = teamMesh;
     activePersonality = coordinatorPersonality;
+    setOnSkillProposed = teamSetOnSkillProposed;
   } else {
     activeMeshName = meshName;
     activePersonality = config.personality;
@@ -165,6 +171,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     });
     loop = result.loop;
     toolRegistry = result.toolRegistry;
+    setOnSkillProposed = result.setOnSkillProposed;
   }
   const session = createSessionStore({ dataDir: dir });
   const mesh = new AgentMesh(meshRegistryPath(activeMeshName));
@@ -250,6 +257,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     listTeams: async () => listRegisteredTeams(dir),
     ...(webDist ? { webDist } : {}),
     ...(config.webBaseUrl ? { webBaseUrl: config.webBaseUrl } : {}),
+    ...(setOnSkillProposed ? { setOnSkillProposed } : {}),
   });
   chatService = created.chatService;
   const webApp = created.app;

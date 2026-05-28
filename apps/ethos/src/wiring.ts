@@ -231,7 +231,7 @@ export async function createAgentLoop(
     ...(config.storage ? { storage: config.storage } : {}),
     secretsResolver: await getSecretsResolver(),
   };
-  return packageCreateAgentLoop(wiringConfig, {
+  const result = await packageCreateAgentLoop(wiringConfig, {
     dataDir: ethosDir(),
     workingDir: process.cwd(),
     profile: opts.profile ?? 'cli',
@@ -240,6 +240,15 @@ export async function createAgentLoop(
     observability: getEthosObservability(),
     ...(opts.cronScheduler ? { cronScheduler: opts.cronScheduler } : {}),
   });
+
+  result.setOnSkillProposed?.((skillId, personalityId) => {
+    console.warn(
+      `[skill-evolution] Proposed skill candidate "${skillId}" for personality "${personalityId}". ` +
+        `Review with: ethos evolve --list-pending`,
+    );
+  });
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +262,8 @@ export interface TeamLoopInfo {
   coordinatorPersonality: string;
   /** Mesh name (team name unless manifest.mesh overrides it). */
   meshName: string;
+  /** Forward the improvement-fork callback setter so `serve.ts` can wire SSE. */
+  setOnSkillProposed?: (fn: (skillId: string, personalityId: string) => void) => void;
 }
 
 /** Resolve a team manifest by name (local ./team.yaml or ~/.ethos/teams/<n>.yaml). */
@@ -297,7 +308,7 @@ export async function createTeamAgentLoop(
 
   // Plan B — thread teamName + role into the wiring so the kanban store points at
   // the team board and the role-gate hook gets registered.
-  const { loop, toolRegistry } = await createAgentLoop(
+  const { loop, toolRegistry, setOnSkillProposed } = await createAgentLoop(
     {
       ...coordinatorConfig,
       personality: coordinatorPersonality,
@@ -315,7 +326,7 @@ export async function createTeamAgentLoop(
     return { prependSystem: coordinatorSystem };
   });
 
-  return { loop, toolRegistry, coordinatorPersonality, meshName };
+  return { loop, toolRegistry, coordinatorPersonality, meshName, setOnSkillProposed };
 }
 
 function buildCoordinatorTeamPrompt(manifest: TeamManifest): string {
