@@ -76,6 +76,9 @@ importers:
       '@ethosagent/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+      '@ethosagent/ui-components':
+        specifier: workspace:*
+        version: link:../../packages/ui-components
       '@ethosagent/web-contracts':
         specifier: workspace:*
         version: link:../../packages/web-contracts
@@ -685,9 +688,6 @@ importers:
 
   extensions/gateway:
     dependencies:
-      '@ethosagent/agent-bridge':
-        specifier: workspace:*
-        version: link:../../packages/agent-bridge
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core

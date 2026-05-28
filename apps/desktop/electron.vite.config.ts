@@ -27,6 +27,9 @@ export default defineConfig({
   },
   renderer: {
     plugins: [react()],
+    optimizeDeps: {
+      exclude: ['@ethosagent/ui-components'],
+    },
     define: {
       'process.env': '{}',
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),

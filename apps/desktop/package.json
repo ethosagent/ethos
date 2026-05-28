@@ -13,6 +13,7 @@
   "dependencies": {
     "@ethosagent/design-tokens": "workspace:*",
     "@ethosagent/sdk": "workspace:*",
+    "@ethosagent/ui-components": "workspace:*",
     "@ethosagent/web-contracts": "workspace:*",
     "electron-store": "^10.0.0",
     "electron-updater": "^6.3.0",
