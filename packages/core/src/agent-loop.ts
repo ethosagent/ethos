@@ -46,6 +46,7 @@ import { DefaultPersonalityRegistry } from './defaults/noop-personality';
 import { redactArgs } from './dry-run';
 import { DefaultHookRegistry } from './hook-registry';
 import type { AgentLoopObservability } from './observability/agent-loop-observability';
+import { SimpleCompletionImpl } from './simple-completion';
 import { DefaultToolRegistry } from './tool-registry';
 
 // ---------------------------------------------------------------------------
@@ -80,6 +81,7 @@ export const KNOWN_AGENT_EVENT_TYPES = [
   'tool_approval_response',
   'evaluators_complete',
   'credential_required',
+  'notification_received',
 ] as const;
 
 export type KnownAgentEventType = (typeof KNOWN_AGENT_EVENT_TYPES)[number];
@@ -179,6 +181,14 @@ export type AgentEvent =
       authUrl?: string;
       sessionKey: string;
       pendingUserMessage: string;
+    }
+  | {
+      type: 'notification_received';
+      pluginId: string;
+      sessionKey: string;
+      message: string;
+      startTurn: boolean;
+      payload?: Record<string, unknown>;
     };
 
 // ---------------------------------------------------------------------------
@@ -286,6 +296,31 @@ export interface AgentLoopConfig {
    * record of each LLM request/response for offline analysis and debugging.
    */
   requestDumpStore?: RequestDumpStore;
+  /** v2.2 — Callback to emit tool invocation metrics to the diagnostic store.
+   *  Wiring provides this; core never imports DiagnosticStore directly. */
+  onToolMetric?: (opts: {
+    pluginId: string;
+    toolName: string;
+    ok: boolean;
+    durationMs: number;
+    sessionId: string;
+    turnId: string;
+  }) => void;
+  /** v2.2 — Pre-turn credential check. Returns the first missing credential,
+   *  or null if all required credentials are present. Opt-in: when undefined,
+   *  the check is skipped. Wiring provides this when plugins declare required
+   *  credentials. */
+  credentialCheck?: (
+    sessionKey: string,
+    pendingUserMessage: string,
+  ) => Promise<{
+    pluginId: string;
+    credentialKey: string;
+    kind: 'oauth' | 'api_key' | 'text';
+    label: string;
+    description?: string;
+    authUrl?: string;
+  } | null>;
   options?: {
     maxIterations?: number;
     historyLimit?: number;
@@ -407,6 +442,10 @@ export class AgentLoop {
   private readonly teamId?: string;
   /** Per-personality MCP tool policy from mcp.yaml (NOT on PersonalityConfig). */
   private readonly mcpPolicy?: import('@ethosagent/types').McpPolicy;
+  /** v2.2 — Callback to emit per-tool invocation metrics to the diagnostic store. */
+  private readonly onToolMetric?: AgentLoopConfig['onToolMetric'];
+  /** v2.2 — Pre-turn credential check callback. */
+  private readonly credentialCheck?: AgentLoopConfig['credentialCheck'];
   /** Per-session accumulated spend in USD. Keyed by sessionKey. Reset via resetSessionCost(). */
   private readonly sessionCosts = new Map<string, number>();
   /** FW-28 — per-session mtime registry. Keyed by sessionKey → (absPath → record). */
@@ -445,6 +484,8 @@ export class AgentLoop {
     if (config.clarifyBridge) this.clarifyBridge = config.clarifyBridge;
     if (config.requestDumpStore) this.requestDumpStore = config.requestDumpStore;
     if (config.mcpPolicy) this.mcpPolicy = config.mcpPolicy;
+    if (config.onToolMetric) this.onToolMetric = config.onToolMetric;
+    if (config.credentialCheck) this.credentialCheck = config.credentialCheck;
     this.contextEngines = config.contextEngines ?? new DefaultContextEngineRegistry();
   }
 
@@ -633,6 +674,29 @@ export class AgentLoop {
       },
       allowedPlugins,
     );
+
+    // v2.2: Pre-turn credential check — surface a credential_required event
+    // before the LLM call so the host can prompt the user for auth.
+    if (this.credentialCheck) {
+      const missing = await this.credentialCheck(sessionKey, text);
+      if (missing) {
+        if (traceId) this.observability?.endTrace(traceId, 'error');
+        this.observability?.flush();
+        yield {
+          type: 'credential_required',
+          pluginId: missing.pluginId,
+          credentialKey: missing.credentialKey,
+          kind: missing.kind,
+          label: missing.label,
+          description: missing.description,
+          authUrl: missing.authUrl,
+          sessionKey,
+          pendingUserMessage: text,
+        };
+        yield { type: 'done', text: '', turnCount: 0 };
+        return;
+      }
+    }
 
     // Step 3: Persist the user message.
     //
@@ -1301,6 +1365,10 @@ export class AgentLoop {
         ...(scopedStorage ? { storage: scopedStorage } : {}),
         ...(personality.safety?.network ? { networkPolicy: personality.safety.network } : {}),
         ...this.contextStore.asContextMethods(),
+        llm: new SimpleCompletionImpl(this.llm, effectiveModel, ({ input, output }) => {
+          llmInputTokens += input;
+          llmOutputTokens += output;
+        }),
       };
 
       // Run before_tool_call hooks; build exec list with effective args
@@ -1640,6 +1708,21 @@ export class AgentLoop {
             },
             allowedPlugins,
           );
+
+          // v2.2 — push auto-metric for plugin tool invocations
+          if (this.onToolMetric) {
+            const pluginId = this.tools.getPluginId?.(p.name);
+            if (pluginId) {
+              this.onToolMetric({
+                pluginId,
+                toolName: p.name,
+                ok: result.ok,
+                durationMs,
+                sessionId,
+                turnId: String(turnCount),
+              });
+            }
+          }
 
           // E5 — surface the touched filesystem path so subscribers (e.g. the
           // file-context injector's progressive discovery) can react to where

@@ -264,6 +264,10 @@ export interface TeamLoopInfo {
   meshName: string;
   /** Forward the improvement-fork callback setter so `serve.ts` can wire SSE. */
   setOnSkillProposed?: (fn: (skillId: string, personalityId: string) => void) => void;
+  /** v2.2 — Notification router for registering per-session adapters. */
+  notificationRouter: import('@ethosagent/types').NotificationRouter;
+  /** v2.2 — Plugin loader for health checks and diagnostics. */
+  pluginLoader: import('@ethosagent/wiring').CreateAgentLoopResult['pluginLoader'];
 }
 
 /** Resolve a team manifest by name (local ./team.yaml or ~/.ethos/teams/<n>.yaml). */
@@ -308,17 +312,18 @@ export async function createTeamAgentLoop(
 
   // Plan B — thread teamName + role into the wiring so the kanban store points at
   // the team board and the role-gate hook gets registered.
-  const { loop, toolRegistry, setOnSkillProposed } = await createAgentLoop(
-    {
-      ...coordinatorConfig,
-      personality: coordinatorPersonality,
-      teamName,
-      role: opts.role ?? 'coordinator',
-      postmortems: manifest.postmortems,
-      trustPolicy: manifest.trust_policy,
-    },
-    { profile: opts.profile ?? 'cli', meshRegistryPath: meshRegistryPath(meshName) },
-  );
+  const { loop, toolRegistry, setOnSkillProposed, notificationRouter, pluginLoader } =
+    await createAgentLoop(
+      {
+        ...coordinatorConfig,
+        personality: coordinatorPersonality,
+        teamName,
+        role: opts.role ?? 'coordinator',
+        postmortems: manifest.postmortems,
+        trustPolicy: manifest.trust_policy,
+      },
+      { profile: opts.profile ?? 'cli', meshRegistryPath: meshRegistryPath(meshName) },
+    );
 
   const coordinatorSystem = buildCoordinatorTeamPrompt(manifest);
   loop.hooks.registerModifying('before_prompt_build', async (payload) => {
@@ -326,7 +331,15 @@ export async function createTeamAgentLoop(
     return { prependSystem: coordinatorSystem };
   });
 
-  return { loop, toolRegistry, coordinatorPersonality, meshName, setOnSkillProposed };
+  return {
+    loop,
+    toolRegistry,
+    coordinatorPersonality,
+    meshName,
+    setOnSkillProposed,
+    notificationRouter,
+    pluginLoader,
+  };
 }
 
 function buildCoordinatorTeamPrompt(manifest: TeamManifest): string {
@@ -354,6 +367,10 @@ export interface ActiveLoop {
   personalityId: string;
   /** Human-readable label for the banner: "researcher" or "team:myteam". */
   displayName: string;
+  /** v2.2 — Notification router for registering per-session adapters. */
+  notificationRouter: import('@ethosagent/types').NotificationRouter;
+  /** v2.2 — Plugin loader for health checks and diagnostics. */
+  pluginLoader: import('@ethosagent/wiring').CreateAgentLoopResult['pluginLoader'];
 }
 
 export async function resolveActiveLoop(
@@ -362,14 +379,26 @@ export async function resolveActiveLoop(
 ): Promise<ActiveLoop> {
   if (config.activeContext?.type === 'team') {
     const teamName = config.activeContext.name;
-    const { loop, coordinatorPersonality } = await createTeamAgentLoop(config, teamName, opts);
-    applyCliOverrideHooks(loop, config);
-    return { loop, personalityId: coordinatorPersonality, displayName: `team:${teamName}` };
+    const teamResult = await createTeamAgentLoop(config, teamName, opts);
+    applyCliOverrideHooks(teamResult.loop, config);
+    return {
+      loop: teamResult.loop,
+      personalityId: teamResult.coordinatorPersonality,
+      displayName: `team:${teamName}`,
+      notificationRouter: teamResult.notificationRouter,
+      pluginLoader: teamResult.pluginLoader,
+    };
   }
   const personalityId = config.activeContext?.name ?? config.personality;
-  const { loop } = await createAgentLoop({ ...config, personality: personalityId }, opts);
-  applyCliOverrideHooks(loop, config);
-  return { loop, personalityId, displayName: personalityId };
+  const result = await createAgentLoop({ ...config, personality: personalityId }, opts);
+  applyCliOverrideHooks(result.loop, config);
+  return {
+    loop: result.loop,
+    personalityId,
+    displayName: personalityId,
+    notificationRouter: result.notificationRouter,
+    pluginLoader: result.pluginLoader,
+  };
 }
 
 // ---------------------------------------------------------------------------

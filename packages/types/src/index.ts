@@ -3,6 +3,7 @@
 
 export * from './clarify';
 export * from './context-engine';
+export * from './diagnostics';
 export * from './errors';
 export * from './evaluator';
 export * from './hooks';
@@ -13,10 +14,14 @@ export * from './logger';
 export * from './mcp';
 export * from './memory';
 export * from './model-catalog';
+export * from './monitor';
+export * from './notification-router';
+export * from './oauth';
 export * from './observability';
 export * from './personality';
 export * from './platform';
 export * from './plugin';
+export * from './plugin-llm';
 export * from './retention';
 export * from './sandbox';
 export { SecretNotFoundError, type SecretRef, type SecretsResolver } from './secrets';

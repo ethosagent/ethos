@@ -246,11 +246,9 @@ describe('CronScheduler repeat policy', () => {
       missedRunPolicy: 'run-once',
       repeat: { kind: 'once' },
     });
-    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await scheduler.patchJob(job.id, {
       nextRunAt: new Date(Date.now() - 60_000).toISOString(),
     });
-    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await scheduler.tick();
     const updated = await scheduler.getJob(job.id);
     expect(updated?.status).toBe('done');
@@ -268,21 +266,17 @@ describe('CronScheduler repeat policy', () => {
       repeat: { kind: 'count', maxRuns: 2 },
     });
     // First tick
-    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await scheduler.patchJob(job.id, {
       nextRunAt: new Date(Date.now() - 60_000).toISOString(),
     });
-    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await scheduler.tick();
     let updated = await scheduler.getJob(job.id);
     expect(updated?.status).toBe('active');
     expect(updated?.runCount).toBe(1);
     // Second tick
-    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await scheduler.patchJob(job.id, {
       nextRunAt: new Date(Date.now() - 60_000).toISOString(),
     });
-    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await scheduler.tick();
     updated = await scheduler.getJob(job.id);
     expect(updated?.status).toBe('done');
@@ -393,12 +387,10 @@ describe('CronScheduler tick', () => {
     });
     // Force nextRunAt to the past
     // Access internal method via cast
-    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await scheduler.patchJob(job.id, {
       nextRunAt: new Date(Date.now() - 60_000).toISOString(),
     });
     // Manually trigger tick
-    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await scheduler.tick();
     expect(runs).not.toContain('overdue-skip');
     // Next run should be updated to a future time
@@ -421,11 +413,9 @@ describe('CronScheduler tick', () => {
       personalityId: 'test',
       missedRunPolicy: 'run-once',
     });
-    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await scheduler.patchJob(job.id, {
       nextRunAt: new Date(Date.now() - 60_000).toISOString(),
     });
-    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await scheduler.tick();
     expect(runs).toContain('overdue-run');
   });
@@ -444,12 +434,10 @@ describe('CronScheduler tick', () => {
       personalityId: 'test',
       missedRunPolicy: 'run-once',
     });
-    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await scheduler.patchJob(job.id, {
       nextRunAt: new Date(Date.now() - 60_000).toISOString(),
       status: 'paused',
     });
-    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await scheduler.tick();
     expect(runs).not.toContain('paused-job');
   });

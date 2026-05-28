@@ -22,6 +22,10 @@ export interface AuthRoutesOptions {
   cookieMaxAgeSeconds?: number;
   /** When true, the cookie's `secure` flag is set. Default: false (localhost). */
   secureCookie?: boolean;
+  /** OAuth coordinator for plugin credential flows (v2.2). */
+  oauthCoordinator?: import('@ethosagent/plugin-sdk').OAuthCoordinator;
+  /** Notification router for resuming turns after OAuth (v2.2). */
+  notificationRouter?: import('@ethosagent/types').NotificationRouter;
 }
 
 export function authRoutes(opts: AuthRoutesOptions) {
@@ -68,6 +72,23 @@ export function authRoutes(opts: AuthRoutesOptions) {
 
     // 302 to a clean URL so the token doesn't land in browser history.
     return c.redirect('/', 302);
+  });
+
+  app.get('/callback', async (c) => {
+    const code = c.req.query('code');
+    const state = c.req.query('state');
+    if (!code || !state) {
+      return c.html('<html><body>Missing code or state parameter.</body></html>', 400);
+    }
+    try {
+      if (!opts.oauthCoordinator || !opts.notificationRouter) {
+        return c.html('<html><body>OAuth is not configured on this server.</body></html>', 500);
+      }
+      await opts.oauthCoordinator.handleCallback(code, state, opts.notificationRouter);
+      return c.html('<html><body>Connected — you can close this tab.</body></html>');
+    } catch {
+      return c.html('<html><body>OAuth connection failed. Please try again.</body></html>', 400);
+    }
   });
 
   return app;

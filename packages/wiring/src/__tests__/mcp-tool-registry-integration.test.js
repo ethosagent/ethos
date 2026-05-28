@@ -45,7 +45,6 @@ class StubTransportManager extends McpManager {
     const real = super._buildClient(config);
     const transport = this.transports.get(config.name);
     if (transport) {
-      // biome-ignore lint/suspicious/noExplicitAny: test seam
       real._createTransport = async () => transport;
     }
     return real;
