@@ -20,10 +20,8 @@ describe('redactPii', () => {
   });
 
   it('redacts credit card numbers', () => {
-    // The phone regex is greedy and fires before the card regex, so long
-    // digit sequences are tagged as phone rather than card.  The important
-    // property is that the raw digits are removed.
     const result = redactPii('My card is 4111 1111 1111 1111');
+    expect(result).toContain('[REDACTED:card]');
     expect(result).not.toContain('4111');
   });
 

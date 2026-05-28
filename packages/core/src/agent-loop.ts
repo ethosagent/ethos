@@ -714,12 +714,11 @@ export class AgentLoop {
     // which files/images the user attached. Persisted with the message so
     // replay is faithful (plan risk #10).
     const piiConfig = personality.safety?.piiRedaction;
-    const sanitizedText = piiConfig?.enabled ? redactPii(text, piiConfig.extraPatterns) : text;
-
     const attachmentAnnotation = buildAttachmentAnnotation(opts.attachments ?? []);
-    const annotatedText = attachmentAnnotation
-      ? `${attachmentAnnotation}\n${sanitizedText}`
-      : sanitizedText;
+    const rawAnnotatedText = attachmentAnnotation ? `${attachmentAnnotation}\n${text}` : text;
+    const annotatedText = piiConfig?.enabled
+      ? redactPii(rawAnnotatedText, piiConfig.extraPatterns)
+      : rawAnnotatedText;
 
     await this.session.appendMessage({
       sessionId,
