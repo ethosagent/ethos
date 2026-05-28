@@ -4,8 +4,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
-  type PluginLockEntry,
   computeIntegrity,
+  type PluginLockEntry,
   readLockfile,
   writeLockfile,
 } from '@ethosagent/plugin-loader';
@@ -243,7 +243,7 @@ async function installPlugin(pkg: string, personalityId?: string): Promise<void>
     const lastAt = exactSpec.lastIndexOf('@');
     const pkgName = lastAt > 0 ? exactSpec.slice(0, lastAt) : exactSpec;
     const pkgVersion = lastAt > 0 ? exactSpec.slice(lastAt + 1) : 'unknown';
-    const pluginId = pkgName.startsWith('@') ? pkgName.split('/')[1] ?? pkgName : pkgName;
+    const pluginId = pkgName.startsWith('@') ? (pkgName.split('/')[1] ?? pkgName) : pkgName;
     const pkgJsonPath = join(pluginsDir(), 'node_modules', pkgName, 'package.json');
     const integrity = await computeIntegrity(pkgJsonPath);
     const entry: PluginLockEntry = {
