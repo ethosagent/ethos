@@ -35,4 +35,12 @@ export const platformsRouter = {
   botsRemoveSlack: os.platforms.botsRemoveSlack.handler(({ input, context }) =>
     context.platforms.removeSlackApp(input.botKey),
   ),
+
+  getChannelFilter: os.platforms.getChannelFilter.handler(({ input, context }) =>
+    context.platforms.getChannelFilter(input.platform),
+  ),
+
+  setChannelFilter: os.platforms.setChannelFilter.handler(({ input, context }) =>
+    context.platforms.setChannelFilter(input.platform, input.filter),
+  ),
 };

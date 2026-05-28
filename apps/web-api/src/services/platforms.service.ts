@@ -1,5 +1,6 @@
 import type {
   BotBinding,
+  ChannelPlatformFilter,
   PlatformId,
   PlatformStatus,
   SlackAppEntry,
@@ -63,5 +64,16 @@ export class PlatformsService {
   async removeSlackApp(botKey: string): Promise<{ ok: true }> {
     await this.opts.repo.removeSlackApp(botKey);
     return { ok: true };
+  }
+
+  async getChannelFilter(platform: string): Promise<{ filter: ChannelPlatformFilter }> {
+    return { filter: await this.opts.repo.getChannelFilter(platform) };
+  }
+
+  async setChannelFilter(
+    platform: string,
+    filter: ChannelPlatformFilter,
+  ): Promise<{ filter: ChannelPlatformFilter }> {
+    return { filter: await this.opts.repo.setChannelFilter(platform, filter) };
   }
 }

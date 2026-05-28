@@ -6,6 +6,7 @@ import {
   ApprovalScopeSchema,
   BatchRunInfoSchema,
   BotBindingSchema,
+  ChannelPlatformFilterSchema,
   CronJobSchema,
   CronRunSchema,
   EvalRunInfoSchema,
@@ -702,6 +703,14 @@ const platforms = {
   botsRemoveSlack: oc
     .input(z.object({ botKey: z.string() }))
     .output(z.object({ ok: z.literal(true) })),
+
+  getChannelFilter: oc
+    .input(z.object({ platform: z.string() }))
+    .output(z.object({ filter: ChannelPlatformFilterSchema })),
+
+  setChannelFilter: oc
+    .input(z.object({ platform: z.string(), filter: ChannelPlatformFilterSchema }))
+    .output(z.object({ filter: ChannelPlatformFilterSchema })),
 };
 
 // ---------------------------------------------------------------------------

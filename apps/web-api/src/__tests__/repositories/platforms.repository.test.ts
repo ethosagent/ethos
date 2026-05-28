@@ -385,3 +385,110 @@ describe('PlatformsRepository multi-bot slack', () => {
     expect(await repo.listSlackApps()).toEqual([]);
   });
 });
+
+// --- channel filter ---
+
+describe('PlatformsRepository channel filter', () => {
+  let storage: InMemoryStorage;
+  let secrets: InMemorySecretsResolver;
+  let configRepo: ConfigRepository;
+  let repo: PlatformsRepository;
+
+  beforeEach(() => {
+    storage = new InMemoryStorage();
+    secrets = new InMemorySecretsResolver();
+    configRepo = new ConfigRepository({ dataDir: DATA, storage });
+    repo = new PlatformsRepository({ config: configRepo, secrets });
+  });
+
+  it('returns default filter when no config exists', async () => {
+    const filter = await repo.getChannelFilter('telegram');
+    expect(filter).toEqual({ enabled: true, ownerUserId: '', allowlist: [] });
+  });
+
+  it('setChannelFilter stores keys and roundtrips', async () => {
+    await repo.setChannelFilter('telegram', {
+      enabled: true,
+      ownerUserId: '123',
+      allowlist: ['456', '789'],
+    });
+
+    const filter = await repo.getChannelFilter('telegram');
+    expect(filter).toEqual({
+      enabled: true,
+      ownerUserId: '123',
+      allowlist: ['456', '789'],
+    });
+  });
+
+  it('disabling the filter writes enable: false', async () => {
+    await repo.setChannelFilter('telegram', {
+      enabled: false,
+      ownerUserId: '123',
+      allowlist: ['456'],
+    });
+
+    const filter = await repo.getChannelFilter('telegram');
+    expect(filter.enabled).toBe(false);
+
+    const yaml = await storage.read(join(DATA, 'config.yaml'));
+    expect(yaml).toContain('channel_filter.telegram.enable: false');
+  });
+
+  it('empty allowlist deletes the recipientAllowlist key', async () => {
+    await repo.setChannelFilter('telegram', {
+      enabled: true,
+      ownerUserId: '123',
+      allowlist: ['456'],
+    });
+
+    const before = await storage.read(join(DATA, 'config.yaml'));
+    expect(before).toContain('channel_filter.telegram.recipientAllowlist');
+
+    await repo.setChannelFilter('telegram', {
+      enabled: true,
+      ownerUserId: '123',
+      allowlist: [],
+    });
+
+    const after = await storage.read(join(DATA, 'config.yaml'));
+    expect(after).not.toContain('channel_filter.telegram.recipientAllowlist');
+
+    const filter = await repo.getChannelFilter('telegram');
+    expect(filter.allowlist).toEqual([]);
+  });
+
+  it('empty ownerUserId deletes the ownerUserId key', async () => {
+    await repo.setChannelFilter('telegram', {
+      enabled: true,
+      ownerUserId: '123',
+      allowlist: ['456'],
+    });
+
+    const before = await storage.read(join(DATA, 'config.yaml'));
+    expect(before).toContain('channel_filter.telegram.ownerUserId');
+
+    await repo.setChannelFilter('telegram', {
+      enabled: true,
+      ownerUserId: '',
+      allowlist: ['456'],
+    });
+
+    const after = await storage.read(join(DATA, 'config.yaml'));
+    expect(after).not.toContain('channel_filter.telegram.ownerUserId');
+
+    const filter = await repo.getChannelFilter('telegram');
+    expect(filter.ownerUserId).toBe('');
+  });
+
+  it('allowlist comma-parsing trims whitespace', async () => {
+    await configRepo.update({
+      passthrough: {
+        'channel_filter.telegram.recipientAllowlist': 'a, b , c',
+      },
+    });
+
+    const filter = await repo.getChannelFilter('telegram');
+    expect(filter.allowlist).toEqual(['a', 'b', 'c']);
+  });
+});

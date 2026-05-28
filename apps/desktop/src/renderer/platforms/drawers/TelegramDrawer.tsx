@@ -2,6 +2,7 @@ import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppState } from '../../state/AppContext';
 import { PersonalityBindingRow } from '../../ui/PersonalityBindingRow';
+import { AccessControlSection } from '../components/AccessControlSection';
 import { BotRow } from '../components/BotRow';
 import { TokenInput } from '../components/TokenInput';
 
@@ -239,6 +240,8 @@ export function TelegramDrawer({ onBotChange }: TelegramDrawerProps) {
           <div style={{ fontSize: 12, color: 'var(--error)', marginTop: 8 }}>{connectError}</div>
         )}
       </div>
+
+      <AccessControlSection platform="telegram" client={client} />
 
       <div
         style={{

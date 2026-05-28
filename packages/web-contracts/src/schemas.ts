@@ -418,6 +418,13 @@ export const SlackAppEntrySchema = z.object({
 });
 export type SlackAppEntry = z.infer<typeof SlackAppEntrySchema>;
 
+export const ChannelPlatformFilterSchema = z.object({
+  enabled: z.boolean(),
+  ownerUserId: z.string(),
+  allowlist: z.array(z.string()),
+});
+export type ChannelPlatformFilter = z.infer<typeof ChannelPlatformFilterSchema>;
+
 // ---------------------------------------------------------------------------
 // Plugins + MCP — v1
 //
