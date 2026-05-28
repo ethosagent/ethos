@@ -1,14 +1,16 @@
 import { Alert, Button, Spin, Typography } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { z } from 'zod';
 import { rpc } from '../rpc';
 
-interface OAuthPayload {
-  code?: string | null;
-  state?: string | null;
-  error?: string | null;
-  error_description?: string | null;
-}
+const OAuthPayloadSchema = z.object({
+  code: z.string().nullish(),
+  state: z.string().nullish(),
+  error: z.string().nullish(),
+  error_description: z.string().nullish(),
+});
+type OAuthPayload = z.infer<typeof OAuthPayloadSchema>;
 
 type Status = 'completing' | 'success' | 'error';
 
@@ -34,7 +36,7 @@ export function OAuthCallback() {
 
     let payload: OAuthPayload;
     try {
-      payload = JSON.parse(raw) as OAuthPayload;
+      payload = OAuthPayloadSchema.parse(JSON.parse(raw));
     } catch {
       setStatus('error');
       setErrorMsg('Failed to parse OAuth callback data.');

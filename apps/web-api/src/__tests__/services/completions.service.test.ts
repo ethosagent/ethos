@@ -1,7 +1,8 @@
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { CompletionsRepository } from '../../features/completions/repository';
+import { CompletionsService } from '../../features/completions/service';
 import type { ChatCompletionChunk, ChatCompletionRequest } from '../../routes/openai/schemas';
-import { CompletionsService } from '../../services/completions.service';
 import { makeStubAgentLoop } from '../test-helpers';
 
 const defaults = { model: 'claude-test', provider: 'anthropic' };
@@ -12,7 +13,8 @@ const seqIds = () => {
 };
 
 function makeService(overrides: Parameters<typeof makeStubAgentLoop>[0] = {}) {
-  const sessions = new SQLiteSessionStore(':memory:');
+  const store = new SQLiteSessionStore(':memory:');
+  const sessions = new CompletionsRepository(store);
   const loop = makeStubAgentLoop(overrides);
   const service = new CompletionsService({
     loop,
@@ -21,7 +23,7 @@ function makeService(overrides: Parameters<typeof makeStubAgentLoop>[0] = {}) {
     now: fixedNow,
     newId: seqIds(),
   });
-  return { service, sessions, loop };
+  return { service, sessions, store, loop };
 }
 
 const userOnly = (text: string): ChatCompletionRequest => ({
@@ -30,8 +32,8 @@ const userOnly = (text: string): ChatCompletionRequest => ({
 });
 
 describe('CompletionsService.complete', () => {
-  let sessions: SQLiteSessionStore;
-  afterEach(() => sessions.close());
+  let store: SQLiteSessionStore;
+  afterEach(() => store.close());
   beforeEach(() => {});
 
   it('returns OpenAI response shape for a single text turn', async () => {
@@ -43,7 +45,7 @@ describe('CompletionsService.complete', () => {
         { type: 'done', text: 'hello world', turnCount: 1 },
       ],
     });
-    sessions = ctx.sessions;
+    store = ctx.store;
     const out = await ctx.service.complete({ req: userOnly('hi'), personalityId: 'engineer' });
     expect(out.id).toBe('chatcmpl-id-1');
     expect(out.object).toBe('chat.completion');
@@ -63,7 +65,7 @@ describe('CompletionsService.complete', () => {
       },
       events: [{ type: 'done', text: '', turnCount: 1 }],
     });
-    sessions = ctx.sessions;
+    store = ctx.store;
     await ctx.service.complete({ req: userOnly('hello'), personalityId: 'researcher' });
     expect(captured).not.toBeNull();
     const o = captured as unknown as {
@@ -83,7 +85,7 @@ describe('CompletionsService.complete', () => {
       },
       events: [{ type: 'done', text: '', turnCount: 1 }],
     });
-    sessions = ctx.sessions;
+    store = ctx.store;
     await ctx.service.complete({ req: userOnly('hi'), personalityId: undefined });
     expect(opts).not.toBeNull();
     const o = opts as unknown as { sessionKey: string; personalityId?: string };
@@ -97,7 +99,7 @@ describe('CompletionsService.complete', () => {
         { type: 'error', error: 'upstream went down', code: 'LLM_ERROR' },
       ],
     });
-    sessions = ctx.sessions;
+    store = ctx.store;
     await expect(
       ctx.service.complete({ req: userOnly('hi'), personalityId: 'engineer' }),
     ).rejects.toThrow(/upstream went down/);
@@ -105,7 +107,7 @@ describe('CompletionsService.complete', () => {
 
   it('throws when no user message ends the conversation', async () => {
     const ctx = makeService({});
-    sessions = ctx.sessions;
+    store = ctx.store;
     const req: ChatCompletionRequest = {
       model: 'engineer',
       messages: [{ role: 'assistant', content: 'unprompted' }],
@@ -117,7 +119,7 @@ describe('CompletionsService.complete', () => {
 
   it('rejects [user, assistant] — refuses to silently rerun an earlier user prompt', async () => {
     const ctx = makeService({});
-    sessions = ctx.sessions;
+    store = ctx.store;
     const req: ChatCompletionRequest = {
       model: 'engineer',
       messages: [
@@ -132,7 +134,7 @@ describe('CompletionsService.complete', () => {
 
   it('pre-populates the ephemeral session with prior user/assistant turns', async () => {
     const ctx = makeService({ events: [{ type: 'done', text: '', turnCount: 1 }] });
-    sessions = ctx.sessions;
+    store = ctx.store;
     const req: ChatCompletionRequest = {
       model: 'engineer',
       messages: [
@@ -143,19 +145,19 @@ describe('CompletionsService.complete', () => {
       ],
     };
     await ctx.service.complete({ req, personalityId: 'engineer' });
-    const list = await sessions.listSessions({});
+    const list = await store.listSessions({});
     expect(list).toHaveLength(1);
     const session = list[0];
     if (!session) throw new Error('expected one session');
     expect(session.key).toMatch(/^openai:ephem:/);
-    const messages = await sessions.getMessages(session.id);
+    const messages = await store.getMessages(session.id);
     // System dropped, q1+a1 prepopulated (q2 is the live turn and not appended by the service).
     expect(messages.map((m) => `${m.role}:${m.content}`)).toEqual(['user:q1', 'assistant:a1']);
   });
 
   it('does NOT pre-populate when X-Ethos-Session (stateful) is supplied', async () => {
     const ctx = makeService({ events: [{ type: 'done', text: '', turnCount: 1 }] });
-    sessions = ctx.sessions;
+    store = ctx.store;
     const req: ChatCompletionRequest = {
       model: 'engineer',
       messages: [
@@ -172,14 +174,14 @@ describe('CompletionsService.complete', () => {
     // No session row created by the service; AgentLoop would lazily create
     // `openai:my-session` on its own. The stub doesn't, so there are zero
     // sessions in the store.
-    const list = await sessions.listSessions({});
+    const list = await store.listSessions({});
     expect(list).toHaveLength(0);
   });
 });
 
 describe('CompletionsService.stream', () => {
-  let sessions: SQLiteSessionStore;
-  afterEach(() => sessions.close());
+  let store: SQLiteSessionStore;
+  afterEach(() => store.close());
 
   async function collect(gen: AsyncGenerator<ChatCompletionChunk>): Promise<ChatCompletionChunk[]> {
     const out: ChatCompletionChunk[] = [];
@@ -195,7 +197,7 @@ describe('CompletionsService.stream', () => {
         { type: 'done', text: 'foobar', turnCount: 1 },
       ],
     });
-    sessions = ctx.sessions;
+    store = ctx.store;
     const chunks = await collect(
       ctx.service.stream({ req: userOnly('hi'), personalityId: 'engineer' }),
     );
@@ -214,7 +216,7 @@ describe('CompletionsService.stream', () => {
         { type: 'done', text: 'ok', turnCount: 1 },
       ],
     });
-    sessions = ctx.sessions;
+    store = ctx.store;
     const req: ChatCompletionRequest = {
       model: 'engineer',
       messages: [{ role: 'user', content: 'hi' }],
@@ -231,7 +233,7 @@ describe('CompletionsService.stream', () => {
     const ctx = makeService({
       events: [{ type: 'error', error: 'boom', code: 'LLM_ERROR' }],
     });
-    sessions = ctx.sessions;
+    store = ctx.store;
     const gen = ctx.service.stream({ req: userOnly('hi'), personalityId: 'engineer' });
     await expect(
       (async () => {
@@ -248,7 +250,7 @@ describe('CompletionsService.stream', () => {
       },
       events: [{ type: 'done', text: '', turnCount: 1 }],
     });
-    sessions = ctx.sessions;
+    store = ctx.store;
     const controller = new AbortController();
     await collect(
       ctx.service.stream({

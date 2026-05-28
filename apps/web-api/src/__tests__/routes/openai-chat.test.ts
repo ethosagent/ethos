@@ -1,8 +1,9 @@
 import type { AgentEvent } from '@ethosagent/core';
 import { SQLiteSessionStore, SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { CompletionsRepository } from '../../features/completions/repository';
+import { CompletionsService } from '../../features/completions/service';
 import { openAiRoutes } from '../../routes/openai';
-import { CompletionsService } from '../../services/completions.service';
 import type { PersonalitiesService } from '../../services/personalities.service';
 import { makeStubAgentLoop } from '../test-helpers';
 
@@ -35,7 +36,7 @@ async function setup(opts: SetupOptions = {}) {
   });
   const completions = new CompletionsService({
     loop,
-    sessions,
+    sessions: new CompletionsRepository(sessions),
     defaults: { model: 'claude-test', provider: 'anthropic' },
   });
   const app = openAiRoutes({

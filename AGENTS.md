@@ -355,6 +355,10 @@ array[n]! and map.get(key)! are blocked. Preferred patterns:
 array[n] ?? fallback — safe default
 const val = map.get(key); if (val) { ... } — explicit guard
 Extract into a const before using in a filter: const match = update.substringMatch; if (!match) break;
+
+API response type safety
+Never cast API response types with `as`. The oRPC typed client infers return types — use those. For SSE events, parse with the Zod schema from `@ethosagent/web-contracts`. For external JSON (localStorage, URL params), use Zod `.safeParse()` with a fallback rather than `as`.
+
 Design system
 Always read DESIGN.md before making any visual or UI decision. All font choices, colors, spacing, motion, and aesthetic direction are defined there. Do not deviate without explicit user approval.
 

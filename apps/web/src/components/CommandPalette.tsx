@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Input, Modal } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { usePalettePersonalities } from '../features/personalities/api/queries';
 import { clearLastSessionId, setLastSessionId } from '../lib/lastSession';
 import { rpc } from '../rpc';
 
@@ -68,11 +69,7 @@ export function CommandPalette({ open, onClose, onToggleDrawer }: CommandPalette
     queryFn: () => rpc.sessions.list({ limit: RECENT_SESSION_COUNT }),
     enabled: open,
   });
-  const personalitiesQuery = useQuery({
-    queryKey: ['palette', 'personalities'],
-    queryFn: () => rpc.personalities.list({}),
-    enabled: open,
-  });
+  const personalitiesQuery = usePalettePersonalities(open);
 
   const items = useMemo<CommandItem[]>(() => {
     const closeAfter = (fn: () => void) => () => {

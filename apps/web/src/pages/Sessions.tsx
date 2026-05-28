@@ -1,10 +1,15 @@
 import type { Session } from '@ethosagent/web-contracts';
-import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { MenuProps } from 'antd';
-import { App as AntApp, Button, Dropdown, Input, Popconfirm, Spin, Table } from 'antd';
+import { Button, Dropdown, Input, Popconfirm, Spin, Table } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { rpc } from '../rpc';
+import {
+  useSessionDelete,
+  useSessionExport,
+  useSessionFork,
+  useSessionRename,
+} from '../features/sessions/api/mutations';
+import { useSessionList } from '../features/sessions/api/queries';
 
 // Sessions tab — list, search, paginate, fork, delete. The chat tab uses
 // the URL `?session=<id>` deep link as the wire, so all the actions here
@@ -18,13 +23,10 @@ import { rpc } from '../rpc';
 // before triggering a refetch — so typing fast doesn't fire a refetch
 // per character.
 
-const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 400;
 
 export function Sessions() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const { notification, message } = AntApp.useApp();
 
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -38,87 +40,20 @@ export function Sessions() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const queryKey = useMemo(
-    () => ['sessions', 'list', { q: debouncedSearch }] as const,
-    [debouncedSearch],
-  );
-
   const { data, error, isLoading, isFetching, hasNextPage, fetchNextPage, isFetchingNextPage } =
-    useInfiniteQuery({
-      queryKey,
-      queryFn: ({ pageParam }: { pageParam: string | null }) =>
-        rpc.sessions.list({
-          limit: PAGE_SIZE,
-          ...(debouncedSearch ? { q: debouncedSearch } : {}),
-          ...(pageParam ? { cursor: pageParam } : {}),
-        }),
-      initialPageParam: null as string | null,
-      getNextPageParam: (last) => last.nextCursor,
-    });
+    useSessionList(debouncedSearch);
 
   const flat = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
 
   // --- mutations ---
 
-  const deleteMut = useMutation({
-    mutationFn: (id: string) => rpc.sessions.delete({ id }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['sessions', 'list'] });
-    },
-    onError: (err) => {
-      notification.error({
-        message: 'Could not delete session',
-        description: err instanceof Error ? err.message : String(err),
-        placement: 'topRight',
-      });
-    },
-  });
+  const deleteMut = useSessionDelete();
 
-  const forkMut = useMutation({
-    mutationFn: (id: string) => rpc.sessions.fork({ id }),
-    onSuccess: (result) => {
-      void queryClient.invalidateQueries({ queryKey: ['sessions', 'list'] });
-      navigate(`/chat?session=${result.session.id}`);
-    },
-    onError: (err) => {
-      notification.error({
-        message: 'Could not fork session',
-        description: err instanceof Error ? err.message : String(err),
-        placement: 'topRight',
-      });
-    },
-  });
+  const forkMut = useSessionFork();
 
-  const renameMut = useMutation({
-    mutationFn: ({ id, title }: { id: string; title: string | null }) =>
-      rpc.sessions.update({ id, title }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['sessions', 'list'] });
-    },
-    onError: (err) => {
-      notification.error({
-        message: 'Could not rename session',
-        description: err instanceof Error ? err.message : String(err),
-        placement: 'topRight',
-      });
-    },
-  });
+  const renameMut = useSessionRename();
 
-  const exportMut = useMutation({
-    mutationFn: (id: string) => rpc.sessions.export({ id, format: 'markdown' }),
-    onSuccess: (data) => {
-      const blob = new Blob([data.content], { type: 'text/markdown' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = data.filename;
-      a.click();
-      URL.revokeObjectURL(url);
-    },
-    onError: () => {
-      void message.error('Could not export session');
-    },
-  });
+  const exportMut = useSessionExport();
 
   // --- render ---
 
@@ -293,7 +228,11 @@ export function Sessions() {
                       setEditingId(row.id);
                       setEditingValue(row.title ?? '');
                     }}
-                    onFork={() => forkMut.mutate(row.id)}
+                    onFork={() =>
+                      forkMut.mutate(row.id, {
+                        onSuccess: (result) => navigate(`/chat?session=${result.session.id}`),
+                      })
+                    }
                     onExport={() => exportMut.mutate(row.id)}
                     onDelete={() => deleteMut.mutate(row.id)}
                     deleting={deleteMut.isPending && deleteMut.variables === row.id}

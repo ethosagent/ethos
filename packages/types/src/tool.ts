@@ -23,11 +23,10 @@ export type ToolResult =
       structured?: Record<string, unknown>;
       cost_usd?: number;
     }
-  | {
-      ok: false;
-      error: string;
-      code: 'input_invalid' | 'not_available' | 'execution_failed' | 'STALE_WRITE';
-    };
+  | { ok: false; code: 'input_invalid'; error: string; field?: string }
+  | { ok: false; code: 'not_available'; error: string; reason?: string }
+  | { ok: false; code: 'execution_failed'; error: string; cause?: unknown }
+  | { ok: false; code: 'STALE_WRITE'; error: string; conflictKey?: string };
 
 export interface ToolProgressEvent {
   type: 'progress';

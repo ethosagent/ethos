@@ -27,7 +27,7 @@ import { OpenAICompatProvider } from '@ethosagent/llm-openai-compat';
 import { noopLogger } from '@ethosagent/logger';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import { VectorMemoryProvider } from '@ethosagent/memory-vector';
-import { createPersonalityRegistry } from '@ethosagent/personalities';
+import { compose as composePersonalities } from '@ethosagent/personalities/compose';
 import {
   platformId as discordId,
   platformPrompt as discordPrompt,
@@ -52,13 +52,10 @@ import {
   type PluginRouteEntry,
 } from '@ethosagent/plugin-sdk';
 import { DockerSandbox } from '@ethosagent/sandbox-docker';
-import { createKvStoreFactory, SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import {
-  bundledSkillsSource,
-  createInjectors,
-  PlatformFormattingInjector,
-  UniversalScanner,
-} from '@ethosagent/skills';
+import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
+import { compose as composeSession } from '@ethosagent/session-sqlite/compose';
+import { UniversalScanner } from '@ethosagent/skills';
+import { compose as composeSkills } from '@ethosagent/skills/compose';
 import { createCryptoStorage } from '@ethosagent/storage-crypto';
 import { FsAttachmentCache, FsStorage, REF_TO_ENV } from '@ethosagent/storage-fs';
 import { createBrowserTools } from '@ethosagent/tools-browser';
@@ -112,6 +109,9 @@ import type {
   ToolRegistry,
 } from '@ethosagent/types';
 import { resolveKanbanDbPath } from './kanban-path';
+
+export type { WiringContext } from './types';
+
 import { MODEL_CATALOG } from './model-catalog';
 import { fetchManifest, loadModelCatalog, manifestToEntries } from './model-catalog-loader';
 import type { EthosObservability } from './observability/ethos-observability';
@@ -755,23 +755,18 @@ export async function createAgentLoop(
   });
 
   // -------------------------------------------------------------------------
+  // WiringContext — shared by all compose calls
+  // -------------------------------------------------------------------------
+
+  const wiringCtx = { storage: new FsStorage(), dataDir, workingDir, log };
+
+  // -------------------------------------------------------------------------
   // Personality + hooks + tools (infrastructure needed before plugin loading)
   // -------------------------------------------------------------------------
 
-  const personalities = await createPersonalityRegistry();
-  await personalities.loadFromDirectory(join(dataDir, 'personalities'));
-
-  if (config.personality) {
-    try {
-      personalities.setDefault(config.personality);
-    } catch {
-      // Unknown personality — fall back to built-in default.
-    }
-  }
-
-  // Capture the active personality once. Downstream wiring (kanban, MCP, skill
-  // passthrough, watcher boot) all branch off this same value.
-  const activePerson = personalities.getDefault();
+  const { personalities, activePerson } = await composePersonalities(wiringCtx, {
+    personality: config.personality,
+  });
 
   // Sandbox is shared by the browser and code tools. init() is non-blocking
   // when Docker is absent; the tool sets gate themselves on isAvailable().
@@ -786,9 +781,12 @@ export async function createAgentLoop(
   // skill injectors, terminal guard, kanban role gate, and plugin hooks onto it.
   const hooks = new DefaultHookRegistry();
 
+  // Phase A compose — session + kvStore share the same DB path.
+  const sessionCompose = composeSession(wiringCtx);
+
   const resolver = config.secretsResolver;
   const capabilityBackends: CapabilityBackends = {
-    kvStoreFactory: createKvStoreFactory(join(dataDir, 'sessions.db')),
+    kvStoreFactory: sessionCompose.kvStoreFactory,
     secretsBackend: async (ref) => {
       if (resolver) {
         const val = await resolver.get(ref);
@@ -924,10 +922,16 @@ export async function createAgentLoop(
   // ingest filter cannot contribute passthrough. Passthrough is then applied
   // only to MCP servers the personality is allowed to reach (mcp_servers
   // allowlist), not globally to every server.
-  const codingBundleSource = bundledSkillsSource();
-  const skillPool = await new UniversalScanner({
-    trustedFirstPartySources: [codingBundleSource],
-  }).scan();
+  // Phase B compose — skills (depends on personalities).
+  const skillsCompose = await composeSkills(wiringCtx, {
+    personalities,
+    activePerson,
+    hooks,
+    platformPrompts,
+    log,
+  });
+  const { skillPool, injectors, scanner: skillScanner } = skillsCompose;
+  for (const tool of skillsCompose.tools) tools.register(tool);
   // Use the personality's declared toolset as an approximation for capability
   // filtering at boot time (MCP tools aren't registered yet).
   const bootToolNames = new Set(activePerson.toolset ?? []);
@@ -1054,24 +1058,6 @@ export async function createAgentLoop(
   })) {
     tools.register(tool);
   }
-
-  const {
-    injectors,
-    tools: skillTools,
-    scanner: skillScanner,
-  } = createInjectors(personalities, {
-    // Skipped at info level: a personality whose toolset lacks tools a
-    // bundled skill requires is the common, expected case (e.g. the
-    // personality-architect interviewer doesn't have read_file/terminal,
-    // so coding skills filter out). Demoted from warn so the operator's
-    // chat console isn't spammed at boot. Audit trail still flows via the
-    // logger sink for anyone investigating "why didn't <skill> load?".
-    onSkillSkip: (skillId, reason) => log.info(`skill ${skillId} skipped: ${reason}`),
-    trustedFirstPartySources: [codingBundleSource],
-    hooks,
-  });
-  for (const tool of skillTools) tools.register(tool);
-  injectors.unshift(new PlatformFormattingInjector(platformPrompts));
 
   // CLI/TUI/ACP get the synchronous block-and-explain guard. Web replaces it
   // with an interactive approval flow registered after createAgentLoop returns
@@ -1222,7 +1208,7 @@ export async function createAgentLoop(
       });
     });
 
-  const session = new SQLiteSessionStore(join(dataDir, 'sessions.db'));
+  const session = sessionCompose.sessionStore;
   const memoryName = config.memory ?? 'markdown';
   const memoryFactory = memoryProviders.get(memoryName);
   if (!memoryFactory) {

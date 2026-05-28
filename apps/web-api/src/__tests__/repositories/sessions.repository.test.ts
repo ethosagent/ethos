@@ -1,6 +1,6 @@
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SessionsRepository } from '../../repositories/sessions.repository';
+import { SessionsRepository } from '../../features/sessions/repository';
 
 // Repository tests use a real (in-memory) SQLite store. No HTTP, no service
 // layer — we want regressions in the schema or query shape to fail HERE,

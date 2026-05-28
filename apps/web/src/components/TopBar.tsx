@@ -1,5 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
-import { rpc } from '../rpc';
+import { useConfig } from '../features/config/api/queries';
 
 // v0 top bar — brand on the left, current provider/model + connection
 // status on the right, plus the right-drawer toggle. The full chrome
@@ -12,10 +11,7 @@ export interface TopBarProps {
 }
 
 export function TopBar({ drawerOpen, onToggleDrawer }: TopBarProps) {
-  const { data, error, isLoading } = useQuery({
-    queryKey: ['config'],
-    queryFn: () => rpc.config.get(),
-  });
+  const { data, error, isLoading } = useConfig();
 
   const statusState: 'connected' | 'connecting' | 'offline' = isLoading
     ? 'connecting'

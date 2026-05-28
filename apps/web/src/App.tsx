@@ -1,4 +1,3 @@
-import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { CommandPalette } from './components/CommandPalette';
@@ -6,6 +5,7 @@ import { MobileTabBar } from './components/MobileTabBar';
 import { RightDrawer } from './components/RightDrawer';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
+import { useOnboardingState } from './features/config/api/queries';
 import { usePushEventToasts } from './hooks/usePushEventToasts';
 import { useSessionTitleSync } from './hooks/useSessionTitleSync';
 import { Activity } from './pages/Activity';
@@ -31,7 +31,6 @@ import { Skills } from './pages/Skills';
 import { TeamControlCenter } from './pages/TeamControlCenter';
 import { TeamCreate } from './pages/TeamCreate';
 import { Teams } from './pages/Teams';
-import { rpc } from './rpc';
 
 // Top-level route map. v0 ships only Talk-group routes (Chat + Sessions)
 // plus the onboarding flow and the signing-in placeholder. v0.5 adds the
@@ -172,10 +171,7 @@ export function App() {
 function useOnboardingRedirect(): void {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { data, isLoading } = useQuery({
-    queryKey: ['onboarding', 'state'],
-    queryFn: () => rpc.onboarding.state(),
-  });
+  const { data, isLoading } = useOnboardingState();
 
   useEffect(() => {
     if (isLoading || !data) return;

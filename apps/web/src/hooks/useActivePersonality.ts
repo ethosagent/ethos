@@ -1,6 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { rpc } from '../rpc';
+import { useConfig } from '../features/config/api/queries';
 
 // Resolves the currently active personality for the chat surface.
 //
@@ -24,10 +23,7 @@ export interface ActivePersonality {
 }
 
 export function useActivePersonality(): ActivePersonality {
-  const { data, isLoading } = useQuery({
-    queryKey: ['config'],
-    queryFn: () => rpc.config.get(),
-  });
+  const { data, isLoading } = useConfig();
   const [override, setOverride] = useState<string | null>(null);
 
   // While loading, fall back to a sensible default so chrome can render.
