@@ -3,10 +3,12 @@ import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { readLockfile, writeLockfile } from '@ethosagent/plugin-loader';
+import { computeIntegrity, readLockfile, writeLockfile } from '@ethosagent/plugin-loader';
 import { canInstall, scanPluginCode } from '@ethosagent/safety-scanner';
 import { EthosError } from '@ethosagent/types';
+import { ethosDir } from '../config';
 import { writeJson } from '../json-output';
+import { getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -26,11 +28,17 @@ export async function runPlugin(args) {
     case 'install': {
       const pkg = args[1];
       if (!pkg) {
-        console.log('Usage: ethos plugin install <package>');
+        console.log('Usage: ethos plugin install <package> [--personality <id>]');
+        process.exit(1);
+      }
+      const pFlagIdx = args.indexOf('--personality');
+      const personalityId = pFlagIdx >= 0 ? args[pFlagIdx + 1] : undefined;
+      if (pFlagIdx >= 0 && !personalityId) {
+        console.log('Usage: ethos plugin install <package> [--personality <id>]');
         process.exit(1);
       }
       try {
-        await installPlugin(pkg);
+        await installPlugin(pkg, personalityId);
       } catch (err) {
         if (err instanceof EthosError) {
           console.error(`${c.red}${err.cause}${c.reset}\n${c.dim}→ ${err.action}${c.reset}`);
@@ -75,7 +83,7 @@ export async function runPlugin(args) {
 // ---------------------------------------------------------------------------
 // Install: download to temp, scan, prompt, then commit
 // ---------------------------------------------------------------------------
-async function installPlugin(pkg) {
+async function installPlugin(pkg, personalityId) {
   const dir = pluginsDir();
   const tmpDir = join(dir, `.tmp-scan-${process.pid}`);
   console.log(
@@ -196,6 +204,27 @@ async function installPlugin(pkg) {
     process.exit(result.status ?? 1);
   }
   console.log(`\n${c.green}✓ Installed.${c.reset} Restart ethos to load the plugin.`);
+
+  if (personalityId) {
+    const lastAt = exactSpec.lastIndexOf('@');
+    const pkgName = lastAt > 0 ? exactSpec.slice(0, lastAt) : exactSpec;
+    const pkgVersion = lastAt > 0 ? exactSpec.slice(lastAt + 1) : 'unknown';
+    const pluginId = pkgName.startsWith('@') ? pkgName.split('/')[1] ?? pkgName : pkgName;
+    const pkgJsonPath = join(pluginsDir(), 'node_modules', pkgName, 'package.json');
+    const integrity = await computeIntegrity(pkgJsonPath);
+    const entry = {
+      package: pkgName,
+      version: pkgVersion,
+      registry: 'https://registry.npmjs.org',
+      integrity,
+    };
+    const personalityDir = join(ethosDir(), 'personalities', personalityId);
+    const storage = getStorage();
+    await updatePersonalityPluginConfig(storage, personalityDir, pluginId, entry);
+    console.log(
+      `${c.green}✓${c.reset} Added ${c.cyan}${pluginId}${c.reset} to personality ${c.bold}${personalityId}${c.reset}.`,
+    );
+  }
 }
 /**
  * Discover the installed package directory from the manifest npm writes into
