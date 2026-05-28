@@ -26,6 +26,7 @@ function makeFakeAdapter(): PlatformAdapter & { sentMessages: string[] } {
   return {
     id: 'telegram:bot-1',
     displayName: 'Telegram',
+    capabilities: { platform: 'test' },
     canSendTyping: false,
     canEditMessage: true,
     canReact: true,

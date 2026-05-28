@@ -106,6 +106,7 @@ export interface PlatformAdapter {
   readonly canReact: boolean;
   readonly canSendFiles: boolean;
   readonly maxMessageLength: number;
+  readonly capabilities?: AdapterCapabilities;
   start(): Promise<void>;
   stop(): Promise<void>;
   send(chatId: string, message: OutboundMessage): Promise<DeliveryResult>;
@@ -159,4 +160,23 @@ export interface ApprovalCapableAdapter {
     decidedBy: string;
   }): Promise<DeliveryResult>;
   onApprovalDecision(handler: (event: ApprovalDecisionEvent) => void): void;
+}
+
+/**
+ * Declarative capability manifest for platform adapters. Exported at module
+ * level alongside the adapter class so the gateway and tooling can introspect
+ * what a platform supports without reading source or checking instanceof.
+ */
+export interface AdapterCapabilities {
+  platform: string;
+  typing?: boolean;
+  editDetection?: boolean;
+  replyToThreading?: boolean;
+  persistence?: boolean;
+  channelModes?: boolean;
+  homeView?: boolean;
+  joinGreeting?: boolean;
+  roleBasedApprovals?: boolean;
+  outboundFiles?: boolean;
+  webhookMode?: boolean;
 }

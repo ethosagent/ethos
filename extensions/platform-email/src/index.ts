@@ -1,5 +1,6 @@
 import { deriveBotKey } from '@ethosagent/core';
 import type {
+  AdapterCapabilities,
   DeliveryResult,
   InboundMessage,
   OutboundMessage,
@@ -70,6 +71,12 @@ export class EmailAdapter implements PlatformAdapter {
   readonly canReact = false;
   readonly canSendFiles = false;
   readonly maxMessageLength = 100_000;
+
+  get capabilities(): AdapterCapabilities {
+    return {
+      platform: 'email',
+    };
+  }
 
   private readonly config: EmailAdapterConfig;
   private readonly pollIntervalMs: number;

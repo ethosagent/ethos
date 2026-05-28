@@ -11,6 +11,7 @@ function stubAdapter(overrides: Partial<PlatformAdapter> = {}): PlatformAdapter 
   return {
     id: 'test',
     displayName: 'Test',
+    capabilities: { platform: 'test' },
     canSendTyping: false,
     canEditMessage: false,
     canReact: false,

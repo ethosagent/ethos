@@ -26,6 +26,12 @@ export function translateChannelPlugin(plugin: ChannelPlugin): PlatformAdapter {
     id: String(plugin.id),
     displayName: plugin.meta.label,
 
+    capabilities: {
+      platform: String(plugin.id),
+      editDetection: caps.edit ?? false,
+      outboundFiles: caps.media ?? false,
+    },
+
     // Capability flags — mapped from ChannelCapabilities
     canSendTyping: false, // no typing indicator field in ChannelCapabilities
     canEditMessage: caps.edit ?? false,

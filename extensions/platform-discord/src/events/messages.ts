@@ -16,10 +16,12 @@ const IMAGE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'im
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
 const SKIP_EXTS = new Set(['exe', 'dll', 'so', 'dylib']);
 
+/** Debounce window for edit events (ms). */
+const EDIT_DEBOUNCE_MS = 200;
+
 interface MessageContext {
   client: Client;
   botKey: string;
-  mentionOnly: boolean;
   defaultChannelMode: ChannelMode;
   receiptReaction: string;
   cache?: AttachmentCache;
@@ -34,62 +36,15 @@ export function registerMessageHandler(ctx: MessageContext): void {
   ctx.client.on('messageCreate', async (message: Message) => {
     if (message.author.bot) return;
 
-    const isDm = message.channel.isDMBased();
-    const isMention = ctx.client.user
-      ? message.mentions.has(ctx.client.user) && !message.mentions.everyone
-      : false;
-    const isThread = message.channel.isThread();
-
-    let text = message.content;
-    if (ctx.client.user) {
-      text = text.replace(new RegExp(`<@!?${ctx.client.user.id}>`, 'g'), '').trim();
-    }
-
-    const triageCtx: TriageContext = {
-      botKey: ctx.botKey,
-      defaultChannelMode: ctx.defaultChannelMode,
-      channelOverrides: ctx.channelOverrides,
-      threadState: ctx.threadState,
-    };
-
-    const result = await triageMessage(
-      {
-        channelId: message.channelId,
-        userId: message.author.id,
-        username: message.author.username,
-        text,
-        messageId: message.id,
-        isDm,
-        isThread,
-        threadId: isThread ? message.channelId : undefined,
-        parentChannelId: isThread ? (message.channel.parentId ?? undefined) : undefined,
-        isMention: isMention && !isDm,
-        reference: {
-          messageId: message.reference?.messageId ?? undefined,
-          userId: message.mentions.repliedUser?.id ?? undefined,
-        },
-        raw: message,
-      },
-      triageCtx,
-    );
-
-    if (!result.envelope) return;
-
-    // Populate replyToId/replyToUserId from the reference
-    const envelope = result.envelope;
-    if (message.reference?.messageId) {
-      envelope.replyToId = message.reference.messageId;
-    }
-    if (message.mentions.repliedUser?.id) {
-      envelope.replyToUserId = message.mentions.repliedUser.id;
-    }
+    const envelope = await buildMessageEnvelope(message, ctx, false);
+    if (!envelope) return;
 
     // Channel history backfill — first encounter in this lane
     if (ctx.backfillState) {
-      const bfChatId = isThread
+      const bfChatId = message.channel.isThread()
         ? (message.channel.parentId ?? message.channelId)
         : message.channelId;
-      const bfThreadId = isThread ? message.channelId : undefined;
+      const bfThreadId = message.channel.isThread() ? message.channelId : undefined;
       if (!ctx.backfillState.hasDone(bfChatId, bfThreadId)) {
         const priorContext = await fetchChannelHistory(message);
         await ctx.backfillState.mark(bfChatId, bfThreadId);
@@ -119,6 +74,118 @@ export function registerMessageHandler(ctx: MessageContext): void {
     }
     ctx.onMessage(envelope);
   });
+}
+
+/**
+ * Registers a `messageUpdate` listener that debounces rapid edits and
+ * re-triages the updated message with `isEdit: true`.
+ */
+export function registerEditHandler(ctx: MessageContext): void {
+  const pending = new Map<string, ReturnType<typeof setTimeout>>();
+
+  ctx.client.on('messageUpdate', async (_oldMessage, newMessage) => {
+    // Partials: fetch full message when needed
+    if (newMessage.partial) {
+      try {
+        newMessage = await newMessage.fetch();
+      } catch {
+        return;
+      }
+    }
+
+    if (newMessage.author?.bot) return;
+
+    // Discord fires messageUpdate for embed hydration, pin changes, flag
+    // updates, etc. Only process events where user-visible content changed.
+    const oldContent = _oldMessage.partial ? undefined : _oldMessage.content;
+    if (oldContent !== undefined && oldContent === newMessage.content) return;
+
+    const debounceKey = `${newMessage.channelId}:${newMessage.id}`;
+    const existing = pending.get(debounceKey);
+    if (existing !== undefined) clearTimeout(existing);
+
+    const timer = setTimeout(() => {
+      pending.delete(debounceKey);
+      void (async () => {
+        try {
+          const envelope = await buildMessageEnvelope(newMessage as Message, ctx, true);
+          if (!envelope) return;
+          ctx.onMessage(envelope);
+        } catch {
+          // Best-effort — matches adapter error policy for messageCreate
+        }
+      })();
+    }, EDIT_DEBOUNCE_MS);
+
+    pending.set(debounceKey, timer);
+  });
+}
+
+/**
+ * Shared logic: triage a Discord message into an InboundMessage envelope.
+ * Returns `undefined` when the message should be dropped.
+ */
+async function buildMessageEnvelope(
+  message: Message,
+  ctx: MessageContext,
+  isEdit: boolean,
+): Promise<InboundMessage | undefined> {
+  const isDm = message.channel.isDMBased();
+  const isMention = ctx.client.user
+    ? message.mentions.has(ctx.client.user) && !message.mentions.everyone
+    : false;
+  const isThread = message.channel.isThread();
+
+  let text = message.content;
+  if (ctx.client.user) {
+    text = text.replace(new RegExp(`<@!?${ctx.client.user.id}>`, 'g'), '').trim();
+  }
+
+  const triageCtx: TriageContext = {
+    botKey: ctx.botKey,
+    defaultChannelMode: ctx.defaultChannelMode,
+    channelOverrides: ctx.channelOverrides,
+    threadState: ctx.threadState,
+  };
+
+  const result = await triageMessage(
+    {
+      channelId: message.channelId,
+      userId: message.author.id,
+      username: message.author.username,
+      text,
+      messageId: message.id,
+      isDm,
+      isThread,
+      threadId: isThread ? message.channelId : undefined,
+      parentChannelId: isThread ? (message.channel.parentId ?? undefined) : undefined,
+      isMention: isMention && !isDm,
+      reference: {
+        messageId: message.reference?.messageId ?? undefined,
+        userId: message.mentions.repliedUser?.id ?? undefined,
+      },
+      raw: message,
+    },
+    triageCtx,
+  );
+
+  if (!result.envelope) return undefined;
+
+  const envelope = result.envelope;
+
+  if (isEdit) {
+    envelope.isEdit = true;
+  }
+
+  // Populate replyToId/replyToUserId from the reference
+  if (message.reference?.messageId) {
+    envelope.replyToId = message.reference.messageId;
+  }
+  if (message.mentions.repliedUser?.id) {
+    envelope.replyToUserId = message.mentions.repliedUser.id;
+  }
+
+  return envelope;
 }
 
 function classifyAttachmentType(

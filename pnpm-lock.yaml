@@ -881,6 +881,9 @@ importers:
       grammy:
         specifier: ^1.26.0
         version: 1.42.0(encoding@0.1.13)
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
 
   extensions/plugin-loader:
     dependencies:
