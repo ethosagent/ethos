@@ -247,7 +247,9 @@ describe('SkillsInjector.resolveSkills', () => {
     const ctx = makeCtx(testDir);
     await injector.inject(ctx);
     const resolved = await injector.resolveSkills('researcher');
-    expect(resolved.map((r) => r.id).sort()).toEqual((ctx.meta?.skillFilesUsed).slice().sort());
+    expect(resolved.map((r) => r.id).sort()).toEqual(
+      (ctx.meta?.skillFilesUsed ?? []).slice().sort(),
+    );
   });
 });
 // ---------------------------------------------------------------------------
