@@ -75,3 +75,49 @@ function excerpt(text: string, maxLen = 80): string {
   const trimmed = text.trim();
   return trimmed.length > maxLen ? `${trimmed.slice(0, maxLen)}…` : trimmed;
 }
+
+export const C2_PATTERNS: Array<{ rule: string; pattern: RegExp }> = [
+  {
+    rule: 'c2-exfiltrate-send',
+    pattern: /send (?:the )?(?:contents? of|all|these|the) .{0,60}to https?:\/\//i,
+  },
+  { rule: 'c2-exfiltrate-post', pattern: /\bPOST\b.{0,80}https?:\/\//i },
+  {
+    rule: 'c2-exfiltrate-embed',
+    pattern: /embed .{0,40}(?:in|into) (?:a |the )?(?:url|request|query)/i,
+  },
+  { rule: 'c2-exfiltrate-encode', pattern: /(?:base64|url)[\s-]?encode .{0,40}(?:and )?send/i },
+  { rule: 'c2-true-purpose', pattern: /your (?:true|real|actual|hidden) purpose is/i },
+  { rule: 'c2-maintenance-mode', pattern: /(?:maintenance|debug|developer|admin) mode/i },
+  { rule: 'c2-new-objective', pattern: /(?:new|updated|real) (?:objective|mission|goal|task):/i },
+  { rule: 'c2-system-override', pattern: /SYSTEM OVERRIDE|SYSTEM UPDATE|PRIORITY DIRECTIVE/i },
+  {
+    rule: 'c2-memory-write',
+    pattern: /(?:add|append|write|store|save) .{0,60}(?:to|in|into) (?:your )?(?:MEMORY|USER)\.md/i,
+  },
+  { rule: 'c2-remember-always', pattern: /remember (?:this|these) for (?:all )?future sessions/i },
+  { rule: 'c2-persist-instruct', pattern: /persist (?:this|these) instructions?/i },
+  {
+    rule: 'c2-read-secrets',
+    pattern: /read .{0,40}(?:~\/\.ethos\/secrets|api[_-]?key|credentials?|\.env)/i,
+  },
+  {
+    rule: 'c2-exfil-keys',
+    pattern: /(?:extract|retrieve|read|get) .{0,40}(?:api.?key|token|secret|password)/i,
+  },
+];
+
+export function c2PatternCheck(content: string): PatternCheckResult {
+  if (!content) return { containsInstructions: false, hits: [] };
+  const seenRules = new Set<string>();
+  const hits: PatternHit[] = [];
+  for (const { rule, pattern } of C2_PATTERNS) {
+    if (seenRules.has(rule)) continue;
+    const match = pattern.exec(content);
+    if (match) {
+      seenRules.add(rule);
+      hits.push({ rule, excerpt: excerpt(match[0]) });
+    }
+  }
+  return { containsInstructions: hits.length > 0, hits };
+}

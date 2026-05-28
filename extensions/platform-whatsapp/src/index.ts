@@ -18,6 +18,11 @@ export interface WhatsAppAdapterConfig {
   sessionDir: string;
   defaultMode?: 'all' | 'mention_only';
   allowedJids?: string[];
+  /** Reject messages from JIDs not in allowedJids. Default true.
+   *  Set to false to allow all senders (open mode — not recommended for production). */
+  denyUnknown?: boolean;
+  /** Message sent to rejected senders. Omit for silent reject (default). */
+  denyMessage?: string;
   cache?: AttachmentCache;
   onQr?: (qr: string | null) => void;
   /** When set, link via phone-number pairing code instead of QR. The adapter
@@ -46,6 +51,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
   private stopped = false;
   private reconnectAttempts = 0;
   private pairingCodeRequested = false;
+  private denyWarnEmitted = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private messageHandler?: (message: InboundMessage) => void;
   private botJid = '';
@@ -165,14 +171,32 @@ export class WhatsAppAdapter implements PlatformAdapter {
         const jid = msg.key.remoteJid ?? '';
         const isDm = !jid.endsWith('@g.us');
 
-        if (this.config.allowedJids) {
+        const denyUnknown = this.config.denyUnknown ?? true;
+        if (denyUnknown) {
+          if (!this.config.allowedJids || this.config.allowedJids.length === 0) {
+            if (!this.denyWarnEmitted) {
+              console.warn(
+                'platform-whatsapp: denyUnknown=true but allowedJids is empty — rejecting all senders. Set allowedJids or denyUnknown=false.',
+              );
+              this.denyWarnEmitted = true;
+            }
+            continue;
+          }
           const checkJid = isDm ? jid : (msg.key.participant ?? '');
           const number = checkJid.split('@')[0].replace(/[^0-9]/g, '');
           const matched = this.config.allowedJids.some((allowed) => {
             const normalizedAllowed = allowed.replace(/[^0-9]/g, '');
             return number === normalizedAllowed;
           });
-          if (!matched) continue;
+          if (!matched) {
+            if (this.config.denyMessage && this.sock) {
+              const s = this.sock as {
+                sendMessage: (jid: string, content: unknown) => Promise<unknown>;
+              };
+              await s.sendMessage(jid, { text: this.config.denyMessage }).catch(() => {});
+            }
+            continue;
+          }
         }
 
         if (!isDm && this.config.defaultMode === 'mention_only') {

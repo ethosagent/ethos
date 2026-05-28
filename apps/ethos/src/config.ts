@@ -104,6 +104,7 @@ export interface TelegramBotConfig {
   id?: string;
   token: string;
   bind: BotBinding;
+  piiRedaction?: boolean;
 }
 
 export interface SlackAppConfig {
@@ -112,6 +113,7 @@ export interface SlackAppConfig {
   appToken: string;
   signingSecret: string;
   bind: BotBinding;
+  piiRedaction?: boolean;
 }
 
 /**
@@ -136,6 +138,7 @@ export interface WhatsAppConfig {
    *  a bind), WhatsApp bind is optional — bind-less entries fall back to the
    *  default personality in the gateway. */
   bind?: BotBinding;
+  piiRedaction?: boolean;
 }
 
 export interface ProviderConfig {
@@ -450,6 +453,8 @@ export interface EthosConfig {
   storage?: {
     encryption?: boolean;
   };
+  /** Deployment-level PII redaction for channels without per-bot config. */
+  privacy?: { piiRedaction?: boolean };
   /** Whether to auto-install plugins from plugins.lock on personality load.
    *  Config key: plugins.auto_install */
   pluginsAutoInstall?: boolean;

@@ -781,7 +781,7 @@ async function buildGatewayBots(
       loop = result.loop;
       setters.push(result.setMessagingSend);
     }
-    return { botKey, loop, binding: { ...bot.bind } };
+    return { botKey, loop, binding: { ...bot.bind }, piiRedaction: bot.piiRedaction };
   };
   for (const bot of config.telegram?.bots ?? []) out.push(await buildOne(bot));
   for (const app of config.slack?.apps ?? []) out.push(await buildOne(app));
@@ -808,7 +808,7 @@ async function buildGatewayBots(
       loop = result.loop;
       setters.push(result.setMessagingSend);
     }
-    out.push({ botKey, loop, binding: { ...bind } });
+    out.push({ botKey, loop, binding: { ...bind }, piiRedaction: waCfg.piiRedaction });
   }
   return { bots: out, messagingSetters: setters };
 }

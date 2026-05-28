@@ -2,7 +2,7 @@ export type { InjectionClassifier, InjectionVerdict } from './classifier';
 export { createLLMClassifier } from './classifier';
 export { DOWNGRADE_REJECTION_MESSAGE, resolveDowngradedTools } from './downgrade';
 export type { PatternCheckResult, PatternHit } from './pattern-check';
-export { shortPatternCheck } from './pattern-check';
+export { C2_PATTERNS, c2PatternCheck, shortPatternCheck } from './pattern-check';
 export { sanitize } from './prompt-sanitize';
 export type { SanitizeResult } from './sanitize';
 export { STRIPPED_PLACEHOLDER, sanitizeTemplateTokens } from './sanitize';

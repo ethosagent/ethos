@@ -703,6 +703,9 @@ importers:
       '@ethosagent/safety-injection':
         specifier: workspace:*
         version: link:../../packages/safety/injection
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../../packages/safety/redact
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types

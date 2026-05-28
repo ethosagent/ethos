@@ -82,6 +82,15 @@ export interface PersonalitySafetyConfig {
        */
       tools?: string[] | 'auto';
     };
+    /** Redact tool results that contain detected secrets. Default false (emit only). */
+    blockSecretResults?: boolean;
+    /** Wrap tool results in ===TOOL_RESULT_START/<END>=== sentinels. Default true. */
+    toolResultDelimiters?: boolean;
+  };
+  /** PII redaction applied to user messages before they enter LLM context. Opt-in. */
+  piiRedaction?: {
+    enabled: boolean;
+    extraPatterns?: string[];
   };
 }
 

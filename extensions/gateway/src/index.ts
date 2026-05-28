@@ -10,6 +10,7 @@ import {
   revokeApproval,
 } from '@ethosagent/safety-channel';
 import { shortPatternCheck, wrapUntrusted } from '@ethosagent/safety-injection';
+import { redactPii } from '@ethosagent/safety-redact';
 import type {
   AttachmentCache,
   ClarifyResponse,
@@ -166,6 +167,9 @@ export interface GatewayBotConfig {
     name: string;
     allowSlashSwitch?: boolean;
   };
+  /** When true, PII (email, phone, card, SSN) is redacted from inbound message
+   *  text before it reaches AgentLoop. Default false. */
+  piiRedaction?: boolean;
 }
 
 export interface GatewayConfig {
@@ -675,7 +679,8 @@ export class Gateway {
       ? buildLaneKey(message.platform, bot.botKey, message.chatId, threadId)
       : buildLaneKey(message.platform, bot.botKey, message.chatId);
     const lane = this.getOrCreateLane(laneKey);
-    const text = message.text?.trim() ?? '';
+    const rawText = message.text?.trim() ?? '';
+    const text = bot.piiRedaction ? redactPii(rawText) : rawText;
 
     // --- Gateway-level slash command handling ---
 

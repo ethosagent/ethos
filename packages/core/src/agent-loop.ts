@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
+  c2PatternCheck,
   DOWNGRADE_REJECTION_MESSAGE,
   INJECTION_DEFENSE_PRELUDE,
   type InjectionClassifier,
@@ -11,7 +12,7 @@ import {
   shortPatternCheck,
   wrapUntrusted,
 } from '@ethosagent/safety-injection';
-import { redactString } from '@ethosagent/safety-redact';
+import { detectSecrets, redactPii, redactString } from '@ethosagent/safety-redact';
 import { defaultAlwaysDeny, ScopedStorage } from '@ethosagent/storage-fs';
 import type {
   CompletionChunk,
@@ -712,8 +713,13 @@ export class AgentLoop {
     // Attachment annotation: prepend an <attachments> block so the LLM sees
     // which files/images the user attached. Persisted with the message so
     // replay is faithful (plan risk #10).
+    const piiConfig = personality.safety?.piiRedaction;
+    const sanitizedText = piiConfig?.enabled ? redactPii(text, piiConfig.extraPatterns) : text;
+
     const attachmentAnnotation = buildAttachmentAnnotation(opts.attachments ?? []);
-    const annotatedText = attachmentAnnotation ? `${attachmentAnnotation}\n${text}` : text;
+    const annotatedText = attachmentAnnotation
+      ? `${attachmentAnnotation}\n${sanitizedText}`
+      : sanitizedText;
 
     await this.session.appendMessage({
       sessionId,
@@ -1745,6 +1751,21 @@ export class AgentLoop {
 
           llmContent = result.ok ? result.value : result.error;
 
+          if (result.ok && result.value) {
+            const detections = detectSecrets(result.value);
+            if (detections.length > 0) {
+              this.observability?.recordSafetyBlock?.({
+                traceId,
+                code: 'secret_in_tool_result',
+                cause: detections.map((d) => d.label).join(', '),
+              });
+              if (personality.safety?.injectionDefense?.blockSecretResults) {
+                result = { ...result, value: redactString(result.value) };
+                llmContent = result.value;
+              }
+            }
+          }
+
           // Ch.3a + 3c — provenance wrap + Tier-1 pattern check + optional
           // Tier-2 LLM classifier. Only applies on success; errors are
           // framework-authored and skip wrapping.
@@ -1786,10 +1807,16 @@ export class AgentLoop {
           toolName: p.name,
         });
 
+        const delimiterEnabled = personality.safety?.injectionDefense?.toolResultDelimiters ?? true;
+        const finalContent =
+          delimiterEnabled && result.ok
+            ? `===TOOL_RESULT_START:${p.name}===\n${llmContent}\n===TOOL_RESULT_END===`
+            : llmContent;
+
         toolResultContent.push({
           type: 'tool_result',
           tool_use_id: p.toolCallId,
-          content: llmContent,
+          content: finalContent,
           is_error: !result.ok,
         });
       }
@@ -2067,7 +2094,9 @@ export class AgentLoop {
       ...(source ? { source } : {}),
     });
     const tier1 = shortPatternCheck(rawValue);
-    const tier1Hit = tier1.containsInstructions || wrapped.strippedTokens > 0;
+    const c2 = c2PatternCheck(rawValue);
+    const tier1Hit =
+      tier1.containsInstructions || c2.containsInstructions || wrapped.strippedTokens > 0;
 
     const classifierConfig = personality.safety?.injectionDefense?.classifier;
     const shouldCallLLM =
