@@ -13,30 +13,30 @@ import { homedir } from 'node:os';
  * consume one source of truth.
  */
 export function defaultAlwaysDeny() {
-    const home = homedir();
-    return [
-        `${home}/.ssh`,
-        `${home}/.aws/credentials`,
-        `${home}/.aws/config`,
-        `${home}/.gnupg`,
-        `${home}/.netrc`,
-        `${home}/.bash_history`,
-        `${home}/.zsh_history`,
-        `${home}/.psql_history`,
-        `${home}/.mysql_history`,
-        `${home}/.npmrc`,
-        `${home}/.ethos/keys.json`,
-        `${home}/.ethos/secrets`,
-        `${home}/Library/Keychains`,
-        '/etc/passwd',
-        '/etc/shadow',
-        '/etc/sudoers',
-        '/etc/sudoers.d',
-        '/root',
-        '/boot',
-        '/sys',
-        '/proc/sys',
-        '/proc/self/environ',
-        '/proc/self/cmdline',
-    ];
+  const home = homedir();
+  return [
+    `${home}/.ssh`,
+    `${home}/.aws/credentials`,
+    `${home}/.aws/config`,
+    `${home}/.gnupg`,
+    `${home}/.netrc`,
+    `${home}/.bash_history`,
+    `${home}/.zsh_history`,
+    `${home}/.psql_history`,
+    `${home}/.mysql_history`,
+    `${home}/.npmrc`,
+    `${home}/.ethos/keys.json`,
+    `${home}/.ethos/secrets`,
+    `${home}/Library/Keychains`,
+    '/etc/passwd',
+    '/etc/shadow',
+    '/etc/sudoers',
+    '/etc/sudoers.d',
+    '/root',
+    '/boot',
+    '/sys',
+    '/proc/sys',
+    '/proc/self/environ',
+    '/proc/self/cmdline',
+  ];
 }

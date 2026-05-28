@@ -13,52 +13,47 @@ import { createHash } from 'node:crypto';
  * in a shipped adapter.
  */
 export class MessageDedupCache {
-    entries = new Map();
-    ttlMs;
-    disabled;
-    maxEntries;
-    constructor(opts = {}) {
-        this.ttlMs = opts.ttlMs ?? 30_000;
-        this.maxEntries = opts.maxEntries ?? 4096;
-        this.disabled = process.env.ETHOS_DEDUP_LEGACY === '1' || this.ttlMs <= 0;
+  entries = new Map();
+  ttlMs;
+  disabled;
+  maxEntries;
+  constructor(opts = {}) {
+    this.ttlMs = opts.ttlMs ?? 30_000;
+    this.maxEntries = opts.maxEntries ?? 4096;
+    this.disabled = process.env.ETHOS_DEDUP_LEGACY === '1' || this.ttlMs <= 0;
+  }
+  /**
+   * Returns `true` if the message is new (and records it). Returns `false`
+   * if the same content was sent on the same session within `ttlMs`.
+   */
+  shouldSend(sessionId, content) {
+    if (this.disabled) return true;
+    if (!content) return true;
+    const now = Date.now();
+    const hash = createHash('sha256').update(content).digest('hex');
+    const key = `${sessionId}:${hash}`;
+    // Lazy eviction: only check the key we touched. The size cap handles
+    // the global bound; a periodic O(N) sweep would dominate hot paths.
+    const expiry = this.entries.get(key);
+    if (expiry !== undefined) {
+      if (expiry > now) return false;
+      this.entries.delete(key); // expired — drop so re-insert refreshes order
     }
-    /**
-     * Returns `true` if the message is new (and records it). Returns `false`
-     * if the same content was sent on the same session within `ttlMs`.
-     */
-    shouldSend(sessionId, content) {
-        if (this.disabled)
-            return true;
-        if (!content)
-            return true;
-        const now = Date.now();
-        const hash = createHash('sha256').update(content).digest('hex');
-        const key = `${sessionId}:${hash}`;
-        // Lazy eviction: only check the key we touched. The size cap handles
-        // the global bound; a periodic O(N) sweep would dominate hot paths.
-        const expiry = this.entries.get(key);
-        if (expiry !== undefined) {
-            if (expiry > now)
-                return false;
-            this.entries.delete(key); // expired — drop so re-insert refreshes order
-        }
-        this.entries.set(key, now + this.ttlMs);
-        if (this.entries.size > this.maxEntries) {
-            const oldest = this.entries.keys().next().value;
-            if (oldest !== undefined)
-                this.entries.delete(oldest);
-        }
-        return true;
+    this.entries.set(key, now + this.ttlMs);
+    if (this.entries.size > this.maxEntries) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest !== undefined) this.entries.delete(oldest);
     }
-    /** Forget every key associated with `sessionId` (called by `/new`). */
-    clearSession(sessionId) {
-        const prefix = `${sessionId}:`;
-        for (const key of this.entries.keys()) {
-            if (key.startsWith(prefix))
-                this.entries.delete(key);
-        }
+    return true;
+  }
+  /** Forget every key associated with `sessionId` (called by `/new`). */
+  clearSession(sessionId) {
+    const prefix = `${sessionId}:`;
+    for (const key of this.entries.keys()) {
+      if (key.startsWith(prefix)) this.entries.delete(key);
     }
-    size() {
-        return this.entries.size;
-    }
+  }
+  size() {
+    return this.entries.size;
+  }
 }

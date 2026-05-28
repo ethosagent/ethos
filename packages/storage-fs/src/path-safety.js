@@ -9,25 +9,31 @@ import { resolve } from 'node:path';
  * normalized scope root.
  */
 export function resolveScopedPath(scopeRoot, untrustedSegment) {
-    // Pre-check: reject obviously dangerous patterns before resolution.
-    if (untrustedSegment.includes('..')) {
-        throw new Error(`Path segment contains "..": "${untrustedSegment}" — path traversal is not allowed`);
-    }
-    if (untrustedSegment.includes('\0')) {
-        throw new Error('Path segment contains NUL byte — rejected');
-    }
-    if (untrustedSegment.includes('\\')) {
-        throw new Error(`Path segment contains backslash: "${untrustedSegment}" — non-portable path separator`);
-    }
-    const normalizedRoot = resolve(scopeRoot);
-    const resolved = resolve(normalizedRoot, untrustedSegment);
-    // Post-check: the resolved path must start with the scope root followed
-    // by a `/` (or be the root itself). Without the slash check, a scope root
-    // of `/a/b` would incorrectly allow `/a/bc/...`.
-    if (resolved !== normalizedRoot && !resolved.startsWith(`${normalizedRoot}/`)) {
-        throw new Error(`Resolved path "${resolved}" escapes scope root "${normalizedRoot}" — access denied`);
-    }
-    return resolved;
+  // Pre-check: reject obviously dangerous patterns before resolution.
+  if (untrustedSegment.includes('..')) {
+    throw new Error(
+      `Path segment contains "..": "${untrustedSegment}" — path traversal is not allowed`,
+    );
+  }
+  if (untrustedSegment.includes('\0')) {
+    throw new Error('Path segment contains NUL byte — rejected');
+  }
+  if (untrustedSegment.includes('\\')) {
+    throw new Error(
+      `Path segment contains backslash: "${untrustedSegment}" — non-portable path separator`,
+    );
+  }
+  const normalizedRoot = resolve(scopeRoot);
+  const resolved = resolve(normalizedRoot, untrustedSegment);
+  // Post-check: the resolved path must start with the scope root followed
+  // by a `/` (or be the root itself). Without the slash check, a scope root
+  // of `/a/b` would incorrectly allow `/a/bc/...`.
+  if (resolved !== normalizedRoot && !resolved.startsWith(`${normalizedRoot}/`)) {
+    throw new Error(
+      `Resolved path "${resolved}" escapes scope root "${normalizedRoot}" — access denied`,
+    );
+  }
+  return resolved;
 }
 /**
  * Validate that a string is safe to use as a single path segment (file or
@@ -42,17 +48,11 @@ export function resolveScopedPath(scopeRoot, untrustedSegment) {
  * - Starts with `.` (hidden files)
  */
 export function isSafePathSegment(segment) {
-    if (segment.length === 0)
-        return false;
-    if (segment.includes('..'))
-        return false;
-    if (segment.includes('/'))
-        return false;
-    if (segment.includes('\\'))
-        return false;
-    if (segment.includes('\0'))
-        return false;
-    if (segment.startsWith('.'))
-        return false;
-    return true;
+  if (segment.length === 0) return false;
+  if (segment.includes('..')) return false;
+  if (segment.includes('/')) return false;
+  if (segment.includes('\\')) return false;
+  if (segment.includes('\0')) return false;
+  if (segment.startsWith('.')) return false;
+  return true;
 }

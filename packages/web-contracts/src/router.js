@@ -1,6 +1,75 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
-import { ApiKeyMetadataSchema, ApiKeyScopeSchema, ApprovalScopeSchema, BatchRunInfoSchema, BotBindingSchema, ChannelPlatformFilterSchema, CredentialKeyInfoSchema, CronJobSchema, CronRunSchema, EvalRunInfoSchema, EvalScorerSchema, EvolveConfigSchema, EvolverRunSchema, IdentityMapEntrySchema, KanbanBoardSnapshotSchema, KanbanTaskSchema, KanbanTaskStatusSchema, KanbanTeamSummarySchema, McpAddServerInputSchema, McpAddServerOutputSchema, McpAttachInputSchema, McpAttachOutputSchema, McpCancelInputSchema, McpCompleteInputSchema, McpCompleteOutputSchema, McpDeleteInputSchema, McpListOutputSchema, McpPersonalityServersInputSchema, McpPersonalityServersOutputSchema, McpPolicySchema, McpReconnectInputSchema, McpRefreshTokenInputSchema, McpRefreshTokenOutputSchema, McpRenameInputSchema, McpRenameOutputSchema, McpScopeStatusInputSchema, McpScopeStatusOutputSchema, McpServerInfoSchema, McpServerToolsInputSchema, McpServerToolsOutputSchema, McpStartInputSchema, McpStartOutputSchema, McpStatusOutputSchema, McpUpdateTokenInputSchema, McpUpdateTokenOutputSchema, McpValidateConfigInputSchema, McpValidateConfigOutputSchema, MemoryFileSchema, MemoryStoreSchema, MeshAgentSchema, MeshRouteResultSchema, MissedRunPolicySchema, ModelTierConfigSchema, OnboardingStepSchema, PendingSkillSchema, PersonalitySchema, PersonalitySkillSchema, PlatformIdSchema, PlatformStatusSchema, PluginInfoSchema, ProviderEntrySchema, ProviderIdSchema, SessionSchema, SkillSchema, SlackAppEntrySchema, StoredMessageSchema, TelegramBotEntrySchema, } from './schemas';
+import {
+  ApiKeyMetadataSchema,
+  ApiKeyScopeSchema,
+  ApprovalScopeSchema,
+  BatchRunInfoSchema,
+  BotBindingSchema,
+  ChannelPlatformFilterSchema,
+  CredentialKeyInfoSchema,
+  CronJobSchema,
+  CronRunSchema,
+  EvalRunInfoSchema,
+  EvalScorerSchema,
+  EvolveConfigSchema,
+  EvolverRunSchema,
+  IdentityMapEntrySchema,
+  KanbanBoardSnapshotSchema,
+  KanbanTaskSchema,
+  KanbanTaskStatusSchema,
+  KanbanTeamSummarySchema,
+  McpAddServerInputSchema,
+  McpAddServerOutputSchema,
+  McpAttachInputSchema,
+  McpAttachOutputSchema,
+  McpCancelInputSchema,
+  McpCompleteInputSchema,
+  McpCompleteOutputSchema,
+  McpDeleteInputSchema,
+  McpListOutputSchema,
+  McpPersonalityServersInputSchema,
+  McpPersonalityServersOutputSchema,
+  McpPolicySchema,
+  McpReconnectInputSchema,
+  McpRefreshTokenInputSchema,
+  McpRefreshTokenOutputSchema,
+  McpRenameInputSchema,
+  McpRenameOutputSchema,
+  McpScopeStatusInputSchema,
+  McpScopeStatusOutputSchema,
+  McpServerInfoSchema,
+  McpServerToolsInputSchema,
+  McpServerToolsOutputSchema,
+  McpStartInputSchema,
+  McpStartOutputSchema,
+  McpStatusOutputSchema,
+  McpUpdateTokenInputSchema,
+  McpUpdateTokenOutputSchema,
+  McpValidateConfigInputSchema,
+  McpValidateConfigOutputSchema,
+  MemoryFileSchema,
+  MemoryStoreSchema,
+  MeshAgentSchema,
+  MeshRouteResultSchema,
+  MissedRunPolicySchema,
+  ModelTierConfigSchema,
+  OnboardingStepSchema,
+  PendingSkillSchema,
+  PersonalitySchema,
+  PersonalitySkillSchema,
+  PlatformIdSchema,
+  PlatformStatusSchema,
+  PluginInfoSchema,
+  ProviderEntrySchema,
+  ProviderIdSchema,
+  SessionSchema,
+  SkillSchema,
+  SlackAppEntrySchema,
+  StoredMessageSchema,
+  TelegramBotEntrySchema,
+} from './schemas';
+
 // oRPC contract — single source of truth for the web control plane.
 // `apps/web-api` (server) calls `implement(contract)` against this.
 // `apps/web` (client) calls `createORPCClient(link)` typed as
@@ -14,214 +83,214 @@ import { ApiKeyMetadataSchema, ApiKeyScopeSchema, ApprovalScopeSchema, BatchRunI
 // Sessions
 // ---------------------------------------------------------------------------
 const SessionListInput = z.object({
-    /** Full-text query (FTS5). Empty / omitted returns recent sessions. */
-    q: z.string().optional(),
-    /** Page size; max 200 to keep payloads bounded. */
-    limit: z.number().int().min(1).max(200).optional(),
-    /** Opaque rowid cursor from the previous response's `nextCursor`. */
-    cursor: z.string().nullable().optional(),
-    personalityId: z.string().optional(),
+  /** Full-text query (FTS5). Empty / omitted returns recent sessions. */
+  q: z.string().optional(),
+  /** Page size; max 200 to keep payloads bounded. */
+  limit: z.number().int().min(1).max(200).optional(),
+  /** Opaque rowid cursor from the previous response's `nextCursor`. */
+  cursor: z.string().nullable().optional(),
+  personalityId: z.string().optional(),
 });
 const SessionListOutput = z.object({
-    items: z.array(SessionSchema),
-    nextCursor: z.string().nullable(),
+  items: z.array(SessionSchema),
+  nextCursor: z.string().nullable(),
 });
 const SessionGetInput = z.object({ id: z.string() });
 const SessionGetOutput = z.object({
-    session: SessionSchema,
-    messages: z.array(StoredMessageSchema),
+  session: SessionSchema,
+  messages: z.array(StoredMessageSchema),
 });
 const SessionForkInput = z.object({
-    id: z.string(),
-    personalityId: z.string().optional(),
-    /** Optimistic-concurrency guard. v1 ignores this. */
-    expectedVersion: z.number().int().optional(),
+  id: z.string(),
+  personalityId: z.string().optional(),
+  /** Optimistic-concurrency guard. v1 ignores this. */
+  expectedVersion: z.number().int().optional(),
 });
 const SessionForkOutput = z.object({ session: SessionSchema });
 const SessionDeleteInput = z.object({
-    id: z.string(),
-    /** Optimistic-concurrency guard. v1 ignores this. */
-    expectedVersion: z.number().int().optional(),
+  id: z.string(),
+  /** Optimistic-concurrency guard. v1 ignores this. */
+  expectedVersion: z.number().int().optional(),
 });
 const SessionDeleteOutput = z.object({ ok: z.literal(true) });
 const SessionUpdateInput = z.object({
-    id: z.string(),
-    /** New human-readable title. Pass null to clear the title. */
-    title: z.string().max(200).nullable(),
-    /** Optimistic-concurrency guard. v1 ignores this. */
-    expectedVersion: z.number().int().optional(),
+  id: z.string(),
+  /** New human-readable title. Pass null to clear the title. */
+  title: z.string().max(200).nullable(),
+  /** Optimistic-concurrency guard. v1 ignores this. */
+  expectedVersion: z.number().int().optional(),
 });
 const SessionUpdateOutput = z.object({ session: SessionSchema });
 const SessionExportInput = z.object({
-    id: z.string(),
-    format: z.enum(['markdown']),
+  id: z.string(),
+  format: z.enum(['markdown']),
 });
 const SessionExportOutput = z.object({
-    content: z.string(),
-    filename: z.string(),
+  content: z.string(),
+  filename: z.string(),
 });
 const SessionPinInput = z.object({ id: z.string() });
 const SessionPinOutput = z.object({ session: SessionSchema });
 /** @stable v1 */
 const sessions = {
-    list: oc.input(SessionListInput).output(SessionListOutput),
-    get: oc.input(SessionGetInput).output(SessionGetOutput),
-    fork: oc.input(SessionForkInput).output(SessionForkOutput),
-    delete: oc.input(SessionDeleteInput).output(SessionDeleteOutput),
-    update: oc.input(SessionUpdateInput).output(SessionUpdateOutput),
-    export: oc.input(SessionExportInput).output(SessionExportOutput),
-    pin: oc.input(SessionPinInput).output(SessionPinOutput),
-    unpin: oc.input(SessionPinInput).output(SessionPinOutput),
+  list: oc.input(SessionListInput).output(SessionListOutput),
+  get: oc.input(SessionGetInput).output(SessionGetOutput),
+  fork: oc.input(SessionForkInput).output(SessionForkOutput),
+  delete: oc.input(SessionDeleteInput).output(SessionDeleteOutput),
+  update: oc.input(SessionUpdateInput).output(SessionUpdateOutput),
+  export: oc.input(SessionExportInput).output(SessionExportOutput),
+  pin: oc.input(SessionPinInput).output(SessionPinOutput),
+  unpin: oc.input(SessionPinInput).output(SessionPinOutput),
 };
 // ---------------------------------------------------------------------------
 // Personalities (v0 read-only — create/edit lands in v1)
 // ---------------------------------------------------------------------------
 const PersonalityListInput = z.object({
-    /** Page size. */
-    limit: z.number().int().positive().optional(),
-    /** Opaque cursor from the previous response's `nextCursor`. */
-    cursor: z.string().optional(),
+  /** Page size. */
+  limit: z.number().int().positive().optional(),
+  /** Opaque cursor from the previous response's `nextCursor`. */
+  cursor: z.string().optional(),
 });
 const PersonalityListOutput = z.object({
-    items: z.array(PersonalitySchema),
-    nextCursor: z.string().nullable(),
-    defaultId: z.string(),
+  items: z.array(PersonalitySchema),
+  nextCursor: z.string().nullable(),
+  defaultId: z.string(),
 });
 const PersonalityGetInput = z.object({ id: z.string() });
 const PersonalityGetOutput = z.object({
-    personality: PersonalitySchema,
-    /** Markdown body of SOUL.md. Empty string when the file isn't present. */
-    soulMd: z.string(),
-    /** Per-personality MCP tool policy from `mcp.yaml`. Null when the
-     *  personality has no `mcp.yaml`. A server with no `tools` entry means
-     *  "all tools allowed" (default-allow). */
-    mcpPolicy: McpPolicySchema.nullable(),
+  personality: PersonalitySchema,
+  /** Markdown body of SOUL.md. Empty string when the file isn't present. */
+  soulMd: z.string(),
+  /** Per-personality MCP tool policy from `mcp.yaml`. Null when the
+   *  personality has no `mcp.yaml`. A server with no `tools` entry means
+   *  "all tools allowed" (default-allow). */
+  mcpPolicy: McpPolicySchema.nullable(),
 });
 const PersonalityCharacterSheetInput = z.object({ id: z.string() });
 const PersonalityCharacterSheetOutput = z.object({
-    /** Generated Markdown character sheet — the same artifact `ethos personality
-     *  show` prints. Regenerated on each call; see `renderCharacterSheet` in
-     *  @ethosagent/personalities. */
-    markdown: z.string(),
+  /** Generated Markdown character sheet — the same artifact `ethos personality
+   *  show` prints. Regenerated on each call; see `renderCharacterSheet` in
+   *  @ethosagent/personalities. */
+  markdown: z.string(),
 });
 const PersonalityIdRegex = /^[a-z0-9_-]+$/;
 const PersonalityCreateInput = z.object({
-    /** Lowercase id; becomes the directory name. */
-    id: z.string().min(1).regex(PersonalityIdRegex),
-    name: z.string().min(1),
-    description: z.string().optional(),
-    model: z.union([z.string(), ModelTierConfigSchema]).optional(),
-    toolset: z.array(z.string()),
-    /** Markdown body of SOUL.md. May be empty. */
-    soulMd: z.string(),
-    provider: ProviderIdSchema.or(z.literal('')).optional(),
-    capabilities: z.array(z.string()).optional(),
-    mcp_servers: z.array(z.string()).optional(),
-    plugins: z.array(z.string()).optional(),
-    fs_reach: z
-        .object({
-        read: z.array(z.string()).optional(),
-        write: z.array(z.string()).optional(),
+  /** Lowercase id; becomes the directory name. */
+  id: z.string().min(1).regex(PersonalityIdRegex),
+  name: z.string().min(1),
+  description: z.string().optional(),
+  model: z.union([z.string(), ModelTierConfigSchema]).optional(),
+  toolset: z.array(z.string()),
+  /** Markdown body of SOUL.md. May be empty. */
+  soulMd: z.string(),
+  provider: ProviderIdSchema.or(z.literal('')).optional(),
+  capabilities: z.array(z.string()).optional(),
+  mcp_servers: z.array(z.string()).optional(),
+  plugins: z.array(z.string()).optional(),
+  fs_reach: z
+    .object({
+      read: z.array(z.string()).optional(),
+      write: z.array(z.string()).optional(),
     })
-        .optional(),
+    .optional(),
 });
 const PersonalityCreateOutput = z.object({ personality: PersonalitySchema });
 const PersonalityUpdateInput = z.object({
-    id: z.string().min(1),
-    /** Patch — only present fields are written. */
-    name: z.string().optional(),
-    description: z.string().optional(),
-    model: z.union([z.string(), ModelTierConfigSchema]).optional(),
-    toolset: z.array(z.string()).optional(),
-    soulMd: z.string().optional(),
-    mcp_servers: z.array(z.string()).optional(),
-    /** Per-server MCP tool subsets, written to `mcp.yaml`. Maps a server name
-     *  to the BARE tool names that server may expose. Only include a server
-     *  here when it is a STRICT subset — a server with every tool selected
-     *  should be omitted (that records "all tools allowed"). Servers attached
-     *  via `mcp_servers` but absent here have any prior `tools` entry cleared.
-     *  Ignored unless `mcp_servers` is also present. */
-    mcp_tools: z.record(z.string(), z.array(z.string())).optional(),
-    plugins: z.array(z.string()).optional(),
-    capabilities: z.array(z.string()).optional(),
-    provider: ProviderIdSchema.or(z.literal('')).optional(),
-    fs_reach: z
-        .object({
-        read: z.array(z.string()).optional(),
-        write: z.array(z.string()).optional(),
+  id: z.string().min(1),
+  /** Patch — only present fields are written. */
+  name: z.string().optional(),
+  description: z.string().optional(),
+  model: z.union([z.string(), ModelTierConfigSchema]).optional(),
+  toolset: z.array(z.string()).optional(),
+  soulMd: z.string().optional(),
+  mcp_servers: z.array(z.string()).optional(),
+  /** Per-server MCP tool subsets, written to `mcp.yaml`. Maps a server name
+   *  to the BARE tool names that server may expose. Only include a server
+   *  here when it is a STRICT subset — a server with every tool selected
+   *  should be omitted (that records "all tools allowed"). Servers attached
+   *  via `mcp_servers` but absent here have any prior `tools` entry cleared.
+   *  Ignored unless `mcp_servers` is also present. */
+  mcp_tools: z.record(z.string(), z.array(z.string())).optional(),
+  plugins: z.array(z.string()).optional(),
+  capabilities: z.array(z.string()).optional(),
+  provider: ProviderIdSchema.or(z.literal('')).optional(),
+  fs_reach: z
+    .object({
+      read: z.array(z.string()).optional(),
+      write: z.array(z.string()).optional(),
     })
-        .optional(),
+    .optional(),
 });
 const PersonalityUpdateOutput = z.object({ personality: PersonalitySchema });
 const PersonalityDeleteInput = z.object({ id: z.string().min(1) });
 const PersonalityOkOutput = z.object({ ok: z.literal(true) });
 const PersonalityDuplicateInput = z.object({
-    id: z.string().min(1),
-    newId: z.string().min(1).regex(PersonalityIdRegex),
+  id: z.string().min(1),
+  newId: z.string().min(1).regex(PersonalityIdRegex),
 });
 const PersonalityDuplicateOutput = z.object({ personality: PersonalitySchema });
 // Per-personality skills (gate 19).
 const PersonalitySkillsListInput = z.object({ personalityId: z.string().min(1) });
 const PersonalitySkillsListOutput = z.object({ skills: z.array(PersonalitySkillSchema) });
 const PersonalitySkillsGetInput = z.object({
-    personalityId: z.string().min(1),
-    skillId: z.string().min(1),
+  personalityId: z.string().min(1),
+  skillId: z.string().min(1),
 });
 const PersonalitySkillsGetOutput = z.object({ skill: PersonalitySkillSchema });
 const PersonalitySkillsCreateInput = z.object({
-    personalityId: z.string().min(1),
-    skillId: z
-        .string()
-        .min(1)
-        .regex(/^[a-zA-Z0-9_-]+$/),
-    body: z.string(),
+  personalityId: z.string().min(1),
+  skillId: z
+    .string()
+    .min(1)
+    .regex(/^[a-zA-Z0-9_-]+$/),
+  body: z.string(),
 });
 const PersonalitySkillsCreateOutput = z.object({ skill: PersonalitySkillSchema });
 const PersonalitySkillsUpdateInput = z.object({
-    personalityId: z.string().min(1),
-    skillId: z.string().min(1),
-    body: z.string(),
+  personalityId: z.string().min(1),
+  skillId: z.string().min(1),
+  body: z.string(),
 });
 const PersonalitySkillsUpdateOutput = z.object({ skill: PersonalitySkillSchema });
 const PersonalitySkillsDeleteInput = z.object({
-    personalityId: z.string().min(1),
-    skillId: z.string().min(1),
+  personalityId: z.string().min(1),
+  skillId: z.string().min(1),
 });
 const PersonalitySkillsImportInput = z.object({
-    personalityId: z.string().min(1),
-    /** Global skill ids to copy from ~/.ethos/skills/<id>.md into the personality's skills/. */
-    skillIds: z.array(z.string().min(1)),
+  personalityId: z.string().min(1),
+  /** Global skill ids to copy from ~/.ethos/skills/<id>.md into the personality's skills/. */
+  skillIds: z.array(z.string().min(1)),
 });
 const PersonalitySkillsImportOutput = z.object({ imported: z.array(PersonalitySkillSchema) });
 // Per-personality MCP bearer-token management (headless gap 4).
 const PersonalityMcpSetTokenInput = z.object({
-    personalityId: z.string().min(1),
-    server: z.string().min(1),
-    token: z.string().min(1),
+  personalityId: z.string().min(1),
+  server: z.string().min(1),
+  token: z.string().min(1),
 });
 const PersonalityMcpSetTokenOutput = z.object({ ok: z.literal(true) });
 const PersonalityMcpDeleteTokenInput = z.object({
-    personalityId: z.string().min(1),
-    server: z.string().min(1),
+  personalityId: z.string().min(1),
+  server: z.string().min(1),
 });
 const PersonalityMcpDeleteTokenOutput = z.object({ ok: z.literal(true) });
 /** @stable v1 */
 const personalities = {
-    list: oc.input(PersonalityListInput).output(PersonalityListOutput),
-    get: oc.input(PersonalityGetInput).output(PersonalityGetOutput),
-    characterSheet: oc.input(PersonalityCharacterSheetInput).output(PersonalityCharacterSheetOutput),
-    create: oc.input(PersonalityCreateInput).output(PersonalityCreateOutput),
-    update: oc.input(PersonalityUpdateInput).output(PersonalityUpdateOutput),
-    delete: oc.input(PersonalityDeleteInput).output(PersonalityOkOutput),
-    duplicate: oc.input(PersonalityDuplicateInput).output(PersonalityDuplicateOutput),
-    skillsList: oc.input(PersonalitySkillsListInput).output(PersonalitySkillsListOutput),
-    skillsGet: oc.input(PersonalitySkillsGetInput).output(PersonalitySkillsGetOutput),
-    skillsCreate: oc.input(PersonalitySkillsCreateInput).output(PersonalitySkillsCreateOutput),
-    skillsUpdate: oc.input(PersonalitySkillsUpdateInput).output(PersonalitySkillsUpdateOutput),
-    skillsDelete: oc.input(PersonalitySkillsDeleteInput).output(PersonalityOkOutput),
-    skillsImportGlobal: oc.input(PersonalitySkillsImportInput).output(PersonalitySkillsImportOutput),
-    mcpSetToken: oc.input(PersonalityMcpSetTokenInput).output(PersonalityMcpSetTokenOutput),
-    mcpDeleteToken: oc.input(PersonalityMcpDeleteTokenInput).output(PersonalityMcpDeleteTokenOutput),
+  list: oc.input(PersonalityListInput).output(PersonalityListOutput),
+  get: oc.input(PersonalityGetInput).output(PersonalityGetOutput),
+  characterSheet: oc.input(PersonalityCharacterSheetInput).output(PersonalityCharacterSheetOutput),
+  create: oc.input(PersonalityCreateInput).output(PersonalityCreateOutput),
+  update: oc.input(PersonalityUpdateInput).output(PersonalityUpdateOutput),
+  delete: oc.input(PersonalityDeleteInput).output(PersonalityOkOutput),
+  duplicate: oc.input(PersonalityDuplicateInput).output(PersonalityDuplicateOutput),
+  skillsList: oc.input(PersonalitySkillsListInput).output(PersonalitySkillsListOutput),
+  skillsGet: oc.input(PersonalitySkillsGetInput).output(PersonalitySkillsGetOutput),
+  skillsCreate: oc.input(PersonalitySkillsCreateInput).output(PersonalitySkillsCreateOutput),
+  skillsUpdate: oc.input(PersonalitySkillsUpdateInput).output(PersonalitySkillsUpdateOutput),
+  skillsDelete: oc.input(PersonalitySkillsDeleteInput).output(PersonalityOkOutput),
+  skillsImportGlobal: oc.input(PersonalitySkillsImportInput).output(PersonalitySkillsImportOutput),
+  mcpSetToken: oc.input(PersonalityMcpSetTokenInput).output(PersonalityMcpSetTokenOutput),
+  mcpDeleteToken: oc.input(PersonalityMcpDeleteTokenInput).output(PersonalityMcpDeleteTokenOutput),
 };
 // ---------------------------------------------------------------------------
 // Chat
@@ -232,21 +301,21 @@ const personalities = {
 // browser tabs writing to the same session (CEO finding 4.1).
 // ---------------------------------------------------------------------------
 const ChatSendInput = z.object({
-    /** Existing session ID, or omit to start a new session. */
-    sessionId: z.string().optional(),
-    clientId: z.string().min(1),
-    text: z.string().min(1),
-    personalityId: z.string().optional(),
-    userId: z.string().optional(),
-    /** When true, the agent plans tool calls without executing them. The SSE
-     *  stream emits a `dry_run_summary` event with the tool plan instead of
-     *  running the tools. */
-    dryRun: z.boolean().optional(),
+  /** Existing session ID, or omit to start a new session. */
+  sessionId: z.string().optional(),
+  clientId: z.string().min(1),
+  text: z.string().min(1),
+  personalityId: z.string().optional(),
+  userId: z.string().optional(),
+  /** When true, the agent plans tool calls without executing them. The SSE
+   *  stream emits a `dry_run_summary` event with the tool plan instead of
+   *  running the tools. */
+  dryRun: z.boolean().optional(),
 });
 const ChatSendOutput = z.object({
-    sessionId: z.string(),
-    /** Echoed back so a tab knows which turn the SSE stream belongs to. */
-    turnId: z.string(),
+  sessionId: z.string(),
+  /** Echoed back so a tab knows which turn the SSE stream belongs to. */
+  turnId: z.string(),
 });
 const ChatAbortInput = z.object({ sessionId: z.string() });
 const ChatAbortOutput = z.object({ ok: z.literal(true) });
@@ -254,43 +323,47 @@ const ChatSteerInput = z.object({ sessionId: z.string(), text: z.string().min(1)
 const ChatSteerOutput = z.object({ ok: z.boolean() });
 /** @stable v1 */
 const chat = {
-    send: oc.input(ChatSendInput).output(ChatSendOutput),
-    abort: oc.input(ChatAbortInput).output(ChatAbortOutput),
-    steer: oc.input(ChatSteerInput).output(ChatSteerOutput),
+  send: oc.input(ChatSendInput).output(ChatSendOutput),
+  abort: oc.input(ChatAbortInput).output(ChatAbortOutput),
+  steer: oc.input(ChatSteerInput).output(ChatSteerOutput),
 };
 // ---------------------------------------------------------------------------
 // Tools — approval workflow for dangerous tool calls
 // ---------------------------------------------------------------------------
 const ToolApproveInput = z.object({
-    approvalId: z.string(),
-    /** Tab identity. Other tabs viewing this session see `decidedBy: clientId`
-     *  on the `approval.resolved` SSE event so the modal auto-dismisses with
-     *  "approved by another window." */
-    clientId: z.string().min(1),
-    scope: ApprovalScopeSchema,
+  approvalId: z.string(),
+  /** Tab identity. Other tabs viewing this session see `decidedBy: clientId`
+   *  on the `approval.resolved` SSE event so the modal auto-dismisses with
+   *  "approved by another window." */
+  clientId: z.string().min(1),
+  scope: ApprovalScopeSchema,
 });
 const ToolApproveOutput = z.object({ ok: z.literal(true) });
 const ToolDenyInput = z.object({
-    approvalId: z.string(),
-    clientId: z.string().min(1),
-    reason: z.string().optional(),
+  approvalId: z.string(),
+  clientId: z.string().min(1),
+  reason: z.string().optional(),
 });
 const ToolDenyOutput = z.object({ ok: z.literal(true) });
 const ToolsCatalogInput = z.object({});
 const ToolsCatalogOutput = z.object({
-    groups: z.array(z.object({
-        group: z.string(),
-        tools: z.array(z.object({
-            name: z.string(),
-            description: z.string().optional(),
-        })),
-    })),
+  groups: z.array(
+    z.object({
+      group: z.string(),
+      tools: z.array(
+        z.object({
+          name: z.string(),
+          description: z.string().optional(),
+        }),
+      ),
+    }),
+  ),
 });
 /** @experimental */
 const tools = {
-    approve: oc.input(ToolApproveInput).output(ToolApproveOutput),
-    deny: oc.input(ToolDenyInput).output(ToolDenyOutput),
-    catalog: oc.input(ToolsCatalogInput).output(ToolsCatalogOutput),
+  approve: oc.input(ToolApproveInput).output(ToolApproveOutput),
+  deny: oc.input(ToolDenyInput).output(ToolDenyOutput),
+  catalog: oc.input(ToolsCatalogInput).output(ToolsCatalogOutput),
 };
 // ---------------------------------------------------------------------------
 // Clarify — resolve a pending `clarify` request (the agent asked the user a
@@ -298,54 +371,54 @@ const tools = {
 // path back, mirroring the tool-approval transport.
 // ---------------------------------------------------------------------------
 const ClarifyRespondInput = z.object({
-    requestId: z.string(),
-    /** The user's answer — free-form text, or one of the offered options. */
-    answer: z.string(),
-    /** `user` for a real answer, `cancel` when the user dismissed the card. */
-    source: z.enum(['user', 'cancel']),
+  requestId: z.string(),
+  /** The user's answer — free-form text, or one of the offered options. */
+  answer: z.string(),
+  /** `user` for a real answer, `cancel` when the user dismissed the card. */
+  source: z.enum(['user', 'cancel']),
 });
 const ClarifyRespondOutput = z.object({ ok: z.literal(true) });
 /** @experimental */
 const clarify = {
-    respond: oc.input(ClarifyRespondInput).output(ClarifyRespondOutput),
+  respond: oc.input(ClarifyRespondInput).output(ClarifyRespondOutput),
 };
 // ---------------------------------------------------------------------------
 // Onboarding
 // ---------------------------------------------------------------------------
 const OnboardingStateOutput = z.object({
-    step: OnboardingStepSchema,
-    /** True once `~/.ethos/config.yaml` has a valid provider + key. */
-    hasProvider: z.boolean(),
-    /** Set after step 3. */
-    selectedPersonalityId: z.string().nullable(),
+  step: OnboardingStepSchema,
+  /** True once `~/.ethos/config.yaml` has a valid provider + key. */
+  hasProvider: z.boolean(),
+  /** Set after step 3. */
+  selectedPersonalityId: z.string().nullable(),
 });
 const OnboardingValidateProviderInput = z.object({
-    provider: ProviderIdSchema,
-    apiKey: z.string().min(1),
-    baseUrl: z.string().optional(),
+  provider: ProviderIdSchema,
+  apiKey: z.string().min(1),
+  baseUrl: z.string().optional(),
 });
 const OnboardingValidateProviderOutput = z.object({
-    ok: z.boolean(),
-    /** Models returned by the provider's catalog endpoint when validation succeeds. */
-    models: z.array(z.string()).nullable(),
-    error: z.string().nullable(),
-    completionTested: z.boolean(),
+  ok: z.boolean(),
+  /** Models returned by the provider's catalog endpoint when validation succeeds. */
+  models: z.array(z.string()).nullable(),
+  error: z.string().nullable(),
+  completionTested: z.boolean(),
 });
 const OnboardingCompleteInput = z.object({
-    provider: ProviderIdSchema,
-    model: z.string().min(1),
-    apiKey: z.string().min(1),
-    baseUrl: z.string().optional(),
-    personalityId: z.string().min(1),
+  provider: ProviderIdSchema,
+  model: z.string().min(1),
+  apiKey: z.string().min(1),
+  baseUrl: z.string().optional(),
+  personalityId: z.string().min(1),
 });
 const OnboardingCompleteOutput = z.object({ ok: z.literal(true) });
 /** @experimental */
 const onboarding = {
-    state: oc.output(OnboardingStateOutput),
-    validateProvider: oc
-        .input(OnboardingValidateProviderInput)
-        .output(OnboardingValidateProviderOutput),
-    complete: oc.input(OnboardingCompleteInput).output(OnboardingCompleteOutput),
+  state: oc.output(OnboardingStateOutput),
+  validateProvider: oc
+    .input(OnboardingValidateProviderInput)
+    .output(OnboardingValidateProviderOutput),
+  complete: oc.input(OnboardingCompleteInput).output(OnboardingCompleteOutput),
 };
 // ---------------------------------------------------------------------------
 // Config
@@ -356,40 +429,42 @@ const onboarding = {
 // is active without leaking it to the browser.
 // ---------------------------------------------------------------------------
 const ConfigGetOutput = z.object({
-    provider: z.string(),
-    model: z.string(),
-    apiKeyPreview: z.string(), // e.g. "sk-…abc1"
-    baseUrl: z.string().nullable(),
-    personality: z.string(),
-    memory: z.enum(['markdown', 'vector']),
-    modelRouting: z.record(z.string(), z.string()),
-    /** Currently selected skin (one of the BUILTIN_SKINS names). */
-    skin: z.string(),
-    providers: z.array(ProviderEntrySchema),
+  provider: z.string(),
+  model: z.string(),
+  apiKeyPreview: z.string(), // e.g. "sk-…abc1"
+  baseUrl: z.string().nullable(),
+  personality: z.string(),
+  memory: z.enum(['markdown', 'vector']),
+  modelRouting: z.record(z.string(), z.string()),
+  /** Currently selected skin (one of the BUILTIN_SKINS names). */
+  skin: z.string(),
+  providers: z.array(ProviderEntrySchema),
 });
 const ConfigUpdateInput = z.object({
-    provider: z.string().optional(),
-    model: z.string().optional(),
-    apiKey: z.string().optional(),
-    baseUrl: z.string().optional(),
-    personality: z.string().optional(),
-    memory: z.enum(['markdown', 'vector']).optional(),
-    modelRouting: z.record(z.string(), z.string()).optional(),
-    skin: z.string().optional(),
-    providers: z
-        .array(z.object({
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+  personality: z.string().optional(),
+  memory: z.enum(['markdown', 'vector']).optional(),
+  modelRouting: z.record(z.string(), z.string()).optional(),
+  skin: z.string().optional(),
+  providers: z
+    .array(
+      z.object({
         provider: z.string(),
         model: z.string().optional(),
         apiKey: z.string().optional(),
         baseUrl: z.string().optional(),
-    }))
-        .optional(),
+      }),
+    )
+    .optional(),
 });
 const ConfigUpdateOutput = z.object({ ok: z.literal(true) });
 /** @experimental */
 const config = {
-    get: oc.output(ConfigGetOutput),
-    update: oc.input(ConfigUpdateInput).output(ConfigUpdateOutput),
+  get: oc.output(ConfigGetOutput),
+  update: oc.input(ConfigUpdateInput).output(ConfigUpdateOutput),
 };
 // ---------------------------------------------------------------------------
 // Cron (v0.5 — the proactive pillar)
@@ -402,47 +477,47 @@ const CronListOutput = z.object({ jobs: z.array(CronJobSchema) });
 const CronGetInput = z.object({ id: z.string().min(1) });
 const CronGetOutput = z.object({ job: CronJobSchema });
 const CronCreateInput = z.object({
-    name: z.string().min(1),
-    schedule: z.string().min(1),
-    prompt: z.string().min(1),
-    personalityId: z.string().min(1),
-    missedRunPolicy: MissedRunPolicySchema.optional(),
+  name: z.string().min(1),
+  schedule: z.string().min(1),
+  prompt: z.string().min(1),
+  personalityId: z.string().min(1),
+  missedRunPolicy: MissedRunPolicySchema.optional(),
 });
 const CronCreateOutput = z.object({ job: CronJobSchema });
 const CronIdOnlyInput = z.object({ id: z.string().min(1) });
 const CronOkOutput = z.object({ ok: z.literal(true) });
 const CronRunNowInput = z.object({ id: z.string().min(1) });
 const CronRunNowOutput = z.object({
-    ok: z.literal(true),
-    /** Full output body from this synchronous run. */
-    output: z.string(),
-    ranAt: z.string(),
+  ok: z.literal(true),
+  /** Full output body from this synchronous run. */
+  output: z.string(),
+  ranAt: z.string(),
 });
 const CronUpdateInput = z.object({
-    id: z.string().min(1),
-    name: z.string().min(1).optional(),
-    schedule: z.string().min(1).optional(),
-    prompt: z.string().min(1).optional(),
-    personalityId: z.string().min(1).optional(),
+  id: z.string().min(1),
+  name: z.string().min(1).optional(),
+  schedule: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
+  personalityId: z.string().min(1).optional(),
 });
 const CronUpdateOutput = z.object({ job: CronJobSchema });
 const CronHistoryInput = z.object({
-    id: z.string().min(1),
-    /** Page size; max 100 to keep payloads bounded. Default 20. */
-    limit: z.number().int().min(1).max(100).optional(),
+  id: z.string().min(1),
+  /** Page size; max 100 to keep payloads bounded. Default 20. */
+  limit: z.number().int().min(1).max(100).optional(),
 });
 const CronHistoryOutput = z.object({ runs: z.array(CronRunSchema) });
 /** @experimental */
 const cron = {
-    list: oc.output(CronListOutput),
-    get: oc.input(CronGetInput).output(CronGetOutput),
-    create: oc.input(CronCreateInput).output(CronCreateOutput),
-    update: oc.input(CronUpdateInput).output(CronUpdateOutput),
-    delete: oc.input(CronIdOnlyInput).output(CronOkOutput),
-    pause: oc.input(CronIdOnlyInput).output(CronOkOutput),
-    resume: oc.input(CronIdOnlyInput).output(CronOkOutput),
-    runNow: oc.input(CronRunNowInput).output(CronRunNowOutput),
-    history: oc.input(CronHistoryInput).output(CronHistoryOutput),
+  list: oc.output(CronListOutput),
+  get: oc.input(CronGetInput).output(CronGetOutput),
+  create: oc.input(CronCreateInput).output(CronCreateOutput),
+  update: oc.input(CronUpdateInput).output(CronUpdateOutput),
+  delete: oc.input(CronIdOnlyInput).output(CronOkOutput),
+  pause: oc.input(CronIdOnlyInput).output(CronOkOutput),
+  resume: oc.input(CronIdOnlyInput).output(CronOkOutput),
+  runNow: oc.input(CronRunNowInput).output(CronRunNowOutput),
+  history: oc.input(CronHistoryInput).output(CronHistoryOutput),
 };
 // ---------------------------------------------------------------------------
 // Skills (v0.5 — the learning pillar)
@@ -452,37 +527,37 @@ const cron = {
 // surface is the global library only.
 // ---------------------------------------------------------------------------
 const SkillListOutput = z.object({
-    skills: z.array(SkillSchema),
-    /** Approval queue size — surfaced as a sidebar badge so the user can
-     *  see pending candidates without opening the Evolver panel. */
-    pendingCount: z.number().int().nonnegative(),
+  skills: z.array(SkillSchema),
+  /** Approval queue size — surfaced as a sidebar badge so the user can
+   *  see pending candidates without opening the Evolver panel. */
+  pendingCount: z.number().int().nonnegative(),
 });
 const SkillGetInput = z.object({ id: z.string().min(1) });
 const SkillGetOutput = z.object({ skill: SkillSchema });
 const SkillCreateInput = z.object({
-    /** Plain filename (no path, no `.md`). Letters, digits, dash, underscore. */
-    id: z
-        .string()
-        .min(1)
-        .regex(/^[a-zA-Z0-9_-]+$/),
-    /** Markdown body. May start with a YAML frontmatter block. */
-    body: z.string(),
+  /** Plain filename (no path, no `.md`). Letters, digits, dash, underscore. */
+  id: z
+    .string()
+    .min(1)
+    .regex(/^[a-zA-Z0-9_-]+$/),
+  /** Markdown body. May start with a YAML frontmatter block. */
+  body: z.string(),
 });
 const SkillCreateOutput = z.object({ skill: SkillSchema });
 const SkillUpdateInput = z.object({
-    id: z.string().min(1),
-    body: z.string(),
+  id: z.string().min(1),
+  body: z.string(),
 });
 const SkillUpdateOutput = z.object({ skill: SkillSchema });
 const SkillDeleteInput = z.object({ id: z.string().min(1) });
 const SkillOkOutput = z.object({ ok: z.literal(true) });
 /** @experimental */
 const skills = {
-    list: oc.output(SkillListOutput),
-    get: oc.input(SkillGetInput).output(SkillGetOutput),
-    create: oc.input(SkillCreateInput).output(SkillCreateOutput),
-    update: oc.input(SkillUpdateInput).output(SkillUpdateOutput),
-    delete: oc.input(SkillDeleteInput).output(SkillOkOutput),
+  list: oc.output(SkillListOutput),
+  get: oc.input(SkillGetInput).output(SkillGetOutput),
+  create: oc.input(SkillCreateInput).output(SkillCreateOutput),
+  update: oc.input(SkillUpdateInput).output(SkillUpdateOutput),
+  delete: oc.input(SkillDeleteInput).output(SkillOkOutput),
 };
 // ---------------------------------------------------------------------------
 // Evolver (v0.5 — companion to Skills)
@@ -501,12 +576,12 @@ const EvolverHistoryInput = z.object({ limit: z.number().int().min(1).max(100).o
 const EvolverHistoryOutput = z.object({ runs: z.array(EvolverRunSchema) });
 /** @experimental */
 const evolver = {
-    configGet: oc.output(EvolverConfigGetOutput),
-    configUpdate: oc.input(EvolverConfigUpdateInput).output(EvolverConfigUpdateOutput),
-    pendingList: oc.output(EvolverPendingListOutput),
-    pendingApprove: oc.input(EvolverPendingActionInput).output(SkillOkOutput),
-    pendingReject: oc.input(EvolverPendingActionInput).output(SkillOkOutput),
-    history: oc.input(EvolverHistoryInput).output(EvolverHistoryOutput),
+  configGet: oc.output(EvolverConfigGetOutput),
+  configUpdate: oc.input(EvolverConfigUpdateInput).output(EvolverConfigUpdateOutput),
+  pendingList: oc.output(EvolverPendingListOutput),
+  pendingApprove: oc.input(EvolverPendingActionInput).output(SkillOkOutput),
+  pendingReject: oc.input(EvolverPendingActionInput).output(SkillOkOutput),
+  history: oc.input(EvolverHistoryInput).output(EvolverHistoryOutput),
 };
 // ---------------------------------------------------------------------------
 // Communications (v1)
@@ -518,50 +593,54 @@ const evolver = {
 // ---------------------------------------------------------------------------
 const PlatformsListOutput = z.object({ platforms: z.array(PlatformStatusSchema) });
 const PlatformsSetInput = z.object({
-    id: PlatformIdSchema,
-    /** Per-field plaintext. Field names match the schema each platform
-     *  declares — e.g. telegram = { token }, slack = { botToken,
-     *  appToken, signingSecret }. Empty / missing keys preserve the
-     *  current value. */
-    fields: z.record(z.string(), z.string()),
+  id: PlatformIdSchema,
+  /** Per-field plaintext. Field names match the schema each platform
+   *  declares — e.g. telegram = { token }, slack = { botToken,
+   *  appToken, signingSecret }. Empty / missing keys preserve the
+   *  current value. */
+  fields: z.record(z.string(), z.string()),
 });
 const PlatformsSetOutput = z.object({ platform: PlatformStatusSchema });
 const PlatformsClearInput = z.object({ id: PlatformIdSchema });
 const PlatformsClearOutput = z.object({ platform: PlatformStatusSchema });
 /** @experimental */
 const platforms = {
-    list: oc.output(PlatformsListOutput),
-    set: oc.input(PlatformsSetInput).output(PlatformsSetOutput),
-    clear: oc.input(PlatformsClearInput).output(PlatformsClearOutput),
-    botsListTelegram: oc.output(z.object({ bots: z.array(TelegramBotEntrySchema) })),
-    botsAddTelegram: oc
-        .input(z.object({
+  list: oc.output(PlatformsListOutput),
+  set: oc.input(PlatformsSetInput).output(PlatformsSetOutput),
+  clear: oc.input(PlatformsClearInput).output(PlatformsClearOutput),
+  botsListTelegram: oc.output(z.object({ bots: z.array(TelegramBotEntrySchema) })),
+  botsAddTelegram: oc
+    .input(
+      z.object({
         token: z.string().min(1),
         bind: BotBindingSchema,
         username: z.string().optional(),
-    }))
-        .output(z.object({ bot: TelegramBotEntrySchema })),
-    botsRemoveTelegram: oc
-        .input(z.object({ botKey: z.string() }))
-        .output(z.object({ ok: z.literal(true) })),
-    botsListSlack: oc.output(z.object({ bots: z.array(SlackAppEntrySchema) })),
-    botsAddSlack: oc
-        .input(z.object({
+      }),
+    )
+    .output(z.object({ bot: TelegramBotEntrySchema })),
+  botsRemoveTelegram: oc
+    .input(z.object({ botKey: z.string() }))
+    .output(z.object({ ok: z.literal(true) })),
+  botsListSlack: oc.output(z.object({ bots: z.array(SlackAppEntrySchema) })),
+  botsAddSlack: oc
+    .input(
+      z.object({
         botToken: z.string().min(1),
         appToken: z.string().min(1),
         signingSecret: z.string().min(1),
         bind: BotBindingSchema,
-    }))
-        .output(z.object({ bot: SlackAppEntrySchema })),
-    botsRemoveSlack: oc
-        .input(z.object({ botKey: z.string() }))
-        .output(z.object({ ok: z.literal(true) })),
-    getChannelFilter: oc
-        .input(z.object({ platform: z.string() }))
-        .output(z.object({ filter: ChannelPlatformFilterSchema })),
-    setChannelFilter: oc
-        .input(z.object({ platform: z.string(), filter: ChannelPlatformFilterSchema }))
-        .output(z.object({ filter: ChannelPlatformFilterSchema })),
+      }),
+    )
+    .output(z.object({ bot: SlackAppEntrySchema })),
+  botsRemoveSlack: oc
+    .input(z.object({ botKey: z.string() }))
+    .output(z.object({ ok: z.literal(true) })),
+  getChannelFilter: oc
+    .input(z.object({ platform: z.string() }))
+    .output(z.object({ filter: ChannelPlatformFilterSchema })),
+  setChannelFilter: oc
+    .input(z.object({ platform: z.string(), filter: ChannelPlatformFilterSchema }))
+    .output(z.object({ filter: ChannelPlatformFilterSchema })),
 };
 // ---------------------------------------------------------------------------
 // Plugins + MCP (v1)
@@ -571,66 +650,66 @@ const platforms = {
 // npm under the hood (same as the CLI's `ethos plugin install / remove`).
 // ---------------------------------------------------------------------------
 const PluginsListOutput = z.object({
-    plugins: z.array(PluginInfoSchema),
-    mcpServers: z.array(McpServerInfoSchema),
+  plugins: z.array(PluginInfoSchema),
+  mcpServers: z.array(McpServerInfoSchema),
 });
 const PluginsInstallInput = z.object({ packageSpec: z.string().min(1) });
 const PluginsInstallOutput = z.object({ ok: z.literal(true) });
 const PluginsUninstallInput = z.object({ pluginId: z.string().min(1) });
 const PluginsUninstallOutput = z.object({ ok: z.literal(true) });
 const PluginsSetCredentialInput = z.object({
-    pluginId: z.string().min(1),
-    key: z.string().min(1),
-    value: z.string(),
+  pluginId: z.string().min(1),
+  key: z.string().min(1),
+  value: z.string(),
 });
 const PluginsSetCredentialOutput = z.object({ ok: z.literal(true) });
 const PluginsGetCredentialMetaInput = z.object({
-    pluginId: z.string().min(1),
-    key: z.string().min(1),
+  pluginId: z.string().min(1),
+  key: z.string().min(1),
 });
 const PluginsGetCredentialMetaOutput = z.object({
-    updatedAt: z.string().nullable(),
+  updatedAt: z.string().nullable(),
 });
 const PluginsListCredentialKeysInput = z.object({
-    pluginId: z.string().min(1),
+  pluginId: z.string().min(1),
 });
 const PluginsListCredentialKeysOutput = z.object({
-    keys: z.array(CredentialKeyInfoSchema),
+  keys: z.array(CredentialKeyInfoSchema),
 });
 const PluginsGetPageSpecInput = z.object({ pluginId: z.string().min(1) });
 const PluginsGetPageSpecOutput = z.object({
-    spec: z
-        .object({
-        title: z.string(),
-        icon: z.string().optional(),
-        sections: z.array(z.record(z.string(), z.unknown())),
-        showInSidebar: z.boolean().optional(),
+  spec: z
+    .object({
+      title: z.string(),
+      icon: z.string().optional(),
+      sections: z.array(z.record(z.string(), z.unknown())),
+      showInSidebar: z.boolean().optional(),
     })
-        .nullable(),
+    .nullable(),
 });
 const PluginsInvokeToolForPageInput = z.object({
-    pluginId: z.string().min(1),
-    toolName: z.string().min(1),
-    args: z.record(z.string(), z.unknown()).optional(),
+  pluginId: z.string().min(1),
+  toolName: z.string().min(1),
+  args: z.record(z.string(), z.unknown()).optional(),
 });
 const PluginsInvokeToolForPageOutput = z.object({
-    ok: z.boolean(),
-    value: z.string(),
-    structured: z.record(z.string(), z.unknown()).optional(),
-    error: z.string().optional(),
+  ok: z.boolean(),
+  value: z.string(),
+  structured: z.record(z.string(), z.unknown()).optional(),
+  error: z.string().optional(),
 });
 /** @experimental */
 const plugins = {
-    list: oc.output(PluginsListOutput),
-    install: oc.input(PluginsInstallInput).output(PluginsInstallOutput),
-    uninstall: oc.input(PluginsUninstallInput).output(PluginsUninstallOutput),
-    setCredential: oc.input(PluginsSetCredentialInput).output(PluginsSetCredentialOutput),
-    getCredentialMeta: oc.input(PluginsGetCredentialMetaInput).output(PluginsGetCredentialMetaOutput),
-    listCredentialKeys: oc
-        .input(PluginsListCredentialKeysInput)
-        .output(PluginsListCredentialKeysOutput),
-    getPageSpec: oc.input(PluginsGetPageSpecInput).output(PluginsGetPageSpecOutput),
-    invokeToolForPage: oc.input(PluginsInvokeToolForPageInput).output(PluginsInvokeToolForPageOutput),
+  list: oc.output(PluginsListOutput),
+  install: oc.input(PluginsInstallInput).output(PluginsInstallOutput),
+  uninstall: oc.input(PluginsUninstallInput).output(PluginsUninstallOutput),
+  setCredential: oc.input(PluginsSetCredentialInput).output(PluginsSetCredentialOutput),
+  getCredentialMeta: oc.input(PluginsGetCredentialMetaInput).output(PluginsGetCredentialMetaOutput),
+  listCredentialKeys: oc
+    .input(PluginsListCredentialKeysInput)
+    .output(PluginsListCredentialKeysOutput),
+  getPageSpec: oc.input(PluginsGetPageSpecInput).output(PluginsGetPageSpecOutput),
+  invokeToolForPage: oc.input(PluginsInvokeToolForPageInput).output(PluginsInvokeToolForPageOutput),
 };
 // ---------------------------------------------------------------------------
 // MCP install flow (v1 — OAuth UI)
@@ -641,27 +720,27 @@ const plugins = {
 // ---------------------------------------------------------------------------
 /** @experimental */
 const mcp = {
-    start: oc.input(McpStartInputSchema).output(McpStartOutputSchema),
-    complete: oc.input(McpCompleteInputSchema).output(McpCompleteOutputSchema),
-    status: oc.output(McpStatusOutputSchema),
-    cancel: oc.input(McpCancelInputSchema).output(z.object({ ok: z.literal(true) })),
-    attachPersonalities: oc.input(McpAttachInputSchema).output(McpAttachOutputSchema),
-    list: oc.output(McpListOutputSchema),
-    delete: oc.input(McpDeleteInputSchema).output(z.object({ ok: z.literal(true) })),
-    reconnect: oc.input(McpReconnectInputSchema).output(McpStartOutputSchema),
-    /** List the bare tool names a given MCP server exposes, for the
-     *  per-server tool checklist in the personality editor. */
-    serverTools: oc.input(McpServerToolsInputSchema).output(McpServerToolsOutputSchema),
-    /** List MCP servers attached to a personality with their OAuth auth status. */
-    personalityServers: oc
-        .input(McpPersonalityServersInputSchema)
-        .output(McpPersonalityServersOutputSchema),
-    addServer: oc.input(McpAddServerInputSchema).output(McpAddServerOutputSchema),
-    refreshToken: oc.input(McpRefreshTokenInputSchema).output(McpRefreshTokenOutputSchema),
-    rename: oc.input(McpRenameInputSchema).output(McpRenameOutputSchema),
-    updateToken: oc.input(McpUpdateTokenInputSchema).output(McpUpdateTokenOutputSchema),
-    scopeStatus: oc.input(McpScopeStatusInputSchema).output(McpScopeStatusOutputSchema),
-    validateConfig: oc.input(McpValidateConfigInputSchema).output(McpValidateConfigOutputSchema),
+  start: oc.input(McpStartInputSchema).output(McpStartOutputSchema),
+  complete: oc.input(McpCompleteInputSchema).output(McpCompleteOutputSchema),
+  status: oc.output(McpStatusOutputSchema),
+  cancel: oc.input(McpCancelInputSchema).output(z.object({ ok: z.literal(true) })),
+  attachPersonalities: oc.input(McpAttachInputSchema).output(McpAttachOutputSchema),
+  list: oc.output(McpListOutputSchema),
+  delete: oc.input(McpDeleteInputSchema).output(z.object({ ok: z.literal(true) })),
+  reconnect: oc.input(McpReconnectInputSchema).output(McpStartOutputSchema),
+  /** List the bare tool names a given MCP server exposes, for the
+   *  per-server tool checklist in the personality editor. */
+  serverTools: oc.input(McpServerToolsInputSchema).output(McpServerToolsOutputSchema),
+  /** List MCP servers attached to a personality with their OAuth auth status. */
+  personalityServers: oc
+    .input(McpPersonalityServersInputSchema)
+    .output(McpPersonalityServersOutputSchema),
+  addServer: oc.input(McpAddServerInputSchema).output(McpAddServerOutputSchema),
+  refreshToken: oc.input(McpRefreshTokenInputSchema).output(McpRefreshTokenOutputSchema),
+  rename: oc.input(McpRenameInputSchema).output(McpRenameOutputSchema),
+  updateToken: oc.input(McpUpdateTokenInputSchema).output(McpUpdateTokenOutputSchema),
+  scopeStatus: oc.input(McpScopeStatusInputSchema).output(McpScopeStatusOutputSchema),
+  validateConfig: oc.input(McpValidateConfigInputSchema).output(McpValidateConfigOutputSchema),
 };
 // ---------------------------------------------------------------------------
 // Memory (v1)
@@ -672,42 +751,42 @@ const mcp = {
 // both. Vector-mode chunk CRUD lands later.
 // ---------------------------------------------------------------------------
 const MemoryListInput = z.object({
-    personalityId: z.string().min(1),
-    /** Page size. */
-    limit: z.number().int().positive().optional(),
-    /** Opaque cursor from the previous response's `nextCursor`. */
-    cursor: z.string().optional(),
-    /** When present and store is 'user', reads user-scoped memory. */
-    userId: z.string().optional(),
+  personalityId: z.string().min(1),
+  /** Page size. */
+  limit: z.number().int().positive().optional(),
+  /** Opaque cursor from the previous response's `nextCursor`. */
+  cursor: z.string().optional(),
+  /** When present and store is 'user', reads user-scoped memory. */
+  userId: z.string().optional(),
 });
 const MemoryListOutput = z.object({
-    items: z.array(MemoryFileSchema),
-    nextCursor: z.string().nullable(),
+  items: z.array(MemoryFileSchema),
+  nextCursor: z.string().nullable(),
 });
 const MemoryGetInput = z.object({
-    store: MemoryStoreSchema,
-    personalityId: z.string().min(1),
-    /** When present and store is 'user', reads user-scoped memory. */
-    userId: z.string().optional(),
+  store: MemoryStoreSchema,
+  personalityId: z.string().min(1),
+  /** When present and store is 'user', reads user-scoped memory. */
+  userId: z.string().optional(),
 });
 const MemoryGetOutput = z.object({ file: MemoryFileSchema });
 const MemoryWriteInput = z.object({
-    store: MemoryStoreSchema,
-    content: z.string(),
-    personalityId: z.string().min(1),
-    /** When present and store is 'user', writes user-scoped memory. */
-    userId: z.string().optional(),
+  store: MemoryStoreSchema,
+  content: z.string(),
+  personalityId: z.string().min(1),
+  /** When present and store is 'user', writes user-scoped memory. */
+  userId: z.string().optional(),
 });
 const MemoryWriteOutput = z.object({ file: MemoryFileSchema });
 const MemoryListUsersOutput = z.object({
-    users: z.array(IdentityMapEntrySchema),
+  users: z.array(IdentityMapEntrySchema),
 });
 /** @stable v1 */
 const memory = {
-    list: oc.input(MemoryListInput).output(MemoryListOutput),
-    get: oc.input(MemoryGetInput).output(MemoryGetOutput),
-    write: oc.input(MemoryWriteInput).output(MemoryWriteOutput),
-    listUsers: oc.input(z.object({})).output(MemoryListUsersOutput),
+  list: oc.input(MemoryListInput).output(MemoryListOutput),
+  get: oc.input(MemoryGetInput).output(MemoryGetOutput),
+  write: oc.input(MemoryWriteInput).output(MemoryWriteOutput),
+  listUsers: oc.input(z.object({})).output(MemoryListUsersOutput),
 };
 // ---------------------------------------------------------------------------
 // Mesh (v0.5 — the swarm pillar)
@@ -719,14 +798,14 @@ const memory = {
 // ---------------------------------------------------------------------------
 const MeshListOutput = z.object({ agents: z.array(MeshAgentSchema) });
 const MeshRouteTestInput = z.object({
-    /** Capability the synthetic task should route to (e.g. `code`, `web`). */
-    capability: z.string().min(1),
+  /** Capability the synthetic task should route to (e.g. `code`, `web`). */
+  capability: z.string().min(1),
 });
 const MeshRouteTestOutput = MeshRouteResultSchema;
 /** @experimental */
 const mesh = {
-    list: oc.output(MeshListOutput),
-    routeTest: oc.input(MeshRouteTestInput).output(MeshRouteTestOutput),
+  list: oc.output(MeshListOutput),
+  routeTest: oc.input(MeshRouteTestInput).output(MeshRouteTestOutput),
 };
 // ---------------------------------------------------------------------------
 // Lab — Batch (v1)
@@ -739,12 +818,12 @@ const mesh = {
 // ---------------------------------------------------------------------------
 const BatchListOutput = z.object({ runs: z.array(BatchRunInfoSchema) });
 const BatchStartInput = z.object({
-    /** Newline-delimited JSON; each line `{ id, prompt, personalityId? }`. */
-    tasksJsonl: z.string().min(1),
-    /** Default 4. Max 16 to keep a single-user local app polite. */
-    concurrency: z.number().int().min(1).max(16).optional(),
-    /** Personality id used for tasks that don't pin one. */
-    defaultPersonalityId: z.string().optional(),
+  /** Newline-delimited JSON; each line `{ id, prompt, personalityId? }`. */
+  tasksJsonl: z.string().min(1),
+  /** Default 4. Max 16 to keep a single-user local app polite. */
+  concurrency: z.number().int().min(1).max(16).optional(),
+  /** Personality id used for tasks that don't pin one. */
+  defaultPersonalityId: z.string().optional(),
 });
 const BatchStartOutput = z.object({ run: BatchRunInfoSchema });
 const BatchGetInput = z.object({ id: z.string() });
@@ -753,10 +832,10 @@ const BatchOutputInput = z.object({ id: z.string() });
 const BatchOutputOutput = z.object({ content: z.string() });
 /** @experimental */
 const batch = {
-    list: oc.output(BatchListOutput),
-    start: oc.input(BatchStartInput).output(BatchStartOutput),
-    get: oc.input(BatchGetInput).output(BatchGetOutput),
-    output: oc.input(BatchOutputInput).output(BatchOutputOutput),
+  list: oc.output(BatchListOutput),
+  start: oc.input(BatchStartInput).output(BatchStartOutput),
+  get: oc.input(BatchGetInput).output(BatchGetOutput),
+  output: oc.input(BatchOutputInput).output(BatchOutputOutput),
 };
 // ---------------------------------------------------------------------------
 // Lab — Eval (v1)
@@ -768,11 +847,11 @@ const batch = {
 // ---------------------------------------------------------------------------
 const EvalListOutput = z.object({ runs: z.array(EvalRunInfoSchema) });
 const EvalStartInput = z.object({
-    tasksJsonl: z.string().min(1),
-    /** Newline-delimited JSON: `{ id, expected, match? }`. */
-    expectedJsonl: z.string().min(1),
-    scorer: EvalScorerSchema.optional(),
-    concurrency: z.number().int().min(1).max(16).optional(),
+  tasksJsonl: z.string().min(1),
+  /** Newline-delimited JSON: `{ id, expected, match? }`. */
+  expectedJsonl: z.string().min(1),
+  scorer: EvalScorerSchema.optional(),
+  concurrency: z.number().int().min(1).max(16).optional(),
 });
 const EvalStartOutput = z.object({ run: EvalRunInfoSchema });
 const EvalGetInput = z.object({ id: z.string() });
@@ -781,10 +860,10 @@ const EvalOutputInput = z.object({ id: z.string() });
 const EvalOutputOutput = z.object({ content: z.string() });
 /** @experimental */
 const evalNs = {
-    list: oc.output(EvalListOutput),
-    start: oc.input(EvalStartInput).output(EvalStartOutput),
-    get: oc.input(EvalGetInput).output(EvalGetOutput),
-    output: oc.input(EvalOutputInput).output(EvalOutputOutput),
+  list: oc.output(EvalListOutput),
+  start: oc.input(EvalStartInput).output(EvalStartOutput),
+  get: oc.input(EvalGetInput).output(EvalGetOutput),
+  output: oc.input(EvalOutputInput).output(EvalOutputOutput),
 };
 // ---------------------------------------------------------------------------
 // Kanban — Plan B Control Center surface
@@ -796,21 +875,21 @@ const evalNs = {
 // ---------------------------------------------------------------------------
 const KanbanListOutput = z.object({ teams: z.array(KanbanTeamSummarySchema) });
 const KanbanGetBoardInput = z.object({
-    team: z.string().min(1),
+  team: z.string().min(1),
 });
 const KanbanGetBoardOutput = z.object({ board: KanbanBoardSnapshotSchema });
 const KanbanUpdateStatusInput = z.object({
-    team: z.string().min(1),
-    taskId: z.string().min(1),
-    status: KanbanTaskStatusSchema,
-    reason: z.string().optional(),
+  team: z.string().min(1),
+  taskId: z.string().min(1),
+  status: KanbanTaskStatusSchema,
+  reason: z.string().optional(),
 });
 const KanbanUpdateStatusOutput = z.object({ task: KanbanTaskSchema });
 /** @experimental */
 const kanban = {
-    list: oc.output(KanbanListOutput),
-    getBoard: oc.input(KanbanGetBoardInput).output(KanbanGetBoardOutput),
-    updateStatus: oc.input(KanbanUpdateStatusInput).output(KanbanUpdateStatusOutput),
+  list: oc.output(KanbanListOutput),
+  getBoard: oc.input(KanbanGetBoardInput).output(KanbanGetBoardOutput),
+  updateStatus: oc.input(KanbanUpdateStatusInput).output(KanbanUpdateStatusOutput),
 };
 // ---------------------------------------------------------------------------
 // API Keys — admin CRUD (cookie-auth-gated only)
@@ -821,52 +900,50 @@ const kanban = {
 // prevent privilege escalation (a stolen key must not mint more keys).
 // ---------------------------------------------------------------------------
 const OriginSchema = z
-    .string()
-    .transform((s) => {
+  .string()
+  .transform((s) => {
     try {
-        const u = new URL(s);
-        return u.origin;
+      const u = new URL(s);
+      return u.origin;
+    } catch {
+      return s;
     }
-    catch {
-        return s;
-    }
-})
-    .refine((s) => {
+  })
+  .refine((s) => {
     try {
-        const u = new URL(s);
-        return u.origin === s;
+      const u = new URL(s);
+      return u.origin === s;
+    } catch {
+      return false;
     }
-    catch {
-        return false;
-    }
-}, 'Must be a valid origin (scheme + host + optional port, no path/query/fragment)');
+  }, 'Must be a valid origin (scheme + host + optional port, no path/query/fragment)');
 const ApiKeyCreateInput = z.object({
-    name: z.string().min(1).max(100),
-    scopes: z.array(ApiKeyScopeSchema).min(1),
-    allowedOrigins: z.array(OriginSchema).min(1),
+  name: z.string().min(1).max(100),
+  scopes: z.array(ApiKeyScopeSchema).min(1),
+  allowedOrigins: z.array(OriginSchema).min(1),
 });
 const ApiKeyCreateOutput = z.object({
-    /** Plaintext secret — shown once, then never again. */
-    secret: z.string(),
-    key: ApiKeyMetadataSchema,
+  /** Plaintext secret — shown once, then never again. */
+  secret: z.string(),
+  key: ApiKeyMetadataSchema,
 });
 const ApiKeyListInput = z.object({
-    /** Page size. */
-    limit: z.number().int().positive().optional(),
-    /** Opaque cursor from the previous response's `nextCursor`. */
-    cursor: z.string().optional(),
+  /** Page size. */
+  limit: z.number().int().positive().optional(),
+  /** Opaque cursor from the previous response's `nextCursor`. */
+  cursor: z.string().optional(),
 });
 const ApiKeyListOutput = z.object({
-    items: z.array(ApiKeyMetadataSchema),
-    nextCursor: z.string().nullable(),
+  items: z.array(ApiKeyMetadataSchema),
+  nextCursor: z.string().nullable(),
 });
 const ApiKeyRevokeInput = z.object({ id: z.string() });
 const ApiKeyRevokeOutput = z.object({ ok: z.literal(true) });
 /** @experimental */
 const apiKeys = {
-    create: oc.input(ApiKeyCreateInput).output(ApiKeyCreateOutput),
-    list: oc.input(ApiKeyListInput).output(ApiKeyListOutput),
-    revoke: oc.input(ApiKeyRevokeInput).output(ApiKeyRevokeOutput),
+  create: oc.input(ApiKeyCreateInput).output(ApiKeyCreateOutput),
+  list: oc.input(ApiKeyListInput).output(ApiKeyListOutput),
+  revoke: oc.input(ApiKeyRevokeInput).output(ApiKeyRevokeOutput),
 };
 // ---------------------------------------------------------------------------
 // Meta — server capabilities (stable from v1)
@@ -876,34 +953,34 @@ const apiKeys = {
 // are added additively — the shape never changes, only its contents grow.
 // ---------------------------------------------------------------------------
 const MetaCapabilitiesOutput = z.object({
-    capabilities: z.record(z.string(), z.boolean()),
+  capabilities: z.record(z.string(), z.boolean()),
 });
 /** @stable v1 */
 const meta = {
-    capabilities: oc.output(MetaCapabilitiesOutput),
+  capabilities: oc.output(MetaCapabilitiesOutput),
 };
 // ---------------------------------------------------------------------------
 // Root contract — every namespace mounted under one symbol
 // ---------------------------------------------------------------------------
 export const contract = {
-    sessions,
-    personalities,
-    chat,
-    tools,
-    clarify,
-    onboarding,
-    config,
-    cron,
-    skills,
-    evolver,
-    mesh,
-    memory,
-    plugins,
-    mcp,
-    platforms,
-    batch,
-    eval: evalNs,
-    kanban,
-    apiKeys,
-    meta,
+  sessions,
+  personalities,
+  chat,
+  tools,
+  clarify,
+  onboarding,
+  config,
+  cron,
+  skills,
+  evolver,
+  mesh,
+  memory,
+  plugins,
+  mcp,
+  platforms,
+  batch,
+  eval: evalNs,
+  kanban,
+  apiKeys,
+  meta,
 };

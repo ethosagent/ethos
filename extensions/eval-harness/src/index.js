@@ -1,2 +1,2 @@
 export { EvalRunner, parseExpectedJsonl } from './runner';
-export { containsScorer, exactMatchScorer, llmJudgeScorer, regexScorer, } from './scorers';
+export { containsScorer, exactMatchScorer, llmJudgeScorer, regexScorer } from './scorers';

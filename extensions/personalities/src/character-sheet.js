@@ -14,24 +14,21 @@ import { resolveModelDisplay } from '@ethosagent/types';
  * does.
  */
 export function firstParagraph(soulMd) {
-    const para = [];
-    for (const line of soulMd.split('\n')) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('#'))
-            continue; // skip heading lines
-        if (trimmed === '') {
-            if (para.length > 0)
-                break; // blank line closes the first paragraph
-            continue; // skip leading blank lines
-        }
-        para.push(trimmed);
+  const para = [];
+  for (const line of soulMd.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('#')) continue; // skip heading lines
+    if (trimmed === '') {
+      if (para.length > 0) break; // blank line closes the first paragraph
+      continue; // skip leading blank lines
     }
-    return para.join(' ');
+    para.push(trimmed);
+  }
+  return para.join(' ');
 }
 function bulletList(items, emptyLabel) {
-    if (items.length === 0)
-        return [`- ${emptyLabel}`];
-    return items.map((item) => `- ${item}`);
+  if (items.length === 0) return [`- ${emptyLabel}`];
+  return items.map((item) => `- ${item}`);
 }
 /**
  * Render a personality's character sheet as Markdown. Pure — takes the
@@ -40,45 +37,42 @@ function bulletList(items, emptyLabel) {
  * reader never has to guess whether a blank means "unset" or "missing".
  */
 export function renderCharacterSheet(config, soulMd) {
-    const lines = [`# ${config.id} — ${config.name}`, ''];
-    if (config.description)
-        lines.push(config.description, '');
-    const prose = firstParagraph(soulMd);
-    if (prose)
-        lines.push(prose, '');
-    lines.push('## Routing');
-    lines.push(`- Model: ${resolveModelDisplay(config.model, '(engine default)')}`);
-    lines.push(`- Provider: ${config.provider ?? '(engine default)'}`);
-    lines.push('');
-    lines.push('## Capabilities');
-    lines.push(...bulletList(config.capabilities ?? [], '(none)'));
-    lines.push('');
-    lines.push('## Memory');
-    lines.push(`- Memory scope: personality:${config.id}`);
-    lines.push('');
-    const toolset = config.toolset ?? [];
-    lines.push('## Toolset');
-    if (toolset.length > 0) {
-        lines.push(`${toolset.length} tool${toolset.length === 1 ? '' : 's'}:`);
-    }
-    lines.push(...bulletList(toolset, '(none)'));
-    lines.push('');
-    lines.push('## MCP servers');
-    lines.push(...bulletList(config.mcp_servers ?? [], '(none)'));
-    lines.push('');
-    lines.push('## Plugins');
-    lines.push(...bulletList(config.plugins ?? [], '(none)'));
-    lines.push('');
-    lines.push('## Filesystem reach');
-    const reach = config.fs_reach;
-    const read = reach?.read ?? [];
-    const write = reach?.write ?? [];
-    if (read.length > 0 || write.length > 0) {
-        lines.push(`- Read: ${read.length > 0 ? read.join(', ') : '(none)'}`);
-        lines.push(`- Write: ${write.length > 0 ? write.join(', ') : '(none)'}`);
-    }
-    else {
-        lines.push('- (default — personality directory only)');
-    }
-    return `${lines.join('\n')}\n`;
+  const lines = [`# ${config.id} — ${config.name}`, ''];
+  if (config.description) lines.push(config.description, '');
+  const prose = firstParagraph(soulMd);
+  if (prose) lines.push(prose, '');
+  lines.push('## Routing');
+  lines.push(`- Model: ${resolveModelDisplay(config.model, '(engine default)')}`);
+  lines.push(`- Provider: ${config.provider ?? '(engine default)'}`);
+  lines.push('');
+  lines.push('## Capabilities');
+  lines.push(...bulletList(config.capabilities ?? [], '(none)'));
+  lines.push('');
+  lines.push('## Memory');
+  lines.push(`- Memory scope: personality:${config.id}`);
+  lines.push('');
+  const toolset = config.toolset ?? [];
+  lines.push('## Toolset');
+  if (toolset.length > 0) {
+    lines.push(`${toolset.length} tool${toolset.length === 1 ? '' : 's'}:`);
+  }
+  lines.push(...bulletList(toolset, '(none)'));
+  lines.push('');
+  lines.push('## MCP servers');
+  lines.push(...bulletList(config.mcp_servers ?? [], '(none)'));
+  lines.push('');
+  lines.push('## Plugins');
+  lines.push(...bulletList(config.plugins ?? [], '(none)'));
+  lines.push('');
+  lines.push('## Filesystem reach');
+  const reach = config.fs_reach;
+  const read = reach?.read ?? [];
+  const write = reach?.write ?? [];
+  if (read.length > 0 || write.length > 0) {
+    lines.push(`- Read: ${read.length > 0 ? read.join(', ') : '(none)'}`);
+    lines.push(`- Write: ${write.length > 0 ? write.join(', ') : '(none)'}`);
+  } else {
+    lines.push('- (default — personality directory only)');
+  }
+  return `${lines.join('\n')}\n`;
 }

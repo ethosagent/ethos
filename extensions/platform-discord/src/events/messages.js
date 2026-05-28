@@ -1,4 +1,5 @@
 import { triageMessage } from '../routing/triage';
+
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 /** Known Discord CDN hosts for attachment downloads. */
 const DISCORD_CDN_HOSTS = new Set(['cdn.discordapp.com', 'media.discordapp.net']);
@@ -8,231 +9,214 @@ const SKIP_EXTS = new Set(['exe', 'dll', 'so', 'dylib']);
 /** Debounce window for edit events (ms). */
 const EDIT_DEBOUNCE_MS = 200;
 export function registerMessageHandler(ctx) {
-    ctx.client.on('messageCreate', async (message) => {
-        if (message.author.bot)
-            return;
-        const envelope = await buildMessageEnvelope(message, ctx, false);
-        if (!envelope)
-            return;
-        // Channel history backfill — first encounter in this lane
-        if (ctx.backfillState) {
-            const bfChatId = message.channel.isThread()
-                ? (message.channel.parentId ?? message.channelId)
-                : message.channelId;
-            const bfThreadId = message.channel.isThread() ? message.channelId : undefined;
-            if (!ctx.backfillState.hasDone(bfChatId, bfThreadId)) {
-                const priorContext = await fetchChannelHistory(message);
-                await ctx.backfillState.mark(bfChatId, bfThreadId);
-                if (priorContext) {
-                    envelope.priorContext = priorContext;
-                }
-            }
+  ctx.client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+    const envelope = await buildMessageEnvelope(message, ctx, false);
+    if (!envelope) return;
+    // Channel history backfill — first encounter in this lane
+    if (ctx.backfillState) {
+      const bfChatId = message.channel.isThread()
+        ? (message.channel.parentId ?? message.channelId)
+        : message.channelId;
+      const bfThreadId = message.channel.isThread() ? message.channelId : undefined;
+      if (!ctx.backfillState.hasDone(bfChatId, bfThreadId)) {
+        const priorContext = await fetchChannelHistory(message);
+        await ctx.backfillState.mark(bfChatId, bfThreadId);
+        if (priorContext) {
+          envelope.priorContext = priorContext;
         }
-        // Receipt reaction (best-effort, non-blocking)
-        if (ctx.receiptReaction) {
-            message.react(ctx.receiptReaction).catch(() => { });
-            ctx.onReceipt(message.channelId, message.id);
-        }
-        if (message.attachments.size === 0 || !ctx.cache) {
-            ctx.onMessage(envelope);
-            return;
-        }
-        const attachments = await downloadAttachments(message, ctx.cache);
-        if (attachments.length > 0) {
-            envelope.attachments = attachments;
-            if (!envelope.text) {
-                envelope.text = attachments[0].type === 'image' ? '(attached image)' : '(attached file)';
-            }
-        }
-        ctx.onMessage(envelope);
-    });
+      }
+    }
+    // Receipt reaction (best-effort, non-blocking)
+    if (ctx.receiptReaction) {
+      message.react(ctx.receiptReaction).catch(() => {});
+      ctx.onReceipt(message.channelId, message.id);
+    }
+    if (message.attachments.size === 0 || !ctx.cache) {
+      ctx.onMessage(envelope);
+      return;
+    }
+    const attachments = await downloadAttachments(message, ctx.cache);
+    if (attachments.length > 0) {
+      envelope.attachments = attachments;
+      if (!envelope.text) {
+        envelope.text = attachments[0].type === 'image' ? '(attached image)' : '(attached file)';
+      }
+    }
+    ctx.onMessage(envelope);
+  });
 }
 /**
  * Registers a `messageUpdate` listener that debounces rapid edits and
  * re-triages the updated message with `isEdit: true`.
  */
 export function registerEditHandler(ctx) {
-    const pending = new Map();
-    ctx.client.on('messageUpdate', async (_oldMessage, newMessage) => {
-        // Partials: fetch full message when needed
-        if (newMessage.partial) {
-            try {
-                newMessage = await newMessage.fetch();
-            }
-            catch {
-                return;
-            }
+  const pending = new Map();
+  ctx.client.on('messageUpdate', async (_oldMessage, newMessage) => {
+    // Partials: fetch full message when needed
+    if (newMessage.partial) {
+      try {
+        newMessage = await newMessage.fetch();
+      } catch {
+        return;
+      }
+    }
+    if (newMessage.author?.bot) return;
+    // Discord fires messageUpdate for embed hydration, pin changes, flag
+    // updates, etc. Only process events where user-visible content changed.
+    const oldContent = _oldMessage.partial ? undefined : _oldMessage.content;
+    if (oldContent !== undefined && oldContent === newMessage.content) return;
+    const debounceKey = `${newMessage.channelId}:${newMessage.id}`;
+    const existing = pending.get(debounceKey);
+    if (existing !== undefined) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      pending.delete(debounceKey);
+      void (async () => {
+        try {
+          const envelope = await buildMessageEnvelope(newMessage, ctx, true);
+          if (!envelope) return;
+          ctx.onMessage(envelope);
+        } catch {
+          // Best-effort — matches adapter error policy for messageCreate
         }
-        if (newMessage.author?.bot)
-            return;
-        // Discord fires messageUpdate for embed hydration, pin changes, flag
-        // updates, etc. Only process events where user-visible content changed.
-        const oldContent = _oldMessage.partial ? undefined : _oldMessage.content;
-        if (oldContent !== undefined && oldContent === newMessage.content)
-            return;
-        const debounceKey = `${newMessage.channelId}:${newMessage.id}`;
-        const existing = pending.get(debounceKey);
-        if (existing !== undefined)
-            clearTimeout(existing);
-        const timer = setTimeout(() => {
-            pending.delete(debounceKey);
-            void (async () => {
-                try {
-                    const envelope = await buildMessageEnvelope(newMessage, ctx, true);
-                    if (!envelope)
-                        return;
-                    ctx.onMessage(envelope);
-                }
-                catch {
-                    // Best-effort — matches adapter error policy for messageCreate
-                }
-            })();
-        }, EDIT_DEBOUNCE_MS);
-        pending.set(debounceKey, timer);
-    });
+      })();
+    }, EDIT_DEBOUNCE_MS);
+    pending.set(debounceKey, timer);
+  });
 }
 /**
  * Shared logic: triage a Discord message into an InboundMessage envelope.
  * Returns `undefined` when the message should be dropped.
  */
 async function buildMessageEnvelope(message, ctx, isEdit) {
-    const isDm = message.channel.isDMBased();
-    const isMention = ctx.client.user
-        ? message.mentions.has(ctx.client.user) && !message.mentions.everyone
-        : false;
-    const isThread = message.channel.isThread();
-    let text = message.content;
-    if (ctx.client.user) {
-        text = text.replace(new RegExp(`<@!?${ctx.client.user.id}>`, 'g'), '').trim();
-    }
-    const triageCtx = {
-        botKey: ctx.botKey,
-        defaultChannelMode: ctx.defaultChannelMode,
-        channelOverrides: ctx.channelOverrides,
-        threadState: ctx.threadState,
-    };
-    const result = await triageMessage({
-        channelId: message.channelId,
-        userId: message.author.id,
-        username: message.author.username,
-        text,
-        messageId: message.id,
-        isDm,
-        isThread,
-        threadId: isThread ? message.channelId : undefined,
-        parentChannelId: isThread ? (message.channel.parentId ?? undefined) : undefined,
-        isMention: isMention && !isDm,
-        reference: {
-            messageId: message.reference?.messageId ?? undefined,
-            userId: message.mentions.repliedUser?.id ?? undefined,
-        },
-        raw: message,
-    }, triageCtx);
-    if (!result.envelope)
-        return undefined;
-    const envelope = result.envelope;
-    if (isEdit) {
-        envelope.isEdit = true;
-    }
-    // Populate replyToId/replyToUserId from the reference
-    if (message.reference?.messageId) {
-        envelope.replyToId = message.reference.messageId;
-    }
-    if (message.mentions.repliedUser?.id) {
-        envelope.replyToUserId = message.mentions.repliedUser.id;
-    }
-    return envelope;
+  const isDm = message.channel.isDMBased();
+  const isMention = ctx.client.user
+    ? message.mentions.has(ctx.client.user) && !message.mentions.everyone
+    : false;
+  const isThread = message.channel.isThread();
+  let text = message.content;
+  if (ctx.client.user) {
+    text = text.replace(new RegExp(`<@!?${ctx.client.user.id}>`, 'g'), '').trim();
+  }
+  const triageCtx = {
+    botKey: ctx.botKey,
+    defaultChannelMode: ctx.defaultChannelMode,
+    channelOverrides: ctx.channelOverrides,
+    threadState: ctx.threadState,
+  };
+  const result = await triageMessage(
+    {
+      channelId: message.channelId,
+      userId: message.author.id,
+      username: message.author.username,
+      text,
+      messageId: message.id,
+      isDm,
+      isThread,
+      threadId: isThread ? message.channelId : undefined,
+      parentChannelId: isThread ? (message.channel.parentId ?? undefined) : undefined,
+      isMention: isMention && !isDm,
+      reference: {
+        messageId: message.reference?.messageId ?? undefined,
+        userId: message.mentions.repliedUser?.id ?? undefined,
+      },
+      raw: message,
+    },
+    triageCtx,
+  );
+  if (!result.envelope) return undefined;
+  const envelope = result.envelope;
+  if (isEdit) {
+    envelope.isEdit = true;
+  }
+  // Populate replyToId/replyToUserId from the reference
+  if (message.reference?.messageId) {
+    envelope.replyToId = message.reference.messageId;
+  }
+  if (message.mentions.repliedUser?.id) {
+    envelope.replyToUserId = message.mentions.repliedUser.id;
+  }
+  return envelope;
 }
 function classifyAttachmentType(contentType, filename) {
-    // Trust contentType first when available
-    if (contentType && IMAGE_CONTENT_TYPES.has(contentType))
-        return 'image';
-    // Fall back to extension
-    const ext = filename?.split('.').pop()?.toLowerCase() ?? '';
-    if (IMAGE_EXTS.has(ext))
-        return 'image';
-    return 'file';
+  // Trust contentType first when available
+  if (contentType && IMAGE_CONTENT_TYPES.has(contentType)) return 'image';
+  // Fall back to extension
+  const ext = filename?.split('.').pop()?.toLowerCase() ?? '';
+  if (IMAGE_EXTS.has(ext)) return 'image';
+  return 'file';
 }
 async function downloadAttachments(message, cache) {
-    const results = [];
-    for (const [, attachment] of message.attachments) {
-        if (attachment.size > MAX_FILE_SIZE)
-            continue;
-        const ext = attachment.name?.split('.').pop()?.toLowerCase() ?? '';
-        if (SKIP_EXTS.has(ext))
-            continue;
-        const mimeType = attachment.contentType ?? 'application/octet-stream';
-        const type = classifyAttachmentType(attachment.contentType, attachment.name ?? undefined);
-        try {
-            // SSRF gate: only fetch from known Discord CDN hosts
-            let attachmentHost;
-            try {
-                attachmentHost = new URL(attachment.url).hostname.toLowerCase();
-            }
-            catch {
-                continue;
-            }
-            if (!DISCORD_CDN_HOSTS.has(attachmentHost))
-                continue;
-            // Use redirect: 'error' — Discord CDN responses should not redirect;
-            // refusing redirects eliminates the SSRF-via-redirect vector.
-            let attachResp;
-            try {
-                attachResp = await fetch(attachment.url, { redirect: 'error' });
-            }
-            catch {
-                continue;
-            }
-            if (!attachResp.ok)
-                continue;
-            const buffer = Buffer.from(await attachResp.arrayBuffer());
-            const filename = attachment.name ?? 'attachment';
-            const url = await cache.write(buffer, {
-                sessionKey: '',
-                messageId: message.id,
-                filename,
-                mime: mimeType,
-            });
-            results.push({
-                type,
-                ref: attachment.url,
-                url,
-                mimeType,
-                filename,
-                sizeBytes: buffer.length,
-            });
-        }
-        catch {
-            // best-effort download
-        }
+  const results = [];
+  for (const [, attachment] of message.attachments) {
+    if (attachment.size > MAX_FILE_SIZE) continue;
+    const ext = attachment.name?.split('.').pop()?.toLowerCase() ?? '';
+    if (SKIP_EXTS.has(ext)) continue;
+    const mimeType = attachment.contentType ?? 'application/octet-stream';
+    const type = classifyAttachmentType(attachment.contentType, attachment.name ?? undefined);
+    try {
+      // SSRF gate: only fetch from known Discord CDN hosts
+      let attachmentHost;
+      try {
+        attachmentHost = new URL(attachment.url).hostname.toLowerCase();
+      } catch {
+        continue;
+      }
+      if (!DISCORD_CDN_HOSTS.has(attachmentHost)) continue;
+      // Use redirect: 'error' — Discord CDN responses should not redirect;
+      // refusing redirects eliminates the SSRF-via-redirect vector.
+      let attachResp;
+      try {
+        attachResp = await fetch(attachment.url, { redirect: 'error' });
+      } catch {
+        continue;
+      }
+      if (!attachResp.ok) continue;
+      const buffer = Buffer.from(await attachResp.arrayBuffer());
+      const filename = attachment.name ?? 'attachment';
+      const url = await cache.write(buffer, {
+        sessionKey: '',
+        messageId: message.id,
+        filename,
+        mime: mimeType,
+      });
+      results.push({
+        type,
+        ref: attachment.url,
+        url,
+        mimeType,
+        filename,
+        sizeBytes: buffer.length,
+      });
+    } catch {
+      // best-effort download
     }
-    return results;
+  }
+  return results;
 }
 const BACKFILL_FETCH_LIMIT = 50;
 const BACKFILL_INCLUDE_LIMIT = 40;
 const BACKFILL_CHAR_LIMIT = 4000;
 async function fetchChannelHistory(message) {
-    try {
-        const fetched = await message.channel.messages.fetch({
-            limit: BACKFILL_FETCH_LIMIT,
-            before: message.id,
-        });
-        if (fetched.size === 0)
-            return undefined;
-        const lines = [...fetched.values()]
-            .reverse()
-            .filter((m) => m.content.trim() && !m.author.bot)
-            .slice(-BACKFILL_INCLUDE_LIMIT)
-            .map((m) => `${m.author.username}: ${m.content.trim()}`)
-            .join('\n');
-        if (!lines)
-            return undefined;
-        const trimmed = lines.length > BACKFILL_CHAR_LIMIT
-            ? `[... earlier messages omitted]\n${lines.slice(-BACKFILL_CHAR_LIMIT)}`
-            : lines;
-        return `[Recent channel history — ${fetched.size} messages before bot joined]\n\n${trimmed}`;
-    }
-    catch {
-        return undefined;
-    }
+  try {
+    const fetched = await message.channel.messages.fetch({
+      limit: BACKFILL_FETCH_LIMIT,
+      before: message.id,
+    });
+    if (fetched.size === 0) return undefined;
+    const lines = [...fetched.values()]
+      .reverse()
+      .filter((m) => m.content.trim() && !m.author.bot)
+      .slice(-BACKFILL_INCLUDE_LIMIT)
+      .map((m) => `${m.author.username}: ${m.content.trim()}`)
+      .join('\n');
+    if (!lines) return undefined;
+    const trimmed =
+      lines.length > BACKFILL_CHAR_LIMIT
+        ? `[... earlier messages omitted]\n${lines.slice(-BACKFILL_CHAR_LIMIT)}`
+        : lines;
+    return `[Recent channel history — ${fetched.size} messages before bot joined]\n\n${trimmed}`;
+  } catch {
+    return undefined;
+  }
 }

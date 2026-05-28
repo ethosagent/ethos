@@ -6,105 +6,106 @@ import { describe, expect, it } from 'vitest';
 import { BlobStore } from '../blob-store';
 import { ObservabilityService } from '../service';
 import { SQLiteObservabilityStore } from '../store';
+
 function makeService() {
-    const store = new SQLiteObservabilityStore(join(tmpdir(), `obs-svc-${randomUUID()}.db`));
-    const blobStore = new BlobStore('/blobs', new InMemoryStorage());
-    const service = new ObservabilityService(store, blobStore);
-    return { service, store };
+  const store = new SQLiteObservabilityStore(join(tmpdir(), `obs-svc-${randomUUID()}.db`));
+  const blobStore = new BlobStore('/blobs', new InMemoryStorage());
+  const service = new ObservabilityService(store, blobStore);
+  return { service, store };
 }
 describe('ObservabilityService redaction policy', () => {
-    it("level 'none': args not stored in span attrs", () => {
-        const { service, store } = makeService();
-        const traceId = service.startTrace({ kind: 'turn', redaction: { level: 'none' } });
-        const spanId = service.startSpan({
-            traceId,
-            kind: 'tool_call',
-            name: 'bash',
-            attrs: { args: 'rm -rf /' },
-            redaction: { level: 'none' },
-        });
-        service.endSpan(spanId, 'ok');
-        const spans = store.getSpans(traceId);
-        expect(spans[0]?.attrs?.args).toBeUndefined();
+  it("level 'none': args not stored in span attrs", () => {
+    const { service, store } = makeService();
+    const traceId = service.startTrace({ kind: 'turn', redaction: { level: 'none' } });
+    const spanId = service.startSpan({
+      traceId,
+      kind: 'tool_call',
+      name: 'bash',
+      attrs: { args: 'rm -rf /' },
+      redaction: { level: 'none' },
     });
-    it("level 'redacted' (default): args stored with redaction", () => {
-        const { service, store } = makeService();
-        const awsKey = `AKIA${'A'.repeat(16)}`;
-        const traceId = service.startTrace({ kind: 'turn' });
-        const spanId = service.startSpan({
-            traceId,
-            kind: 'tool_call',
-            name: 'bash',
-            attrs: { args: `key=${awsKey}` },
-        });
-        service.endSpan(spanId, 'ok');
-        const spans = store.getSpans(traceId);
-        expect(spans[0]?.attrs?.args).toContain('[REDACTED');
-        expect(spans[0]?.attrs?.args).not.toContain(awsKey);
+    service.endSpan(spanId, 'ok');
+    const spans = store.getSpans(traceId);
+    expect(spans[0]?.attrs?.args).toBeUndefined();
+  });
+  it("level 'redacted' (default): args stored with redaction", () => {
+    const { service, store } = makeService();
+    const awsKey = `AKIA${'A'.repeat(16)}`;
+    const traceId = service.startTrace({ kind: 'turn' });
+    const spanId = service.startSpan({
+      traceId,
+      kind: 'tool_call',
+      name: 'bash',
+      attrs: { args: `key=${awsKey}` },
     });
-    it('extraPatterns: consumer-supplied patterns applied on top of floor', () => {
-        const { service, store } = makeService();
-        const traceId = service.startTrace({ kind: 'turn' });
-        const spanId = service.startSpan({
-            traceId,
-            kind: 'tool_call',
-            name: 'bash',
-            attrs: { args: 'INTERNAL-DOC-ABCD1234' },
-            redaction: { level: 'redacted', extraPatterns: ['INTERNAL-DOC-[A-Z0-9]{8}'] },
-        });
-        service.endSpan(spanId, 'ok');
-        const spans = store.getSpans(traceId);
-        expect(spans[0]?.attrs?.args).toContain('[REDACTED:custom]');
-        expect(spans[0]?.attrs?.args).not.toContain('INTERNAL-DOC-ABCD1234');
+    service.endSpan(spanId, 'ok');
+    const spans = store.getSpans(traceId);
+    expect(spans[0]?.attrs?.args).toContain('[REDACTED');
+    expect(spans[0]?.attrs?.args).not.toContain(awsKey);
+  });
+  it('extraPatterns: consumer-supplied patterns applied on top of floor', () => {
+    const { service, store } = makeService();
+    const traceId = service.startTrace({ kind: 'turn' });
+    const spanId = service.startSpan({
+      traceId,
+      kind: 'tool_call',
+      name: 'bash',
+      attrs: { args: 'INTERNAL-DOC-ABCD1234' },
+      redaction: { level: 'redacted', extraPatterns: ['INTERNAL-DOC-[A-Z0-9]{8}'] },
     });
-    it("level 'full': built-in floor patterns still apply", () => {
-        const { service, store } = makeService();
-        const awsKey = `AKIA${'A'.repeat(16)}`;
-        const traceId = service.startTrace({ kind: 'turn', redaction: { level: 'full' } });
-        const spanId = service.startSpan({
-            traceId,
-            kind: 'tool_call',
-            name: 'bash',
-            attrs: { args: `key=${awsKey}` },
-            redaction: { level: 'full' },
-        });
-        service.endSpan(spanId, 'ok');
-        const spans = store.getSpans(traceId);
-        // Built-in floor patterns always apply — AWS key must be redacted even in 'full' mode
-        expect(spans[0]?.attrs?.args).toContain('[REDACTED:aws-key]');
-        expect(spans[0]?.attrs?.args).not.toContain(awsKey);
+    service.endSpan(spanId, 'ok');
+    const spans = store.getSpans(traceId);
+    expect(spans[0]?.attrs?.args).toContain('[REDACTED:custom]');
+    expect(spans[0]?.attrs?.args).not.toContain('INTERNAL-DOC-ABCD1234');
+  });
+  it("level 'full': built-in floor patterns still apply", () => {
+    const { service, store } = makeService();
+    const awsKey = `AKIA${'A'.repeat(16)}`;
+    const traceId = service.startTrace({ kind: 'turn', redaction: { level: 'full' } });
+    const spanId = service.startSpan({
+      traceId,
+      kind: 'tool_call',
+      name: 'bash',
+      attrs: { args: `key=${awsKey}` },
+      redaction: { level: 'full' },
     });
-    it("level 'full': consumer extraPatterns are skipped (only floor applies)", () => {
-        const { service, store } = makeService();
-        const traceId = service.startTrace({ kind: 'turn', redaction: { level: 'full' } });
-        const spanId = service.startSpan({
-            traceId,
-            kind: 'tool_call',
-            name: 'bash',
-            attrs: { args: 'INTERNAL-DOC-ABCD1234' },
-            redaction: { level: 'full', extraPatterns: ['INTERNAL-DOC-[A-Z0-9]{8}'] },
-        });
-        service.endSpan(spanId, 'ok');
-        const spans = store.getSpans(traceId);
-        // Consumer extra pattern must NOT fire in 'full' mode
-        expect(spans[0]?.attrs?.args).toBe('INTERNAL-DOC-ABCD1234');
-        expect(spans[0]?.attrs?.args).not.toContain('[REDACTED:custom]');
+    service.endSpan(spanId, 'ok');
+    const spans = store.getSpans(traceId);
+    // Built-in floor patterns always apply — AWS key must be redacted even in 'full' mode
+    expect(spans[0]?.attrs?.args).toContain('[REDACTED:aws-key]');
+    expect(spans[0]?.attrs?.args).not.toContain(awsKey);
+  });
+  it("level 'full': consumer extraPatterns are skipped (only floor applies)", () => {
+    const { service, store } = makeService();
+    const traceId = service.startTrace({ kind: 'turn', redaction: { level: 'full' } });
+    const spanId = service.startSpan({
+      traceId,
+      kind: 'tool_call',
+      name: 'bash',
+      attrs: { args: 'INTERNAL-DOC-ABCD1234' },
+      redaction: { level: 'full', extraPatterns: ['INTERNAL-DOC-[A-Z0-9]{8}'] },
     });
-    it('redaction policy flows from startTrace to all spans in that trace', () => {
-        const { service, store } = makeService();
-        const traceId = service.startTrace({
-            kind: 'turn',
-            redaction: { level: 'none' },
-        });
-        // Don't pass redaction on startSpan — should inherit from trace
-        const spanId = service.startSpan({
-            traceId,
-            kind: 'tool_call',
-            name: 'read_file',
-            attrs: { args: '/etc/passwd' },
-        });
-        service.endSpan(spanId, 'ok');
-        const spans = store.getSpans(traceId);
-        expect(spans[0]?.attrs?.args).toBeUndefined();
+    service.endSpan(spanId, 'ok');
+    const spans = store.getSpans(traceId);
+    // Consumer extra pattern must NOT fire in 'full' mode
+    expect(spans[0]?.attrs?.args).toBe('INTERNAL-DOC-ABCD1234');
+    expect(spans[0]?.attrs?.args).not.toContain('[REDACTED:custom]');
+  });
+  it('redaction policy flows from startTrace to all spans in that trace', () => {
+    const { service, store } = makeService();
+    const traceId = service.startTrace({
+      kind: 'turn',
+      redaction: { level: 'none' },
     });
+    // Don't pass redaction on startSpan — should inherit from trace
+    const spanId = service.startSpan({
+      traceId,
+      kind: 'tool_call',
+      name: 'read_file',
+      attrs: { args: '/etc/passwd' },
+    });
+    service.endSpan(spanId, 'ok');
+    const spans = store.getSpans(traceId);
+    expect(spans[0]?.attrs?.args).toBeUndefined();
+  });
 });

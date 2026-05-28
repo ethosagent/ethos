@@ -22,49 +22,37 @@ const SEP = ' · ';
  *   5. otherwise → JSON.stringify
  */
 export function previewArgs(args) {
-    if (args === null || args === undefined)
-        return '';
-    if (typeof args === 'string')
-        return args;
-    if (typeof args === 'number' || typeof args === 'boolean')
-        return String(args);
-    if (typeof args !== 'object')
-        return JSON.stringify(args);
-    const obj = args;
-    if (Object.keys(obj).length === 0)
-        return '';
-    const PRIMARY = ['cmd', 'command', 'query', 'q', 'path', 'file', 'url', 'pattern', 'text'];
-    for (const key of PRIMARY) {
-        const v = obj[key];
-        if (typeof v === 'string' && v.length > 0)
-            return v;
-    }
-    for (const [, v] of Object.entries(obj)) {
-        if (typeof v === 'string')
-            return v;
-        if (typeof v === 'number' || typeof v === 'boolean')
-            return String(v);
-    }
-    return JSON.stringify(obj);
+  if (args === null || args === undefined) return '';
+  if (typeof args === 'string') return args;
+  if (typeof args === 'number' || typeof args === 'boolean') return String(args);
+  if (typeof args !== 'object') return JSON.stringify(args);
+  const obj = args;
+  if (Object.keys(obj).length === 0) return '';
+  const PRIMARY = ['cmd', 'command', 'query', 'q', 'path', 'file', 'url', 'pattern', 'text'];
+  for (const key of PRIMARY) {
+    const v = obj[key];
+    if (typeof v === 'string' && v.length > 0) return v;
+  }
+  for (const [, v] of Object.entries(obj)) {
+    if (typeof v === 'string') return v;
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  }
+  return JSON.stringify(obj);
 }
 export function truncatePreview(s, max) {
-    if (max <= 0)
-        return s;
-    if (s.length <= max)
-        return s;
-    return `${s.slice(0, max - 1)}…`;
+  if (max <= 0) return s;
+  if (s.length <= max) return s;
+  return `${s.slice(0, max - 1)}…`;
 }
 export function formatDuration(ms) {
-    if (ms < 1000)
-        return `${ms}ms`;
-    return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 export function formatToolFeedLine(input) {
-    const preview = truncatePreview(previewArgs(input.args), input.previewLength ?? 0);
-    const duration = formatDuration(input.durationMs);
-    const parts = [input.toolName];
-    if (preview)
-        parts.push(preview);
-    parts.push(duration);
-    return `${GLYPH} ${parts.join(SEP)}`;
+  const preview = truncatePreview(previewArgs(input.args), input.previewLength ?? 0);
+  const duration = formatDuration(input.durationMs);
+  const parts = [input.toolName];
+  if (preview) parts.push(preview);
+  parts.push(duration);
+  return `${GLYPH} ${parts.join(SEP)}`;
 }

@@ -53,6 +53,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
+
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 // Directories to scan (library code only — CLI surface code has different rules).
 const SCAN_DIRS = [join(ROOT, 'packages'), join(ROOT, 'extensions')];
@@ -60,65 +61,64 @@ const SCAN_DIRS = [join(ROOT, 'packages'), join(ROOT, 'extensions')];
 // Match is prefix-based: a file is allowed if its relative path starts with
 // any of these strings.
 const ALLOWED_PREFIXES = [
-    'packages/storage-fs/',
-    'extensions/session-sqlite/',
-    'extensions/memory-vector/',
+  'packages/storage-fs/',
+  'extensions/session-sqlite/',
+  'extensions/memory-vector/',
 ];
 // Specific files (relative to ROOT) that are permitted to import node:fs.
 const ALLOWED_FILES = new Set([
-    'extensions/cron/src/index.ts',
-    'extensions/claw-migrate/src/index.ts',
-    'extensions/skills/src/skill-compat.ts',
-    'extensions/skills/src/file-context-injector.ts',
+  'extensions/cron/src/index.ts',
+  'extensions/claw-migrate/src/index.ts',
+  'extensions/skills/src/skill-compat.ts',
+  'extensions/skills/src/file-context-injector.ts',
 ]);
 // Matches any static or dynamic import of node:fs or node:fs/promises.
 const RAW_FS = /(?:from|import)\s*\(\s*['"]node:fs(?:\/promises)?['"]/;
 function isAllowed(absPath) {
-    const rel = relative(ROOT, absPath).replace(/\\/g, '/');
-    if (ALLOWED_FILES.has(rel))
-        return true;
-    return ALLOWED_PREFIXES.some((p) => rel.startsWith(p));
+  const rel = relative(ROOT, absPath).replace(/\\/g, '/');
+  if (ALLOWED_FILES.has(rel)) return true;
+  return ALLOWED_PREFIXES.some((p) => rel.startsWith(p));
 }
 function walkTs(dir) {
-    const out = [];
-    for (const entry of readdirSync(dir)) {
-        const full = join(dir, entry);
-        const stats = statSync(full);
-        if (stats.isDirectory()) {
-            if (entry === '__tests__' || entry === 'node_modules' || entry === 'dist')
-                continue;
-            out.push(...walkTs(full));
-        }
-        else if (extname(entry) === '.ts') {
-            out.push(full);
-        }
+  const out = [];
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    const stats = statSync(full);
+    if (stats.isDirectory()) {
+      if (entry === '__tests__' || entry === 'node_modules' || entry === 'dist') continue;
+      out.push(...walkTs(full));
+    } else if (extname(entry) === '.ts') {
+      out.push(full);
     }
-    return out;
+  }
+  return out;
 }
 describe('Law 7: no raw node:fs imports on the personality boundary', () => {
-    it('packages/ and extensions/ do not import node:fs outside the documented allowlist', () => {
-        const offenders = [];
-        for (const dir of SCAN_DIRS) {
-            for (const file of walkTs(dir)) {
-                if (isAllowed(file))
-                    continue;
-                const src = readFileSync(file, 'utf-8');
-                const lines = src.split('\n');
-                for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i] ?? '';
-                    if (RAW_FS.test(line)) {
-                        offenders.push(`${relative(ROOT, file)}:${i + 1}  ${line.trim()}`);
-                    }
-                }
-            }
+  it('packages/ and extensions/ do not import node:fs outside the documented allowlist', () => {
+    const offenders = [];
+    for (const dir of SCAN_DIRS) {
+      for (const file of walkTs(dir)) {
+        if (isAllowed(file)) continue;
+        const src = readFileSync(file, 'utf-8');
+        const lines = src.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i] ?? '';
+          if (RAW_FS.test(line)) {
+            offenders.push(`${relative(ROOT, file)}:${i + 1}  ${line.trim()}`);
+          }
         }
-        expect(offenders, [
-            'Library code must use Storage (from @ethosagent/types) instead of node:fs directly.',
-            'To add a new exception, document the reason in apps/ethos/src/__tests__/no-raw-fs.test.ts',
-            'and in CLAUDE.md before adding to ALLOWED_PREFIXES or ALLOWED_FILES.',
-            '',
-            'Offenders:',
-            ...offenders,
-        ].join('\n')).toEqual([]);
-    });
+      }
+    }
+    expect(
+      offenders,
+      [
+        'Library code must use Storage (from @ethosagent/types) instead of node:fs directly.',
+        'To add a new exception, document the reason in apps/ethos/src/__tests__/no-raw-fs.test.ts',
+        'and in CLAUDE.md before adding to ALLOWED_PREFIXES or ALLOWED_FILES.',
+        '',
+        'Offenders:',
+        ...offenders,
+      ].join('\n'),
+    ).toEqual([]);
+  });
 });

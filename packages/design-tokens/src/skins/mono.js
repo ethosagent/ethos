@@ -10,16 +10,16 @@
 // design-md-parity test catches drift if either side moves.
 const muted = '#9A9A98';
 export const monoSkin = {
-    name: 'mono',
-    description: 'Desaturated — every personality renders in text-secondary grey.',
-    extends: 'default',
-    tokens: {
-        accents: {
-            researcher: muted,
-            engineer: muted,
-            reviewer: muted,
-            coach: muted,
-            operator: muted,
-        },
+  name: 'mono',
+  description: 'Desaturated — every personality renders in text-secondary grey.',
+  extends: 'default',
+  tokens: {
+    accents: {
+      researcher: muted,
+      engineer: muted,
+      reviewer: muted,
+      coach: muted,
+      operator: muted,
     },
+  },
 };

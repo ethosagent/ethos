@@ -16,27 +16,21 @@ import { APPROVE_ACTION_ID, DENY_ACTION_ID } from '../blocks/approval';
  * adapter's interaction loop.
  */
 export async function handleApprovalAction(payload, handlers) {
-    let decision;
-    if (payload.actionId === APPROVE_ACTION_ID)
-        decision = 'allow';
-    else if (payload.actionId === DENY_ACTION_ID)
-        decision = 'deny';
-    else
-        return;
-    if (!payload.approvalId)
-        return;
-    if (!payload.userId)
-        return;
-    try {
-        await handlers.onDecision({
-            approvalId: payload.approvalId,
-            decision,
-            decidedBy: payload.userId,
-            channelId: payload.channelId,
-            messageTs: payload.messageTs,
-        });
-    }
-    catch {
-        // Stale / already-resolved approval — expected, not exceptional.
-    }
+  let decision;
+  if (payload.actionId === APPROVE_ACTION_ID) decision = 'allow';
+  else if (payload.actionId === DENY_ACTION_ID) decision = 'deny';
+  else return;
+  if (!payload.approvalId) return;
+  if (!payload.userId) return;
+  try {
+    await handlers.onDecision({
+      approvalId: payload.approvalId,
+      decision,
+      decidedBy: payload.userId,
+      channelId: payload.channelId,
+      messageTs: payload.messageTs,
+    });
+  } catch {
+    // Stale / already-resolved approval — expected, not exceptional.
+  }
 }

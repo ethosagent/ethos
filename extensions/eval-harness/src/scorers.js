@@ -1,30 +1,28 @@
 export async function exactMatchScorer(response, expected) {
-    return response.trim() === expected.expected.trim() ? 1 : 0;
+  return response.trim() === expected.expected.trim() ? 1 : 0;
 }
 export async function containsScorer(response, expected) {
-    return response.toLowerCase().includes(expected.expected.toLowerCase()) ? 1 : 0;
+  return response.toLowerCase().includes(expected.expected.toLowerCase()) ? 1 : 0;
 }
 export async function regexScorer(response, expected) {
-    try {
-        return new RegExp(expected.expected, 'i').test(response) ? 1 : 0;
-    }
-    catch {
-        return 0;
-    }
+  try {
+    return new RegExp(expected.expected, 'i').test(response) ? 1 : 0;
+  } catch {
+    return 0;
+  }
 }
 export function llmJudgeScorer(llm) {
-    return async (response, expected) => {
-        const messages = [
-            {
-                role: 'user',
-                content: `Criteria: ${expected.expected}\n\nResponse:\n${response}\n\nDoes the response meet the criteria? Reply with only "1" (yes) or "0" (no).`,
-            },
-        ];
-        let text = '';
-        for await (const chunk of llm.complete(messages, [], { maxTokens: 5, temperature: 0 })) {
-            if (chunk.type === 'text_delta')
-                text += chunk.text;
-        }
-        return text.trim().startsWith('1') ? 1 : 0;
-    };
+  return async (response, expected) => {
+    const messages = [
+      {
+        role: 'user',
+        content: `Criteria: ${expected.expected}\n\nResponse:\n${response}\n\nDoes the response meet the criteria? Reply with only "1" (yes) or "0" (no).`,
+      },
+    ];
+    let text = '';
+    for await (const chunk of llm.complete(messages, [], { maxTokens: 5, temperature: 0 })) {
+      if (chunk.type === 'text_delta') text += chunk.text;
+    }
+    return text.trim().startsWith('1') ? 1 : 0;
+  };
 }

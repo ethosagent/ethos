@@ -5,8 +5,8 @@ import { accentFor } from './index';
 // tool chip icon, focus ring — get our accents. The CSS variable block
 // returned here is injected into the webview's root.
 export function tokensToVscode(tokens, personalityId) {
-    const accent = accentFor(tokens, personalityId);
-    return `:root {
+  const accent = accentFor(tokens, personalityId);
+  return `:root {
   --ethos-accent: ${accent};
   --ethos-bg-elevated: ${tokens.surface.bgElevated};
   --ethos-bg-overlay: ${tokens.surface.bgOverlay};

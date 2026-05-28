@@ -1,4 +1,11 @@
-import { accentFor, BUILTIN_SKIN_NAMES, BUILTIN_SKINS, DEFAULT_TOKENS, personalityAccent as resolvePersonalityAccent, resolveSkin, } from '@ethosagent/design-tokens';
+import {
+  accentFor,
+  BUILTIN_SKIN_NAMES,
+  BUILTIN_SKINS,
+  DEFAULT_TOKENS,
+  personalityAccent as resolvePersonalityAccent,
+  resolveSkin,
+} from '@ethosagent/design-tokens';
 import { createContext, useContext } from 'react';
 // TUI skin adapter. Two consumption modes:
 //
@@ -13,26 +20,26 @@ import { createContext, useContext } from 'react';
 export const tokens = DEFAULT_TOKENS;
 /** DESIGN.md canonical color tokens — derived from DEFAULT_TOKENS. */
 export const DESIGN = {
-    textPrimary: tokens.surface.textPrimary,
-    textSecondary: tokens.surface.textSecondary,
-    textTertiary: tokens.surface.textTertiary,
-    bgBase: tokens.surface.bgBase,
-    bgElevated: tokens.surface.bgElevated,
-    borderSubtle: tokens.surface.borderSubtle,
-    borderStrong: tokens.surface.borderStrong,
-    success: tokens.semantic.success,
-    warning: tokens.semantic.warning,
-    error: tokens.semantic.error,
-    info: tokens.semantic.info,
+  textPrimary: tokens.surface.textPrimary,
+  textSecondary: tokens.surface.textSecondary,
+  textTertiary: tokens.surface.textTertiary,
+  bgBase: tokens.surface.bgBase,
+  bgElevated: tokens.surface.bgElevated,
+  borderSubtle: tokens.surface.borderSubtle,
+  borderStrong: tokens.surface.borderStrong,
+  success: tokens.semantic.success,
+  warning: tokens.semantic.warning,
+  error: tokens.semantic.error,
+  info: tokens.semantic.info,
 };
 /** Unified glyph palette — DEFAULT_TOKENS.glyphs. */
 export const GLYPHS = tokens.glyphs;
 export function personalityAccent(personality) {
-    return resolvePersonalityAccent(personality);
+  return resolvePersonalityAccent(personality);
 }
 export { accentFor, BUILTIN_SKIN_NAMES, BUILTIN_SKINS, resolveSkin };
 export const SkinContext = createContext(DEFAULT_TOKENS);
 /** Returns the current resolved tokens from `SkinContext`. */
 export function useSkin() {
-    return useContext(SkinContext);
+  return useContext(SkinContext);
 }

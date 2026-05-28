@@ -5,16 +5,15 @@ import { filterSkill } from '@ethosagent/skills';
  * rejected skills cannot leak their declared passthrough vars.
  */
 export function deriveSkillPassthrough(skillPool, personality, bootToolNames) {
-    const result = new Set();
-    for (const skill of skillPool.values()) {
-        const decision = filterSkill(skill, personality, bootToolNames);
-        if (!decision.include)
-            continue;
-        for (const v of skill.permissions?.mcp_env_passthrough ?? []) {
-            result.add(v);
-        }
+  const result = new Set();
+  for (const skill of skillPool.values()) {
+    const decision = filterSkill(skill, personality, bootToolNames);
+    if (!decision.include) continue;
+    for (const v of skill.permissions?.mcp_env_passthrough ?? []) {
+      result.add(v);
     }
-    return result;
+  }
+  return result;
 }
 /**
  * Apply a skill passthrough set to an MCP server config list.
@@ -23,17 +22,15 @@ export function deriveSkillPassthrough(skillPool, personality, bootToolNames) {
  * an unrelated server the personality hasn't attached.
  */
 export function applySkillPassthrough(rawMcpConfig, skillPassthrough, attachedServers) {
-    if (skillPassthrough.size === 0)
-        return rawMcpConfig;
-    return rawMcpConfig.map((cfg) => {
-        // attachedServers is a whitelist: an empty set means the active personality
-        // has no MCP server allowlist (wiring.ts warns "0 servers attached") and no
-        // server should receive skill-requested credentials.
-        if (!attachedServers.has(cfg.name))
-            return cfg;
-        return {
-            ...cfg,
-            mcpEnvPassthrough: [...new Set([...(cfg.mcpEnvPassthrough ?? []), ...skillPassthrough])],
-        };
-    });
+  if (skillPassthrough.size === 0) return rawMcpConfig;
+  return rawMcpConfig.map((cfg) => {
+    // attachedServers is a whitelist: an empty set means the active personality
+    // has no MCP server allowlist (wiring.ts warns "0 servers attached") and no
+    // server should receive skill-requested credentials.
+    if (!attachedServers.has(cfg.name)) return cfg;
+    return {
+      ...cfg,
+      mcpEnvPassthrough: [...new Set([...(cfg.mcpEnvPassthrough ?? []), ...skillPassthrough])],
+    };
+  });
 }

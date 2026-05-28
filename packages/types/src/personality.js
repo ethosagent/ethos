@@ -3,9 +3,7 @@
  * Centralizes the typeof check so consumers don't scatter it.
  */
 export function resolveModelDisplay(model, fallback = '(engine default)') {
-    if (!model)
-        return fallback;
-    if (typeof model === 'string')
-        return model;
-    return model.default ?? fallback;
+  if (!model) return fallback;
+  if (typeof model === 'string') return model;
+  return model.default ?? fallback;
 }

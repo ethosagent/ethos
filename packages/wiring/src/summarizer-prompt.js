@@ -39,32 +39,31 @@ Rules:
  * so the summarizer can report tool outcomes accurately.
  */
 export function renderMiddleForSummary(middle) {
-    const parts = [];
-    for (const msg of middle) {
-        parts.push(`### ${msg.role}`);
-        if (typeof msg.content === 'string') {
-            parts.push(msg.content);
-            continue;
-        }
-        for (const block of msg.content) {
-            parts.push(renderBlock(block));
-        }
+  const parts = [];
+  for (const msg of middle) {
+    parts.push(`### ${msg.role}`);
+    if (typeof msg.content === 'string') {
+      parts.push(msg.content);
+      continue;
     }
-    return parts.join('\n\n');
+    for (const block of msg.content) {
+      parts.push(renderBlock(block));
+    }
+  }
+  return parts.join('\n\n');
 }
 function renderBlock(block) {
-    if (block.type === 'text')
-        return block.text;
-    if (block.type === 'tool_use') {
-        return `[tool_use ${block.name}] ${JSON.stringify(block.input)}`;
-    }
-    if (block.type === 'tool_result') {
-        const status = block.is_error ? 'error' : 'ok';
-        return `[tool_result ${status}] ${block.content}`;
-    }
-    // image / document — opaque to the summariser; render as a typed placeholder
-    // so the textual summary doesn't lose track of the attachment.
-    return `[${block.type} ${block.mediaType}]`;
+  if (block.type === 'text') return block.text;
+  if (block.type === 'tool_use') {
+    return `[tool_use ${block.name}] ${JSON.stringify(block.input)}`;
+  }
+  if (block.type === 'tool_result') {
+    const status = block.is_error ? 'error' : 'ok';
+    return `[tool_result ${status}] ${block.content}`;
+  }
+  // image / document — opaque to the summariser; render as a typed placeholder
+  // so the textual summary doesn't lose track of the attachment.
+  return `[${block.type} ${block.mediaType}]`;
 }
 /**
  * Enforce the summary length cap. When the summary exceeds `targetTokens`,
@@ -72,16 +71,20 @@ function renderBlock(block) {
  * the persisted summary stays readable.
  */
 export function capSummary(text, targetTokens) {
-    const maxChars = Math.max(1, targetTokens) * CHARS_PER_TOKEN;
-    if (text.length <= maxChars)
-        return text;
-    const head = text.slice(0, maxChars);
-    // Last sentence-ending punctuation or newline within the budget.
-    const boundary = Math.max(head.lastIndexOf('. '), head.lastIndexOf('! '), head.lastIndexOf('? '), head.lastIndexOf('\n'));
-    // Only honor the boundary if it keeps a meaningful chunk (>50% of budget),
-    // otherwise a single long sentence would collapse the whole summary.
-    if (boundary > maxChars * 0.5) {
-        return `${head.slice(0, boundary + 1).trimEnd()}\n\n[summary truncated to fit budget]`;
-    }
-    return `${head.trimEnd()}\n\n[summary truncated to fit budget]`;
+  const maxChars = Math.max(1, targetTokens) * CHARS_PER_TOKEN;
+  if (text.length <= maxChars) return text;
+  const head = text.slice(0, maxChars);
+  // Last sentence-ending punctuation or newline within the budget.
+  const boundary = Math.max(
+    head.lastIndexOf('. '),
+    head.lastIndexOf('! '),
+    head.lastIndexOf('? '),
+    head.lastIndexOf('\n'),
+  );
+  // Only honor the boundary if it keeps a meaningful chunk (>50% of budget),
+  // otherwise a single long sentence would collapse the whole summary.
+  if (boundary > maxChars * 0.5) {
+    return `${head.slice(0, boundary + 1).trimEnd()}\n\n[summary truncated to fit budget]`;
+  }
+  return `${head.trimEnd()}\n\n[summary truncated to fit budget]`;
 }

@@ -8,46 +8,48 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
+
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 const LIB_ROOT = join(REPO_ROOT, 'extensions', 'observability-sqlite', 'src');
 const ALLOWED_WORKSPACE = new Set(['@ethosagent/types', '@ethosagent/safety-redact']);
 const WORKSPACE_RE = /from\s+['"](@ethosagent\/[^'"\s]+)['"]/g;
 function* walkLibrarySources(dir) {
-    for (const entry of readdirSync(dir)) {
-        const abs = join(dir, entry);
-        const st = statSync(abs);
-        if (st.isDirectory()) {
-            if (entry === '__tests__' || entry === 'node_modules' || entry === 'dist')
-                continue;
-            yield* walkLibrarySources(abs);
-            continue;
-        }
-        if (st.isFile() && /\.(ts|tsx)$/.test(entry))
-            yield abs;
+  for (const entry of readdirSync(dir)) {
+    const abs = join(dir, entry);
+    const st = statSync(abs);
+    if (st.isDirectory()) {
+      if (entry === '__tests__' || entry === 'node_modules' || entry === 'dist') continue;
+      yield* walkLibrarySources(abs);
+      continue;
     }
+    if (st.isFile() && /\.(ts|tsx)$/.test(entry)) yield abs;
+  }
 }
 describe('observability-sqlite import graph', () => {
-    it('library source only imports allowed zero-dep workspace packages', () => {
-        const offenders = [];
-        for (const file of walkLibrarySources(LIB_ROOT)) {
-            const lines = readFileSync(file, 'utf-8').split('\n');
-            for (let i = 0; i < lines.length; i++) {
-                const text = lines[i] ?? '';
-                for (const match of text.matchAll(WORKSPACE_RE)) {
-                    const pkg = match[1];
-                    if (pkg && !ALLOWED_WORKSPACE.has(pkg)) {
-                        offenders.push({
-                            file: relative(REPO_ROOT, file),
-                            line: i + 1,
-                            packageName: pkg,
-                            text: text.trim(),
-                        });
-                    }
-                }
-            }
+  it('library source only imports allowed zero-dep workspace packages', () => {
+    const offenders = [];
+    for (const file of walkLibrarySources(LIB_ROOT)) {
+      const lines = readFileSync(file, 'utf-8').split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const text = lines[i] ?? '';
+        for (const match of text.matchAll(WORKSPACE_RE)) {
+          const pkg = match[1];
+          if (pkg && !ALLOWED_WORKSPACE.has(pkg)) {
+            offenders.push({
+              file: relative(REPO_ROOT, file),
+              line: i + 1,
+              packageName: pkg,
+              text: text.trim(),
+            });
+          }
         }
-        expect(offenders, `Library source must not depend on workspace packages other than ${[...ALLOWED_WORKSPACE].join(', ')}.\nOffenders:\n${offenders
-            .map((o) => `${o.file}:${o.line}: imports ${o.packageName}`)
-            .join('\n')}`).toEqual([]);
-    });
+      }
+    }
+    expect(
+      offenders,
+      `Library source must not depend on workspace packages other than ${[...ALLOWED_WORKSPACE].join(', ')}.\nOffenders:\n${offenders
+        .map((o) => `${o.file}:${o.line}: imports ${o.packageName}`)
+        .join('\n')}`,
+    ).toEqual([]);
+  });
 });

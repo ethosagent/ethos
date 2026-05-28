@@ -29,13 +29,15 @@
  *   absent   → 4a + 4c + approval mode — treat as local
  */
 export function isStrictAttestation(a) {
-    return (a.readonlyRootFs &&
-        a.noHostMounts &&
-        a.egressControlled &&
-        a.noDockerSocket &&
-        a.nonRoot &&
-        a.noPrivileged &&
-        a.noCapAdd &&
-        a.capDropAll &&
-        a.noNewPrivs);
+  return (
+    a.readonlyRootFs &&
+    a.noHostMounts &&
+    a.egressControlled &&
+    a.noDockerSocket &&
+    a.nonRoot &&
+    a.noPrivileged &&
+    a.noCapAdd &&
+    a.capDropAll &&
+    a.noNewPrivs
+  );
 }

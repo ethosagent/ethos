@@ -2,7 +2,7 @@
 // DEFAULT_TOKENS. Lives as its own module so users can `extends: 'default'`
 // without the engine special-casing the name.
 export const defaultSkin = {
-    name: 'default',
-    description: 'DESIGN.md baseline — dark mode, full per-personality accents.',
-    tokens: {},
+  name: 'default',
+  description: 'DESIGN.md baseline — dark mode, full per-personality accents.',
+  tokens: {},
 };

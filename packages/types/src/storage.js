@@ -20,14 +20,14 @@
  * into a user-facing tool error rather than letting it propagate.
  */
 export class BoundaryError extends Error {
-    code = 'storage-boundary';
-    kind;
-    path;
-    constructor(kind, path, allowed, why) {
-        const suffix = why ? ` (${why})` : '';
-        super(`${kind} not permitted: ${path} not in [${allowed.join(', ')}]${suffix}`);
-        this.name = 'BoundaryError';
-        this.kind = kind;
-        this.path = path;
-    }
+  code = 'storage-boundary';
+  kind;
+  path;
+  constructor(kind, path, allowed, why) {
+    const suffix = why ? ` (${why})` : '';
+    super(`${kind} not permitted: ${path} not in [${allowed.join(', ')}]${suffix}`);
+    this.name = 'BoundaryError';
+    this.kind = kind;
+    this.path = path;
+  }
 }

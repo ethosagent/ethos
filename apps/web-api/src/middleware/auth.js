@@ -6,23 +6,23 @@ import { getCookie } from 'hono/cookie';
 // re-validates against the stored token; rotation breaks any stolen URL.
 export const AUTH_COOKIE = 'ethos_auth';
 export function authMiddleware(opts) {
-    return async (c, next) => {
-        const cookie = getCookie(c, AUTH_COOKIE);
-        if (!cookie) {
-            throw new EthosError({
-                code: 'UNAUTHORIZED',
-                cause: 'Missing auth cookie',
-                action: 'Visit `?t=<token>` printed by `ethos serve` to sign in.',
-            });
-        }
-        const ok = await opts.tokens.matches(cookie);
-        if (!ok) {
-            throw new EthosError({
-                code: 'UNAUTHORIZED',
-                cause: 'Auth cookie does not match the active token',
-                action: 'Re-open the URL printed by `ethos serve`. Token may have rotated.',
-            });
-        }
-        await next();
-    };
+  return async (c, next) => {
+    const cookie = getCookie(c, AUTH_COOKIE);
+    if (!cookie) {
+      throw new EthosError({
+        code: 'UNAUTHORIZED',
+        cause: 'Missing auth cookie',
+        action: 'Visit `?t=<token>` printed by `ethos serve` to sign in.',
+      });
+    }
+    const ok = await opts.tokens.matches(cookie);
+    if (!ok) {
+      throw new EthosError({
+        code: 'UNAUTHORIZED',
+        cause: 'Auth cookie does not match the active token',
+        action: 'Re-open the URL printed by `ethos serve`. Token may have rotated.',
+      });
+    }
+    await next();
+  };
 }

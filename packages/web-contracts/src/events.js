@@ -16,154 +16,156 @@ import { ApprovalRequestSchema, MessageRoleSchema } from './schemas';
 // Per-turn events
 // ---------------------------------------------------------------------------
 export const TextDeltaEventSchema = z.object({
-    type: z.literal('text_delta'),
-    text: z.string(),
+  type: z.literal('text_delta'),
+  text: z.string(),
 });
 export const ThinkingDeltaEventSchema = z.object({
-    type: z.literal('thinking_delta'),
-    thinking: z.string(),
+  type: z.literal('thinking_delta'),
+  thinking: z.string(),
 });
 export const ToolStartEventSchema = z.object({
-    type: z.literal('tool_start'),
-    toolCallId: z.string(),
-    toolName: z.string(),
-    args: z.unknown(),
+  type: z.literal('tool_start'),
+  toolCallId: z.string(),
+  toolName: z.string(),
+  args: z.unknown(),
 });
 export const ToolProgressEventSchema = z.object({
-    type: z.literal('tool_progress'),
-    toolName: z.string(),
-    message: z.string(),
-    percent: z.number().min(0).max(100).optional(),
-    audience: z.enum(['internal', 'user', 'dashboard']),
+  type: z.literal('tool_progress'),
+  toolName: z.string(),
+  message: z.string(),
+  percent: z.number().min(0).max(100).optional(),
+  audience: z.enum(['internal', 'user', 'dashboard']),
 });
 export const ToolEndEventSchema = z.object({
-    type: z.literal('tool_end'),
-    toolCallId: z.string(),
-    toolName: z.string(),
-    ok: z.boolean(),
-    durationMs: z.number().nonnegative(),
-    audience: z.enum(['internal', 'user', 'dashboard']).optional(),
-    /** Tool output body — success value or error message. The web chip
-     *  surfaces it on click-to-expand without a follow-up history fetch. */
-    result: z.string().optional(),
+  type: z.literal('tool_end'),
+  toolCallId: z.string(),
+  toolName: z.string(),
+  ok: z.boolean(),
+  durationMs: z.number().nonnegative(),
+  audience: z.enum(['internal', 'user', 'dashboard']).optional(),
+  /** Tool output body — success value or error message. The web chip
+   *  surfaces it on click-to-expand without a follow-up history fetch. */
+  result: z.string().optional(),
 });
 export const UsageEventSchema = z.object({
-    type: z.literal('usage'),
-    inputTokens: z.number().int().nonnegative(),
-    outputTokens: z.number().int().nonnegative(),
-    estimatedCostUsd: z.number().nonnegative(),
+  type: z.literal('usage'),
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  estimatedCostUsd: z.number().nonnegative(),
 });
 export const ContextMetaEventSchema = z.object({
-    type: z.literal('context_meta'),
-    data: z.record(z.string(), z.unknown()),
+  type: z.literal('context_meta'),
+  data: z.record(z.string(), z.unknown()),
 });
 export const TurnDoneEventSchema = z.object({
-    type: z.literal('done'),
-    text: z.string(),
-    turnCount: z.number().int().nonnegative(),
+  type: z.literal('done'),
+  text: z.string(),
+  turnCount: z.number().int().nonnegative(),
 });
 export const TurnErrorEventSchema = z.object({
-    type: z.literal('error'),
-    error: z.string(),
-    code: z.string(),
+  type: z.literal('error'),
+  error: z.string(),
+  code: z.string(),
 });
 export const MessagePersistedEventSchema = z.object({
-    type: z.literal('message_persisted'),
-    messageId: z.string(),
-    role: MessageRoleSchema,
+  type: z.literal('message_persisted'),
+  messageId: z.string(),
+  role: MessageRoleSchema,
 });
 // ---------------------------------------------------------------------------
 // Push events (not tied to the active turn)
 // ---------------------------------------------------------------------------
 export const ToolApprovalRequiredEventSchema = z.object({
-    type: z.literal('tool.approval_required'),
-    request: ApprovalRequestSchema,
+  type: z.literal('tool.approval_required'),
+  request: ApprovalRequestSchema,
 });
 export const ApprovalResolvedEventSchema = z.object({
-    type: z.literal('approval.resolved'),
-    approvalId: z.string(),
-    decision: z.enum(['allow', 'deny']),
-    decidedBy: z.string(), // clientId of the resolving tab
+  type: z.literal('approval.resolved'),
+  approvalId: z.string(),
+  decision: z.enum(['allow', 'deny']),
+  decidedBy: z.string(), // clientId of the resolving tab
 });
 export const CronFiredEventSchema = z.object({
-    type: z.literal('cron.fired'),
-    jobId: z.string(),
-    ranAt: z.string(), // ISO-8601
-    outputPath: z.string().nullable(),
+  type: z.literal('cron.fired'),
+  jobId: z.string(),
+  ranAt: z.string(), // ISO-8601
+  outputPath: z.string().nullable(),
 });
 // The `clarify` tool asked the user a question mid-turn. Pushed (not a turn
 // event) so a browser refresh / SSE reconnect re-presents any pending clarify.
 export const ClarifyRequestEventSchema = z.object({
-    type: z.literal('clarify.request'),
-    requestId: z.string(),
-    question: z.string(),
-    options: z.array(z.string()).optional(),
-    default: z.string().optional(),
-    /** ISO-8601 — when the timeout fires and the default is used. */
-    defaultDeadlineAt: z.string(),
+  type: z.literal('clarify.request'),
+  requestId: z.string(),
+  question: z.string(),
+  options: z.array(z.string()).optional(),
+  default: z.string().optional(),
+  /** ISO-8601 — when the timeout fires and the default is used. */
+  defaultDeadlineAt: z.string(),
 });
 export const ClarifyResolvedEventSchema = z.object({
-    type: z.literal('clarify.resolved'),
-    requestId: z.string(),
-    source: z.enum(['user', 'timeout-default', 'timeout-no-default', 'cancel']),
+  type: z.literal('clarify.resolved'),
+  requestId: z.string(),
+  source: z.enum(['user', 'timeout-default', 'timeout-no-default', 'cancel']),
 });
 export const MeshChangedEventSchema = z.object({
-    type: z.literal('mesh.changed'),
-    agents: z.array(z.object({
-        agentId: z.string(),
-        capabilities: z.array(z.string()),
-        activeSessions: z.number().int().nonnegative(),
-    })),
+  type: z.literal('mesh.changed'),
+  agents: z.array(
+    z.object({
+      agentId: z.string(),
+      capabilities: z.array(z.string()),
+      activeSessions: z.number().int().nonnegative(),
+    }),
+  ),
 });
 export const EvolveSkillPendingEventSchema = z.object({
-    type: z.literal('evolve.skill_pending'),
-    skillId: z.string(),
-    personalityId: z.string().nullable(),
-    proposedAt: z.string(), // ISO-8601
+  type: z.literal('evolve.skill_pending'),
+  skillId: z.string(),
+  personalityId: z.string().nullable(),
+  proposedAt: z.string(), // ISO-8601
 });
 export const DryRunToolPlanSchema = z.object({
-    toolCallId: z.string(),
-    toolName: z.string(),
-    args: z.unknown(),
+  toolCallId: z.string(),
+  toolName: z.string(),
+  args: z.unknown(),
 });
 export const DryRunSummaryEventSchema = z.object({
-    type: z.literal('dry_run_summary'),
-    plan: z.array(DryRunToolPlanSchema),
-    capped: z.number().int().nonnegative(),
+  type: z.literal('dry_run_summary'),
+  plan: z.array(DryRunToolPlanSchema),
+  capped: z.number().int().nonnegative(),
 });
 export const RunStartEventSchema = z.object({
-    type: z.literal('run_start'),
-    provider: z.string(),
-    model: z.string(),
-    source: z.enum(['team-coordinator', 'team-personality', 'personality', 'global']),
+  type: z.literal('run_start'),
+  provider: z.string(),
+  model: z.string(),
+  source: z.enum(['team-coordinator', 'team-personality', 'personality', 'global']),
 });
 export const ProtocolUpgradeRequiredEventSchema = z.object({
-    type: z.literal('protocol.upgrade_required'),
-    serverVersion: z.string(),
-    clientVersionExpected: z.string(),
+  type: z.literal('protocol.upgrade_required'),
+  serverVersion: z.string(),
+  clientVersionExpected: z.string(),
 });
 // ---------------------------------------------------------------------------
 // Combined union — one schema covers every event the server may send.
 // ---------------------------------------------------------------------------
 export const SseEventSchema = z.discriminatedUnion('type', [
-    TextDeltaEventSchema,
-    ThinkingDeltaEventSchema,
-    ToolStartEventSchema,
-    ToolProgressEventSchema,
-    ToolEndEventSchema,
-    UsageEventSchema,
-    ContextMetaEventSchema,
-    TurnDoneEventSchema,
-    TurnErrorEventSchema,
-    MessagePersistedEventSchema,
-    ToolApprovalRequiredEventSchema,
-    ApprovalResolvedEventSchema,
-    ClarifyRequestEventSchema,
-    ClarifyResolvedEventSchema,
-    CronFiredEventSchema,
-    MeshChangedEventSchema,
-    EvolveSkillPendingEventSchema,
-    DryRunSummaryEventSchema,
-    RunStartEventSchema,
-    ProtocolUpgradeRequiredEventSchema,
+  TextDeltaEventSchema,
+  ThinkingDeltaEventSchema,
+  ToolStartEventSchema,
+  ToolProgressEventSchema,
+  ToolEndEventSchema,
+  UsageEventSchema,
+  ContextMetaEventSchema,
+  TurnDoneEventSchema,
+  TurnErrorEventSchema,
+  MessagePersistedEventSchema,
+  ToolApprovalRequiredEventSchema,
+  ApprovalResolvedEventSchema,
+  ClarifyRequestEventSchema,
+  ClarifyResolvedEventSchema,
+  CronFiredEventSchema,
+  MeshChangedEventSchema,
+  EvolveSkillPendingEventSchema,
+  DryRunSummaryEventSchema,
+  RunStartEventSchema,
+  ProtocolUpgradeRequiredEventSchema,
 ]);

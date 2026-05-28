@@ -17,46 +17,43 @@ import { safeFetch } from '@ethosagent/safety-network';
  * partial mitigation, file/data/javascript schemes).
  */
 export class ScopedFetchImpl {
-    allowedHosts;
-    policy;
-    testSeam;
-    constructor(allowedHosts, policy, testSeam = {}) {
-        this.allowedHosts = allowedHosts;
-        this.policy = policy;
-        this.testSeam = testSeam;
+  allowedHosts;
+  policy;
+  testSeam;
+  constructor(allowedHosts, policy, testSeam = {}) {
+    this.allowedHosts = allowedHosts;
+    this.policy = policy;
+    this.testSeam = testSeam;
+  }
+  async fetch(url, init) {
+    const parsed = new URL(url);
+    if (!this.isHostAllowed(parsed.hostname)) {
+      throw new Error(`HOST_NOT_ALLOWED: ${parsed.hostname} is not in the declared allowedHosts`);
     }
-    async fetch(url, init) {
-        const parsed = new URL(url);
-        if (!this.isHostAllowed(parsed.hostname)) {
-            throw new Error(`HOST_NOT_ALLOWED: ${parsed.hostname} is not in the declared allowedHosts`);
-        }
-        // redirect is forced to 'manual' inside safeFetch — strip it so the
-        // omit-typed init shape lines up.
-        const { redirect: _redirect, ...rest } = init ?? {};
-        const result = await safeFetch(parsed.toString(), {
-            policy: this.policy,
-            init: rest,
-            fetchImpl: this.testSeam.fetchImpl,
-            resolveHost: this.testSeam.resolveHost,
-        });
-        if (!result.ok) {
-            throw new Error(`HOST_NOT_ALLOWED: ${result.reason}`);
-        }
-        return result.response;
+    // redirect is forced to 'manual' inside safeFetch — strip it so the
+    // omit-typed init shape lines up.
+    const { redirect: _redirect, ...rest } = init ?? {};
+    const result = await safeFetch(parsed.toString(), {
+      policy: this.policy,
+      init: rest,
+      fetchImpl: this.testSeam.fetchImpl,
+      resolveHost: this.testSeam.resolveHost,
+    });
+    if (!result.ok) {
+      throw new Error(`HOST_NOT_ALLOWED: ${result.reason}`);
     }
-    isHostAllowed(hostname) {
-        if (this.allowedHosts.has('*'))
-            return true;
-        if (this.allowedHosts.has(hostname))
-            return true;
-        // Check subdomain wildcards: '*.github.com' matches 'api.github.com'
-        for (const pattern of this.allowedHosts) {
-            if (pattern.startsWith('*.')) {
-                const suffix = pattern.slice(1); // '.github.com'
-                if (hostname.endsWith(suffix) && hostname.length > suffix.length)
-                    return true;
-            }
-        }
-        return false;
+    return result.response;
+  }
+  isHostAllowed(hostname) {
+    if (this.allowedHosts.has('*')) return true;
+    if (this.allowedHosts.has(hostname)) return true;
+    // Check subdomain wildcards: '*.github.com' matches 'api.github.com'
+    for (const pattern of this.allowedHosts) {
+      if (pattern.startsWith('*.')) {
+        const suffix = pattern.slice(1); // '.github.com'
+        if (hostname.endsWith(suffix) && hostname.length > suffix.length) return true;
+      }
     }
+    return false;
+  }
 }

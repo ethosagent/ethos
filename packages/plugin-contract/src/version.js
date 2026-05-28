@@ -21,21 +21,25 @@ export const PLUGIN_CONTRACT_MAJOR = 2;
  *
  * Anything else fails. Non-integer or negative declared → fail.
  */
-export function checkPluginContractMajor(declared, current = PLUGIN_CONTRACT_MAJOR, pluginName = 'plugin') {
-    if (declared === undefined) {
-        return { ok: true };
-    }
-    if (!Number.isInteger(declared) || declared < 0) {
-        return {
-            ok: false,
-            reason: `${pluginName} declared an invalid pluginContractMajor (${String(declared)}); expected a non-negative integer. Current contract major is ${current}. See https://github.com/ethosdev/ethos/blob/main/packages/plugin-contract/MIGRATIONS.md`,
-        };
-    }
-    if (declared !== current) {
-        return {
-            ok: false,
-            reason: `${pluginName} declares pluginContractMajor=${declared}, but Ethos's current plugin contract is major=${current}. Update the plugin per https://github.com/ethosdev/ethos/blob/main/packages/plugin-contract/MIGRATIONS.md`,
-        };
-    }
+export function checkPluginContractMajor(
+  declared,
+  current = PLUGIN_CONTRACT_MAJOR,
+  pluginName = 'plugin',
+) {
+  if (declared === undefined) {
     return { ok: true };
+  }
+  if (!Number.isInteger(declared) || declared < 0) {
+    return {
+      ok: false,
+      reason: `${pluginName} declared an invalid pluginContractMajor (${String(declared)}); expected a non-negative integer. Current contract major is ${current}. See https://github.com/ethosdev/ethos/blob/main/packages/plugin-contract/MIGRATIONS.md`,
+    };
+  }
+  if (declared !== current) {
+    return {
+      ok: false,
+      reason: `${pluginName} declares pluginContractMajor=${declared}, but Ethos's current plugin contract is major=${current}. Update the plugin per https://github.com/ethosdev/ethos/blob/main/packages/plugin-contract/MIGRATIONS.md`,
+    };
+  }
+  return { ok: true };
 }

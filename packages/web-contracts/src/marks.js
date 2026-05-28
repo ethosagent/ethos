@@ -20,14 +20,14 @@ const UNIQUE_COLS = 3; // 0..2; columns 3 and 4 are mirrors of 1 and 0.
 const _FILL_BITS_NEEDED = GRID_SIZE * UNIQUE_COLS; // 15
 /** FNV-1a 32-bit hash. Standard, fast, no dependencies. */
 export function fnv1a32(input) {
-    let hash = FNV_OFFSET_32;
-    for (let i = 0; i < input.length; i++) {
-        hash ^= input.charCodeAt(i);
-        // Math.imul handles 32-bit overflow; the explicit bit math at the end
-        // forces unsigned interpretation so callers can safely shift.
-        hash = Math.imul(hash, FNV_PRIME_32);
-    }
-    return hash >>> 0;
+  let hash = FNV_OFFSET_32;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    // Math.imul handles 32-bit overflow; the explicit bit math at the end
+    // forces unsigned interpretation so callers can safely shift.
+    hash = Math.imul(hash, FNV_PRIME_32);
+  }
+  return hash >>> 0;
 }
 /**
  * Generate the deterministic mark spec for a personality id. Pure
@@ -39,30 +39,29 @@ export function fnv1a32(input) {
  * so the second pass keys off `${id}:o` to keep the algorithm pure.
  */
 export function generatePersonalityMark(personalityId) {
-    const fillHash = fnv1a32(personalityId);
-    const opacityHash = fnv1a32(`${personalityId}:o`);
-    const cells = [];
-    for (let row = 0; row < GRID_SIZE; row++) {
-        for (let uniqueCol = 0; uniqueCol < UNIQUE_COLS; uniqueCol++) {
-            const cellIndex = row * UNIQUE_COLS + uniqueCol;
-            const filled = (fillHash >>> cellIndex) & 1;
-            if (!filled)
-                continue;
-            const opacityBits = (opacityHash >>> (cellIndex * 2)) & 0b11;
-            const opacity = OPACITY_LEVELS[opacityBits] ?? OPACITY_LEVELS[0];
-            cells.push({ row, col: uniqueCol, opacity });
-            // Mirror to the right half. Center column (uniqueCol === 2) has no
-            // mirror — col 4 - 2 = 2 is itself.
-            if (uniqueCol < UNIQUE_COLS - 1) {
-                cells.push({ row, col: GRID_SIZE - 1 - uniqueCol, opacity });
-            }
-        }
+  const fillHash = fnv1a32(personalityId);
+  const opacityHash = fnv1a32(`${personalityId}:o`);
+  const cells = [];
+  for (let row = 0; row < GRID_SIZE; row++) {
+    for (let uniqueCol = 0; uniqueCol < UNIQUE_COLS; uniqueCol++) {
+      const cellIndex = row * UNIQUE_COLS + uniqueCol;
+      const filled = (fillHash >>> cellIndex) & 1;
+      if (!filled) continue;
+      const opacityBits = (opacityHash >>> (cellIndex * 2)) & 0b11;
+      const opacity = OPACITY_LEVELS[opacityBits] ?? OPACITY_LEVELS[0];
+      cells.push({ row, col: uniqueCol, opacity });
+      // Mirror to the right half. Center column (uniqueCol === 2) has no
+      // mirror — col 4 - 2 = 2 is itself.
+      if (uniqueCol < UNIQUE_COLS - 1) {
+        cells.push({ row, col: GRID_SIZE - 1 - uniqueCol, opacity });
+      }
     }
-    return {
-        cells,
-        bgRadius: 0.16,
-        bgAlpha: 0x22 / 0xff,
-    };
+  }
+  return {
+    cells,
+    bgRadius: 0.16,
+    bgAlpha: 0x22 / 0xff,
+  };
 }
 // Personality accent resolution moved to @ethosagent/design-tokens (the
 // single runtime source of truth for visual tokens). The marks algorithm

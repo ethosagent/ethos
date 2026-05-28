@@ -12,26 +12,26 @@ import { join } from 'node:path';
  * via `extraSources`.
  */
 export function bundledCodingSkillsSource() {
-    return {
-        label: 'ethos-bundled',
-        dir: join(import.meta.dirname, '..', 'data'),
-    };
+  return {
+    label: 'ethos-bundled',
+    dir: join(import.meta.dirname, '..', 'data'),
+  };
 }
 /** Stable list of skill ids shipped in this bundle. Useful for tests + docs. */
 export const BUNDLED_CODING_SKILL_IDS = [
-    'plan',
-    'writing-plans',
-    'spike',
-    'tdd',
-    'code-review',
-    'systematic-debugging',
-    'github-pr-workflow',
-    'github-code-review',
-    'coding-agent',
-    'subagent-driven-development',
-    'github-auth',
-    'codebase-inspection',
-    'requesting-code-review',
-    'native-mcp',
-    'ethos-skill-authoring',
+  'plan',
+  'writing-plans',
+  'spike',
+  'tdd',
+  'code-review',
+  'systematic-debugging',
+  'github-pr-workflow',
+  'github-code-review',
+  'coding-agent',
+  'subagent-driven-development',
+  'github-auth',
+  'codebase-inspection',
+  'requesting-code-review',
+  'native-mcp',
+  'ethos-skill-authoring',
 ];

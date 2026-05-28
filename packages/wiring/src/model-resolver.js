@@ -17,25 +17,22 @@
  *   3. globalModel                                      → source: 'global'
  */
 export function resolveModelTarget(input) {
-    const { isTeam, isCoordinator, personalityId, teamManifest, globalModel, globalModelRouting } = input;
-    if (isTeam && isCoordinator) {
-        const override = teamManifest?.coordinator_model;
-        if (override)
-            return { model: override, source: 'team-coordinator' };
-        return { model: globalModel, source: 'global' };
-    }
-    if (isTeam && !isCoordinator) {
-        const teamOverride = teamManifest?.personality_models?.[personalityId];
-        if (teamOverride)
-            return { model: teamOverride, source: 'team-personality' };
-        const personalityOverride = globalModelRouting?.[personalityId];
-        if (personalityOverride)
-            return { model: personalityOverride, source: 'personality' };
-        return { model: globalModel, source: 'global' };
-    }
-    // Non-team
-    const personalityOverride = globalModelRouting?.[personalityId];
-    if (personalityOverride)
-        return { model: personalityOverride, source: 'personality' };
+  const { isTeam, isCoordinator, personalityId, teamManifest, globalModel, globalModelRouting } =
+    input;
+  if (isTeam && isCoordinator) {
+    const override = teamManifest?.coordinator_model;
+    if (override) return { model: override, source: 'team-coordinator' };
     return { model: globalModel, source: 'global' };
+  }
+  if (isTeam && !isCoordinator) {
+    const teamOverride = teamManifest?.personality_models?.[personalityId];
+    if (teamOverride) return { model: teamOverride, source: 'team-personality' };
+    const personalityOverride = globalModelRouting?.[personalityId];
+    if (personalityOverride) return { model: personalityOverride, source: 'personality' };
+    return { model: globalModel, source: 'global' };
+  }
+  // Non-team
+  const personalityOverride = globalModelRouting?.[personalityId];
+  if (personalityOverride) return { model: personalityOverride, source: 'personality' };
+  return { model: globalModel, source: 'global' };
 }

@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+
 let _obs;
 /**
  * Wire up an observability adapter so mesh events are also written to
@@ -9,7 +10,7 @@ let _obs;
  * `MeshJournalObservability`).
  */
 export function setMeshObservabilityService(obs) {
-    _obs = obs;
+  _obs = obs;
 }
 // CC-4: mesh.jsonl atomic line writes — O_APPEND + 4 KB row cap.
 //
@@ -24,7 +25,7 @@ export function setMeshObservabilityService(obs) {
 //   4. Write in one synchronous call (appendFileSync = single write(2) on POSIX).
 const MAX_ROW_BYTES = 4000; // < 4096 PIPE_BUF with margin for newline + metadata
 export function meshJournalPath() {
-    return join(homedir(), '.ethos', 'logs', 'mesh.jsonl');
+  return join(homedir(), '.ethos', 'logs', 'mesh.jsonl');
 }
 /**
  * Append one event to mesh.jsonl.
@@ -34,22 +35,21 @@ export function meshJournalPath() {
  * in a single O_APPEND call so the row is atomic on POSIX.
  */
 export function appendMeshJournal(entry) {
-    const logPath = meshJournalPath();
-    mkdirSync(dirname(logPath), { recursive: true });
-    let row = JSON.stringify(entry);
-    if (Buffer.byteLength(row, 'utf8') >= MAX_ROW_BYTES) {
-        // Truncate the details field to fit within the cap.
-        const truncated = { ...entry, details: '[truncated — exceeded 4 KB cap]' };
-        row = JSON.stringify(truncated);
-    }
-    appendFileSync(logPath, `${row}\n`);
-    try {
-        _obs?.recordInstallEvent({
-            code: entry.event,
-            cause: JSON.stringify(entry).slice(0, 200),
-        });
-    }
-    catch {
-        // Observability is best-effort — never mask the primary journal path.
-    }
+  const logPath = meshJournalPath();
+  mkdirSync(dirname(logPath), { recursive: true });
+  let row = JSON.stringify(entry);
+  if (Buffer.byteLength(row, 'utf8') >= MAX_ROW_BYTES) {
+    // Truncate the details field to fit within the cap.
+    const truncated = { ...entry, details: '[truncated — exceeded 4 KB cap]' };
+    row = JSON.stringify(truncated);
+  }
+  appendFileSync(logPath, `${row}\n`);
+  try {
+    _obs?.recordInstallEvent({
+      code: entry.event,
+      cause: JSON.stringify(entry).slice(0, 200),
+    });
+  } catch {
+    // Observability is best-effort — never mask the primary journal path.
+  }
 }

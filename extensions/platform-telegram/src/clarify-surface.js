@@ -20,231 +20,221 @@ const SURFACE = 'telegram';
 const CALLBACK_PREFIX = 'clr';
 const CANCEL_MARKER = 'cancel';
 export class TelegramClarifySurface {
-    adapter;
-    bridge;
-    store;
-    getSessionRouting;
-    constructor(cfg) {
-        this.adapter = cfg.adapter;
-        this.bridge = cfg.bridge;
-        this.store = cfg.store;
-        this.getSessionRouting = cfg.getSessionRouting;
-        this.bridge.setPresenter((row) => this.present(row));
-        this.bridge.onResolved((row, resp) => {
-            void this.onResolved(row, resp);
-        });
-        this.adapter.onCallbackQuery((evt) => {
-            void this.handleCallback(evt);
-        });
+  adapter;
+  bridge;
+  store;
+  getSessionRouting;
+  constructor(cfg) {
+    this.adapter = cfg.adapter;
+    this.bridge = cfg.bridge;
+    this.store = cfg.store;
+    this.getSessionRouting = cfg.getSessionRouting;
+    this.bridge.setPresenter((row) => this.present(row));
+    this.bridge.onResolved((row, resp) => {
+      void this.onResolved(row, resp);
+    });
+    this.adapter.onCallbackQuery((evt) => {
+      void this.handleCallback(evt);
+    });
+  }
+  /**
+   * Present a pending clarify to the Telegram chat. With `options` the user
+   * gets an inline keyboard; without, a force-reply prompt. Writes the
+   * Telegram message id back into the persisted row so later replies and
+   * sweeps can find it.
+   */
+  async present(row) {
+    if (row.surfaceType !== SURFACE) return;
+    const routing = this.getSessionRouting(row.sessionId);
+    if (!routing) {
+      // No routing means the gateway lost track of which chat — the turn
+      // will time out and the bridge will fire `timeout-no-default` or
+      // `timeout-default`. Nothing to send; nothing to wedge.
+      return;
     }
-    /**
-     * Present a pending clarify to the Telegram chat. With `options` the user
-     * gets an inline keyboard; without, a force-reply prompt. Writes the
-     * Telegram message id back into the persisted row so later replies and
-     * sweeps can find it.
-     */
-    async present(row) {
-        if (row.surfaceType !== SURFACE)
-            return;
-        const routing = this.getSessionRouting(row.sessionId);
-        if (!routing) {
-            // No routing means the gateway lost track of which chat — the turn
-            // will time out and the bridge will fire `timeout-no-default` or
-            // `timeout-default`. Nothing to send; nothing to wedge.
-            return;
-        }
-        const text = formatPrompt(row);
-        const result = row.options && row.options.length > 0
-            ? await this.adapter.sendInlineKeyboard(routing.chatId, text, buildButtonRows(row))
-            : await this.adapter.sendForceReply(routing.chatId, text);
-        if (!result.ok || !result.messageId) {
-            // A send failure (e.g. user blocked the bot) leaves the row persisted;
-            // the bridge timer will still fire and clean up. Don't throw — we
-            // mustn't wedge the turn.
-            return;
-        }
-        await this.store.update(row.requestId, {
-            surfaceContext: {
-                ...row.surfaceContext,
-                chatId: routing.chatId,
-                botKey: this.adapter.botKey,
-                messageId: result.messageId,
-                ...(routing.requesterUserId !== undefined
-                    ? { originatorUserId: routing.requesterUserId }
-                    : {}),
-            },
-        });
+    const text = formatPrompt(row);
+    const result =
+      row.options && row.options.length > 0
+        ? await this.adapter.sendInlineKeyboard(routing.chatId, text, buildButtonRows(row))
+        : await this.adapter.sendForceReply(routing.chatId, text);
+    if (!result.ok || !result.messageId) {
+      // A send failure (e.g. user blocked the bot) leaves the row persisted;
+      // the bridge timer will still fire and clean up. Don't throw — we
+      // mustn't wedge the turn.
+      return;
     }
-    /**
-     * Inbound-message correlator: returns a clarify response when the message
-     * resolves a pending Telegram clarify (force-reply matching a stored
-     * messageId, or `/cancel [requestId]` in a chat with a pending row);
-     * otherwise null. Run by the gateway BEFORE the channel safety filter so
-     * a tap from an approved sender's force-reply doesn't get treated as a
-     * normal agent prompt.
-     */
-    async correlateMessage(message) {
-        if (message.platform !== SURFACE)
-            return null;
-        if (message.botKey !== this.adapter.botKey)
-            return null;
-        const text = (message.text ?? '').trim();
-        const parts = text.split(/\s+/);
-        const head = parts[0];
-        if (head === '/cancel' || head?.startsWith('/cancel@')) {
-            const explicit = parts[1];
-            const target = await this.findCancelTarget(message.chatId, explicit);
-            if (!target)
-                return null;
-            if (!gateAnswerer(target, message.userId))
-                return null;
-            return { requestId: target.requestId, answer: '', source: 'cancel' };
-        }
-        if (!message.replyToId)
-            return null;
-        const rows = await this.store.list({ surfaceType: SURFACE });
-        const target = rows.find((r) => r.surfaceContext.chatId === message.chatId &&
-            r.surfaceContext.botKey === this.adapter.botKey &&
-            String(r.surfaceContext.messageId ?? '') === message.replyToId);
-        if (!target)
-            return null;
-        if (!gateAnswerer(target, message.userId))
-            return null;
-        return { requestId: target.requestId, answer: text, source: 'user' };
+    await this.store.update(row.requestId, {
+      surfaceContext: {
+        ...row.surfaceContext,
+        chatId: routing.chatId,
+        botKey: this.adapter.botKey,
+        messageId: result.messageId,
+        ...(routing.requesterUserId !== undefined
+          ? { originatorUserId: routing.requesterUserId }
+          : {}),
+      },
+    });
+  }
+  /**
+   * Inbound-message correlator: returns a clarify response when the message
+   * resolves a pending Telegram clarify (force-reply matching a stored
+   * messageId, or `/cancel [requestId]` in a chat with a pending row);
+   * otherwise null. Run by the gateway BEFORE the channel safety filter so
+   * a tap from an approved sender's force-reply doesn't get treated as a
+   * normal agent prompt.
+   */
+  async correlateMessage(message) {
+    if (message.platform !== SURFACE) return null;
+    if (message.botKey !== this.adapter.botKey) return null;
+    const text = (message.text ?? '').trim();
+    const parts = text.split(/\s+/);
+    const head = parts[0];
+    if (head === '/cancel' || head?.startsWith('/cancel@')) {
+      const explicit = parts[1];
+      const target = await this.findCancelTarget(message.chatId, explicit);
+      if (!target) return null;
+      if (!gateAnswerer(target, message.userId)) return null;
+      return { requestId: target.requestId, answer: '', source: 'cancel' };
     }
-    // -------------------------------------------------------------------------
-    // Internals
-    // -------------------------------------------------------------------------
-    async handleCallback(evt) {
-        const parsed = parseCallback(evt.data);
-        if (!parsed) {
-            await evt.answer();
-            return;
-        }
-        const row = await this.store.get(parsed.requestId);
-        if (!row || row.surfaceType !== SURFACE) {
-            // Row already resolved or never belonged to us — dismiss the spinner
-            // with a hint so the user isn't left staring at a frozen button.
-            await evt.answer('Already resolved.');
-            return;
-        }
-        // Cross-tenant gate: a stale, forwarded, or otherwise replayed callback
-        // must not resolve a row whose stored (botKey, chatId, messageId) doesn't
-        // match the click's origin. The plan calls this out explicitly for
-        // multi-bot/multi-chat correctness.
-        if (row.surfaceContext.botKey !== this.adapter.botKey ||
-            row.surfaceContext.chatId !== evt.chatId ||
-            row.surfaceContext.messageId !== evt.messageId) {
-            await evt.answer('Already resolved.');
-            return;
-        }
-        if (!gateAnswerer(row, evt.userId)) {
-            await evt.answer('Only the original asker can answer this.');
-            return;
-        }
-        let response;
-        if (parsed.kind === 'cancel') {
-            response = { requestId: row.requestId, answer: '', source: 'cancel' };
-        }
-        else {
-            const answer = row.options?.[parsed.choiceIndex];
-            if (answer === undefined) {
-                // Out-of-range / stale callback — refuse rather than silently
-                // resolve with an empty string (which the LLM would treat as a
-                // valid answer).
-                await evt.answer('That choice is no longer available.');
-                return;
-            }
-            response = { requestId: row.requestId, answer, source: 'user' };
-        }
-        await this.bridge.respond(response);
-        await evt.answer();
+    if (!message.replyToId) return null;
+    const rows = await this.store.list({ surfaceType: SURFACE });
+    const target = rows.find(
+      (r) =>
+        r.surfaceContext.chatId === message.chatId &&
+        r.surfaceContext.botKey === this.adapter.botKey &&
+        String(r.surfaceContext.messageId ?? '') === message.replyToId,
+    );
+    if (!target) return null;
+    if (!gateAnswerer(target, message.userId)) return null;
+    return { requestId: target.requestId, answer: text, source: 'user' };
+  }
+  // -------------------------------------------------------------------------
+  // Internals
+  // -------------------------------------------------------------------------
+  async handleCallback(evt) {
+    const parsed = parseCallback(evt.data);
+    if (!parsed) {
+      await evt.answer();
+      return;
     }
-    async onResolved(row, response) {
-        if (row.surfaceType !== SURFACE)
-            return;
-        if (row.surfaceContext.botKey !== this.adapter.botKey)
-            return;
-        const chatId = row.surfaceContext.chatId;
-        const messageId = row.surfaceContext.messageId;
-        if (typeof chatId !== 'string' || typeof messageId !== 'string')
-            return;
-        await this.adapter.editToPlainText(chatId, messageId, formatResolved(row, response));
+    const row = await this.store.get(parsed.requestId);
+    if (!row || row.surfaceType !== SURFACE) {
+      // Row already resolved or never belonged to us — dismiss the spinner
+      // with a hint so the user isn't left staring at a frozen button.
+      await evt.answer('Already resolved.');
+      return;
     }
-    async findCancelTarget(chatId, requestId) {
-        const rows = await this.store.list({ surfaceType: SURFACE });
-        const sameChat = rows.filter((r) => r.surfaceContext.chatId === chatId && r.surfaceContext.botKey === this.adapter.botKey);
-        if (requestId)
-            return sameChat.find((r) => r.requestId === requestId);
-        return sameChat[0];
+    // Cross-tenant gate: a stale, forwarded, or otherwise replayed callback
+    // must not resolve a row whose stored (botKey, chatId, messageId) doesn't
+    // match the click's origin. The plan calls this out explicitly for
+    // multi-bot/multi-chat correctness.
+    if (
+      row.surfaceContext.botKey !== this.adapter.botKey ||
+      row.surfaceContext.chatId !== evt.chatId ||
+      row.surfaceContext.messageId !== evt.messageId
+    ) {
+      await evt.answer('Already resolved.');
+      return;
     }
+    if (!gateAnswerer(row, evt.userId)) {
+      await evt.answer('Only the original asker can answer this.');
+      return;
+    }
+    let response;
+    if (parsed.kind === 'cancel') {
+      response = { requestId: row.requestId, answer: '', source: 'cancel' };
+    } else {
+      const answer = row.options?.[parsed.choiceIndex];
+      if (answer === undefined) {
+        // Out-of-range / stale callback — refuse rather than silently
+        // resolve with an empty string (which the LLM would treat as a
+        // valid answer).
+        await evt.answer('That choice is no longer available.');
+        return;
+      }
+      response = { requestId: row.requestId, answer, source: 'user' };
+    }
+    await this.bridge.respond(response);
+    await evt.answer();
+  }
+  async onResolved(row, response) {
+    if (row.surfaceType !== SURFACE) return;
+    if (row.surfaceContext.botKey !== this.adapter.botKey) return;
+    const chatId = row.surfaceContext.chatId;
+    const messageId = row.surfaceContext.messageId;
+    if (typeof chatId !== 'string' || typeof messageId !== 'string') return;
+    await this.adapter.editToPlainText(chatId, messageId, formatResolved(row, response));
+  }
+  async findCancelTarget(chatId, requestId) {
+    const rows = await this.store.list({ surfaceType: SURFACE });
+    const sameChat = rows.filter(
+      (r) => r.surfaceContext.chatId === chatId && r.surfaceContext.botKey === this.adapter.botKey,
+    );
+    if (requestId) return sameChat.find((r) => r.requestId === requestId);
+    return sameChat[0];
+  }
 }
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 /** Two-column inline keyboard (scannable) plus a Cancel row. */
 function buildButtonRows(row) {
-    const options = row.options ?? [];
-    const rows = [];
-    for (let i = 0; i < options.length; i += 2) {
-        const r = [];
-        for (let j = 0; j < 2 && i + j < options.length; j++) {
-            const idx = i + j;
-            const label = options[idx];
-            if (label === undefined)
-                continue;
-            r.push({ label, data: `${CALLBACK_PREFIX}:${row.requestId}:${idx}` });
-        }
-        if (r.length > 0)
-            rows.push(r);
+  const options = row.options ?? [];
+  const rows = [];
+  for (let i = 0; i < options.length; i += 2) {
+    const r = [];
+    for (let j = 0; j < 2 && i + j < options.length; j++) {
+      const idx = i + j;
+      const label = options[idx];
+      if (label === undefined) continue;
+      r.push({ label, data: `${CALLBACK_PREFIX}:${row.requestId}:${idx}` });
     }
-    rows.push([{ label: 'Cancel', data: `${CALLBACK_PREFIX}:${row.requestId}:${CANCEL_MARKER}` }]);
-    return rows;
+    if (r.length > 0) rows.push(r);
+  }
+  rows.push([{ label: 'Cancel', data: `${CALLBACK_PREFIX}:${row.requestId}:${CANCEL_MARKER}` }]);
+  return rows;
 }
 function parseCallback(data) {
-    const parts = data.split(':');
-    if (parts.length !== 3)
-        return null;
-    const [prefix, requestId, tail] = parts;
-    if (prefix !== CALLBACK_PREFIX || !requestId || tail === undefined)
-        return null;
-    if (tail === CANCEL_MARKER)
-        return { kind: 'cancel', requestId };
-    const idx = Number(tail);
-    if (!Number.isInteger(idx) || idx < 0)
-        return null;
-    return { kind: 'choice', requestId, choiceIndex: idx };
+  const parts = data.split(':');
+  if (parts.length !== 3) return null;
+  const [prefix, requestId, tail] = parts;
+  if (prefix !== CALLBACK_PREFIX || !requestId || tail === undefined) return null;
+  if (tail === CANCEL_MARKER) return { kind: 'cancel', requestId };
+  const idx = Number(tail);
+  if (!Number.isInteger(idx) || idx < 0) return null;
+  return { kind: 'choice', requestId, choiceIndex: idx };
 }
 function gateAnswerer(row, userId) {
-    if (row.answerableBy === 'anyone')
-        return true;
-    const originator = row.surfaceContext.originatorUserId;
-    if (typeof originator !== 'string')
-        return false; // originator-only with no originator stamp → reject
-    return userId === originator;
+  if (row.answerableBy === 'anyone') return true;
+  const originator = row.surfaceContext.originatorUserId;
+  if (typeof originator !== 'string') return false; // originator-only with no originator stamp → reject
+  return userId === originator;
 }
 function formatPrompt(row) {
-    const minutes = Math.max(1, Math.round((new Date(row.defaultDeadlineAt).getTime() - new Date(row.createdAt).getTime()) / 60_000));
-    const lines = [row.question, ''];
-    if (row.default !== undefined) {
-        lines.push(`default in ${minutes}m: ${row.default}`);
-    }
-    else {
-        lines.push(`no default — answer within ${minutes}m or cancel`);
-    }
-    return lines.join('\n');
+  const minutes = Math.max(
+    1,
+    Math.round(
+      (new Date(row.defaultDeadlineAt).getTime() - new Date(row.createdAt).getTime()) / 60_000,
+    ),
+  );
+  const lines = [row.question, ''];
+  if (row.default !== undefined) {
+    lines.push(`default in ${minutes}m: ${row.default}`);
+  } else {
+    lines.push(`no default — answer within ${minutes}m or cancel`);
+  }
+  return lines.join('\n');
 }
 function formatResolved(row, response) {
-    if (!response)
-        return `${row.question}\n\n(timed out — no default)`;
-    switch (response.source) {
-        case 'user':
-            return `${row.question}\n\n→ ${response.answer}`;
-        case 'cancel':
-            return `${row.question}\n\n(cancelled)`;
-        case 'timeout-default':
-            return `${row.question}\n\n(timed out — used ${response.answer})`;
-        case 'timeout-no-default':
-            return `${row.question}\n\n(timed out — no default)`;
-    }
+  if (!response) return `${row.question}\n\n(timed out — no default)`;
+  switch (response.source) {
+    case 'user':
+      return `${row.question}\n\n→ ${response.answer}`;
+    case 'cancel':
+      return `${row.question}\n\n(cancelled)`;
+    case 'timeout-default':
+      return `${row.question}\n\n(timed out — used ${response.answer})`;
+    case 'timeout-no-default':
+      return `${row.question}\n\n(timed out — no default)`;
+  }
 }

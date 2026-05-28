@@ -1,38 +1,39 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
+
 // Publishable packages export from ./dist/ for npm consumers but
 // tests need to resolve them to source so no build step is required.
 const srcAliases = {
-    '@ethosagent/types': resolve('./packages/types/src'),
-    '@ethosagent/storage-fs': resolve('./packages/storage-fs/src'),
-    '@ethosagent/core': resolve('./packages/core/src'),
-    '@ethosagent/plugin-sdk': resolve('./packages/plugin-sdk/src'),
-    '@ethosagent/plugin-sdk/tool-helpers': resolve('./packages/plugin-sdk/src/tool-helpers.ts'),
-    '@ethosagent/plugin-sdk/testing': resolve('./packages/plugin-sdk/src/testing.ts'),
-    '@ethosagent/plugin-contract': resolve('./packages/plugin-contract/src'),
-    '@ethosagent/batch-runner': resolve('./extensions/batch-runner/src'),
-    '@ethosagent/eval-harness': resolve('./extensions/eval-harness/src'),
-    '@ethosagent/memory-vector': resolve('./extensions/memory-vector/src'),
-    '@ethosagent/safety-scanner': resolve('./packages/safety/scanner/src'),
-    '@ethosagent/safety-injection': resolve('./packages/safety/injection/src'),
-    '@ethosagent/safety-channel': resolve('./packages/safety/channel/src'),
-    '@ethosagent/safety-network': resolve('./packages/safety/network/src'),
-    '@ethosagent/safety-redact': resolve('./packages/safety/redact/src'),
-    '@ethosagent/safety-watcher': resolve('./packages/safety/watcher/src'),
-    '@ethosagent/tools-file': resolve('./extensions/tools-file/src'),
-    '@ethosagent/tools-mcp': resolve('./extensions/tools-mcp/src'),
-    '@ethosagent/agent-bridge': resolve('./packages/agent-bridge/src'),
+  '@ethosagent/types': resolve('./packages/types/src'),
+  '@ethosagent/storage-fs': resolve('./packages/storage-fs/src'),
+  '@ethosagent/core': resolve('./packages/core/src'),
+  '@ethosagent/plugin-sdk': resolve('./packages/plugin-sdk/src'),
+  '@ethosagent/plugin-sdk/tool-helpers': resolve('./packages/plugin-sdk/src/tool-helpers.ts'),
+  '@ethosagent/plugin-sdk/testing': resolve('./packages/plugin-sdk/src/testing.ts'),
+  '@ethosagent/plugin-contract': resolve('./packages/plugin-contract/src'),
+  '@ethosagent/batch-runner': resolve('./extensions/batch-runner/src'),
+  '@ethosagent/eval-harness': resolve('./extensions/eval-harness/src'),
+  '@ethosagent/memory-vector': resolve('./extensions/memory-vector/src'),
+  '@ethosagent/safety-scanner': resolve('./packages/safety/scanner/src'),
+  '@ethosagent/safety-injection': resolve('./packages/safety/injection/src'),
+  '@ethosagent/safety-channel': resolve('./packages/safety/channel/src'),
+  '@ethosagent/safety-network': resolve('./packages/safety/network/src'),
+  '@ethosagent/safety-redact': resolve('./packages/safety/redact/src'),
+  '@ethosagent/safety-watcher': resolve('./packages/safety/watcher/src'),
+  '@ethosagent/tools-file': resolve('./extensions/tools-file/src'),
+  '@ethosagent/tools-mcp': resolve('./extensions/tools-mcp/src'),
+  '@ethosagent/agent-bridge': resolve('./packages/agent-bridge/src'),
 };
 export default defineConfig({
-    resolve: { alias: srcAliases },
-    test: {
-        include: [
-            'packages/*/src/**/*.test.ts',
-            'packages/*/scripts/**/*.test.ts',
-            'packages/safety/*/src/**/*.test.ts',
-            'extensions/*/src/**/*.test.ts',
-            'apps/*/src/**/*.test.ts',
-            'examples/plugins/*/src/**/*.test.ts',
-        ],
-    },
+  resolve: { alias: srcAliases },
+  test: {
+    include: [
+      'packages/*/src/**/*.test.ts',
+      'packages/*/scripts/**/*.test.ts',
+      'packages/safety/*/src/**/*.test.ts',
+      'extensions/*/src/**/*.test.ts',
+      'apps/*/src/**/*.test.ts',
+      'examples/plugins/*/src/**/*.test.ts',
+    ],
+  },
 });

@@ -30,27 +30,25 @@ import { createProcessTools } from '@ethosagent/tools-process';
 import { createTerminalTools } from '@ethosagent/tools-terminal';
 import { createWebTools } from '@ethosagent/tools-web';
 import { describe, expect, it } from 'vitest';
+
 const sandboxStub = {
-    isAvailable: () => false,
-    run: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+  isAvailable: () => false,
+  run: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
 };
 describe('Ch.3d default downgrade list — drift gate', () => {
-    it('every name in the default `auto` set is the name of an actual registered tool', () => {
-        const registered = new Set();
-        for (const t of createFileTools())
-            registered.add(t.name);
-        for (const t of createTerminalTools())
-            registered.add(t.name);
-        for (const t of createWebTools())
-            registered.add(t.name);
-        for (const t of createProcessTools('/tmp/ethos-test'))
-            registered.add(t.name);
-        for (const t of createCodeTools(sandboxStub))
-            registered.add(t.name);
-        for (const t of createBrowserTools({}))
-            registered.add(t.name);
-        const downgraded = [...resolveDowngradedTools('auto')];
-        const missing = downgraded.filter((name) => !registered.has(name));
-        expect(missing, `Default downgrade list contains tool names that are no longer registered: ${missing.join(', ')}. Update packages/safety/injection/src/downgrade.ts.`).toEqual([]);
-    });
+  it('every name in the default `auto` set is the name of an actual registered tool', () => {
+    const registered = new Set();
+    for (const t of createFileTools()) registered.add(t.name);
+    for (const t of createTerminalTools()) registered.add(t.name);
+    for (const t of createWebTools()) registered.add(t.name);
+    for (const t of createProcessTools('/tmp/ethos-test')) registered.add(t.name);
+    for (const t of createCodeTools(sandboxStub)) registered.add(t.name);
+    for (const t of createBrowserTools({})) registered.add(t.name);
+    const downgraded = [...resolveDowngradedTools('auto')];
+    const missing = downgraded.filter((name) => !registered.has(name));
+    expect(
+      missing,
+      `Default downgrade list contains tool names that are no longer registered: ${missing.join(', ')}. Update packages/safety/injection/src/downgrade.ts.`,
+    ).toEqual([]);
+  });
 });

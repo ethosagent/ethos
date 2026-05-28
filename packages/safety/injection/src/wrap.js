@@ -11,24 +11,24 @@ import { sanitizeTemplateTokens } from './sanitize';
  * first so the placeholder lands inside the fence (not outside).
  */
 export function wrapUntrusted({ content, toolName, source }) {
-    const { content: sanitized, strippedCount } = sanitizeTemplateTokens(content);
-    const sourceAttr = encodeAttr(source ?? 'unknown');
-    const toolAttr = encodeAttr(toolName);
-    const escaped = escapeBodyTags(sanitized);
-    const wrapped = `<untrusted source="${sourceAttr}" tool="${toolAttr}">\n${escaped}\n</untrusted>`;
-    return { content: wrapped, strippedTokens: strippedCount };
+  const { content: sanitized, strippedCount } = sanitizeTemplateTokens(content);
+  const sourceAttr = encodeAttr(source ?? 'unknown');
+  const toolAttr = encodeAttr(toolName);
+  const escaped = escapeBodyTags(sanitized);
+  const wrapped = `<untrusted source="${sourceAttr}" tool="${toolAttr}">\n${escaped}\n</untrusted>`;
+  return { content: wrapped, strippedTokens: strippedCount };
 }
 // Escape the opening/closing tags that form the provenance fence so an
 // attacker-controlled body cannot close the fence early or open a nested one.
 function escapeBodyTags(body) {
-    return body.replace(/<(\/?untrusted)/g, '&lt;$1');
+  return body.replace(/<(\/?untrusted)/g, '&lt;$1');
 }
 // Quote and strip newlines / angle brackets so a malicious source label can't
 // itself break out of the attribute or close the wrapper element early.
 function encodeAttr(value) {
-    return value
-        .replace(/[\r\n]+/g, ' ')
-        .replace(/[<>]/g, '')
-        .replace(/"/g, "'")
-        .slice(0, 256);
+  return value
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[<>]/g, '')
+    .replace(/"/g, "'")
+    .slice(0, 256);
 }

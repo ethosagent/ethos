@@ -9,9 +9,15 @@
 // The fork uses a fresh InMemorySessionStore so it never pollutes the
 // parent's session. It does NOT call close() on shared providers.
 import { join } from 'node:path';
-import { AgentLoop, DefaultHookRegistry, DefaultToolRegistry, InMemorySessionStore, } from '@ethosagent/core';
+import {
+  AgentLoop,
+  DefaultHookRegistry,
+  DefaultToolRegistry,
+  InMemorySessionStore,
+} from '@ethosagent/core';
 import { buildForkContext } from './fork-context';
 import { createSkillProposeTool, createSkillReadTool } from './tools';
+
 // Rubric system prompt for the fork personality.
 const RUBRIC_SYSTEM = `You are the self-improvement reviewer. After each user turn you receive a clean summary of what just happened. Your only job: classify and act.
 
@@ -23,168 +29,162 @@ Rules for classification:
 Never write both memory and skill in the same turn. Pick the stronger signal.
 Never invent facts or extrapolate beyond what the transcript shows.`;
 export class ImprovementFork {
-    cooldowns = new Map();
-    opts;
-    now;
-    constructor(opts) {
-        this.opts = opts;
-        this.now = opts.now ?? (() => Date.now());
+  cooldowns = new Map();
+  opts;
+  now;
+  constructor(opts) {
+    this.opts = opts;
+    this.now = opts.now ?? (() => Date.now());
+  }
+  /**
+   * Register an `agent_done` void hook. When shouldFork returns true,
+   * spawns a background fork via run(). Returns the cleanup function.
+   */
+  register() {
+    return this.opts.hooks.registerVoid('agent_done', async (payload) => {
+      if (this.shouldFork(payload)) {
+        await this.run(payload);
+      }
+    });
+  }
+  shouldFork(payload) {
+    if (!payload.personalityId) return false;
+    const personality = this.opts.personalities.get(payload.personalityId);
+    if (!personality) return false;
+    const cfg = personality.skill_evolution;
+    if (!cfg?.enabled) return false;
+    const minToolCalls = cfg.min_tool_calls ?? 5;
+    const successfulCalls = payload.successfulToolCalls ?? 0;
+    if (successfulCalls < minToolCalls) return false;
+    // Cooldown — refuse to re-fire too quickly per personality.
+    const cooldownMinutes = cfg.cooldown_minutes ?? 60;
+    const state = this.cooldowns.get(personality.id);
+    const nowMs = this.now();
+    if (state && nowMs - state.lastFiredAtMs < cooldownMinutes * 60_000) return false;
+    this.cooldowns.set(personality.id, { lastFiredAtMs: nowMs });
+    return true;
+  }
+  async run(payload) {
+    const personality = this.opts.personalities.get(payload.personalityId ?? '');
+    if (!personality) return;
+    // 1. Build fork context from the parent's session store.
+    const context = await buildForkContext(payload, this.opts.runtime.sessionStore);
+    // 2. Build the user prompt. Prepend the rubric (AgentLoop's RunOptions has
+    //    no `system` field — injectors build the system prompt internally).
+    const activeSkillHint = payload.activeSkillFiles?.length
+      ? `\nActive skills for this turn: [${payload.activeSkillFiles.join(', ')}]\nPrefer updating one of these if the pattern fits.`
+      : '';
+    const userPrompt = `${RUBRIC_SYSTEM}\n\n${context}${activeSkillHint}`;
+    // 3. Build the restricted fork tool registry.
+    const pendingDir = join(this.opts.dataDir, 'skills', '.pending', personality.id);
+    const skillsDirs = personality.skillsDirs ?? [];
+    let proposed = false;
+    const forkTools = new DefaultToolRegistry();
+    // Skill tools (cast needed: Tool<T> is contravariant in T; register() takes Tool<unknown>)
+    forkTools.register(createSkillReadTool({ storage: this.opts.storage, skillsDirs }));
+    forkTools.register(
+      createSkillProposeTool({
+        storage: this.opts.storage,
+        pendingDir,
+        now: this.opts.now,
+        onProposed: () => {
+          proposed = true;
+        },
+      }),
+    );
+    // Memory tools — lightweight wrappers around the shared MemoryProvider.
+    // These avoid pulling in the full @ethosagent/tools-memory package.
+    const memCtx = {
+      scopeId: `personality:${personality.id}`,
+      sessionId: 'improvement-fork',
+      sessionKey: 'improvement-fork',
+      platform: 'fork',
+      workingDir: '',
+    };
+    const memProvider = this.opts.runtime.memoryProvider;
+    forkTools.register(createMemoryReadTool(memProvider, memCtx));
+    forkTools.register(createMemoryWriteTool(memProvider, memCtx));
+    // 4. Create the fork AgentLoop with restricted toolset.
+    const forkSession = new InMemorySessionStore();
+    const forkHooks = new DefaultHookRegistry(); // clean — prevents fork-to-fork recursion
+    const forkLoop = new AgentLoop({
+      llm: this.opts.runtime.llm,
+      tools: forkTools,
+      session: forkSession,
+      hooks: forkHooks,
+      memory: this.opts.runtime.memoryProvider,
+    });
+    // 5. Run the fork — single turn, drain all events.
+    try {
+      for await (const _event of forkLoop.run(userPrompt, {
+        sessionKey: `improvement-fork-${Date.now()}`,
+      })) {
+        // drain — no streaming
+      }
+    } catch {
+      // Fork failures are non-fatal.
     }
-    /**
-     * Register an `agent_done` void hook. When shouldFork returns true,
-     * spawns a background fork via run(). Returns the cleanup function.
-     */
-    register() {
-        return this.opts.hooks.registerVoid('agent_done', async (payload) => {
-            if (this.shouldFork(payload)) {
-                await this.run(payload);
-            }
-        });
+    // 6. If a skill was proposed, fire the callback.
+    if (proposed && this.opts.onSkillProposed) {
+      this.opts.onSkillProposed(`auto-${Date.now()}`, personality.id);
     }
-    shouldFork(payload) {
-        if (!payload.personalityId)
-            return false;
-        const personality = this.opts.personalities.get(payload.personalityId);
-        if (!personality)
-            return false;
-        const cfg = personality.skill_evolution;
-        if (!cfg?.enabled)
-            return false;
-        const minToolCalls = cfg.min_tool_calls ?? 5;
-        const successfulCalls = payload.successfulToolCalls ?? 0;
-        if (successfulCalls < minToolCalls)
-            return false;
-        // Cooldown — refuse to re-fire too quickly per personality.
-        const cooldownMinutes = cfg.cooldown_minutes ?? 60;
-        const state = this.cooldowns.get(personality.id);
-        const nowMs = this.now();
-        if (state && nowMs - state.lastFiredAtMs < cooldownMinutes * 60_000)
-            return false;
-        this.cooldowns.set(personality.id, { lastFiredAtMs: nowMs });
-        return true;
-    }
-    async run(payload) {
-        const personality = this.opts.personalities.get(payload.personalityId ?? '');
-        if (!personality)
-            return;
-        // 1. Build fork context from the parent's session store.
-        const context = await buildForkContext(payload, this.opts.runtime.sessionStore);
-        // 2. Build the user prompt. Prepend the rubric (AgentLoop's RunOptions has
-        //    no `system` field — injectors build the system prompt internally).
-        const activeSkillHint = payload.activeSkillFiles?.length
-            ? `\nActive skills for this turn: [${payload.activeSkillFiles.join(', ')}]\nPrefer updating one of these if the pattern fits.`
-            : '';
-        const userPrompt = `${RUBRIC_SYSTEM}\n\n${context}${activeSkillHint}`;
-        // 3. Build the restricted fork tool registry.
-        const pendingDir = join(this.opts.dataDir, 'skills', '.pending', personality.id);
-        const skillsDirs = personality.skillsDirs ?? [];
-        let proposed = false;
-        const forkTools = new DefaultToolRegistry();
-        // Skill tools (cast needed: Tool<T> is contravariant in T; register() takes Tool<unknown>)
-        forkTools.register(createSkillReadTool({ storage: this.opts.storage, skillsDirs }));
-        forkTools.register(createSkillProposeTool({
-            storage: this.opts.storage,
-            pendingDir,
-            now: this.opts.now,
-            onProposed: () => {
-                proposed = true;
-            },
-        }));
-        // Memory tools — lightweight wrappers around the shared MemoryProvider.
-        // These avoid pulling in the full @ethosagent/tools-memory package.
-        const memCtx = {
-            scopeId: `personality:${personality.id}`,
-            sessionId: 'improvement-fork',
-            sessionKey: 'improvement-fork',
-            platform: 'fork',
-            workingDir: '',
-        };
-        const memProvider = this.opts.runtime.memoryProvider;
-        forkTools.register(createMemoryReadTool(memProvider, memCtx));
-        forkTools.register(createMemoryWriteTool(memProvider, memCtx));
-        // 4. Create the fork AgentLoop with restricted toolset.
-        const forkSession = new InMemorySessionStore();
-        const forkHooks = new DefaultHookRegistry(); // clean — prevents fork-to-fork recursion
-        const forkLoop = new AgentLoop({
-            llm: this.opts.runtime.llm,
-            tools: forkTools,
-            session: forkSession,
-            hooks: forkHooks,
-            memory: this.opts.runtime.memoryProvider,
-        });
-        // 5. Run the fork — single turn, drain all events.
-        try {
-            for await (const _event of forkLoop.run(userPrompt, {
-                sessionKey: `improvement-fork-${Date.now()}`,
-            })) {
-                // drain — no streaming
-            }
-        }
-        catch {
-            // Fork failures are non-fatal.
-        }
-        // 6. If a skill was proposed, fire the callback.
-        if (proposed && this.opts.onSkillProposed) {
-            this.opts.onSkillProposed(`auto-${Date.now()}`, personality.id);
-        }
-    }
+  }
 }
 /** Reset cooldowns for testing. */
 export function resetImprovementForkCooldowns(fork) {
-    // Access the private cooldowns map via bracket notation for test-only use.
-    fork.cooldowns.clear();
+  // Access the private cooldowns map via bracket notation for test-only use.
+  fork.cooldowns.clear();
 }
 // ---------------------------------------------------------------------------
 // Inline memory tools — minimal wrappers that avoid a tools-memory dep.
 // ---------------------------------------------------------------------------
 function createMemoryReadTool(provider, ctx) {
-    return {
-        name: 'memory_read',
-        description: 'Read the current memory (MEMORY.md and USER.md).',
-        toolset: 'memory',
-        capabilities: {},
-        schema: { type: 'object', properties: {}, required: [] },
-        async execute() {
-            const result = await provider.prefetch(ctx);
-            if (!result)
-                return { ok: true, value: '(No memory content found)' };
-            const parts = result.entries.map((e) => `## ${e.key}\n${e.content}`).join('\n\n');
-            return { ok: true, value: parts };
-        },
-    };
+  return {
+    name: 'memory_read',
+    description: 'Read the current memory (MEMORY.md and USER.md).',
+    toolset: 'memory',
+    capabilities: {},
+    schema: { type: 'object', properties: {}, required: [] },
+    async execute() {
+      const result = await provider.prefetch(ctx);
+      if (!result) return { ok: true, value: '(No memory content found)' };
+      const parts = result.entries.map((e) => `## ${e.key}\n${e.content}`).join('\n\n');
+      return { ok: true, value: parts };
+    },
+  };
 }
 function createMemoryWriteTool(provider, ctx) {
-    return {
-        name: 'memory_write',
-        description: 'Write to memory. Specify store (memory or user), action (add/replace/remove), and content.',
-        toolset: 'memory',
-        capabilities: {},
-        schema: {
-            type: 'object',
-            properties: {
-                store: {
-                    type: 'string',
-                    enum: ['memory', 'user'],
-                    description: 'Which store to write to',
-                },
-                action: {
-                    type: 'string',
-                    enum: ['add', 'replace', 'remove'],
-                    description: 'Write action',
-                },
-                content: { type: 'string', description: 'Content to write' },
-            },
-            required: ['store', 'action', 'content'],
+  return {
+    name: 'memory_write',
+    description:
+      'Write to memory. Specify store (memory or user), action (add/replace/remove), and content.',
+    toolset: 'memory',
+    capabilities: {},
+    schema: {
+      type: 'object',
+      properties: {
+        store: {
+          type: 'string',
+          enum: ['memory', 'user'],
+          description: 'Which store to write to',
         },
-        async execute(args) {
-            const key = args.store === 'user' ? 'USER.md' : 'MEMORY.md';
-            if (args.action === 'remove') {
-                await provider.sync([{ action: 'remove', key, substringMatch: args.content }], ctx);
-            }
-            else {
-                await provider.sync([{ action: args.action, key, content: args.content }], ctx);
-            }
-            return { ok: true, value: `Wrote to ${key} (${args.action})` };
+        action: {
+          type: 'string',
+          enum: ['add', 'replace', 'remove'],
+          description: 'Write action',
         },
-    };
+        content: { type: 'string', description: 'Content to write' },
+      },
+      required: ['store', 'action', 'content'],
+    },
+    async execute(args) {
+      const key = args.store === 'user' ? 'USER.md' : 'MEMORY.md';
+      if (args.action === 'remove') {
+        await provider.sync([{ action: 'remove', key, substringMatch: args.content }], ctx);
+      } else {
+        await provider.sync([{ action: args.action, key, content: args.content }], ctx);
+      }
+      return { ok: true, value: `Wrote to ${key} (${args.action})` };
+    },
+  };
 }

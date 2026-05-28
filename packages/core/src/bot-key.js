@@ -12,5 +12,5 @@ import { createHash } from 'node:crypto';
  * truth for the algorithm means two sources of divergence.
  */
 export function deriveBotKey(seed) {
-    return createHash('sha256').update(seed).digest('hex').slice(0, 24);
+  return createHash('sha256').update(seed).digest('hex').slice(0, 24);
 }

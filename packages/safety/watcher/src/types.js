@@ -12,10 +12,10 @@
 // through ObservabilityWriter as `audit.watcher` events for `ethos
 // security audit` to surface.
 export function makeInitialState() {
-    return {
-        recentToolEnds: new Map(),
-        outputTokensThisTurn: 0,
-        consecutiveFailures: new Map(),
-        recentCalls: [],
-    };
+  return {
+    recentToolEnds: new Map(),
+    outputTokensThisTurn: 0,
+    consecutiveFailures: new Map(),
+    recentCalls: [],
+  };
 }

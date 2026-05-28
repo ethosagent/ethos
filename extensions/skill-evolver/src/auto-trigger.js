@@ -11,6 +11,7 @@
 // reach the queue.
 import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
+
 /** Maps personalityId → cooldown state. Cleared on process restart. */
 const cooldowns = new Map();
 /**
@@ -18,55 +19,50 @@ const cooldowns = new Map();
  * cleanup function from `registerVoid` so callers can detach in tests.
  */
 export function registerSkillEvolutionAutoTrigger(opts) {
-    const storage = opts.storage ?? new FsStorage();
-    const now = opts.now ?? (() => Date.now());
-    return opts.hooks.registerVoid('agent_done', async (payload) => {
-        if (!payload.personalityId)
-            return;
-        const personality = opts.personalities.get(payload.personalityId);
-        if (!personality)
-            return;
-        const cfg = personality.skill_evolution;
-        if (!cfg?.enabled)
-            return;
-        const minToolCalls = cfg.min_tool_calls ?? 5;
-        const cooldownMinutes = cfg.cooldown_minutes ?? 60;
-        const successfulCalls = payload.successfulToolCalls ?? 0;
-        if (successfulCalls < minToolCalls)
-            return;
-        // Cooldown — refuse to re-queue too quickly per personality.
-        const state = cooldowns.get(personality.id);
-        const nowMs = now();
-        if (state && nowMs - state.lastFiredAtMs < cooldownMinutes * 60_000)
-            return;
-        cooldowns.set(personality.id, { lastFiredAtMs: nowMs });
-        const pendingDir = join(opts.dataDir, 'skills', '.pending', personality.id);
-        await storage.mkdir(pendingDir);
-        const id = `auto-${nowMs}-${randomSuffix()}`;
-        const filename = `${id}.md`;
-        const candidate = renderCandidate({
-            id,
-            personalityId: personality.id,
-            sessionId: payload.sessionId,
-            turnCount: payload.turnCount,
-            successfulToolCalls: successfulCalls,
-            totalToolCalls: payload.totalToolCalls ?? successfulCalls,
-            toolNames: payload.toolNames ?? [],
-            initialPrompt: payload.initialPrompt ?? '',
-            finalText: payload.text,
-        });
-        await storage.write(join(pendingDir, filename), candidate);
+  const storage = opts.storage ?? new FsStorage();
+  const now = opts.now ?? (() => Date.now());
+  return opts.hooks.registerVoid('agent_done', async (payload) => {
+    if (!payload.personalityId) return;
+    const personality = opts.personalities.get(payload.personalityId);
+    if (!personality) return;
+    const cfg = personality.skill_evolution;
+    if (!cfg?.enabled) return;
+    const minToolCalls = cfg.min_tool_calls ?? 5;
+    const cooldownMinutes = cfg.cooldown_minutes ?? 60;
+    const successfulCalls = payload.successfulToolCalls ?? 0;
+    if (successfulCalls < minToolCalls) return;
+    // Cooldown — refuse to re-queue too quickly per personality.
+    const state = cooldowns.get(personality.id);
+    const nowMs = now();
+    if (state && nowMs - state.lastFiredAtMs < cooldownMinutes * 60_000) return;
+    cooldowns.set(personality.id, { lastFiredAtMs: nowMs });
+    const pendingDir = join(opts.dataDir, 'skills', '.pending', personality.id);
+    await storage.mkdir(pendingDir);
+    const id = `auto-${nowMs}-${randomSuffix()}`;
+    const filename = `${id}.md`;
+    const candidate = renderCandidate({
+      id,
+      personalityId: personality.id,
+      sessionId: payload.sessionId,
+      turnCount: payload.turnCount,
+      successfulToolCalls: successfulCalls,
+      totalToolCalls: payload.totalToolCalls ?? successfulCalls,
+      toolNames: payload.toolNames ?? [],
+      initialPrompt: payload.initialPrompt ?? '',
+      finalText: payload.text,
     });
+    await storage.write(join(pendingDir, filename), candidate);
+  });
 }
 /** Reset cooldowns (test-only helper). */
 export function resetSkillEvolutionCooldowns() {
-    cooldowns.clear();
+  cooldowns.clear();
 }
 function renderCandidate(input) {
-    const tools = input.toolNames.length > 0 ? input.toolNames.join(', ') : '(none recorded)';
-    const trimmedPrompt = truncate(input.initialPrompt, 400);
-    const trimmedFinal = truncate(input.finalText, 400);
-    return `---
+  const tools = input.toolNames.length > 0 ? input.toolNames.join(', ') : '(none recorded)';
+  const trimmedPrompt = truncate(input.initialPrompt, 400);
+  const trimmedFinal = truncate(input.finalText, 400);
+  return `---
 name: ${input.id}
 description: Auto-proposed skill candidate from ${input.personalityId}
 ethos:
@@ -95,10 +91,9 @@ ${trimmedFinal}
 `;
 }
 function truncate(s, n) {
-    if (s.length <= n)
-        return s;
-    return `${s.slice(0, n)}…`;
+  if (s.length <= n) return s;
+  return `${s.slice(0, n)}…`;
 }
 function randomSuffix() {
-    return Math.random().toString(36).slice(2, 8);
+  return Math.random().toString(36).slice(2, 8);
 }

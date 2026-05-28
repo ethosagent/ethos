@@ -1,13 +1,29 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import { meshRegistryPath, setMeshObservabilityService } from '@ethosagent/agent-mesh';
-import { BlobStore, ObservabilityService, SQLiteObservabilityStore, startPruneCron, } from '@ethosagent/observability-sqlite';
-import { EnvSecretsResolver, FileSecretsResolver, FsStorage, loadDotEnv, MergedSecretsResolver, } from '@ethosagent/storage-fs';
+import {
+  BlobStore,
+  ObservabilityService,
+  SQLiteObservabilityStore,
+  startPruneCron,
+} from '@ethosagent/observability-sqlite';
+import {
+  EnvSecretsResolver,
+  FileSecretsResolver,
+  FsStorage,
+  loadDotEnv,
+  MergedSecretsResolver,
+} from '@ethosagent/storage-fs';
 import { parseTeamManifest, teamsDir } from '@ethosagent/team-supervisor';
-import { EthosObservability, createAgentLoop as packageCreateAgentLoop, createLLM as packageCreateLLM, } from '@ethosagent/wiring';
+import {
+  EthosObservability,
+  createAgentLoop as packageCreateAgentLoop,
+  createLLM as packageCreateLLM,
+} from '@ethosagent/wiring';
 import { ethosDir, readKeys, readRawConfig } from './config';
 import { setObservabilityService } from './error-log';
 import { logger } from './logger';
+
 // CLI-side adapter over @ethosagent/wiring. Resolves the rotation pool, data
 // dir, working dir, and logger from the CLI's environment, then delegates.
 // The actual loop assembly (LLM + tools + hooks + session/memory/personalities)
@@ -19,39 +35,38 @@ let storageSingleton;
  * graph readable: any code path that needs ~/.ethos/ access calls this.
  */
 export function getStorage() {
-    if (!storageSingleton)
-        storageSingleton = new FsStorage();
-    return storageSingleton;
+  if (!storageSingleton) storageSingleton = new FsStorage();
+  return storageSingleton;
 }
 let secretsInitPromise;
 export function getSecretsResolver() {
-    if (!secretsInitPromise) {
-        secretsInitPromise = initSecrets();
-    }
-    return secretsInitPromise;
+  if (!secretsInitPromise) {
+    secretsInitPromise = initSecrets();
+  }
+  return secretsInitPromise;
 }
 async function initSecrets() {
-    const envFilePath = process.env.ETHOS_ENV_FILE ?? join(ethosDir(), '.env');
-    loadDotEnv(envFilePath);
-    const file = new FileSecretsResolver({
-        dir: join(ethosDir(), 'secrets'),
-        storage: getStorage(),
+  const envFilePath = process.env.ETHOS_ENV_FILE ?? join(ethosDir(), '.env');
+  loadDotEnv(envFilePath);
+  const file = new FileSecretsResolver({
+    dir: join(ethosDir(), 'secrets'),
+    storage: getStorage(),
+  });
+  const env = new EnvSecretsResolver();
+  const rawConfig = await readRawConfig(getStorage());
+  if (rawConfig?.aws?.secrets?.enabled) {
+    const { AwsSecretsManagerResolver } = await import('@ethosagent/secrets-aws');
+    const awsResolver = new AwsSecretsManagerResolver({
+      region: rawConfig.aws.secrets.region ?? 'us-east-1',
+      prefix: rawConfig.aws.secrets.prefix ?? 'ethos',
+      endpoint: rawConfig.aws.secrets.endpoint,
     });
-    const env = new EnvSecretsResolver();
-    const rawConfig = await readRawConfig(getStorage());
-    if (rawConfig?.aws?.secrets?.enabled) {
-        const { AwsSecretsManagerResolver } = await import('@ethosagent/secrets-aws');
-        const awsResolver = new AwsSecretsManagerResolver({
-            region: rawConfig.aws.secrets.region ?? 'us-east-1',
-            prefix: rawConfig.aws.secrets.prefix ?? 'ethos',
-            endpoint: rawConfig.aws.secrets.endpoint,
-        });
-        return new MergedSecretsResolver({
-            readers: [env, awsResolver, file],
-            writer: awsResolver,
-        });
-    }
-    return new MergedSecretsResolver({ readers: [env, file], writer: file });
+    return new MergedSecretsResolver({
+      readers: [env, awsResolver, file],
+      writer: awsResolver,
+    });
+  }
+  return new MergedSecretsResolver({ readers: [env, file], writer: file });
 }
 let obsSingleton;
 let ethosObsSingleton;
@@ -63,27 +78,26 @@ let pruneStop;
  * components that need typed domain helpers (error-log, mesh journal).
  */
 export function getObservabilityService() {
-    if (!obsSingleton) {
-        const dir = ethosDir();
-        const storage = getStorage();
-        const store = new SQLiteObservabilityStore(join(dir, 'observability.db'));
-        const blobStore = new BlobStore(join(dir, 'blobs'), storage);
-        const killSwitchPath = join(dir, '.observability.disabled');
-        obsSingleton = new ObservabilityService(store, blobStore, () => existsSync(killSwitchPath));
-        ethosObsSingleton = new EthosObservability(obsSingleton);
-        setObservabilityService(ethosObsSingleton);
-        setMeshObservabilityService(ethosObsSingleton);
-    }
-    return obsSingleton;
+  if (!obsSingleton) {
+    const dir = ethosDir();
+    const storage = getStorage();
+    const store = new SQLiteObservabilityStore(join(dir, 'observability.db'));
+    const blobStore = new BlobStore(join(dir, 'blobs'), storage);
+    const killSwitchPath = join(dir, '.observability.disabled');
+    obsSingleton = new ObservabilityService(store, blobStore, () => existsSync(killSwitchPath));
+    ethosObsSingleton = new EthosObservability(obsSingleton);
+    setObservabilityService(ethosObsSingleton);
+    setMeshObservabilityService(ethosObsSingleton);
+  }
+  return obsSingleton;
 }
 function getEthosObservability() {
-    // Constructed alongside the singleton — getObservabilityService initialises both.
-    if (!ethosObsSingleton) {
-        getObservabilityService();
-    }
-    if (!ethosObsSingleton)
-        throw new Error('ethos observability adapter not initialised');
-    return ethosObsSingleton;
+  // Constructed alongside the singleton — getObservabilityService initialises both.
+  if (!ethosObsSingleton) {
+    getObservabilityService();
+  }
+  if (!ethosObsSingleton) throw new Error('ethos observability adapter not initialised');
+  return ethosObsSingleton;
 }
 /**
  * Start the nightly observability prune cron job (03:00 local time).
@@ -91,23 +105,23 @@ function getEthosObservability() {
  * Returns a stop function for clean shutdown.
  */
 export function startNightlyPrune(config, personalitiesConfig) {
-    if (!pruneStop) {
-        const handle = startPruneCron({
-            obsDbPath: join(ethosDir(), 'observability.db'),
-            sessDbPath: join(ethosDir(), 'sessions.db'),
-            config,
-            perSubjectConfig: personalitiesConfig,
-        });
-        pruneStop = handle.stop;
-    }
-    return pruneStop;
+  if (!pruneStop) {
+    const handle = startPruneCron({
+      obsDbPath: join(ethosDir(), 'observability.db'),
+      sessDbPath: join(ethosDir(), 'sessions.db'),
+      config,
+      perSubjectConfig: personalitiesConfig,
+    });
+    pruneStop = handle.stop;
+  }
+  return pruneStop;
 }
 /** Stop the nightly prune cron job if it was started. */
 export function stopNightlyPrune() {
-    if (pruneStop) {
-        pruneStop();
-        pruneStop = undefined;
-    }
+  if (pruneStop) {
+    pruneStop();
+    pruneStop = undefined;
+  }
 }
 let evolverCronStop;
 /**
@@ -119,85 +133,87 @@ let evolverCronStop;
  * to avoid pulling better-sqlite3 and the LLM into startup.
  */
 export async function startEvolverCron(schedule, config) {
-    if (!evolverCronStop) {
-        const { registerEvolverCron } = await import('@ethosagent/skill-evolver');
-        evolverCronStop = registerEvolverCron(schedule, async () => {
-            try {
-                // Lazy import keeps the LLM wiring out of the startup bundle.
-                const { runEvolve } = await import('./commands/evolve');
-                await runEvolve(['run', '--quiet'], config);
-            }
-            catch (err) {
-                // Cron failures must not propagate into the interactive session.
-                // Log a warning to stderr so the user can diagnose if they look.
-                process.stderr.write(`[ethos evolve cron] run failed: ${err instanceof Error ? err.message : String(err)}\n`);
-            }
-        });
-    }
-    return evolverCronStop;
+  if (!evolverCronStop) {
+    const { registerEvolverCron } = await import('@ethosagent/skill-evolver');
+    evolverCronStop = registerEvolverCron(schedule, async () => {
+      try {
+        // Lazy import keeps the LLM wiring out of the startup bundle.
+        const { runEvolve } = await import('./commands/evolve');
+        await runEvolve(['run', '--quiet'], config);
+      } catch (err) {
+        // Cron failures must not propagate into the interactive session.
+        // Log a warning to stderr so the user can diagnose if they look.
+        process.stderr.write(
+          `[ethos evolve cron] run failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+    });
+  }
+  return evolverCronStop;
 }
 /** Stop the evolver cron job if it was started. */
 export function stopEvolverCron() {
-    if (evolverCronStop) {
-        evolverCronStop();
-        evolverCronStop = undefined;
-    }
+  if (evolverCronStop) {
+    evolverCronStop();
+    evolverCronStop = undefined;
+  }
 }
 async function withRotation(config) {
-    const rotationKeys = config.provider === 'anthropic' ? await readKeys(getStorage(), await getSecretsResolver()) : [];
-    return { ...config, rotationKeys };
+  const rotationKeys =
+    config.provider === 'anthropic' ? await readKeys(getStorage(), await getSecretsResolver()) : [];
+  return { ...config, rotationKeys };
 }
 export async function createLLM(config) {
-    return packageCreateLLM(await withRotation(config));
+  return packageCreateLLM(await withRotation(config));
 }
 export async function createAgentLoop(config, opts = {}) {
-    const rotated = await withRotation(config);
-    const wiringConfig = {
-        ...rotated,
-        ...(config.teamName !== undefined ? { teamName: config.teamName } : {}),
-        ...(config.role !== undefined ? { role: config.role } : {}),
-        ...(config.auxiliary?.compression
-            ? { auxiliaryCompression: config.auxiliary.compression }
-            : {}),
-        ...(config.auxiliary?.vision ? { auxiliaryVision: config.auxiliary.vision } : {}),
-        ...(config.postmortems !== undefined ? { postmortems: config.postmortems } : {}),
-        ...(config.trustPolicy !== undefined ? { trustPolicy: config.trustPolicy } : {}),
-        ...(config.modelCatalog ? { modelCatalogConfig: config.modelCatalog } : {}),
-        ...(config.storage ? { storage: config.storage } : {}),
-        secretsResolver: await getSecretsResolver(),
-    };
-    const result = await packageCreateAgentLoop(wiringConfig, {
-        dataDir: ethosDir(),
-        workingDir: process.cwd(),
-        profile: opts.profile ?? 'cli',
-        logger,
-        meshRegistryPath: opts.meshRegistryPath,
-        observability: getEthosObservability(),
-        ...(opts.cronScheduler ? { cronScheduler: opts.cronScheduler } : {}),
-    });
-    result.setOnSkillProposed?.((skillId, personalityId) => {
-        console.warn(`[skill-evolution] Proposed skill candidate "${skillId}" for personality "${personalityId}". ` +
-            `Review with: ethos evolve --list-pending`);
-    });
-    return result;
+  const rotated = await withRotation(config);
+  const wiringConfig = {
+    ...rotated,
+    ...(config.teamName !== undefined ? { teamName: config.teamName } : {}),
+    ...(config.role !== undefined ? { role: config.role } : {}),
+    ...(config.auxiliary?.compression
+      ? { auxiliaryCompression: config.auxiliary.compression }
+      : {}),
+    ...(config.auxiliary?.vision ? { auxiliaryVision: config.auxiliary.vision } : {}),
+    ...(config.postmortems !== undefined ? { postmortems: config.postmortems } : {}),
+    ...(config.trustPolicy !== undefined ? { trustPolicy: config.trustPolicy } : {}),
+    ...(config.modelCatalog ? { modelCatalogConfig: config.modelCatalog } : {}),
+    ...(config.storage ? { storage: config.storage } : {}),
+    secretsResolver: await getSecretsResolver(),
+  };
+  const result = await packageCreateAgentLoop(wiringConfig, {
+    dataDir: ethosDir(),
+    workingDir: process.cwd(),
+    profile: opts.profile ?? 'cli',
+    logger,
+    meshRegistryPath: opts.meshRegistryPath,
+    observability: getEthosObservability(),
+    ...(opts.cronScheduler ? { cronScheduler: opts.cronScheduler } : {}),
+  });
+  result.setOnSkillProposed?.((skillId, personalityId) => {
+    console.warn(
+      `[skill-evolution] Proposed skill candidate "${skillId}" for personality "${personalityId}". ` +
+        `Review with: ethos evolve --list-pending`,
+    );
+  });
+  return result;
 }
 /** Resolve a team manifest by name (local ./team.yaml or ~/.ethos/teams/<n>.yaml). */
 export function loadTeamManifest(teamName) {
-    // Try trusted location first — ~/.ethos/teams/<teamName>.yaml
-    const trusted = join(teamsDir(), `${teamName}.yaml`);
-    try {
-        return parseTeamManifest(readFileSync(trusted, 'utf-8'));
-    }
-    catch {
-        // Not found — fall through to CWD fallback
-    }
-    // Fallback: ./team.yaml in CWD (developer convenience, lower priority)
-    const local = resolvePath('./team.yaml');
-    const src = readFileSync(local, 'utf-8');
-    const m = parseTeamManifest(src);
-    if (m.name === teamName)
-        return m;
-    throw new Error(`team.yaml in CWD has name "${m.name}", expected "${teamName}"`);
+  // Try trusted location first — ~/.ethos/teams/<teamName>.yaml
+  const trusted = join(teamsDir(), `${teamName}.yaml`);
+  try {
+    return parseTeamManifest(readFileSync(trusted, 'utf-8'));
+  } catch {
+    // Not found — fall through to CWD fallback
+  }
+  // Fallback: ./team.yaml in CWD (developer convenience, lower priority)
+  const local = resolvePath('./team.yaml');
+  const src = readFileSync(local, 'utf-8');
+  const m = parseTeamManifest(src);
+  if (m.name === teamName) return m;
+  throw new Error(`team.yaml in CWD has name "${m.name}", expected "${teamName}"`);
 }
 /**
  * Build an AgentLoop wired to a team's named mesh.
@@ -207,77 +223,81 @@ export function loadTeamManifest(teamName) {
  * Phase 2: applies coordinator model override from manifest.coordinator_model.
  */
 export async function createTeamAgentLoop(config, teamName, opts = {}) {
-    const manifest = loadTeamManifest(teamName);
-    const coordinatorPersonality = manifest.coordinator ?? manifest.members[0]?.personality ?? config.personality;
-    const meshName = manifest.mesh ?? manifest.name;
-    // Coordinator model: manifest.coordinator_model beats global config.model.
-    // Coordinator does NOT use personality-level modelRouting (see plan doc).
-    const coordinatorConfig = manifest.coordinator_model
-        ? { ...config, model: manifest.coordinator_model }
-        : config;
-    // Plan B — thread teamName + role into the wiring so the kanban store points at
-    // the team board and the role-gate hook gets registered.
-    const { loop, toolRegistry, setOnSkillProposed, notificationRouter, pluginLoader } = await createAgentLoop({
+  const manifest = loadTeamManifest(teamName);
+  const coordinatorPersonality =
+    manifest.coordinator ?? manifest.members[0]?.personality ?? config.personality;
+  const meshName = manifest.mesh ?? manifest.name;
+  // Coordinator model: manifest.coordinator_model beats global config.model.
+  // Coordinator does NOT use personality-level modelRouting (see plan doc).
+  const coordinatorConfig = manifest.coordinator_model
+    ? { ...config, model: manifest.coordinator_model }
+    : config;
+  // Plan B — thread teamName + role into the wiring so the kanban store points at
+  // the team board and the role-gate hook gets registered.
+  const { loop, toolRegistry, setOnSkillProposed, notificationRouter, pluginLoader } =
+    await createAgentLoop(
+      {
         ...coordinatorConfig,
         personality: coordinatorPersonality,
         teamName,
         role: opts.role ?? 'coordinator',
         postmortems: manifest.postmortems,
         trustPolicy: manifest.trust_policy,
-    }, { profile: opts.profile ?? 'cli', meshRegistryPath: meshRegistryPath(meshName) });
-    const coordinatorSystem = buildCoordinatorTeamPrompt(manifest);
-    loop.hooks.registerModifying('before_prompt_build', async (payload) => {
-        if (payload.personalityId !== coordinatorPersonality)
-            return null;
-        return { prependSystem: coordinatorSystem };
-    });
-    return {
-        loop,
-        toolRegistry,
-        coordinatorPersonality,
-        meshName,
-        setOnSkillProposed,
-        notificationRouter,
-        pluginLoader,
-    };
+      },
+      { profile: opts.profile ?? 'cli', meshRegistryPath: meshRegistryPath(meshName) },
+    );
+  const coordinatorSystem = buildCoordinatorTeamPrompt(manifest);
+  loop.hooks.registerModifying('before_prompt_build', async (payload) => {
+    if (payload.personalityId !== coordinatorPersonality) return null;
+    return { prependSystem: coordinatorSystem };
+  });
+  return {
+    loop,
+    toolRegistry,
+    coordinatorPersonality,
+    meshName,
+    setOnSkillProposed,
+    notificationRouter,
+    pluginLoader,
+  };
 }
 function buildCoordinatorTeamPrompt(manifest) {
-    const members = manifest.members.map((m) => m.personality);
-    const teamName = manifest.name;
-    const memberText = members.length > 0 ? members.join(', ') : 'none';
-    return [
-        `## Team Identity`,
-        `You are the coordinator of team "${teamName}".`,
-        `Your name is "${teamName}".`,
-        `If asked your name, answer with "${teamName}".`,
-        `If asked who you are, say you are the coordinator of this team and list your member personalities: ${memberText}.`,
-        `For simple conversational questions (greetings, identity, coordination metadata), reply directly without any tool call.`,
-        `Delegate only when specialist execution is required.`,
-    ].join('\n');
+  const members = manifest.members.map((m) => m.personality);
+  const teamName = manifest.name;
+  const memberText = members.length > 0 ? members.join(', ') : 'none';
+  return [
+    `## Team Identity`,
+    `You are the coordinator of team "${teamName}".`,
+    `Your name is "${teamName}".`,
+    `If asked your name, answer with "${teamName}".`,
+    `If asked who you are, say you are the coordinator of this team and list your member personalities: ${memberText}.`,
+    `For simple conversational questions (greetings, identity, coordination metadata), reply directly without any tool call.`,
+    `Delegate only when specialist execution is required.`,
+  ].join('\n');
 }
 export async function resolveActiveLoop(config, opts = {}) {
-    if (config.activeContext?.type === 'team') {
-        const teamName = config.activeContext.name;
-        const teamResult = await createTeamAgentLoop(config, teamName, opts);
-        applyCliOverrideHooks(teamResult.loop, config);
-        return {
-            loop: teamResult.loop,
-            personalityId: teamResult.coordinatorPersonality,
-            displayName: `team:${teamName}`,
-            notificationRouter: teamResult.notificationRouter,
-            pluginLoader: teamResult.pluginLoader,
-        };
-    }
-    const personalityId = config.activeContext?.name ?? config.personality;
-    const result = await createAgentLoop({ ...config, personality: personalityId }, opts);
-    applyCliOverrideHooks(result.loop, config);
+  if (config.activeContext?.type === 'team') {
+    const teamName = config.activeContext.name;
+    const teamResult = await createTeamAgentLoop(config, teamName, opts);
+    applyCliOverrideHooks(teamResult.loop, config);
     return {
-        loop: result.loop,
-        personalityId,
-        displayName: personalityId,
-        notificationRouter: result.notificationRouter,
-        pluginLoader: result.pluginLoader,
+      loop: teamResult.loop,
+      personalityId: teamResult.coordinatorPersonality,
+      displayName: `team:${teamName}`,
+      notificationRouter: teamResult.notificationRouter,
+      pluginLoader: teamResult.pluginLoader,
     };
+  }
+  const personalityId = config.activeContext?.name ?? config.personality;
+  const result = await createAgentLoop({ ...config, personality: personalityId }, opts);
+  applyCliOverrideHooks(result.loop, config);
+  return {
+    loop: result.loop,
+    personalityId,
+    displayName: personalityId,
+    notificationRouter: result.notificationRouter,
+    pluginLoader: result.pluginLoader,
+  };
 }
 // ---------------------------------------------------------------------------
 // FW-8 — apply CLI override hooks after the AgentLoop is constructed
@@ -288,26 +308,26 @@ export async function resolveActiveLoop(config, opts = {}) {
  * and solo modes both get the overrides.
  */
 function applyCliOverrideHooks(loop, config) {
-    // --toolsets: reject before_tool_call for tools not in the allowed set
-    if (config.cliToolsets && config.cliToolsets.length > 0) {
-        const allowed = new Set(config.cliToolsets);
-        loop.hooks.registerModifying('before_tool_call', async (payload) => {
-            const tool = loop.getAvailableTools().find((t) => t.name === payload.toolName);
-            if (tool?.toolset && !allowed.has(tool.toolset)) {
-                return {
-                    error: `Tool '${payload.toolName}' (toolset: ${tool.toolset}) is disabled by --toolsets CLI override`,
-                };
-            }
-            return null;
-        });
+  // --toolsets: reject before_tool_call for tools not in the allowed set
+  if (config.cliToolsets && config.cliToolsets.length > 0) {
+    const allowed = new Set(config.cliToolsets);
+    loop.hooks.registerModifying('before_tool_call', async (payload) => {
+      const tool = loop.getAvailableTools().find((t) => t.name === payload.toolName);
+      if (tool?.toolset && !allowed.has(tool.toolset)) {
+        return {
+          error: `Tool '${payload.toolName}' (toolset: ${tool.toolset}) is disabled by --toolsets CLI override`,
+        };
+      }
+      return null;
+    });
+  }
+  // -s: prepend skill content to every turn's system prompt (content pre-loaded by applyCliOverrides)
+  if (config.cliSkillContents && config.cliSkillContents.length > 0) {
+    const skillContent = config.cliSkillContents.filter(Boolean).join('\n\n---\n\n');
+    if (skillContent) {
+      loop.hooks.registerModifying('before_prompt_build', async () => {
+        return { prependSystem: skillContent };
+      });
     }
-    // -s: prepend skill content to every turn's system prompt (content pre-loaded by applyCliOverrides)
-    if (config.cliSkillContents && config.cliSkillContents.length > 0) {
-        const skillContent = config.cliSkillContents.filter(Boolean).join('\n\n---\n\n');
-        if (skillContent) {
-            loop.hooks.registerModifying('before_prompt_build', async () => {
-                return { prependSystem: skillContent };
-            });
-        }
-    }
+  }
 }

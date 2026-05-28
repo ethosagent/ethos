@@ -1,201 +1,207 @@
 import BetterSqlite3 from 'better-sqlite3';
 /** Parse a duration string to milliseconds, or null for 'forever'. */
 export function parseDuration(s) {
-    if (s === 'forever')
-        return null;
-    const m = s.match(/^(\d+)(d|w|m|y)$/);
-    if (!m)
-        throw new Error(`Invalid duration: "${s}"`);
-    const n = Number(m[1]);
-    switch (m[2]) {
-        case 'd':
-            return n * 86_400_000;
-        case 'w':
-            return n * 7 * 86_400_000;
-        case 'm':
-            return n * 30 * 86_400_000;
-        case 'y':
-            return n * 365 * 86_400_000;
-        default:
-            throw new Error(`Unknown unit in "${s}"`);
-    }
+  if (s === 'forever') return null;
+  const m = s.match(/^(\d+)(d|w|m|y)$/);
+  if (!m) throw new Error(`Invalid duration: "${s}"`);
+  const n = Number(m[1]);
+  switch (m[2]) {
+    case 'd':
+      return n * 86_400_000;
+    case 'w':
+      return n * 7 * 86_400_000;
+    case 'm':
+      return n * 30 * 86_400_000;
+    case 'y':
+      return n * 365 * 86_400_000;
+    default:
+      throw new Error(`Unknown unit in "${s}"`);
+  }
 }
 /** Deep-merge a sparse per-subject override on top of the global config. */
 export function mergeRetentionConfig(global, override) {
-    if (!override)
-        return global;
-    return {
-        ...global,
-        ...override,
-        events: override.events ? { ...global.events, ...override.events } : global.events,
-    };
+  if (!override) return global;
+  return {
+    ...global,
+    ...override,
+    events: override.events ? { ...global.events, ...override.events } : global.events,
+  };
 }
 /**
  * Prune rows from observability.db that have exceeded their retention TTL.
  * Returns counts of deleted rows (or would-delete counts when dryRun=true).
  */
 export function pruneObservability(db, config, opts = {}) {
-    const now = opts.now ?? Date.now();
-    const result = { traces: 0, spans: 0, events: 0, snapshots: 0, messages: 0 };
-    const cutoff = (dur, def) => parseDuration(dur ?? def);
-    const traceCutoff = cutoff(config.traces, '90d');
-    const spanCutoff = cutoff(config.spans, '90d');
-    // Subjects that have their own prune pass — excluded from the global pass
-    // so a stricter global TTL cannot delete rows the subject pass should retain.
-    const excluded = opts.excludeSubjectIds ?? [];
-    if (traceCutoff !== null) {
-        const threshold = now - traceCutoff;
-        if (opts.subjectId) {
-            if (opts.dryRun) {
-                result.traces = db
-                    .prepare('SELECT COUNT(*) as n FROM traces WHERE subject_id = ? AND start_ts < ?')
-                    .get(opts.subjectId, threshold).n;
-            }
-            else {
-                result.traces = db
-                    .prepare('DELETE FROM traces WHERE subject_id = ? AND start_ts < ?')
-                    .run(opts.subjectId, threshold).changes;
-            }
-        }
-        else if (excluded.length > 0) {
-            const ph = excluded.map(() => '?').join(',');
-            if (opts.dryRun) {
-                result.traces = db
-                    .prepare(`SELECT COUNT(*) as n FROM traces WHERE start_ts < ? AND (subject_id IS NULL OR subject_id NOT IN (${ph}))`)
-                    .get(threshold, ...excluded).n;
-            }
-            else {
-                result.traces = db
-                    .prepare(`DELETE FROM traces WHERE start_ts < ? AND (subject_id IS NULL OR subject_id NOT IN (${ph}))`)
-                    .run(threshold, ...excluded).changes;
-            }
-        }
-        else if (opts.dryRun) {
-            result.traces = db.prepare('SELECT COUNT(*) as n FROM traces WHERE start_ts < ?').get(threshold).n;
-        }
-        else {
-            result.traces = db.prepare('DELETE FROM traces WHERE start_ts < ?').run(threshold).changes;
-        }
+  const now = opts.now ?? Date.now();
+  const result = { traces: 0, spans: 0, events: 0, snapshots: 0, messages: 0 };
+  const cutoff = (dur, def) => parseDuration(dur ?? def);
+  const traceCutoff = cutoff(config.traces, '90d');
+  const spanCutoff = cutoff(config.spans, '90d');
+  // Subjects that have their own prune pass — excluded from the global pass
+  // so a stricter global TTL cannot delete rows the subject pass should retain.
+  const excluded = opts.excludeSubjectIds ?? [];
+  if (traceCutoff !== null) {
+    const threshold = now - traceCutoff;
+    if (opts.subjectId) {
+      if (opts.dryRun) {
+        result.traces = db
+          .prepare('SELECT COUNT(*) as n FROM traces WHERE subject_id = ? AND start_ts < ?')
+          .get(opts.subjectId, threshold).n;
+      } else {
+        result.traces = db
+          .prepare('DELETE FROM traces WHERE subject_id = ? AND start_ts < ?')
+          .run(opts.subjectId, threshold).changes;
+      }
+    } else if (excluded.length > 0) {
+      const ph = excluded.map(() => '?').join(',');
+      if (opts.dryRun) {
+        result.traces = db
+          .prepare(
+            `SELECT COUNT(*) as n FROM traces WHERE start_ts < ? AND (subject_id IS NULL OR subject_id NOT IN (${ph}))`,
+          )
+          .get(threshold, ...excluded).n;
+      } else {
+        result.traces = db
+          .prepare(
+            `DELETE FROM traces WHERE start_ts < ? AND (subject_id IS NULL OR subject_id NOT IN (${ph}))`,
+          )
+          .run(threshold, ...excluded).changes;
+      }
+    } else if (opts.dryRun) {
+      result.traces = db
+        .prepare('SELECT COUNT(*) as n FROM traces WHERE start_ts < ?')
+        .get(threshold).n;
+    } else {
+      result.traces = db.prepare('DELETE FROM traces WHERE start_ts < ?').run(threshold).changes;
     }
-    if (spanCutoff !== null) {
-        const threshold = now - spanCutoff;
-        if (opts.subjectId) {
-            if (opts.dryRun) {
-                result.spans = db
-                    .prepare('SELECT COUNT(*) as n FROM spans WHERE trace_id IN (SELECT trace_id FROM traces WHERE subject_id = ? AND start_ts < ?)')
-                    .get(opts.subjectId, threshold).n;
-            }
-            else {
-                result.spans = db
-                    .prepare('DELETE FROM spans WHERE trace_id IN (SELECT trace_id FROM traces WHERE subject_id = ? AND start_ts < ?)')
-                    .run(opts.subjectId, threshold).changes;
-            }
-        }
-        else if (excluded.length > 0) {
-            const ph = excluded.map(() => '?').join(',');
-            if (opts.dryRun) {
-                result.spans = db
-                    .prepare(`SELECT COUNT(*) as n FROM spans WHERE start_ts < ? AND trace_id NOT IN (SELECT trace_id FROM traces WHERE subject_id IN (${ph}))`)
-                    .get(threshold, ...excluded).n;
-            }
-            else {
-                result.spans = db
-                    .prepare(`DELETE FROM spans WHERE start_ts < ? AND trace_id NOT IN (SELECT trace_id FROM traces WHERE subject_id IN (${ph}))`)
-                    .run(threshold, ...excluded).changes;
-            }
-        }
-        else if (opts.dryRun) {
-            result.spans = db.prepare('SELECT COUNT(*) as n FROM spans WHERE start_ts < ?').get(threshold).n;
-        }
-        else {
-            result.spans = db.prepare('DELETE FROM spans WHERE start_ts < ?').run(threshold).changes;
-        }
+  }
+  if (spanCutoff !== null) {
+    const threshold = now - spanCutoff;
+    if (opts.subjectId) {
+      if (opts.dryRun) {
+        result.spans = db
+          .prepare(
+            'SELECT COUNT(*) as n FROM spans WHERE trace_id IN (SELECT trace_id FROM traces WHERE subject_id = ? AND start_ts < ?)',
+          )
+          .get(opts.subjectId, threshold).n;
+      } else {
+        result.spans = db
+          .prepare(
+            'DELETE FROM spans WHERE trace_id IN (SELECT trace_id FROM traces WHERE subject_id = ? AND start_ts < ?)',
+          )
+          .run(opts.subjectId, threshold).changes;
+      }
+    } else if (excluded.length > 0) {
+      const ph = excluded.map(() => '?').join(',');
+      if (opts.dryRun) {
+        result.spans = db
+          .prepare(
+            `SELECT COUNT(*) as n FROM spans WHERE start_ts < ? AND trace_id NOT IN (SELECT trace_id FROM traces WHERE subject_id IN (${ph}))`,
+          )
+          .get(threshold, ...excluded).n;
+      } else {
+        result.spans = db
+          .prepare(
+            `DELETE FROM spans WHERE start_ts < ? AND trace_id NOT IN (SELECT trace_id FROM traces WHERE subject_id IN (${ph}))`,
+          )
+          .run(threshold, ...excluded).changes;
+      }
+    } else if (opts.dryRun) {
+      result.spans = db
+        .prepare('SELECT COUNT(*) as n FROM spans WHERE start_ts < ?')
+        .get(threshold).n;
+    } else {
+      result.spans = db.prepare('DELETE FROM spans WHERE start_ts < ?').run(threshold).changes;
     }
-    // Events: per-category cutoffs.
-    //
-    // The keys (`audit`, `channel`, `install`) are ethos-flavored. They live
-    // here because RetentionEventsConfig in `@ethosagent/types` exposes them
-    // as named fields — reshaping that into a generic pattern map is
-    // explicitly out-of-scope for the extractability refactor (see
-    // plan/phases/observability_extractability.md "Out of scope"). The
-    // hardcoded LIKE patterns mirror the conventions documented in the
-    // library README's vocabulary-contract section.
-    const categories = [
-        ['error', config.events?.error ?? '90d'],
-        ['audit.%', config.events?.audit ?? '365d'],
-        ['channel.%', config.events?.channel ?? '365d'],
-        ['install.%', config.events?.install ?? 'forever'],
-    ];
-    for (const [pat, dur] of categories) {
-        const ms = parseDuration(dur);
-        if (ms === null)
-            continue;
-        const threshold = now - ms;
-        const likeOp = pat.includes('%') ? 'LIKE' : '=';
-        if (opts.subjectId) {
-            if (opts.dryRun) {
-                result.events += db
-                    .prepare(`SELECT COUNT(*) as n FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id IN (SELECT trace_id FROM traces WHERE subject_id = ?))`)
-                    .get(pat, threshold, opts.subjectId).n;
-            }
-            else {
-                result.events += db
-                    .prepare(`DELETE FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id IN (SELECT trace_id FROM traces WHERE subject_id = ?))`)
-                    .run(pat, threshold, opts.subjectId).changes;
-            }
-        }
-        else if (excluded.length > 0) {
-            const ph = excluded.map(() => '?').join(',');
-            if (opts.dryRun) {
-                result.events += db
-                    .prepare(`SELECT COUNT(*) as n FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id NOT IN (SELECT trace_id FROM traces WHERE subject_id IN (${ph})))`)
-                    .get(pat, threshold, ...excluded).n;
-            }
-            else {
-                result.events += db
-                    .prepare(`DELETE FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id NOT IN (SELECT trace_id FROM traces WHERE subject_id IN (${ph})))`)
-                    .run(pat, threshold, ...excluded).changes;
-            }
-        }
-        else if (opts.dryRun) {
-            result.events += db
-                .prepare(`SELECT COUNT(*) as n FROM events WHERE category ${likeOp} ? AND ts < ?`)
-                .get(pat, threshold).n;
-        }
-        else {
-            result.events += db
-                .prepare(`DELETE FROM events WHERE category ${likeOp} ? AND ts < ?`)
-                .run(pat, threshold).changes;
-        }
+  }
+  // Events: per-category cutoffs.
+  //
+  // The keys (`audit`, `channel`, `install`) are ethos-flavored. They live
+  // here because RetentionEventsConfig in `@ethosagent/types` exposes them
+  // as named fields — reshaping that into a generic pattern map is
+  // explicitly out-of-scope for the extractability refactor (see
+  // plan/phases/observability_extractability.md "Out of scope"). The
+  // hardcoded LIKE patterns mirror the conventions documented in the
+  // library README's vocabulary-contract section.
+  const categories = [
+    ['error', config.events?.error ?? '90d'],
+    ['audit.%', config.events?.audit ?? '365d'],
+    ['channel.%', config.events?.channel ?? '365d'],
+    ['install.%', config.events?.install ?? 'forever'],
+  ];
+  for (const [pat, dur] of categories) {
+    const ms = parseDuration(dur);
+    if (ms === null) continue;
+    const threshold = now - ms;
+    const likeOp = pat.includes('%') ? 'LIKE' : '=';
+    if (opts.subjectId) {
+      if (opts.dryRun) {
+        result.events += db
+          .prepare(
+            `SELECT COUNT(*) as n FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id IN (SELECT trace_id FROM traces WHERE subject_id = ?))`,
+          )
+          .get(pat, threshold, opts.subjectId).n;
+      } else {
+        result.events += db
+          .prepare(
+            `DELETE FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id IN (SELECT trace_id FROM traces WHERE subject_id = ?))`,
+          )
+          .run(pat, threshold, opts.subjectId).changes;
+      }
+    } else if (excluded.length > 0) {
+      const ph = excluded.map(() => '?').join(',');
+      if (opts.dryRun) {
+        result.events += db
+          .prepare(
+            `SELECT COUNT(*) as n FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id NOT IN (SELECT trace_id FROM traces WHERE subject_id IN (${ph})))`,
+          )
+          .get(pat, threshold, ...excluded).n;
+      } else {
+        result.events += db
+          .prepare(
+            `DELETE FROM events WHERE category ${likeOp} ? AND ts < ? AND (trace_id IS NULL OR trace_id NOT IN (SELECT trace_id FROM traces WHERE subject_id IN (${ph})))`,
+          )
+          .run(pat, threshold, ...excluded).changes;
+      }
+    } else if (opts.dryRun) {
+      result.events += db
+        .prepare(`SELECT COUNT(*) as n FROM events WHERE category ${likeOp} ? AND ts < ?`)
+        .get(pat, threshold).n;
+    } else {
+      result.events += db
+        .prepare(`DELETE FROM events WHERE category ${likeOp} ? AND ts < ?`)
+        .run(pat, threshold).changes;
     }
-    // Snapshots: prune orphaned snapshots (no referenced trace) — global-only
-    if (!opts.subjectId && !opts.dryRun) {
-        result.snapshots = db
-            .prepare('DELETE FROM snapshots WHERE snapshot_id NOT IN (SELECT DISTINCT snapshot_id FROM traces WHERE snapshot_id IS NOT NULL)')
-            .run().changes;
+  }
+  // Snapshots: prune orphaned snapshots (no referenced trace) — global-only
+  if (!opts.subjectId && !opts.dryRun) {
+    result.snapshots = db
+      .prepare(
+        'DELETE FROM snapshots WHERE snapshot_id NOT IN (SELECT DISTINCT snapshot_id FROM traces WHERE snapshot_id IS NOT NULL)',
+      )
+      .run().changes;
+  }
+  // Messages (sessions.db — separate DB, passed in as sessDb).
+  // Not subject-scoped: messages table has no subject_id column.
+  // Only run in the global pass (not per-subject passes).
+  if (opts.sessDb && !opts.subjectId) {
+    const msgCutoff = cutoff(config.messages, '365d');
+    if (msgCutoff !== null) {
+      const threshold = now - msgCutoff;
+      // messages.timestamp is an ISO-8601 TEXT column; convert threshold to ISO for comparison.
+      const iso = new Date(threshold).toISOString();
+      if (opts.dryRun) {
+        result.messages = opts.sessDb
+          .prepare('SELECT COUNT(*) as n FROM messages WHERE timestamp < ?')
+          .get(iso).n;
+      } else {
+        result.messages = opts.sessDb
+          .prepare('DELETE FROM messages WHERE timestamp < ?')
+          .run(iso).changes;
+      }
     }
-    // Messages (sessions.db — separate DB, passed in as sessDb).
-    // Not subject-scoped: messages table has no subject_id column.
-    // Only run in the global pass (not per-subject passes).
-    if (opts.sessDb && !opts.subjectId) {
-        const msgCutoff = cutoff(config.messages, '365d');
-        if (msgCutoff !== null) {
-            const threshold = now - msgCutoff;
-            // messages.timestamp is an ISO-8601 TEXT column; convert threshold to ISO for comparison.
-            const iso = new Date(threshold).toISOString();
-            if (opts.dryRun) {
-                result.messages = opts.sessDb
-                    .prepare('SELECT COUNT(*) as n FROM messages WHERE timestamp < ?')
-                    .get(iso).n;
-            }
-            else {
-                result.messages = opts.sessDb
-                    .prepare('DELETE FROM messages WHERE timestamp < ?')
-                    .run(iso).changes;
-            }
-        }
-    }
-    return result;
+  }
+  return result;
 }
 /**
  * Convenience wrapper: open a SQLite database by path, prune it, then close.
@@ -203,35 +209,32 @@ export function pruneObservability(db, config, opts = {}) {
  * directly when they only have a file path.
  */
 export function pruneObservabilityByPath(dbPath, config, opts = {}) {
-    const db = new BetterSqlite3(dbPath);
-    let sessDb;
-    if (opts.sessDbPath) {
-        sessDb = new BetterSqlite3(opts.sessDbPath);
-    }
-    try {
-        return pruneObservability(db, config, { ...opts, sessDb });
-    }
-    finally {
-        sessDb?.close();
-        db.close();
-    }
+  const db = new BetterSqlite3(dbPath);
+  let sessDb;
+  if (opts.sessDbPath) {
+    sessDb = new BetterSqlite3(opts.sessDbPath);
+  }
+  try {
+    return pruneObservability(db, config, { ...opts, sessDb });
+  } finally {
+    sessDb?.close();
+    db.close();
+  }
 }
 /**
  * Get SQLite page statistics for a database file.
  * Returns null if the file cannot be opened.
  */
 export function getSqliteStats(dbPath) {
-    let db = null;
-    try {
-        db = new BetterSqlite3(dbPath, { readonly: true });
-        const pageCount = db.prepare('PRAGMA page_count').get().page_count;
-        const pageSize = db.prepare('PRAGMA page_size').get().page_size;
-        return { pageCount, pageSize, totalBytes: pageCount * pageSize };
-    }
-    catch {
-        return null;
-    }
-    finally {
-        db?.close();
-    }
+  let db = null;
+  try {
+    db = new BetterSqlite3(dbPath, { readonly: true });
+    const pageCount = db.prepare('PRAGMA page_count').get().page_count;
+    const pageSize = db.prepare('PRAGMA page_size').get().page_size;
+    return { pageCount, pageSize, totalBytes: pageCount * pageSize };
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
 }
