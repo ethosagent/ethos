@@ -133,6 +133,12 @@ export class ChatService {
     bridge.abortTurn();
   }
 
+  steer(sessionId: string, text: string): boolean {
+    const bridge = this.bridges.get(sessionId);
+    if (!bridge) return false;
+    return bridge.steer(text);
+  }
+
   // ---------------------------------------------------------------------------
   // SSE entry point
   // ---------------------------------------------------------------------------
@@ -281,6 +287,9 @@ export class ChatService {
     );
     bridge.on('dry_run_summary', (plan, capped) =>
       this.append(sessionId, { type: 'dry_run_summary', plan, capped }),
+    );
+    bridge.on('run_start', (provider, model, source) =>
+      this.append(sessionId, { type: 'run_start', provider, model, source }),
     );
     bridge.on('error', (error, code) => this.append(sessionId, { type: 'error', error, code }));
     bridge.on('done', (text, turnCount) => {

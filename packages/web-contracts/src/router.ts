@@ -348,10 +348,14 @@ const ChatSendOutput = z.object({
 const ChatAbortInput = z.object({ sessionId: z.string() });
 const ChatAbortOutput = z.object({ ok: z.literal(true) });
 
+const ChatSteerInput = z.object({ sessionId: z.string(), text: z.string().min(1) });
+const ChatSteerOutput = z.object({ ok: z.boolean() });
+
 /** @stable v1 */
 const chat = {
   send: oc.input(ChatSendInput).output(ChatSendOutput),
   abort: oc.input(ChatAbortInput).output(ChatAbortOutput),
+  steer: oc.input(ChatSteerInput).output(ChatSteerOutput),
 };
 
 // ---------------------------------------------------------------------------

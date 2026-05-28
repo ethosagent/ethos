@@ -18,4 +18,9 @@ export const chatRouter = {
     await context.chat.abort(input.sessionId);
     return { ok: true as const };
   }),
+
+  steer: os.chat.steer.handler(({ input, context }) => {
+    const ok = context.chat.steer(input.sessionId, input.text);
+    return { ok };
+  }),
 };

@@ -13,6 +13,7 @@ import type {
   DryRunToolPlan,
   RunOptions,
 } from '@ethosagent/core';
+import { InMemorySteerSink } from './in-memory-steer-sink';
 
 export type BridgeOpts = Omit<RunOptions, 'abortSignal'>;
 
@@ -71,6 +72,7 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
   // gets a fresh ClarifyBridge that must be re-bound to the surface.
   private clarifyPresenter: ClarifyPresenter | undefined;
   private readonly clarifyResolvedListeners = new Set<ClarifyResolvedListener>();
+  private activeSink: InMemorySteerSink | null = null;
 
   constructor(loop: AgentLoop, options: BridgeOptions = {}) {
     super();
@@ -154,6 +156,11 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
     return dropped;
   }
 
+  steer(text: string): boolean {
+    if (!this.activeSink) return false;
+    return this.activeSink.push(text);
+  }
+
   /** Returns accumulated spend for the session key (0 if no spend recorded). */
   getSessionCost(sessionKey: string): number {
     return this.loop.getSessionCost(sessionKey);
@@ -206,16 +213,21 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
         'TIMEOUT',
       );
       this.controller.abort();
+      this.activeSink = null;
       this.controller = null;
       this.emit('idle');
       const next = this.queue.shift();
       if (next) void this.runTurn(next.input, next.opts);
     }, this.turnTimeoutMs);
 
+    const steerSink = new InMemorySteerSink();
+    this.activeSink = steerSink;
+
     try {
       for await (const event of this.loop.run(input, {
         ...opts,
         abortSignal: this.controller.signal,
+        steerSink,
       })) {
         switch (event.type) {
           case 'text_delta':
@@ -275,6 +287,7 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
       if (!timedOut) {
         // Normal path: timeout handler didn't fire, do normal cleanup.
         this.flushText();
+        this.activeSink = null;
         this.controller = null;
         this.emit('idle');
         const next = this.queue.shift();

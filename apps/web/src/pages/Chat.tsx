@@ -1,3 +1,4 @@
+import { TurnStatusBar } from '@ethosagent/ui-components';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, ConfigProvider } from 'antd';
 import { useEffect, useState } from 'react';
@@ -44,17 +45,18 @@ export function Chat() {
 
   const queryClient = useQueryClient();
 
-  const { state, currentSessionId, sendMessage, switchSession, resetSession } = useChat({
-    ...(sessionParam ? { initialSessionId: sessionParam } : {}),
-    personalityId,
-    onSessionCreated: (id) => {
-      // Mirror the server-assigned id into the URL so refresh stays on
-      // this conversation. `replace` (not `push`) keeps Back from
-      // bouncing the user out of an empty chat.
-      setSearchParams({ session: id }, { replace: true });
-      setLastSessionId(id);
-    },
-  });
+  const { state, currentSessionId, sendMessage, steerMessage, switchSession, resetSession } =
+    useChat({
+      ...(sessionParam ? { initialSessionId: sessionParam } : {}),
+      personalityId,
+      onSessionCreated: (id) => {
+        // Mirror the server-assigned id into the URL so refresh stays on
+        // this conversation. `replace` (not `push`) keeps Back from
+        // bouncing the user out of an empty chat.
+        setSearchParams({ session: id }, { replace: true });
+        setLastSessionId(id);
+      },
+    });
 
   const sessionQuery = useQuery({
     queryKey: ['sessions', 'get', currentSessionId],
@@ -139,6 +141,27 @@ export function Chat() {
     state.lastStreamEventAt !== null &&
     Date.now() - state.lastStreamEventAt > 30_000;
 
+  const [elapsedMs, setElapsedMs] = useState(0);
+  useEffect(() => {
+    if (!state.turnStartedAt) {
+      setElapsedMs(0);
+      return;
+    }
+    const id = setInterval(() => {
+      setElapsedMs(Date.now() - (state.turnStartedAt ?? Date.now()));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [state.turnStartedAt]);
+
+  const handleSend = async (text: string) => {
+    if (state.isStreaming) {
+      const ok = await steerMessage(text);
+      if (ok) return;
+      // Turn ended — fall through to normal send
+    }
+    await sendMessage(text);
+  };
+
   // Render the head of the queue. Multiple back-to-back approvals are
   // rare in practice (the agent loop awaits each tool sequentially), but
   // the queue model means we don't have to special-case "second approval
@@ -217,6 +240,11 @@ export function Chat() {
               : 'Start the conversation. Tools, files, and skills come along.'
           }
         />
+        <TurnStatusBar
+          isStreaming={state.isStreaming}
+          currentOp={state.currentOp}
+          elapsedMs={elapsedMs}
+        />
         <div>
           {state.error ? (
             <div className="chat-error" role="alert">
@@ -230,9 +258,9 @@ export function Chat() {
           ) : null}
           <Composer
             personalityId={personalityId}
-            disabled={state.isStreaming}
-            onSend={sendMessage}
-            placeholder={state.isStreaming ? 'Waiting for the response…' : 'Send a message…'}
+            disabled={false}
+            onSend={handleSend}
+            placeholder={state.isStreaming ? 'Steer the agent…' : 'Send a message…'}
           />
         </div>
       </div>

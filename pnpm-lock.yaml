@@ -685,6 +685,9 @@ importers:
 
   extensions/gateway:
     dependencies:
+      '@ethosagent/agent-bridge':
+        specifier: workspace:*
+        version: link:../../packages/agent-bridge
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
