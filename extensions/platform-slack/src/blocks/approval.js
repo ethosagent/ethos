@@ -23,44 +23,44 @@ const SLACK_USER_ID = /^[UW][A-Z0-9]{2,}$/;
 /** Render a decider as a safe mention, or a plain label when it isn't a
  *  recognizable Slack user id. */
 function renderDecider(decidedBy) {
-  return SLACK_USER_ID.test(decidedBy) ? `<@${decidedBy}>` : 'the system';
+    return SLACK_USER_ID.test(decidedBy) ? `<@${decidedBy}>` : 'the system';
 }
 export function approvalPendingBlocks(input) {
-  const blocks = [
-    header('Approval required'),
-    section(`\`${escapeMrkdwn(input.toolName)}\` wants to run.`),
-  ];
-  if (input.reason) {
-    blocks.push(section(`*Why:* ${escapeMrkdwn(input.reason)}`));
-  }
-  blocks.push(section(`\`\`\`${formatArgs(input.args)}\`\`\``));
-  blocks.push({
-    type: 'actions',
-    elements: [
-      {
-        type: 'button',
-        action_id: APPROVE_ACTION_ID,
-        text: { type: 'plain_text', text: 'Allow', emoji: true },
-        style: 'primary',
-        value: input.approvalId,
-      },
-      {
-        type: 'button',
-        action_id: DENY_ACTION_ID,
-        text: { type: 'plain_text', text: 'Deny', emoji: true },
-        style: 'danger',
-        value: input.approvalId,
-      },
-    ],
-  });
-  return blocks;
+    const blocks = [
+        header('Approval required'),
+        section(`\`${escapeMrkdwn(input.toolName)}\` wants to run.`),
+    ];
+    if (input.reason) {
+        blocks.push(section(`*Why:* ${escapeMrkdwn(input.reason)}`));
+    }
+    blocks.push(section(`\`\`\`${formatArgs(input.args)}\`\`\``));
+    blocks.push({
+        type: 'actions',
+        elements: [
+            {
+                type: 'button',
+                action_id: APPROVE_ACTION_ID,
+                text: { type: 'plain_text', text: 'Allow', emoji: true },
+                style: 'primary',
+                value: input.approvalId,
+            },
+            {
+                type: 'button',
+                action_id: DENY_ACTION_ID,
+                text: { type: 'plain_text', text: 'Deny', emoji: true },
+                style: 'danger',
+                value: input.approvalId,
+            },
+        ],
+    });
+    return blocks;
 }
 export function approvalResolvedBlocks(input) {
-  const verb = input.decision === 'allow' ? 'Approved' : 'Denied';
-  return [
-    section(`${verb}: \`${escapeMrkdwn(input.toolName)}\``),
-    context([`${verb.toLowerCase()} by ${renderDecider(input.decidedBy)}`]),
-  ];
+    const verb = input.decision === 'allow' ? 'Approved' : 'Denied';
+    return [
+        section(`${verb}: \`${escapeMrkdwn(input.toolName)}\``),
+        context([`${verb.toLowerCase()} by ${renderDecider(input.decidedBy)}`]),
+    ];
 }
 /**
  * JSON-stringify args, falling back gracefully, neutralize any code-fence
@@ -74,22 +74,25 @@ export function approvalResolvedBlocks(input) {
  * substring can be parsed as a fence delimiter.
  */
 function formatArgs(args) {
-  let text;
-  if (args === null || args === undefined) {
-    text = '(no arguments)';
-  } else if (typeof args === 'string') {
-    text = args;
-  } else {
-    try {
-      text = JSON.stringify(args, null, 2);
-    } catch {
-      text = String(args);
+    let text;
+    if (args === null || args === undefined) {
+        text = '(no arguments)';
     }
-  }
-  // Insert a zero-width space between consecutive backticks.
-  text = text.replace(/`+/g, (run) => run.split('').join('​'));
-  if (text.length > ARGS_PREVIEW_MAX) {
-    return `${text.slice(0, ARGS_PREVIEW_MAX)}\n… (truncated)`;
-  }
-  return text;
+    else if (typeof args === 'string') {
+        text = args;
+    }
+    else {
+        try {
+            text = JSON.stringify(args, null, 2);
+        }
+        catch {
+            text = String(args);
+        }
+    }
+    // Insert a zero-width space between consecutive backticks.
+    text = text.replace(/`+/g, (run) => run.split('').join('​'));
+    if (text.length > ARGS_PREVIEW_MAX) {
+        return `${text.slice(0, ARGS_PREVIEW_MAX)}\n… (truncated)`;
+    }
+    return text;
 }

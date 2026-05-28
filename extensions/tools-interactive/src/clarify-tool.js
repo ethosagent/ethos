@@ -4,12 +4,7 @@
 // The tool blocks inside `execute()` until the ClarifyBridge resolves the
 // request (user answer, timeout → default, or cancel). The agent loop is
 // paused by the blocked tool — the same way a tool-call approval pauses it.
-import {
-  ClarifyBusyError,
-  ClarifyNoSurfaceError,
-  ClarifyTimedOutNoDefaultError,
-} from '@ethosagent/core';
-
+import { ClarifyBusyError, ClarifyNoSurfaceError, ClarifyTimedOutNoDefaultError, } from '@ethosagent/core';
 const DEFAULT_TIMEOUT_S = 900; // 15 min — uniform across surfaces (plan Q3)
 const MIN_TIMEOUT_S = 1;
 const MAX_TIMEOUT_S = 86_400; // 24h hard cap (plan)
@@ -17,116 +12,107 @@ const MAX_RESULT_CHARS = 2_000;
 // Proactive-use rules shipped verbatim in the description (plan — sourced from
 // Hermes's `clarify` prompt + Anthropic Computer Use's `wait_for_user`).
 const DESCRIPTION = [
-  'Ask the user a structured question mid-turn, then wait for their answer before continuing.',
-  '',
-  'WHEN TO USE',
-  "- You need information you can't reasonably infer from context",
-  '- There is a small set of valid choices and you want to constrain the answer (use `options`)',
-  '- The cost of guessing wrong is high (modifying many files, calling external APIs)',
-  '',
-  'WHEN NOT TO USE',
-  '- Confirmations the user already gave ("you said X, are you sure?")',
-  "- Trivia the user clearly knows but didn't include",
-  '- As a substitute for reading their previous message carefully',
-  '- Avoid in long autonomous loops — clarify forces a pause; use it sparingly',
+    'Ask the user a structured question mid-turn, then wait for their answer before continuing.',
+    '',
+    'WHEN TO USE',
+    "- You need information you can't reasonably infer from context",
+    '- There is a small set of valid choices and you want to constrain the answer (use `options`)',
+    '- The cost of guessing wrong is high (modifying many files, calling external APIs)',
+    '',
+    'WHEN NOT TO USE',
+    '- Confirmations the user already gave ("you said X, are you sure?")',
+    "- Trivia the user clearly knows but didn't include",
+    '- As a substitute for reading their previous message carefully',
+    '- Avoid in long autonomous loops — clarify forces a pause; use it sparingly',
 ].join('\n');
 function errorResult(error, code) {
-  return { ok: false, error, code };
+    return { ok: false, error, code };
 }
 export function createClarifyTool(bridge) {
-  return {
-    name: 'clarify',
-    description: DESCRIPTION,
-    toolset: 'interactive',
-    maxResultChars: MAX_RESULT_CHARS,
-    capabilities: {},
-    schema: {
-      type: 'object',
-      required: ['question'],
-      properties: {
-        question: {
-          type: 'string',
-          description: 'The question to ask the user.',
-        },
-        options: {
-          type: 'array',
-          items: { type: 'string' },
-          description:
-            'Optional multiple-choice answers. When omitted, the user answers in free-form text.',
-        },
-        default: {
-          type: 'string',
-          description: 'Returned on timeout if the user does not answer in time.',
-        },
-        timeout_s: {
-          type: 'number',
-          description: `Seconds to wait before the timeout fires. Default ${DEFAULT_TIMEOUT_S} (15 min).`,
-        },
-        answerable_by: {
-          type: 'string',
-          enum: ['anyone', 'originator'],
-          description:
-            "Group chats: who may answer. 'anyone' (default) or 'originator' to restrict to the user who triggered the turn.",
-        },
-      },
-    },
-    async execute(args, ctx) {
-      const question = typeof args.question === 'string' ? args.question.trim() : '';
-      if (!question) {
-        return errorResult('clarify requires a non-empty `question`', 'input_invalid');
-      }
-      const options = Array.isArray(args.options)
-        ? args.options.filter((o) => typeof o === 'string' && o.length > 0)
-        : undefined;
-      const def = typeof args.default === 'string' ? args.default : undefined;
-      const timeoutRaw =
-        typeof args.timeout_s === 'number' && Number.isFinite(args.timeout_s)
-          ? args.timeout_s
-          : DEFAULT_TIMEOUT_S;
-      const timeoutS = Math.min(MAX_TIMEOUT_S, Math.max(MIN_TIMEOUT_S, Math.round(timeoutRaw)));
-      const answerableBy = args.answerable_by === 'originator' ? 'originator' : 'anyone';
-      const startedAt = Date.now();
-      try {
-        const response = await bridge.request({
-          question,
-          ...(options && options.length > 0 ? { options } : {}),
-          ...(def !== undefined ? { default: def } : {}),
-          timeoutMs: timeoutS * 1000,
-          answerableBy,
-          sessionId: ctx.sessionId,
-          surfaceType: ctx.platform,
-          abortSignal: ctx.abortSignal,
-        });
-        const tookS = Math.round((Date.now() - startedAt) / 1000);
-        return {
-          ok: true,
-          value: JSON.stringify(
-            {
-              answer: response.answer,
-              requestId: response.requestId,
-              took_s: tookS,
-              was_default: response.source === 'timeout-default',
-              cancelled: response.source === 'cancel',
+    return {
+        name: 'clarify',
+        description: DESCRIPTION,
+        toolset: 'interactive',
+        maxResultChars: MAX_RESULT_CHARS,
+        capabilities: {},
+        schema: {
+            type: 'object',
+            required: ['question'],
+            properties: {
+                question: {
+                    type: 'string',
+                    description: 'The question to ask the user.',
+                },
+                options: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'Optional multiple-choice answers. When omitted, the user answers in free-form text.',
+                },
+                default: {
+                    type: 'string',
+                    description: 'Returned on timeout if the user does not answer in time.',
+                },
+                timeout_s: {
+                    type: 'number',
+                    description: `Seconds to wait before the timeout fires. Default ${DEFAULT_TIMEOUT_S} (15 min).`,
+                },
+                answerable_by: {
+                    type: 'string',
+                    enum: ['anyone', 'originator'],
+                    description: "Group chats: who may answer. 'anyone' (default) or 'originator' to restrict to the user who triggered the turn.",
+                },
             },
-            null,
-            2,
-          ),
-        };
-      } catch (err) {
-        if (err instanceof ClarifyNoSurfaceError) {
-          return errorResult(
-            `CLARIFY_NO_SURFACE: ${err.message}. Ask the question in plain prose instead.`,
-            'not_available',
-          );
-        }
-        if (err instanceof ClarifyBusyError) {
-          return errorResult(`CLARIFY_BUSY: ${err.message}`, 'execution_failed');
-        }
-        if (err instanceof ClarifyTimedOutNoDefaultError) {
-          return errorResult(`CLARIFY_TIMED_OUT_NO_DEFAULT: ${err.message}`, 'execution_failed');
-        }
-        return errorResult(err instanceof Error ? err.message : String(err), 'execution_failed');
-      }
-    },
-  };
+        },
+        async execute(args, ctx) {
+            const question = typeof args.question === 'string' ? args.question.trim() : '';
+            if (!question) {
+                return errorResult('clarify requires a non-empty `question`', 'input_invalid');
+            }
+            const options = Array.isArray(args.options)
+                ? args.options.filter((o) => typeof o === 'string' && o.length > 0)
+                : undefined;
+            const def = typeof args.default === 'string' ? args.default : undefined;
+            const timeoutRaw = typeof args.timeout_s === 'number' && Number.isFinite(args.timeout_s)
+                ? args.timeout_s
+                : DEFAULT_TIMEOUT_S;
+            const timeoutS = Math.min(MAX_TIMEOUT_S, Math.max(MIN_TIMEOUT_S, Math.round(timeoutRaw)));
+            const answerableBy = args.answerable_by === 'originator' ? 'originator' : 'anyone';
+            const startedAt = Date.now();
+            try {
+                const response = await bridge.request({
+                    question,
+                    ...(options && options.length > 0 ? { options } : {}),
+                    ...(def !== undefined ? { default: def } : {}),
+                    timeoutMs: timeoutS * 1000,
+                    answerableBy,
+                    sessionId: ctx.sessionId,
+                    surfaceType: ctx.platform,
+                    abortSignal: ctx.abortSignal,
+                });
+                const tookS = Math.round((Date.now() - startedAt) / 1000);
+                return {
+                    ok: true,
+                    value: JSON.stringify({
+                        answer: response.answer,
+                        requestId: response.requestId,
+                        took_s: tookS,
+                        was_default: response.source === 'timeout-default',
+                        cancelled: response.source === 'cancel',
+                    }, null, 2),
+                };
+            }
+            catch (err) {
+                if (err instanceof ClarifyNoSurfaceError) {
+                    return errorResult(`CLARIFY_NO_SURFACE: ${err.message}. Ask the question in plain prose instead.`, 'not_available');
+                }
+                if (err instanceof ClarifyBusyError) {
+                    return errorResult(`CLARIFY_BUSY: ${err.message}`, 'execution_failed');
+                }
+                if (err instanceof ClarifyTimedOutNoDefaultError) {
+                    return errorResult(`CLARIFY_TIMED_OUT_NO_DEFAULT: ${err.message}`, 'execution_failed');
+                }
+                return errorResult(err instanceof Error ? err.message : String(err), 'execution_failed');
+            }
+        },
+    };
 }

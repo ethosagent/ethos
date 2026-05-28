@@ -1,86 +1,86 @@
 import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openAiRoutes } from '../../routes/openai';
-
 function makeStubPersonalitiesService(ids) {
-  return {
-    list() {
-      return {
-        items: ids.map((id) => ({ id })),
-        nextCursor: null,
-        defaultId: ids[0] ?? 'ethos',
-      };
-    },
-  };
+    return {
+        list() {
+            return {
+                items: ids.map((id) => ({ id })),
+                nextCursor: null,
+                defaultId: ids[0] ?? 'ethos',
+            };
+        },
+    };
 }
 describe('GET /v1/models', () => {
-  let store;
-  let secret;
-  beforeEach(async () => {
-    store = new SqliteApiKeyStore(':memory:');
-    const created = await store.create({ name: 'cursor', scopes: ['chat'] });
-    secret = created.secret;
-  });
-  afterEach(() => {
-    store.close();
-  });
-  it('returns OpenAI-shaped list of personalities + ethos-default with a valid key', async () => {
-    const app = openAiRoutes({
-      apiKeys: store,
-      personalities: makeStubPersonalitiesService(['engineer', 'coordinator']),
+    let store;
+    let secret;
+    beforeEach(async () => {
+        store = new SqliteApiKeyStore(':memory:');
+        const created = await store.create({ name: 'cursor', scopes: ['chat'] });
+        secret = created.secret;
     });
-    const res = await app.request('/models', {
-      headers: { Authorization: `Bearer ${secret}` },
+    afterEach(() => {
+        store.close();
     });
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.object).toBe('list');
-    const ids = body.data.map((m) => m.id);
-    expect(ids).toEqual(['engineer', 'coordinator', 'ethos-default']);
-    expect(body.data[0]).toEqual({
-      id: 'engineer',
-      object: 'model',
-      created: 0,
-      owned_by: 'ethos',
+    it('returns OpenAI-shaped list of personalities + ethos-default with a valid key', async () => {
+        const app = openAiRoutes({
+            apiKeys: store,
+            personalities: makeStubPersonalitiesService(['engineer', 'coordinator']),
+        });
+        const res = await app.request('/models', {
+            headers: { Authorization: `Bearer ${secret}` },
+        });
+        expect(res.status).toBe(200);
+        const body = (await res.json());
+        expect(body.object).toBe('list');
+        const ids = body.data.map((m) => m.id);
+        expect(ids).toEqual(['engineer', 'coordinator', 'ethos-default']);
+        expect(body.data[0]).toEqual({
+            id: 'engineer',
+            object: 'model',
+            created: 0,
+            owned_by: 'ethos',
+        });
     });
-  });
-  it('includes team: entries when a listTeams callback is provided', async () => {
-    const app = openAiRoutes({
-      apiKeys: store,
-      personalities: makeStubPersonalitiesService(['engineer']),
-      listTeams: async () => ['analytics', 'support'],
+    it('includes team: entries when a listTeams callback is provided', async () => {
+        const app = openAiRoutes({
+            apiKeys: store,
+            personalities: makeStubPersonalitiesService(['engineer']),
+            listTeams: async () => ['analytics', 'support'],
+        });
+        const res = await app.request('/models', {
+            headers: { Authorization: `Bearer ${secret}` },
+        });
+        expect(res.status).toBe(200);
+        const body = (await res.json());
+        const ids = body.data.map((m) => m.id);
+        expect(ids).toEqual(['engineer', 'team:analytics', 'team:support', 'ethos-default']);
     });
-    const res = await app.request('/models', {
-      headers: { Authorization: `Bearer ${secret}` },
+    it('returns 401 when Authorization is missing', async () => {
+        const app = openAiRoutes({
+            apiKeys: store,
+            personalities: makeStubPersonalitiesService(['engineer']),
+        });
+        const res = await app.request('/models');
+        expect(res.status).toBe(401);
+        const body = (await res.json());
+        expect(body.error.type).toBe('authentication_error');
+        expect(body.error.code).toBe('invalid_api_key');
     });
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    const ids = body.data.map((m) => m.id);
-    expect(ids).toEqual(['engineer', 'team:analytics', 'team:support', 'ethos-default']);
-  });
-  it('returns 401 when Authorization is missing', async () => {
-    const app = openAiRoutes({
-      apiKeys: store,
-      personalities: makeStubPersonalitiesService(['engineer']),
+    it('returns 401 when the key has been revoked', async () => {
+        const all = await store.list();
+        const target = all[0];
+        if (!target)
+            throw new Error('expected one key');
+        await store.revoke(target.prefix);
+        const app = openAiRoutes({
+            apiKeys: store,
+            personalities: makeStubPersonalitiesService(['engineer']),
+        });
+        const res = await app.request('/models', {
+            headers: { Authorization: `Bearer ${secret}` },
+        });
+        expect(res.status).toBe(401);
     });
-    const res = await app.request('/models');
-    expect(res.status).toBe(401);
-    const body = await res.json();
-    expect(body.error.type).toBe('authentication_error');
-    expect(body.error.code).toBe('invalid_api_key');
-  });
-  it('returns 401 when the key has been revoked', async () => {
-    const all = await store.list();
-    const target = all[0];
-    if (!target) throw new Error('expected one key');
-    await store.revoke(target.prefix);
-    const app = openAiRoutes({
-      apiKeys: store,
-      personalities: makeStubPersonalitiesService(['engineer']),
-    });
-    const res = await app.request('/models', {
-      headers: { Authorization: `Bearer ${secret}` },
-    });
-    expect(res.status).toBe(401);
-  });
 });

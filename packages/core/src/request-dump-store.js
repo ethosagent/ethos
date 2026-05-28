@@ -4,35 +4,36 @@
  * Caps at `maxRecords` to prevent unbounded memory growth.
  */
 export class InMemoryRequestDumpStore {
-  records = [];
-  maxRecords;
-  constructor(opts) {
-    this.maxRecords = opts?.maxRecords ?? 1000;
-  }
-  async append(record) {
-    this.records.push(record);
-    if (this.records.length > this.maxRecords) {
-      this.records = this.records.slice(-this.maxRecords);
+    records = [];
+    maxRecords;
+    constructor(opts) {
+        this.maxRecords = opts?.maxRecords ?? 1000;
     }
-  }
-  async recent(opts) {
-    let results = [...this.records].reverse();
-    if (opts.sessionId) results = results.filter((r) => r.sessionId === opts.sessionId);
-    if (opts.since) {
-      const sinceTs = opts.since.getTime();
-      results = results.filter((r) => new Date(r.timestamp).getTime() >= sinceTs);
+    async append(record) {
+        this.records.push(record);
+        if (this.records.length > this.maxRecords) {
+            this.records = this.records.slice(-this.maxRecords);
+        }
     }
-    results = results.slice(0, opts.limit);
-    if (!opts.includeContent) {
-      results = results.map((r) => {
-        const { system, tools, messages, responseText, ...meta } = r;
-        return meta;
-      });
+    async recent(opts) {
+        let results = [...this.records].reverse();
+        if (opts.sessionId)
+            results = results.filter((r) => r.sessionId === opts.sessionId);
+        if (opts.since) {
+            const sinceTs = opts.since.getTime();
+            results = results.filter((r) => new Date(r.timestamp).getTime() >= sinceTs);
+        }
+        results = results.slice(0, opts.limit);
+        if (!opts.includeContent) {
+            results = results.map((r) => {
+                const { system, tools, messages, responseText, ...meta } = r;
+                return meta;
+            });
+        }
+        return results;
     }
-    return results;
-  }
-  async close() {}
-  getAll() {
-    return this.records;
-  }
+    async close() { }
+    getAll() {
+        return this.records;
+    }
 }

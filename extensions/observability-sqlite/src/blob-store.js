@@ -10,37 +10,39 @@ import { gunzipSync, gzipSync } from 'node:zlib';
  *   SQLite DB files via better-sqlite3 — blob-store uses Storage for all I/O.
  */
 export class BlobStore {
-  root;
-  storage;
-  constructor(root, storage) {
-    this.root = root;
-    this.storage = storage;
-  }
-  /** Write content (compressed) and return its content-addressed key (hex SHA-256). */
-  async put(content) {
-    const key = sha256(content);
-    const path = this.blobPath(key);
-    const dir = join(this.root, key.slice(0, 2));
-    // Idempotent — skip if already written.
-    if (await this.storage.exists(path)) return key;
-    await this.storage.mkdir(dir);
-    const compressed = gzipSync(Buffer.from(content, 'utf-8'));
-    // Base64-encode so the pure-ASCII result is safe through UTF-8 Storage.write.
-    await this.storage.write(path, compressed.toString('base64'), { mode: 0o600 });
-    return key;
-  }
-  /** Read and decompress a blob by key. Returns null if missing. */
-  async get(key) {
-    const path = this.blobPath(key);
-    const raw = await this.storage.read(path);
-    if (raw === null) return null;
-    const buf = Buffer.from(raw, 'base64');
-    return gunzipSync(buf).toString('utf-8');
-  }
-  blobPath(key) {
-    return join(this.root, key.slice(0, 2), `${key}.gz`);
-  }
+    root;
+    storage;
+    constructor(root, storage) {
+        this.root = root;
+        this.storage = storage;
+    }
+    /** Write content (compressed) and return its content-addressed key (hex SHA-256). */
+    async put(content) {
+        const key = sha256(content);
+        const path = this.blobPath(key);
+        const dir = join(this.root, key.slice(0, 2));
+        // Idempotent — skip if already written.
+        if (await this.storage.exists(path))
+            return key;
+        await this.storage.mkdir(dir);
+        const compressed = gzipSync(Buffer.from(content, 'utf-8'));
+        // Base64-encode so the pure-ASCII result is safe through UTF-8 Storage.write.
+        await this.storage.write(path, compressed.toString('base64'), { mode: 0o600 });
+        return key;
+    }
+    /** Read and decompress a blob by key. Returns null if missing. */
+    async get(key) {
+        const path = this.blobPath(key);
+        const raw = await this.storage.read(path);
+        if (raw === null)
+            return null;
+        const buf = Buffer.from(raw, 'base64');
+        return gunzipSync(buf).toString('utf-8');
+    }
+    blobPath(key) {
+        return join(this.root, key.slice(0, 2), `${key}.gz`);
+    }
 }
 function sha256(content) {
-  return createHash('sha256').update(content, 'utf-8').digest('hex');
+    return createHash('sha256').update(content, 'utf-8').digest('hex');
 }

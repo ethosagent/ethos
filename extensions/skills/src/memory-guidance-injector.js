@@ -14,13 +14,13 @@ You have access to persistent memory across sessions via the \`memory_read\`, \`
 
 Keep entries concise. Use \`memory_write\` with \`action: "add"\` to append new facts. Use \`action: "remove"\` with \`substring_match\` to delete outdated entries before replacing them. Read memory at the start of new tasks to recall prior context.`.trim();
 export class MemoryGuidanceInjector {
-  id = 'memory-guidance';
-  priority = 80;
-  shouldInject(ctx) {
-    // Only inject if there's a meaningful conversation going on (not turn 0)
-    return ctx.turnNumber > 0;
-  }
-  async inject(_ctx) {
-    return { content: GUIDANCE, position: 'append' };
-  }
+    id = 'memory-guidance';
+    priority = 80;
+    shouldInject(ctx) {
+        // Only inject if there's a meaningful conversation going on (not turn 0)
+        return ctx.turnNumber > 0;
+    }
+    async inject(_ctx) {
+        return { content: GUIDANCE, position: 'append' };
+    }
 }

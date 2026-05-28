@@ -1,5 +1,4 @@
 import { theme } from 'antd';
-
 // Antd-specific adapter. Maps the surface-agnostic `Tokens` shape onto
 // Antd's ThemeConfig token names. Only the Web surface imports this entry,
 // so TUI and CLI don't pay for the antd peer dep.
@@ -13,8 +12,8 @@ import { theme } from 'antd';
 //     derived text / hover / border tokens land on light defaults
 const msToCssSeconds = (ms) => `${ms / 1000}s`;
 function srgbToLinear(c) {
-  const channel = c / 255;
-  return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    const channel = c / 255;
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
 }
 /**
  * WCAG relative luminance — 0 (black) to 1 (white). Used to decide whether
@@ -22,51 +21,53 @@ function srgbToLinear(c) {
  * Antd the matching derived-token rules.
  */
 export function surfaceLuminance(hex) {
-  const trimmed = hex.replace(/^#/, '');
-  if (trimmed.length !== 6) return 0;
-  const n = Number.parseInt(trimmed, 16);
-  if (!Number.isFinite(n)) return 0;
-  const r = srgbToLinear((n >>> 16) & 0xff);
-  const g = srgbToLinear((n >>> 8) & 0xff);
-  const b = srgbToLinear(n & 0xff);
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const trimmed = hex.replace(/^#/, '');
+    if (trimmed.length !== 6)
+        return 0;
+    const n = Number.parseInt(trimmed, 16);
+    if (!Number.isFinite(n))
+        return 0;
+    const r = srgbToLinear((n >>> 16) & 0xff);
+    const g = srgbToLinear((n >>> 8) & 0xff);
+    const b = srgbToLinear(n & 0xff);
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 /** True when the resolved skin renders against a light background. */
 export function isLightSurface(tokens) {
-  return surfaceLuminance(tokens.surface.bgBase) > 0.5;
+    return surfaceLuminance(tokens.surface.bgBase) > 0.5;
 }
 export function tokensToAntd(tokens) {
-  const algorithm = isLightSurface(tokens) ? theme.defaultAlgorithm : theme.darkAlgorithm;
-  return {
-    algorithm,
-    token: {
-      fontFamily: tokens.typography.fontDisplay,
-      fontFamilyCode: tokens.typography.fontMono,
-      colorBgLayout: tokens.surface.bgBase,
-      colorBgContainer: tokens.surface.bgElevated,
-      colorBgElevated: tokens.surface.bgElevated,
-      colorPrimary: tokens.accents.researcher ?? tokens.semantic.info,
-      colorBorder: tokens.surface.borderSubtle,
-      colorBorderSecondary: tokens.surface.borderStrong,
-      colorText: tokens.surface.textPrimary,
-      colorTextSecondary: tokens.surface.textSecondary,
-      colorTextTertiary: tokens.surface.textTertiary,
-      colorSuccess: tokens.semantic.success,
-      colorWarning: tokens.semantic.warning,
-      colorError: tokens.semantic.error,
-      colorInfo: tokens.semantic.info,
-      borderRadius: tokens.radius.md,
-      motionDurationFast: msToCssSeconds(tokens.motion.fastMs),
-      motionDurationMid: msToCssSeconds(tokens.motion.defaultMs),
-      motionDurationSlow: msToCssSeconds(tokens.motion.slowMs),
-      motionEaseOut: tokens.motion.ease,
-      motionEaseInOut: tokens.motion.ease,
-    },
-    components: {
-      Card: { borderRadius: tokens.radius.lg },
-      Modal: { borderRadius: tokens.radius.md },
-    },
-  };
+    const algorithm = isLightSurface(tokens) ? theme.defaultAlgorithm : theme.darkAlgorithm;
+    return {
+        algorithm,
+        token: {
+            fontFamily: tokens.typography.fontDisplay,
+            fontFamilyCode: tokens.typography.fontMono,
+            colorBgLayout: tokens.surface.bgBase,
+            colorBgContainer: tokens.surface.bgElevated,
+            colorBgElevated: tokens.surface.bgElevated,
+            colorPrimary: tokens.accents.researcher ?? tokens.semantic.info,
+            colorBorder: tokens.surface.borderSubtle,
+            colorBorderSecondary: tokens.surface.borderStrong,
+            colorText: tokens.surface.textPrimary,
+            colorTextSecondary: tokens.surface.textSecondary,
+            colorTextTertiary: tokens.surface.textTertiary,
+            colorSuccess: tokens.semantic.success,
+            colorWarning: tokens.semantic.warning,
+            colorError: tokens.semantic.error,
+            colorInfo: tokens.semantic.info,
+            borderRadius: tokens.radius.md,
+            motionDurationFast: msToCssSeconds(tokens.motion.fastMs),
+            motionDurationMid: msToCssSeconds(tokens.motion.defaultMs),
+            motionDurationSlow: msToCssSeconds(tokens.motion.slowMs),
+            motionEaseOut: tokens.motion.ease,
+            motionEaseInOut: tokens.motion.ease,
+        },
+        components: {
+            Card: { borderRadius: tokens.radius.lg },
+            Modal: { borderRadius: tokens.radius.md },
+        },
+    };
 }
 /**
  * Root-level CSS variables emitted from the resolved tokens. Injected by
@@ -82,8 +83,8 @@ export function tokensToAntd(tokens) {
  *   • layout — `--layout-sidebar-expanded` etc. Same as before.
  */
 export function tokensToCssVariables(tokens) {
-  const { layout, surface } = tokens;
-  return `:root {
+    const { layout, surface } = tokens;
+    return `:root {
   --ethos-bg: ${surface.bgBase};
   --ethos-bg-elevated: ${surface.bgElevated};
   --ethos-bg-overlay: ${surface.bgOverlay};

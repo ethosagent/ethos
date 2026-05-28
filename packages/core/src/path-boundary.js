@@ -13,21 +13,22 @@ import { resolve, sep } from 'node:path';
  * @throws BoundaryEscapeError if the resolved target escapes the base
  */
 export function assertWithinBase(base, target) {
-  const resolvedBase = resolve(base);
-  const resolvedTarget = resolve(target);
-  if (resolvedTarget === resolvedBase) return;
-  if (!resolvedTarget.startsWith(resolvedBase + sep)) {
-    throw new BoundaryEscapeError(resolvedBase, resolvedTarget);
-  }
+    const resolvedBase = resolve(base);
+    const resolvedTarget = resolve(target);
+    if (resolvedTarget === resolvedBase)
+        return;
+    if (!resolvedTarget.startsWith(resolvedBase + sep)) {
+        throw new BoundaryEscapeError(resolvedBase, resolvedTarget);
+    }
 }
 export class BoundaryEscapeError extends Error {
-  code = 'path-boundary-escape';
-  base;
-  resolved;
-  constructor(base, resolved) {
-    super(`Path "${resolved}" escapes boundary "${base}"`);
-    this.name = 'BoundaryEscapeError';
-    this.base = base;
-    this.resolved = resolved;
-  }
+    code = 'path-boundary-escape';
+    base;
+    resolved;
+    constructor(base, resolved) {
+        super(`Path "${resolved}" escapes boundary "${base}"`);
+        this.name = 'BoundaryEscapeError';
+        this.base = base;
+        this.resolved = resolved;
+    }
 }

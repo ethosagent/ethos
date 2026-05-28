@@ -20,20 +20,18 @@ const BEL = '\x07';
 //      ESC( [A-B0-2]
 //   4. Other common single-char escape sequences:
 //      ESC [DME78HNO=>cfn]
-const ANSI_RE = new RegExp(
-  `${ESC}\\[[?!>]?[0-9;]*[A-Za-z~]` +
+const ANSI_RE = new RegExp(`${ESC}\\[[?!>]?[0-9;]*[A-Za-z~]` +
     `|${ESC}\\][^${BEL}${ESC}]*(?:${BEL}|${ESC}\\\\)` +
     `|${ESC}\\([A-B0-2]` +
-    `|${ESC}[DME78HNO=>cfn]`,
-  'g',
-);
+    `|${ESC}[DME78HNO=>cfn]`, 'g');
 const MAX_STRIP_ITERATIONS = 10;
 export function stripAnsiEscapes(input) {
-  let result = input;
-  for (let i = 0; i < MAX_STRIP_ITERATIONS; i++) {
-    const next = result.replace(ANSI_RE, '');
-    if (next === result) return next;
-    result = next;
-  }
-  return result;
+    let result = input;
+    for (let i = 0; i < MAX_STRIP_ITERATIONS; i++) {
+        const next = result.replace(ANSI_RE, '');
+        if (next === result)
+            return next;
+        result = next;
+    }
+    return result;
 }

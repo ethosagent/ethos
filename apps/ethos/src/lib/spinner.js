@@ -22,55 +22,58 @@ const STATIC_GLYPH = '·';
  * `start()` re-starts a stopped instance — used between turns.
  */
 export class SpinnerState {
-  phase = 'idle';
-  startedAt = 0;
-  elapsedMs = 0;
-  frameIdx = 0;
-  reducedMotion;
-  constructor(options = {}) {
-    this.reducedMotion = options.reducedMotion ?? false;
-  }
-  start(now) {
-    this.phase = 'running';
-    this.startedAt = now;
-    this.elapsedMs = 0;
-    this.frameIdx = 0;
-  }
-  tick(now) {
-    if (this.phase !== 'running') return;
-    this.elapsedMs = now - this.startedAt;
-    this.frameIdx = (this.frameIdx + 1) % SPINNER_FRAMES.length;
-  }
-  stop(now) {
-    if (this.phase !== 'running') {
-      // stop() called on idle/stopped instance — leave elapsedMs untouched.
-      this.phase = 'stopped';
-      return;
+    phase = 'idle';
+    startedAt = 0;
+    elapsedMs = 0;
+    frameIdx = 0;
+    reducedMotion;
+    constructor(options = {}) {
+        this.reducedMotion = options.reducedMotion ?? false;
     }
-    this.elapsedMs = now - this.startedAt;
-    this.phase = 'stopped';
-  }
-  isRunning() {
-    return this.phase === 'running';
-  }
-  getPhase() {
-    return this.phase;
-  }
-  frame() {
-    if (this.reducedMotion) return STATIC_GLYPH;
-    return SPINNER_FRAMES[this.frameIdx] ?? SPINNER_FRAMES[0];
-  }
-  elapsed() {
-    return formatElapsed(this.elapsedMs);
-  }
-  elapsedMillis() {
-    return this.elapsedMs;
-  }
+    start(now) {
+        this.phase = 'running';
+        this.startedAt = now;
+        this.elapsedMs = 0;
+        this.frameIdx = 0;
+    }
+    tick(now) {
+        if (this.phase !== 'running')
+            return;
+        this.elapsedMs = now - this.startedAt;
+        this.frameIdx = (this.frameIdx + 1) % SPINNER_FRAMES.length;
+    }
+    stop(now) {
+        if (this.phase !== 'running') {
+            // stop() called on idle/stopped instance — leave elapsedMs untouched.
+            this.phase = 'stopped';
+            return;
+        }
+        this.elapsedMs = now - this.startedAt;
+        this.phase = 'stopped';
+    }
+    isRunning() {
+        return this.phase === 'running';
+    }
+    getPhase() {
+        return this.phase;
+    }
+    frame() {
+        if (this.reducedMotion)
+            return STATIC_GLYPH;
+        return SPINNER_FRAMES[this.frameIdx] ?? SPINNER_FRAMES[0];
+    }
+    elapsed() {
+        return formatElapsed(this.elapsedMs);
+    }
+    elapsedMillis() {
+        return this.elapsedMs;
+    }
 }
 export function formatElapsed(ms) {
-  const totalSecs = ms / 1000;
-  if (totalSecs < 60) return `${totalSecs.toFixed(1)}s`;
-  const mins = Math.floor(totalSecs / 60);
-  const remSecs = Math.floor(totalSecs - mins * 60);
-  return `${mins}m ${remSecs}s`;
+    const totalSecs = ms / 1000;
+    if (totalSecs < 60)
+        return `${totalSecs.toFixed(1)}s`;
+    const mins = Math.floor(totalSecs / 60);
+    const remSecs = Math.floor(totalSecs - mins * 60);
+    return `${mins}m ${remSecs}s`;
 }

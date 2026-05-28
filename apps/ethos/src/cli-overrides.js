@@ -12,24 +12,30 @@ import { ethosDir } from './config';
 // Known toolsets (derived from extensions/tools-*/src/index.ts)
 // ---------------------------------------------------------------------------
 export const VALID_TOOLSETS = [
-  'browser',
-  'code',
-  'cron',
-  'delegation',
-  'file',
-  'image',
-  'kanban',
-  'mcp',
-  'memory',
-  'process',
-  'terminal',
-  'todo',
-  'web',
+    'browser',
+    'code',
+    'cron',
+    'delegation',
+    'file',
+    'image',
+    'kanban',
+    'mcp',
+    'memory',
+    'process',
+    'terminal',
+    'todo',
+    'web',
 ];
 // ---------------------------------------------------------------------------
 // Known providers
 // ---------------------------------------------------------------------------
-export const VALID_PROVIDERS = ['anthropic', 'openrouter', 'openai-compat', 'ollama', 'gemini'];
+export const VALID_PROVIDERS = [
+    'anthropic',
+    'openrouter',
+    'openai-compat',
+    'ollama',
+    'gemini',
+];
 // ---------------------------------------------------------------------------
 // argv parser
 // ---------------------------------------------------------------------------
@@ -39,40 +45,45 @@ export const VALID_PROVIDERS = ['anthropic', 'openrouter', 'openai-compat', 'oll
  * Does not validate values — call applyCliOverrides for that.
  */
 export function parseCliOverrideFlags(argv) {
-  const flags = {};
-  const nextArg = (i) => {
-    const v = argv[i + 1];
-    return v && !v.startsWith('-') ? v : undefined;
-  };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i] ?? '';
-    if (a === '--model') {
-      flags.model = nextArg(i);
-      if (flags.model !== undefined) i++;
-    } else if (a === '--provider') {
-      flags.provider = nextArg(i);
-      if (flags.provider !== undefined) i++;
-    } else if (a === '--toolsets') {
-      const val = nextArg(i);
-      if (val) {
-        flags.toolsets = val
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean);
-        i++;
-      }
-    } else if (a === '-s') {
-      const val = nextArg(i);
-      if (val) {
-        flags.skills = val
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean);
-        i++;
-      }
+    const flags = {};
+    const nextArg = (i) => {
+        const v = argv[i + 1];
+        return v && !v.startsWith('-') ? v : undefined;
+    };
+    for (let i = 0; i < argv.length; i++) {
+        const a = argv[i] ?? '';
+        if (a === '--model') {
+            flags.model = nextArg(i);
+            if (flags.model !== undefined)
+                i++;
+        }
+        else if (a === '--provider') {
+            flags.provider = nextArg(i);
+            if (flags.provider !== undefined)
+                i++;
+        }
+        else if (a === '--toolsets') {
+            const val = nextArg(i);
+            if (val) {
+                flags.toolsets = val
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                i++;
+            }
+        }
+        else if (a === '-s') {
+            const val = nextArg(i);
+            if (val) {
+                flags.skills = val
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                i++;
+            }
+        }
     }
-  }
-  return flags;
+    return flags;
 }
 // ---------------------------------------------------------------------------
 // Override application + validation
@@ -86,68 +97,66 @@ export function parseCliOverrideFlags(argv) {
  * @throws {EthosError} MISSING_SKILL    — skill file not found for -s item
  */
 export async function applyCliOverrides(config, flags, storage) {
-  const result = { ...config };
-  // --model: pass-through, no validation
-  if (flags.model !== undefined) {
-    result.model = flags.model;
-  }
-  // --provider: validate against the known list
-  if (flags.provider !== undefined) {
-    const valid = VALID_PROVIDERS;
-    if (!valid.includes(flags.provider)) {
-      throw new EthosError({
-        code: 'INVALID_PROVIDER',
-        cause: `Unknown provider '${flags.provider}'. Valid options: ${VALID_PROVIDERS.join(', ')}`,
-        action: `Use one of: ${VALID_PROVIDERS.join(', ')}`,
-      });
+    const result = { ...config };
+    // --model: pass-through, no validation
+    if (flags.model !== undefined) {
+        result.model = flags.model;
     }
-    result.provider = flags.provider;
-  }
-  // --toolsets: validate each item against the known toolset names
-  if (flags.toolsets !== undefined) {
-    const valid = VALID_TOOLSETS;
-    for (const ts of flags.toolsets) {
-      if (!valid.includes(ts)) {
-        throw new EthosError({
-          code: 'INVALID_TOOLSET',
-          cause: `Unknown toolset '${ts}'. Valid options: ${VALID_TOOLSETS.join(', ')}`,
-          action: `Use one of: ${VALID_TOOLSETS.join(', ')}`,
-        });
-      }
+    // --provider: validate against the known list
+    if (flags.provider !== undefined) {
+        const valid = VALID_PROVIDERS;
+        if (!valid.includes(flags.provider)) {
+            throw new EthosError({
+                code: 'INVALID_PROVIDER',
+                cause: `Unknown provider '${flags.provider}'. Valid options: ${VALID_PROVIDERS.join(', ')}`,
+                action: `Use one of: ${VALID_PROVIDERS.join(', ')}`,
+            });
+        }
+        result.provider = flags.provider;
     }
-    result.cliToolsets = flags.toolsets;
-  }
-  // -s: resolve each skill name against ~/.ethos/skills/<name>.md
-  if (flags.skills !== undefined && flags.skills.length > 0) {
-    const skillsRoot = flags.skillsDir ?? join(ethosDir(), 'skills');
-    const skillContents = [];
-    for (const name of flags.skills) {
-      // Reject path traversal attempts before joining into ~/.ethos/skills/
-      if (
-        name.includes('/') ||
-        name.includes('\\') ||
-        name.includes('..') ||
-        name.startsWith('.')
-      ) {
-        throw new EthosError({
-          code: 'MISSING_SKILL',
-          cause: `Invalid skill name '${name}': must be a plain filename with no path separators`,
-          action: `Use a simple skill name like 'my-skill', not a path`,
-        });
-      }
-      const path = join(skillsRoot, `${name}.md`);
-      const content = await storage.read(path);
-      if (content === null) {
-        throw new EthosError({
-          code: 'MISSING_SKILL',
-          cause: `Skill '${name}' not found at ${path}`,
-          action: `Place a ${name}.md file in ~/.ethos/skills/ or check the skill name spelling`,
-        });
-      }
-      skillContents.push(content);
+    // --toolsets: validate each item against the known toolset names
+    if (flags.toolsets !== undefined) {
+        const valid = VALID_TOOLSETS;
+        for (const ts of flags.toolsets) {
+            if (!valid.includes(ts)) {
+                throw new EthosError({
+                    code: 'INVALID_TOOLSET',
+                    cause: `Unknown toolset '${ts}'. Valid options: ${VALID_TOOLSETS.join(', ')}`,
+                    action: `Use one of: ${VALID_TOOLSETS.join(', ')}`,
+                });
+            }
+        }
+        result.cliToolsets = flags.toolsets;
     }
-    result.cliSkills = flags.skills;
-    result.cliSkillContents = skillContents;
-  }
-  return result;
+    // -s: resolve each skill name against ~/.ethos/skills/<name>.md
+    if (flags.skills !== undefined && flags.skills.length > 0) {
+        const skillsRoot = flags.skillsDir ?? join(ethosDir(), 'skills');
+        const skillContents = [];
+        for (const name of flags.skills) {
+            // Reject path traversal attempts before joining into ~/.ethos/skills/
+            if (name.includes('/') ||
+                name.includes('\\') ||
+                name.includes('..') ||
+                name.startsWith('.')) {
+                throw new EthosError({
+                    code: 'MISSING_SKILL',
+                    cause: `Invalid skill name '${name}': must be a plain filename with no path separators`,
+                    action: `Use a simple skill name like 'my-skill', not a path`,
+                });
+            }
+            const path = join(skillsRoot, `${name}.md`);
+            const content = await storage.read(path);
+            if (content === null) {
+                throw new EthosError({
+                    code: 'MISSING_SKILL',
+                    cause: `Skill '${name}' not found at ${path}`,
+                    action: `Place a ${name}.md file in ~/.ethos/skills/ or check the skill name spelling`,
+                });
+            }
+            skillContents.push(content);
+        }
+        result.cliSkills = flags.skills;
+        result.cliSkillContents = skillContents;
+    }
+    return result;
 }

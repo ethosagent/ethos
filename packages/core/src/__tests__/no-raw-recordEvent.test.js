@@ -11,80 +11,79 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
-
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 const SCAN_ROOTS = [
-  'packages/core/src',
-  'packages/wiring/src',
-  'extensions/gateway/src',
-  'packages/safety/channel/src',
-  'packages/safety/injection/src',
-  'packages/safety/scanner/src',
-  'packages/safety/watcher/src',
-  'extensions/agent-mesh/src',
-  'apps/ethos/src',
+    'packages/core/src',
+    'packages/wiring/src',
+    'extensions/gateway/src',
+    'packages/safety/channel/src',
+    'packages/safety/injection/src',
+    'packages/safety/scanner/src',
+    'packages/safety/watcher/src',
+    'extensions/agent-mesh/src',
+    'apps/ethos/src',
 ];
 const WRAPPER_REL = 'packages/wiring/src/observability/ethos-observability.ts';
 function* walkSourceFiles(dir) {
-  for (const entry of readdirSync(dir)) {
-    const abs = join(dir, entry);
-    let st;
-    try {
-      st = statSync(abs);
-    } catch {
-      continue;
+    for (const entry of readdirSync(dir)) {
+        const abs = join(dir, entry);
+        let st;
+        try {
+            st = statSync(abs);
+        }
+        catch {
+            continue;
+        }
+        if (st.isDirectory()) {
+            if (entry === 'node_modules' || entry === 'dist' || entry === '__tests__')
+                continue;
+            yield* walkSourceFiles(abs);
+            continue;
+        }
+        if (!st.isFile())
+            continue;
+        if (!/\.(ts|tsx)$/.test(entry))
+            continue;
+        yield abs;
     }
-    if (st.isDirectory()) {
-      if (entry === 'node_modules' || entry === 'dist' || entry === '__tests__') continue;
-      yield* walkSourceFiles(abs);
-      continue;
-    }
-    if (!st.isFile()) continue;
-    if (!/\.(ts|tsx)$/.test(entry)) continue;
-    yield abs;
-  }
 }
 function scan(pattern, roots) {
-  const hits = [];
-  for (const root of roots) {
-    const dir = join(REPO_ROOT, root);
-    let exists = false;
-    try {
-      exists = statSync(dir).isDirectory();
-    } catch {
-      // Root missing — fine; nothing to scan.
-    }
-    if (!exists) continue;
-    for (const file of walkSourceFiles(dir)) {
-      const lines = readFileSync(file, 'utf-8').split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        const text = lines[i] ?? '';
-        if (pattern.test(text)) {
-          hits.push({ file: relative(REPO_ROOT, file), line: i + 1, text });
+    const hits = [];
+    for (const root of roots) {
+        const dir = join(REPO_ROOT, root);
+        let exists = false;
+        try {
+            exists = statSync(dir).isDirectory();
         }
-      }
+        catch {
+            // Root missing — fine; nothing to scan.
+        }
+        if (!exists)
+            continue;
+        for (const file of walkSourceFiles(dir)) {
+            const lines = readFileSync(file, 'utf-8').split('\n');
+            for (let i = 0; i < lines.length; i++) {
+                const text = lines[i] ?? '';
+                if (pattern.test(text)) {
+                    hits.push({ file: relative(REPO_ROOT, file), line: i + 1, text });
+                }
+            }
+        }
     }
-  }
-  return hits;
+    return hits;
 }
 function format(hits) {
-  return hits.map((h) => `${h.file}:${h.line}: ${h.text.trim()}`).join('\n');
+    return hits.map((h) => `${h.file}:${h.line}: ${h.text.trim()}`).join('\n');
 }
 describe('observability call-site discipline', () => {
-  it('no raw .recordEvent() calls in ethos consumer code', () => {
-    const hits = scan(/\.recordEvent\(/, SCAN_ROOTS);
-    const offenders = hits.filter((h) => h.file !== WRAPPER_REL);
-    expect(
-      offenders,
-      `Use a typed EthosObservability helper instead of writer.recordEvent.\nOffenders:\n${format(offenders)}`,
-    ).toEqual([]);
-  });
-  it('no raw .startTrace() calls in ethos consumer code', () => {
-    const hits = scan(/\.startTrace\(/, SCAN_ROOTS);
-    const offenders = hits.filter((h) => h.file !== WRAPPER_REL);
-    expect(
-      offenders,
-      `Use EthosObservability.startTurnTrace(...) etc.\nOffenders:\n${format(offenders)}`,
-    ).toEqual([]);
-  });
+    it('no raw .recordEvent() calls in ethos consumer code', () => {
+        const hits = scan(/\.recordEvent\(/, SCAN_ROOTS);
+        const offenders = hits.filter((h) => h.file !== WRAPPER_REL);
+        expect(offenders, `Use a typed EthosObservability helper instead of writer.recordEvent.\nOffenders:\n${format(offenders)}`).toEqual([]);
+    });
+    it('no raw .startTrace() calls in ethos consumer code', () => {
+        const hits = scan(/\.startTrace\(/, SCAN_ROOTS);
+        const offenders = hits.filter((h) => h.file !== WRAPPER_REL);
+        expect(offenders, `Use EthosObservability.startTurnTrace(...) etc.\nOffenders:\n${format(offenders)}`).toEqual([]);
+    });
 });

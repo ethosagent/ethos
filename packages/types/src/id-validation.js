@@ -12,15 +12,15 @@
  */
 const SAFE_ID_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
 export class IdValidationError extends Error {
-  code = 'invalid-id';
-  id;
-  kind;
-  constructor(id, kind) {
-    super(`Invalid ${kind}: "${id}" — must match /^[a-z0-9][a-z0-9_-]*$/`);
-    this.name = 'IdValidationError';
-    this.id = id;
-    this.kind = kind;
-  }
+    code = 'invalid-id';
+    id;
+    kind;
+    constructor(id, kind) {
+        super(`Invalid ${kind}: "${id}" — must match /^[a-z0-9][a-z0-9_-]*$/`);
+        this.name = 'IdValidationError';
+        this.id = id;
+        this.kind = kind;
+    }
 }
 /**
  * Validate that a user-supplied identifier is safe for use in path
@@ -29,7 +29,7 @@ export class IdValidationError extends Error {
  * @throws IdValidationError if the id is empty or contains unsafe characters
  */
 export function assertSafeId(id, kind) {
-  if (!id || !SAFE_ID_REGEX.test(id)) {
-    throw new IdValidationError(id, kind);
-  }
+    if (!id || !SAFE_ID_REGEX.test(id)) {
+        throw new IdValidationError(id, kind);
+    }
 }

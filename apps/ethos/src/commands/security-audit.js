@@ -8,15 +8,14 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { ethosDir } from '../config';
-
 const c = {
-  reset: '\x1b[0m',
-  dim: '\x1b[2m',
-  bold: '\x1b[1m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  red: '\x1b[31m',
-  cyan: '\x1b[36m',
+    reset: '\x1b[0m',
+    dim: '\x1b[2m',
+    bold: '\x1b[1m',
+    green: '\x1b[32m',
+    yellow: '\x1b[33m',
+    red: '\x1b[31m',
+    cyan: '\x1b[36m',
 };
 const CHANNEL_INGRESS_PLATFORMS = new Set(['telegram', 'discord', 'slack', 'whatsapp', 'email']);
 // Built-in always-deny floor that every personality should have visible
@@ -25,208 +24,214 @@ const CHANNEL_INGRESS_PLATFORMS = new Set(['telegram', 'discord', 'slack', 'what
 // which personalities effectively run with which fs_reach scopes.
 const ALWAYS_DENY_FLOOR = ['~/.ssh', '/etc/passwd', '/etc/shadow', '~/.aws/credentials'];
 async function check0600(path) {
-  try {
-    const s = await stat(path);
-    const mode = s.mode & 0o777;
-    return mode === 0o600 ? 'ok' : 'warn';
-  } catch {
-    return 'ok'; // missing file = nothing to lock down
-  }
+    try {
+        const s = await stat(path);
+        const mode = s.mode & 0o777;
+        return mode === 0o600 ? 'ok' : 'warn';
+    }
+    catch {
+        return 'ok'; // missing file = nothing to lock down
+    }
 }
 function parseFlags(argv) {
-  return {
-    fix: argv.includes('--fix'),
-    json: argv.includes('--json'),
-    deep: argv.includes('--deep'),
-  };
+    return {
+        fix: argv.includes('--fix'),
+        json: argv.includes('--json'),
+        deep: argv.includes('--deep'),
+    };
 }
 export async function runSecurityAudit(argv) {
-  if (argv[0] !== 'audit' && argv[0] !== undefined) {
-    console.error(`Usage: ethos security audit [--fix] [--json] [--deep]`);
-    process.exit(2);
-  }
-  const opts = parseFlags(argv);
-  const findings = [];
-  const dir = ethosDir();
-  // ---- Channel boundaries ----
-  // We don't have a live gateway here; report the personality-side state.
-  let registry;
-  try {
-    registry = await createPersonalityRegistry({
-      userPersonalitiesDir: join(dir, 'personalities'),
-    });
-  } catch (err) {
-    findings.push({
-      severity: 'fail',
-      section: 'Personalities',
-      message: `Personality load failed: ${err instanceof Error ? err.message : String(err)}`,
-    });
-    return emit(findings, opts);
-  }
-  const personalities = registry.list();
-  for (const p of personalities) {
-    const platform = p.platform;
-    if (platform && CHANNEL_INGRESS_PLATFORMS.has(platform)) {
-      if (p.safety?.approvalMode === 'off') {
-        findings.push({
-          severity: 'fail',
-          section: 'Channel boundaries',
-          message: `${p.id}: approvalMode: off + channel ${platform} (load-time rule should have rejected this)`,
+    if (argv[0] !== 'audit' && argv[0] !== undefined) {
+        console.error(`Usage: ethos security audit [--fix] [--json] [--deep]`);
+        process.exit(2);
+    }
+    const opts = parseFlags(argv);
+    const findings = [];
+    const dir = ethosDir();
+    // ---- Channel boundaries ----
+    // We don't have a live gateway here; report the personality-side state.
+    let registry;
+    try {
+        registry = await createPersonalityRegistry({
+            userPersonalitiesDir: join(dir, 'personalities'),
         });
-      } else {
+    }
+    catch (err) {
         findings.push({
-          severity: 'ok',
-          section: 'Channel boundaries',
-          message: `${p.id}: approvalMode=${p.safety?.approvalMode ?? 'manual'} on channel ${platform}`,
+            severity: 'fail',
+            section: 'Personalities',
+            message: `Personality load failed: ${err instanceof Error ? err.message : String(err)}`,
         });
-      }
+        return emit(findings, opts);
     }
-  }
-  // ---- Tool boundaries (approval mode) ----
-  for (const p of personalities) {
-    const mode = p.safety?.approvalMode ?? 'manual';
-    findings.push({
-      severity: mode === 'off' ? 'warn' : 'ok',
-      section: 'Tool boundaries',
-      message: `${p.id}: approvalMode=${mode}`,
-    });
-  }
-  // ---- File hygiene ----
-  const sensitiveFiles = [
-    join(dir, 'config.yaml'),
-    join(dir, 'keys.json'),
-    join(dir, 'observability.db'),
-  ];
-  for (const f of sensitiveFiles) {
-    const sev = await check0600(f);
-    findings.push({
-      severity: sev,
-      section: 'File hygiene',
-      message:
-        sev === 'ok'
-          ? `${f} is mode 0600 (or absent)`
-          : `${f} mode is too permissive — should be 0600`,
-      fixable: sev !== 'ok',
-      fix: async () => {
-        const { chmod } = await import('node:fs/promises');
-        await chmod(f, 0o600);
-      },
-    });
-  }
-  // ---- Always-deny floor advisory (informational) ----
-  findings.push({
-    severity: 'ok',
-    section: 'FS always-deny floor',
-    message: `built-in always-deny prefixes apply to every personality: ${ALWAYS_DENY_FLOOR.join(', ')}, …`,
-  });
-  // ---- Watcher / Network policy advisories ----
-  for (const p of personalities) {
-    const net = p.safety?.network;
-    if (net?.allow_private_urls === true) {
-      findings.push({
-        severity: 'warn',
-        section: 'Network policy',
-        message: `${p.id}: allow_private_urls=true (cloud-metadata still blocked, but RFC1918 is reachable)`,
-      });
-    }
-    const inj = p.safety?.injectionDefense;
-    if (inj?.enabled === false) {
-      findings.push({
-        severity: 'warn',
-        section: 'Injection defense',
-        message: `${p.id}: injectionDefense disabled (no provenance wrapping or post-read downgrade)`,
-      });
-    }
-  }
-  // ---- Apply fixes ----
-  if (opts.fix) {
-    for (const f of findings) {
-      if (f.fixable && f.fix) {
-        try {
-          await f.fix();
-          f.severity = 'ok';
-          f.message = `${f.message} — FIXED`;
-        } catch (err) {
-          f.message = `${f.message} — FIX FAILED: ${err instanceof Error ? err.message : String(err)}`;
+    const personalities = registry.list();
+    for (const p of personalities) {
+        const platform = p.platform;
+        if (platform && CHANNEL_INGRESS_PLATFORMS.has(platform)) {
+            if (p.safety?.approvalMode === 'off') {
+                findings.push({
+                    severity: 'fail',
+                    section: 'Channel boundaries',
+                    message: `${p.id}: approvalMode: off + channel ${platform} (load-time rule should have rejected this)`,
+                });
+            }
+            else {
+                findings.push({
+                    severity: 'ok',
+                    section: 'Channel boundaries',
+                    message: `${p.id}: approvalMode=${p.safety?.approvalMode ?? 'manual'} on channel ${platform}`,
+                });
+            }
         }
-      }
     }
-  }
-  emit(findings, opts);
+    // ---- Tool boundaries (approval mode) ----
+    for (const p of personalities) {
+        const mode = p.safety?.approvalMode ?? 'manual';
+        findings.push({
+            severity: mode === 'off' ? 'warn' : 'ok',
+            section: 'Tool boundaries',
+            message: `${p.id}: approvalMode=${mode}`,
+        });
+    }
+    // ---- File hygiene ----
+    const sensitiveFiles = [
+        join(dir, 'config.yaml'),
+        join(dir, 'keys.json'),
+        join(dir, 'observability.db'),
+    ];
+    for (const f of sensitiveFiles) {
+        const sev = await check0600(f);
+        findings.push({
+            severity: sev,
+            section: 'File hygiene',
+            message: sev === 'ok'
+                ? `${f} is mode 0600 (or absent)`
+                : `${f} mode is too permissive — should be 0600`,
+            fixable: sev !== 'ok',
+            fix: async () => {
+                const { chmod } = await import('node:fs/promises');
+                await chmod(f, 0o600);
+            },
+        });
+    }
+    // ---- Always-deny floor advisory (informational) ----
+    findings.push({
+        severity: 'ok',
+        section: 'FS always-deny floor',
+        message: `built-in always-deny prefixes apply to every personality: ${ALWAYS_DENY_FLOOR.join(', ')}, …`,
+    });
+    // ---- Watcher / Network policy advisories ----
+    for (const p of personalities) {
+        const net = p.safety?.network;
+        if (net?.allow_private_urls === true) {
+            findings.push({
+                severity: 'warn',
+                section: 'Network policy',
+                message: `${p.id}: allow_private_urls=true (cloud-metadata still blocked, but RFC1918 is reachable)`,
+            });
+        }
+        const inj = p.safety?.injectionDefense;
+        if (inj?.enabled === false) {
+            findings.push({
+                severity: 'warn',
+                section: 'Injection defense',
+                message: `${p.id}: injectionDefense disabled (no provenance wrapping or post-read downgrade)`,
+            });
+        }
+    }
+    // ---- Apply fixes ----
+    if (opts.fix) {
+        for (const f of findings) {
+            if (f.fixable && f.fix) {
+                try {
+                    await f.fix();
+                    f.severity = 'ok';
+                    f.message = `${f.message} — FIXED`;
+                }
+                catch (err) {
+                    f.message = `${f.message} — FIX FAILED: ${err instanceof Error ? err.message : String(err)}`;
+                }
+            }
+        }
+    }
+    emit(findings, opts);
 }
 function severityIcon(s) {
-  if (s === 'ok') return `${c.green}✓${c.reset}`;
-  if (s === 'warn') return `${c.yellow}⚠${c.reset}`;
-  return `${c.red}✗${c.reset}`;
+    if (s === 'ok')
+        return `${c.green}✓${c.reset}`;
+    if (s === 'warn')
+        return `${c.yellow}⚠${c.reset}`;
+    return `${c.red}✗${c.reset}`;
 }
 function emit(findings, opts) {
-  if (opts.json) {
-    process.stdout.write(JSON.stringify({ findings }, null, 2));
-    process.stdout.write('\n');
-  } else {
-    let lastSection = '';
-    for (const f of findings) {
-      if (f.section !== lastSection) {
-        process.stdout.write(`\n${c.bold}─ ${f.section} ${'─'.repeat(40)}${c.reset}\n`);
-        lastSection = f.section;
-      }
-      process.stdout.write(`  ${severityIcon(f.severity)} ${f.message}\n`);
+    if (opts.json) {
+        process.stdout.write(JSON.stringify({ findings }, null, 2));
+        process.stdout.write('\n');
+    }
+    else {
+        let lastSection = '';
+        for (const f of findings) {
+            if (f.section !== lastSection) {
+                process.stdout.write(`\n${c.bold}─ ${f.section} ${'─'.repeat(40)}${c.reset}\n`);
+                lastSection = f.section;
+            }
+            process.stdout.write(`  ${severityIcon(f.severity)} ${f.message}\n`);
+        }
+        const fails = findings.filter((f) => f.severity === 'fail').length;
+        const warns = findings.filter((f) => f.severity === 'warn').length;
+        process.stdout.write(`\n${fails} fail, ${warns} warn, ${findings.length - fails - warns} ok\n`);
+        if (!opts.fix) {
+            const fixable = findings.filter((f) => f.fixable).length;
+            if (fixable > 0) {
+                process.stdout.write(`Run ${c.cyan}ethos security audit --fix${c.reset} to auto-repair ${fixable}.\n`);
+            }
+        }
     }
     const fails = findings.filter((f) => f.severity === 'fail').length;
-    const warns = findings.filter((f) => f.severity === 'warn').length;
-    process.stdout.write(`\n${fails} fail, ${warns} warn, ${findings.length - fails - warns} ok\n`);
-    if (!opts.fix) {
-      const fixable = findings.filter((f) => f.fixable).length;
-      if (fixable > 0) {
-        process.stdout.write(
-          `Run ${c.cyan}ethos security audit --fix${c.reset} to auto-repair ${fixable}.\n`,
-        );
-      }
-    }
-  }
-  const fails = findings.filter((f) => f.severity === 'fail').length;
-  if (fails > 0) process.exit(1);
+    if (fails > 0)
+        process.exit(1);
 }
 // Helper for tests — synthesize findings in-process without exiting.
 export async function runSecurityAuditAndCollect(personalities) {
-  const findings = [];
-  for (const p of personalities) {
-    const platform = p.platform;
-    if (platform && CHANNEL_INGRESS_PLATFORMS.has(platform)) {
-      if (p.safety?.approvalMode === 'off') {
+    const findings = [];
+    for (const p of personalities) {
+        const platform = p.platform;
+        if (platform && CHANNEL_INGRESS_PLATFORMS.has(platform)) {
+            if (p.safety?.approvalMode === 'off') {
+                findings.push({
+                    severity: 'fail',
+                    section: 'Channel boundaries',
+                    message: `${p.id}: approvalMode: off + channel ${platform}`,
+                });
+            }
+            else {
+                findings.push({
+                    severity: 'ok',
+                    section: 'Channel boundaries',
+                    message: `${p.id}: approvalMode=${p.safety?.approvalMode ?? 'manual'} on channel ${platform}`,
+                });
+            }
+        }
+        const mode = p.safety?.approvalMode ?? 'manual';
         findings.push({
-          severity: 'fail',
-          section: 'Channel boundaries',
-          message: `${p.id}: approvalMode: off + channel ${platform}`,
+            severity: mode === 'off' ? 'warn' : 'ok',
+            section: 'Tool boundaries',
+            message: `${p.id}: approvalMode=${mode}`,
         });
-      } else {
-        findings.push({
-          severity: 'ok',
-          section: 'Channel boundaries',
-          message: `${p.id}: approvalMode=${p.safety?.approvalMode ?? 'manual'} on channel ${platform}`,
-        });
-      }
+        if (p.safety?.network?.allow_private_urls === true) {
+            findings.push({
+                severity: 'warn',
+                section: 'Network policy',
+                message: `${p.id}: allow_private_urls=true`,
+            });
+        }
+        if (p.safety?.injectionDefense?.enabled === false) {
+            findings.push({
+                severity: 'warn',
+                section: 'Injection defense',
+                message: `${p.id}: injectionDefense disabled`,
+            });
+        }
     }
-    const mode = p.safety?.approvalMode ?? 'manual';
-    findings.push({
-      severity: mode === 'off' ? 'warn' : 'ok',
-      section: 'Tool boundaries',
-      message: `${p.id}: approvalMode=${mode}`,
-    });
-    if (p.safety?.network?.allow_private_urls === true) {
-      findings.push({
-        severity: 'warn',
-        section: 'Network policy',
-        message: `${p.id}: allow_private_urls=true`,
-      });
-    }
-    if (p.safety?.injectionDefense?.enabled === false) {
-      findings.push({
-        severity: 'warn',
-        section: 'Injection defense',
-        message: `${p.id}: injectionDefense disabled`,
-      });
-    }
-  }
-  return { findings };
+    return { findings };
 }

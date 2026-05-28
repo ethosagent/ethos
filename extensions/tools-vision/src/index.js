@@ -30,9 +30,7 @@
 import { resolveFile, VisionInputError } from './input-resolver';
 import { supportsPdf, supportsVision } from './pricing';
 import { createVideoAnalyzeTool } from './video';
-
 export { createVideoAnalyzeTool } from './video';
-
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -41,267 +39,245 @@ export { createVideoAnalyzeTool } from './video';
 // document transcripts) are out of scope for v1; clip with the per-call cap.
 const MAX_RESULT_CHARS = 8_000;
 const RESOLVER_CODE_TO_TOOL_CODE = {
-  INVALID_INPUT: 'input_invalid',
-  FILE_NOT_FOUND: 'input_invalid',
-  URL_BLOCKED: 'input_invalid',
-  FILE_TOO_LARGE: 'input_invalid',
-  UNSUPPORTED_FILE_TYPE: 'input_invalid',
+    INVALID_INPUT: 'input_invalid',
+    FILE_NOT_FOUND: 'input_invalid',
+    URL_BLOCKED: 'input_invalid',
+    FILE_TOO_LARGE: 'input_invalid',
+    UNSUPPORTED_FILE_TYPE: 'input_invalid',
 };
 // ---------------------------------------------------------------------------
 // Tool factory
 // ---------------------------------------------------------------------------
 export function createVisionTools(opts) {
-  return [makeVisionAnalyze(opts), createVideoAnalyzeTool(opts)];
+    return [makeVisionAnalyze(opts), createVideoAnalyzeTool(opts)];
 }
 // Surfaced for callers that want the single tool without the factory list.
 export function makeVisionAnalyze(opts) {
-  return {
-    name: 'vision_analyze',
-    description:
-      'Analyze an image (PNG/JPEG/GIF/WEBP) or PDF with a vision-capable LLM. ' +
-      'Provide exactly one of file_path (personality-allowlisted), file_url (HTTPS, SSRF-checked), ' +
-      "or file_base64. Returns the model's text response plus token usage and cost. " +
-      'Pass format.json_schema to receive a parsed JSON object alongside the text. ' +
-      'v1 limitation: format.schema must have type "object" (array / primitive top-level types are not supported).',
-    toolset: 'vision',
-    maxResultChars: MAX_RESULT_CHARS,
-    capabilities: {
-      fs_reach: { read: 'from-personality' },
-      // The tool description and capability table both support PDFs ('file'
-      // kind in Telegram/Slack's classification). Without 'file' here, the
-      // ScopedAttachments filter drops PDFs before the tool sees them and
-      // openByRef throws 'No attachment with ref "att-0"' — misleading
-      // because the attachment exists, just not in this tool's scope.
-      attachments: { kinds: ['image', 'file'] },
-    },
-    // Tool output is the LLM's interpretation of an image / document the user
-    // supplied — owner-authored prompt + the model's reply. Not adversary
-    // content the way a fetched webpage is, but the underlying image bytes
-    // can carry prompt-injection text. Conservative: tag as untrusted so
-    // AgentLoop wraps the result in an <untrusted> envelope.
-    outputIsUntrusted: true,
-    schema: {
-      type: 'object',
-      properties: {
-        ref: {
-          type: 'string',
-          description:
-            'Opaque attachment reference (e.g. att-0) from the <attachments> block. When set, the referenced image is analyzed.',
+    return {
+        name: 'vision_analyze',
+        description: 'Analyze an image (PNG/JPEG/GIF/WEBP) or PDF with a vision-capable LLM. ' +
+            'Provide exactly one of file_path (personality-allowlisted), file_url (HTTPS, SSRF-checked), ' +
+            "or file_base64. Returns the model's text response plus token usage and cost. " +
+            'Pass format.json_schema to receive a parsed JSON object alongside the text. ' +
+            'v1 limitation: format.schema must have type "object" (array / primitive top-level types are not supported).',
+        toolset: 'vision',
+        maxResultChars: MAX_RESULT_CHARS,
+        capabilities: {
+            fs_reach: { read: 'from-personality' },
+            // The tool description and capability table both support PDFs ('file'
+            // kind in Telegram/Slack's classification). Without 'file' here, the
+            // ScopedAttachments filter drops PDFs before the tool sees them and
+            // openByRef throws 'No attachment with ref "att-0"' — misleading
+            // because the attachment exists, just not in this tool's scope.
+            attachments: { kinds: ['image', 'file'] },
         },
-        file_path: {
-          type: 'string',
-          description:
-            "Absolute path to a local file. Must lie within the personality's fs_reach allowlist.",
+        // Tool output is the LLM's interpretation of an image / document the user
+        // supplied — owner-authored prompt + the model's reply. Not adversary
+        // content the way a fetched webpage is, but the underlying image bytes
+        // can carry prompt-injection text. Conservative: tag as untrusted so
+        // AgentLoop wraps the result in an <untrusted> envelope.
+        outputIsUntrusted: true,
+        schema: {
+            type: 'object',
+            properties: {
+                ref: {
+                    type: 'string',
+                    description: 'Opaque attachment reference (e.g. att-0) from the <attachments> block. When set, the referenced image is analyzed.',
+                },
+                file_path: {
+                    type: 'string',
+                    description: "Absolute path to a local file. Must lie within the personality's fs_reach allowlist.",
+                },
+                file_url: {
+                    type: 'string',
+                    description: 'HTTPS URL to fetch. Routed through the safety-network SSRF pipeline. Max 32 MB.',
+                },
+                file_base64: {
+                    type: 'string',
+                    description: 'Base64-encoded file bytes. Optional "data:<mime>;base64," prefix accepted.',
+                },
+                prompt: {
+                    type: 'string',
+                    description: 'Question or instruction to apply to the file.',
+                },
+                model: {
+                    type: 'string',
+                    description: 'Optional override for the model used. Falls back to auxiliary.vision.model, ' +
+                        "then to the active personality's main model.",
+                },
+                format: {
+                    type: 'object',
+                    description: 'When set to { type: "json_schema", schema }, the tool appends a schema-binding ' +
+                        'instruction to the prompt and parses the response as JSON. v1 only supports ' +
+                        'schemas with top-level type "object" — array / primitive root types are rejected.',
+                    properties: {
+                        type: { type: 'string', enum: ['json_schema'] },
+                        schema: { type: 'object' },
+                    },
+                    required: ['type', 'schema'],
+                },
+            },
+            required: ['prompt'],
         },
-        file_url: {
-          type: 'string',
-          description:
-            'HTTPS URL to fetch. Routed through the safety-network SSRF pipeline. Max 32 MB.',
+        async execute(args, ctx) {
+            return await executeVision(args, ctx, opts);
         },
-        file_base64: {
-          type: 'string',
-          description: 'Base64-encoded file bytes. Optional "data:<mime>;base64," prefix accepted.',
-        },
-        prompt: {
-          type: 'string',
-          description: 'Question or instruction to apply to the file.',
-        },
-        model: {
-          type: 'string',
-          description:
-            'Optional override for the model used. Falls back to auxiliary.vision.model, ' +
-            "then to the active personality's main model.",
-        },
-        format: {
-          type: 'object',
-          description:
-            'When set to { type: "json_schema", schema }, the tool appends a schema-binding ' +
-            'instruction to the prompt and parses the response as JSON. v1 only supports ' +
-            'schemas with top-level type "object" — array / primitive root types are rejected.',
-          properties: {
-            type: { type: 'string', enum: ['json_schema'] },
-            schema: { type: 'object' },
-          },
-          required: ['type', 'schema'],
-        },
-      },
-      required: ['prompt'],
-    },
-    async execute(args, ctx) {
-      return await executeVision(args, ctx, opts);
-    },
-  };
+    };
 }
 // ---------------------------------------------------------------------------
 // execute()
 // ---------------------------------------------------------------------------
 async function executeVision(args, ctx, opts) {
-  // 1. Arg validation. The resolver already enforces "exactly one of the
-  //    three keys", but we pre-check prompt + format here so the error
-  //    attribution stays sharp.
-  if (typeof args.prompt !== 'string' || args.prompt.length === 0) {
-    return fail('input_invalid', 'INVALID_INPUT: prompt is required (non-empty string)');
-  }
-  if (args.model !== undefined && typeof args.model !== 'string') {
-    return fail('input_invalid', 'INVALID_INPUT: model must be a string');
-  }
-  if (args.format !== undefined) {
-    const f = args.format;
-    if (f.type !== 'json_schema') {
-      return fail('input_invalid', 'INVALID_INPUT: format.type must be "json_schema"');
+    // 1. Arg validation. The resolver already enforces "exactly one of the
+    //    three keys", but we pre-check prompt + format here so the error
+    //    attribution stays sharp.
+    if (typeof args.prompt !== 'string' || args.prompt.length === 0) {
+        return fail('input_invalid', 'INVALID_INPUT: prompt is required (non-empty string)');
     }
-    if (typeof f.schema !== 'object' || f.schema === null) {
-      return fail('input_invalid', 'INVALID_INPUT: format.schema must be an object');
+    if (args.model !== undefined && typeof args.model !== 'string') {
+        return fail('input_invalid', 'INVALID_INPUT: model must be a string');
     }
-    // v1 only supports object-rooted schemas. The downstream validator
-    // (`tryParseJsonAgainstSchema`) silently no-ops on any other top-level
-    // type, which would mean `{ type: 'array' }` — or `{}` with no type at
-    // all — accepts any parseable JSON. Require an explicit `type: 'object'`
-    // so the contract matches the validator (CLAUDE.md "Simplicity first" —
-    // extend when a real caller asks).
-    if (f.schema.type !== 'object') {
-      return fail(
-        'input_invalid',
-        'INVALID_INPUT: format.schema.type must be "object" (other top-level types are not supported in v1)',
-      );
+    if (args.format !== undefined) {
+        const f = args.format;
+        if (f.type !== 'json_schema') {
+            return fail('input_invalid', 'INVALID_INPUT: format.type must be "json_schema"');
+        }
+        if (typeof f.schema !== 'object' || f.schema === null) {
+            return fail('input_invalid', 'INVALID_INPUT: format.schema must be an object');
+        }
+        // v1 only supports object-rooted schemas. The downstream validator
+        // (`tryParseJsonAgainstSchema`) silently no-ops on any other top-level
+        // type, which would mean `{ type: 'array' }` — or `{}` with no type at
+        // all — accepts any parseable JSON. Require an explicit `type: 'object'`
+        // so the contract matches the validator (CLAUDE.md "Simplicity first" —
+        // extend when a real caller asks).
+        if (f.schema.type !== 'object') {
+            return fail('input_invalid', 'INVALID_INPUT: format.schema.type must be "object" (other top-level types are not supported in v1)');
+        }
     }
-  }
-  // 2a. Resolve attachment ref → file_path if present.
-  let effectiveArgs = args;
-  if (args.ref) {
-    if (!ctx.attachments) {
-      return fail('not_available', 'No attachments available for this turn.');
+    // 2a. Resolve attachment ref → file_path if present.
+    let effectiveArgs = args;
+    if (args.ref) {
+        if (!ctx.attachments) {
+            return fail('not_available', 'No attachments available for this turn.');
+        }
+        const { path } = await ctx.attachments.openByRef(args.ref);
+        effectiveArgs = { ...args, file_path: path, ref: undefined };
     }
-    const { path } = await ctx.attachments.openByRef(args.ref);
-    effectiveArgs = { ...args, file_path: path, ref: undefined };
-  }
-  // 2. Resolve bytes + media type.
-  let mediaType;
-  let buffer;
-  try {
-    const resolved = await resolveFile(
-      {
-        ...(effectiveArgs.file_path !== undefined ? { file_path: effectiveArgs.file_path } : {}),
-        ...(effectiveArgs.file_url !== undefined ? { file_url: effectiveArgs.file_url } : {}),
-        ...(effectiveArgs.file_base64 !== undefined
-          ? { file_base64: effectiveArgs.file_base64 }
-          : {}),
-      },
-      {
-        ...(ctx.scopedFs ? { scopedFs: ctx.scopedFs } : {}),
-        workingDir: ctx.workingDir,
-        ...(ctx.networkPolicy ? { networkPolicy: ctx.networkPolicy } : {}),
-        abortSignal: ctx.abortSignal,
-      },
-    );
-    mediaType = resolved.mediaType;
-    buffer = resolved.buffer;
-  } catch (err) {
-    if (err instanceof VisionInputError) {
-      const code = RESOLVER_CODE_TO_TOOL_CODE[err.code];
-      return fail(code, `${err.code}: ${err.message}`);
+    // 2. Resolve bytes + media type.
+    let mediaType;
+    let buffer;
+    try {
+        const resolved = await resolveFile({
+            ...(effectiveArgs.file_path !== undefined ? { file_path: effectiveArgs.file_path } : {}),
+            ...(effectiveArgs.file_url !== undefined ? { file_url: effectiveArgs.file_url } : {}),
+            ...(effectiveArgs.file_base64 !== undefined
+                ? { file_base64: effectiveArgs.file_base64 }
+                : {}),
+        }, {
+            ...(ctx.scopedFs ? { scopedFs: ctx.scopedFs } : {}),
+            workingDir: ctx.workingDir,
+            ...(ctx.networkPolicy ? { networkPolicy: ctx.networkPolicy } : {}),
+            abortSignal: ctx.abortSignal,
+        });
+        mediaType = resolved.mediaType;
+        buffer = resolved.buffer;
     }
-    throw err;
-  }
-  // 3. Pick the model: args > aux > default.
-  const model = args.model ?? opts.auxiliaryVisionModel ?? opts.defaultModel;
-  // 4. Capability gate.
-  const isPdf = mediaType === 'application/pdf';
-  if (!isPdf && !supportsVision(model)) {
-    return fail(
-      'not_available',
-      `VISION_NOT_SUPPORTED: model '${model}' is not vision-capable. ` +
-        'Pair this personality with a vision-capable model or set auxiliary.vision.model in ~/.ethos/config.yaml.',
-    );
-  }
-  if (isPdf && !supportsPdf(model)) {
-    return fail(
-      'not_available',
-      `PDF_NOT_SUPPORTED: model '${model}' cannot process PDF input. ` +
-        'Pair this personality with a PDF-capable model or set auxiliary.vision.model in ~/.ethos/config.yaml.',
-    );
-  }
-  // 5. Resolve provider.
-  const provider = opts.resolveProvider(model);
-  if (!provider) {
-    return fail(
-      'not_available',
-      `VISION_NOT_SUPPORTED: no LLMProvider configured for model '${model}'. ` +
-        'Set auxiliary.vision.* in ~/.ethos/config.yaml so vision_analyze has a provider to route through.',
-    );
-  }
-  // 6. Build the request.
-  const userMsg = buildUserMessage({
-    mediaType,
-    buffer,
-    prompt: args.prompt,
-    schema: args.format?.schema,
-  });
-  // 7. Call provider.complete() and stream.
-  let text = '';
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let costUsd = 0;
-  try {
-    const stream = provider.complete([userMsg], [], {
-      modelOverride: model,
-      abortSignal: ctx.abortSignal,
+    catch (err) {
+        if (err instanceof VisionInputError) {
+            const code = RESOLVER_CODE_TO_TOOL_CODE[err.code];
+            return fail(code, `${err.code}: ${err.message}`);
+        }
+        throw err;
+    }
+    // 3. Pick the model: args > aux > default.
+    const model = args.model ?? opts.auxiliaryVisionModel ?? opts.defaultModel;
+    // 4. Capability gate.
+    const isPdf = mediaType === 'application/pdf';
+    if (!isPdf && !supportsVision(model)) {
+        return fail('not_available', `VISION_NOT_SUPPORTED: model '${model}' is not vision-capable. ` +
+            'Pair this personality with a vision-capable model or set auxiliary.vision.model in ~/.ethos/config.yaml.');
+    }
+    if (isPdf && !supportsPdf(model)) {
+        return fail('not_available', `PDF_NOT_SUPPORTED: model '${model}' cannot process PDF input. ` +
+            'Pair this personality with a PDF-capable model or set auxiliary.vision.model in ~/.ethos/config.yaml.');
+    }
+    // 5. Resolve provider.
+    const provider = opts.resolveProvider(model);
+    if (!provider) {
+        return fail('not_available', `VISION_NOT_SUPPORTED: no LLMProvider configured for model '${model}'. ` +
+            'Set auxiliary.vision.* in ~/.ethos/config.yaml so vision_analyze has a provider to route through.');
+    }
+    // 6. Build the request.
+    const userMsg = buildUserMessage({
+        mediaType,
+        buffer,
+        prompt: args.prompt,
+        schema: args.format?.schema,
     });
-    for await (const chunk of stream) {
-      if (chunk.type === 'text_delta') {
-        text += chunk.text;
-      } else if (chunk.type === 'usage') {
-        inputTokens = chunk.usage.inputTokens;
-        outputTokens = chunk.usage.outputTokens;
-        costUsd = chunk.usage.estimatedCostUsd;
-      }
+    // 7. Call provider.complete() and stream.
+    let text = '';
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let costUsd = 0;
+    try {
+        const stream = provider.complete([userMsg], [], {
+            modelOverride: model,
+            abortSignal: ctx.abortSignal,
+        });
+        for await (const chunk of stream) {
+            if (chunk.type === 'text_delta') {
+                text += chunk.text;
+            }
+            else if (chunk.type === 'usage') {
+                inputTokens = chunk.usage.inputTokens;
+                outputTokens = chunk.usage.outputTokens;
+                costUsd = chunk.usage.estimatedCostUsd;
+            }
+        }
     }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (isPdf && looksLikePageLimit(msg)) {
-      return fail('execution_failed', `PDF_TOO_MANY_PAGES: ${msg}`);
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (isPdf && looksLikePageLimit(msg)) {
+            return fail('execution_failed', `PDF_TOO_MANY_PAGES: ${msg}`);
+        }
+        return fail('execution_failed', `LLM_ERROR: ${msg}`);
     }
-    return fail('execution_failed', `LLM_ERROR: ${msg}`);
-  }
-  // 8. json_schema validation (if requested).
-  let parsed;
-  if (args.format?.type === 'json_schema') {
-    const parseResult = tryParseJsonAgainstSchema(text, args.format.schema);
-    if (!parseResult.ok) {
-      return fail(
-        'execution_failed',
-        `RESPONSE_NOT_JSON: ${parseResult.reason}. Raw text: ${text}`,
-      );
+    // 8. json_schema validation (if requested).
+    let parsed;
+    if (args.format?.type === 'json_schema') {
+        const parseResult = tryParseJsonAgainstSchema(text, args.format.schema);
+        if (!parseResult.ok) {
+            return fail('execution_failed', `RESPONSE_NOT_JSON: ${parseResult.reason}. Raw text: ${text}`);
+        }
+        parsed = parseResult.value;
     }
-    parsed = parseResult.value;
-  }
-  // 9. Envelope.
-  const envelope = {
-    text,
-    ...(parsed !== undefined ? { parsed } : {}),
-    model,
-    cost_usd: costUsd,
-    input_tokens: inputTokens,
-    output_tokens: outputTokens,
-  };
-  return { ok: true, value: JSON.stringify(envelope), cost_usd: costUsd };
+    // 9. Envelope.
+    const envelope = {
+        text,
+        ...(parsed !== undefined ? { parsed } : {}),
+        model,
+        cost_usd: costUsd,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+    };
+    return { ok: true, value: JSON.stringify(envelope), cost_usd: costUsd };
 }
 // ---------------------------------------------------------------------------
 // Message construction
 // ---------------------------------------------------------------------------
 function buildUserMessage(args) {
-  const data = args.buffer.toString('base64');
-  const mediaBlock =
-    args.mediaType === 'application/pdf'
-      ? { type: 'document', mediaType: 'application/pdf', data }
-      : { type: 'image', mediaType: args.mediaType, data };
-  const promptText = args.schema
-    ? `${args.prompt}\n\nReply with ONLY a JSON object matching this schema: ${JSON.stringify(args.schema)}`
-    : args.prompt;
-  return {
-    role: 'user',
-    content: [mediaBlock, { type: 'text', text: promptText }],
-  };
+    const data = args.buffer.toString('base64');
+    const mediaBlock = args.mediaType === 'application/pdf'
+        ? { type: 'document', mediaType: 'application/pdf', data }
+        : { type: 'image', mediaType: args.mediaType, data };
+    const promptText = args.schema
+        ? `${args.prompt}\n\nReply with ONLY a JSON object matching this schema: ${JSON.stringify(args.schema)}`
+        : args.prompt;
+    return {
+        role: 'user',
+        content: [mediaBlock, { type: 'text', text: promptText }],
+    };
 }
 // ---------------------------------------------------------------------------
 // JSON-schema validation (intentionally tiny — see CLAUDE.md "Simplicity first")
@@ -314,47 +290,48 @@ function buildUserMessage(args) {
 // A future revision can swap in a real validator (zod-from-json-schema,
 // ajv) if real-world usage demands deeper checks.
 function tryParseJsonAgainstSchema(text, schema) {
-  const trimmed = text.trim();
-  if (!trimmed) return { ok: false, reason: 'empty response' };
-  let value;
-  try {
-    value = JSON.parse(trimmed);
-  } catch (err) {
-    return { ok: false, reason: `JSON.parse failed: ${err instanceof Error ? err.message : err}` };
-  }
-  // Top-level type check — only `object` is exercised by the test suite; we
-  // could expand here but the v1 spec keeps it minimal.
-  const expectedType = schema.type;
-  if (expectedType === 'object') {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-      return { ok: false, reason: 'expected JSON object at top level' };
+    const trimmed = text.trim();
+    if (!trimmed)
+        return { ok: false, reason: 'empty response' };
+    let value;
+    try {
+        value = JSON.parse(trimmed);
     }
-    const required = Array.isArray(schema.required) ? schema.required : [];
-    for (const key of required) {
-      if (typeof key !== 'string') continue;
-      if (!(key in value)) {
-        return { ok: false, reason: `missing required field '${key}'` };
-      }
+    catch (err) {
+        return { ok: false, reason: `JSON.parse failed: ${err instanceof Error ? err.message : err}` };
     }
-  }
-  return { ok: true, value };
+    // Top-level type check — only `object` is exercised by the test suite; we
+    // could expand here but the v1 spec keeps it minimal.
+    const expectedType = schema.type;
+    if (expectedType === 'object') {
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+            return { ok: false, reason: 'expected JSON object at top level' };
+        }
+        const required = Array.isArray(schema.required) ? schema.required : [];
+        for (const key of required) {
+            if (typeof key !== 'string')
+                continue;
+            if (!(key in value)) {
+                return { ok: false, reason: `missing required field '${key}'` };
+            }
+        }
+    }
+    return { ok: true, value };
 }
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 function looksLikePageLimit(message) {
-  const m = message.toLowerCase();
-  // Anthropic surfaces "too many pages" / "page count exceeds"; OpenAI hasn't
-  // standardized a wording yet, so we match a few common substrings. A
-  // single false positive here mis-attributes a real error — the surfaced
-  // message still contains the original text so the user can disambiguate.
-  return (
-    m.includes('too many pages') ||
-    m.includes('page count') ||
-    m.includes('page limit') ||
-    m.includes('document_too_large')
-  );
+    const m = message.toLowerCase();
+    // Anthropic surfaces "too many pages" / "page count exceeds"; OpenAI hasn't
+    // standardized a wording yet, so we match a few common substrings. A
+    // single false positive here mis-attributes a real error — the surfaced
+    // message still contains the original text so the user can disambiguate.
+    return (m.includes('too many pages') ||
+        m.includes('page count') ||
+        m.includes('page limit') ||
+        m.includes('document_too_large'));
 }
 function fail(code, error) {
-  return { ok: false, error, code };
+    return { ok: false, error, code };
 }

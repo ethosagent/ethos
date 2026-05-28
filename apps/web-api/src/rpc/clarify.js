@@ -8,12 +8,12 @@ import { os } from './context';
 // subscribed to the owning session's SSE stream — the same reachability
 // posture as `approvalId` in the tool-approval transport.
 export const clarifyRouter = {
-  respond: os.clarify.respond.handler(async ({ input, context }) => {
-    await context.clarifyBridge?.respond({
-      requestId: input.requestId,
-      answer: input.answer,
-      source: input.source,
-    });
-    return { ok: true };
-  }),
+    respond: os.clarify.respond.handler(async ({ input, context }) => {
+        await context.clarifyBridge?.respond({
+            requestId: input.requestId,
+            answer: input.answer,
+            source: input.source,
+        });
+        return { ok: true };
+    }),
 };

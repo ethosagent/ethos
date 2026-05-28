@@ -4,43 +4,38 @@ import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi } from '../../index';
-import {
-  makeStubAgentLoop,
-  makeStubMemoryProvider,
-  makeStubPersonalityRegistry,
-} from '../test-helpers';
-
+import { makeStubAgentLoop, makeStubMemoryProvider, makeStubPersonalityRegistry, } from '../test-helpers';
 describe('GET /healthz', () => {
-  let dir;
-  let store;
-  let app;
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'ethos-webapi-'));
-    store = new SQLiteSessionStore(':memory:');
-    app = createWebApi({
-      dataDir: dir,
-      sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
-      agentLoop: makeStubAgentLoop(),
-      personalities: makeStubPersonalityRegistry(),
-      chatDefaults: { model: 'claude-test', provider: 'anthropic' },
-    }).app;
-  });
-  afterEach(async () => {
-    store.close();
-    await rm(dir, { recursive: true, force: true });
-  });
-  it('returns 503 with status degraded and gateway down when no heartbeat file exists', async () => {
-    const res = await app.request('/healthz');
-    expect(res.status).toBe(503);
-    const body = await res.json();
-    expect(body.status).toBe('degraded');
-    expect(body.uptime).toBeGreaterThan(0);
-    expect(body.gateway.status).toBe('down');
-  });
-  it('responds without auth headers (unauthenticated)', async () => {
-    // No cookie, no bearer token — should still respond (no auth required).
-    const res = await app.request('/healthz');
-    expect(res.status).toBe(503);
-  });
+    let dir;
+    let store;
+    let app;
+    beforeEach(async () => {
+        dir = await mkdtemp(join(tmpdir(), 'ethos-webapi-'));
+        store = new SQLiteSessionStore(':memory:');
+        app = createWebApi({
+            dataDir: dir,
+            sessionStore: store,
+            memoryProvider: makeStubMemoryProvider(),
+            agentLoop: makeStubAgentLoop(),
+            personalities: makeStubPersonalityRegistry(),
+            chatDefaults: { model: 'claude-test', provider: 'anthropic' },
+        }).app;
+    });
+    afterEach(async () => {
+        store.close();
+        await rm(dir, { recursive: true, force: true });
+    });
+    it('returns 503 with status degraded and gateway down when no heartbeat file exists', async () => {
+        const res = await app.request('/healthz');
+        expect(res.status).toBe(503);
+        const body = (await res.json());
+        expect(body.status).toBe('degraded');
+        expect(body.uptime).toBeGreaterThan(0);
+        expect(body.gateway.status).toBe('down');
+    });
+    it('responds without auth headers (unauthenticated)', async () => {
+        // No cookie, no bearer token — should still respond (no auth required).
+        const res = await app.request('/healthz');
+        expect(res.status).toBe(503);
+    });
 });

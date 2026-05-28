@@ -1,5 +1,4 @@
 import { EthosError } from '@ethosagent/types';
-
 // CSRF protection (CEO finding 3.2). With `SameSite=Strict` cookies, the
 // browser will refuse to attach our auth cookie to most cross-origin
 // requests anyway, but a defense-in-depth Origin check on every state-
@@ -11,52 +10,58 @@ import { EthosError } from '@ethosagent/types';
 // verbatim instead.
 const STATEFUL_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 export function csrfMiddleware(opts = {}) {
-  const allowedOrigins = opts.allowedOrigins;
-  const allowLocalhost = opts.allowLocalhost ?? true;
-  return async (c, next) => {
-    if (!STATEFUL_METHODS.has(c.req.method)) return next();
-    const origin = c.req.header('origin');
-    // Same-origin requests don't always send Origin (older browsers, some
-    // fetch contexts). Fall back to Referer when present.
-    const referer = c.req.header('referer');
-    let refererOrigin = null;
-    if (referer) {
-      try {
-        refererOrigin = new URL(referer).origin;
-      } catch {
+    const allowedOrigins = opts.allowedOrigins;
+    const allowLocalhost = opts.allowLocalhost ?? true;
+    return async (c, next) => {
+        if (!STATEFUL_METHODS.has(c.req.method))
+            return next();
+        const origin = c.req.header('origin');
+        // Same-origin requests don't always send Origin (older browsers, some
+        // fetch contexts). Fall back to Referer when present.
+        const referer = c.req.header('referer');
+        let refererOrigin = null;
+        if (referer) {
+            try {
+                refererOrigin = new URL(referer).origin;
+            }
+            catch {
+                throw new EthosError({
+                    code: 'INVALID_INPUT',
+                    cause: 'Malformed Referer header',
+                    action: 'Send a valid URL in the Referer header.',
+                });
+            }
+        }
+        const candidate = origin ?? refererOrigin;
+        if (!candidate) {
+            throw new EthosError({
+                code: 'UNAUTHORIZED',
+                cause: 'Missing Origin header on state-changing request',
+                action: 'Browsers send Origin automatically for fetch/XHR. Check your client.',
+            });
+        }
+        if (isAllowed(candidate, allowedOrigins, allowLocalhost))
+            return next();
         throw new EthosError({
-          code: 'INVALID_INPUT',
-          cause: 'Malformed Referer header',
-          action: 'Send a valid URL in the Referer header.',
+            code: 'UNAUTHORIZED',
+            cause: `Cross-origin request from ${candidate} blocked`,
+            action: 'Use the URL printed by `ethos serve`, or pass `--bind` with an explicit allow-list.',
         });
-      }
-    }
-    const candidate = origin ?? refererOrigin;
-    if (!candidate) {
-      throw new EthosError({
-        code: 'UNAUTHORIZED',
-        cause: 'Missing Origin header on state-changing request',
-        action: 'Browsers send Origin automatically for fetch/XHR. Check your client.',
-      });
-    }
-    if (isAllowed(candidate, allowedOrigins, allowLocalhost)) return next();
-    throw new EthosError({
-      code: 'UNAUTHORIZED',
-      cause: `Cross-origin request from ${candidate} blocked`,
-      action: 'Use the URL printed by `ethos serve`, or pass `--bind` with an explicit allow-list.',
-    });
-  };
+    };
 }
 function isAllowed(origin, allowed, allowLocalhost) {
-  if (allowed && allowed.length > 0) return allowed.includes(origin);
-  if (allowLocalhost && isLocalhost(origin)) return true;
-  return false;
+    if (allowed && allowed.length > 0)
+        return allowed.includes(origin);
+    if (allowLocalhost && isLocalhost(origin))
+        return true;
+    return false;
 }
 function isLocalhost(origin) {
-  try {
-    const host = new URL(origin).hostname;
-    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
-  } catch {
-    return false;
-  }
+    try {
+        const host = new URL(origin).hostname;
+        return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+    }
+    catch {
+        return false;
+    }
 }

@@ -11,7 +11,7 @@
 import { clarifyHomeEntryBlocks } from '../blocks/clarify';
 import { kanbanListBlocks } from '../blocks/kanban';
 import { sessionListBlocks } from '../blocks/session';
-import { context, divider, escapeMrkdwn, header, section, truncate } from '../blocks/shared';
+import { context, divider, escapeMrkdwn, header, section, truncate, } from '../blocks/shared';
 /** `action_id` for the home tab's Refresh button. */
 export const HOME_REFRESH_ACTION_ID = 'home:refresh';
 // Per-section caps. Slack Home tab views have a hard 100-block limit; an
@@ -44,89 +44,91 @@ const CHANNEL_NAME_MAX = 100;
 /** Truncate `items` to `cap`. Returns the kept slice and the overflow count
  *  so the caller can append an honest `+ N more` context row. */
 function capSection(items, cap) {
-  if (items.length <= cap) return { kept: items, overflow: 0 };
-  return { kept: items.slice(0, cap), overflow: items.length - cap };
+    if (items.length <= cap)
+        return { kept: items, overflow: 0 };
+    return { kept: items.slice(0, cap), overflow: items.length - cap };
 }
 export function buildHomeView(input) {
-  const blocks = [];
-  // Header — bot identity.
-  blocks.push(header(input.bot.displayName));
-  const subject = input.bot.binding.type === 'team' ? 'team' : 'personality';
-  blocks.push(
-    section(
-      `Bound to the *${subject}* \`${escapeMrkdwn(input.bot.binding.name)}\` · status *online*`,
-    ),
-  );
-  blocks.push(divider());
-  // Waiting on you — pending clarifies. Hidden entirely when there are none
-  // so the section "earns" its existence rather than showing a tasteful
-  // empty state on every load.
-  const pending = input.pendingClarifies ?? [];
-  if (pending.length > 0) {
-    blocks.push(header('Waiting on you'));
-    const clarifies = capSection(pending, CLARIFY_CAP);
-    for (const row of clarifies.kept) {
-      // Each row contributes its own question section + action buttons. The
-      // App Home shares the same action_ids as the in-channel card, so a
-      // click here resolves the same pending row.
-      blocks.push(...clarifyHomeEntryBlocks(row));
-    }
-    if (clarifies.overflow > 0) blocks.push(context([`+ ${clarifies.overflow} more`]));
+    const blocks = [];
+    // Header — bot identity.
+    blocks.push(header(input.bot.displayName));
+    const subject = input.bot.binding.type === 'team' ? 'team' : 'personality';
+    blocks.push(section(`Bound to the *${subject}* \`${escapeMrkdwn(input.bot.binding.name)}\` · status *online*`));
     blocks.push(divider());
-  }
-  // Recent sessions.
-  const sessions = capSection(input.sessions, SESSION_CAP);
-  blocks.push(...sessionListBlocks({ sessions: sessions.kept, webUiBaseUrl: input.webUiBaseUrl }));
-  if (sessions.overflow > 0) blocks.push(context([`+ ${sessions.overflow} more`]));
-  // Active kanban — team-bound bots only. Hidden entirely for personality bots
-  // per the spec (kanban is a team feature).
-  if (input.bot.binding.type === 'team') {
-    const kanban = capSection(input.kanbanTickets, KANBAN_CAP);
-    // `kanbanListBlocks` is shared with the `/ethos kanban` slash command, so
-    // the per-field cap is applied here (App Home layer) on title-truncated
-    // copies rather than in the builder.
-    const tickets = kanban.kept.map((t) => ({
-      ...t,
-      title: truncate(t.title, KANBAN_TITLE_MAX),
-    }));
-    blocks.push(...kanbanListBlocks({ team: input.bot.binding.name, tickets }));
-    if (kanban.overflow > 0) blocks.push(context([`+ ${kanban.overflow} more`]));
+    // Waiting on you — pending clarifies. Hidden entirely when there are none
+    // so the section "earns" its existence rather than showing a tasteful
+    // empty state on every load.
+    const pending = input.pendingClarifies ?? [];
+    if (pending.length > 0) {
+        blocks.push(header('Waiting on you'));
+        const clarifies = capSection(pending, CLARIFY_CAP);
+        for (const row of clarifies.kept) {
+            // Each row contributes its own question section + action buttons. The
+            // App Home shares the same action_ids as the in-channel card, so a
+            // click here resolves the same pending row.
+            blocks.push(...clarifyHomeEntryBlocks(row));
+        }
+        if (clarifies.overflow > 0)
+            blocks.push(context([`+ ${clarifies.overflow} more`]));
+        blocks.push(divider());
+    }
+    // Recent sessions.
+    const sessions = capSection(input.sessions, SESSION_CAP);
+    blocks.push(...sessionListBlocks({ sessions: sessions.kept, webUiBaseUrl: input.webUiBaseUrl }));
+    if (sessions.overflow > 0)
+        blocks.push(context([`+ ${sessions.overflow} more`]));
+    // Active kanban — team-bound bots only. Hidden entirely for personality bots
+    // per the spec (kanban is a team feature).
+    if (input.bot.binding.type === 'team') {
+        const kanban = capSection(input.kanbanTickets, KANBAN_CAP);
+        // `kanbanListBlocks` is shared with the `/ethos kanban` slash command, so
+        // the per-field cap is applied here (App Home layer) on title-truncated
+        // copies rather than in the builder.
+        const tickets = kanban.kept.map((t) => ({
+            ...t,
+            title: truncate(t.title, KANBAN_TITLE_MAX),
+        }));
+        blocks.push(...kanbanListBlocks({ team: input.bot.binding.name, tickets }));
+        if (kanban.overflow > 0)
+            blocks.push(context([`+ ${kanban.overflow} more`]));
+        blocks.push(divider());
+    }
+    // Recent memory updates.
+    blocks.push(header('Recent memory updates'));
+    const memory = capSection(input.memorySnippets, MEMORY_CAP);
+    if (memory.kept.length === 0) {
+        blocks.push(section('No recent memory updates.'));
+    }
+    else {
+        for (const snippet of memory.kept) {
+            blocks.push(section(escapeMrkdwn(truncate(snippet, MEMORY_SNIPPET_MAX))));
+        }
+        if (memory.overflow > 0)
+            blocks.push(context([`+ ${memory.overflow} more`]));
+    }
     blocks.push(divider());
-  }
-  // Recent memory updates.
-  blocks.push(header('Recent memory updates'));
-  const memory = capSection(input.memorySnippets, MEMORY_CAP);
-  if (memory.kept.length === 0) {
-    blocks.push(section('No recent memory updates.'));
-  } else {
-    for (const snippet of memory.kept) {
-      blocks.push(section(escapeMrkdwn(truncate(snippet, MEMORY_SNIPPET_MAX))));
+    // This bot is in — channels + their mode.
+    blocks.push(header('This bot is in'));
+    const channels = capSection(input.channelModes, CHANNEL_CAP);
+    if (channels.kept.length === 0) {
+        blocks.push(section('This bot is not in any channels yet, or channel state is not persisted.'));
     }
-    if (memory.overflow > 0) blocks.push(context([`+ ${memory.overflow} more`]));
-  }
-  blocks.push(divider());
-  // This bot is in — channels + their mode.
-  blocks.push(header('This bot is in'));
-  const channels = capSection(input.channelModes, CHANNEL_CAP);
-  if (channels.kept.length === 0) {
-    blocks.push(section('This bot is not in any channels yet, or channel state is not persisted.'));
-  } else {
-    for (const [channel, mode] of channels.kept) {
-      blocks.push(
-        section(`<#${escapeMrkdwn(truncate(channel, CHANNEL_NAME_MAX))}> · mode \`${mode}\``),
-      );
+    else {
+        for (const [channel, mode] of channels.kept) {
+            blocks.push(section(`<#${escapeMrkdwn(truncate(channel, CHANNEL_NAME_MAX))}> · mode \`${mode}\``));
+        }
+        if (channels.overflow > 0)
+            blocks.push(context([`+ ${channels.overflow} more`]));
     }
-    if (channels.overflow > 0) blocks.push(context([`+ ${channels.overflow} more`]));
-  }
-  blocks.push({
-    type: 'actions',
-    elements: [
-      {
-        type: 'button',
-        action_id: HOME_REFRESH_ACTION_ID,
-        text: { type: 'plain_text', text: 'Refresh', emoji: true },
-      },
-    ],
-  });
-  return { type: 'home', blocks };
+    blocks.push({
+        type: 'actions',
+        elements: [
+            {
+                type: 'button',
+                action_id: HOME_REFRESH_ACTION_ID,
+                text: { type: 'plain_text', text: 'Refresh', emoji: true },
+            },
+        ],
+    });
+    return { type: 'home', blocks };
 }

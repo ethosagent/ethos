@@ -2,25 +2,25 @@
 // at runtime. We use a minimal structural type so this package doesn't take
 // a direct `@slack/types` dependency.
 export function divider() {
-  return { type: 'divider' };
+    return { type: 'divider' };
 }
 export function section(text) {
-  return {
-    type: 'section',
-    text: { type: 'mrkdwn', text },
-  };
+    return {
+        type: 'section',
+        text: { type: 'mrkdwn', text },
+    };
 }
 export function header(text) {
-  return {
-    type: 'header',
-    text: { type: 'plain_text', text, emoji: true },
-  };
+    return {
+        type: 'header',
+        text: { type: 'plain_text', text, emoji: true },
+    };
 }
 export function context(elements) {
-  return {
-    type: 'context',
-    elements: elements.map((text) => ({ type: 'mrkdwn', text })),
-  };
+    return {
+        type: 'context',
+        elements: elements.map((text) => ({ type: 'mrkdwn', text })),
+    };
 }
 /**
  * A `section` rendered as a two-column key/value grid via Slack's `fields`
@@ -29,10 +29,10 @@ export function context(elements) {
  * at 10 entries — callers stay well under that.
  */
 export function sectionFields(fields) {
-  return {
-    type: 'section',
-    fields: fields.map((text) => ({ type: 'mrkdwn', text })),
-  };
+    return {
+        type: 'section',
+        fields: fields.map((text) => ({ type: 'mrkdwn', text })),
+    };
 }
 /**
  * Escape the three characters Slack mrkdwn treats as markup delimiters. Any
@@ -42,7 +42,7 @@ export function sectionFields(fields) {
  * a live mention or link onto an Ethos surface.
  */
 export function escapeMrkdwn(text) {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 /**
  * Cap a single field's length so it can't blow past Slack's per-block text
@@ -53,8 +53,9 @@ export function escapeMrkdwn(text) {
  * normalization) so it composes with `escapeMrkdwn` and link wrapping.
  */
 export function truncate(text, max) {
-  if (text.length <= max) return text;
-  return `${text.slice(0, max)}…`;
+    if (text.length <= max)
+        return text;
+    return `${text.slice(0, max)}…`;
 }
 /** Plaintext fallback rendered into the message `text` field — Slack uses
  *  this for notifications, screen-readers, and clients that don't render
@@ -62,17 +63,20 @@ export function truncate(text, max) {
  *  client-side for notifications, and pre-stripping here mangles identifiers
  *  like `thread_follow` (the underscores would be eaten as italic markers). */
 export function plaintextFallback(blocks) {
-  const parts = [];
-  for (const block of blocks) {
-    if (block.type === 'header' || block.type === 'section') {
-      const t = block.text;
-      if (t?.text) parts.push(t.text);
-    } else if (block.type === 'context') {
-      const els = block.elements ?? [];
-      for (const el of els) {
-        if (el.text) parts.push(el.text);
-      }
+    const parts = [];
+    for (const block of blocks) {
+        if (block.type === 'header' || block.type === 'section') {
+            const t = block.text;
+            if (t?.text)
+                parts.push(t.text);
+        }
+        else if (block.type === 'context') {
+            const els = block.elements ?? [];
+            for (const el of els) {
+                if (el.text)
+                    parts.push(el.text);
+            }
+        }
     }
-  }
-  return parts.join('\n');
+    return parts.join('\n');
 }

@@ -14,10 +14,10 @@ You are replying inside a Discord server or DM. Follow these rules:
   offer to continue.
 - Avoid @mentions unless explicitly asked to tag someone.`;
 export function toNativeMarkdown(text) {
-  let out = text;
-  // Strip any HTML tags — Discord renders raw markdown, not HTML
-  out = out.replace(/<[^>]+>/g, '');
-  // Links: [text](url) → text (url)  — Discord plain text doesn't support markdown links
-  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)');
-  return out;
+    let out = text;
+    // Strip any HTML tags — Discord renders raw markdown, not HTML
+    out = out.replace(/<[^>]+>/g, '');
+    // Links: [text](url) → text (url)  — Discord plain text doesn't support markdown links
+    out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)');
+    return out;
 }

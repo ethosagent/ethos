@@ -2,328 +2,332 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, open, readdir, readFile, rename, rm, stat, unlink } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { createInterface } from 'node:readline';
-import { canInstall, deriveTier, scanPluginCode, scanSkillMd } from '@ethosagent/safety-scanner';
+import { canInstall, deriveTier, scanPluginCode, scanSkillMd, } from '@ethosagent/safety-scanner';
 import { UniversalScanner } from '@ethosagent/skills';
 import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
 import { isSafePathSegment } from '@ethosagent/storage-fs';
 import { EthosError } from '@ethosagent/types';
 import { ethosDir } from '../config';
 import { writeJson } from '../json-output';
-
 const c = {
-  reset: '\x1b[0m',
-  dim: '\x1b[2m',
-  bold: '\x1b[1m',
-  cyan: '\x1b[36m',
-  green: '\x1b[32m',
-  red: '\x1b[31m',
-  yellow: '\x1b[33m',
+    reset: '\x1b[0m',
+    dim: '\x1b[2m',
+    bold: '\x1b[1m',
+    cyan: '\x1b[36m',
+    green: '\x1b[32m',
+    red: '\x1b[31m',
+    yellow: '\x1b[33m',
 };
 function skillsRoot() {
-  return join(ethosDir(), 'skills');
+    return join(ethosDir(), 'skills');
 }
 export async function runSkills(args) {
-  const sub = args[0] ?? 'list';
-  switch (sub) {
-    case 'install': {
-      const yesFlag = args.includes('--yes');
-      const slug = args.filter((a) => a !== '--yes')[1];
-      if (!slug) {
-        console.log('Usage: ethos skills install <slug> [--yes]');
-        console.log('  e.g. ethos skills install steipete/slack');
-        console.log('       ethos skills install github:owner/repo/path');
-        console.log('       ethos skills install owner/skill --yes  # accept yellow findings');
-        process.exit(1);
-      }
-      await installSkill(slug, yesFlag);
-      break;
+    const sub = args[0] ?? 'list';
+    switch (sub) {
+        case 'install': {
+            const yesFlag = args.includes('--yes');
+            const slug = args.filter((a) => a !== '--yes')[1];
+            if (!slug) {
+                console.log('Usage: ethos skills install <slug> [--yes]');
+                console.log('  e.g. ethos skills install steipete/slack');
+                console.log('       ethos skills install github:owner/repo/path');
+                console.log('       ethos skills install owner/skill --yes  # accept yellow findings');
+                process.exit(1);
+            }
+            await installSkill(slug, yesFlag);
+            break;
+        }
+        case 'update': {
+            const yesFlag = args.includes('--yes');
+            const slug = args.filter((a) => a !== '--yes')[1];
+            if (slug) {
+                await updateOne(slug, yesFlag);
+            }
+            else {
+                await updateAll(yesFlag);
+            }
+            break;
+        }
+        case 'remove': {
+            const slug = args[1];
+            if (!slug) {
+                console.log('Usage: ethos skills remove <slug>');
+                process.exit(1);
+            }
+            await removeSkill(slug);
+            break;
+        }
+        case 'list': {
+            await listSkills(args);
+            break;
+        }
+        default:
+            console.log('Usage: ethos skills [install <slug> | list | update [slug] | remove <slug>]');
     }
-    case 'update': {
-      const yesFlag = args.includes('--yes');
-      const slug = args.filter((a) => a !== '--yes')[1];
-      if (slug) {
-        await updateOne(slug, yesFlag);
-      } else {
-        await updateAll(yesFlag);
-      }
-      break;
-    }
-    case 'remove': {
-      const slug = args[1];
-      if (!slug) {
-        console.log('Usage: ethos skills remove <slug>');
-        process.exit(1);
-      }
-      await removeSkill(slug);
-      break;
-    }
-    case 'list': {
-      await listSkills(args);
-      break;
-    }
-    default:
-      console.log('Usage: ethos skills [install <slug> | list | update [slug] | remove <slug>]');
-  }
 }
 // ---------------------------------------------------------------------------
 // Operations
 // ---------------------------------------------------------------------------
 async function installSkill(slug, yesFlag = false) {
-  const dir = skillsRoot();
-  console.log(
-    `${c.dim}Installing ${c.reset}${c.bold}${slug}${c.reset}${c.dim} via clawhub to ${dir}...${c.reset}\n`,
-  );
-  try {
-    await atomicInstall({
-      slug,
-      skillsRoot: dir,
-      runInstaller: async (workdir) => {
-        const result = runClawhub(['install', '--workdir', workdir, slug]);
-        if (result.status !== 0) {
-          throw new EthosError({
-            code: 'SKILL_INSTALL_FAILED',
-            cause: `clawhub exited with status ${result.status ?? 'unknown'}`,
-            action: 'Check the clawhub output above and re-run with the corrected slug.',
-          });
-        }
-      },
-      onBeforeCommit: (skillDir) => scanSkillDir(slug, skillDir, yesFlag),
-    });
-  } catch (err) {
-    if (err instanceof EthosError) {
-      console.error(`${c.red}${err.cause}${c.reset}\n${c.dim}→ ${err.action}${c.reset}`);
-    } else {
-      console.error(
-        `${c.red}Install failed: ${err instanceof Error ? err.message : String(err)}${c.reset}`,
-      );
+    const dir = skillsRoot();
+    console.log(`${c.dim}Installing ${c.reset}${c.bold}${slug}${c.reset}${c.dim} via clawhub to ${dir}...${c.reset}\n`);
+    try {
+        await atomicInstall({
+            slug,
+            skillsRoot: dir,
+            runInstaller: async (workdir) => {
+                const result = runClawhub(['install', '--workdir', workdir, slug]);
+                if (result.status !== 0) {
+                    throw new EthosError({
+                        code: 'SKILL_INSTALL_FAILED',
+                        cause: `clawhub exited with status ${result.status ?? 'unknown'}`,
+                        action: 'Check the clawhub output above and re-run with the corrected slug.',
+                    });
+                }
+            },
+            onBeforeCommit: (skillDir) => scanSkillDir(slug, skillDir, yesFlag),
+        });
     }
-    process.exit(1);
-  }
-  console.log(`\n${c.green}✓ Installed ${slug}.${c.reset}`);
+    catch (err) {
+        if (err instanceof EthosError) {
+            console.error(`${c.red}${err.cause}${c.reset}\n${c.dim}→ ${err.action}${c.reset}`);
+        }
+        else {
+            console.error(`${c.red}Install failed: ${err instanceof Error ? err.message : String(err)}${c.reset}`);
+        }
+        process.exit(1);
+    }
+    console.log(`\n${c.green}✓ Installed ${slug}.${c.reset}`);
 }
 async function updateOne(slug, yesFlag = false) {
-  const dir = skillsRoot();
-  console.log(`${c.dim}Updating ${c.reset}${c.bold}${slug}${c.reset}${c.dim}...${c.reset}\n`);
-  try {
-    // clawhub treats `install` of an existing slug as an update.
-    await atomicInstall({
-      slug,
-      skillsRoot: dir,
-      runInstaller: async (workdir) => {
-        const result = runClawhub(['install', '--workdir', workdir, slug]);
-        if (result.status !== 0) {
-          throw new EthosError({
-            code: 'SKILL_INSTALL_FAILED',
-            cause: `clawhub exited with status ${result.status ?? 'unknown'}`,
-            action: 'Check the clawhub output above and re-run with the corrected slug.',
-          });
-        }
-      },
-      onBeforeCommit: (skillDir) => scanSkillDir(slug, skillDir, yesFlag),
-    });
-  } catch (err) {
-    if (err instanceof EthosError) {
-      console.error(`${c.red}${err.cause}${c.reset}\n${c.dim}→ ${err.action}${c.reset}`);
-    } else {
-      console.error(
-        `${c.red}Update failed: ${err instanceof Error ? err.message : String(err)}${c.reset}`,
-      );
+    const dir = skillsRoot();
+    console.log(`${c.dim}Updating ${c.reset}${c.bold}${slug}${c.reset}${c.dim}...${c.reset}\n`);
+    try {
+        // clawhub treats `install` of an existing slug as an update.
+        await atomicInstall({
+            slug,
+            skillsRoot: dir,
+            runInstaller: async (workdir) => {
+                const result = runClawhub(['install', '--workdir', workdir, slug]);
+                if (result.status !== 0) {
+                    throw new EthosError({
+                        code: 'SKILL_INSTALL_FAILED',
+                        cause: `clawhub exited with status ${result.status ?? 'unknown'}`,
+                        action: 'Check the clawhub output above and re-run with the corrected slug.',
+                    });
+                }
+            },
+            onBeforeCommit: (skillDir) => scanSkillDir(slug, skillDir, yesFlag),
+        });
     }
-    process.exit(1);
-  }
-  console.log(`\n${c.green}✓ Updated ${slug}.${c.reset}`);
+    catch (err) {
+        if (err instanceof EthosError) {
+            console.error(`${c.red}${err.cause}${c.reset}\n${c.dim}→ ${err.action}${c.reset}`);
+        }
+        else {
+            console.error(`${c.red}Update failed: ${err instanceof Error ? err.message : String(err)}${c.reset}`);
+        }
+        process.exit(1);
+    }
+    console.log(`\n${c.green}✓ Updated ${slug}.${c.reset}`);
 }
 async function updateAll(yesFlag = false) {
-  const slugs = await listInstalledSlugs();
-  if (slugs.length === 0) {
-    console.log(`${c.dim}No skills installed.${c.reset}`);
-    return;
-  }
-  for (const slug of slugs) {
-    await updateOne(slug, yesFlag);
-  }
+    const slugs = await listInstalledSlugs();
+    if (slugs.length === 0) {
+        console.log(`${c.dim}No skills installed.${c.reset}`);
+        return;
+    }
+    for (const slug of slugs) {
+        await updateOne(slug, yesFlag);
+    }
 }
 async function removeSkill(slug) {
-  if (!isSafePathSegment(slug)) {
-    console.error(`${c.red}Invalid skill slug: ${slug}${c.reset}`);
-    process.exit(1);
-  }
-  const target = join(skillsRoot(), slug);
-  try {
-    const s = await stat(target);
-    if (!s.isDirectory()) {
-      console.error(`${c.red}Not a skill directory: ${target}${c.reset}`);
-      process.exit(1);
+    if (!isSafePathSegment(slug)) {
+        console.error(`${c.red}Invalid skill slug: ${slug}${c.reset}`);
+        process.exit(1);
     }
-  } catch {
-    console.error(`${c.red}Skill not found: ${slug}${c.reset}`);
-    process.exit(1);
-  }
-  await rm(target, { recursive: true, force: true });
-  console.log(`${c.green}✓ Removed ${slug}.${c.reset}`);
+    const target = join(skillsRoot(), slug);
+    try {
+        const s = await stat(target);
+        if (!s.isDirectory()) {
+            console.error(`${c.red}Not a skill directory: ${target}${c.reset}`);
+            process.exit(1);
+        }
+    }
+    catch {
+        console.error(`${c.red}Skill not found: ${slug}${c.reset}`);
+        process.exit(1);
+    }
+    await rm(target, { recursive: true, force: true });
+    console.log(`${c.green}✓ Removed ${slug}.${c.reset}`);
 }
 async function listSkills(args = []) {
-  const jsonMode = args.includes('--json');
-  const pool = await new UniversalScanner({
-    trustedFirstPartySources: [bundledCodingSkillsSource()],
-  }).scan();
-  const bySource = new Map();
-  for (const skill of pool.values()) {
-    const list = bySource.get(skill.source) ?? [];
-    list.push(skill);
-    bySource.set(skill.source, list);
-  }
-  // Stable order: bundled first, then ethos (user), then alphabetical
-  const sourceOrder = (label) => {
-    if (label === 'ethos-bundled') return 0;
-    if (label === 'ethos') return 1;
-    return 2;
-  };
-  const sortedSources = [...bySource.keys()].sort(
-    (a, b) => sourceOrder(a) - sourceOrder(b) || a.localeCompare(b),
-  );
-  if (jsonMode) {
-    const result = [];
-    for (const source of sortedSources) {
-      const skills = (bySource.get(source) ?? []).sort((a, b) => a.name.localeCompare(b.name));
-      for (const skill of skills) {
-        const ethosFm = skill.rawFrontmatter.ethos;
-        const category = typeof ethosFm?.category === 'string' ? ethosFm.category : undefined;
-        const entry = {
-          name: skill.name,
-          source,
-        };
-        if (category) entry.category = category;
-        result.push(entry);
-      }
+    const jsonMode = args.includes('--json');
+    const pool = await new UniversalScanner({
+        trustedFirstPartySources: [bundledCodingSkillsSource()],
+    }).scan();
+    const bySource = new Map();
+    for (const skill of pool.values()) {
+        const list = bySource.get(skill.source) ?? [];
+        list.push(skill);
+        bySource.set(skill.source, list);
     }
-    writeJson(result);
-    return;
-  }
-  if (sortedSources.length === 0) {
-    console.log(`\n${c.dim}No skills found.${c.reset}`);
-    console.log(`${c.dim}Install one with: ${c.reset}ethos skills install <slug>\n`);
-    return;
-  }
-  console.log();
-  for (const source of sortedSources) {
-    const skills = (bySource.get(source) ?? []).sort((a, b) => a.name.localeCompare(b.name));
-    const root = source === 'ethos' ? `  ${c.dim}(${skillsRoot()})${c.reset}` : '';
-    console.log(`${c.bold}${source}${c.reset}${root}`);
-    for (const skill of skills) {
-      const ethosFm = skill.rawFrontmatter.ethos;
-      const category = typeof ethosFm?.category === 'string' ? ethosFm.category : undefined;
-      const tag = category ? `  ${c.dim}[${category}]${c.reset}` : '';
-      console.log(`  ${c.cyan}${skill.name}${c.reset}${tag}`);
+    // Stable order: bundled first, then ethos (user), then alphabetical
+    const sourceOrder = (label) => {
+        if (label === 'ethos-bundled')
+            return 0;
+        if (label === 'ethos')
+            return 1;
+        return 2;
+    };
+    const sortedSources = [...bySource.keys()].sort((a, b) => sourceOrder(a) - sourceOrder(b) || a.localeCompare(b));
+    if (jsonMode) {
+        const result = [];
+        for (const source of sortedSources) {
+            const skills = (bySource.get(source) ?? []).sort((a, b) => a.name.localeCompare(b.name));
+            for (const skill of skills) {
+                const ethosFm = skill.rawFrontmatter.ethos;
+                const category = typeof ethosFm?.category === 'string' ? ethosFm.category : undefined;
+                const entry = {
+                    name: skill.name,
+                    source,
+                };
+                if (category)
+                    entry.category = category;
+                result.push(entry);
+            }
+        }
+        writeJson(result);
+        return;
+    }
+    if (sortedSources.length === 0) {
+        console.log(`\n${c.dim}No skills found.${c.reset}`);
+        console.log(`${c.dim}Install one with: ${c.reset}ethos skills install <slug>\n`);
+        return;
     }
     console.log();
-  }
+    for (const source of sortedSources) {
+        const skills = (bySource.get(source) ?? []).sort((a, b) => a.name.localeCompare(b.name));
+        const root = source === 'ethos' ? `  ${c.dim}(${skillsRoot()})${c.reset}` : '';
+        console.log(`${c.bold}${source}${c.reset}${root}`);
+        for (const skill of skills) {
+            const ethosFm = skill.rawFrontmatter.ethos;
+            const category = typeof ethosFm?.category === 'string' ? ethosFm.category : undefined;
+            const tag = category ? `  ${c.dim}[${category}]${c.reset}` : '';
+            console.log(`  ${c.cyan}${skill.name}${c.reset}${tag}`);
+        }
+        console.log();
+    }
 }
 // ---------------------------------------------------------------------------
 // Pre-install safety scan
 // ---------------------------------------------------------------------------
 function deriveTierFromSlug(slug) {
-  if (slug.startsWith('/') || slug.startsWith('./') || slug.startsWith('../')) {
-    return 'untrusted';
-  }
-  if (slug.startsWith('github:')) {
-    return deriveTier(`github.com/${slug.slice('github:'.length)}`);
-  }
-  // Short clawhub slug: owner/name
-  return deriveTier(`clawhub/${slug}`);
+    if (slug.startsWith('/') || slug.startsWith('./') || slug.startsWith('../')) {
+        return 'untrusted';
+    }
+    if (slug.startsWith('github:')) {
+        return deriveTier(`github.com/${slug.slice('github:'.length)}`);
+    }
+    // Short clawhub slug: owner/name
+    return deriveTier(`clawhub/${slug}`);
 }
 /** Regex matching scannable source file extensions. */
 const SCANNABLE_SOURCE_EXT = /\.[jt]sx?$|\.(?:cjs|mjs)$/;
 /** Declaration-file suffixes that should be skipped. */
 function isDeclarationFile(name) {
-  return name.endsWith('.d.ts') || name.endsWith('.d.cts') || name.endsWith('.d.mts');
+    return name.endsWith('.d.ts') || name.endsWith('.d.cts') || name.endsWith('.d.mts');
 }
 /**
  * Recursively walk `dir` and scan all source files through `scanPluginCode`.
  * Skips `node_modules` directories and declaration files.
  */
 async function walkAndScanSkillSource(dir, out) {
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const e of entries) {
-    const name = String(e.name);
-    if (e.isDirectory()) {
-      if (name === 'node_modules') continue;
-      await walkAndScanSkillSource(join(dir, name), out);
-    } else if (SCANNABLE_SOURCE_EXT.test(name) && !isDeclarationFile(name)) {
-      const src = await readFile(join(dir, name), 'utf-8').catch(() => null);
-      if (src) out.push(...scanPluginCode(src).findings);
+    let entries;
+    try {
+        entries = await readdir(dir, { withFileTypes: true });
     }
-  }
+    catch {
+        return;
+    }
+    for (const e of entries) {
+        const name = String(e.name);
+        if (e.isDirectory()) {
+            if (name === 'node_modules')
+                continue;
+            await walkAndScanSkillSource(join(dir, name), out);
+        }
+        else if (SCANNABLE_SOURCE_EXT.test(name) && !isDeclarationFile(name)) {
+            const src = await readFile(join(dir, name), 'utf-8').catch(() => null);
+            if (src)
+                out.push(...scanPluginCode(src).findings);
+        }
+    }
 }
 async function scanSkillDir(slug, skillDir, yesFlag = false) {
-  // Scan SKILL.md for prompt-injection / hidden-unicode / etc.
-  const allFindings = [];
-  try {
-    const content = await readFile(join(skillDir, 'SKILL.md'), 'utf8');
-    allFindings.push(...scanSkillMd(content, join(skillDir, 'SKILL.md')).findings);
-  } catch {
-    // No SKILL.md — locateSlugSubpath already verified its presence
-  }
-  // Also scan any source files (.ts, .js, .cjs, .mjs, .tsx, .jsx) in the bundle
-  await walkAndScanSkillSource(skillDir, allFindings);
-  const result = {
-    findings: allFindings,
-    hasRed: allFindings.some((f) => f.severity === 'red'),
-    hasYellow: allFindings.some((f) => f.severity === 'yellow'),
-  };
-  if (!result.hasRed && !result.hasYellow) return;
-  const tier = deriveTierFromSlug(slug);
-  const tierColor = tier === 'untrusted' ? c.red : tier === 'community' ? c.yellow : c.dim;
-  const decision = canInstall(result, tier);
-  console.log(`\n${c.bold}Safety scan — ${slug}${c.reset}  ${tierColor}[${tier}]${c.reset}`);
-  for (const f of result.findings) {
-    const color = f.severity === 'red' ? c.red : c.yellow;
-    const loc = f.line !== undefined ? `:${f.line}` : '';
-    console.log(
-      `  ${color}${f.severity === 'red' ? '✗' : '⚠'} ${f.severity}${c.reset}  ${f.rule}${loc}`,
-    );
-    if (f.message) console.log(`     ${c.dim}${f.message}${c.reset}`);
-    if (f.excerpt) console.log(`     ${c.dim}${f.excerpt}${c.reset}`);
-  }
-  if (!decision.allowed) {
-    if (result.hasRed) {
-      console.log();
-      throw new EthosError({
-        code: 'SKILL_INSTALL_FAILED',
-        cause: `Skill '${slug}' blocked by safety scan: ${decision.blockedBy}`,
-        action:
-          'Review the findings above. Remove the flagged content or choose a different skill.',
-      });
+    // Scan SKILL.md for prompt-injection / hidden-unicode / etc.
+    const allFindings = [];
+    try {
+        const content = await readFile(join(skillDir, 'SKILL.md'), 'utf8');
+        allFindings.push(...scanSkillMd(content, join(skillDir, 'SKILL.md')).findings);
     }
-    // Yellow-only for community/untrusted: accept via --yes, fail fast if
-    // non-interactive, or prompt interactively.
-    const yellowAction = resolveYellowFindings({
-      slug,
-      findings: result.findings,
-      yesFlag,
-      isTTY: !!process.stdin.isTTY,
-      managed: process.env.ETHOS_MANAGED === '1',
-    });
-    if (yellowAction === 'proceed') return;
-    // Interactive TTY path: prompt for confirmation
-    const confirmed = await promptConfirm(
-      `\n${c.yellow}⚠ Install '${slug}' with the warnings above? [y/N]${c.reset} `,
-    );
-    if (!confirmed) {
-      throw new EthosError({
-        code: 'SKILL_INSTALL_FAILED',
-        cause: `Skill '${slug}' install cancelled by user`,
-        action: 'Choose a different skill or contact the skill author to address the findings.',
-      });
+    catch {
+        // No SKILL.md — locateSlugSubpath already verified its presence
     }
-    return;
-  }
-  console.log(`${c.yellow}⚠ Installed with warnings — review findings above.${c.reset}`);
+    // Also scan any source files (.ts, .js, .cjs, .mjs, .tsx, .jsx) in the bundle
+    await walkAndScanSkillSource(skillDir, allFindings);
+    const result = {
+        findings: allFindings,
+        hasRed: allFindings.some((f) => f.severity === 'red'),
+        hasYellow: allFindings.some((f) => f.severity === 'yellow'),
+    };
+    if (!result.hasRed && !result.hasYellow)
+        return;
+    const tier = deriveTierFromSlug(slug);
+    const tierColor = tier === 'untrusted' ? c.red : tier === 'community' ? c.yellow : c.dim;
+    const decision = canInstall(result, tier);
+    console.log(`\n${c.bold}Safety scan — ${slug}${c.reset}  ${tierColor}[${tier}]${c.reset}`);
+    for (const f of result.findings) {
+        const color = f.severity === 'red' ? c.red : c.yellow;
+        const loc = f.line !== undefined ? `:${f.line}` : '';
+        console.log(`  ${color}${f.severity === 'red' ? '✗' : '⚠'} ${f.severity}${c.reset}  ${f.rule}${loc}`);
+        if (f.message)
+            console.log(`     ${c.dim}${f.message}${c.reset}`);
+        if (f.excerpt)
+            console.log(`     ${c.dim}${f.excerpt}${c.reset}`);
+    }
+    if (!decision.allowed) {
+        if (result.hasRed) {
+            console.log();
+            throw new EthosError({
+                code: 'SKILL_INSTALL_FAILED',
+                cause: `Skill '${slug}' blocked by safety scan: ${decision.blockedBy}`,
+                action: 'Review the findings above. Remove the flagged content or choose a different skill.',
+            });
+        }
+        // Yellow-only for community/untrusted: accept via --yes, fail fast if
+        // non-interactive, or prompt interactively.
+        const yellowAction = resolveYellowFindings({
+            slug,
+            findings: result.findings,
+            yesFlag,
+            isTTY: !!process.stdin.isTTY,
+            managed: process.env.ETHOS_MANAGED === '1',
+        });
+        if (yellowAction === 'proceed')
+            return;
+        // Interactive TTY path: prompt for confirmation
+        const confirmed = await promptConfirm(`\n${c.yellow}⚠ Install '${slug}' with the warnings above? [y/N]${c.reset} `);
+        if (!confirmed) {
+            throw new EthosError({
+                code: 'SKILL_INSTALL_FAILED',
+                cause: `Skill '${slug}' install cancelled by user`,
+                action: 'Choose a different skill or contact the skill author to address the findings.',
+            });
+        }
+        return;
+    }
+    console.log(`${c.yellow}⚠ Installed with warnings — review findings above.${c.reset}`);
 }
 /**
  * Resolve a yellow-finding install decision without hanging on stdin.
@@ -333,34 +337,34 @@ async function scanSkillDir(slug, skillDir, yesFlag = false) {
  * @returns `'proceed'` to continue installing, or throws EthosError to abort.
  */
 export function resolveYellowFindings(opts) {
-  const { slug, findings, yesFlag, isTTY, managed } = opts;
-  const yellowFindings = findings.filter((f) => f.severity === 'yellow');
-  if (yesFlag) {
-    console.log(`${c.yellow}⚠ Accepted yellow findings for '${slug}' (--yes)${c.reset}`);
-    for (const f of yellowFindings) {
-      console.log(`  ${c.dim}accepted: ${f.rule}${c.reset}`);
+    const { slug, findings, yesFlag, isTTY, managed } = opts;
+    const yellowFindings = findings.filter((f) => f.severity === 'yellow');
+    if (yesFlag) {
+        console.log(`${c.yellow}⚠ Accepted yellow findings for '${slug}' (--yes)${c.reset}`);
+        for (const f of yellowFindings) {
+            console.log(`  ${c.dim}accepted: ${f.rule}${c.reset}`);
+        }
+        return 'proceed';
     }
-    return 'proceed';
-  }
-  const nonInteractive = !isTTY || managed;
-  if (nonInteractive) {
-    const findingSummary = yellowFindings.map((f) => f.rule).join(', ');
-    throw new EthosError({
-      code: 'SKILL_INSTALL_FAILED',
-      cause: `Skill '${slug}' has yellow safety findings (${findingSummary}) and stdin is not a TTY.`,
-      action: 'Re-run with --yes to accept the findings, or install interactively.',
-    });
-  }
-  return 'prompt';
+    const nonInteractive = !isTTY || managed;
+    if (nonInteractive) {
+        const findingSummary = yellowFindings.map((f) => f.rule).join(', ');
+        throw new EthosError({
+            code: 'SKILL_INSTALL_FAILED',
+            cause: `Skill '${slug}' has yellow safety findings (${findingSummary}) and stdin is not a TTY.`,
+            action: 'Re-run with --yes to accept the findings, or install interactively.',
+        });
+    }
+    return 'prompt';
 }
 function promptConfirm(question) {
-  return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(question, (ans) => {
-      rl.close();
-      resolve(ans.trim().toLowerCase() === 'y');
+    return new Promise((resolve) => {
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        rl.question(question, (ans) => {
+            rl.close();
+            resolve(ans.trim().toLowerCase() === 'y');
+        });
     });
-  });
 }
 // ---------------------------------------------------------------------------
 // Atomic install
@@ -388,179 +392,196 @@ function promptConfirm(question) {
 const LOCK_TIMEOUT_MS = 60_000;
 const LOCK_POLL_MS = 200;
 export async function atomicInstall(opts) {
-  const { slug, skillsRoot, runInstaller, onBeforeCommit } = opts;
-  const pid = opts.pid ?? process.pid;
-  const tmpRoot = join(skillsRoot, '.tmp');
-  const lockPath = join(skillsRoot, '.lock');
-  await mkdir(skillsRoot, { recursive: true });
-  await mkdir(tmpRoot, { recursive: true });
-  const tmpDir = join(tmpRoot, `${slug.replace(/[^A-Za-z0-9._-]/g, '_')}-${pid}`);
-  const releaseLock = await acquireLock(lockPath);
-  try {
-    // Wipe any prior remnant for this pid, then create a fresh tmp dir.
-    await rm(tmpDir, { recursive: true, force: true });
-    await mkdir(tmpDir, { recursive: true });
-    // If the installer throws, the `finally` below still runs `rm -rf` on the
-    // tmp dir — destination is never touched.
-    await runInstaller(tmpDir);
-    // Locate the slug subtree by finding the SKILL.md leaf.
-    const slugSubpath = await locateSlugSubpath(tmpDir);
-    if (!slugSubpath) {
-      throw new EthosError({
-        code: 'SKILL_INSTALL_FAILED',
-        cause: `installer produced no SKILL.md under ${tmpDir}`,
-        action:
-          'The slug may be wrong, or the upstream skill is missing SKILL.md. Check the installer output above.',
-      });
-    }
-    const src = join(tmpDir, slugSubpath);
-    const dst = join(skillsRoot, slugSubpath);
-    // Pre-commit hook (e.g. safety scan) — throw to abort before any rename.
-    await onBeforeCommit?.(src);
-    await mkdir(dirname(dst), { recursive: true });
-    // If the destination exists (update flow), rename it aside first so the
-    // swap-in is still atomic. We restore the aside if rename fails.
-    let aside;
+    const { slug, skillsRoot, runInstaller, onBeforeCommit } = opts;
+    const pid = opts.pid ?? process.pid;
+    const tmpRoot = join(skillsRoot, '.tmp');
+    const lockPath = join(skillsRoot, '.lock');
+    await mkdir(skillsRoot, { recursive: true });
+    await mkdir(tmpRoot, { recursive: true });
+    const tmpDir = join(tmpRoot, `${slug.replace(/[^A-Za-z0-9._-]/g, '_')}-${pid}`);
+    const releaseLock = await acquireLock(lockPath);
     try {
-      await stat(dst);
-      aside = `${dst}.old-${pid}`;
-      await rm(aside, { recursive: true, force: true });
-      await rename(dst, aside);
-    } catch (err) {
-      const code = err?.code;
-      if (code !== 'ENOENT') throw err;
-      // Destination doesn't exist — first-time install.
-    }
-    try {
-      await rename(src, dst);
-    } catch (err) {
-      // Roll back: restore the aside.
-      if (aside) {
-        try {
-          await rename(aside, dst);
-        } catch {
-          // Best-effort; leave the aside in place if even rollback fails.
+        // Wipe any prior remnant for this pid, then create a fresh tmp dir.
+        await rm(tmpDir, { recursive: true, force: true });
+        await mkdir(tmpDir, { recursive: true });
+        // If the installer throws, the `finally` below still runs `rm -rf` on the
+        // tmp dir — destination is never touched.
+        await runInstaller(tmpDir);
+        // Locate the slug subtree by finding the SKILL.md leaf.
+        const slugSubpath = await locateSlugSubpath(tmpDir);
+        if (!slugSubpath) {
+            throw new EthosError({
+                code: 'SKILL_INSTALL_FAILED',
+                cause: `installer produced no SKILL.md under ${tmpDir}`,
+                action: 'The slug may be wrong, or the upstream skill is missing SKILL.md. Check the installer output above.',
+            });
         }
-      }
-      throw err;
+        const src = join(tmpDir, slugSubpath);
+        const dst = join(skillsRoot, slugSubpath);
+        // Pre-commit hook (e.g. safety scan) — throw to abort before any rename.
+        await onBeforeCommit?.(src);
+        await mkdir(dirname(dst), { recursive: true });
+        // If the destination exists (update flow), rename it aside first so the
+        // swap-in is still atomic. We restore the aside if rename fails.
+        let aside;
+        try {
+            await stat(dst);
+            aside = `${dst}.old-${pid}`;
+            await rm(aside, { recursive: true, force: true });
+            await rename(dst, aside);
+        }
+        catch (err) {
+            const code = err?.code;
+            if (code !== 'ENOENT')
+                throw err;
+            // Destination doesn't exist — first-time install.
+        }
+        try {
+            await rename(src, dst);
+        }
+        catch (err) {
+            // Roll back: restore the aside.
+            if (aside) {
+                try {
+                    await rename(aside, dst);
+                }
+                catch {
+                    // Best-effort; leave the aside in place if even rollback fails.
+                }
+            }
+            throw err;
+        }
+        // Success → drop the aside copy.
+        if (aside)
+            await rm(aside, { recursive: true, force: true });
     }
-    // Success → drop the aside copy.
-    if (aside) await rm(aside, { recursive: true, force: true });
-  } finally {
-    // Always clean up the per-pid tmp directory; never leaves a half-written
-    // dir under <skillsRoot>/<slug>/ either way.
-    try {
-      await rm(tmpDir, { recursive: true, force: true });
-    } catch {
-      // Best-effort cleanup.
+    finally {
+        // Always clean up the per-pid tmp directory; never leaves a half-written
+        // dir under <skillsRoot>/<slug>/ either way.
+        try {
+            await rm(tmpDir, { recursive: true, force: true });
+        }
+        catch {
+            // Best-effort cleanup.
+        }
+        await releaseLock();
     }
-    await releaseLock();
-  }
 }
 async function acquireLock(lockPath) {
-  const start = Date.now();
-  while (true) {
-    try {
-      const fh = await open(lockPath, 'wx');
-      await fh.write(`${process.pid}\n`);
-      await fh.close();
-      return async () => {
+    const start = Date.now();
+    while (true) {
         try {
-          await unlink(lockPath);
-        } catch {
-          // Lock file already gone — nothing to release.
+            const fh = await open(lockPath, 'wx');
+            await fh.write(`${process.pid}\n`);
+            await fh.close();
+            return async () => {
+                try {
+                    await unlink(lockPath);
+                }
+                catch {
+                    // Lock file already gone — nothing to release.
+                }
+            };
         }
-      };
-    } catch (err) {
-      const code = err?.code;
-      if (code !== 'EEXIST') throw err;
-      if (Date.now() - start > LOCK_TIMEOUT_MS) {
-        throw new EthosError({
-          code: 'SKILL_INSTALL_FAILED',
-          cause: `another skill install is in progress (lock held: ${lockPath})`,
-          action:
-            'Wait for the other install to finish. If no install is running, remove the lock file manually.',
-        });
-      }
-      await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
+        catch (err) {
+            const code = err?.code;
+            if (code !== 'EEXIST')
+                throw err;
+            if (Date.now() - start > LOCK_TIMEOUT_MS) {
+                throw new EthosError({
+                    code: 'SKILL_INSTALL_FAILED',
+                    cause: `another skill install is in progress (lock held: ${lockPath})`,
+                    action: 'Wait for the other install to finish. If no install is running, remove the lock file manually.',
+                });
+            }
+            await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
+        }
     }
-  }
 }
 async function locateSlugSubpath(tmpDir) {
-  // Walk `tmpDir` looking for the first `SKILL.md`; return its parent dir
-  // path relative to `tmpDir`. clawhub may emit either `<slug>/SKILL.md` or
-  // `<scope>/<name>/SKILL.md`, so we don't pre-assume the depth.
-  const stack = [tmpDir];
-  while (stack.length > 0) {
-    const dir = stack.pop();
-    if (!dir) break;
-    let entries;
-    try {
-      const raw = await readdir(dir, { withFileTypes: true });
-      entries = raw.map((e) => ({ name: e.name, isDir: e.isDirectory(), isFile: e.isFile() }));
-    } catch {
-      continue;
+    // Walk `tmpDir` looking for the first `SKILL.md`; return its parent dir
+    // path relative to `tmpDir`. clawhub may emit either `<slug>/SKILL.md` or
+    // `<scope>/<name>/SKILL.md`, so we don't pre-assume the depth.
+    const stack = [tmpDir];
+    while (stack.length > 0) {
+        const dir = stack.pop();
+        if (!dir)
+            break;
+        let entries;
+        try {
+            const raw = await readdir(dir, { withFileTypes: true });
+            entries = raw.map((e) => ({ name: e.name, isDir: e.isDirectory(), isFile: e.isFile() }));
+        }
+        catch {
+            continue;
+        }
+        for (const entry of entries) {
+            const full = join(dir, entry.name);
+            if (entry.isFile && entry.name === 'SKILL.md') {
+                const parent = dirname(full);
+                return relative(tmpDir, parent);
+            }
+            if (entry.isDir)
+                stack.push(full);
+        }
     }
-    for (const entry of entries) {
-      const full = join(dir, entry.name);
-      if (entry.isFile && entry.name === 'SKILL.md') {
-        const parent = dirname(full);
-        return relative(tmpDir, parent);
-      }
-      if (entry.isDir) stack.push(full);
-    }
-  }
-  return undefined;
+    return undefined;
 }
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 function runClawhub(extraArgs) {
-  // Prefer a globally-installed `clawhub`, otherwise fall back to `npx clawhub@latest`.
-  const direct = spawnSync('clawhub', ['--version'], { stdio: 'ignore' });
-  if (direct.status === 0) {
-    return spawnSync('clawhub', extraArgs, { stdio: 'inherit' });
-  }
-  return spawnSync('npx', ['clawhub@latest', ...extraArgs], { stdio: 'inherit' });
+    // Prefer a globally-installed `clawhub`, otherwise fall back to `npx clawhub@latest`.
+    const direct = spawnSync('clawhub', ['--version'], { stdio: 'ignore' });
+    if (direct.status === 0) {
+        return spawnSync('clawhub', extraArgs, { stdio: 'inherit' });
+    }
+    return spawnSync('npx', ['clawhub@latest', ...extraArgs], { stdio: 'inherit' });
 }
 async function listInstalledSlugs() {
-  const root = skillsRoot();
-  let entries;
-  try {
-    const raw = await readdir(root, { withFileTypes: true });
-    entries = raw.map((e) => ({ name: e.name, isDir: e.isDirectory() }));
-  } catch {
-    return [];
-  }
-  const slugs = [];
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (!entry.isDir) continue;
-    if (entry.name === 'pending' || entry.name.startsWith('.')) continue;
-    const skillRoot = join(root, entry.name);
-    if (await exists(join(skillRoot, 'SKILL.md'))) {
-      slugs.push(entry.name);
-      continue;
-    }
-    // Scoped: <root>/<scope>/<slug>/SKILL.md
+    const root = skillsRoot();
+    let entries;
     try {
-      const inner = await readdir(skillRoot, { withFileTypes: true });
-      for (const child of inner.sort((a, b) => a.name.localeCompare(b.name))) {
-        if (!child.isDirectory()) continue;
-        if (await exists(join(skillRoot, child.name, 'SKILL.md'))) {
-          slugs.push(`${entry.name}/${child.name}`);
-        }
-      }
-    } catch {
-      // ignore unreadable dirs
+        const raw = await readdir(root, { withFileTypes: true });
+        entries = raw.map((e) => ({ name: e.name, isDir: e.isDirectory() }));
     }
-  }
-  return slugs;
+    catch {
+        return [];
+    }
+    const slugs = [];
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+        if (!entry.isDir)
+            continue;
+        if (entry.name === 'pending' || entry.name.startsWith('.'))
+            continue;
+        const skillRoot = join(root, entry.name);
+        if (await exists(join(skillRoot, 'SKILL.md'))) {
+            slugs.push(entry.name);
+            continue;
+        }
+        // Scoped: <root>/<scope>/<slug>/SKILL.md
+        try {
+            const inner = await readdir(skillRoot, { withFileTypes: true });
+            for (const child of inner.sort((a, b) => a.name.localeCompare(b.name))) {
+                if (!child.isDirectory())
+                    continue;
+                if (await exists(join(skillRoot, child.name, 'SKILL.md'))) {
+                    slugs.push(`${entry.name}/${child.name}`);
+                }
+            }
+        }
+        catch {
+            // ignore unreadable dirs
+        }
+    }
+    return slugs;
 }
 async function exists(path) {
-  try {
-    const s = await stat(path);
-    return s.isFile();
-  } catch {
-    return false;
-  }
+    try {
+        const s = await stat(path);
+        return s.isFile();
+    }
+    catch {
+        return false;
+    }
 }

@@ -1,65 +1,67 @@
 function hostMatchesPattern(host, pattern) {
-  if (pattern === host) return true;
-  if (pattern === '*') return true;
-  if (pattern.startsWith('*.')) {
-    const suffix = pattern.slice(1);
-    return host.endsWith(suffix) && host.length > suffix.length;
-  }
-  return false;
+    if (pattern === host)
+        return true;
+    if (pattern === '*')
+        return true;
+    if (pattern.startsWith('*.')) {
+        const suffix = pattern.slice(1);
+        return host.endsWith(suffix) && host.length > suffix.length;
+    }
+    return false;
 }
 export function validateRegistration(tool, personality) {
-  const caps = tool.capabilities;
-  if (!caps) return [];
-  const errors = [];
-  if (caps.network) {
-    const allowed = personality.safety?.network?.allow;
-    // Mirror `resolveCapabilities`: a personality without an explicit
-    // `safety.network.allow` (or with an empty list) is in open mode —
-    // the tool's declared hosts pass through. Only validate the
-    // intersection when the personality actually restricts the surface.
-    if (allowed && allowed.length > 0) {
-      for (const host of caps.network.allowedHosts) {
-        if (host === '*') continue;
-        const covered = allowed.some((pattern) => hostMatchesPattern(host, pattern));
-        if (!covered) {
-          errors.push({
-            tool: tool.name,
-            capability: 'network',
-            message: `host "${host}" is not in personality network allow list`,
-          });
+    const caps = tool.capabilities;
+    if (!caps)
+        return [];
+    const errors = [];
+    if (caps.network) {
+        const allowed = personality.safety?.network?.allow;
+        // Mirror `resolveCapabilities`: a personality without an explicit
+        // `safety.network.allow` (or with an empty list) is in open mode —
+        // the tool's declared hosts pass through. Only validate the
+        // intersection when the personality actually restricts the surface.
+        if (allowed && allowed.length > 0) {
+            for (const host of caps.network.allowedHosts) {
+                if (host === '*')
+                    continue;
+                const covered = allowed.some((pattern) => hostMatchesPattern(host, pattern));
+                if (!covered) {
+                    errors.push({
+                        tool: tool.name,
+                        capability: 'network',
+                        message: `host "${host}" is not in personality network allow list`,
+                    });
+                }
+            }
         }
-      }
     }
-  }
-  if (caps.fs_reach) {
-    const personalityRead = personality.fs_reach?.read ?? [];
-    const personalityWrite = personality.fs_reach?.write ?? [];
-    if (caps.fs_reach.read && caps.fs_reach.read !== 'from-personality') {
-      for (const toolPath of caps.fs_reach.read) {
-        const covered = personalityRead.some((p) => toolPath === p || toolPath.startsWith(`${p}/`));
-        if (!covered) {
-          errors.push({
-            tool: tool.name,
-            capability: 'fs_reach.read',
-            message: `path "${toolPath}" is not covered by personality fs_reach.read`,
-          });
+    if (caps.fs_reach) {
+        const personalityRead = personality.fs_reach?.read ?? [];
+        const personalityWrite = personality.fs_reach?.write ?? [];
+        if (caps.fs_reach.read && caps.fs_reach.read !== 'from-personality') {
+            for (const toolPath of caps.fs_reach.read) {
+                const covered = personalityRead.some((p) => toolPath === p || toolPath.startsWith(`${p}/`));
+                if (!covered) {
+                    errors.push({
+                        tool: tool.name,
+                        capability: 'fs_reach.read',
+                        message: `path "${toolPath}" is not covered by personality fs_reach.read`,
+                    });
+                }
+            }
         }
-      }
-    }
-    if (caps.fs_reach.write && caps.fs_reach.write !== 'from-personality') {
-      for (const toolPath of caps.fs_reach.write) {
-        const covered = personalityWrite.some(
-          (p) => toolPath === p || toolPath.startsWith(`${p}/`),
-        );
-        if (!covered) {
-          errors.push({
-            tool: tool.name,
-            capability: 'fs_reach.write',
-            message: `path "${toolPath}" is not covered by personality fs_reach.write`,
-          });
+        if (caps.fs_reach.write && caps.fs_reach.write !== 'from-personality') {
+            for (const toolPath of caps.fs_reach.write) {
+                const covered = personalityWrite.some((p) => toolPath === p || toolPath.startsWith(`${p}/`));
+                if (!covered) {
+                    errors.push({
+                        tool: tool.name,
+                        capability: 'fs_reach.write',
+                        message: `path "${toolPath}" is not covered by personality fs_reach.write`,
+                    });
+                }
+            }
         }
-      }
     }
-  }
-  return errors;
+    return errors;
 }

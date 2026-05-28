@@ -17,7 +17,7 @@
 // card. Reader failures and `chat.unfurl` failures are swallowed — Slack and the
 // readers are things we don't control, and a bad event must never crash Bolt's
 // event loop.
-import { kanbanUnfurlBlocks, personalityUnfurlBlocks, sessionUnfurlBlocks } from '../blocks/unfurl';
+import { kanbanUnfurlBlocks, personalityUnfurlBlocks, sessionUnfurlBlocks, } from '../blocks/unfurl';
 /**
  * Match a shared URL against the configured Ethos web UI base. Returns the
  * recognized resource, or `null` when the URL is malformed, on a different
@@ -27,46 +27,53 @@ import { kanbanUnfurlBlocks, personalityUnfurlBlocks, sessionUnfurlBlocks } from
  * workspace's links.
  */
 export function matchEthosUrl(sharedUrl, webUiBaseUrl) {
-  if (!webUiBaseUrl) return null;
-  let base;
-  let url;
-  try {
-    base = new URL(webUiBaseUrl);
-    url = new URL(sharedUrl);
-  } catch {
-    return null;
-  }
-  if (url.origin !== base.origin) return null;
-  // Strip the base's path prefix so path-prefixed deployments
-  // (`https://host/app`) work — the resource path is whatever follows it.
-  // The match must respect a path-segment boundary: a bare `startsWith`
-  // would let base `/app` also match `/appmemory` or `/appsessions/abc`,
-  // unfurling same-domain links that aren't under the configured base.
-  // Require the path to equal the prefix or continue with a `/`. An empty
-  // `basePath` (no prefix) trivially passes — every path starts with `/`.
-  const basePath = base.pathname.replace(/\/+$/, '');
-  if (url.pathname !== basePath && !url.pathname.startsWith(`${basePath}/`)) {
-    return null;
-  }
-  const rest = url.pathname.slice(basePath.length);
-  const segments = rest.split('/').filter((s) => s.length > 0);
-  if (segments.length === 2) {
-    const [collection, rawId] = segments;
-    // `decodeURIComponent` throws `URIError` on malformed percent-encoding
-    // (e.g. `/sessions/%E0%A4%A`) — a same-origin URL that parses fine as a
-    // `URL`. This function is contractually total, so a bad encoding is just
-    // "no match", never a throw that escapes into the Bolt event loop.
-    let id;
+    if (!webUiBaseUrl)
+        return null;
+    let base;
+    let url;
     try {
-      id = decodeURIComponent(rawId);
-    } catch {
-      return null;
+        base = new URL(webUiBaseUrl);
+        url = new URL(sharedUrl);
     }
-    if (collection === 'sessions') return { kind: 'session', id };
-    if (collection === 'kanban') return { kind: 'kanban', id };
-    if (collection === 'personalities') return { kind: 'personality', id };
-  }
-  return null;
+    catch {
+        return null;
+    }
+    if (url.origin !== base.origin)
+        return null;
+    // Strip the base's path prefix so path-prefixed deployments
+    // (`https://host/app`) work — the resource path is whatever follows it.
+    // The match must respect a path-segment boundary: a bare `startsWith`
+    // would let base `/app` also match `/appmemory` or `/appsessions/abc`,
+    // unfurling same-domain links that aren't under the configured base.
+    // Require the path to equal the prefix or continue with a `/`. An empty
+    // `basePath` (no prefix) trivially passes — every path starts with `/`.
+    const basePath = base.pathname.replace(/\/+$/, '');
+    if (url.pathname !== basePath && !url.pathname.startsWith(`${basePath}/`)) {
+        return null;
+    }
+    const rest = url.pathname.slice(basePath.length);
+    const segments = rest.split('/').filter((s) => s.length > 0);
+    if (segments.length === 2) {
+        const [collection, rawId] = segments;
+        // `decodeURIComponent` throws `URIError` on malformed percent-encoding
+        // (e.g. `/sessions/%E0%A4%A`) — a same-origin URL that parses fine as a
+        // `URL`. This function is contractually total, so a bad encoding is just
+        // "no match", never a throw that escapes into the Bolt event loop.
+        let id;
+        try {
+            id = decodeURIComponent(rawId);
+        }
+        catch {
+            return null;
+        }
+        if (collection === 'sessions')
+            return { kind: 'session', id };
+        if (collection === 'kanban')
+            return { kind: 'kanban', id };
+        if (collection === 'personalities')
+            return { kind: 'personality', id };
+    }
+    return null;
 }
 /** Upper bound on Ethos URLs resolved per `link_shared` event — caps the
  *  reader fan-out so a message spamming links can't trigger an unbounded
@@ -74,69 +81,79 @@ export function matchEthosUrl(sharedUrl, webUiBaseUrl) {
  *  handful of links worth unfurling. */
 const MAX_UNFURLS_PER_EVENT = 10;
 export function registerLinkEvents(app, deps) {
-  // No configured web UI base → we can't recognize any Ethos URL, so there is
-  // nothing for the handler to do. Don't register it at all.
-  if (!deps.webUiBaseUrl) return;
-  app.event('link_shared', async ({ event, client }) => {
-    const evt = event;
-    if (!evt.channel || !evt.message_ts || !evt.links) return;
-    // Match first, then resolve concurrently. Each `buildUnfurl` hits a
-    // backing reader; serializing them would make the handler's latency the
-    // sum of every lookup, and a slow event handler is what Slack retries.
-    // The per-event cap bounds the fan-out — a message spamming Ethos links
-    // can't trigger an unbounded burst of reader calls.
-    const matched = [];
-    for (const link of evt.links) {
-      const url = link.url;
-      if (!url) continue;
-      const match = matchEthosUrl(url, deps.webUiBaseUrl);
-      if (match) matched.push({ url, match });
-      if (matched.length >= MAX_UNFURLS_PER_EVENT) break;
-    }
-    const unfurls = {};
-    const resolved = await Promise.all(
-      matched.map(async ({ url, match }) => ({ url, blocks: await buildUnfurl(match, deps) })),
-    );
-    for (const { url, blocks } of resolved) {
-      // An unfurl is all-or-nothing: only add a URL once we have real data.
-      if (blocks) unfurls[url] = { blocks };
-    }
-    if (Object.keys(unfurls).length === 0) return;
-    try {
-      await client.chat.unfurl({
-        channel: evt.channel,
-        ts: evt.message_ts,
-        unfurls,
-      });
-    } catch {
-      // Slack is the one thing we don't control — a `chat.unfurl` failure or
-      // Bolt API drift must not throw inside the event loop.
-    }
-  });
+    // No configured web UI base → we can't recognize any Ethos URL, so there is
+    // nothing for the handler to do. Don't register it at all.
+    if (!deps.webUiBaseUrl)
+        return;
+    app.event('link_shared', async ({ event, client }) => {
+        const evt = event;
+        if (!evt.channel || !evt.message_ts || !evt.links)
+            return;
+        // Match first, then resolve concurrently. Each `buildUnfurl` hits a
+        // backing reader; serializing them would make the handler's latency the
+        // sum of every lookup, and a slow event handler is what Slack retries.
+        // The per-event cap bounds the fan-out — a message spamming Ethos links
+        // can't trigger an unbounded burst of reader calls.
+        const matched = [];
+        for (const link of evt.links) {
+            const url = link.url;
+            if (!url)
+                continue;
+            const match = matchEthosUrl(url, deps.webUiBaseUrl);
+            if (match)
+                matched.push({ url, match });
+            if (matched.length >= MAX_UNFURLS_PER_EVENT)
+                break;
+        }
+        const unfurls = {};
+        const resolved = await Promise.all(matched.map(async ({ url, match }) => ({ url, blocks: await buildUnfurl(match, deps) })));
+        for (const { url, blocks } of resolved) {
+            // An unfurl is all-or-nothing: only add a URL once we have real data.
+            if (blocks)
+                unfurls[url] = { blocks };
+        }
+        if (Object.keys(unfurls).length === 0)
+            return;
+        try {
+            await client.chat.unfurl({
+                channel: evt.channel,
+                ts: evt.message_ts,
+                unfurls,
+            });
+        }
+        catch {
+            // Slack is the one thing we don't control — a `chat.unfurl` failure or
+            // Bolt API drift must not throw inside the event loop.
+        }
+    });
 }
 /** Resolve one matched URL to its unfurl blocks, or `null` when the backing
  *  reader is unwired, the id isn't found, or the reader throws. */
 async function buildUnfurl(match, deps) {
-  try {
-    switch (match.kind) {
-      case 'session': {
-        if (!deps.session) return null;
-        const data = await deps.session.lookupSession(match.id);
-        return data ? sessionUnfurlBlocks(data) : null;
-      }
-      case 'kanban': {
-        if (!deps.kanban) return null;
-        const data = await deps.kanban.lookupTicket(match.id);
-        return data ? kanbanUnfurlBlocks(data) : null;
-      }
-      case 'personality': {
-        if (!deps.personality) return null;
-        const data = await deps.personality.lookupPersonality(match.id);
-        return data ? personalityUnfurlBlocks(data) : null;
-      }
+    try {
+        switch (match.kind) {
+            case 'session': {
+                if (!deps.session)
+                    return null;
+                const data = await deps.session.lookupSession(match.id);
+                return data ? sessionUnfurlBlocks(data) : null;
+            }
+            case 'kanban': {
+                if (!deps.kanban)
+                    return null;
+                const data = await deps.kanban.lookupTicket(match.id);
+                return data ? kanbanUnfurlBlocks(data) : null;
+            }
+            case 'personality': {
+                if (!deps.personality)
+                    return null;
+                const data = await deps.personality.lookupPersonality(match.id);
+                return data ? personalityUnfurlBlocks(data) : null;
+            }
+        }
     }
-  } catch {
-    // A reader failure for one URL must not crash the whole event.
-    return null;
-  }
+    catch {
+        // A reader failure for one URL must not crash the whole event.
+        return null;
+    }
 }

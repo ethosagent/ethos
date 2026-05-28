@@ -43,16 +43,19 @@ export const LEGACY_KEY_PREFIX = '__legacy:';
  *       rest of the original key (including any /new timestamp suffix).
  */
 export function decideMigration(key, knownByPlatform, primaryByPlatform) {
-  const parts = key.split(':');
-  if (parts.length < 2) return { kind: 'skip-no-bot' };
-  const platform = parts[0];
-  const second = parts[1];
-  const primary = primaryByPlatform.get(platform);
-  if (!primary) return { kind: 'skip-no-bot' };
-  const known = knownByPlatform.get(platform);
-  if (known?.has(second)) return { kind: 'skip-already-migrated' };
-  const rest = parts.slice(1).join(':');
-  return { kind: 'rewrite', newKey: `${platform}:${primary}:${rest}` };
+    const parts = key.split(':');
+    if (parts.length < 2)
+        return { kind: 'skip-no-bot' };
+    const platform = parts[0];
+    const second = parts[1];
+    const primary = primaryByPlatform.get(platform);
+    if (!primary)
+        return { kind: 'skip-no-bot' };
+    const known = knownByPlatform.get(platform);
+    if (known?.has(second))
+        return { kind: 'skip-already-migrated' };
+    const rest = parts.slice(1).join(':');
+    return { kind: 'rewrite', newKey: `${platform}:${primary}:${rest}` };
 }
 /**
  * @internal — one-shot migration entry point. Do not call outside the
@@ -69,80 +72,80 @@ export function decideMigration(key, knownByPlatform, primaryByPlatform) {
  * migrating and dying on the UNIQUE constraint.
  */
 export function migrateSessionKeys(opts) {
-  const db = new Database(opts.dbPath);
-  let migrated = 0;
-  let alreadyMigrated = 0;
-  let skippedNoBot = 0;
-  let quarantinedStale = 0;
-  try {
-    const rows = db.prepare('SELECT id, key FROM sessions').all();
-    const existingKeys = new Set(rows.map((r) => r.key));
-    const targets = new Map(); // newKey → rowId
-    const collisions = [];
-    const plan = [];
-    for (const row of rows) {
-      // Rows already in the quarantine namespace are dead history;
-      // never re-process them (their original platform segment is
-      // hidden behind the `__legacy:` prefix anyway).
-      if (row.key.startsWith(LEGACY_KEY_PREFIX)) continue;
-      const decision = decideMigration(row.key, opts.knownByPlatform, opts.primaryByPlatform);
-      if (decision.kind === 'skip-already-migrated') {
-        alreadyMigrated++;
-        continue;
-      }
-      if (decision.kind === 'skip-no-bot') {
-        skippedNoBot++;
-        continue;
-      }
-      const { newKey } = decision;
-      // Target already in the table: the new row is the live session
-      // (created by a previous partial migration or a post-upgrade
-      // chat). Move the legacy row into the `__legacy:` quarantine
-      // namespace so the main key space stays free of dead history.
-      // Idempotent on re-run because we skip `__legacy:` rows above.
-      if (existingKeys.has(newKey) && newKey !== row.key) {
-        const quarantineKey = `${LEGACY_KEY_PREFIX}${row.key}`;
-        if (existingKeys.has(quarantineKey)) {
-          collisions.push(
-            `${row.key} → cannot quarantine: ${quarantineKey} already exists. Inspect ${opts.dbPath} manually.`,
-          );
-          continue;
+    const db = new Database(opts.dbPath);
+    let migrated = 0;
+    let alreadyMigrated = 0;
+    let skippedNoBot = 0;
+    let quarantinedStale = 0;
+    try {
+        const rows = db.prepare('SELECT id, key FROM sessions').all();
+        const existingKeys = new Set(rows.map((r) => r.key));
+        const targets = new Map(); // newKey → rowId
+        const collisions = [];
+        const plan = [];
+        for (const row of rows) {
+            // Rows already in the quarantine namespace are dead history;
+            // never re-process them (their original platform segment is
+            // hidden behind the `__legacy:` prefix anyway).
+            if (row.key.startsWith(LEGACY_KEY_PREFIX))
+                continue;
+            const decision = decideMigration(row.key, opts.knownByPlatform, opts.primaryByPlatform);
+            if (decision.kind === 'skip-already-migrated') {
+                alreadyMigrated++;
+                continue;
+            }
+            if (decision.kind === 'skip-no-bot') {
+                skippedNoBot++;
+                continue;
+            }
+            const { newKey } = decision;
+            // Target already in the table: the new row is the live session
+            // (created by a previous partial migration or a post-upgrade
+            // chat). Move the legacy row into the `__legacy:` quarantine
+            // namespace so the main key space stays free of dead history.
+            // Idempotent on re-run because we skip `__legacy:` rows above.
+            if (existingKeys.has(newKey) && newKey !== row.key) {
+                const quarantineKey = `${LEGACY_KEY_PREFIX}${row.key}`;
+                if (existingKeys.has(quarantineKey)) {
+                    collisions.push(`${row.key} → cannot quarantine: ${quarantineKey} already exists. Inspect ${opts.dbPath} manually.`);
+                    continue;
+                }
+                targets.set(quarantineKey, row.id);
+                plan.push({ id: row.id, newKey: quarantineKey, kind: 'quarantine' });
+                continue;
+            }
+            // Two legacy rows in this pass that decide to the same target —
+            // a structural impossibility under the current key shape (each
+            // chatId → one ${botKey}:${chatId} target), but if the shape
+            // ever evolves we want the failure mode to be loud, not a
+            // silently-overwritten row.
+            const dupe = targets.get(newKey);
+            if (dupe) {
+                collisions.push(`${row.key} and (id=${dupe}) both decide to ${newKey}.`);
+                continue;
+            }
+            targets.set(newKey, row.id);
+            plan.push({ id: row.id, newKey, kind: 'migrate' });
         }
-        targets.set(quarantineKey, row.id);
-        plan.push({ id: row.id, newKey: quarantineKey, kind: 'quarantine' });
-        continue;
-      }
-      // Two legacy rows in this pass that decide to the same target —
-      // a structural impossibility under the current key shape (each
-      // chatId → one ${botKey}:${chatId} target), but if the shape
-      // ever evolves we want the failure mode to be loud, not a
-      // silently-overwritten row.
-      const dupe = targets.get(newKey);
-      if (dupe) {
-        collisions.push(`${row.key} and (id=${dupe}) both decide to ${newKey}.`);
-        continue;
-      }
-      targets.set(newKey, row.id);
-      plan.push({ id: row.id, newKey, kind: 'migrate' });
+        if (collisions.length > 0) {
+            throw new Error(`Session-key migration aborted: ${collisions.length} collision(s) detected.\n` +
+                `${collisions.join('\n')}\n` +
+                `Back up sessions.db and resolve manually before retrying.`);
+        }
+        const update = db.prepare('UPDATE sessions SET key = ? WHERE id = ?');
+        const tx = db.transaction((items) => {
+            for (const item of items) {
+                update.run(item.newKey, item.id);
+                if (item.kind === 'quarantine')
+                    quarantinedStale++;
+                else
+                    migrated++;
+            }
+        });
+        tx(plan);
     }
-    if (collisions.length > 0) {
-      throw new Error(
-        `Session-key migration aborted: ${collisions.length} collision(s) detected.\n` +
-          `${collisions.join('\n')}\n` +
-          `Back up sessions.db and resolve manually before retrying.`,
-      );
+    finally {
+        db.close();
     }
-    const update = db.prepare('UPDATE sessions SET key = ? WHERE id = ?');
-    const tx = db.transaction((items) => {
-      for (const item of items) {
-        update.run(item.newKey, item.id);
-        if (item.kind === 'quarantine') quarantinedStale++;
-        else migrated++;
-      }
-    });
-    tx(plan);
-  } finally {
-    db.close();
-  }
-  return { migrated, alreadyMigrated, skippedNoBot, quarantinedStale };
+    return { migrated, alreadyMigrated, skippedNoBot, quarantinedStale };
 }

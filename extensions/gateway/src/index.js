@@ -1,17 +1,9 @@
 import { stripAnsiEscapes } from '@ethosagent/core';
-import {
-  checkMessage,
-  consumeAndAllow,
-  getApprovedSenders,
-  isSenderAllowed,
-  revokeApproval,
-} from '@ethosagent/safety-channel';
+import { checkMessage, consumeAndAllow, getApprovedSenders, isSenderAllowed, revokeApproval, } from '@ethosagent/safety-channel';
 import { shortPatternCheck, wrapUntrusted } from '@ethosagent/safety-injection';
 import { MessageDedupCache } from './dedup';
-
 export { MessageDedupCache } from './dedup';
 export { DreamExecutor } from './dream-executor';
-
 // ---------------------------------------------------------------------------
 // Lane / session key encoding
 // ---------------------------------------------------------------------------
@@ -36,888 +28,990 @@ export { DreamExecutor } from './dream-executor';
  * single point of truth for what a lane key looks like.
  */
 function buildLaneKey(...segments) {
-  return segments.map(encodeURIComponent).join(':');
+    return segments.map(encodeURIComponent).join(':');
 }
 export class SessionLane {
-  queue = [];
-  processing = false;
-  currentAbort = null;
-  enqueue(task) {
-    return new Promise((resolve, reject) => {
-      this.queue.push({ run: task, resolve, reject });
-      void this.drain();
-    });
-  }
-  /** Abort the running task and drop everything queued behind it. */
-  abort() {
-    this.currentAbort?.abort();
-    const dropped = this.queue.splice(0);
-    for (const item of dropped) {
-      item.reject(new Error('aborted'));
+    queue = [];
+    processing = false;
+    currentAbort = null;
+    enqueue(task) {
+        return new Promise((resolve, reject) => {
+            this.queue.push({ run: task, resolve, reject });
+            void this.drain();
+        });
     }
-  }
-  get length() {
-    return this.queue.length + (this.processing ? 1 : 0);
-  }
-  async drain() {
-    if (this.processing) return;
-    this.processing = true;
-    while (this.queue.length > 0) {
-      const item = this.queue.shift();
-      if (!item) break;
-      this.currentAbort = new AbortController();
-      try {
-        await item.run(this.currentAbort.signal);
-        item.resolve();
-      } catch (err) {
-        item.reject(err instanceof Error ? err : new Error(String(err)));
-      }
+    /** Abort the running task and drop everything queued behind it. */
+    abort() {
+        this.currentAbort?.abort();
+        const dropped = this.queue.splice(0);
+        for (const item of dropped) {
+            item.reject(new Error('aborted'));
+        }
     }
-    this.currentAbort = null;
-    this.processing = false;
-  }
+    get length() {
+        return this.queue.length + (this.processing ? 1 : 0);
+    }
+    async drain() {
+        if (this.processing)
+            return;
+        this.processing = true;
+        while (this.queue.length > 0) {
+            const item = this.queue.shift();
+            if (!item)
+                break;
+            this.currentAbort = new AbortController();
+            try {
+                await item.run(this.currentAbort.signal);
+                item.resolve();
+            }
+            catch (err) {
+                item.reject(err instanceof Error ? err : new Error(String(err)));
+            }
+        }
+        this.currentAbort = null;
+        this.processing = false;
+    }
 }
 // ---------------------------------------------------------------------------
 // Built-in gateway slash commands (handled before the AgentLoop sees the text)
 // ---------------------------------------------------------------------------
 const PLATFORM_COMMANDS = {
-  '/new': 'new',
-  '/reset': 'new',
-  '/stop': 'stop',
-  '/usage': 'usage',
-  '/help': 'help',
-  '/personality': 'personality',
-  '/allow': 'allow',
-  '/deny': 'deny',
-  '/communications': 'communications',
-  '/start': 'start',
+    '/new': 'new',
+    '/reset': 'new',
+    '/stop': 'stop',
+    '/usage': 'usage',
+    '/help': 'help',
+    '/personality': 'personality',
+    '/allow': 'allow',
+    '/deny': 'deny',
+    '/communications': 'communications',
+    '/start': 'start',
 };
 export class Gateway {
-  /** Bot routing table keyed by `botKey`. */
-  bots;
-  /** The botKey used when `InboundMessage.botKey` is absent (single-bot
-   *  deployments). When the config supplies multiple bots, this is null
-   *  and a message without `botKey` is treated as an unknown route. */
-  defaultBotKey;
-  lanes = new Map();
-  /** Effective session key per lane (allows /new to fork a fresh session). */
-  sessionKeys = new Map();
-  /** Per-lane active personality (overrideable via /personality). */
-  personalityIds = new Map();
-  /** Per-lane usage accumulator. */
-  usageStore = new Map();
-  /** Bounded LRU of recently-seen inbound-message keys. */
-  seenMessages = new Set();
-  dedupWindow;
-  /** Outbound-message dedup cache. Suppresses `(sessionId, content)` within TTL. */
-  outboundDedup;
-  /** Active turns by laneKey — used by graceful shutdown to notify users. */
-  activeTurns = new Map();
-  /**
-   * Routing for an in-flight turn, keyed by `sessionKey`. Populated when the
-   * turn is enqueued (where `adapter`, `chatId`, and `threadId` are all in
-   * scope) and consumed by the `session_start` hook below, which is the only
-   * place `sessionId` becomes known. `activeTurns` is keyed by `laneKey` and
-   * lacks `threadId`, so it can't serve this — hence a parallel map.
-   */
-  sessionRouting = new Map();
-  /**
-   * `sessionId → routing` — the bridge a `before_tool_call` approval hook
-   * needs. The hook only has `sessionId`; the adapter/chat/thread live on the
-   * inbound message. The gateway is the one component that knows both halves,
-   * so it owns the mapping. Populated by the `session_start` hook (which
-   * carries both ids), cleared when the turn ends.
-   */
-  approvalRoutes = new Map();
-  /**
-   * `sessionKey → sessionId`, recorded by the `session_start` hook. The
-   * gateway never computes `sessionId` itself (the AgentLoop does), so this
-   * is how turn-end cleanup — which only knows `sessionKey` — finds the
-   * `approvalRoutes` entry to evict.
-   */
-  sessionIdByKey = new Map();
-  maxChats;
-  /** Optional clarify correlator — see GatewayConfig.clarifyMessageCorrelator. */
-  clarifyCorrelator;
-  /** Live timer running the periodic clarify sweep, cleared on shutdown. */
-  clarifySweepTimer;
-  /** Chapter 1 safety: per-platform sender allowlist + pairing config. */
-  channelFilter;
-  /** SQLite DB for pairing codes. */
-  pairingDb;
-  /** Observability adapter for audit events. */
-  observability;
-  /** Whether to send a brief channel message on each tool_start event. */
-  showToolCalls;
-  /** Hook called when the allowlist changes via /allow or /deny. */
-  onAllowlistChange;
-  /** Optional card reader for `/personality rich`. */
-  personalityCardReader;
-  /** Optional greeting provider for `/start`. */
-  greetingProvider;
-  /** Optional attachment cache for cleanup on /new and lane eviction. */
-  attachmentCache;
-  /** Adapter lookup for agent-initiated outbound sends (send_message tool). */
-  adapterRegistry;
-  resolveUserIdFn;
-  constructor(config) {
-    // The two construction shapes are mutually exclusive. Silent
-    // precedence would let a caller wire both and not notice that
-    // `loop` was ignored — a debugging nightmare three years out.
-    if (config.bots && config.bots.length > 0 && config.loop !== undefined) {
-      throw new Error(
-        'Gateway: pass either `bots: [...]` (multi-bot) or `loop` (single-bot back-compat), not both.',
-      );
-    }
-    const botEntries =
-      config.bots && config.bots.length > 0
-        ? config.bots
-        : config.loop !== undefined
-          ? [
-              {
-                // Back-compat: synthesize a one-entry routing table from the
-                // legacy `loop` + `defaultPersonality` shorthand. `default`
-                // is the lane-key segment for these messages.
-                botKey: 'default',
-                loop: config.loop,
-                binding: {
-                  type: 'personality',
-                  name: config.defaultPersonality ?? 'default',
-                  // The legacy single-bot path used to allow /personality
-                  // switching freely. Preserve that.
-                  allowSlashSwitch: true,
-                },
-              },
-            ]
-          : [];
-    if (botEntries.length === 0) {
-      throw new Error('Gateway: provide either `bots: [...]` or `loop` in GatewayConfig.');
-    }
-    this.bots = new Map(botEntries.map((b) => [b.botKey, b]));
-    if (this.bots.size !== botEntries.length) {
-      throw new Error('Gateway: duplicate botKey in GatewayConfig.bots.');
-    }
-    this.defaultBotKey = botEntries.length === 1 ? botEntries[0].botKey : null;
-    // Bridge `sessionId → routing`. `session_start` fires inside `loop.run()`
-    // (AgentLoop step 2) and is the only hook that carries BOTH `sessionId`
-    // and `sessionKey`. We register it on every bot loop so that, by the time
-    // any `before_tool_call` approval hook fires later in the same turn, the
-    // gateway can resolve the sessionId back to its adapter/chat/thread.
-    for (const entry of botEntries) {
-      entry.loop.hooks.registerVoid('session_start', async (payload) => {
-        const routing = this.sessionRouting.get(payload.sessionKey);
-        if (routing) {
-          this.approvalRoutes.set(payload.sessionId, routing);
-          this.sessionIdByKey.set(payload.sessionKey, payload.sessionId);
+    /** Bot routing table keyed by `botKey`. */
+    bots;
+    /** The botKey used when `InboundMessage.botKey` is absent (single-bot
+     *  deployments). When the config supplies multiple bots, this is null
+     *  and a message without `botKey` is treated as an unknown route. */
+    defaultBotKey;
+    lanes = new Map();
+    /** Effective session key per lane (allows /new to fork a fresh session). */
+    sessionKeys = new Map();
+    /** Per-lane active personality (overrideable via /personality). */
+    personalityIds = new Map();
+    /** Per-lane usage accumulator. */
+    usageStore = new Map();
+    /** Bounded LRU of recently-seen inbound-message keys. */
+    seenMessages = new Set();
+    dedupWindow;
+    /** Outbound-message dedup cache. Suppresses `(sessionId, content)` within TTL. */
+    outboundDedup;
+    /** Active turns by laneKey — used by graceful shutdown to notify users. */
+    activeTurns = new Map();
+    /** Active steer sinks by laneKey — inbound messages during a turn push here. */
+    activeSinks = new Map();
+    /** Live status message per lane — edited in place during tool execution. */
+    activeStatusMessages = new Map();
+    /**
+     * Routing for an in-flight turn, keyed by `sessionKey`. Populated when the
+     * turn is enqueued (where `adapter`, `chatId`, and `threadId` are all in
+     * scope) and consumed by the `session_start` hook below, which is the only
+     * place `sessionId` becomes known. `activeTurns` is keyed by `laneKey` and
+     * lacks `threadId`, so it can't serve this — hence a parallel map.
+     */
+    sessionRouting = new Map();
+    /**
+     * `sessionId → routing` — the bridge a `before_tool_call` approval hook
+     * needs. The hook only has `sessionId`; the adapter/chat/thread live on the
+     * inbound message. The gateway is the one component that knows both halves,
+     * so it owns the mapping. Populated by the `session_start` hook (which
+     * carries both ids), cleared when the turn ends.
+     */
+    approvalRoutes = new Map();
+    /**
+     * `sessionKey → sessionId`, recorded by the `session_start` hook. The
+     * gateway never computes `sessionId` itself (the AgentLoop does), so this
+     * is how turn-end cleanup — which only knows `sessionKey` — finds the
+     * `approvalRoutes` entry to evict.
+     */
+    sessionIdByKey = new Map();
+    maxChats;
+    /** Optional clarify correlator — see GatewayConfig.clarifyMessageCorrelator. */
+    clarifyCorrelator;
+    /** Live timer running the periodic clarify sweep, cleared on shutdown. */
+    clarifySweepTimer;
+    /** Chapter 1 safety: per-platform sender allowlist + pairing config. */
+    channelFilter;
+    /** SQLite DB for pairing codes. */
+    pairingDb;
+    /** Observability adapter for audit events. */
+    observability;
+    /** Whether to send a brief channel message on each tool_start event. */
+    showToolCalls;
+    /** Hook called when the allowlist changes via /allow or /deny. */
+    onAllowlistChange;
+    /** Optional card reader for `/personality rich`. */
+    personalityCardReader;
+    /** Optional greeting provider for `/start`. */
+    greetingProvider;
+    /** Optional attachment cache for cleanup on /new and lane eviction. */
+    attachmentCache;
+    /** Adapter lookup for agent-initiated outbound sends (send_message tool). */
+    adapterRegistry;
+    resolveUserIdFn;
+    constructor(config) {
+        // The two construction shapes are mutually exclusive. Silent
+        // precedence would let a caller wire both and not notice that
+        // `loop` was ignored — a debugging nightmare three years out.
+        if (config.bots && config.bots.length > 0 && config.loop !== undefined) {
+            throw new Error('Gateway: pass either `bots: [...]` (multi-bot) or `loop` (single-bot back-compat), not both.');
         }
-      });
-    }
-    this.dedupWindow = config.dedupWindow ?? 1024;
-    this.maxChats = config.maxChats ?? 4096;
-    // ttlMs <= 0 disables dedup inside the cache itself (shouldSend always returns true).
-    this.outboundDedup = new MessageDedupCache({ ttlMs: config.outboundDedupTtlMs ?? 30_000 });
-    this.channelFilter = config.channelFilter;
-    this.pairingDb = config.pairingDb;
-    this.observability = config.observability;
-    this.showToolCalls = config.showToolCalls ?? true;
-    this.onAllowlistChange = config.onAllowlistChange;
-    this.clarifyCorrelator = config.clarifyMessageCorrelator;
-    this.personalityCardReader = config.personalityCardReader;
-    this.greetingProvider = config.greetingProvider;
-    this.attachmentCache = config.attachmentCache;
-    this.adapterRegistry = config.adapters ?? new Map();
-    this.resolveUserIdFn = config.resolveUserId;
-    // Clarify sweep — fires on a single timer for all bots' bridges so a
-    // multi-bot deployment doesn't pile up N timers. Each bridge owns its own
-    // expiry logic; we just tick them in parallel.
-    const sweepMs = config.clarifySweepIntervalMs ?? 30_000;
-    const bridges = botEntries.map((b) => b.loop.clarifyBridge).filter((b) => b !== undefined);
-    if (sweepMs > 0 && bridges.length > 0) {
-      this.clarifySweepTimer = setInterval(() => {
-        void Promise.all(bridges.map((b) => b.sweep())).catch(() => {});
-      }, sweepMs);
-      // `unref()` lets the process exit when only the sweep timer remains.
-      this.clarifySweepTimer.unref?.();
-    }
-    // Seed in-memory allowlists from DB-persisted approved senders
-    if (config.pairingDb && config.channelFilter) {
-      for (const [platform, cfg] of Object.entries(config.channelFilter)) {
-        const approved = getApprovedSenders(config.pairingDb, platform);
-        if (approved.length > 0) {
-          if (!cfg.recipientAllowlist) cfg.recipientAllowlist = [];
-          for (const id of approved) {
-            if (!cfg.recipientAllowlist.includes(id)) cfg.recipientAllowlist.push(id);
-          }
+        const botEntries = config.bots && config.bots.length > 0
+            ? config.bots
+            : config.loop !== undefined
+                ? [
+                    {
+                        // Back-compat: synthesize a one-entry routing table from the
+                        // legacy `loop` + `defaultPersonality` shorthand. `default`
+                        // is the lane-key segment for these messages.
+                        botKey: 'default',
+                        loop: config.loop,
+                        binding: {
+                            type: 'personality',
+                            name: config.defaultPersonality ?? 'default',
+                            // The legacy single-bot path used to allow /personality
+                            // switching freely. Preserve that.
+                            allowSlashSwitch: true,
+                        },
+                    },
+                ]
+                : [];
+        if (botEntries.length === 0) {
+            throw new Error('Gateway: provide either `bots: [...]` or `loop` in GatewayConfig.');
         }
-      }
-    }
-  }
-  /**
-   * Returns true if this message is a duplicate of one seen in the dedup
-   * window (and records the key for future drops). Returns false for
-   * never-before-seen keys, or when the message has no `messageId` (we can't
-   * dedup what isn't keyed).
-   *
-   * The dedup key is platform-, bot-, chat-, and message-scoped: the same
-   * `messageId` arriving through two different bots is two distinct
-   * inbounds, not a duplicate. (Without the botKey segment, multi-bot
-   * routing would silently drop one of them.)
-   */
-  isDuplicate(message, botKey) {
-    if (this.dedupWindow <= 0 || !message.messageId) return false;
-    const key = buildLaneKey(message.platform, botKey, message.chatId, message.messageId);
-    if (this.seenMessages.has(key)) return true;
-    this.seenMessages.add(key);
-    // Bound the set — drop the oldest entry once we exceed the window.
-    if (this.seenMessages.size > this.dedupWindow) {
-      const first = this.seenMessages.values().next().value;
-      if (first !== undefined) this.seenMessages.delete(first);
-    }
-    return false;
-  }
-  // ---------------------------------------------------------------------------
-  // Public API — adapters call this for every inbound message
-  // ---------------------------------------------------------------------------
-  async handleMessage(message, adapter) {
-    // Drop duplicates BEFORE any work — billing-relevant. See OpenClaw #71761
-    // (channel messages injected twice → 2× cost). Use the resolved botKey
-    // (message.botKey or the synthesized default) so multi-bot routing
-    // doesn't accidentally cross-dedupe. Edited messages (`isEdit: true`)
-    // bypass dedup because they intentionally re-use the same `messageId`
-    // with different content.
-    const dedupBotKey = message.botKey ?? this.defaultBotKey ?? '';
-    if (!message.isEdit && this.isDuplicate(message, dedupBotKey)) return;
-    // --- Clarify correlator: short-circuit force-reply + `/cancel` ---
-    // Runs BEFORE the safety filter's mention gate so an approved sender's
-    // force-reply isn't treated as a fresh agent prompt (the agent is
-    // already paused inside `clarify()` waiting on this answer). But we
-    // still gate on the *allowlist* portion of the safety filter — a
-    // non-allowlisted sender in a group chat must NOT be able to resolve
-    // the bot's pending clarify (that would be an authentication bypass,
-    // not just a routing shortcut).
-    if (this.clarifyCorrelator) {
-      const platformCfg = this.channelFilter?.[message.platform];
-      if (isSenderAllowed(message, platformCfg)) {
-        const resp = await this.clarifyCorrelator(message).catch(() => null);
-        if (resp) {
-          const bot = this.bots.get(dedupBotKey);
-          await bot?.loop.clarifyBridge?.respond(resp);
-          return;
+        this.bots = new Map(botEntries.map((b) => [b.botKey, b]));
+        if (this.bots.size !== botEntries.length) {
+            throw new Error('Gateway: duplicate botKey in GatewayConfig.bots.');
         }
-      }
-    }
-    // --- Chapter 1: before_inbound channel safety filter ---
-    if (this.channelFilter) {
-      const platformCfg = this.channelFilter[message.platform];
-      const filterResult = checkMessage(message, platformCfg, this.pairingDb);
-      if (filterResult.action === 'drop') {
-        // Emit audit event for observability
-        this.observability?.recordSafetyBlock({
-          code: message.isDm ? 'channel.allowlist.blocked' : 'channel.mention_gate',
-          details: {
-            platform: message.platform,
-            chatId: message.chatId,
-            userId: message.userId,
-            isDm: message.isDm,
-            isGroupMention: message.isGroupMention,
-          },
-        });
-        return;
-      }
-      if (filterResult.action === 'pairing_reply') {
-        await adapter.send(message.chatId, { text: filterResult.reply ?? '' }).catch(() => {});
-        return;
-      }
-      // 'allow' — if context was stripped, use stripped text for the turn
-      if (filterResult.strippedText !== undefined) {
-        this.observability?.recordSafetyBlock({
-          code: 'channel.context_stripped',
-          details: {
-            platform: message.platform,
-            chatId: message.chatId,
-            userId: message.userId,
-            replyToId: message.replyToId,
-          },
-        });
-        message = { ...message, text: filterResult.strippedText };
-      }
-    }
-    // Resolve which bot this message is for. `message.botKey` wins when
-    // adapters populate it; single-bot deployments fall back to the
-    // synthesized default. Multi-bot deployments with a missing botKey
-    // are a configuration error — log and drop rather than silently
-    // route to a wrong personality.
-    const botKey = message.botKey ?? this.defaultBotKey ?? '';
-    const bot = botKey ? this.bots.get(botKey) : undefined;
-    if (!bot) {
-      this.observability?.recordSafetyBlock({
-        code: 'gateway.unknown_botKey',
-        details: { platform: message.platform, chatId: message.chatId, botKey: message.botKey },
-      });
-      return;
-    }
-    // Adapters that surface a thread identifier (currently only Slack, via
-    // `thread_ts`) get a per-thread lane so concurrent threads in the same
-    // channel never share session state. Adapters without thread semantics
-    // omit `threadId` and the key degrades to the unthreaded form.
-    //
-    // Empty-string `threadId` is treated as no thread: the contract is
-    // `threadId?: string`, but an empty string carries no routing signal,
-    // and admitting it would mean a misbehaving adapter could quietly
-    // build a thread lane keyed on `''` — distinct from the unthreaded
-    // root but holding only its mistakes.
-    const threadId = message.threadId ? message.threadId : undefined;
-    const laneKey = threadId
-      ? buildLaneKey(message.platform, bot.botKey, message.chatId, threadId)
-      : buildLaneKey(message.platform, bot.botKey, message.chatId);
-    const lane = this.getOrCreateLane(laneKey);
-    const text = message.text?.trim() ?? '';
-    // --- Gateway-level slash command handling ---
-    const cmdToken = text.split(/\s+/)[0] ?? '';
-    const cmdType = PLATFORM_COMMANDS[cmdToken.toLowerCase()];
-    if (cmdType === 'stop') {
-      lane.abort();
-      await adapter.send(message.chatId, { text: '✓ Stopped.' }).catch(() => {});
-      return;
-    }
-    if (cmdType === 'new') {
-      lane.abort();
-      const previousSession = this.sessionKeys.get(laneKey) ?? laneKey;
-      this.outboundDedup.clearSession(previousSession);
-      void this.attachmentCache?.clear(previousSession).catch(() => {});
-      const fresh = `${laneKey}:${Date.now()}`;
-      this.sessionKeys.set(laneKey, fresh);
-      this.usageStore.delete(laneKey);
-      this.personalityIds.delete(laneKey); // reset to default personality
-      await adapter.send(message.chatId, { text: '✓ New session started.' }).catch(() => {});
-      return;
-    }
-    if (cmdType === 'help') {
-      const current = this.activePersonalityFor(laneKey, bot);
-      const personalityLines = this.personalitySwitchAllowed(bot)
-        ? [
-            `/personality — show current personality (${current})`,
-            `/personality list — available personalities`,
-            `/personality <id> — switch personality`,
-          ]
-        : [`/personality — show current binding (${current}; switching disabled)`];
-      await adapter
-        .send(message.chatId, {
-          text:
-            `/new — start a fresh session\n` +
-            `/stop — abort current response\n` +
-            `${personalityLines.join('\n')}\n` +
-            `/usage — token and cost stats\n` +
-            `/help — this message`,
-        })
-        .catch(() => {});
-      return;
-    }
-    if (cmdType === 'start') {
-      const personalityId = this.activePersonalityFor(laneKey, bot);
-      if (this.greetingProvider) {
-        const greeting = await this.greetingProvider.greet(personalityId).catch(() => null);
-        if (greeting) {
-          await adapter.send(message.chatId, { text: greeting }).catch(() => {});
-          return;
+        this.defaultBotKey = botEntries.length === 1 ? botEntries[0].botKey : null;
+        // Bridge `sessionId → routing`. `session_start` fires inside `loop.run()`
+        // (AgentLoop step 2) and is the only hook that carries BOTH `sessionId`
+        // and `sessionKey`. We register it on every bot loop so that, by the time
+        // any `before_tool_call` approval hook fires later in the same turn, the
+        // gateway can resolve the sessionId back to its adapter/chat/thread.
+        for (const entry of botEntries) {
+            entry.loop.hooks.registerVoid('session_start', async (payload) => {
+                const routing = this.sessionRouting.get(payload.sessionKey);
+                if (routing) {
+                    this.approvalRoutes.set(payload.sessionId, routing);
+                    this.sessionIdByKey.set(payload.sessionKey, payload.sessionId);
+                }
+            });
         }
-      }
-      await adapter
-        .send(message.chatId, {
-          text: `Hello! I'm running as *${personalityId}*. Send a message to get started, or try /help for available commands.`,
-        })
-        .catch(() => {});
-      return;
-    }
-    if (cmdType === 'personality') {
-      const arg = text.split(/\s+/).slice(1).join(' ').trim();
-      const current = this.activePersonalityFor(laneKey, bot);
-      if (!arg) {
-        await adapter
-          .send(message.chatId, { text: `Current personality: ${current}` })
-          .catch(() => {});
-        return;
-      }
-      // `/personality rich` — full character sheet. Works for personality
-      // bindings even when switching is disabled; team bindings fall through
-      // to the compact view.
-      if (
-        arg.toLowerCase() === 'rich' &&
-        this.personalityCardReader &&
-        bot.binding.type === 'personality'
-      ) {
-        const card = await this.personalityCardReader.read(current).catch(() => null);
-        if (card) {
-          await adapter.send(message.chatId, { text: card.text }).catch(() => {});
-          return;
+        this.dedupWindow = config.dedupWindow ?? 1024;
+        this.maxChats = config.maxChats ?? 4096;
+        // ttlMs <= 0 disables dedup inside the cache itself (shouldSend always returns true).
+        this.outboundDedup = new MessageDedupCache({ ttlMs: config.outboundDedupTtlMs ?? 30_000 });
+        this.channelFilter = config.channelFilter;
+        this.pairingDb = config.pairingDb;
+        this.observability = config.observability;
+        this.showToolCalls = config.showToolCalls ?? true;
+        this.onAllowlistChange = config.onAllowlistChange;
+        this.clarifyCorrelator = config.clarifyMessageCorrelator;
+        this.personalityCardReader = config.personalityCardReader;
+        this.greetingProvider = config.greetingProvider;
+        this.attachmentCache = config.attachmentCache;
+        this.adapterRegistry = config.adapters ?? new Map();
+        this.resolveUserIdFn = config.resolveUserId;
+        // Clarify sweep — fires on a single timer for all bots' bridges so a
+        // multi-bot deployment doesn't pile up N timers. Each bridge owns its own
+        // expiry logic; we just tick them in parallel.
+        const sweepMs = config.clarifySweepIntervalMs ?? 30_000;
+        const bridges = botEntries
+            .map((b) => b.loop.clarifyBridge)
+            .filter((b) => b !== undefined);
+        if (sweepMs > 0 && bridges.length > 0) {
+            this.clarifySweepTimer = setInterval(() => {
+                void Promise.all(bridges.map((b) => b.sweep())).catch(() => { });
+            }, sweepMs);
+            // `unref()` lets the process exit when only the sweep timer remains.
+            this.clarifySweepTimer.unref?.();
         }
-      }
-      // Identity-bound bots reject the switch — the bot's external
-      // identity is the routing contract. The user sees a clear pointer
-      // to the right surface to switch to. Team-bots reject regardless
-      // of allowSlashSwitch because the coordinator is structurally part
-      // of the loop, not a runtime hat.
-      if (!this.personalitySwitchAllowed(bot)) {
-        await adapter
-          .send(message.chatId, {
-            text:
-              `This bot is bound to ${bot.binding.type} '${bot.binding.name}'. ` +
-              `Switching personalities is disabled for identity-bound bots. ` +
-              `To talk to a different agent, message that agent's bot.`,
-          })
-          .catch(() => {});
-        return;
-      }
-      if (arg === 'list') {
-        await adapter
-          .send(message.chatId, {
-            text: 'Built-in personalities: researcher · engineer · reviewer · coach · operator\n\nUse /personality <id> to switch.',
-          })
-          .catch(() => {});
-        return;
-      }
-      // Switch personality — also start a fresh session so the new identity takes effect immediately
-      const previousSession = this.sessionKeys.get(laneKey) ?? laneKey;
-      this.outboundDedup.clearSession(previousSession);
-      void this.attachmentCache?.clear(previousSession).catch(() => {});
-      this.personalityIds.set(laneKey, arg);
-      const fresh = `${laneKey}:${Date.now()}`;
-      this.sessionKeys.set(laneKey, fresh);
-      await adapter
-        .send(message.chatId, { text: `✓ Switched to ${arg} personality. New session started.` })
-        .catch(() => {});
-      return;
-    }
-    if (cmdType === 'usage') {
-      const u = this.usageStore.get(laneKey) ?? { inputTokens: 0, outputTokens: 0, costUsd: 0 };
-      await adapter
-        .send(message.chatId, {
-          text: `Tokens: ${u.inputTokens.toLocaleString()} in / ${u.outputTokens.toLocaleString()} out\nCost: $${u.costUsd.toFixed(5)}`,
-        })
-        .catch(() => {});
-      return;
-    }
-    if (cmdType === 'allow') {
-      const code = text.split(/\s+/)[1]?.toUpperCase() ?? '';
-      if (!code || !this.pairingDb || !this.channelFilter) {
-        await adapter
-          .send(message.chatId, { text: '✗ Pairing not configured or no code given.' })
-          .catch(() => {});
-        return;
-      }
-      // Verify the caller is the configured owner for the code's platform before consuming.
-      // This prevents allowlisted non-owners from approving pairings.
-      const codeRow = this.pairingDb
-        .prepare('SELECT platform FROM pairing_codes WHERE code = ?')
-        .get(code);
-      if (codeRow) {
-        const codePlatformCfg = this.channelFilter[codeRow.platform];
-        const isOwner =
-          codePlatformCfg?.ownerUserId && message.userId === codePlatformCfg.ownerUserId;
-        if (!isOwner) {
-          await adapter
-            .send(message.chatId, { text: '✗ Only the owner may approve pairings.' })
-            .catch(() => {});
-          return;
-        }
-      }
-      const result = consumeAndAllow(this.pairingDb, code, message.userId);
-      if (result.ok) {
-        // Update in-memory cache
-        const platformCfg = this.channelFilter[result.platform];
-        if (platformCfg) {
-          if (!platformCfg.recipientAllowlist) platformCfg.recipientAllowlist = [];
-          if (!platformCfg.recipientAllowlist.includes(result.senderId)) {
-            platformCfg.recipientAllowlist.push(result.senderId);
-          }
-        }
-        this.observability?.recordChannelAllow({
-          code: 'channel.pairing.approved',
-          details: {
-            approvedUserId: result.senderId,
-            approvedPlatform: result.platform,
-            byUserId: message.userId,
-          },
-        });
-        await this.onAllowlistChange?.(result.platform, result.senderId, 'add');
-        await adapter
-          .send(message.chatId, { text: `✓ ${result.senderId} approved.` })
-          .catch(() => {});
-      } else if (result.reason === 'owner_paused') {
-        await adapter
-          .send(message.chatId, { text: '✗ Too many invalid attempts. Pairing paused for 24h.' })
-          .catch(() => {});
-      } else {
-        await adapter.send(message.chatId, { text: '✗ Invalid or expired code.' }).catch(() => {});
-      }
-      return;
-    }
-    if (cmdType === 'deny') {
-      const targetUserId = text.split(/\s+/)[1] ?? '';
-      const cleanTarget = targetUserId.replace(/^@/, '');
-      if (!cleanTarget || !this.channelFilter) {
-        await adapter.send(message.chatId, { text: '✗ Usage: /deny <userId>' }).catch(() => {});
-        return;
-      }
-      let removed = false;
-      for (const [platform, cfg] of Object.entries(this.channelFilter)) {
-        // Only the owner can remove senders.
-        const isOwner = cfg.ownerUserId && message.userId === cfg.ownerUserId;
-        if (!isOwner) continue;
-        let removedOnPlatform = false;
-        // Remove from in-memory list.
-        const list = cfg.recipientAllowlist;
-        if (list) {
-          const idx = list.indexOf(cleanTarget);
-          if (idx !== -1) {
-            list.splice(idx, 1);
-            removedOnPlatform = true;
-          }
-        }
-        // Revoke from persistent DB — idempotent, catches pairing-approved senders.
-        if (this.pairingDb && revokeApproval(this.pairingDb, cleanTarget, platform)) {
-          removedOnPlatform = true;
-        }
-        if (removedOnPlatform) {
-          removed = true;
-          this.observability?.recordChannelDeny({
-            code: 'channel.allowlist.removed',
-            details: { removedUserId: cleanTarget, platform, byUserId: message.userId },
-          });
-          await this.onAllowlistChange?.(platform, cleanTarget, 'remove');
-        }
-      }
-      if (removed) {
-        await adapter.send(message.chatId, { text: `✓ ${cleanTarget} removed.` }).catch(() => {});
-      } else {
-        await adapter
-          .send(message.chatId, { text: `✗ ${cleanTarget} not found in any allowlist.` })
-          .catch(() => {});
-      }
-      return;
-    }
-    if (cmdType === 'communications') {
-      if (!this.pairingDb || !this.channelFilter) {
-        await adapter.send(message.chatId, { text: 'Pairing not configured.' }).catch(() => {});
-        return;
-      }
-      const platformCfg = this.channelFilter[message.platform];
-      const isOwner = platformCfg?.ownerUserId && message.userId === platformCfg.ownerUserId;
-      if (!isOwner) {
-        await adapter
-          .send(message.chatId, { text: '✗ Only the owner may use /communications.' })
-          .catch(() => {});
-        return;
-      }
-      const subCmd = text.split(/\s+/)[1]?.toLowerCase();
-      if (subCmd === 'approve-all') {
-        // Scope to platforms where the caller is the configured owner.
-        const ownedPlatforms = new Set(
-          Object.entries(this.channelFilter)
-            .filter(([, cfg]) => cfg.ownerUserId && message.userId === cfg.ownerUserId)
-            .map(([p]) => p),
-        );
-        const pending = this.pairingDb
-          .prepare(`SELECT code, platform FROM pairing_codes WHERE status = 'pending'`)
-          .all();
-        let approvedCount = 0;
-        for (const { code, platform } of pending) {
-          if (!ownedPlatforms.has(platform)) continue;
-          const result = consumeAndAllow(this.pairingDb, code, message.userId);
-          if (result.ok) {
-            approvedCount++;
-            const cfg = this.channelFilter[result.platform];
-            if (cfg) {
-              if (!cfg.recipientAllowlist) cfg.recipientAllowlist = [];
-              if (!cfg.recipientAllowlist.includes(result.senderId)) {
-                cfg.recipientAllowlist.push(result.senderId);
-              }
+        // Seed in-memory allowlists from DB-persisted approved senders
+        if (config.pairingDb && config.channelFilter) {
+            for (const [platform, cfg] of Object.entries(config.channelFilter)) {
+                const approved = getApprovedSenders(config.pairingDb, platform);
+                if (approved.length > 0) {
+                    if (!cfg.recipientAllowlist)
+                        cfg.recipientAllowlist = [];
+                    for (const id of approved) {
+                        if (!cfg.recipientAllowlist.includes(id))
+                            cfg.recipientAllowlist.push(id);
+                    }
+                }
             }
-            await this.onAllowlistChange?.(result.platform, result.senderId, 'add');
-          }
         }
-        await adapter
-          .send(message.chatId, { text: `✓ Approved ${approvedCount} sender(s).` })
-          .catch(() => {});
-        return;
-      }
-      // Default: list pending codes
-      const pending = this.pairingDb
-        .prepare(`SELECT code, sender_id, platform FROM pairing_codes WHERE status = 'pending'`)
-        .all();
-      if (pending.length === 0) {
-        await adapter
-          .send(message.chatId, { text: 'No pending pairing requests.' })
-          .catch(() => {});
-        return;
-      }
-      const lines = pending.map((r) => `${r.sender_id} (${r.platform}) — /allow ${r.code}`);
-      const reply = `${pending.length} pending pairing request(s):\n${lines.join('\n')}`;
-      await adapter.send(message.chatId, { text: reply }).catch(() => {});
-      return;
     }
-    // --- Agent turn ---
-    await lane.enqueue(async (signal) => {
-      const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
-      // For team bots the coordinator personality is part of the loop;
-      // we don't override per turn. For personality bots, the binding's
-      // name is the default, and an in-lane /personality override (only
-      // possible when allowSlashSwitch is on) takes precedence.
-      const personalityId =
-        bot.binding.type === 'team'
-          ? undefined
-          : (this.personalityIds.get(laneKey) ?? bot.binding.name);
-      // Track this turn so graceful shutdown can notify the user (P1-1).
-      this.activeTurns.set(laneKey, { adapter, chatId: message.chatId });
-      // Record routing keyed by `sessionKey` so the `session_start` hook
-      // (which runs inside `loop.run()` below and is the only place the
-      // `sessionId` is known) can complete the `sessionId → routing` bridge.
-      // `message.threadId` is in scope here; `activeTurns` isn't a fit
-      // because it's keyed by `laneKey` and carries no thread identifier.
-      this.sessionRouting.set(sessionKey, {
-        adapter,
-        chatId: message.chatId,
-        threadId: message.threadId ? message.threadId : undefined,
-        requesterUserId: message.userId,
-      });
-      // Typing indicator — renew every 4 s (Telegram shows it for ~5 s)
-      await adapter.sendTyping?.(message.chatId).catch(() => {});
-      const typingTimer = setInterval(() => {
-        void adapter.sendTyping?.(message.chatId).catch(() => {});
-      }, 4_000);
-      try {
-        let responseText = '';
-        let errored = null;
-        // All channel messages are untrusted — deterministic trust boundary.
-        // Every message from an external channel is wrapped unconditionally;
-        // the pattern check below is telemetry-only (monitoring/alerting),
-        // not a gate for wrapping.
-        const wrapped = wrapUntrusted({ content: text, toolName: 'channel_message' });
-        // Channel history backfill — prepend prior context on first encounter.
-        // priorContext is channel history (user-generated) and must be wrapped
-        // as untrusted to prevent prompt injection from old messages.
-        const contextPrefix = message.priorContext
-          ? wrapUntrusted({ content: message.priorContext, toolName: 'channel_history' }).content +
-            '\n\n---\n\n'
-          : '';
-        const loopText = contextPrefix ? `${contextPrefix}${wrapped.content}` : wrapped.content;
-        // Telemetry: record when known injection patterns or template tokens
-        // are detected, for monitoring/alerting. Not a trust gate.
-        const tier1 = shortPatternCheck(text);
-        if (tier1.containsInstructions || wrapped.strippedTokens > 0) {
-          this.observability?.recordInjectionFlag?.({
-            code: 'channel.injection_detected',
-            cause: tier1.containsInstructions
-              ? (tier1.hits[0]?.rule ?? 'pattern-hit')
-              : `stripped ${wrapped.strippedTokens} template token${wrapped.strippedTokens === 1 ? '' : 's'}`,
-            details: {
-              platform: message.platform,
-              chatId: message.chatId,
-              userId: message.userId,
-              ...(tier1.containsInstructions ? { hits: tier1.hits } : {}),
-            },
-          });
+    /**
+     * Returns true if this message is a duplicate of one seen in the dedup
+     * window (and records the key for future drops). Returns false for
+     * never-before-seen keys, or when the message has no `messageId` (we can't
+     * dedup what isn't keyed).
+     *
+     * The dedup key is platform-, bot-, chat-, and message-scoped: the same
+     * `messageId` arriving through two different bots is two distinct
+     * inbounds, not a duplicate. (Without the botKey segment, multi-bot
+     * routing would silently drop one of them.)
+     */
+    isDuplicate(message, botKey) {
+        if (this.dedupWindow <= 0 || !message.messageId)
+            return false;
+        const key = buildLaneKey(message.platform, botKey, message.chatId, message.messageId);
+        if (this.seenMessages.has(key))
+            return true;
+        this.seenMessages.add(key);
+        // Bound the set — drop the oldest entry once we exceed the window.
+        if (this.seenMessages.size > this.dedupWindow) {
+            const first = this.seenMessages.values().next().value;
+            if (first !== undefined)
+                this.seenMessages.delete(first);
         }
-        const userId =
-          message.userId && this.resolveUserIdFn
-            ? await this.resolveUserIdFn(message.platform, message.userId, message.username)
-            : undefined;
-        for await (const event of bot.loop.run(loopText, {
-          sessionKey,
-          personalityId,
-          abortSignal: signal,
-          attachments: message.attachments,
-          userId,
-        })) {
-          if (event.type === 'tool_start' && this.showToolCalls) {
+        return false;
+    }
+    // ---------------------------------------------------------------------------
+    // Public API — adapters call this for every inbound message
+    // ---------------------------------------------------------------------------
+    async handleMessage(message, adapter) {
+        // Drop duplicates BEFORE any work — billing-relevant. See OpenClaw #71761
+        // (channel messages injected twice → 2× cost). Use the resolved botKey
+        // (message.botKey or the synthesized default) so multi-bot routing
+        // doesn't accidentally cross-dedupe. Edited messages (`isEdit: true`)
+        // bypass dedup because they intentionally re-use the same `messageId`
+        // with different content.
+        const dedupBotKey = message.botKey ?? this.defaultBotKey ?? '';
+        if (!message.isEdit && this.isDuplicate(message, dedupBotKey))
+            return;
+        // --- Clarify correlator: short-circuit force-reply + `/cancel` ---
+        // Runs BEFORE the safety filter's mention gate so an approved sender's
+        // force-reply isn't treated as a fresh agent prompt (the agent is
+        // already paused inside `clarify()` waiting on this answer). But we
+        // still gate on the *allowlist* portion of the safety filter — a
+        // non-allowlisted sender in a group chat must NOT be able to resolve
+        // the bot's pending clarify (that would be an authentication bypass,
+        // not just a routing shortcut).
+        if (this.clarifyCorrelator) {
+            const platformCfg = this.channelFilter?.[message.platform];
+            if (isSenderAllowed(message, platformCfg)) {
+                const resp = await this.clarifyCorrelator(message).catch(() => null);
+                if (resp) {
+                    const bot = this.bots.get(dedupBotKey);
+                    await bot?.loop.clarifyBridge?.respond(resp);
+                    return;
+                }
+            }
+        }
+        // --- Chapter 1: before_inbound channel safety filter ---
+        if (this.channelFilter) {
+            const platformCfg = this.channelFilter[message.platform];
+            const filterResult = checkMessage(message, platformCfg, this.pairingDb);
+            if (filterResult.action === 'drop') {
+                // Emit audit event for observability
+                this.observability?.recordSafetyBlock({
+                    code: message.isDm ? 'channel.allowlist.blocked' : 'channel.mention_gate',
+                    details: {
+                        platform: message.platform,
+                        chatId: message.chatId,
+                        userId: message.userId,
+                        isDm: message.isDm,
+                        isGroupMention: message.isGroupMention,
+                    },
+                });
+                return;
+            }
+            if (filterResult.action === 'pairing_reply') {
+                await adapter.send(message.chatId, { text: filterResult.reply ?? '' }).catch(() => { });
+                return;
+            }
+            // 'allow' — if context was stripped, use stripped text for the turn
+            if (filterResult.strippedText !== undefined) {
+                this.observability?.recordSafetyBlock({
+                    code: 'channel.context_stripped',
+                    details: {
+                        platform: message.platform,
+                        chatId: message.chatId,
+                        userId: message.userId,
+                        replyToId: message.replyToId,
+                    },
+                });
+                message = { ...message, text: filterResult.strippedText };
+            }
+        }
+        // Resolve which bot this message is for. `message.botKey` wins when
+        // adapters populate it; single-bot deployments fall back to the
+        // synthesized default. Multi-bot deployments with a missing botKey
+        // are a configuration error — log and drop rather than silently
+        // route to a wrong personality.
+        const botKey = message.botKey ?? this.defaultBotKey ?? '';
+        const bot = botKey ? this.bots.get(botKey) : undefined;
+        if (!bot) {
+            this.observability?.recordSafetyBlock({
+                code: 'gateway.unknown_botKey',
+                details: { platform: message.platform, chatId: message.chatId, botKey: message.botKey },
+            });
+            return;
+        }
+        // Adapters that surface a thread identifier (currently only Slack, via
+        // `thread_ts`) get a per-thread lane so concurrent threads in the same
+        // channel never share session state. Adapters without thread semantics
+        // omit `threadId` and the key degrades to the unthreaded form.
+        //
+        // Empty-string `threadId` is treated as no thread: the contract is
+        // `threadId?: string`, but an empty string carries no routing signal,
+        // and admitting it would mean a misbehaving adapter could quietly
+        // build a thread lane keyed on `''` — distinct from the unthreaded
+        // root but holding only its mistakes.
+        const threadId = message.threadId ? message.threadId : undefined;
+        const laneKey = threadId
+            ? buildLaneKey(message.platform, bot.botKey, message.chatId, threadId)
+            : buildLaneKey(message.platform, bot.botKey, message.chatId);
+        const lane = this.getOrCreateLane(laneKey);
+        const text = message.text?.trim() ?? '';
+        // --- Gateway-level slash command handling ---
+        const cmdToken = text.split(/\s+/)[0] ?? '';
+        const cmdType = PLATFORM_COMMANDS[cmdToken.toLowerCase()];
+        if (cmdType === 'stop') {
+            lane.abort();
+            await adapter.send(message.chatId, { text: '✓ Stopped.' }).catch(() => { });
+            return;
+        }
+        if (cmdType === 'new') {
+            lane.abort();
+            const previousSession = this.sessionKeys.get(laneKey) ?? laneKey;
+            this.outboundDedup.clearSession(previousSession);
+            void this.attachmentCache?.clear(previousSession).catch(() => { });
+            const fresh = `${laneKey}:${Date.now()}`;
+            this.sessionKeys.set(laneKey, fresh);
+            this.usageStore.delete(laneKey);
+            this.personalityIds.delete(laneKey); // reset to default personality
+            await adapter.send(message.chatId, { text: '✓ New session started.' }).catch(() => { });
+            return;
+        }
+        if (cmdType === 'help') {
+            const current = this.activePersonalityFor(laneKey, bot);
+            const personalityLines = this.personalitySwitchAllowed(bot)
+                ? [
+                    `/personality — show current personality (${current})`,
+                    `/personality list — available personalities`,
+                    `/personality <id> — switch personality`,
+                ]
+                : [`/personality — show current binding (${current}; switching disabled)`];
             await adapter
-              .send(message.chatId, { text: `⚙ ${event.toolName}`, threadId })
-              .catch(() => {});
-          }
-          if (event.type === 'text_delta') responseText += event.text;
-          if (event.type === 'usage') {
-            const u = this.usageStore.get(laneKey) ?? {
-              inputTokens: 0,
-              outputTokens: 0,
-              costUsd: 0,
-            };
-            u.inputTokens += event.inputTokens;
-            u.outputTokens += event.outputTokens;
-            u.costUsd += event.estimatedCostUsd;
-            this.usageStore.set(laneKey, u);
-          }
-          if (event.type === 'error') {
-            errored = { error: event.error, code: event.code };
-            break;
-          }
-          if (event.type === 'done') break;
+                .send(message.chatId, {
+                text: `/new — start a fresh session\n` +
+                    `/stop — abort current response\n` +
+                    `${personalityLines.join('\n')}\n` +
+                    `/usage — token and cost stats\n` +
+                    `/help — this message`,
+            })
+                .catch(() => { });
+            return;
         }
-        if (signal.aborted) {
-          // /stop or shutdown — caller already notified the user.
-        } else if (errored) {
-          // Surface error explicitly so users don't mistake a partial answer
-          // for a complete one. Aborts (code === 'aborted') are silent above.
-          const note =
-            responseText.trim().length > 0
-              ? `${responseText}\n\n⚠ Response interrupted: ${errored.error}`
-              : `⚠ Error: ${errored.error}`;
-          const sanitizedNote = stripAnsiEscapes(note);
-          if (this.outboundDedup.shouldSend(sessionKey, sanitizedNote)) {
-            await adapter.send(message.chatId, { text: sanitizedNote, threadId }).catch(() => {});
-          }
-        } else if (responseText) {
-          // Outbound dedup — suppress same (sessionId, content) within TTL.
-          // Adapters that previously rolled their own dedup go through this
-          // cache instead. See plan/phases/30-robustness.md § 30.4.
-          const sanitized = stripAnsiEscapes(responseText);
-          if (this.outboundDedup.shouldSend(sessionKey, sanitized)) {
-            // Pass the inbound thread identifier through so adapters with
-            // thread semantics (Slack) reply in the same thread. Top-level
-            // posts have no `threadId` — the value is undefined and the
-            // adapter posts at the channel root.
+        if (cmdType === 'start') {
+            const personalityId = this.activePersonalityFor(laneKey, bot);
+            if (this.greetingProvider) {
+                const greeting = await this.greetingProvider.greet(personalityId).catch(() => null);
+                if (greeting) {
+                    await adapter.send(message.chatId, { text: greeting }).catch(() => { });
+                    return;
+                }
+            }
             await adapter
-              .send(message.chatId, {
-                text: sanitized,
-                parseMode: 'markdown',
-                threadId,
-              })
-              .catch(() => {});
-          }
+                .send(message.chatId, {
+                text: `Hello! I'm running as *${personalityId}*. Send a message to get started, or try /help for available commands.`,
+            })
+                .catch(() => { });
+            return;
         }
-      } finally {
-        clearInterval(typingTimer);
-        this.activeTurns.delete(laneKey);
-        // Tear down the approval-routing bridge for this turn. An approval
-        // fires *during* the turn (the hook awaits, the turn is paused), so
-        // the maps are guaranteed populated for the whole pending window.
-        this.sessionRouting.delete(sessionKey);
-        const sessionId = this.sessionIdByKey.get(sessionKey);
-        if (sessionId !== undefined) {
-          this.approvalRoutes.delete(sessionId);
-          this.sessionIdByKey.delete(sessionKey);
+        if (cmdType === 'personality') {
+            const arg = text.split(/\s+/).slice(1).join(' ').trim();
+            const current = this.activePersonalityFor(laneKey, bot);
+            if (!arg) {
+                await adapter
+                    .send(message.chatId, { text: `Current personality: ${current}` })
+                    .catch(() => { });
+                return;
+            }
+            // `/personality rich` — full character sheet. Works for personality
+            // bindings even when switching is disabled; team bindings fall through
+            // to the compact view.
+            if (arg.toLowerCase() === 'rich' &&
+                this.personalityCardReader &&
+                bot.binding.type === 'personality') {
+                const card = await this.personalityCardReader.read(current).catch(() => null);
+                if (card) {
+                    await adapter.send(message.chatId, { text: card.text }).catch(() => { });
+                    return;
+                }
+            }
+            // Identity-bound bots reject the switch — the bot's external
+            // identity is the routing contract. The user sees a clear pointer
+            // to the right surface to switch to. Team-bots reject regardless
+            // of allowSlashSwitch because the coordinator is structurally part
+            // of the loop, not a runtime hat.
+            if (!this.personalitySwitchAllowed(bot)) {
+                await adapter
+                    .send(message.chatId, {
+                    text: `This bot is bound to ${bot.binding.type} '${bot.binding.name}'. ` +
+                        `Switching personalities is disabled for identity-bound bots. ` +
+                        `To talk to a different agent, message that agent's bot.`,
+                })
+                    .catch(() => { });
+                return;
+            }
+            if (arg === 'list') {
+                await adapter
+                    .send(message.chatId, {
+                    text: 'Built-in personalities: researcher · engineer · reviewer · coach · operator\n\nUse /personality <id> to switch.',
+                })
+                    .catch(() => { });
+                return;
+            }
+            // Switch personality — also start a fresh session so the new identity takes effect immediately
+            const previousSession = this.sessionKeys.get(laneKey) ?? laneKey;
+            this.outboundDedup.clearSession(previousSession);
+            void this.attachmentCache?.clear(previousSession).catch(() => { });
+            this.personalityIds.set(laneKey, arg);
+            const fresh = `${laneKey}:${Date.now()}`;
+            this.sessionKeys.set(laneKey, fresh);
+            await adapter
+                .send(message.chatId, { text: `✓ Switched to ${arg} personality. New session started.` })
+                .catch(() => { });
+            return;
         }
-      }
-    });
-  }
-  /**
-   * Resolve a `sessionId` to the adapter/chat/thread its turn originated
-   * from — the bridge a `before_tool_call` approval hook needs to surface an
-   * approval prompt on the right platform conversation. Returns `undefined`
-   * once the turn ends (or if the sessionId was never seen). Platform-
-   * agnostic by design: the gateway returns a generic `PlatformAdapter` and
-   * never learns which concrete platform is in play.
-   */
-  resolveApprovalRoute(sessionId) {
-    return this.approvalRoutes.get(sessionId);
-  }
-  /**
-   * Stop all active session lanes gracefully. If `notify` is set, send that
-   * text to every chat with an in-flight turn before aborting — so users
-   * never see silent failure on shutdown / upgrade. See IMPROVEMENT.md P1-1
-   * and OpenClaw #71178 (mid-turn update drops every Telegram message).
-   */
-  async shutdown(opts = {}) {
-    if (opts.notify) {
-      const sends = [];
-      for (const ctx of this.activeTurns.values()) {
-        sends.push(ctx.adapter.send(ctx.chatId, { text: opts.notify }).catch(() => {}));
-      }
-      await Promise.allSettled(sends);
-    }
-    if (this.clarifySweepTimer) {
-      clearInterval(this.clarifySweepTimer);
-      this.clarifySweepTimer = undefined;
-    }
-    for (const lane of this.lanes.values()) {
-      lane.abort();
-    }
-    this.lanes.clear();
-    this.sessionKeys.clear();
-    this.activeTurns.clear();
-    this.sessionRouting.clear();
-    this.approvalRoutes.clear();
-    this.sessionIdByKey.clear();
-  }
-  // ---------------------------------------------------------------------------
-  // Helpers
-  // ---------------------------------------------------------------------------
-  /** Whether `/personality` switching is permitted for this lane's bot.
-   *  Team bots always reject (coordinator is structural). Personality
-   *  bots reject unless `binding.allowSlashSwitch` is on. */
-  personalitySwitchAllowed(bot) {
-    if (bot.binding.type === 'team') return false;
-    return bot.binding.allowSlashSwitch === true;
-  }
-  /** The personality identifier surfaced by `/personality` (no arg) and
-   *  `/help` for a given lane. Honors the per-lane override only when
-   *  the bot permits slash-switching. */
-  activePersonalityFor(laneKey, bot) {
-    if (this.personalitySwitchAllowed(bot)) {
-      const override = this.personalityIds.get(laneKey);
-      if (override) return override;
-    }
-    return bot.binding.name;
-  }
-  // ---------------------------------------------------------------------------
-  // Public API — agent-initiated outbound sends (send_message tool)
-  // ---------------------------------------------------------------------------
-  async sendTo(platform, target, body) {
-    const adapter = this.adapterRegistry.get(platform);
-    if (!adapter) {
-      return { ok: false, error: `No adapter registered for platform "${platform}"` };
-    }
-    try {
-      // Route through outbound dedup — same path as normal responses.
-      // Use target as the session key for dedup so repeated sends to the
-      // same target with same content are suppressed within TTL.
-      const dedupKey = `outbound:${platform}:${target}`;
-      if (!this.outboundDedup.shouldSend(dedupKey, body)) {
-        return { ok: true }; // silently deduplicated
-      }
-      const result = await adapter.send(target, { text: body });
-      if (!result.ok) {
-        return { ok: false, error: result.error ?? 'Adapter send failed' };
-      }
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  }
-  getOrCreateLane(key) {
-    const existing = this.lanes.get(key);
-    if (existing) {
-      // LRU touch: re-insert to push to the tail so eviction skips it.
-      this.lanes.delete(key);
-      this.lanes.set(key, existing);
-      return existing;
-    }
-    const lane = new SessionLane();
-    this.lanes.set(key, lane);
-    this.evictIdleChats();
-    return lane;
-  }
-  /**
-   * Bound per-chat state at `maxChats`. Walks `lanes` in LRU order (oldest
-   * first) and evicts the first idle chat — one whose lane queue is empty
-   * and that has no in-flight turn. Active chats are skipped, so a flood of
-   * new chats can't drop a user mid-response.
-   */
-  evictIdleChats() {
-    while (this.lanes.size > this.maxChats) {
-      let evictedKey = null;
-      for (const [key, lane] of this.lanes) {
-        if (lane.length === 0 && !this.activeTurns.has(key)) {
-          evictedKey = key;
-          break;
+        if (cmdType === 'usage') {
+            const u = this.usageStore.get(laneKey) ?? { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+            await adapter
+                .send(message.chatId, {
+                text: `Tokens: ${u.inputTokens.toLocaleString()} in / ${u.outputTokens.toLocaleString()} out\nCost: $${u.costUsd.toFixed(5)}`,
+            })
+                .catch(() => { });
+            return;
         }
-      }
-      if (evictedKey === null) return; // every chat is busy — leave the cap alone
-      const evictedSession = this.sessionKeys.get(evictedKey) ?? evictedKey;
-      void this.attachmentCache?.clear(evictedSession).catch(() => {});
-      this.lanes.delete(evictedKey);
-      this.sessionKeys.delete(evictedKey);
-      this.personalityIds.delete(evictedKey);
-      this.usageStore.delete(evictedKey);
+        if (cmdType === 'allow') {
+            const code = text.split(/\s+/)[1]?.toUpperCase() ?? '';
+            if (!code || !this.pairingDb || !this.channelFilter) {
+                await adapter
+                    .send(message.chatId, { text: '✗ Pairing not configured or no code given.' })
+                    .catch(() => { });
+                return;
+            }
+            // Verify the caller is the configured owner for the code's platform before consuming.
+            // This prevents allowlisted non-owners from approving pairings.
+            const codeRow = this.pairingDb
+                .prepare('SELECT platform FROM pairing_codes WHERE code = ?')
+                .get(code);
+            if (codeRow) {
+                const codePlatformCfg = this.channelFilter[codeRow.platform];
+                const isOwner = codePlatformCfg?.ownerUserId && message.userId === codePlatformCfg.ownerUserId;
+                if (!isOwner) {
+                    await adapter
+                        .send(message.chatId, { text: '✗ Only the owner may approve pairings.' })
+                        .catch(() => { });
+                    return;
+                }
+            }
+            const result = consumeAndAllow(this.pairingDb, code, message.userId);
+            if (result.ok) {
+                // Update in-memory cache
+                const platformCfg = this.channelFilter[result.platform];
+                if (platformCfg) {
+                    if (!platformCfg.recipientAllowlist)
+                        platformCfg.recipientAllowlist = [];
+                    if (!platformCfg.recipientAllowlist.includes(result.senderId)) {
+                        platformCfg.recipientAllowlist.push(result.senderId);
+                    }
+                }
+                this.observability?.recordChannelAllow({
+                    code: 'channel.pairing.approved',
+                    details: {
+                        approvedUserId: result.senderId,
+                        approvedPlatform: result.platform,
+                        byUserId: message.userId,
+                    },
+                });
+                await this.onAllowlistChange?.(result.platform, result.senderId, 'add');
+                await adapter
+                    .send(message.chatId, { text: `✓ ${result.senderId} approved.` })
+                    .catch(() => { });
+            }
+            else if (result.reason === 'owner_paused') {
+                await adapter
+                    .send(message.chatId, { text: '✗ Too many invalid attempts. Pairing paused for 24h.' })
+                    .catch(() => { });
+            }
+            else {
+                await adapter.send(message.chatId, { text: '✗ Invalid or expired code.' }).catch(() => { });
+            }
+            return;
+        }
+        if (cmdType === 'deny') {
+            const targetUserId = text.split(/\s+/)[1] ?? '';
+            const cleanTarget = targetUserId.replace(/^@/, '');
+            if (!cleanTarget || !this.channelFilter) {
+                await adapter.send(message.chatId, { text: '✗ Usage: /deny <userId>' }).catch(() => { });
+                return;
+            }
+            let removed = false;
+            for (const [platform, cfg] of Object.entries(this.channelFilter)) {
+                // Only the owner can remove senders.
+                const isOwner = cfg.ownerUserId && message.userId === cfg.ownerUserId;
+                if (!isOwner)
+                    continue;
+                let removedOnPlatform = false;
+                // Remove from in-memory list.
+                const list = cfg.recipientAllowlist;
+                if (list) {
+                    const idx = list.indexOf(cleanTarget);
+                    if (idx !== -1) {
+                        list.splice(idx, 1);
+                        removedOnPlatform = true;
+                    }
+                }
+                // Revoke from persistent DB — idempotent, catches pairing-approved senders.
+                if (this.pairingDb && revokeApproval(this.pairingDb, cleanTarget, platform)) {
+                    removedOnPlatform = true;
+                }
+                if (removedOnPlatform) {
+                    removed = true;
+                    this.observability?.recordChannelDeny({
+                        code: 'channel.allowlist.removed',
+                        details: { removedUserId: cleanTarget, platform, byUserId: message.userId },
+                    });
+                    await this.onAllowlistChange?.(platform, cleanTarget, 'remove');
+                }
+            }
+            if (removed) {
+                await adapter.send(message.chatId, { text: `✓ ${cleanTarget} removed.` }).catch(() => { });
+            }
+            else {
+                await adapter
+                    .send(message.chatId, { text: `✗ ${cleanTarget} not found in any allowlist.` })
+                    .catch(() => { });
+            }
+            return;
+        }
+        if (cmdType === 'communications') {
+            if (!this.pairingDb || !this.channelFilter) {
+                await adapter.send(message.chatId, { text: 'Pairing not configured.' }).catch(() => { });
+                return;
+            }
+            const platformCfg = this.channelFilter[message.platform];
+            const isOwner = platformCfg?.ownerUserId && message.userId === platformCfg.ownerUserId;
+            if (!isOwner) {
+                await adapter
+                    .send(message.chatId, { text: '✗ Only the owner may use /communications.' })
+                    .catch(() => { });
+                return;
+            }
+            const subCmd = text.split(/\s+/)[1]?.toLowerCase();
+            if (subCmd === 'approve-all') {
+                // Scope to platforms where the caller is the configured owner.
+                const ownedPlatforms = new Set(Object.entries(this.channelFilter)
+                    .filter(([, cfg]) => cfg.ownerUserId && message.userId === cfg.ownerUserId)
+                    .map(([p]) => p));
+                const pending = this.pairingDb
+                    .prepare(`SELECT code, platform FROM pairing_codes WHERE status = 'pending'`)
+                    .all();
+                let approvedCount = 0;
+                for (const { code, platform } of pending) {
+                    if (!ownedPlatforms.has(platform))
+                        continue;
+                    const result = consumeAndAllow(this.pairingDb, code, message.userId);
+                    if (result.ok) {
+                        approvedCount++;
+                        const cfg = this.channelFilter[result.platform];
+                        if (cfg) {
+                            if (!cfg.recipientAllowlist)
+                                cfg.recipientAllowlist = [];
+                            if (!cfg.recipientAllowlist.includes(result.senderId)) {
+                                cfg.recipientAllowlist.push(result.senderId);
+                            }
+                        }
+                        await this.onAllowlistChange?.(result.platform, result.senderId, 'add');
+                    }
+                }
+                await adapter
+                    .send(message.chatId, { text: `✓ Approved ${approvedCount} sender(s).` })
+                    .catch(() => { });
+                return;
+            }
+            // Default: list pending codes
+            const pending = this.pairingDb
+                .prepare(`SELECT code, sender_id, platform FROM pairing_codes WHERE status = 'pending'`)
+                .all();
+            if (pending.length === 0) {
+                await adapter
+                    .send(message.chatId, { text: 'No pending pairing requests.' })
+                    .catch(() => { });
+                return;
+            }
+            const lines = pending.map((r) => `${r.sender_id} (${r.platform}) — /allow ${r.code}`);
+            const reply = `${pending.length} pending pairing request(s):\n${lines.join('\n')}`;
+            await adapter.send(message.chatId, { text: reply }).catch(() => { });
+            return;
+        }
+        // --- Auto-steer: if a turn is already running, push into its steer sink ---
+        const activeSink = this.activeSinks.get(laneKey);
+        if (activeSink) {
+            const accepted = activeSink.push(text);
+            if (accepted) {
+                await adapter.send(message.chatId, { text: '↩ noted', threadId }).catch(() => { });
+            }
+            return;
+        }
+        // --- Agent turn ---
+        await lane.enqueue(async (signal) => {
+            const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+            // For team bots the coordinator personality is part of the loop;
+            // we don't override per turn. For personality bots, the binding's
+            // name is the default, and an in-lane /personality override (only
+            // possible when allowSlashSwitch is on) takes precedence.
+            const personalityId = bot.binding.type === 'team'
+                ? undefined
+                : (this.personalityIds.get(laneKey) ?? bot.binding.name);
+            // Track this turn so graceful shutdown can notify the user (P1-1).
+            this.activeTurns.set(laneKey, { adapter, chatId: message.chatId });
+            const steerSink = createSteerSink();
+            this.activeSinks.set(laneKey, steerSink);
+            // Record routing keyed by `sessionKey` so the `session_start` hook
+            // (which runs inside `loop.run()` below and is the only place the
+            // `sessionId` is known) can complete the `sessionId → routing` bridge.
+            // `message.threadId` is in scope here; `activeTurns` isn't a fit
+            // because it's keyed by `laneKey` and carries no thread identifier.
+            this.sessionRouting.set(sessionKey, {
+                adapter,
+                chatId: message.chatId,
+                threadId: message.threadId ? message.threadId : undefined,
+                requesterUserId: message.userId,
+            });
+            // Typing indicator — renew every 4 s (Telegram shows it for ~5 s)
+            await adapter.sendTyping?.(message.chatId).catch(() => { });
+            const typingTimer = setInterval(() => {
+                void adapter.sendTyping?.(message.chatId).catch(() => { });
+            }, 4_000);
+            try {
+                let responseText = '';
+                let errored = null;
+                // All channel messages are untrusted — deterministic trust boundary.
+                // Every message from an external channel is wrapped unconditionally;
+                // the pattern check below is telemetry-only (monitoring/alerting),
+                // not a gate for wrapping.
+                const wrapped = wrapUntrusted({ content: text, toolName: 'channel_message' });
+                // Channel history backfill — prepend prior context on first encounter.
+                // priorContext is channel history (user-generated) and must be wrapped
+                // as untrusted to prevent prompt injection from old messages.
+                const contextPrefix = message.priorContext
+                    ? wrapUntrusted({ content: message.priorContext, toolName: 'channel_history' }).content +
+                        '\n\n---\n\n'
+                    : '';
+                const loopText = contextPrefix ? `${contextPrefix}${wrapped.content}` : wrapped.content;
+                // Telemetry: record when known injection patterns or template tokens
+                // are detected, for monitoring/alerting. Not a trust gate.
+                const tier1 = shortPatternCheck(text);
+                if (tier1.containsInstructions || wrapped.strippedTokens > 0) {
+                    this.observability?.recordInjectionFlag?.({
+                        code: 'channel.injection_detected',
+                        cause: tier1.containsInstructions
+                            ? (tier1.hits[0]?.rule ?? 'pattern-hit')
+                            : `stripped ${wrapped.strippedTokens} template token${wrapped.strippedTokens === 1 ? '' : 's'}`,
+                        details: {
+                            platform: message.platform,
+                            chatId: message.chatId,
+                            userId: message.userId,
+                            ...(tier1.containsInstructions ? { hits: tier1.hits } : {}),
+                        },
+                    });
+                }
+                const userId = message.userId && this.resolveUserIdFn
+                    ? await this.resolveUserIdFn(message.platform, message.userId, message.username)
+                    : undefined;
+                for await (const event of bot.loop.run(loopText, {
+                    sessionKey,
+                    personalityId,
+                    abortSignal: signal,
+                    attachments: message.attachments,
+                    userId,
+                    steerSink,
+                })) {
+                    if (event.type === 'run_start' && this.showToolCalls && adapter.canEditMessage) {
+                        const existing = this.activeStatusMessages.get(laneKey);
+                        if (existing) {
+                            await existing.adapter
+                                .editMessage?.(existing.chatId, existing.messageId, '💭 Thinking…')
+                                .catch(() => { });
+                        }
+                        else {
+                            const sent = await adapter
+                                .send(message.chatId, { text: '💭 Thinking…', threadId })
+                                .catch(() => null);
+                            if (sent?.messageId) {
+                                this.activeStatusMessages.set(laneKey, {
+                                    messageId: sent.messageId,
+                                    adapter,
+                                    chatId: message.chatId,
+                                    threadId,
+                                });
+                            }
+                        }
+                    }
+                    if (event.type === 'tool_start' && this.showToolCalls) {
+                        const status = this.activeStatusMessages.get(laneKey);
+                        if (status) {
+                            await status.adapter
+                                .editMessage?.(status.chatId, status.messageId, `⚙ ${event.toolName}…`)
+                                .catch(() => { });
+                        }
+                        else {
+                            await adapter
+                                .send(message.chatId, { text: `⚙ ${event.toolName}`, threadId })
+                                .catch(() => { });
+                        }
+                    }
+                    if (event.type === 'tool_end' && this.showToolCalls) {
+                        const status = this.activeStatusMessages.get(laneKey);
+                        if (status) {
+                            const dur = `${(event.durationMs / 1000).toFixed(1)}s`;
+                            await status.adapter
+                                .editMessage?.(status.chatId, status.messageId, `⚙ ${event.toolName} ✓ · ${dur}`)
+                                .catch(() => { });
+                        }
+                    }
+                    if (event.type === 'text_delta')
+                        responseText += event.text;
+                    if (event.type === 'usage') {
+                        const u = this.usageStore.get(laneKey) ?? {
+                            inputTokens: 0,
+                            outputTokens: 0,
+                            costUsd: 0,
+                        };
+                        u.inputTokens += event.inputTokens;
+                        u.outputTokens += event.outputTokens;
+                        u.costUsd += event.estimatedCostUsd;
+                        this.usageStore.set(laneKey, u);
+                    }
+                    if (event.type === 'error') {
+                        errored = { error: event.error, code: event.code };
+                        break;
+                    }
+                    if (event.type === 'done')
+                        break;
+                }
+                if (signal.aborted) {
+                    // /stop or shutdown — caller already notified the user.
+                }
+                else if (errored) {
+                    const errStatus = this.activeStatusMessages.get(laneKey);
+                    if (errStatus) {
+                        await errStatus.adapter
+                            .editMessage?.(errStatus.chatId, errStatus.messageId, '⚠ Stopped')
+                            .catch(() => { });
+                    }
+                    // Surface error explicitly so users don't mistake a partial answer
+                    // for a complete one. Aborts (code === 'aborted') are silent above.
+                    const note = responseText.trim().length > 0
+                        ? `${responseText}\n\n⚠ Response interrupted: ${errored.error}`
+                        : `⚠ Error: ${errored.error}`;
+                    const sanitizedNote = stripAnsiEscapes(note);
+                    if (this.outboundDedup.shouldSend(sessionKey, sanitizedNote)) {
+                        await adapter.send(message.chatId, { text: sanitizedNote, threadId }).catch(() => { });
+                    }
+                }
+                else if (responseText) {
+                    // Outbound dedup — suppress same (sessionId, content) within TTL.
+                    // Adapters that previously rolled their own dedup go through this
+                    // cache instead. See plan/phases/30-robustness.md § 30.4.
+                    const sanitized = stripAnsiEscapes(responseText);
+                    if (this.outboundDedup.shouldSend(sessionKey, sanitized)) {
+                        // Pass the inbound thread identifier through so adapters with
+                        // thread semantics (Slack) reply in the same thread. Top-level
+                        // posts have no `threadId` — the value is undefined and the
+                        // adapter posts at the channel root.
+                        await adapter
+                            .send(message.chatId, {
+                            text: sanitized,
+                            parseMode: 'markdown',
+                            threadId,
+                        })
+                            .catch(() => { });
+                    }
+                }
+            }
+            finally {
+                clearInterval(typingTimer);
+                this.activeTurns.delete(laneKey);
+                this.activeSinks.delete(laneKey);
+                const status = this.activeStatusMessages.get(laneKey);
+                if (status) {
+                    await status.adapter.editMessage?.(status.chatId, status.messageId, '').catch(() => { });
+                    this.activeStatusMessages.delete(laneKey);
+                }
+                // Tear down the approval-routing bridge for this turn. An approval
+                // fires *during* the turn (the hook awaits, the turn is paused), so
+                // the maps are guaranteed populated for the whole pending window.
+                this.sessionRouting.delete(sessionKey);
+                const sessionId = this.sessionIdByKey.get(sessionKey);
+                if (sessionId !== undefined) {
+                    this.approvalRoutes.delete(sessionId);
+                    this.sessionIdByKey.delete(sessionKey);
+                }
+            }
+        });
     }
-  }
+    /**
+     * Resolve a `sessionId` to the adapter/chat/thread its turn originated
+     * from — the bridge a `before_tool_call` approval hook needs to surface an
+     * approval prompt on the right platform conversation. Returns `undefined`
+     * once the turn ends (or if the sessionId was never seen). Platform-
+     * agnostic by design: the gateway returns a generic `PlatformAdapter` and
+     * never learns which concrete platform is in play.
+     */
+    resolveApprovalRoute(sessionId) {
+        return this.approvalRoutes.get(sessionId);
+    }
+    /**
+     * Stop all active session lanes gracefully. If `notify` is set, send that
+     * text to every chat with an in-flight turn before aborting — so users
+     * never see silent failure on shutdown / upgrade. See IMPROVEMENT.md P1-1
+     * and OpenClaw #71178 (mid-turn update drops every Telegram message).
+     */
+    async shutdown(opts = {}) {
+        if (opts.notify) {
+            const sends = [];
+            for (const ctx of this.activeTurns.values()) {
+                sends.push(ctx.adapter.send(ctx.chatId, { text: opts.notify }).catch(() => { }));
+            }
+            await Promise.allSettled(sends);
+        }
+        if (this.clarifySweepTimer) {
+            clearInterval(this.clarifySweepTimer);
+            this.clarifySweepTimer = undefined;
+        }
+        for (const lane of this.lanes.values()) {
+            lane.abort();
+        }
+        this.lanes.clear();
+        this.sessionKeys.clear();
+        this.activeTurns.clear();
+        this.activeStatusMessages.clear();
+        this.activeSinks.clear();
+        this.sessionRouting.clear();
+        this.approvalRoutes.clear();
+        this.sessionIdByKey.clear();
+    }
+    // ---------------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------------
+    /** Whether `/personality` switching is permitted for this lane's bot.
+     *  Team bots always reject (coordinator is structural). Personality
+     *  bots reject unless `binding.allowSlashSwitch` is on. */
+    personalitySwitchAllowed(bot) {
+        if (bot.binding.type === 'team')
+            return false;
+        return bot.binding.allowSlashSwitch === true;
+    }
+    /** The personality identifier surfaced by `/personality` (no arg) and
+     *  `/help` for a given lane. Honors the per-lane override only when
+     *  the bot permits slash-switching. */
+    activePersonalityFor(laneKey, bot) {
+        if (this.personalitySwitchAllowed(bot)) {
+            const override = this.personalityIds.get(laneKey);
+            if (override)
+                return override;
+        }
+        return bot.binding.name;
+    }
+    // ---------------------------------------------------------------------------
+    // Public API — agent-initiated outbound sends (send_message tool)
+    // ---------------------------------------------------------------------------
+    async sendTo(platform, target, body) {
+        const adapter = this.adapterRegistry.get(platform);
+        if (!adapter) {
+            return { ok: false, error: `No adapter registered for platform "${platform}"` };
+        }
+        try {
+            // Route through outbound dedup — same path as normal responses.
+            // Use target as the session key for dedup so repeated sends to the
+            // same target with same content are suppressed within TTL.
+            const dedupKey = `outbound:${platform}:${target}`;
+            if (!this.outboundDedup.shouldSend(dedupKey, body)) {
+                return { ok: true }; // silently deduplicated
+            }
+            const result = await adapter.send(target, { text: body });
+            if (!result.ok) {
+                return { ok: false, error: result.error ?? 'Adapter send failed' };
+            }
+            return { ok: true };
+        }
+        catch (err) {
+            return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+    }
+    getOrCreateLane(key) {
+        const existing = this.lanes.get(key);
+        if (existing) {
+            // LRU touch: re-insert to push to the tail so eviction skips it.
+            this.lanes.delete(key);
+            this.lanes.set(key, existing);
+            return existing;
+        }
+        const lane = new SessionLane();
+        this.lanes.set(key, lane);
+        this.evictIdleChats();
+        return lane;
+    }
+    /**
+     * Bound per-chat state at `maxChats`. Walks `lanes` in LRU order (oldest
+     * first) and evicts the first idle chat — one whose lane queue is empty
+     * and that has no in-flight turn. Active chats are skipped, so a flood of
+     * new chats can't drop a user mid-response.
+     */
+    evictIdleChats() {
+        while (this.lanes.size > this.maxChats) {
+            let evictedKey = null;
+            for (const [key, lane] of this.lanes) {
+                if (lane.length === 0 && !this.activeTurns.has(key)) {
+                    evictedKey = key;
+                    break;
+                }
+            }
+            if (evictedKey === null)
+                return; // every chat is busy — leave the cap alone
+            const evictedSession = this.sessionKeys.get(evictedKey) ?? evictedKey;
+            void this.attachmentCache?.clear(evictedSession).catch(() => { });
+            this.lanes.delete(evictedKey);
+            this.sessionKeys.delete(evictedKey);
+            this.personalityIds.delete(evictedKey);
+            this.usageStore.delete(evictedKey);
+        }
+    }
+}
+function createSteerSink(cap = 32) {
+    const queue = [];
+    return {
+        push(text) {
+            if (queue.length >= cap)
+                return false;
+            queue.push(text);
+            return true;
+        },
+        drain() {
+            if (queue.length === 0)
+                return [];
+            const out = queue.splice(0);
+            return out;
+        },
+        depth() {
+            return queue.length;
+        },
+    };
 }

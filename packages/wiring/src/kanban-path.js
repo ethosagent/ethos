@@ -12,12 +12,13 @@ import { isSafePathSegment } from '@ethosagent/storage-fs';
  * the wiring (PluginLoader, DockerSandbox, MCP, …).
  */
 export function resolveKanbanDbPath(config, dataDir, personalityId) {
-  if (config.kanbanDbPath !== undefined) return config.kanbanDbPath;
-  if (config.teamName !== undefined) {
-    if (!isSafePathSegment(config.teamName)) {
-      throw new Error(`Invalid team name for kanban path: ${config.teamName}`);
+    if (config.kanbanDbPath !== undefined)
+        return config.kanbanDbPath;
+    if (config.teamName !== undefined) {
+        if (!isSafePathSegment(config.teamName)) {
+            throw new Error(`Invalid team name for kanban path: ${config.teamName}`);
+        }
+        return join(dataDir, 'teams', config.teamName, 'board.db');
     }
-    return join(dataDir, 'teams', config.teamName, 'board.db');
-  }
-  return join(dataDir, 'personalities', personalityId, 'kanban.db');
+    return join(dataDir, 'personalities', personalityId, 'kanban.db');
 }

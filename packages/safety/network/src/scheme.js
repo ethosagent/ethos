@@ -6,23 +6,24 @@
 // (`http://user:pass@host`) are also rejected because the `host` part is
 // what matters and the credentials shape is suspicious.
 export function checkScheme(url) {
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return { ok: false, reason: `URL_SCHEME_REJECTED: malformed URL '${url}'` };
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return {
-      ok: false,
-      reason: `URL_SCHEME_REJECTED: scheme '${parsed.protocol.replace(':', '')}' not allowed (only http/https)`,
-    };
-  }
-  if (parsed.username || parsed.password) {
-    return {
-      ok: false,
-      reason: 'URL_SCHEME_REJECTED: URLs with embedded credentials are not allowed',
-    };
-  }
-  return { ok: true };
+    let parsed;
+    try {
+        parsed = new URL(url);
+    }
+    catch {
+        return { ok: false, reason: `URL_SCHEME_REJECTED: malformed URL '${url}'` };
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return {
+            ok: false,
+            reason: `URL_SCHEME_REJECTED: scheme '${parsed.protocol.replace(':', '')}' not allowed (only http/https)`,
+        };
+    }
+    if (parsed.username || parsed.password) {
+        return {
+            ok: false,
+            reason: 'URL_SCHEME_REJECTED: URLs with embedded credentials are not allowed',
+        };
+    }
+    return { ok: true };
 }

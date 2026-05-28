@@ -12,8 +12,8 @@ import { Cron } from 'croner';
  * running when the next tick fires, the new tick is skipped silently.
  */
 export function registerEvolverCron(schedule, onFire) {
-  const job = new Cron(schedule, { protect: true }, () => void onFire());
-  return () => {
-    job.stop();
-  };
+    const job = new Cron(schedule, { protect: true }, () => void onFire());
+    return () => {
+        job.stop();
+    };
 }

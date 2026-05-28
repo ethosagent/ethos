@@ -8,13 +8,13 @@ import { z } from 'zod';
 export const ChannelModeSchema = z.enum(['mention_only', 'thread_follow', 'all']);
 export const DEFAULT_CHANNEL_MODE = 'mention_only';
 export const BindingSchema = z.object({
-  type: z.enum(['personality', 'team']),
-  name: z.string(),
+    type: z.enum(['personality', 'team']),
+    name: z.string(),
 });
 export const ChannelOverrideSchema = z.object({
-  id: z.string(),
-  mode: ChannelModeSchema,
+    id: z.string(),
+    mode: ChannelModeSchema,
 });
 export const ChannelDefaultsSchema = z.object({
-  channelMode: ChannelModeSchema.optional(),
+    channelMode: ChannelModeSchema.optional(),
 });

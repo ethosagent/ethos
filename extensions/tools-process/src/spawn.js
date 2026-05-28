@@ -37,74 +37,79 @@ export const LOG_MAX_GENERATIONS = 5;
  * leaving a fresh empty file at the original path.
  */
 export function rotateLogIfNeeded(logPath) {
-  let size;
-  try {
-    size = statSync(logPath).size;
-  } catch {
-    return; // file does not exist yet — nothing to rotate
-  }
-  if (size <= LOG_MAX_BYTES) return;
-  // Every fs op below is race-tolerant: two concurrent observers
-  // (e.g. parallel process_logs calls) can both reach this point, so a
-  // rename/unlink whose source was already moved by the other caller is a
-  // no-op, not a thrown ENOENT. Rotation is best-effort by design.
-  const safe = (op) => {
+    let size;
     try {
-      op();
-    } catch (err) {
-      if (err.code !== 'ENOENT') throw err;
+        size = statSync(logPath).size;
     }
-  };
-  // Drop the oldest generation, then shift each generation down by one.
-  safe(() => unlinkSync(`${logPath}.${LOG_MAX_GENERATIONS}`));
-  for (let gen = LOG_MAX_GENERATIONS - 1; gen >= 1; gen--) {
-    safe(() => renameSync(`${logPath}.${gen}`, `${logPath}.${gen + 1}`));
-  }
-  safe(() => renameSync(logPath, `${logPath}.1`));
-  // Leave a fresh empty file at the original path so callers that only
-  // observe (process_list / process_logs) don't leave the path missing.
-  closeSync(openSync(logPath, 'a'));
+    catch {
+        return; // file does not exist yet — nothing to rotate
+    }
+    if (size <= LOG_MAX_BYTES)
+        return;
+    // Every fs op below is race-tolerant: two concurrent observers
+    // (e.g. parallel process_logs calls) can both reach this point, so a
+    // rename/unlink whose source was already moved by the other caller is a
+    // no-op, not a thrown ENOENT. Rotation is best-effort by design.
+    const safe = (op) => {
+        try {
+            op();
+        }
+        catch (err) {
+            if (err.code !== 'ENOENT')
+                throw err;
+        }
+    };
+    // Drop the oldest generation, then shift each generation down by one.
+    safe(() => unlinkSync(`${logPath}.${LOG_MAX_GENERATIONS}`));
+    for (let gen = LOG_MAX_GENERATIONS - 1; gen >= 1; gen--) {
+        safe(() => renameSync(`${logPath}.${gen}`, `${logPath}.${gen + 1}`));
+    }
+    safe(() => renameSync(logPath, `${logPath}.1`));
+    // Leave a fresh empty file at the original path so callers that only
+    // observe (process_list / process_logs) don't leave the path missing.
+    closeSync(openSync(logPath, 'a'));
 }
 export function spawnDetached(id, command, cwd, env, dataDir) {
-  const dir = join(dataDir, 'processes', id);
-  mkdirSync(dir, { recursive: true });
-  const stdoutLog = join(dir, 'stdout.log');
-  const stderrLog = join(dir, 'stderr.log');
-  // Rotate-on-touch: a process id can be reused (or a log left oversized by a
-  // prior run), so rotate before re-opening the fds for append.
-  rotateLogIfNeeded(stdoutLog);
-  rotateLogIfNeeded(stderrLog);
-  const outFd = openSync(stdoutLog, 'a');
-  const errFd = openSync(stderrLog, 'a');
-  const child = spawn(command, [], {
-    shell: true,
-    detached: true,
-    cwd,
-    env: env ? { ...process.env, ...env } : process.env,
-    stdio: ['ignore', outFd, errFd],
-  });
-  // A detached spawn can fail asynchronously (e.g. a non-existent cwd emits
-  // 'error' with ENOENT instead of throwing synchronously). Without a listener
-  // that 'error' event becomes an uncaught exception. The synchronous
-  // `child.pid === undefined` check below already converts the failure into a
-  // thrown error that process_start surfaces as SPAWN_FAILED — this listener
-  // just keeps the async event from crashing the process.
-  child.on('error', () => {});
-  child.on('exit', (code, signal) => {
-    // Killed by an external signal -> orphan; clean exit -> exited.
-    const patch =
-      signal !== null ? { status: 'orphan' } : { status: 'exited', exitCode: code ?? -1 };
-    // The "still running?" check must happen INSIDE the lock: process_stop can
-    // set `killed` while this handler waits for the lock, and we must not
-    // clobber that. updateEntryIf does the predicate-check + write atomically.
-    // Swallow a failed write: a stale `running` entry is self-healing —
-    // process_list's liveness check re-marks it `orphan` on the next touch.
-    // No console.* in library code, and there is no observability channel here.
-    updateEntryIf(dataDir, id, (e) => e.status === 'running', patch).catch(() => {});
-  });
-  child.unref();
-  if (child.pid === undefined) {
-    throw new Error('Failed to spawn process: pid is undefined');
-  }
-  return { pid: child.pid, stdoutLog, stderrLog };
+    const dir = join(dataDir, 'processes', id);
+    mkdirSync(dir, { recursive: true });
+    const stdoutLog = join(dir, 'stdout.log');
+    const stderrLog = join(dir, 'stderr.log');
+    // Rotate-on-touch: a process id can be reused (or a log left oversized by a
+    // prior run), so rotate before re-opening the fds for append.
+    rotateLogIfNeeded(stdoutLog);
+    rotateLogIfNeeded(stderrLog);
+    const outFd = openSync(stdoutLog, 'a');
+    const errFd = openSync(stderrLog, 'a');
+    const child = spawn(command, [], {
+        shell: true,
+        detached: true,
+        cwd,
+        env: env ? { ...process.env, ...env } : process.env,
+        stdio: ['ignore', outFd, errFd],
+    });
+    // A detached spawn can fail asynchronously (e.g. a non-existent cwd emits
+    // 'error' with ENOENT instead of throwing synchronously). Without a listener
+    // that 'error' event becomes an uncaught exception. The synchronous
+    // `child.pid === undefined` check below already converts the failure into a
+    // thrown error that process_start surfaces as SPAWN_FAILED — this listener
+    // just keeps the async event from crashing the process.
+    child.on('error', () => { });
+    child.on('exit', (code, signal) => {
+        // Killed by an external signal -> orphan; clean exit -> exited.
+        const patch = signal !== null
+            ? { status: 'orphan' }
+            : { status: 'exited', exitCode: code ?? -1 };
+        // The "still running?" check must happen INSIDE the lock: process_stop can
+        // set `killed` while this handler waits for the lock, and we must not
+        // clobber that. updateEntryIf does the predicate-check + write atomically.
+        // Swallow a failed write: a stale `running` entry is self-healing —
+        // process_list's liveness check re-marks it `orphan` on the next touch.
+        // No console.* in library code, and there is no observability channel here.
+        updateEntryIf(dataDir, id, (e) => e.status === 'running', patch).catch(() => { });
+    });
+    child.unref();
+    if (child.pid === undefined) {
+        throw new Error('Failed to spawn process: pid is undefined');
+    }
+    return { pid: child.pid, stdoutLog, stderrLog };
 }

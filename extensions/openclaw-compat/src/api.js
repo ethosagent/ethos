@@ -1,89 +1,82 @@
 import { translateChannelPlugin, unwrapChannelRegistration } from './channel-translator';
-import {
-  translateBeforePromptBuildHook,
-  translateCorpusSupplement,
-  translateMemoryCapability,
-  translateMemoryRuntime,
-  translatePromptSectionBuilder,
-} from './memory-translator';
-
+import { translateBeforePromptBuildHook, translateCorpusSupplement, translateMemoryCapability, translateMemoryRuntime, translatePromptSectionBuilder, } from './memory-translator';
 // ---------------------------------------------------------------------------
 // Hook name mapping — OpenClaw → Ethos
 // ---------------------------------------------------------------------------
 // Void hooks: direct name mapping
 const VOID_HOOK_MAP = {
-  session_start: 'session_start',
-  agent_end: 'agent_done',
-  after_tool_call: 'after_tool_call',
-  message_received: 'message_received',
-  message_sent: 'message_sent',
-  model_call_started: 'before_llm_call',
-  model_call_ended: 'after_llm_call',
-  subagent_spawned: 'subagent_spawned',
-  subagent_ended: 'subagent_ended',
+    session_start: 'session_start',
+    agent_end: 'agent_done',
+    after_tool_call: 'after_tool_call',
+    message_received: 'message_received',
+    message_sent: 'message_sent',
+    model_call_started: 'before_llm_call',
+    model_call_ended: 'after_llm_call',
+    subagent_spawned: 'subagent_spawned',
+    subagent_ended: 'subagent_ended',
 };
 // Modifying hooks: require result-shape adaptation
 const MODIFYING_HOOK_MAP = {
-  before_tool_call: 'before_tool_call',
-  message_sending: 'message_sending',
-  subagent_spawning: 'subagent_spawning',
+    before_tool_call: 'before_tool_call',
+    message_sending: 'message_sending',
+    subagent_spawning: 'subagent_spawning',
 };
 // Security-critical registrations that must NOT silently no-op. If an OpenClaw
 // plugin registers a security control and Ethos cannot honour it, the shim
 // throws rather than letting the plugin believe the control is in place.
 const SECURITY_CRITICAL_METHODS = new Set([
-  'registerTrustedToolPolicy',
-  'registerNodeInvokePolicy',
-  'registerSecurityAuditCollector',
+    'registerTrustedToolPolicy',
+    'registerNodeInvokePolicy',
+    'registerSecurityAuditCollector',
 ]);
 // Methods whose calls we accept but cannot translate — log + no-op
 const UNSUPPORTED_METHODS = new Set([
-  'registerCli',
-  'registerContextEngine',
-  'registerCompactionProvider',
-  'registerAgentHarness',
-  'registerHttpRoute',
-  'registerGatewayMethod',
-  'registerReload',
-  'registerNodeHostCommand',
-  'registerNodeInvokePolicy',
-  'registerSecurityAuditCollector',
-  'registerService',
-  'registerGatewayDiscoveryService',
-  'registerCliBackend',
-  'registerTextTransforms',
-  'registerConfigMigration',
-  'registerMigrationProvider',
-  'registerAutoEnableProbe',
-  'registerProvider',
-  'registerSpeechProvider',
-  'registerRealtimeTranscriptionProvider',
-  'registerRealtimeVoiceProvider',
-  'registerMediaUnderstandingProvider',
-  'registerImageGenerationProvider',
-  'registerVideoGenerationProvider',
-  'registerMusicGenerationProvider',
-  'registerWebFetchProvider',
-  'registerWebSearchProvider',
-  'registerInteractiveHandler',
-  'registerAgentToolResultMiddleware',
-  'registerSessionExtension',
-  'registerDetachedTaskRuntime',
-  'registerRuntimeLifecycle',
-  'registerAgentEventSubscription',
-  'registerTrustedToolPolicy',
-  'registerToolMetadata',
-  'registerControlUiDescriptor',
-  'registerSessionSchedulerJob',
-  'registerMemoryEmbeddingProvider',
-  'enqueueNextTurnInjection',
-  'setRunContext',
-  'getRunContext',
-  'clearRunContext',
-  'resolvePath',
-  'onConversationBindingResolved',
-  'registerCommand',
-  'registerCodexAppServerExtensionFactory',
+    'registerCli',
+    'registerContextEngine',
+    'registerCompactionProvider',
+    'registerAgentHarness',
+    'registerHttpRoute',
+    'registerGatewayMethod',
+    'registerReload',
+    'registerNodeHostCommand',
+    'registerNodeInvokePolicy',
+    'registerSecurityAuditCollector',
+    'registerService',
+    'registerGatewayDiscoveryService',
+    'registerCliBackend',
+    'registerTextTransforms',
+    'registerConfigMigration',
+    'registerMigrationProvider',
+    'registerAutoEnableProbe',
+    'registerProvider',
+    'registerSpeechProvider',
+    'registerRealtimeTranscriptionProvider',
+    'registerRealtimeVoiceProvider',
+    'registerMediaUnderstandingProvider',
+    'registerImageGenerationProvider',
+    'registerVideoGenerationProvider',
+    'registerMusicGenerationProvider',
+    'registerWebFetchProvider',
+    'registerWebSearchProvider',
+    'registerInteractiveHandler',
+    'registerAgentToolResultMiddleware',
+    'registerSessionExtension',
+    'registerDetachedTaskRuntime',
+    'registerRuntimeLifecycle',
+    'registerAgentEventSubscription',
+    'registerTrustedToolPolicy',
+    'registerToolMetadata',
+    'registerControlUiDescriptor',
+    'registerSessionSchedulerJob',
+    'registerMemoryEmbeddingProvider',
+    'enqueueNextTurnInjection',
+    'setRunContext',
+    'getRunContext',
+    'clearRunContext',
+    'resolvePath',
+    'onConversationBindingResolved',
+    'registerCommand',
+    'registerCodexAppServerExtensionFactory',
 ]);
 /**
  * Shim that wraps `EthosPluginApi` and exposes the OpenClaw-shaped `api`
@@ -95,167 +88,154 @@ const UNSUPPORTED_METHODS = new Set([
  * unsupported capability is unavailable.
  */
 export class OpenClawPluginApiShim {
-  id;
-  pluginConfig;
-  // Expose identity + config fields that plugins read from api.*
-  name;
-  version;
-  source = 'ethos-compat';
-  registrationMode = 'full';
-  ethosApi;
-  callbacks;
-  injectorIdx = 0;
-  constructor(pluginId, ethosApi, callbacks = {}, pluginConfig) {
-    this.id = pluginId;
-    this.name = pluginId;
-    this.version = undefined;
-    this.ethosApi = ethosApi;
-    this.callbacks = callbacks;
-    this.pluginConfig = pluginConfig;
-  }
-  // -------------------------------------------------------------------------
-  // Memory registration — routes through native registerMemoryProvider
-  // -------------------------------------------------------------------------
-  registerMemoryCapability(cap) {
-    const provider = translateMemoryCapability(cap);
-    this.ethosApi.registerMemoryProvider(`${this.id}/memory`, (_ctx) => provider);
-  }
-  registerMemoryRuntime(runtime) {
-    const provider = translateMemoryRuntime(runtime);
-    this.ethosApi.registerMemoryProvider(`${this.id}/memory`, (_ctx) => provider);
-  }
-  registerMemoryPromptSection(builder) {
-    const injector = translatePromptSectionBuilder(this.id, builder, this.injectorIdx++);
-    this.ethosApi.registerInjector(injector);
-  }
-  registerMemoryPromptSupplement(builder) {
-    const injector = translatePromptSectionBuilder(this.id, builder, this.injectorIdx++, 80);
-    this.ethosApi.registerInjector(injector);
-  }
-  registerMemoryCorpusSupplement(supplement) {
-    const injector = translateCorpusSupplement(this.id, supplement, this.injectorIdx++);
-    this.ethosApi.registerInjector(injector);
-  }
-  registerMemoryFlushPlan(_resolver) {
-    // Ethos has no host-controlled flush plan concept — dropped.
-    console.warn(
-      `[openclaw-compat] Plugin "${this.id}" called api.registerMemoryFlushPlan(). ` +
-        `Flush plan control is not supported in Ethos — using Ethos built-in sync timing.`,
-    );
-  }
-  // -------------------------------------------------------------------------
-  // Channel registration
-  // -------------------------------------------------------------------------
-  registerChannel(reg) {
-    const channelPlugin = unwrapChannelRegistration(reg);
-    const adapter = translateChannelPlugin(channelPlugin);
-    this.callbacks.onPlatformAdapter?.(this.id, adapter);
-  }
-  // -------------------------------------------------------------------------
-  // Tool registration — direct pass-through
-  // -------------------------------------------------------------------------
-  registerTool(tool) {
-    // OpenClaw tools have a similar shape to Ethos tools but with
-    // potential differences in schema format. We attempt a direct register;
-    // if the shape is incompatible, we warn.
-    try {
-      this.ethosApi.registerTool(tool);
-    } catch (err) {
-      console.warn(
-        `[openclaw-compat] Plugin "${this.id}" registerTool() failed: ${String(err)}. ` +
-          `The tool was not registered.`,
-      );
+    id;
+    pluginConfig;
+    // Expose identity + config fields that plugins read from api.*
+    name;
+    version;
+    source = 'ethos-compat';
+    registrationMode = 'full';
+    ethosApi;
+    callbacks;
+    injectorIdx = 0;
+    constructor(pluginId, ethosApi, callbacks = {}, pluginConfig) {
+        this.id = pluginId;
+        this.name = pluginId;
+        this.version = undefined;
+        this.ethosApi = ethosApi;
+        this.callbacks = callbacks;
+        this.pluginConfig = pluginConfig;
     }
-  }
-  // -------------------------------------------------------------------------
-  // Hook subscription — api.on()
-  // -------------------------------------------------------------------------
-  on(hookName, handler, opts) {
-    // Special case: before_prompt_build maps to a ContextInjector (not a hook)
-    // because Ethos's before_prompt_build modifying hook modifies the system
-    // prompt at the hook layer, but memory recall needs injector-level priority.
-    if (hookName === 'before_prompt_build') {
-      const injector = translateBeforePromptBuildHook(
-        this.id,
-        handler,
-        this.injectorIdx++,
-        opts?.priority !== undefined ? opts.priority + 80 : 90,
-      );
-      this.ethosApi.registerInjector(injector);
-      return;
+    // -------------------------------------------------------------------------
+    // Memory registration — routes through native registerMemoryProvider
+    // -------------------------------------------------------------------------
+    registerMemoryCapability(cap) {
+        const provider = translateMemoryCapability(cap);
+        this.ethosApi.registerMemoryProvider(`${this.id}/memory`, (_ctx) => provider);
     }
-    // session_end — no Ethos equivalent
-    if (hookName === 'session_end') {
-      console.warn(
-        `[openclaw-compat] Plugin "${this.id}" subscribed to "session_end" which has no Ethos ` +
-          `equivalent. Session-end cleanup registered by this plugin will not run.`,
-      );
-      return;
+    registerMemoryRuntime(runtime) {
+        const provider = translateMemoryRuntime(runtime);
+        this.ethosApi.registerMemoryProvider(`${this.id}/memory`, (_ctx) => provider);
     }
-    // Void hooks
-    const voidTarget = VOID_HOOK_MAP[hookName];
-    if (voidTarget) {
-      this.ethosApi.registerVoidHook(voidTarget, async (payload) => {
+    registerMemoryPromptSection(builder) {
+        const injector = translatePromptSectionBuilder(this.id, builder, this.injectorIdx++);
+        this.ethosApi.registerInjector(injector);
+    }
+    registerMemoryPromptSupplement(builder) {
+        const injector = translatePromptSectionBuilder(this.id, builder, this.injectorIdx++, 80);
+        this.ethosApi.registerInjector(injector);
+    }
+    registerMemoryCorpusSupplement(supplement) {
+        const injector = translateCorpusSupplement(this.id, supplement, this.injectorIdx++);
+        this.ethosApi.registerInjector(injector);
+    }
+    registerMemoryFlushPlan(_resolver) {
+        // Ethos has no host-controlled flush plan concept — dropped.
+        console.warn(`[openclaw-compat] Plugin "${this.id}" called api.registerMemoryFlushPlan(). ` +
+            `Flush plan control is not supported in Ethos — using Ethos built-in sync timing.`);
+    }
+    // -------------------------------------------------------------------------
+    // Channel registration
+    // -------------------------------------------------------------------------
+    registerChannel(reg) {
+        const channelPlugin = unwrapChannelRegistration(reg);
+        const adapter = translateChannelPlugin(channelPlugin);
+        this.callbacks.onPlatformAdapter?.(this.id, adapter);
+    }
+    // -------------------------------------------------------------------------
+    // Tool registration — direct pass-through
+    // -------------------------------------------------------------------------
+    registerTool(tool) {
+        // OpenClaw tools have a similar shape to Ethos tools but with
+        // potential differences in schema format. We attempt a direct register;
+        // if the shape is incompatible, we warn.
         try {
-          const p = payload;
-          await handler(payload, { sessionId: p.sessionId });
-        } catch {
-          // void hooks swallow errors
+            this.ethosApi.registerTool(tool);
         }
-      });
-      return;
-    }
-    // Modifying hooks
-    const modTarget = MODIFYING_HOOK_MAP[hookName];
-    if (modTarget) {
-      this.ethosApi.registerModifyingHook(modTarget, async (payload) => {
-        const result = await handler(payload, {});
-        // Validate hook return: must be a non-null object with expected shape.
-        // Malformed returns are treated as denials (fail-closed) rather than
-        // silently passing through (fail-open).
-        if (result === null || result === undefined) {
-          return null;
+        catch (err) {
+            console.warn(`[openclaw-compat] Plugin "${this.id}" registerTool() failed: ${String(err)}. ` +
+                `The tool was not registered.`);
         }
-        if (typeof result !== 'object') {
-          console.warn(
-            `[openclaw-compat] Plugin "${this.id}" hook "${hookName}" returned a non-object ` +
-              `(${typeof result}). Treating as denial (fail-closed).`,
-          );
-          return { error: 'Hook returned invalid type' };
+    }
+    // -------------------------------------------------------------------------
+    // Hook subscription — api.on()
+    // -------------------------------------------------------------------------
+    on(hookName, handler, opts) {
+        // Special case: before_prompt_build maps to a ContextInjector (not a hook)
+        // because Ethos's before_prompt_build modifying hook modifies the system
+        // prompt at the hook layer, but memory recall needs injector-level priority.
+        if (hookName === 'before_prompt_build') {
+            const injector = translateBeforePromptBuildHook(this.id, handler, this.injectorIdx++, opts?.priority !== undefined ? opts.priority + 80 : 90);
+            this.ethosApi.registerInjector(injector);
+            return;
         }
-        return result;
-      });
-      return;
+        // session_end — no Ethos equivalent
+        if (hookName === 'session_end') {
+            console.warn(`[openclaw-compat] Plugin "${this.id}" subscribed to "session_end" which has no Ethos ` +
+                `equivalent. Session-end cleanup registered by this plugin will not run.`);
+            return;
+        }
+        // Void hooks
+        const voidTarget = VOID_HOOK_MAP[hookName];
+        if (voidTarget) {
+            this.ethosApi.registerVoidHook(voidTarget, async (payload) => {
+                try {
+                    const p = payload;
+                    await handler(payload, { sessionId: p.sessionId });
+                }
+                catch {
+                    // void hooks swallow errors
+                }
+            });
+            return;
+        }
+        // Modifying hooks
+        const modTarget = MODIFYING_HOOK_MAP[hookName];
+        if (modTarget) {
+            this.ethosApi.registerModifyingHook(modTarget, async (payload) => {
+                const result = await handler(payload, {});
+                // Validate hook return: must be a non-null object with expected shape.
+                // Malformed returns are treated as denials (fail-closed) rather than
+                // silently passing through (fail-open).
+                if (result === null || result === undefined) {
+                    return null;
+                }
+                if (typeof result !== 'object') {
+                    console.warn(`[openclaw-compat] Plugin "${this.id}" hook "${hookName}" returned a non-object ` +
+                        `(${typeof result}). Treating as denial (fail-closed).`);
+                    return { error: 'Hook returned invalid type' };
+                }
+                return result;
+            });
+            return;
+        }
+        // Unmapped hook — warn + ignore
+        console.warn(`[openclaw-compat] Plugin "${this.id}" subscribed to hook "${hookName}" which has no ` +
+            `Ethos equivalent. This subscription is ignored.`);
     }
-    // Unmapped hook — warn + ignore
-    console.warn(
-      `[openclaw-compat] Plugin "${this.id}" subscribed to hook "${hookName}" which has no ` +
-        `Ethos equivalent. This subscription is ignored.`,
-    );
-  }
-  /** Legacy hook registration (openclaw pre-api.on style). Delegates to api.on(). */
-  registerHook(events, handler, opts) {
-    const names = Array.isArray(events) ? events : [events];
-    for (const name of names) {
-      this.on(name, handler, opts);
+    /** Legacy hook registration (openclaw pre-api.on style). Delegates to api.on(). */
+    registerHook(events, handler, opts) {
+        const names = Array.isArray(events) ? events : [events];
+        for (const name of names) {
+            this.on(name, handler, opts);
+        }
     }
-  }
-  // -------------------------------------------------------------------------
-  // Runtime / logger stubs — plugins may call api.runtime.X or api.logger.X
-  // -------------------------------------------------------------------------
-  runtime = {
+    // -------------------------------------------------------------------------
+    // Runtime / logger stubs — plugins may call api.runtime.X or api.logger.X
+    // -------------------------------------------------------------------------
+    runtime = {
     // Minimal stub. Plugins call setDingtalkRuntime(api.runtime) to store a
     // reference for later use. The actual runtime methods they call depend on
     // the plugin; they will fail with "method not found" if called on this stub.
     // Full runtime compat is out of scope (U10 from api_surface.md).
-  };
-  logger = {
-    info: (msg) => process.stdout.write(`[openclaw/${this.id}] ${msg}\n`),
-    warn: (msg) => process.stderr.write(`[openclaw/${this.id}] WARN ${msg}\n`),
-    error: (msg) => process.stderr.write(`[openclaw/${this.id}] ERROR ${msg}\n`),
-    debug: (_msg) => {},
-  };
-  config = {};
+    };
+    logger = {
+        info: (msg) => process.stdout.write(`[openclaw/${this.id}] ${msg}\n`),
+        warn: (msg) => process.stderr.write(`[openclaw/${this.id}] WARN ${msg}\n`),
+        error: (msg) => process.stderr.write(`[openclaw/${this.id}] ERROR ${msg}\n`),
+        debug: (_msg) => { },
+    };
+    config = {};
 }
 // ---------------------------------------------------------------------------
 // Factory — wraps the shim in a Proxy for unknown-method handling
@@ -270,29 +250,26 @@ export class OpenClawPluginApiShim {
  * requiring boilerplate stubs on the class.
  */
 export function createOpenClawApiShim(pluginId, ethosApi, callbacks = {}, pluginConfig) {
-  const shim = new OpenClawPluginApiShim(pluginId, ethosApi, callbacks, pluginConfig);
-  return new Proxy(shim, {
-    get(target, prop) {
-      if (prop in target) return target[prop];
-      if (typeof prop === 'string' && SECURITY_CRITICAL_METHODS.has(prop)) {
-        return () => {
-          throw new Error(
-            `[openclaw-compat] Plugin "${pluginId}" called api.${prop}() which is a security-critical ` +
-              `registration not supported in Ethos. Failing loudly to prevent silent security bypass.`,
-          );
-        };
-      }
-      if (typeof prop === 'string' && UNSUPPORTED_METHODS.has(prop)) {
-        return () => {
-          console.warn(
-            `[openclaw-compat] Plugin "${pluginId}" called api.${prop}() which is not supported in Ethos. ` +
-              `This call is ignored. The plugin may not function fully.`,
-          );
-        };
-      }
-      return undefined;
-    },
-  });
+    const shim = new OpenClawPluginApiShim(pluginId, ethosApi, callbacks, pluginConfig);
+    return new Proxy(shim, {
+        get(target, prop) {
+            if (prop in target)
+                return target[prop];
+            if (typeof prop === 'string' && SECURITY_CRITICAL_METHODS.has(prop)) {
+                return () => {
+                    throw new Error(`[openclaw-compat] Plugin "${pluginId}" called api.${prop}() which is a security-critical ` +
+                        `registration not supported in Ethos. Failing loudly to prevent silent security bypass.`);
+                };
+            }
+            if (typeof prop === 'string' && UNSUPPORTED_METHODS.has(prop)) {
+                return () => {
+                    console.warn(`[openclaw-compat] Plugin "${pluginId}" called api.${prop}() which is not supported in Ethos. ` +
+                        `This call is ignored. The plugin may not function fully.`);
+                };
+            }
+            return undefined;
+        },
+    });
 }
 // ---------------------------------------------------------------------------
 // Module shape detection
@@ -307,20 +284,24 @@ export function createOpenClawApiShim(pluginId, ethosApi, callbacks = {}, plugin
  *   3. `export default function register(api) {...}`                 → default (function)
  */
 export function extractOpenClawRegister(mod) {
-  if (!mod || typeof mod !== 'object') return null;
-  const m = mod;
-  // Check default export first
-  const dflt = m.default;
-  if (dflt) {
-    if (typeof dflt === 'function') return dflt;
-    if (typeof dflt === 'object' && dflt !== null) {
-      const entry = dflt;
-      if (typeof entry.register === 'function') return entry.register;
+    if (!mod || typeof mod !== 'object')
+        return null;
+    const m = mod;
+    // Check default export first
+    const dflt = m.default;
+    if (dflt) {
+        if (typeof dflt === 'function')
+            return dflt;
+        if (typeof dflt === 'object' && dflt !== null) {
+            const entry = dflt;
+            if (typeof entry.register === 'function')
+                return entry.register;
+        }
     }
-  }
-  // Named export `register`
-  if (typeof m.register === 'function') return m.register;
-  return null;
+    // Named export `register`
+    if (typeof m.register === 'function')
+        return m.register;
+    return null;
 }
 // ---------------------------------------------------------------------------
 // Package.json OpenClaw detection
@@ -331,8 +312,10 @@ export function extractOpenClawRegister(mod) {
  *   - NOT required to have openclaw.type — channels just have channels/extensions
  */
 export function isOpenClawPackageJson(raw) {
-  if (!raw || typeof raw !== 'object') return false;
-  const pkg = raw;
-  if (pkg.openclaw && typeof pkg.openclaw === 'object') return true;
-  return false;
+    if (!raw || typeof raw !== 'object')
+        return false;
+    const pkg = raw;
+    if (pkg.openclaw && typeof pkg.openclaw === 'object')
+        return true;
+    return false;
 }

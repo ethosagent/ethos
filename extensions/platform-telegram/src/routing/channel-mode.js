@@ -10,18 +10,24 @@
 //     pattern matches messageText?       -> true
 //   otherwise                            -> false
 export function shouldRespond(inputs) {
-  if (inputs.isDm) return true;
-  if (inputs.channelMode === 'all') return true;
-  if (inputs.isGroupMention) return true;
-  if (inputs.channelMode === 'thread_follow' && inputs.hasBotPosted) return true;
-  if (inputs.channelMode === 'regex_match') {
-    const pattern = inputs.regexPattern;
-    if (!pattern) return false;
-    try {
-      return new RegExp(pattern).test(inputs.messageText ?? '');
-    } catch {
-      return false; // invalid regex stored — treat as no match
+    if (inputs.isDm)
+        return true;
+    if (inputs.channelMode === 'all')
+        return true;
+    if (inputs.isGroupMention)
+        return true;
+    if (inputs.channelMode === 'thread_follow' && inputs.hasBotPosted)
+        return true;
+    if (inputs.channelMode === 'regex_match') {
+        const pattern = inputs.regexPattern;
+        if (!pattern)
+            return false;
+        try {
+            return new RegExp(pattern).test(inputs.messageText ?? '');
+        }
+        catch {
+            return false; // invalid regex stored — treat as no match
+        }
     }
-  }
-  return false;
+    return false;
 }

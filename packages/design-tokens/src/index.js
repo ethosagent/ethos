@@ -13,78 +13,78 @@
  * Phase 2 `paper` skin so it stays out of the base contract.
  */
 export const DEFAULT_TOKENS = {
-  surface: {
-    bgBase: '#0F0F0F',
-    bgElevated: '#1A1A1A',
-    bgOverlay: '#2A2A2A',
-    borderSubtle: '#2A2A2A',
-    borderStrong: '#3A3A3A',
-    textPrimary: '#E8E8E6',
-    textSecondary: '#9A9A98',
-    textTertiary: '#6B6B6A',
-  },
-  accents: {
-    researcher: '#4A9EFF',
-    engineer: '#4ADE80',
-    reviewer: '#F59E0B',
-    coach: '#E879F9',
-    operator: '#94A3B8',
-  },
-  semantic: {
-    success: '#4ADE80',
-    warning: '#F59E0B',
-    error: '#F87171',
-    info: '#4A9EFF',
-  },
-  typography: {
-    fontDisplay: "'Geist', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    fontMono: "'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
-    scale: {
-      h1: { px: 32, weight: 600, lineHeight: 1.2, tracking: '-0.01em' },
-      h2: { px: 24, weight: 600, lineHeight: 1.25, tracking: '0' },
-      h3: { px: 20, weight: 600, lineHeight: 1.3, tracking: '0' },
-      h4: { px: 16, weight: 500, lineHeight: 1.4, tracking: '0' },
-      body: { px: 14, weight: 400, lineHeight: 1.5, tracking: '0' },
-      small: { px: 12, weight: 400, lineHeight: 1.4, tracking: '0' },
-      micro: { px: 11, weight: 500, lineHeight: 1.4, tracking: '0.08em' },
-      mono: { px: 13, weight: 400, lineHeight: 1.45, tracking: '0' },
+    surface: {
+        bgBase: '#0F0F0F',
+        bgElevated: '#1A1A1A',
+        bgOverlay: '#2A2A2A',
+        borderSubtle: '#2A2A2A',
+        borderStrong: '#3A3A3A',
+        textPrimary: '#E8E8E6',
+        textSecondary: '#9A9A98',
+        textTertiary: '#6B6B6A',
     },
-  },
-  spacing: {
-    xs: 4,
-    sm: 8,
-    md: 12,
-    lg: 16,
-    xl: 24,
-    '2xl': 32,
-    '3xl': 48,
-    '4xl': 64,
-    '5xl': 96,
-  },
-  radius: { sm: 4, md: 8, lg: 14, full: 9999 },
-  motion: {
-    fastMs: 80,
-    defaultMs: 180,
-    slowMs: 240,
-    ease: 'cubic-bezier(0.16, 1, 0.3, 1)',
-  },
-  glyphs: {
-    prompt: '›',
-    accentStripe: '▌',
-    toolStart: '⟢',
-    toolOk: '✓',
-    toolFail: '✗',
-    divider: '─',
-    barFill: '▓',
-    barEmpty: '░',
-  },
-  layout: {
-    sidebarExpandedPx: 240,
-    sidebarCollapsedPx: 64,
-    rightDrawerPx: 360,
-    chatMaxWidthPx: 800,
-    onboardingMaxWidthPx: 520,
-  },
+    accents: {
+        researcher: '#4A9EFF',
+        engineer: '#4ADE80',
+        reviewer: '#F59E0B',
+        coach: '#E879F9',
+        operator: '#94A3B8',
+    },
+    semantic: {
+        success: '#4ADE80',
+        warning: '#F59E0B',
+        error: '#F87171',
+        info: '#4A9EFF',
+    },
+    typography: {
+        fontDisplay: "'Geist', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        fontMono: "'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+        scale: {
+            h1: { px: 32, weight: 600, lineHeight: 1.2, tracking: '-0.01em' },
+            h2: { px: 24, weight: 600, lineHeight: 1.25, tracking: '0' },
+            h3: { px: 20, weight: 600, lineHeight: 1.3, tracking: '0' },
+            h4: { px: 16, weight: 500, lineHeight: 1.4, tracking: '0' },
+            body: { px: 14, weight: 400, lineHeight: 1.5, tracking: '0' },
+            small: { px: 12, weight: 400, lineHeight: 1.4, tracking: '0' },
+            micro: { px: 11, weight: 500, lineHeight: 1.4, tracking: '0.08em' },
+            mono: { px: 13, weight: 400, lineHeight: 1.45, tracking: '0' },
+        },
+    },
+    spacing: {
+        xs: 4,
+        sm: 8,
+        md: 12,
+        lg: 16,
+        xl: 24,
+        '2xl': 32,
+        '3xl': 48,
+        '4xl': 64,
+        '5xl': 96,
+    },
+    radius: { sm: 4, md: 8, lg: 14, full: 9999 },
+    motion: {
+        fastMs: 80,
+        defaultMs: 180,
+        slowMs: 240,
+        ease: 'cubic-bezier(0.16, 1, 0.3, 1)',
+    },
+    glyphs: {
+        prompt: '›',
+        accentStripe: '▌',
+        toolStart: '⟢',
+        toolOk: '✓',
+        toolFail: '✗',
+        divider: '─',
+        barFill: '▓',
+        barEmpty: '░',
+    },
+    layout: {
+        sidebarExpandedPx: 240,
+        sidebarCollapsedPx: 64,
+        rightDrawerPx: 360,
+        chatMaxWidthPx: 800,
+        onboardingMaxWidthPx: 520,
+    },
 };
 /**
  * Resolve a personality's accent against a token pack. Unknown personalities
@@ -92,7 +92,7 @@ export const DEFAULT_TOKENS = {
  * customization lands as its own decision.
  */
 export function accentFor(tokens, personalityId) {
-  return tokens.accents[personalityId] ?? tokens.accents.operator ?? '#94A3B8';
+    return tokens.accents[personalityId] ?? tokens.accents.operator ?? '#94A3B8';
 }
 /**
  * Convenience accessor that resolves against `DEFAULT_TOKENS`. Useful for
@@ -101,23 +101,15 @@ export function accentFor(tokens, personalityId) {
  * happens on top by surface code that does have the token pack).
  */
 export function personalityAccent(personalityId) {
-  return accentFor(DEFAULT_TOKENS, personalityId);
+    return accentFor(DEFAULT_TOKENS, personalityId);
 }
 /** Built-in personality ids. Custom personalities resolve via accentFor. */
 export const BUILTIN_PERSONALITY_IDS = Object.freeze(Object.keys(DEFAULT_TOKENS.accents));
 /** True when id matches one of the five built-in personalities. */
 export function isBuiltinPersonality(personalityId) {
-  return personalityId in DEFAULT_TOKENS.accents;
+    return personalityId in DEFAULT_TOKENS.accents;
 }
 // Re-exports so consumers can `import { resolveSkin } from '@ethosagent/design-tokens'`
 // instead of reaching into sub-paths. Sub-path imports also work for tree-shaking.
-export {
-  BUILTIN_SKIN_NAMES,
-  BUILTIN_SKINS,
-  defaultSkin,
-  monoSkin,
-  paperSkin,
-  resolveBuiltinSkin,
-  resolveSkin,
-} from './skins';
-export { contrastRatio, hexToHue, validateSkin, validateTokens } from './validate';
+export { BUILTIN_SKIN_NAMES, BUILTIN_SKINS, defaultSkin, monoSkin, paperSkin, resolveBuiltinSkin, resolveSkin, } from './skins';
+export { contrastRatio, hexToHue, validateSkin, validateTokens, } from './validate';

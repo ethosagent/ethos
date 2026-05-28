@@ -1,46 +1,46 @@
 export async function getSession(sessionStore, id, messageLimit) {
-  const session = await sessionStore.getSession(id);
-  if (!session) {
-    return { error: `Session not found: ${id}` };
-  }
-  const messages = await sessionStore.getMessages(id, { limit: messageLimit });
-  return {
-    session: {
-      id: session.id,
-      key: session.key,
-      platform: session.platform,
-      model: session.model,
-      provider: session.provider,
-      personalityId: session.personalityId,
-      title: session.title,
-      usage: session.usage,
-      createdAt: session.createdAt.toISOString(),
-      updatedAt: session.updatedAt.toISOString(),
-    },
-    messages: messages.map((m) => ({
-      id: m.id,
-      role: m.role,
-      content: m.content,
-      toolName: m.toolName,
-      timestamp: m.timestamp.toISOString(),
-    })),
-  };
+    const session = await sessionStore.getSession(id);
+    if (!session) {
+        return { error: `Session not found: ${id}` };
+    }
+    const messages = await sessionStore.getMessages(id, { limit: messageLimit });
+    return {
+        session: {
+            id: session.id,
+            key: session.key,
+            platform: session.platform,
+            model: session.model,
+            provider: session.provider,
+            personalityId: session.personalityId,
+            title: session.title,
+            usage: session.usage,
+            createdAt: session.createdAt.toISOString(),
+            updatedAt: session.updatedAt.toISOString(),
+        },
+        messages: messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            toolName: m.toolName,
+            timestamp: m.timestamp.toISOString(),
+        })),
+    };
 }
 export const getSessionToolDef = {
-  name: 'get_session',
-  description: 'Get session metadata and first page of messages',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      id: {
-        type: 'string',
-        description: 'Session ID',
-      },
-      messageLimit: {
-        type: 'number',
-        description: 'Max messages to include (default 50)',
-      },
+    name: 'get_session',
+    description: 'Get session metadata and first page of messages',
+    inputSchema: {
+        type: 'object',
+        properties: {
+            id: {
+                type: 'string',
+                description: 'Session ID',
+            },
+            messageLimit: {
+                type: 'number',
+                description: 'Max messages to include (default 50)',
+            },
+        },
+        required: ['id'],
     },
-    required: ['id'],
-  },
 };

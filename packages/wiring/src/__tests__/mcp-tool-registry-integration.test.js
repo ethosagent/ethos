@@ -14,63 +14,62 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Server } from '@modelcontextprotocol/sdk/server';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it } from 'vitest';
-
 async function spawnEchoServer(toolName) {
-  const server = new Server(
-    { name: `test-${toolName}`, version: '1.0.0' },
-    { capabilities: { tools: {} } },
-  );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      {
-        name: toolName,
-        description: `Echo via ${toolName}`,
-        inputSchema: { type: 'object', properties: {} },
-      },
-    ],
-  }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
-    content: [{ type: 'text', text: 'ok' }],
-  }));
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  return clientTransport;
+    const server = new Server({ name: `test-${toolName}`, version: '1.0.0' }, { capabilities: { tools: {} } });
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        tools: [
+            {
+                name: toolName,
+                description: `Echo via ${toolName}`,
+                inputSchema: { type: 'object', properties: {} },
+            },
+        ],
+    }));
+    server.setRequestHandler(CallToolRequestSchema, async () => ({
+        content: [{ type: 'text', text: 'ok' }],
+    }));
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    return clientTransport;
 }
 class StubTransportManager extends McpManager {
-  transports = new Map();
-  setTransport(name, transport) {
-    this.transports.set(name, transport);
-  }
-  _buildClient(config) {
-    const real = super._buildClient(config);
-    const transport = this.transports.get(config.name);
-    if (transport) {
-      real._createTransport = async () => transport;
+    transports = new Map();
+    setTransport(name, transport) {
+        this.transports.set(name, transport);
     }
-    return real;
-  }
+    _buildClient(config) {
+        const real = super._buildClient(config);
+        const transport = this.transports.get(config.name);
+        if (transport) {
+            // biome-ignore lint/suspicious/noExplicitAny: test seam
+            real._createTransport = async () => transport;
+        }
+        return real;
+    }
 }
 describe('McpManager + DefaultToolRegistry integration', () => {
-  it('addServer makes MCP tools visible via registry.getAvailable()', async () => {
-    const clientTransport = await spawnEchoServer('alpha');
-    const registry = new DefaultToolRegistry();
-    const mgr = new StubTransportManager([], {
-      onToolsChanged: (added, removedNames) => {
-        for (const t of added) registry.register(t);
-        for (const n of removedNames) registry.unregister(n);
-      },
+    it('addServer makes MCP tools visible via registry.getAvailable()', async () => {
+        const clientTransport = await spawnEchoServer('alpha');
+        const registry = new DefaultToolRegistry();
+        const mgr = new StubTransportManager([], {
+            onToolsChanged: (added, removedNames) => {
+                for (const t of added)
+                    registry.register(t);
+                for (const n of removedNames)
+                    registry.unregister(n);
+            },
+        });
+        mgr.setTransport('srv', clientTransport);
+        expect(registry.getAvailable()).toHaveLength(0);
+        await mgr.addServer({
+            name: 'srv',
+            transport: 'stdio',
+            command: 'unused',
+            keepaliveSeconds: 0,
+        });
+        const names = registry.getAvailable().map((t) => t.name);
+        expect(names).toEqual(['mcp__srv__alpha']);
+        await mgr.removeServer('srv');
+        expect(registry.getAvailable()).toHaveLength(0);
     });
-    mgr.setTransport('srv', clientTransport);
-    expect(registry.getAvailable()).toHaveLength(0);
-    await mgr.addServer({
-      name: 'srv',
-      transport: 'stdio',
-      command: 'unused',
-      keepaliveSeconds: 0,
-    });
-    const names = registry.getAvailable().map((t) => t.name);
-    expect(names).toEqual(['mcp__srv__alpha']);
-    await mgr.removeServer('srv');
-    expect(registry.getAvailable()).toHaveLength(0);
-  });
 });

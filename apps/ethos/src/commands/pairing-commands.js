@@ -18,76 +18,74 @@
 // future relocation flips one place, not many.
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  consumeAndAllow,
-  getApprovedSenders,
-  initPairingDb,
-  revokeApproval,
-} from '@ethosagent/safety-channel';
+import { consumeAndAllow, getApprovedSenders, initPairingDb, revokeApproval, } from '@ethosagent/safety-channel';
 import Database from 'better-sqlite3';
 import { ethosDir } from '../config';
-
 const SUPPORTED_PLATFORMS = ['telegram', 'discord', 'slack', 'whatsapp', 'email'];
 function pairingDbPath() {
-  return join(ethosDir(), 'pairing.db');
+    return join(ethosDir(), 'pairing.db');
 }
 function openDb() {
-  const path = pairingDbPath();
-  if (!existsSync(path)) {
-    return {
-      ok: false,
-      reason: `no pairing DB at ${path} — start the gateway (\`ethos gateway\`) so it creates the DB.`,
-    };
-  }
-  const db = new Database(path);
-  initPairingDb(db);
-  return { ok: true, db };
+    const path = pairingDbPath();
+    if (!existsSync(path)) {
+        return {
+            ok: false,
+            reason: `no pairing DB at ${path} — start the gateway (\`ethos gateway\`) so it creates the DB.`,
+        };
+    }
+    const db = new Database(path);
+    initPairingDb(db);
+    return { ok: true, db };
 }
 export async function runPairingCommand(cmd, args) {
-  const open = openDb();
-  if (!open.ok) return open.reason;
-  const { db } = open;
-  try {
-    if (cmd === 'allow') {
-      if (!args.code) return 'missing code';
-      const result = consumeAndAllow(db, args.code);
-      if (result.ok) {
-        return `approved sender ${result.senderId} on ${result.platform}`;
-      }
-      return `allow failed: ${result.reason}`;
-    }
-    if (cmd === 'deny') {
-      if (!args.platform || !args.senderId) return 'missing platform / senderId';
-      if (!SUPPORTED_PLATFORMS.includes(args.platform)) {
-        return `unknown platform '${args.platform}' — expected one of ${SUPPORTED_PLATFORMS.join(', ')}`;
-      }
-      const removed = revokeApproval(db, args.senderId, args.platform);
-      return removed
-        ? `revoked ${args.senderId} on ${args.platform}`
-        : `${args.senderId} was not on the approved list for ${args.platform}`;
-    }
-    if (cmd === 'list') {
-      const lines = [];
-      let pending = 0;
-      for (const platform of SUPPORTED_PLATFORMS) {
-        const approved = getApprovedSenders(db, platform);
-        if (approved.length > 0) {
-          lines.push(`${platform}: ${approved.length} approved (${approved.join(', ')})`);
+    const open = openDb();
+    if (!open.ok)
+        return open.reason;
+    const { db } = open;
+    try {
+        if (cmd === 'allow') {
+            if (!args.code)
+                return 'missing code';
+            const result = consumeAndAllow(db, args.code);
+            if (result.ok) {
+                return `approved sender ${result.senderId} on ${result.platform}`;
+            }
+            return `allow failed: ${result.reason}`;
         }
-      }
-      // Pending pairing-code count is a quick aggregate read.
-      const pendingRow = db
-        .prepare("SELECT COUNT(*) AS n FROM pairing_codes WHERE status = 'pending'")
-        .get();
-      pending = pendingRow?.n ?? 0;
-      if (lines.length === 0 && pending === 0) {
-        return 'no approved senders, no pending codes';
-      }
-      const summary = `${lines.join('\n')}${lines.length > 0 ? '\n' : ''}pending pairing codes: ${pending}`;
-      return summary;
+        if (cmd === 'deny') {
+            if (!args.platform || !args.senderId)
+                return 'missing platform / senderId';
+            if (!SUPPORTED_PLATFORMS.includes(args.platform)) {
+                return `unknown platform '${args.platform}' — expected one of ${SUPPORTED_PLATFORMS.join(', ')}`;
+            }
+            const removed = revokeApproval(db, args.senderId, args.platform);
+            return removed
+                ? `revoked ${args.senderId} on ${args.platform}`
+                : `${args.senderId} was not on the approved list for ${args.platform}`;
+        }
+        if (cmd === 'list') {
+            const lines = [];
+            let pending = 0;
+            for (const platform of SUPPORTED_PLATFORMS) {
+                const approved = getApprovedSenders(db, platform);
+                if (approved.length > 0) {
+                    lines.push(`${platform}: ${approved.length} approved (${approved.join(', ')})`);
+                }
+            }
+            // Pending pairing-code count is a quick aggregate read.
+            const pendingRow = db
+                .prepare("SELECT COUNT(*) AS n FROM pairing_codes WHERE status = 'pending'")
+                .get();
+            pending = pendingRow?.n ?? 0;
+            if (lines.length === 0 && pending === 0) {
+                return 'no approved senders, no pending codes';
+            }
+            const summary = `${lines.join('\n')}${lines.length > 0 ? '\n' : ''}pending pairing codes: ${pending}`;
+            return summary;
+        }
+        return `unknown pairing command '${cmd}'`;
     }
-    return `unknown pairing command '${cmd}'`;
-  } finally {
-    db.close();
-  }
+    finally {
+        db.close();
+    }
 }

@@ -26,32 +26,36 @@ import { checkCommand } from '@ethosagent/tools-terminal';
  * dangerous tool.
  */
 export function createDangerPredicate(opts = {}) {
-  const alwaysAsk = new Set(opts.alwaysAsk ?? []);
-  return (payload) => {
-    // Hardline command first — non-overridable in every mode.
-    let hardlineReason = null;
-    if (payload.toolName === 'terminal') {
-      const args = payload.args;
-      if (args?.command) {
-        const result = checkCommand(args.command);
-        if (result.dangerous) hardlineReason = result.reason;
-      }
-    }
-    if (hardlineReason) return hardlineReason;
-    // Non-hardline danger — alwaysAsk is the only such source today.
-    // Future: per-tool risk classifiers (sql_execute, kubectl, etc.)
-    // would also produce non-hardline reasons that route through here.
-    let dangerReason = null;
-    if (alwaysAsk.has(payload.toolName)) {
-      dangerReason = `${payload.toolName} requires explicit approval`;
-    }
-    if (!dangerReason) return null;
-    const mode = opts.getPersonality?.(payload)?.safety?.approvalMode ?? 'manual';
-    if (mode === 'off' && opts.allowAutoApproveDangerousTools === true) return null;
-    if (mode === 'smart' && opts.smartApprove) {
-      const approved = opts.smartApprove(payload, dangerReason);
-      return approved ? null : dangerReason;
-    }
-    return dangerReason;
-  };
+    const alwaysAsk = new Set(opts.alwaysAsk ?? []);
+    return (payload) => {
+        // Hardline command first — non-overridable in every mode.
+        let hardlineReason = null;
+        if (payload.toolName === 'terminal') {
+            const args = payload.args;
+            if (args?.command) {
+                const result = checkCommand(args.command);
+                if (result.dangerous)
+                    hardlineReason = result.reason;
+            }
+        }
+        if (hardlineReason)
+            return hardlineReason;
+        // Non-hardline danger — alwaysAsk is the only such source today.
+        // Future: per-tool risk classifiers (sql_execute, kubectl, etc.)
+        // would also produce non-hardline reasons that route through here.
+        let dangerReason = null;
+        if (alwaysAsk.has(payload.toolName)) {
+            dangerReason = `${payload.toolName} requires explicit approval`;
+        }
+        if (!dangerReason)
+            return null;
+        const mode = opts.getPersonality?.(payload)?.safety?.approvalMode ?? 'manual';
+        if (mode === 'off' && opts.allowAutoApproveDangerousTools === true)
+            return null;
+        if (mode === 'smart' && opts.smartApprove) {
+            const approved = opts.smartApprove(payload, dangerReason);
+            return approved ? null : dangerReason;
+        }
+        return dangerReason;
+    };
 }

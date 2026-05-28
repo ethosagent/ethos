@@ -12,21 +12,23 @@ import { delimiter, join } from 'node:path';
  * `ethos doctor` only.
  */
 export function checkSkillEnv(skill, opts = {}) {
-  const env = opts.env ?? process.env;
-  const which = opts.which ?? defaultWhich;
-  const missingEnv = [];
-  for (const ref of skill.env_required ?? []) {
-    const v = env[ref.name];
-    if (v === undefined || v === '') missingEnv.push(ref.name);
-  }
-  const cliAlts = skill.external_cli_alternatives ?? [];
-  let missingCli = [];
-  if (cliAlts.length > 0) {
-    const anyResolved = cliAlts.some((cmd) => which(cmd));
-    if (!anyResolved) missingCli = [...cliAlts];
-  }
-  const ok = missingEnv.length === 0 && missingCli.length === 0;
-  return { ok, missingEnv, missingCli };
+    const env = opts.env ?? process.env;
+    const which = opts.which ?? defaultWhich;
+    const missingEnv = [];
+    for (const ref of skill.env_required ?? []) {
+        const v = env[ref.name];
+        if (v === undefined || v === '')
+            missingEnv.push(ref.name);
+    }
+    const cliAlts = skill.external_cli_alternatives ?? [];
+    let missingCli = [];
+    if (cliAlts.length > 0) {
+        const anyResolved = cliAlts.some((cmd) => which(cmd));
+        if (!anyResolved)
+            missingCli = [...cliAlts];
+    }
+    const ok = missingEnv.length === 0 && missingCli.length === 0;
+    return { ok, missingEnv, missingCli };
 }
 /**
  * Walk PATH looking for an executable named `cmd`. Mirrors the existing
@@ -34,19 +36,23 @@ export function checkSkillEnv(skill, opts = {}) {
  * cycle: env-resolver is consumed by ingest-filter).
  */
 export function defaultWhich(cmd) {
-  const PATH = process.env.PATH ?? '';
-  if (!PATH || cmd.length === 0) return false;
-  for (const dir of PATH.split(delimiter)) {
-    if (!dir) continue;
-    const candidate = join(dir, cmd);
-    try {
-      if (existsSync(candidate)) {
-        const stat = statSync(candidate);
-        if (stat.isFile()) return true;
-      }
-    } catch {
-      // Skip unreadable entries — broken PATH entries are common and not fatal.
+    const PATH = process.env.PATH ?? '';
+    if (!PATH || cmd.length === 0)
+        return false;
+    for (const dir of PATH.split(delimiter)) {
+        if (!dir)
+            continue;
+        const candidate = join(dir, cmd);
+        try {
+            if (existsSync(candidate)) {
+                const stat = statSync(candidate);
+                if (stat.isFile())
+                    return true;
+            }
+        }
+        catch {
+            // Skip unreadable entries — broken PATH entries are common and not fatal.
+        }
     }
-  }
-  return false;
+    return false;
 }

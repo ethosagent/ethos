@@ -15,17 +15,17 @@ You are replying inside a Slack workspace. Follow these rules:
 - Maximum reply length: 3000 characters. If more is needed, summarise with an offer to
   continue.`;
 export function toNativeMarkdown(text) {
-  let out = text;
-  // Headers → bold (Slack has no native headers)
-  out = out.replace(/^#{1,6}\s+(.+)$/gm, '*$1*');
-  // Bold: **text** → *text* (must come before italic to avoid conflicts)
-  out = out.replace(/\*\*(.+?)\*\*/g, '*$1*');
-  // Italic: _text_ stays as _text_ (Slack uses underscore for italic)
-  // Links: [text](url) → <url|text>
-  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>');
-  // Escape bare &, <, > that are not part of link syntax
-  // Process in reverse order to avoid double-escaping
-  out = out.replace(/&(?!amp;|lt;|gt;)/g, '&amp;');
-  out = out.replace(/(?<!<[^|>]*?)>(?![^<]*?\|)/g, '&gt;');
-  return out;
+    let out = text;
+    // Headers → bold (Slack has no native headers)
+    out = out.replace(/^#{1,6}\s+(.+)$/gm, '*$1*');
+    // Bold: **text** → *text* (must come before italic to avoid conflicts)
+    out = out.replace(/\*\*(.+?)\*\*/g, '*$1*');
+    // Italic: _text_ stays as _text_ (Slack uses underscore for italic)
+    // Links: [text](url) → <url|text>
+    out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>');
+    // Escape bare &, <, > that are not part of link syntax
+    // Process in reverse order to avoid double-escaping
+    out = out.replace(/&(?!amp;|lt;|gt;)/g, '&amp;');
+    out = out.replace(/(?<!<[^|>]*?)>(?![^<]*?\|)/g, '&gt;');
+    return out;
 }

@@ -17,189 +17,201 @@
 // Mirrors `TelegramClarifySurface`. See plan/phases/tool_clarity_plan.md
 // Surface 5.
 import { clarifyModalView, clarifyPendingBlocks, clarifyResolvedBlocks } from './blocks/clarify';
-
 const SURFACE = 'slack';
 export class SlackClarifySurface {
-  adapter;
-  bridge;
-  store;
-  getSessionRouting;
-  /** Captures the responding user id between `bridge.respond()` and the bridge's
-   *  `onResolved` callback so the resolved card can credit the answerer. The
-   *  bridge intentionally doesn't carry per-surface metadata; this is a local
-   *  side-channel. Drained on `onResolved`. Bounded — entries with no matching
-   *  resolution are evicted lazily when the map grows past a soft cap. */
-  responderById = new Map();
-  constructor(cfg) {
-    this.adapter = cfg.adapter;
-    this.bridge = cfg.bridge;
-    this.store = cfg.store;
-    this.getSessionRouting = cfg.getSessionRouting;
-    this.bridge.setPresenter((row) => this.present(row));
-    this.bridge.onResolved((row, resp) => {
-      void this.onResolved(row, resp);
-    });
-    this.adapter.onClarifyAction((evt) => {
-      void this.handleAction(evt);
-    });
-    this.adapter.onClarifyModalSubmit((evt) => {
-      void this.handleModalSubmit(evt);
-    });
-  }
-  /**
-   * Present a pending clarify on Slack. Posts the pending card, then writes
-   * the (chatId, messageTs, botKey, originatorUserId?) back to the row.
-   */
-  async present(row) {
-    if (row.surfaceType !== SURFACE) return;
-    const routing = this.getSessionRouting(row.sessionId);
-    if (!routing) return;
-    const blocks = clarifyPendingBlocks({
-      requestId: row.requestId,
-      question: row.question,
-      ...(row.options !== undefined ? { options: row.options } : {}),
-      ...(row.default !== undefined ? { default: row.default } : {}),
-      defaultDeadlineAt: row.defaultDeadlineAt,
-    });
-    const result = await this.adapter.postClarifyCard({
-      chatId: routing.chatId,
-      ...(routing.threadId !== undefined ? { threadId: routing.threadId } : {}),
-      blocks,
-    });
-    if ('error' in result) {
-      // Send failure (channel gone, bot kicked) — leave the row persisted; the
-      // bridge timer still fires and cleans up.
-      return;
+    adapter;
+    bridge;
+    store;
+    getSessionRouting;
+    /** Captures the responding user id between `bridge.respond()` and the bridge's
+     *  `onResolved` callback so the resolved card can credit the answerer. The
+     *  bridge intentionally doesn't carry per-surface metadata; this is a local
+     *  side-channel. Drained on `onResolved`. Bounded — entries with no matching
+     *  resolution are evicted lazily when the map grows past a soft cap. */
+    responderById = new Map();
+    constructor(cfg) {
+        this.adapter = cfg.adapter;
+        this.bridge = cfg.bridge;
+        this.store = cfg.store;
+        this.getSessionRouting = cfg.getSessionRouting;
+        this.bridge.setPresenter((row) => this.present(row));
+        this.bridge.onResolved((row, resp) => {
+            void this.onResolved(row, resp);
+        });
+        this.adapter.onClarifyAction((evt) => {
+            void this.handleAction(evt);
+        });
+        this.adapter.onClarifyModalSubmit((evt) => {
+            void this.handleModalSubmit(evt);
+        });
     }
-    await this.store.update(row.requestId, {
-      surfaceContext: {
-        ...row.surfaceContext,
-        chatId: routing.chatId,
-        botKey: this.adapter.botKey,
-        messageTs: result.messageTs,
-        ...(routing.threadId !== undefined ? { threadId: routing.threadId } : {}),
-        ...(routing.requesterUserId !== undefined
-          ? { originatorUserId: routing.requesterUserId }
-          : {}),
-      },
-    });
-  }
-  // -------------------------------------------------------------------------
-  // Button taps
-  // -------------------------------------------------------------------------
-  async handleAction(evt) {
-    const row = await this.store.get(evt.requestId);
-    if (!row || row.surfaceType !== SURFACE) {
-      // Already resolved or never ours — silently drop. The Bolt ack already
-      // happened in the adapter; the user sees the buttons (still rendered)
-      // and a stale row is unrecoverable on this surface.
-      return;
+    /**
+     * Present a pending clarify on Slack. Posts the pending card, then writes
+     * the (chatId, messageTs, botKey, originatorUserId?) back to the row.
+     */
+    async present(row) {
+        if (row.surfaceType !== SURFACE)
+            return;
+        const routing = this.getSessionRouting(row.sessionId);
+        if (!routing)
+            return;
+        const blocks = clarifyPendingBlocks({
+            requestId: row.requestId,
+            question: row.question,
+            ...(row.options !== undefined ? { options: row.options } : {}),
+            ...(row.default !== undefined ? { default: row.default } : {}),
+            defaultDeadlineAt: row.defaultDeadlineAt,
+        });
+        const result = await this.adapter.postClarifyCard({
+            chatId: routing.chatId,
+            ...(routing.threadId !== undefined ? { threadId: routing.threadId } : {}),
+            blocks,
+        });
+        if ('error' in result) {
+            // Send failure (channel gone, bot kicked) — leave the row persisted; the
+            // bridge timer still fires and cleans up.
+            return;
+        }
+        await this.store.update(row.requestId, {
+            surfaceContext: {
+                ...row.surfaceContext,
+                chatId: routing.chatId,
+                botKey: this.adapter.botKey,
+                messageTs: result.messageTs,
+                ...(routing.threadId !== undefined ? { threadId: routing.threadId } : {}),
+                ...(routing.requesterUserId !== undefined
+                    ? { originatorUserId: routing.requesterUserId }
+                    : {}),
+            },
+        });
     }
-    // Cross-tenant gate: a stale, forwarded, or replayed payload must not
-    // resolve a row whose stored (botKey, chatId, messageTs) doesn't match
-    // the click's origin. The chat/message check applies only to channel
-    // clicks — App Home payloads carry no channel/message (the click is on
-    // a per-user view), so for Home we keep the botKey gate but skip the
-    // message-coordinate match. The opaque random `requestId` plus
-    // `gateAnswerer` still prevent a Home click from resolving a row the
-    // user shouldn't be answering.
-    if (row.surfaceContext.botKey !== this.adapter.botKey) return;
-    if (!evt.fromHome) {
-      if (
-        row.surfaceContext.chatId !== evt.channelId ||
-        row.surfaceContext.messageTs !== evt.messageTs
-      ) {
-        return;
-      }
+    // -------------------------------------------------------------------------
+    // Button taps
+    // -------------------------------------------------------------------------
+    async handleAction(evt) {
+        const row = await this.store.get(evt.requestId);
+        if (!row || row.surfaceType !== SURFACE) {
+            // Already resolved or never ours — silently drop. The Bolt ack already
+            // happened in the adapter; the user sees the buttons (still rendered)
+            // and a stale row is unrecoverable on this surface.
+            return;
+        }
+        // Cross-tenant gate: a stale, forwarded, or replayed payload must not
+        // resolve a row whose stored (botKey, chatId, messageTs) doesn't match
+        // the click's origin. The chat/message check applies only to channel
+        // clicks — App Home payloads carry no channel/message (the click is on
+        // a per-user view), so for Home we keep the botKey gate but skip the
+        // message-coordinate match. The opaque random `requestId` plus
+        // `gateAnswerer` still prevent a Home click from resolving a row the
+        // user shouldn't be answering.
+        if (row.surfaceContext.botKey !== this.adapter.botKey)
+            return;
+        if (!evt.fromHome) {
+            if (row.surfaceContext.chatId !== evt.channelId ||
+                row.surfaceContext.messageTs !== evt.messageTs) {
+                return;
+            }
+        }
+        if (!gateAnswerer(row, evt.userId))
+            return;
+        if (evt.kind === 'open-modal') {
+            await this.adapter.openClarifyModal({
+                triggerId: evt.triggerId,
+                view: clarifyModalView({
+                    requestId: row.requestId,
+                    question: row.question,
+                    ...(row.default !== undefined ? { default: row.default } : {}),
+                }),
+            });
+            return;
+        }
+        let response;
+        if (evt.kind === 'cancel') {
+            response = { requestId: row.requestId, answer: '', source: 'cancel' };
+        }
+        else {
+            const answer = row.options?.[evt.choiceIndex];
+            if (answer === undefined)
+                return; // out-of-range / stale
+            response = { requestId: row.requestId, answer, source: 'user' };
+        }
+        this.rememberResponder(row.requestId, evt.userId);
+        await this.bridge.respond(response);
     }
-    if (!gateAnswerer(row, evt.userId)) return;
-    if (evt.kind === 'open-modal') {
-      await this.adapter.openClarifyModal({
-        triggerId: evt.triggerId,
-        view: clarifyModalView({
-          requestId: row.requestId,
-          question: row.question,
-          ...(row.default !== undefined ? { default: row.default } : {}),
-        }),
-      });
-      return;
+    // -------------------------------------------------------------------------
+    // Modal submission
+    // -------------------------------------------------------------------------
+    async handleModalSubmit(evt) {
+        const row = await this.store.get(evt.requestId);
+        if (!row || row.surfaceType !== SURFACE)
+            return;
+        if (row.surfaceContext.botKey !== this.adapter.botKey)
+            return;
+        if (!gateAnswerer(row, evt.userId))
+            return;
+        this.rememberResponder(row.requestId, evt.userId);
+        await this.bridge.respond({
+            requestId: row.requestId,
+            answer: evt.answer,
+            source: 'user',
+        });
     }
-    let response;
-    if (evt.kind === 'cancel') {
-      response = { requestId: row.requestId, answer: '', source: 'cancel' };
-    } else {
-      const answer = row.options?.[evt.choiceIndex];
-      if (answer === undefined) return; // out-of-range / stale
-      response = { requestId: row.requestId, answer, source: 'user' };
+    // -------------------------------------------------------------------------
+    // Resolution
+    // -------------------------------------------------------------------------
+    async onResolved(row, response) {
+        if (row.surfaceType !== SURFACE)
+            return;
+        if (row.surfaceContext.botKey !== this.adapter.botKey)
+            return;
+        const chatId = row.surfaceContext.chatId;
+        const messageTs = row.surfaceContext.messageTs;
+        if (typeof chatId !== 'string' || typeof messageTs !== 'string')
+            return;
+        const answeredBy = this.responderById.get(row.requestId);
+        this.responderById.delete(row.requestId);
+        const blocks = clarifyResolvedBlocks(buildResolvedInput(row, response, answeredBy));
+        await this.adapter.updateClarifyCard({ chatId, messageTs, blocks });
     }
-    this.rememberResponder(row.requestId, evt.userId);
-    await this.bridge.respond(response);
-  }
-  // -------------------------------------------------------------------------
-  // Modal submission
-  // -------------------------------------------------------------------------
-  async handleModalSubmit(evt) {
-    const row = await this.store.get(evt.requestId);
-    if (!row || row.surfaceType !== SURFACE) return;
-    if (row.surfaceContext.botKey !== this.adapter.botKey) return;
-    if (!gateAnswerer(row, evt.userId)) return;
-    this.rememberResponder(row.requestId, evt.userId);
-    await this.bridge.respond({
-      requestId: row.requestId,
-      answer: evt.answer,
-      source: 'user',
-    });
-  }
-  // -------------------------------------------------------------------------
-  // Resolution
-  // -------------------------------------------------------------------------
-  async onResolved(row, response) {
-    if (row.surfaceType !== SURFACE) return;
-    if (row.surfaceContext.botKey !== this.adapter.botKey) return;
-    const chatId = row.surfaceContext.chatId;
-    const messageTs = row.surfaceContext.messageTs;
-    if (typeof chatId !== 'string' || typeof messageTs !== 'string') return;
-    const answeredBy = this.responderById.get(row.requestId);
-    this.responderById.delete(row.requestId);
-    const blocks = clarifyResolvedBlocks(buildResolvedInput(row, response, answeredBy));
-    await this.adapter.updateClarifyCard({ chatId, messageTs, blocks });
-  }
-  /** Bounded local memo of the responder's user id, drained on `onResolved`.
-   *  The cap exists so a never-resolved respond (would be a bridge bug) can't
-   *  leak unboundedly. */
-  rememberResponder(requestId, userId) {
-    if (this.responderById.size >= 1024) {
-      const first = this.responderById.keys().next().value;
-      if (first !== undefined) this.responderById.delete(first);
+    /** Bounded local memo of the responder's user id, drained on `onResolved`.
+     *  The cap exists so a never-resolved respond (would be a bridge bug) can't
+     *  leak unboundedly. */
+    rememberResponder(requestId, userId) {
+        if (this.responderById.size >= 1024) {
+            const first = this.responderById.keys().next().value;
+            if (first !== undefined)
+                this.responderById.delete(first);
+        }
+        this.responderById.set(requestId, userId);
     }
-    this.responderById.set(requestId, userId);
-  }
-  // -------------------------------------------------------------------------
-  // Listing — used by the App Home "Waiting on you" section
-  // -------------------------------------------------------------------------
-  /** Pending Slack clarifies for this bot. Used by the home view. */
-  async listPendingForBot() {
-    const rows = await this.store.list({ surfaceType: SURFACE });
-    return rows.filter((r) => r.surfaceContext.botKey === this.adapter.botKey);
-  }
+    // -------------------------------------------------------------------------
+    // Listing — used by the App Home "Waiting on you" section
+    // -------------------------------------------------------------------------
+    /** Pending Slack clarifies for this bot. Used by the home view. */
+    async listPendingForBot() {
+        const rows = await this.store.list({ surfaceType: SURFACE });
+        return rows.filter((r) => r.surfaceContext.botKey === this.adapter.botKey);
+    }
 }
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 function gateAnswerer(row, userId) {
-  if (row.answerableBy === 'anyone') return true;
-  const originator = row.surfaceContext.originatorUserId;
-  if (typeof originator !== 'string') return false;
-  return userId === originator;
+    if (row.answerableBy === 'anyone')
+        return true;
+    const originator = row.surfaceContext.originatorUserId;
+    if (typeof originator !== 'string')
+        return false;
+    return userId === originator;
 }
 function buildResolvedInput(row, response, answeredBy) {
-  if (!response) {
-    return { question: row.question, answer: '', source: 'timeout-no-default' };
-  }
-  return {
-    question: row.question,
-    answer: response.answer,
-    source: response.source,
-    ...(answeredBy !== undefined && response.source === 'user' ? { answeredBy } : {}),
-  };
+    if (!response) {
+        return { question: row.question, answer: '', source: 'timeout-no-default' };
+    }
+    return {
+        question: row.question,
+        answer: response.answer,
+        source: response.source,
+        ...(answeredBy !== undefined && response.source === 'user' ? { answeredBy } : {}),
+    };
 }

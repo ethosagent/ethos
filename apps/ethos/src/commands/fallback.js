@@ -1,7 +1,6 @@
 import { createInterface } from 'node:readline';
 import { readRawConfig, writeConfig } from '../config';
 import { getSecretsResolver, getStorage } from '../wiring';
-
 // `ethos fallback` — interactive editor for the `providers:` chain in
 // ~/.ethos/config.yaml. The mechanism (ChainedProvider with cooldown-based
 // automatic failover) already exists in @ethosagent/wiring; this command
@@ -18,184 +17,172 @@ import { getSecretsResolver, getStorage } from '../wiring';
 // errors. Apikeys are stored as `${secrets:providers/<idx>/<provider>/apiKey}`
 // refs through the SecretsResolver — never plaintext in config.yaml.
 const c = {
-  reset: '\x1b[0m',
-  dim: '\x1b[2m',
-  bold: '\x1b[1m',
-  cyan: '\x1b[36m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  red: '\x1b[31m',
+    reset: '\x1b[0m',
+    dim: '\x1b[2m',
+    bold: '\x1b[1m',
+    cyan: '\x1b[36m',
+    green: '\x1b[32m',
+    yellow: '\x1b[33m',
+    red: '\x1b[31m',
 };
 const USAGE = 'Usage: ethos fallback [list | add | remove <index> | clear]';
 export async function runFallback(args) {
-  const sub = args[0] ?? 'list';
-  const storage = getStorage();
-  const config = await readRawConfig(storage);
-  if (!config) {
-    console.error(
-      `${c.red}No ethos config found.${c.reset} Run ${c.bold}ethos setup${c.reset} first.`,
-    );
-    process.exit(1);
-  }
-  switch (sub) {
-    case 'list':
-      printList(config);
-      return;
-    case 'add':
-      await addEntry(config);
-      return;
-    case 'remove': {
-      const idx = Number(args[1]);
-      if (!Number.isInteger(idx) || idx < 1) {
-        console.error(`${c.red}remove requires a 1-based index.${c.reset} ${USAGE}`);
+    const sub = args[0] ?? 'list';
+    const storage = getStorage();
+    const config = await readRawConfig(storage);
+    if (!config) {
+        console.error(`${c.red}No ethos config found.${c.reset} Run ${c.bold}ethos setup${c.reset} first.`);
         process.exit(1);
-      }
-      await removeEntry(config, idx - 1);
-      return;
     }
-    case 'clear':
-      await clearChain(config);
-      return;
-    case '--help':
-    case '-h':
-      console.log(USAGE);
-      return;
-    default:
-      console.error(`${c.red}Unknown subcommand: ${sub}${c.reset}\n${USAGE}`);
-      process.exit(1);
-  }
+    switch (sub) {
+        case 'list':
+            printList(config);
+            return;
+        case 'add':
+            await addEntry(config);
+            return;
+        case 'remove': {
+            const idx = Number(args[1]);
+            if (!Number.isInteger(idx) || idx < 1) {
+                console.error(`${c.red}remove requires a 1-based index.${c.reset} ${USAGE}`);
+                process.exit(1);
+            }
+            await removeEntry(config, idx - 1);
+            return;
+        }
+        case 'clear':
+            await clearChain(config);
+            return;
+        case '--help':
+        case '-h':
+            console.log(USAGE);
+            return;
+        default:
+            console.error(`${c.red}Unknown subcommand: ${sub}${c.reset}\n${USAGE}`);
+            process.exit(1);
+    }
 }
 function printList(config) {
-  console.log(
-    `${c.bold}Primary${c.reset} ${c.dim}(from top-level provider/apiKey/model)${c.reset}`,
-  );
-  console.log(
-    `  ${c.cyan}${config.provider}${c.reset} · ${config.model} · ${maskRef(config.apiKey)}`,
-  );
-  console.log('');
-  const chain = config.providers ?? [];
-  if (chain.length === 0) {
-    console.log(`${c.dim}No fallback providers configured.${c.reset}`);
-    console.log(`${c.dim}Add one with:${c.reset} ${c.bold}ethos fallback add${c.reset}`);
-    return;
-  }
-  console.log(
-    `${c.bold}Fallback chain${c.reset} ${c.dim}(tried in order on primary error)${c.reset}`,
-  );
-  for (const [i, p] of chain.entries()) {
-    const tag = i === 0 ? c.green : c.dim;
-    console.log(
-      `  ${tag}${i + 1}.${c.reset} ${c.cyan}${p.provider}${c.reset}` +
-        ` · ${p.model ?? '(inherits primary model)'}` +
-        ` · ${maskRef(p.apiKey)}` +
-        (p.baseUrl ? ` · ${c.dim}${p.baseUrl}${c.reset}` : ''),
-    );
-  }
+    console.log(`${c.bold}Primary${c.reset} ${c.dim}(from top-level provider/apiKey/model)${c.reset}`);
+    console.log(`  ${c.cyan}${config.provider}${c.reset} · ${config.model} · ${maskRef(config.apiKey)}`);
+    console.log('');
+    const chain = config.providers ?? [];
+    if (chain.length === 0) {
+        console.log(`${c.dim}No fallback providers configured.${c.reset}`);
+        console.log(`${c.dim}Add one with:${c.reset} ${c.bold}ethos fallback add${c.reset}`);
+        return;
+    }
+    console.log(`${c.bold}Fallback chain${c.reset} ${c.dim}(tried in order on primary error)${c.reset}`);
+    for (const [i, p] of chain.entries()) {
+        const tag = i === 0 ? c.green : c.dim;
+        console.log(`  ${tag}${i + 1}.${c.reset} ${c.cyan}${p.provider}${c.reset}` +
+            ` · ${p.model ?? '(inherits primary model)'}` +
+            ` · ${maskRef(p.apiKey)}` +
+            (p.baseUrl ? ` · ${c.dim}${p.baseUrl}${c.reset}` : ''));
+    }
 }
 async function addEntry(config) {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    console.log(`${c.bold}Add fallback provider${c.reset} ${c.dim}(Ctrl-C to abort)${c.reset}\n`);
-    const provider = (await ask(rl, 'Provider (anthropic / openai-compat / azure): ')).trim();
-    if (!provider) {
-      console.error(`${c.red}Provider is required.${c.reset}`);
-      return;
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+        console.log(`${c.bold}Add fallback provider${c.reset} ${c.dim}(Ctrl-C to abort)${c.reset}\n`);
+        const provider = (await ask(rl, 'Provider (anthropic / openai-compat / azure): ')).trim();
+        if (!provider) {
+            console.error(`${c.red}Provider is required.${c.reset}`);
+            return;
+        }
+        const apiKey = (await ask(rl, 'API key: ')).trim();
+        if (!apiKey) {
+            console.error(`${c.red}API key is required.${c.reset}`);
+            return;
+        }
+        const model = (await ask(rl, 'Model (blank to inherit primary): ')).trim();
+        const baseUrl = (await ask(rl, 'Base URL (blank for provider default): ')).trim();
+        const apiVersion = provider === 'azure'
+            ? (await ask(rl, 'Azure API version (e.g. 2024-12-01-preview): ')).trim()
+            : '';
+        const chain = [...(config.providers ?? [])];
+        const idx = chain.length;
+        // Store the API key through the resolver; config gets the ref.
+        const secrets = await getSecretsResolver();
+        const ref = `providers/${idx}/${provider}/apiKey`;
+        await secrets.set(ref, apiKey);
+        const entry = {
+            provider,
+            apiKey: `\${secrets:${ref}}`,
+            ...(model ? { model } : {}),
+            ...(baseUrl ? { baseUrl } : {}),
+            ...(apiVersion ? { apiVersion } : {}),
+        };
+        chain.push(entry);
+        const next = { ...config, providers: chain };
+        await writeConfig(getStorage(), next);
+        console.log(`\n${c.green}✓ Added fallback ${idx + 1}: ${provider}${c.reset}`);
+        console.log(`${c.dim}Restart 'ethos gateway' (or any running daemon) to pick up the change.${c.reset}`);
     }
-    const apiKey = (await ask(rl, 'API key: ')).trim();
-    if (!apiKey) {
-      console.error(`${c.red}API key is required.${c.reset}`);
-      return;
+    finally {
+        rl.close();
     }
-    const model = (await ask(rl, 'Model (blank to inherit primary): ')).trim();
-    const baseUrl = (await ask(rl, 'Base URL (blank for provider default): ')).trim();
-    const apiVersion =
-      provider === 'azure'
-        ? (await ask(rl, 'Azure API version (e.g. 2024-12-01-preview): ')).trim()
-        : '';
-    const chain = [...(config.providers ?? [])];
-    const idx = chain.length;
-    // Store the API key through the resolver; config gets the ref.
-    const secrets = await getSecretsResolver();
-    const ref = `providers/${idx}/${provider}/apiKey`;
-    await secrets.set(ref, apiKey);
-    const entry = {
-      provider,
-      apiKey: `\${secrets:${ref}}`,
-      ...(model ? { model } : {}),
-      ...(baseUrl ? { baseUrl } : {}),
-      ...(apiVersion ? { apiVersion } : {}),
-    };
-    chain.push(entry);
-    const next = { ...config, providers: chain };
-    await writeConfig(getStorage(), next);
-    console.log(`\n${c.green}✓ Added fallback ${idx + 1}: ${provider}${c.reset}`);
-    console.log(
-      `${c.dim}Restart 'ethos gateway' (or any running daemon) to pick up the change.${c.reset}`,
-    );
-  } finally {
-    rl.close();
-  }
 }
 async function removeEntry(config, idx) {
-  const chain = [...(config.providers ?? [])];
-  if (idx < 0 || idx >= chain.length) {
-    console.error(`${c.red}Index out of range. The chain has ${chain.length} entries.${c.reset}`);
-    process.exit(1);
-  }
-  const removed = chain[idx];
-  if (!removed) {
-    console.error(`${c.red}Internal: missing entry at index ${idx}.${c.reset}`);
-    process.exit(1);
-  }
-  chain.splice(idx, 1);
-  // Best-effort cleanup of the underlying secret. The ref index doesn't
-  // shift even though the array did — operators with multiple removes
-  // may want to manually `ethos secrets list | grep providers/` to
-  // audit dangling refs. We intentionally don't renumber: the original
-  // ref strings in other entries would mis-resolve otherwise.
-  const ref = extractSecretRef(removed.apiKey);
-  if (ref) {
-    await (await getSecretsResolver()).delete(ref);
-  }
-  const next = { ...config, providers: chain.length > 0 ? chain : undefined };
-  await writeConfig(getStorage(), next);
-  console.log(`${c.green}✓ Removed fallback ${idx + 1} (${removed.provider})${c.reset}`);
+    const chain = [...(config.providers ?? [])];
+    if (idx < 0 || idx >= chain.length) {
+        console.error(`${c.red}Index out of range. The chain has ${chain.length} entries.${c.reset}`);
+        process.exit(1);
+    }
+    const removed = chain[idx];
+    if (!removed) {
+        console.error(`${c.red}Internal: missing entry at index ${idx}.${c.reset}`);
+        process.exit(1);
+    }
+    chain.splice(idx, 1);
+    // Best-effort cleanup of the underlying secret. The ref index doesn't
+    // shift even though the array did — operators with multiple removes
+    // may want to manually `ethos secrets list | grep providers/` to
+    // audit dangling refs. We intentionally don't renumber: the original
+    // ref strings in other entries would mis-resolve otherwise.
+    const ref = extractSecretRef(removed.apiKey);
+    if (ref) {
+        await (await getSecretsResolver()).delete(ref);
+    }
+    const next = { ...config, providers: chain.length > 0 ? chain : undefined };
+    await writeConfig(getStorage(), next);
+    console.log(`${c.green}✓ Removed fallback ${idx + 1} (${removed.provider})${c.reset}`);
 }
 async function clearChain(config) {
-  const chain = config.providers ?? [];
-  if (chain.length === 0) {
-    console.log(`${c.dim}Chain is already empty.${c.reset}`);
-    return;
-  }
-  // Delete all underlying secrets we wrote.
-  const secrets = await getSecretsResolver();
-  for (const entry of chain) {
-    const ref = extractSecretRef(entry.apiKey);
-    if (ref) {
-      await secrets.delete(ref).catch(() => {
-        // ignore — operator may have rotated secrets out-of-band
-      });
+    const chain = config.providers ?? [];
+    if (chain.length === 0) {
+        console.log(`${c.dim}Chain is already empty.${c.reset}`);
+        return;
     }
-  }
-  const next = { ...config, providers: undefined };
-  await writeConfig(getStorage(), next);
-  console.log(
-    `${c.green}✓ Cleared ${chain.length} fallback provider${chain.length === 1 ? '' : 's'}${c.reset}`,
-  );
+    // Delete all underlying secrets we wrote.
+    const secrets = await getSecretsResolver();
+    for (const entry of chain) {
+        const ref = extractSecretRef(entry.apiKey);
+        if (ref) {
+            await secrets.delete(ref).catch(() => {
+                // ignore — operator may have rotated secrets out-of-band
+            });
+        }
+    }
+    const next = { ...config, providers: undefined };
+    await writeConfig(getStorage(), next);
+    console.log(`${c.green}✓ Cleared ${chain.length} fallback provider${chain.length === 1 ? '' : 's'}${c.reset}`);
 }
 function ask(rl, prompt) {
-  return new Promise((resolve) => rl.question(prompt, resolve));
+    return new Promise((resolve) => rl.question(prompt, resolve));
 }
 function maskRef(value) {
-  if (!value) return `${c.dim}(unset)${c.reset}`;
-  if (value.startsWith('${secrets:')) {
-    return `${c.dim}${value}${c.reset}`;
-  }
-  // Raw value — show only the last 4 chars.
-  if (value.length <= 8) return `${c.yellow}****${c.reset} (plaintext)`;
-  return `${c.yellow}****${value.slice(-4)}${c.reset}${c.dim} (plaintext — migrate to secrets resolver)${c.reset}`;
+    if (!value)
+        return `${c.dim}(unset)${c.reset}`;
+    if (value.startsWith('${secrets:')) {
+        return `${c.dim}${value}${c.reset}`;
+    }
+    // Raw value — show only the last 4 chars.
+    if (value.length <= 8)
+        return `${c.yellow}****${c.reset} (plaintext)`;
+    return `${c.yellow}****${value.slice(-4)}${c.reset}${c.dim} (plaintext — migrate to secrets resolver)${c.reset}`;
 }
 function extractSecretRef(value) {
-  const m = value.match(/^\$\{secrets:([^}]+)\}$/);
-  return m?.[1] ?? null;
+    const m = value.match(/^\$\{secrets:([^}]+)\}$/);
+    return m?.[1] ?? null;
 }

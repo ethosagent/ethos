@@ -3,150 +3,151 @@ import { readCheckpoint, writeCheckpoint } from './checkpoint';
 import { Semaphore } from './semaphore';
 import { ATROPOS_SCHEMA_VERSION } from './types';
 export class BatchRunner {
-  loop;
-  options;
-  constructor(loop, options) {
-    this.loop = loop;
-    this.options = options;
-  }
-  async run(tasks, onProgress) {
-    const checkpoint = await readCheckpoint(this.options.checkpointPath);
-    const completed = new Set(checkpoint.completedTaskIds);
-    const failed = new Set(checkpoint.failedTaskIds);
-    const pending = tasks.filter((t) => !completed.has(t.id) && !failed.has(t.id));
-    const skipped = tasks.length - pending.length;
-    const writer = new AtroposWriter(this.options.outputPath);
-    // Fresh run (no checkpoint) → truncate output so stale records don't accumulate.
-    await writer.init(
-      checkpoint.completedTaskIds.length === 0 && checkpoint.failedTaskIds.length === 0,
-    );
-    let stopping = false;
-    const onSigterm = () => {
-      stopping = true;
-    };
-    process.on('SIGTERM', onSigterm);
-    const sem = new Semaphore(this.options.concurrency);
-    const promises = [];
-    for (const task of pending) {
-      if (stopping) break;
-      const p = (async () => {
-        await sem.acquire();
-        if (stopping) {
-          sem.release();
-          return;
-        }
-        try {
-          await this.runTask(task, writer, completed, failed);
-        } finally {
-          sem.release();
-          onProgress?.(completed.size + failed.size, tasks.length);
-        }
-      })();
-      promises.push(p);
+    loop;
+    options;
+    constructor(loop, options) {
+        this.loop = loop;
+        this.options = options;
     }
-    await Promise.allSettled(promises);
-    process.off('SIGTERM', onSigterm);
-    return {
-      total: tasks.length,
-      completed: completed.size,
-      failed: failed.size,
-      skipped,
-    };
-  }
-  async runTask(task, writer, completed, failed) {
-    const sessionKey = `batch:${task.id}`;
-    const personalityId = task.personalityId ?? this.options.defaultPersonalityId;
-    await writer.append({
-      schema_version: ATROPOS_SCHEMA_VERSION,
-      task_id: task.id,
-      turn: 0,
-      role: 'user',
-      content: task.prompt,
-      usage: null,
-    });
-    let text = '';
-    let usage = null;
-    const toolCalls = [];
-    const toolResults = [];
-    try {
-      for await (const event of this.loop.run(task.prompt, { sessionKey, personalityId })) {
-        switch (event.type) {
-          case 'text_delta':
-            text += event.text;
-            break;
-          case 'tool_start':
-            toolCalls.push({ name: event.toolName, args: event.args });
-            break;
-          case 'tool_end':
-            toolResults.push({ name: event.toolName, ok: event.ok });
-            break;
-          case 'usage':
-            usage = {
-              input_tokens: event.inputTokens,
-              output_tokens: event.outputTokens,
-              estimated_cost_usd: event.estimatedCostUsd,
-            };
-            break;
+    async run(tasks, onProgress) {
+        const checkpoint = await readCheckpoint(this.options.checkpointPath);
+        const completed = new Set(checkpoint.completedTaskIds);
+        const failed = new Set(checkpoint.failedTaskIds);
+        const pending = tasks.filter((t) => !completed.has(t.id) && !failed.has(t.id));
+        const skipped = tasks.length - pending.length;
+        const writer = new AtroposWriter(this.options.outputPath);
+        // Fresh run (no checkpoint) → truncate output so stale records don't accumulate.
+        await writer.init(checkpoint.completedTaskIds.length === 0 && checkpoint.failedTaskIds.length === 0);
+        let stopping = false;
+        const onSigterm = () => {
+            stopping = true;
+        };
+        process.on('SIGTERM', onSigterm);
+        const sem = new Semaphore(this.options.concurrency);
+        const promises = [];
+        for (const task of pending) {
+            if (stopping)
+                break;
+            const p = (async () => {
+                await sem.acquire();
+                if (stopping) {
+                    sem.release();
+                    return;
+                }
+                try {
+                    await this.runTask(task, writer, completed, failed);
+                }
+                finally {
+                    sem.release();
+                    onProgress?.(completed.size + failed.size, tasks.length);
+                }
+            })();
+            promises.push(p);
         }
-      }
-      const assistantRecord = {
-        schema_version: ATROPOS_SCHEMA_VERSION,
-        task_id: task.id,
-        turn: 0,
-        role: 'assistant',
-        content: text,
-        usage,
-        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-      };
-      await writer.append(assistantRecord);
-      if (toolResults.length > 0) {
+        await Promise.allSettled(promises);
+        process.off('SIGTERM', onSigterm);
+        return {
+            total: tasks.length,
+            completed: completed.size,
+            failed: failed.size,
+            skipped,
+        };
+    }
+    async runTask(task, writer, completed, failed) {
+        const sessionKey = `batch:${task.id}`;
+        const personalityId = task.personalityId ?? this.options.defaultPersonalityId;
         await writer.append({
-          schema_version: ATROPOS_SCHEMA_VERSION,
-          task_id: task.id,
-          turn: 0,
-          role: 'tool',
-          content: '',
-          tool_results: toolResults,
-          usage: null,
+            schema_version: ATROPOS_SCHEMA_VERSION,
+            task_id: task.id,
+            turn: 0,
+            role: 'user',
+            content: task.prompt,
+            usage: null,
         });
-      }
-      completed.add(task.id);
-    } catch (err) {
-      await writer.append({
-        schema_version: ATROPOS_SCHEMA_VERSION,
-        task_id: task.id,
-        turn: 0,
-        role: 'assistant',
-        content: '',
-        error: err instanceof Error ? err.message : String(err),
-        usage: null,
-      });
-      failed.add(task.id);
+        let text = '';
+        let usage = null;
+        const toolCalls = [];
+        const toolResults = [];
+        try {
+            for await (const event of this.loop.run(task.prompt, { sessionKey, personalityId })) {
+                switch (event.type) {
+                    case 'text_delta':
+                        text += event.text;
+                        break;
+                    case 'tool_start':
+                        toolCalls.push({ name: event.toolName, args: event.args });
+                        break;
+                    case 'tool_end':
+                        toolResults.push({ name: event.toolName, ok: event.ok });
+                        break;
+                    case 'usage':
+                        usage = {
+                            input_tokens: event.inputTokens,
+                            output_tokens: event.outputTokens,
+                            estimated_cost_usd: event.estimatedCostUsd,
+                        };
+                        break;
+                }
+            }
+            const assistantRecord = {
+                schema_version: ATROPOS_SCHEMA_VERSION,
+                task_id: task.id,
+                turn: 0,
+                role: 'assistant',
+                content: text,
+                usage,
+                ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+            };
+            await writer.append(assistantRecord);
+            if (toolResults.length > 0) {
+                await writer.append({
+                    schema_version: ATROPOS_SCHEMA_VERSION,
+                    task_id: task.id,
+                    turn: 0,
+                    role: 'tool',
+                    content: '',
+                    tool_results: toolResults,
+                    usage: null,
+                });
+            }
+            completed.add(task.id);
+        }
+        catch (err) {
+            await writer.append({
+                schema_version: ATROPOS_SCHEMA_VERSION,
+                task_id: task.id,
+                turn: 0,
+                role: 'assistant',
+                content: '',
+                error: err instanceof Error ? err.message : String(err),
+                usage: null,
+            });
+            failed.add(task.id);
+        }
+        // Atomic checkpoint after each task — safe even if two tasks finish concurrently
+        // because JS is single-threaded and Set mutations are synchronous.
+        const state = {
+            version: 1,
+            completedTaskIds: [...completed],
+            failedTaskIds: [...failed],
+        };
+        await writeCheckpoint(this.options.checkpointPath, state);
     }
-    // Atomic checkpoint after each task — safe even if two tasks finish concurrently
-    // because JS is single-threaded and Set mutations are synchronous.
-    const state = {
-      version: 1,
-      completedTaskIds: [...completed],
-      failedTaskIds: [...failed],
-    };
-    await writeCheckpoint(this.options.checkpointPath, state);
-  }
 }
 export function parseTasksJsonl(src) {
-  return src
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line, i) => {
-      const obj = JSON.parse(line);
-      if (typeof obj.id !== 'string' || typeof obj.prompt !== 'string') {
-        throw new Error(`Line ${i + 1}: each task must have string fields "id" and "prompt"`);
-      }
-      return {
-        id: obj.id,
-        prompt: obj.prompt,
-        personalityId: typeof obj.personalityId === 'string' ? obj.personalityId : undefined,
-      };
+    return src
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map((line, i) => {
+        const obj = JSON.parse(line);
+        if (typeof obj.id !== 'string' || typeof obj.prompt !== 'string') {
+            throw new Error(`Line ${i + 1}: each task must have string fields "id" and "prompt"`);
+        }
+        return {
+            id: obj.id,
+            prompt: obj.prompt,
+            personalityId: typeof obj.personalityId === 'string' ? obj.personalityId : undefined,
+        };
     });
 }

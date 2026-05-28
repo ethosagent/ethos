@@ -11,15 +11,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveFile, VisionInputError } from '../input-resolver';
-
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 // Smallest valid PNG (1x1 transparent) — Wikipedia "Portable Network Graphics".
-const TINY_PNG = Buffer.from(
-  '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082',
-  'hex',
-);
+const TINY_PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082', 'hex');
 // Smallest valid JPEG header (just the SOI + APP0 marker) — enough for magic
 // detection, but the byte stream is intentionally short so size-limit code is
 // exercised separately with synthetic oversized buffers.
@@ -27,23 +23,23 @@ const TINY_JPEG = Buffer.from('ffd8ffe000104a46494600010100000100010000', 'hex')
 const TINY_GIF = Buffer.from('474946383961010001000000002c00000000010001000002024401003b', 'hex');
 // 'RIFF' <4 bytes size> 'WEBP'
 const TINY_WEBP = Buffer.concat([
-  Buffer.from('RIFF', 'ascii'),
-  Buffer.from([0x1a, 0x00, 0x00, 0x00]),
-  Buffer.from('WEBP', 'ascii'),
-  Buffer.alloc(18, 0),
+    Buffer.from('RIFF', 'ascii'),
+    Buffer.from([0x1a, 0x00, 0x00, 0x00]),
+    Buffer.from('WEBP', 'ascii'),
+    Buffer.alloc(18, 0),
 ]);
 // Minimal PDF — `%PDF-` is all the magic check needs; pad with `%%EOF`.
 const TINY_PDF = Buffer.from('%PDF-1.4\n%%EOF\n', 'utf8');
 // 5 MB + 1 byte of zeros, prefixed with PNG magic. Triggers the per-media
 // image size cap (5 MB).
 const OVERSIZED_PNG = Buffer.concat([
-  TINY_PNG.subarray(0, 8),
-  Buffer.alloc(5 * 1024 * 1024 - 7, 0),
+    TINY_PNG.subarray(0, 8),
+    Buffer.alloc(5 * 1024 * 1024 - 7, 0),
 ]);
 // 32 MB + 1 byte, prefixed with `%PDF-`. Triggers the per-media PDF cap.
 const OVERSIZED_PDF = Buffer.concat([
-  Buffer.from('%PDF-1.4\n', 'utf8'),
-  Buffer.alloc(32 * 1024 * 1024, 0),
+    Buffer.from('%PDF-1.4\n', 'utf8'),
+    Buffer.alloc(32 * 1024 * 1024, 0),
 ]);
 // Random bytes that match none of the known magic prefixes.
 const UNKNOWN_BYTES = Buffer.from('not-an-image-or-pdf-just-text', 'utf8');
@@ -54,116 +50,118 @@ const UNKNOWN_BYTES = Buffer.from('not-an-image-or-pdf-just-text', 'utf8');
  *  latin1 string — preserves binary bytes in a 1:1 mapping so the resolver
  *  can round-trip images/PDFs without loss. */
 class FakeScopedFs {
-  files;
-  constructor(files) {
-    this.files = files;
-  }
-  async read(path) {
-    const buf = this.files.get(path);
-    if (!buf) throw new Error(`File not found: ${path}`);
-    return buf.toString('latin1');
-  }
-  async readBytes(path) {
-    const buf = this.files.get(path);
-    if (!buf) throw new Error(`File not found: ${path}`);
-    return buf;
-  }
-  async write() {}
-  async exists(path) {
-    return this.files.has(path);
-  }
-  async list() {
-    return [];
-  }
-  async mtime() {
-    return null;
-  }
-  async mkdir() {}
-  async listEntries() {
-    return [];
-  }
+    files;
+    constructor(files) {
+        this.files = files;
+    }
+    async read(path) {
+        const buf = this.files.get(path);
+        if (!buf)
+            throw new Error(`File not found: ${path}`);
+        return buf.toString('latin1');
+    }
+    async readBytes(path) {
+        const buf = this.files.get(path);
+        if (!buf)
+            throw new Error(`File not found: ${path}`);
+        return buf;
+    }
+    async write() { }
+    async exists(path) {
+        return this.files.has(path);
+    }
+    async list() {
+        return [];
+    }
+    async mtime() {
+        return null;
+    }
+    async mkdir() { }
+    async listEntries() {
+        return [];
+    }
 }
 /** ScopedFs that always rejects with PATH_NOT_REACHABLE. */
 class BoundaryScopedFs {
-  async read(path) {
-    throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
-  }
-  async readBytes(path) {
-    throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
-  }
-  async write() {}
-  async exists() {
-    return false;
-  }
-  async list() {
-    return [];
-  }
-  async mtime() {
-    return null;
-  }
-  async mkdir() {}
-  async listEntries() {
-    return [];
-  }
+    async read(path) {
+        throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
+    }
+    async readBytes(path) {
+        throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
+    }
+    async write() { }
+    async exists() {
+        return false;
+    }
+    async list() {
+        return [];
+    }
+    async mtime() {
+        return null;
+    }
+    async mkdir() { }
+    async listEntries() {
+        return [];
+    }
 }
 /** ScopedFs backed by real files on disk within the given allowed prefixes.
  *  Uses node:fs for test fixture setup; the resolver sees only the ScopedFs
  *  interface. Reads as latin1 to preserve binary bytes (1:1 mapping). */
 function realScopedFs(allowedPrefixes) {
-  const prefixes = allowedPrefixes.map((p) => (p.endsWith('/') ? p : `${p}/`));
-  return {
-    async read(path) {
-      const { normalize, resolve } = await import('node:path');
-      const canonical = normalize(resolve(path));
-      const allowed = prefixes.some(
-        (pfx) => canonical === pfx.slice(0, -1) || canonical.startsWith(pfx),
-      );
-      if (!allowed) throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
-      try {
-        return readFileSync(path, 'latin1');
-      } catch {
-        throw new Error(`File not found: ${path}`);
-      }
-    },
-    async readBytes(path) {
-      const { normalize, resolve } = await import('node:path');
-      const canonical = normalize(resolve(path));
-      const allowed = prefixes.some(
-        (pfx) => canonical === pfx.slice(0, -1) || canonical.startsWith(pfx),
-      );
-      if (!allowed) throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
-      try {
-        return readFileSync(path);
-      } catch {
-        throw new Error(`File not found: ${path}`);
-      }
-    },
-    async write() {},
-    async exists(path) {
-      const { normalize, resolve } = await import('node:path');
-      const canonical = normalize(resolve(path));
-      const allowed = prefixes.some(
-        (pfx) => canonical === pfx.slice(0, -1) || canonical.startsWith(pfx),
-      );
-      if (!allowed) throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
-      try {
-        readFileSync(path);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    async list() {
-      return [];
-    },
-    async mtime() {
-      return null;
-    },
-    async mkdir() {},
-    async listEntries() {
-      return [];
-    },
-  };
+    const prefixes = allowedPrefixes.map((p) => (p.endsWith('/') ? p : `${p}/`));
+    return {
+        async read(path) {
+            const { normalize, resolve } = await import('node:path');
+            const canonical = normalize(resolve(path));
+            const allowed = prefixes.some((pfx) => canonical === pfx.slice(0, -1) || canonical.startsWith(pfx));
+            if (!allowed)
+                throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
+            try {
+                return readFileSync(path, 'latin1');
+            }
+            catch {
+                throw new Error(`File not found: ${path}`);
+            }
+        },
+        async readBytes(path) {
+            const { normalize, resolve } = await import('node:path');
+            const canonical = normalize(resolve(path));
+            const allowed = prefixes.some((pfx) => canonical === pfx.slice(0, -1) || canonical.startsWith(pfx));
+            if (!allowed)
+                throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
+            try {
+                return readFileSync(path);
+            }
+            catch {
+                throw new Error(`File not found: ${path}`);
+            }
+        },
+        async write() { },
+        async exists(path) {
+            const { normalize, resolve } = await import('node:path');
+            const canonical = normalize(resolve(path));
+            const allowed = prefixes.some((pfx) => canonical === pfx.slice(0, -1) || canonical.startsWith(pfx));
+            if (!allowed)
+                throw new Error(`PATH_NOT_REACHABLE: read not permitted for ${path}`);
+            try {
+                readFileSync(path);
+                return true;
+            }
+            catch {
+                return false;
+            }
+        },
+        async list() {
+            return [];
+        },
+        async mtime() {
+            return null;
+        },
+        async mkdir() { },
+        async listEntries() {
+            return [];
+        },
+    };
 }
 // ---------------------------------------------------------------------------
 // File-system fixtures — real files in os.tmpdir() for the file_path branch.
@@ -172,129 +170,124 @@ function realScopedFs(allowedPrefixes) {
 // ---------------------------------------------------------------------------
 let tmpDir = '';
 beforeEach(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), 'vision-resolve-'));
+    tmpDir = mkdtempSync(join(tmpdir(), 'vision-resolve-'));
 });
 afterEach(() => {
-  if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
-  vi.restoreAllMocks();
+    if (tmpDir)
+        rmSync(tmpDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
 });
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 describe('resolveFile — input shape validation', () => {
-  it('rejects when no input key is set', async () => {
-    await expect(resolveFile({}, {})).rejects.toMatchObject({
-      name: 'VisionInputError',
-      code: 'INVALID_INPUT',
+    it('rejects when no input key is set', async () => {
+        await expect(resolveFile({}, {})).rejects.toMatchObject({
+            name: 'VisionInputError',
+            code: 'INVALID_INPUT',
+        });
     });
-  });
-  it('rejects when two input keys are set', async () => {
-    await expect(resolveFile({ file_path: '/x', file_url: 'https://x' }, {})).rejects.toMatchObject(
-      { code: 'INVALID_INPUT' },
-    );
-  });
-  it('rejects when all three input keys are set', async () => {
-    await expect(
-      resolveFile({ file_path: '/x', file_url: 'https://x', file_base64: 'aGk=' }, {}),
-    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
-  });
+    it('rejects when two input keys are set', async () => {
+        await expect(resolveFile({ file_path: '/x', file_url: 'https://x' }, {})).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    });
+    it('rejects when all three input keys are set', async () => {
+        await expect(resolveFile({ file_path: '/x', file_url: 'https://x', file_base64: 'aGk=' }, {})).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    });
 });
 describe('resolveFile — file_base64 branch', () => {
-  it('decodes a plain base64 PNG and detects image/png', async () => {
-    const b64 = TINY_PNG.toString('base64');
-    const out = await resolveFile({ file_base64: b64 }, {});
-    expect(out.mediaType).toBe('image/png');
-    expect(out.buffer.equals(TINY_PNG)).toBe(true);
-  });
-  it('strips a data: URI prefix before decoding', async () => {
-    const b64 = `data:image/png;base64,${TINY_PNG.toString('base64')}`;
-    const out = await resolveFile({ file_base64: b64 }, {});
-    expect(out.mediaType).toBe('image/png');
-    expect(out.buffer.equals(TINY_PNG)).toBe(true);
-  });
-  it('decodes JPEG / GIF / WEBP / PDF magic correctly', async () => {
-    const jpeg = await resolveFile({ file_base64: TINY_JPEG.toString('base64') }, {});
-    expect(jpeg.mediaType).toBe('image/jpeg');
-    const gif = await resolveFile({ file_base64: TINY_GIF.toString('base64') }, {});
-    expect(gif.mediaType).toBe('image/gif');
-    const webp = await resolveFile({ file_base64: TINY_WEBP.toString('base64') }, {});
-    expect(webp.mediaType).toBe('image/webp');
-    const pdf = await resolveFile({ file_base64: TINY_PDF.toString('base64') }, {});
-    expect(pdf.mediaType).toBe('application/pdf');
-  });
-  it('rejects empty base64', async () => {
-    await expect(resolveFile({ file_base64: '' }, {})).rejects.toMatchObject({
-      code: 'INVALID_INPUT',
+    it('decodes a plain base64 PNG and detects image/png', async () => {
+        const b64 = TINY_PNG.toString('base64');
+        const out = await resolveFile({ file_base64: b64 }, {});
+        expect(out.mediaType).toBe('image/png');
+        expect(out.buffer.equals(TINY_PNG)).toBe(true);
     });
-  });
-  it('rejects bytes with no known magic prefix', async () => {
-    const b64 = UNKNOWN_BYTES.toString('base64');
-    await expect(resolveFile({ file_base64: b64 }, {})).rejects.toMatchObject({
-      code: 'UNSUPPORTED_FILE_TYPE',
+    it('strips a data: URI prefix before decoding', async () => {
+        const b64 = `data:image/png;base64,${TINY_PNG.toString('base64')}`;
+        const out = await resolveFile({ file_base64: b64 }, {});
+        expect(out.mediaType).toBe('image/png');
+        expect(out.buffer.equals(TINY_PNG)).toBe(true);
     });
-  });
-  it('rejects an oversized image (>5 MB) as FILE_TOO_LARGE', async () => {
-    const b64 = OVERSIZED_PNG.toString('base64');
-    await expect(resolveFile({ file_base64: b64 }, {})).rejects.toMatchObject({
-      code: 'FILE_TOO_LARGE',
+    it('decodes JPEG / GIF / WEBP / PDF magic correctly', async () => {
+        const jpeg = await resolveFile({ file_base64: TINY_JPEG.toString('base64') }, {});
+        expect(jpeg.mediaType).toBe('image/jpeg');
+        const gif = await resolveFile({ file_base64: TINY_GIF.toString('base64') }, {});
+        expect(gif.mediaType).toBe('image/gif');
+        const webp = await resolveFile({ file_base64: TINY_WEBP.toString('base64') }, {});
+        expect(webp.mediaType).toBe('image/webp');
+        const pdf = await resolveFile({ file_base64: TINY_PDF.toString('base64') }, {});
+        expect(pdf.mediaType).toBe('application/pdf');
     });
-  });
-  it('rejects an oversized PDF (>32 MB) as FILE_TOO_LARGE', async () => {
-    const b64 = OVERSIZED_PDF.toString('base64');
-    await expect(resolveFile({ file_base64: b64 }, {})).rejects.toMatchObject({
-      code: 'FILE_TOO_LARGE',
+    it('rejects empty base64', async () => {
+        await expect(resolveFile({ file_base64: '' }, {})).rejects.toMatchObject({
+            code: 'INVALID_INPUT',
+        });
     });
-  });
+    it('rejects bytes with no known magic prefix', async () => {
+        const b64 = UNKNOWN_BYTES.toString('base64');
+        await expect(resolveFile({ file_base64: b64 }, {})).rejects.toMatchObject({
+            code: 'UNSUPPORTED_FILE_TYPE',
+        });
+    });
+    it('rejects an oversized image (>5 MB) as FILE_TOO_LARGE', async () => {
+        const b64 = OVERSIZED_PNG.toString('base64');
+        await expect(resolveFile({ file_base64: b64 }, {})).rejects.toMatchObject({
+            code: 'FILE_TOO_LARGE',
+        });
+    });
+    it('rejects an oversized PDF (>32 MB) as FILE_TOO_LARGE', async () => {
+        const b64 = OVERSIZED_PDF.toString('base64');
+        await expect(resolveFile({ file_base64: b64 }, {})).rejects.toMatchObject({
+            code: 'FILE_TOO_LARGE',
+        });
+    });
 });
 describe('resolveFile — file_path branch', () => {
-  it('requires ctx.scopedFs', async () => {
-    await expect(resolveFile({ file_path: '/some/file.png' }, {})).rejects.toMatchObject({
-      code: 'INVALID_INPUT',
+    it('requires ctx.scopedFs', async () => {
+        await expect(resolveFile({ file_path: '/some/file.png' }, {})).rejects.toMatchObject({
+            code: 'INVALID_INPUT',
+        });
     });
-  });
-  it('reads a PNG file and returns the buffer + media type', async () => {
-    const path = join(tmpDir, 'image.png');
-    writeFileSync(path, TINY_PNG);
-    const scopedFs = new FakeScopedFs(new Map([[path, TINY_PNG]]));
-    const out = await resolveFile({ file_path: path }, { scopedFs });
-    expect(out.mediaType).toBe('image/png');
-    expect(out.buffer.equals(TINY_PNG)).toBe(true);
-  });
-  it('resolves relative paths against ctx.workingDir', async () => {
-    const path = join(tmpDir, 'image.png');
-    writeFileSync(path, TINY_PNG);
-    const scopedFs = new FakeScopedFs(new Map([[path, TINY_PNG]]));
-    const out = await resolveFile({ file_path: 'image.png' }, { scopedFs, workingDir: tmpDir });
-    expect(out.mediaType).toBe('image/png');
-  });
-  it('translates ScopedFs PATH_NOT_REACHABLE to FILE_NOT_FOUND', async () => {
-    const scopedFs = new BoundaryScopedFs();
-    await expect(resolveFile({ file_path: '/etc/passwd' }, { scopedFs })).rejects.toMatchObject({
-      code: 'FILE_NOT_FOUND',
+    it('reads a PNG file and returns the buffer + media type', async () => {
+        const path = join(tmpDir, 'image.png');
+        writeFileSync(path, TINY_PNG);
+        const scopedFs = new FakeScopedFs(new Map([[path, TINY_PNG]]));
+        const out = await resolveFile({ file_path: path }, { scopedFs });
+        expect(out.mediaType).toBe('image/png');
+        expect(out.buffer.equals(TINY_PNG)).toBe(true);
     });
-  });
-  it('returns FILE_NOT_FOUND when the file is absent', async () => {
-    const scopedFs = new FakeScopedFs(new Map());
-    await expect(
-      resolveFile({ file_path: join(tmpDir, 'missing.png') }, { scopedFs }),
-    ).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' });
-  });
-  it('rejects oversized PDFs read from disk', async () => {
-    const path = join(tmpDir, 'big.pdf');
-    writeFileSync(path, OVERSIZED_PDF);
-    const scopedFs = new FakeScopedFs(new Map([[path, OVERSIZED_PDF]]));
-    await expect(resolveFile({ file_path: path }, { scopedFs })).rejects.toMatchObject({
-      code: 'FILE_TOO_LARGE',
+    it('resolves relative paths against ctx.workingDir', async () => {
+        const path = join(tmpDir, 'image.png');
+        writeFileSync(path, TINY_PNG);
+        const scopedFs = new FakeScopedFs(new Map([[path, TINY_PNG]]));
+        const out = await resolveFile({ file_path: 'image.png' }, { scopedFs, workingDir: tmpDir });
+        expect(out.mediaType).toBe('image/png');
     });
-  });
-  it('rejects an unknown file type', async () => {
-    const path = join(tmpDir, 'mystery.bin');
-    writeFileSync(path, UNKNOWN_BYTES);
-    const scopedFs = new FakeScopedFs(new Map([[path, UNKNOWN_BYTES]]));
-    await expect(resolveFile({ file_path: path }, { scopedFs })).rejects.toMatchObject({
-      code: 'UNSUPPORTED_FILE_TYPE',
+    it('translates ScopedFs PATH_NOT_REACHABLE to FILE_NOT_FOUND', async () => {
+        const scopedFs = new BoundaryScopedFs();
+        await expect(resolveFile({ file_path: '/etc/passwd' }, { scopedFs })).rejects.toMatchObject({
+            code: 'FILE_NOT_FOUND',
+        });
     });
-  });
+    it('returns FILE_NOT_FOUND when the file is absent', async () => {
+        const scopedFs = new FakeScopedFs(new Map());
+        await expect(resolveFile({ file_path: join(tmpDir, 'missing.png') }, { scopedFs })).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' });
+    });
+    it('rejects oversized PDFs read from disk', async () => {
+        const path = join(tmpDir, 'big.pdf');
+        writeFileSync(path, OVERSIZED_PDF);
+        const scopedFs = new FakeScopedFs(new Map([[path, OVERSIZED_PDF]]));
+        await expect(resolveFile({ file_path: path }, { scopedFs })).rejects.toMatchObject({
+            code: 'FILE_TOO_LARGE',
+        });
+    });
+    it('rejects an unknown file type', async () => {
+        const path = join(tmpDir, 'mystery.bin');
+        writeFileSync(path, UNKNOWN_BYTES);
+        const scopedFs = new FakeScopedFs(new Map([[path, UNKNOWN_BYTES]]));
+        await expect(resolveFile({ file_path: path }, { scopedFs })).rejects.toMatchObject({
+            code: 'UNSUPPORTED_FILE_TYPE',
+        });
+    });
 });
 // ---------------------------------------------------------------------------
 // Path-traversal — wired against a real-file ScopedFs to prove that the
@@ -303,139 +296,116 @@ describe('resolveFile — file_path branch', () => {
 // sneaks past the prefix check.
 // ---------------------------------------------------------------------------
 describe('resolveFile — file_path branch / path-traversal defenses', () => {
-  let safeDir;
-  let outsideDir;
-  beforeEach(async () => {
-    // Canonicalize through realpath — on macOS tmpdir() lives under
-    // /var/folders/... which is a symlink to /private/var/folders/...; the
-    // resolver normalizes the request path, so the allowlist prefix must
-    // already be canonical or the prefix check sees a /private/var path
-    // against a /var prefix.
-    safeDir = await realpath(mkdtempSync(join(tmpdir(), 'vision-safe-')));
-    outsideDir = await realpath(mkdtempSync(join(tmpdir(), 'vision-outside-')));
-  });
-  afterEach(() => {
-    rmSync(safeDir, { recursive: true, force: true });
-    rmSync(outsideDir, { recursive: true, force: true });
-  });
-  it('rejects an absolute path whose lexical prefix is allowed but normalizes outside the allowlist', async () => {
-    writeFileSync(join(outsideDir, 'secret.png'), TINY_PNG);
-    const escapePath = `${safeDir}/../${outsideDir.split('/').pop()}/secret.png`;
-    const scopedFs = realScopedFs([safeDir]);
-    await expect(
-      resolveFile({ file_path: escapePath }, { scopedFs, workingDir: safeDir }),
-    ).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' });
-  });
-  it('rejects a relative path with `..` that escapes the workingDir outside the allowlist', async () => {
-    writeFileSync(join(outsideDir, 'secret.png'), TINY_PNG);
-    const relativeEscape = `../${outsideDir.split('/').pop()}/secret.png`;
-    const scopedFs = realScopedFs([safeDir]);
-    await expect(
-      resolveFile({ file_path: relativeEscape }, { scopedFs, workingDir: safeDir }),
-    ).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' });
-  });
-  it('rejects a symlink inside the allowlist that points to a file outside it', async () => {
-    const realTarget = join(outsideDir, 'secret.png');
-    writeFileSync(realTarget, TINY_PNG);
-    const linkInsideSafe = join(safeDir, 'innocent.png');
-    symlinkSync(realTarget, linkInsideSafe);
-    // The realScopedFs reads via readFileSync which follows symlinks — the
-    // content comes from outside the allowlist. But since the LEXICAL path is
-    // inside the allowlist, the boundary check alone would pass. The resolver
-    // normalizes the path before handing it to scopedFs, which prevents `..`
-    // escapes. Symlink following is a known TOCTOU gap deferred to a shared
-    // native helper. For this test, the file IS reachable via the symlink
-    // (the lexical path passes the allowlist), so we verify the read succeeds
-    // — the symlink defense is not the resolver's responsibility when using
-    // ScopedFs (it's deferred to the native helper).
-    const scopedFs = realScopedFs([safeDir]);
-    // With ScopedFs, the lexical path is inside the allowlist and the file
-    // exists (via symlink), so this succeeds. The symlink TOCTOU defense is
-    // explicitly deferred — see the comment in normalizeAbsolute.
-    const out = await resolveFile({ file_path: linkInsideSafe }, { scopedFs, workingDir: safeDir });
-    expect(out.mediaType).toBe('image/png');
-  });
+    let safeDir;
+    let outsideDir;
+    beforeEach(async () => {
+        // Canonicalize through realpath — on macOS tmpdir() lives under
+        // /var/folders/... which is a symlink to /private/var/folders/...; the
+        // resolver normalizes the request path, so the allowlist prefix must
+        // already be canonical or the prefix check sees a /private/var path
+        // against a /var prefix.
+        safeDir = await realpath(mkdtempSync(join(tmpdir(), 'vision-safe-')));
+        outsideDir = await realpath(mkdtempSync(join(tmpdir(), 'vision-outside-')));
+    });
+    afterEach(() => {
+        rmSync(safeDir, { recursive: true, force: true });
+        rmSync(outsideDir, { recursive: true, force: true });
+    });
+    it('rejects an absolute path whose lexical prefix is allowed but normalizes outside the allowlist', async () => {
+        writeFileSync(join(outsideDir, 'secret.png'), TINY_PNG);
+        const escapePath = `${safeDir}/../${outsideDir.split('/').pop()}/secret.png`;
+        const scopedFs = realScopedFs([safeDir]);
+        await expect(resolveFile({ file_path: escapePath }, { scopedFs, workingDir: safeDir })).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' });
+    });
+    it('rejects a relative path with `..` that escapes the workingDir outside the allowlist', async () => {
+        writeFileSync(join(outsideDir, 'secret.png'), TINY_PNG);
+        const relativeEscape = `../${outsideDir.split('/').pop()}/secret.png`;
+        const scopedFs = realScopedFs([safeDir]);
+        await expect(resolveFile({ file_path: relativeEscape }, { scopedFs, workingDir: safeDir })).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' });
+    });
+    it('rejects a symlink inside the allowlist that points to a file outside it', async () => {
+        const realTarget = join(outsideDir, 'secret.png');
+        writeFileSync(realTarget, TINY_PNG);
+        const linkInsideSafe = join(safeDir, 'innocent.png');
+        symlinkSync(realTarget, linkInsideSafe);
+        // The realScopedFs reads via readFileSync which follows symlinks — the
+        // content comes from outside the allowlist. But since the LEXICAL path is
+        // inside the allowlist, the boundary check alone would pass. The resolver
+        // normalizes the path before handing it to scopedFs, which prevents `..`
+        // escapes. Symlink following is a known TOCTOU gap deferred to a shared
+        // native helper. For this test, the file IS reachable via the symlink
+        // (the lexical path passes the allowlist), so we verify the read succeeds
+        // — the symlink defense is not the resolver's responsibility when using
+        // ScopedFs (it's deferred to the native helper).
+        const scopedFs = realScopedFs([safeDir]);
+        // With ScopedFs, the lexical path is inside the allowlist and the file
+        // exists (via symlink), so this succeeds. The symlink TOCTOU defense is
+        // explicitly deferred — see the comment in normalizeAbsolute.
+        const out = await resolveFile({ file_path: linkInsideSafe }, { scopedFs, workingDir: safeDir });
+        expect(out.mediaType).toBe('image/png');
+    });
 });
 describe('resolveFile — file_url branch', () => {
-  it('rejects non-http(s) schemes', async () => {
-    await expect(resolveFile({ file_url: 'file:///etc/passwd' }, {})).rejects.toMatchObject({
-      code: 'URL_BLOCKED',
+    it('rejects non-http(s) schemes', async () => {
+        await expect(resolveFile({ file_url: 'file:///etc/passwd' }, {})).rejects.toMatchObject({
+            code: 'URL_BLOCKED',
+        });
+        await expect(resolveFile({ file_url: 'ftp://example.com/x.png' }, {})).rejects.toMatchObject({
+            code: 'URL_BLOCKED',
+        });
     });
-    await expect(resolveFile({ file_url: 'ftp://example.com/x.png' }, {})).rejects.toMatchObject({
-      code: 'URL_BLOCKED',
+    it('translates safe-fetch failures (SSRF block / cloud-metadata) to URL_BLOCKED', async () => {
+        // Trigger the cloud-metadata block — non-overridable, no fetch needed.
+        await expect(resolveFile({ file_url: 'http://169.254.169.254/latest/meta-data/' }, {})).rejects.toMatchObject({ code: 'URL_BLOCKED' });
     });
-  });
-  it('translates safe-fetch failures (SSRF block / cloud-metadata) to URL_BLOCKED', async () => {
-    // Trigger the cloud-metadata block — non-overridable, no fetch needed.
-    await expect(
-      resolveFile({ file_url: 'http://169.254.169.254/latest/meta-data/' }, {}),
-    ).rejects.toMatchObject({ code: 'URL_BLOCKED' });
-  });
-  it('downloads a PNG via injected fetch and detects the media type', async () => {
-    const fetchImpl = vi.fn(async () => {
-      return new Response(TINY_PNG, {
-        status: 200,
-        headers: { 'content-type': 'image/png' },
-      });
+    it('downloads a PNG via injected fetch and detects the media type', async () => {
+        const fetchImpl = vi.fn(async () => {
+            return new Response(TINY_PNG, {
+                status: 200,
+                headers: { 'content-type': 'image/png' },
+            });
+        });
+        const out = await resolveFile({ file_url: 'https://example.com/img.png' }, { fetchImpl: fetchImpl, resolveHost: async () => ['8.8.8.8'] });
+        expect(out.mediaType).toBe('image/png');
+        expect(out.buffer.equals(TINY_PNG)).toBe(true);
     });
-    const out = await resolveFile(
-      { file_url: 'https://example.com/img.png' },
-      { fetchImpl: fetchImpl, resolveHost: async () => ['8.8.8.8'] },
-    );
-    expect(out.mediaType).toBe('image/png');
-    expect(out.buffer.equals(TINY_PNG)).toBe(true);
-  });
-  it('aborts the download once received bytes exceed the 32 MB ceiling', async () => {
-    // Stream 33 MB so the per-chunk byte counter trips the cap.
-    const chunkSize = 1024 * 1024;
-    const chunks = Array.from({ length: 33 }, () => Buffer.alloc(chunkSize, 0));
-    const stream = new ReadableStream({
-      start(controller) {
-        for (const c of chunks) controller.enqueue(c);
-        controller.close();
-      },
+    it('aborts the download once received bytes exceed the 32 MB ceiling', async () => {
+        // Stream 33 MB so the per-chunk byte counter trips the cap.
+        const chunkSize = 1024 * 1024;
+        const chunks = Array.from({ length: 33 }, () => Buffer.alloc(chunkSize, 0));
+        const stream = new ReadableStream({
+            start(controller) {
+                for (const c of chunks)
+                    controller.enqueue(c);
+                controller.close();
+            },
+        });
+        const fetchImpl = vi.fn(async () => {
+            return new Response(stream, { status: 200, headers: { 'content-type': 'application/pdf' } });
+        });
+        await expect(resolveFile({ file_url: 'https://example.com/big.pdf' }, { fetchImpl: fetchImpl, resolveHost: async () => ['8.8.8.8'] })).rejects.toMatchObject({ code: 'FILE_TOO_LARGE' });
     });
-    const fetchImpl = vi.fn(async () => {
-      return new Response(stream, { status: 200, headers: { 'content-type': 'application/pdf' } });
+    it('applies the per-media image cap after download', async () => {
+        const fetchImpl = vi.fn(async () => {
+            return new Response(OVERSIZED_PNG, {
+                status: 200,
+                headers: { 'content-type': 'image/png' },
+            });
+        });
+        await expect(resolveFile({ file_url: 'https://example.com/big.png' }, { fetchImpl: fetchImpl, resolveHost: async () => ['8.8.8.8'] })).rejects.toMatchObject({ code: 'FILE_TOO_LARGE' });
     });
-    await expect(
-      resolveFile(
-        { file_url: 'https://example.com/big.pdf' },
-        { fetchImpl: fetchImpl, resolveHost: async () => ['8.8.8.8'] },
-      ),
-    ).rejects.toMatchObject({ code: 'FILE_TOO_LARGE' });
-  });
-  it('applies the per-media image cap after download', async () => {
-    const fetchImpl = vi.fn(async () => {
-      return new Response(OVERSIZED_PNG, {
-        status: 200,
-        headers: { 'content-type': 'image/png' },
-      });
+    it('returns UNSUPPORTED_FILE_TYPE when fetched bytes do not match any magic', async () => {
+        const fetchImpl = vi.fn(async () => {
+            return new Response(UNKNOWN_BYTES, { status: 200 });
+        });
+        await expect(resolveFile({ file_url: 'https://example.com/x' }, { fetchImpl: fetchImpl, resolveHost: async () => ['8.8.8.8'] })).rejects.toMatchObject({ code: 'UNSUPPORTED_FILE_TYPE' });
     });
-    await expect(
-      resolveFile(
-        { file_url: 'https://example.com/big.png' },
-        { fetchImpl: fetchImpl, resolveHost: async () => ['8.8.8.8'] },
-      ),
-    ).rejects.toMatchObject({ code: 'FILE_TOO_LARGE' });
-  });
-  it('returns UNSUPPORTED_FILE_TYPE when fetched bytes do not match any magic', async () => {
-    const fetchImpl = vi.fn(async () => {
-      return new Response(UNKNOWN_BYTES, { status: 200 });
-    });
-    await expect(
-      resolveFile(
-        { file_url: 'https://example.com/x' },
-        { fetchImpl: fetchImpl, resolveHost: async () => ['8.8.8.8'] },
-      ),
-    ).rejects.toMatchObject({ code: 'UNSUPPORTED_FILE_TYPE' });
-  });
 });
 describe('VisionInputError', () => {
-  it('carries the typed code and a message', () => {
-    const err = new VisionInputError('UNSUPPORTED_FILE_TYPE', 'nope');
-    expect(err.name).toBe('VisionInputError');
-    expect(err.code).toBe('UNSUPPORTED_FILE_TYPE');
-    expect(err.message).toBe('nope');
-  });
+    it('carries the typed code and a message', () => {
+        const err = new VisionInputError('UNSUPPORTED_FILE_TYPE', 'nope');
+        expect(err.name).toBe('VisionInputError');
+        expect(err.code).toBe('UNSUPPORTED_FILE_TYPE');
+        expect(err.message).toBe('nope');
+    });
 });
