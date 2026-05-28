@@ -73,8 +73,6 @@ export class PluginMonitorRunner {
 
   /** v2.2 — Return names of all monitors in the 'crashed' state. */
   getCrashedMonitors(): string[] {
-    return [...this.statuses.entries()]
-      .filter(([, s]) => s === 'crashed')
-      .map(([n]) => n);
+    return [...this.statuses.entries()].filter(([, s]) => s === 'crashed').map(([n]) => n);
   }
 }

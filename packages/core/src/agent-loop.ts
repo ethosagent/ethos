@@ -310,7 +310,10 @@ export interface AgentLoopConfig {
    *  or null if all required credentials are present. Opt-in: when undefined,
    *  the check is skipped. Wiring provides this when plugins declare required
    *  credentials. */
-  credentialCheck?: (sessionKey: string, pendingUserMessage: string) => Promise<{
+  credentialCheck?: (
+    sessionKey: string,
+    pendingUserMessage: string,
+  ) => Promise<{
     pluginId: string;
     credentialKey: string;
     kind: 'oauth' | 'api_key' | 'text';
@@ -1362,14 +1365,10 @@ export class AgentLoop {
         ...(scopedStorage ? { storage: scopedStorage } : {}),
         ...(personality.safety?.network ? { networkPolicy: personality.safety.network } : {}),
         ...this.contextStore.asContextMethods(),
-        llm: new SimpleCompletionImpl(
-          this.llm,
-          effectiveModel,
-          ({ input, output }) => {
-            llmInputTokens += input;
-            llmOutputTokens += output;
-          },
-        ),
+        llm: new SimpleCompletionImpl(this.llm, effectiveModel, ({ input, output }) => {
+          llmInputTokens += input;
+          llmOutputTokens += output;
+        }),
       };
 
       // Run before_tool_call hooks; build exec list with effective args

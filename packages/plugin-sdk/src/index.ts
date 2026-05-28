@@ -24,7 +24,7 @@ import type {
   ToolRegistry,
   VoidHooks,
 } from '@ethosagent/types';
-import { DiagnosticStore } from './diagnostic-store';
+import type { DiagnosticStore } from './diagnostic-store';
 import { PluginMonitorRunner } from './monitor-runner';
 
 // ---------------------------------------------------------------------------
@@ -501,8 +501,12 @@ export class PluginApiImpl implements EthosPluginApi {
       getSecret: (key) => this.getSecret(key),
       kvStore: {
         get: async (k) => store.get(k) ?? null,
-        set: async (k, v) => { store.set(k, v); },
-        delete: async (k) => { store.delete(k); },
+        set: async (k, v) => {
+          store.set(k, v);
+        },
+        delete: async (k) => {
+          store.delete(k);
+        },
         list: async (prefix) => [...store.keys()].filter((k) => k.startsWith(prefix)),
       },
       emit: (event, payload) => this.emit(event, payload),
@@ -679,7 +683,6 @@ export type {
   ToolResult,
   VoidHooks,
 } from '@ethosagent/types';
-
-export { DiagnosticStore } from './diagnostic-store';
 export { ContextStore } from './context-registry';
+export { DiagnosticStore } from './diagnostic-store';
 export { OAuthCoordinatorImpl } from './oauth-coordinator';

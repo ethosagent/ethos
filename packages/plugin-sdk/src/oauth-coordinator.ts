@@ -2,13 +2,16 @@ import { randomUUID } from 'node:crypto';
 import type { NotificationRouter, OAuthConfig } from '@ethosagent/types';
 
 export class OAuthCoordinatorImpl {
-  private readonly pending = new Map<string, {
-    pluginId: string;
-    sessionKey: string;
-    config: OAuthConfig;
-    pendingUserMessage: string;
-    redirectUri: string;
-  }>();
+  private readonly pending = new Map<
+    string,
+    {
+      pluginId: string;
+      sessionKey: string;
+      config: OAuthConfig;
+      pendingUserMessage: string;
+      redirectUri: string;
+    }
+  >();
 
   beginFlow(opts: {
     pluginId: string;

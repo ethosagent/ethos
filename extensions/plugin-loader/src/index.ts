@@ -410,9 +410,7 @@ export class PluginLoader {
       result: HealthCheckResult;
     }> = [];
 
-    const targets = pluginId
-      ? [this.apis.get(pluginId)].filter(Boolean)
-      : [...this.apis.values()];
+    const targets = pluginId ? [this.apis.get(pluginId)].filter(Boolean) : [...this.apis.values()];
 
     for (const api of targets) {
       if (!api) continue;

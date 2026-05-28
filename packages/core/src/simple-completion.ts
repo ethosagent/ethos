@@ -1,5 +1,4 @@
-import type { LLMProvider } from '@ethosagent/types';
-import type { SimpleCompletion, SimpleCompletionOptions } from '@ethosagent/types';
+import type { LLMProvider, SimpleCompletion, SimpleCompletionOptions } from '@ethosagent/types';
 
 export class SimpleCompletionImpl implements SimpleCompletion {
   constructor(
@@ -14,15 +13,11 @@ export class SimpleCompletionImpl implements SimpleCompletion {
     let inputTokens = 0;
     let outputTokens = 0;
 
-    const stream = this.provider.complete(
-      [{ role: 'user', content: prompt }],
-      [],
-      {
-        system: options?.systemPrompt,
-        maxTokens: options?.maxTokens ?? 1024,
-        modelOverride: model !== this.provider.model ? model : undefined,
-      },
-    );
+    const stream = this.provider.complete([{ role: 'user', content: prompt }], [], {
+      system: options?.systemPrompt,
+      maxTokens: options?.maxTokens ?? 1024,
+      modelOverride: model !== this.provider.model ? model : undefined,
+    });
 
     for await (const chunk of stream) {
       if (chunk.type === 'text_delta') text += chunk.text;

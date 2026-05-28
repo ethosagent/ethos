@@ -50,6 +50,7 @@ export {
   LazyOnDemandPolicy,
   MemoryConflictError,
 } from './memory-policies';
+export { DefaultNotificationRouter } from './notification-router';
 export type { AgentLoopObservability } from './observability/agent-loop-observability';
 export { assertWithinBase, BoundaryEscapeError } from './path-boundary';
 export type { PluginFactory } from './plugin-registry';
@@ -62,9 +63,8 @@ export { InMemoryRequestDumpStore } from './request-dump-store';
 export { stripAnsiEscapes } from './sanitize-output';
 export type { SecretsBackend } from './scoped';
 export { ScopedFetchImpl, ScopedFsImpl, ScopedProcessImpl, ScopedSecretsImpl } from './scoped';
-export { applyTemporalDecay, parseTemporalBound, toJournalKey } from './temporal';
 export { SimpleCompletionImpl } from './simple-completion';
-export { DefaultNotificationRouter } from './notification-router';
+export { applyTemporalDecay, parseTemporalBound, toJournalKey } from './temporal';
 export { DefaultToolResultReducerRegistry } from './tool-reducer-registry';
 export { DefaultToolRegistry } from './tool-registry';
 export { SsrfError, type ValidateUrlOptions, validateUrl } from './url-validator';
