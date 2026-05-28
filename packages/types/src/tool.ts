@@ -156,6 +156,40 @@ export interface Tool<TArgs = unknown> {
   outputIsUntrusted?: boolean;
 }
 
+/**
+ * Serializable request envelope sent from the registry to the transport.
+ * All fields are JSON-serializable — no live objects, no callbacks.
+ */
+export interface ToolExecuteRequest {
+  toolCallId: string;
+  name: string;
+  args: unknown;
+  sessionId: string;
+  sessionKey: string;
+  platform: string;
+  workingDir: string;
+  personalityId?: string;
+  teamId?: string;
+  agentId?: string;
+  memoryScopeId?: string;
+  userScopeId?: string;
+  currentTurn: number;
+  messageCount: number;
+  resultBudgetChars: number;
+  networkPolicy?: { allow?: string[]; deny?: string[]; allow_private_urls?: boolean };
+  dryRun?: boolean;
+}
+
+/**
+ * Protocol boundary between core (AgentLoop + ToolRegistry) and tool execution.
+ * `signal` is a separate param — lifecycle control, not payload.
+ * Local transport propagates it directly; an HTTP transport uses it to abort
+ * the underlying fetch.
+ */
+export interface ToolTransport {
+  execute(request: ToolExecuteRequest, signal: AbortSignal): Promise<ToolResult>;
+}
+
 /** Options for filtering tools beyond the `allowedTools` name list. */
 export interface ToolFilterOpts {
   /**

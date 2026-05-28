@@ -315,7 +315,7 @@ export function ActivityPage() {
 
   const activeSessionId = sessionFilter ?? sessions[0]?.id ?? null;
 
-  const completedGroupCount = useMemo(
+  const _completedGroupCount = useMemo(
     () => groups.filter((g) => !g.isLive && g.sessionId === activeSessionId).length,
     [groups, activeSessionId],
   );

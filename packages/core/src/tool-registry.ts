@@ -3,17 +3,20 @@ import type {
   Tool,
   ToolCapabilities,
   ToolContext,
+  ToolExecuteRequest,
   ToolFilterOpts,
   ToolReducerContext,
   ToolRegistry,
   ToolResult,
   ToolResultReducer,
   ToolResultReducerRegistry,
+  ToolTransport,
 } from '@ethosagent/types';
 import type { CapabilityBackends } from './capability-resolver';
-import { resolveCapabilities } from './capability-resolver';
 import type { CapabilityValidationError } from './capability-validator';
 import { validateRegistration } from './capability-validator';
+import type { LocalToolTransportLiveCtx } from './local-tool-transport';
+import { LocalToolTransport } from './local-tool-transport';
 
 function needsBackends(caps: ToolCapabilities | undefined): boolean {
   if (!caps) return false;
@@ -84,10 +87,25 @@ export class DefaultToolRegistry implements ToolRegistry {
   private readonly tools = new Map<string, ToolEntry>();
   private readonly backends?: CapabilityBackends;
   private readonly reducers?: ToolResultReducerRegistry;
+  private readonly transport: ToolTransport;
 
-  constructor(backends?: CapabilityBackends, reducers?: ToolResultReducerRegistry) {
+  // Per-turn live context — updated by executeParallel before dispatching.
+  private turnLiveCtx: LocalToolTransportLiveCtx = { emit: () => {} };
+
+  constructor(
+    backends?: CapabilityBackends,
+    reducers?: ToolResultReducerRegistry,
+    transport?: ToolTransport,
+  ) {
     this.backends = backends;
     this.reducers = reducers;
+    this.transport =
+      transport ??
+      new LocalToolTransport(
+        (name) => this.tools.get(name)?.tool,
+        backends,
+        () => this.turnLiveCtx,
+      );
   }
 
   register(tool: Tool, opts?: { pluginId?: string }): void {
@@ -214,6 +232,14 @@ export class DefaultToolRegistry implements ToolRegistry {
   ): Promise<Array<{ toolCallId: string; name: string; result: ToolResult }>> {
     const perCallBudget = Math.floor(ctx.resultBudgetChars / Math.max(calls.length, 1));
 
+    // Update live turn context for the default LocalToolTransport
+    this.turnLiveCtx = {
+      emit: ctx.emit,
+      readMtimes: ctx.readMtimes,
+      storage: ctx.storage,
+      inboundAttachments: turnAttachments,
+    };
+
     const results = await Promise.allSettled(
       calls.map(async (call) => {
         const entry = this.tools.get(call.name);
@@ -294,33 +320,43 @@ export class DefaultToolRegistry implements ToolRegistry {
           };
         }
 
-        const budget = Math.min(perCallBudget, entry.tool.maxResultChars ?? perCallBudget);
-        const toolCtx: ToolContext = { ...ctx, resultBudgetChars: budget };
+        const cappedBudget = Math.min(perCallBudget, entry.tool.maxResultChars ?? perCallBudget);
 
         try {
-          if (needsBackends(entry.tool.capabilities) && this.backends) {
-            const resolved = resolveCapabilities(
-              entry.tool.name,
-              entry.tool.capabilities,
-              { sessionId: ctx.sessionId, personalityId: ctx.personalityId },
-              { ...this.backends, inboundAttachments: turnAttachments },
-            );
-            Object.assign(toolCtx, resolved);
-          }
-          const rawResult = await entry.tool.execute(call.args, toolCtx);
+          const request: ToolExecuteRequest = {
+            toolCallId: call.toolCallId,
+            name: call.name,
+            args: call.args,
+            sessionId: ctx.sessionId,
+            sessionKey: ctx.sessionKey,
+            platform: ctx.platform,
+            workingDir: ctx.workingDir,
+            personalityId: ctx.personalityId,
+            teamId: ctx.teamId,
+            agentId: ctx.agentId,
+            memoryScopeId: ctx.memoryScopeId,
+            userScopeId: ctx.userScopeId,
+            currentTurn: ctx.currentTurn,
+            messageCount: ctx.messageCount,
+            resultBudgetChars: cappedBudget,
+            networkPolicy: ctx.networkPolicy,
+            dryRun: ctx.dryRun,
+          };
+
+          const rawResult = await this.transport.execute(request, ctx.abortSignal);
           // Apply reducer before budget trim so budget sees post-reduced text
           const reducer = this.reducers?.get(call.name);
           const result = reducer
             ? safeReduce(reducer, rawResult, { args: call.args, turnCount: ctx.currentTurn ?? 0 })
             : rawResult;
           // Post-trim result to budget
-          if (result.ok && result.value.length > budget) {
+          if (result.ok && result.value.length > cappedBudget) {
             return {
               toolCallId: call.toolCallId,
               name: call.name,
               result: {
                 ok: true,
-                value: `${result.value.slice(0, budget)}\n[truncated — ${result.value.length} chars total]`,
+                value: `${result.value.slice(0, cappedBudget)}\n[truncated — ${result.value.length} chars total]`,
               } as ToolResult,
             };
           }

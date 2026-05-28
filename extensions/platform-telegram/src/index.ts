@@ -660,6 +660,7 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
    * app.post('/telegram/webhook', adapter.webhook);
    * ```
    */
+  // biome-ignore lint/suspicious/noExplicitAny: grammy's webhookCallback returns an Express-typed handler
   get webhook(): ((...args: any[]) => any) | undefined {
     return this.webhookCb;
   }

@@ -144,7 +144,6 @@ export function registerMessageEvents(
       return;
     }
 
-
     const result = await triageMessage(raw as unknown as RawSlackMessage, triage);
     if (result.envelope && triage.backfillState) {
       const channelId = result.envelope.chatId;

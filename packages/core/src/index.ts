@@ -41,6 +41,8 @@ export { NoopMemoryProvider } from './defaults/noop-memory';
 export { DefaultPersonalityRegistry } from './defaults/noop-personality';
 export { redactArgs, synthesizeDryRunCapResult, synthesizeDryRunResult } from './dry-run';
 export { DefaultHookRegistry } from './hook-registry';
+export type { LocalToolTransportLiveCtx } from './local-tool-transport';
+export { LocalToolTransport } from './local-tool-transport';
 export {
   EagerPrefetchPolicy,
   LastWriteWinsPolicy,
