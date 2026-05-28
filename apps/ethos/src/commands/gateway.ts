@@ -265,8 +265,9 @@ export async function runGatewayStart(): Promise<void> {
     hasEmailConfig;
 
   if (!hasAnyPlatform) {
-    console.log(`${c.red}No platform configured. Run: ethos gateway setup${c.reset}`);
-    process.exit(1);
+    console.log(
+      `${c.dim}No platform configured — gateway idling. Run: ethos gateway setup to add one.${c.reset}`,
+    );
   }
 
   // Multi-bot routing has a known limitation in v1: email and discord
@@ -583,9 +584,8 @@ export async function runGatewayStart(): Promise<void> {
 
   if (adapters.length === 0) {
     console.log(
-      `${c.red}No adapters could be started. Either no platform is configured, or every configured platform's SDK failed to load.${c.reset}`,
+      `${c.dim}No adapters started — gateway idling. Configure a platform to activate.${c.reset}`,
     );
-    process.exit(1);
   }
 
   // Wire all adapters → gateway. Telegram and Slack adapters stamp
