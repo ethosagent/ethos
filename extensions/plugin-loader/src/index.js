@@ -12,7 +12,7 @@ import { canInstall, deriveTier, scanPluginCode } from '@ethosagent/safety-scann
 import { FsStorage } from '@ethosagent/storage-fs';
 import { readLockfile } from './lockfile';
 
-export { readLockfile, writeLockfile, computeIntegrity, verifyIntegrity } from './lockfile';
+export { computeIntegrity, readLockfile, verifyIntegrity, writeLockfile } from './lockfile';
 
 export class PluginLoader {
   registries;
@@ -315,9 +315,7 @@ export class PluginLoader {
     const pluginsDir = join(this.dataDir, 'plugins');
     const exactSpec = `${entry.package}@${entry.version}`;
     const registryArg =
-      entry.registry !== 'https://registry.npmjs.org'
-        ? `--registry=${entry.registry}`
-        : '';
+      entry.registry !== 'https://registry.npmjs.org' ? `--registry=${entry.registry}` : '';
 
     try {
       execSync(

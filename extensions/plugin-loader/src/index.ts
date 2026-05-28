@@ -25,10 +25,10 @@ import {
 } from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { HealthCheckResult, Logger, PlatformAdapter, Storage } from '@ethosagent/types';
-import { readLockfile, type PluginLockEntry } from './lockfile';
+import { type PluginLockEntry, readLockfile } from './lockfile';
 
-export { readLockfile, writeLockfile, computeIntegrity, verifyIntegrity } from './lockfile';
 export type { PluginLockEntry, PluginLockfile } from './lockfile';
+export { computeIntegrity, readLockfile, verifyIntegrity, writeLockfile } from './lockfile';
 
 export interface InstalledPluginManifest {
   /** The plugin's id — `ethos.id` if declared, else `name`. */
@@ -424,9 +424,7 @@ export class PluginLoader {
     const pluginsDir = join(this.dataDir, 'plugins');
     const exactSpec = `${entry.package}@${entry.version}`;
     const registryArg =
-      entry.registry !== 'https://registry.npmjs.org'
-        ? `--registry=${entry.registry}`
-        : '';
+      entry.registry !== 'https://registry.npmjs.org' ? `--registry=${entry.registry}` : '';
 
     try {
       execSync(
