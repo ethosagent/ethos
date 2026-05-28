@@ -453,6 +453,18 @@ export const PluginInfoSchema = z.object({
 });
 export type PluginInfo = z.infer<typeof PluginInfoSchema>;
 
+export const CredentialKeyInfoSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  type: z.enum(['secret', 'text']),
+  description: z.string().nullable(),
+  refreshHint: z.enum(['daily', 'weekly', 'manual']).nullable(),
+  required: z.boolean().nullable(),
+  isSet: z.boolean(),
+  updatedAt: z.string().nullable(),
+});
+export type CredentialKeyInfo = z.infer<typeof CredentialKeyInfoSchema>;
+
 export const McpTransportSchema = z.enum(['stdio', 'sse', 'streamable-http']);
 
 export const McpServerInfoSchema = z.object({

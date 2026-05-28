@@ -7,9 +7,14 @@ export class PluginApiImpl {
   registeredTools = [];
   registeredInjectors = [];
   registeredPersonalities = [];
-  constructor(pluginId, registries) {
+  credentialStorage;
+  credentialBasePath;
+  credentialUpdateHandlers = [];
+  constructor(pluginId, registries, credentialOpts) {
     this.pluginId = pluginId;
     this.registries = registries;
+    this.credentialStorage = credentialOpts?.storage ?? null;
+    this.credentialBasePath = credentialOpts?.basePath ?? null;
   }
   registerTool(tool) {
     // Tag the tool with this plugin's id so AgentLoop can gate it per personality.
@@ -67,6 +72,43 @@ export class PluginApiImpl {
     }
     this.registries.platformAdapters.set(name, factory);
   }
+  // ---- Credential methods ------------------------------------------------
+  credPath(key) {
+    return `${this.credentialBasePath}/credentials/${key}`;
+  }
+  hasSecret(key) {
+    if (!this.credentialStorage || !this.credentialBasePath) return false;
+    return this.credentialStorage.existsSync(this.credPath(key));
+  }
+  async getSecret(key) {
+    if (!this.credentialStorage || !this.credentialBasePath) return null;
+    return this.credentialStorage.read(this.credPath(key));
+  }
+  async setSecret(key, value) {
+    if (!this.credentialStorage || !this.credentialBasePath) {
+      throw new Error(`Plugin "${this.pluginId}" has no credential storage configured`);
+    }
+    const dir = `${this.credentialBasePath}/credentials`;
+    await this.credentialStorage.mkdir(dir);
+    await this.credentialStorage.writeAtomic(this.credPath(key), value);
+    await this.credentialStorage.writeAtomic(
+      `${this.credPath(key)}.meta`,
+      JSON.stringify({ updatedAt: new Date().toISOString() }),
+    );
+    await this.fireCredentialUpdate(key);
+  }
+  onCredentialUpdate(handler) {
+    this.credentialUpdateHandlers.push(handler);
+    return () => {
+      const idx = this.credentialUpdateHandlers.indexOf(handler);
+      if (idx >= 0) this.credentialUpdateHandlers.splice(idx, 1);
+    };
+  }
+  async fireCredentialUpdate(key) {
+    for (const handler of this.credentialUpdateHandlers) {
+      await handler(key);
+    }
+  }
   /** Remove everything this plugin registered. Called by PluginLoader.unload(). */
   cleanup() {
     // Hooks — HookRegistry tracks by pluginId
@@ -82,5 +124,7 @@ export class PluginApiImpl {
       this.registries.injectorPluginIds.delete(inj);
     }
     // Personalities — no unregister method; they stay (harmless)
+    // Credential update handlers
+    this.credentialUpdateHandlers.length = 0;
   }
 }

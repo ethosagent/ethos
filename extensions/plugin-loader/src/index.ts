@@ -8,12 +8,13 @@ import {
   type OpenClawCompatCallbacks,
 } from '@ethosagent/openclaw-compat';
 import {
+  type CredentialDeclaration,
   checkPluginContractMajor,
   type EthosPluginPackageJson,
   isEthosPlugin,
 } from '@ethosagent/plugin-contract';
 import type { EthosPlugin, PluginRegistries } from '@ethosagent/plugin-sdk';
-import { PluginApiImpl } from '@ethosagent/plugin-sdk';
+import { type CredentialStorage, PluginApiImpl } from '@ethosagent/plugin-sdk';
 import {
   canInstall,
   deriveTier,
@@ -39,6 +40,8 @@ export interface InstalledPluginManifest {
   pluginContractMajor: number | null;
   /** Plugin dialect — ethos-native or openclaw compat shim. */
   dialect: 'ethos' | 'openclaw';
+  /** Credential declarations from the plugin's `ethos.credentials` manifest field. */
+  credentials: CredentialDeclaration[];
 }
 
 // ---------------------------------------------------------------------------
@@ -55,6 +58,13 @@ export interface PluginLoaderOptions {
    * The wiring layer uses this to register the adapter with the Gateway.
    */
   onPlatformAdapterRegistered?: (pluginId: string, adapter: PlatformAdapter) => void;
+  /** Credential storage backend. Defaults to a new FsStorage instance.
+   *  Must implement `existsSync` in addition to the Storage interface. */
+  credentialStorage?: CredentialStorage;
+  /** Ethos data directory (e.g. `~/.ethos`). Credential files are stored
+   *  under `<dataDir>/plugins/<pluginId>/credentials/`. Defaults to
+   *  `$HOME/.ethos`. Override in tests with a temporary directory. */
+  dataDir?: string;
 }
 
 export class PluginLoader {
@@ -65,10 +75,16 @@ export class PluginLoader {
   private readonly pluginSkillSources: { label: string; dir: string }[] = [];
   private readonly plugins = new Map<string, EthosPlugin>();
   private readonly compatCallbacks: OpenClawCompatCallbacks;
+  private readonly credentialStorage: CredentialStorage;
+  private readonly dataDir: string;
+  private readonly manifests = new Map<string, EthosPluginPackageJson>();
 
   constructor(registries: PluginRegistries, opts: PluginLoaderOptions = {}) {
     this.registries = registries;
-    this.storage = opts.storage ?? new FsStorage();
+    const defaultFsStorage = new FsStorage();
+    this.storage = opts.storage ?? defaultFsStorage;
+    this.credentialStorage = opts.credentialStorage ?? (defaultFsStorage as CredentialStorage);
+    this.dataDir = opts.dataDir ?? join(homedir(), '.ethos');
     this.logger = opts.logger ?? noopLogger;
     this.compatCallbacks = {
       onPlatformAdapter: opts.onPlatformAdapterRegistered,
@@ -126,6 +142,11 @@ export class PluginLoader {
     // Read package.json once — used for skills_dir discovery, contract check, and permissions.
     const pkgSrc = await this.storage.read(join(dir, 'package.json'));
     const pkgJson = pkgSrc ? (JSON.parse(pkgSrc) as Record<string, unknown>) : {};
+
+    // Store manifest for credential declaration lookups
+    if (pkgSrc) {
+      this.manifests.set(id, pkgJson as unknown as EthosPluginPackageJson);
+    }
 
     // Skills-dir: any package declaring ethos.skills_dir contributes skills
     // without needing an activate() entry point.
@@ -300,6 +321,7 @@ export class PluginLoader {
         // not `@ethosagent/tools-nse-market-data`).
         const declaredId = ethosNm?.id as string | undefined;
         const pluginId = declaredId ?? name.replace(/^@[^/]+\//, '');
+        this.manifests.set(pluginId, raw as EthosPluginPackageJson);
         await this.activatePlugin(pluginId, mod);
       } catch {
         // skip
@@ -352,6 +374,112 @@ export class PluginLoader {
   }
 
   // ---------------------------------------------------------------------------
+  // Credential management
+  // ---------------------------------------------------------------------------
+
+  /** Set a credential value for a loaded plugin. Throws if the plugin is not loaded. */
+  async setCredential(pluginId: string, key: string, value: string): Promise<void> {
+    const impl = this.apis.get(pluginId);
+    if (!impl) throw new Error(`Plugin "${pluginId}" is not loaded`);
+    await impl.setSecret(key, value);
+  }
+
+  /** Read credential metadata (updatedAt timestamp). Returns null if unset. */
+  async getCredentialMeta(pluginId: string, key: string): Promise<{ updatedAt: string } | null> {
+    const basePath = join(this.dataDir, 'plugins', pluginId);
+    const metaPath = `${basePath}/credentials/${key}.meta`;
+    const raw = await this.credentialStorage.read(metaPath);
+    if (raw === null) return null;
+    try {
+      return JSON.parse(raw) as { updatedAt: string };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Remove a credential and its metadata for a plugin. */
+  async clearCredential(pluginId: string, key: string): Promise<void> {
+    const basePath = join(this.dataDir, 'plugins', pluginId, 'credentials');
+    const credPath = `${basePath}/${key}`;
+    const metaPath = `${credPath}.meta`;
+    await this.credentialStorage.remove(credPath).catch(() => {});
+    await this.credentialStorage.remove(metaPath).catch(() => {});
+  }
+
+  /**
+   * List all credential keys for a plugin, merging manifest declarations
+   * with on-disk credential state. Returns declared credentials (from
+   * `ethos.credentials` in package.json) enriched with `isSet` / `updatedAt`,
+   * plus any undeclared keys found on disk.
+   */
+  async listCredentialKeys(pluginId: string): Promise<
+    Array<{
+      key: string;
+      isSet: boolean;
+      updatedAt: string | null;
+      label: string;
+      type: 'secret' | 'text';
+      description?: string;
+      refreshHint?: 'daily' | 'weekly' | 'manual';
+      required?: boolean;
+    }>
+  > {
+    const declared = this.readDeclaredCredentials(pluginId);
+    const basePath = join(this.dataDir, 'plugins', pluginId, 'credentials');
+
+    const result: Array<{
+      key: string;
+      isSet: boolean;
+      updatedAt: string | null;
+      label: string;
+      type: 'secret' | 'text';
+      description?: string;
+      refreshHint?: 'daily' | 'weekly' | 'manual';
+      required?: boolean;
+    }> = [];
+
+    const seenKeys = new Set<string>();
+
+    for (const cred of declared) {
+      seenKeys.add(cred.key);
+      const meta = await this.getCredentialMeta(pluginId, cred.key);
+      const isSet = await this.credentialStorage.exists(`${basePath}/${cred.key}`);
+      result.push({
+        key: cred.key,
+        isSet,
+        updatedAt: meta?.updatedAt ?? null,
+        label: cred.label,
+        type: cred.type,
+        description: cred.description,
+        refreshHint: cred.refreshHint,
+        required: cred.required,
+      });
+    }
+
+    // Scan for undeclared credentials on disk
+    const entries = await this.credentialStorage.list(basePath).catch(() => [] as string[]);
+    for (const name of entries) {
+      if (name.endsWith('.meta')) continue;
+      if (seenKeys.has(name)) continue;
+      const meta = await this.getCredentialMeta(pluginId, name);
+      result.push({
+        key: name,
+        isSet: true,
+        updatedAt: meta?.updatedAt ?? null,
+        label: name,
+        type: 'text',
+      });
+    }
+
+    return result;
+  }
+
+  private readDeclaredCredentials(pluginId: string): CredentialDeclaration[] {
+    const manifest = this.manifests.get(pluginId);
+    return manifest?.ethos?.credentials ?? [];
+  }
+
+  // ---------------------------------------------------------------------------
   // Internal
   // ---------------------------------------------------------------------------
 
@@ -377,7 +505,11 @@ export class PluginLoader {
       await this.unload(id);
     }
 
-    const api = new PluginApiImpl(id, this.registries);
+    const basePath = join(this.dataDir, 'plugins', id);
+    const api = new PluginApiImpl(id, this.registries, {
+      storage: this.credentialStorage,
+      basePath,
+    });
 
     try {
       await mod.activate(api);
@@ -399,7 +531,11 @@ export class PluginLoader {
     id: string,
     registerFn: (...args: unknown[]) => unknown,
   ): Promise<void> {
-    const ethosApi = new PluginApiImpl(id, this.registries);
+    const basePath = join(this.dataDir, 'plugins', id);
+    const ethosApi = new PluginApiImpl(id, this.registries, {
+      storage: this.credentialStorage,
+      basePath,
+    });
     const shim = createOpenClawApiShim(id, ethosApi, this.compatCallbacks);
 
     try {
@@ -598,6 +734,7 @@ function toInstalledPluginManifest(
     path: pluginDir,
     pluginContractMajor: manifest.ethos?.pluginContractMajor ?? null,
     dialect,
+    credentials: manifest.ethos?.credentials ?? [],
   };
 }
 

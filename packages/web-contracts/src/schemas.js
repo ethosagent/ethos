@@ -370,6 +370,16 @@ export const PluginInfoSchema = z.object({
   /** Declared plugin contract major version, or null when the manifest doesn't pin one. */
   pluginContractMajor: z.number().int().nullable(),
 });
+export const CredentialKeyInfoSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  type: z.enum(['secret', 'text']),
+  description: z.string().nullable(),
+  refreshHint: z.enum(['daily', 'weekly', 'manual']).nullable(),
+  required: z.boolean().nullable(),
+  isSet: z.boolean(),
+  updatedAt: z.string().nullable(),
+});
 export const McpTransportSchema = z.enum(['stdio', 'sse', 'streamable-http']);
 export const McpServerInfoSchema = z.object({
   name: z.string(),

@@ -5,6 +5,15 @@
 export type { ContractCompatResult } from './version';
 export { checkPluginContractMajor, PLUGIN_CONTRACT_MAJOR } from './version';
 
+export interface CredentialDeclaration {
+  key: string;
+  label: string;
+  type: 'secret' | 'text';
+  description?: string;
+  refreshHint?: 'daily' | 'weekly' | 'manual';
+  required?: boolean;
+}
+
 export interface EthosPluginPackageJson {
   name: string;
   version: string;
@@ -22,6 +31,7 @@ export interface EthosPluginPackageJson {
     pluginContractMajor?: number;
     id?: string;
     skills_dir?: string;
+    credentials?: CredentialDeclaration[];
   };
 }
 
@@ -62,6 +72,24 @@ export function validatePluginPackageJson(raw: unknown): ValidationResult {
     errors.push('Missing "ethos" field — add { "ethos": { "type": "plugin" } } to package.json');
   } else if (ethos.type !== 'plugin') {
     errors.push(`"ethos.type" must be "plugin", got "${ethos.type}"`);
+  }
+
+  // Credential declarations
+  if (ethos && Array.isArray(ethos.credentials)) {
+    const keyPattern = /^[a-zA-Z0-9_-]+$/;
+    for (const [i, cred] of (ethos.credentials as unknown[]).entries()) {
+      const c = cred as Record<string, unknown>;
+      const prefix = `ethos.credentials[${i}]`;
+      if (typeof c.key !== 'string' || !keyPattern.test(c.key)) {
+        errors.push(`${prefix}.key must match /^[a-zA-Z0-9_-]+$/`);
+      }
+      if (typeof c.label !== 'string' || c.label.length === 0) {
+        errors.push(`${prefix}.label must be a non-empty string`);
+      }
+      if (c.type !== 'secret' && c.type !== 'text') {
+        errors.push(`${prefix}.type must be "secret" or "text"`);
+      }
+    }
   }
 
   // Soft checks

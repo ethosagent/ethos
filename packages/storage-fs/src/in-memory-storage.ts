@@ -317,6 +317,13 @@ export class InMemoryStorage implements Storage {
     return this.dirModes.get(path);
   }
 
+  /** Synchronous existence check. Not on the Storage interface (which is
+   *  async-only) — exists as a concrete-class method for the `hasSecret`
+   *  use case in PluginApiImpl. */
+  existsSync(path: string): boolean {
+    return this.nodes.has(path);
+  }
+
   /** Drop all state. Useful for `beforeEach` resets without re-instantiating. */
   reset(): void {
     this.nodes.clear();

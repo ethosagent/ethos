@@ -25,6 +25,28 @@ export class PluginsService {
   constructor(opts) {
     this.opts = opts;
   }
+  async setCredential(pluginId, key, value) {
+    if (!this.opts.pluginLoader) throw new Error('Plugin loader not available');
+    await this.opts.pluginLoader.setCredential(pluginId, key, value);
+  }
+  async getCredentialMeta(pluginId, key) {
+    if (!this.opts.pluginLoader) return null;
+    return this.opts.pluginLoader.getCredentialMeta(pluginId, key);
+  }
+  async listCredentialKeys(pluginId) {
+    if (!this.opts.pluginLoader) return [];
+    const keys = await this.opts.pluginLoader.listCredentialKeys(pluginId);
+    return keys.map((k) => ({
+      key: k.key,
+      label: k.label,
+      type: k.type,
+      description: k.description ?? null,
+      refreshHint: k.refreshHint ?? null,
+      required: k.required ?? null,
+      isSet: k.isSet,
+      updatedAt: k.updatedAt,
+    }));
+  }
   async install(packageSpec) {
     const dir = join(this.opts.dataDir, 'plugins');
     await mkdir(dir, { recursive: true });

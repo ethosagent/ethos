@@ -10,4 +10,16 @@ export const pluginsRouter = {
     await context.plugins.uninstall(input.pluginId);
     return { ok: true as const };
   }),
+  setCredential: os.plugins.setCredential.handler(async ({ context, input }) => {
+    await context.plugins.setCredential(input.pluginId, input.key, input.value);
+    return { ok: true as const };
+  }),
+  getCredentialMeta: os.plugins.getCredentialMeta.handler(async ({ context, input }) => {
+    const meta = await context.plugins.getCredentialMeta(input.pluginId, input.key);
+    return { updatedAt: meta?.updatedAt ?? null };
+  }),
+  listCredentialKeys: os.plugins.listCredentialKeys.handler(async ({ context, input }) => {
+    const keys = await context.plugins.listCredentialKeys(input.pluginId);
+    return { keys };
+  }),
 };
