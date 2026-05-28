@@ -73,3 +73,35 @@ function redactValue(v, extraPatterns) {
   }
   return v;
 }
+export const PII_PATTERNS = [
+  {
+    label: 'Email',
+    tag: '[REDACTED:email]',
+    regex: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+  },
+  {
+    label: 'Phone (E.164)',
+    tag: '[REDACTED:phone]',
+    regex: /\+?[1-9]\d{1,3}[\s-]?\(?\d{1,4}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}/g,
+  },
+  { label: 'Credit card', tag: '[REDACTED:card]', regex: /\b(?:\d[ -]?){13,16}\b/g },
+  { label: 'SSN (US)', tag: '[REDACTED:ssn]', regex: /\b\d{3}[- ]\d{2}[- ]\d{4}\b/g },
+  { label: 'IBAN', tag: '[REDACTED:iban]', regex: /\b[A-Z]{2}\d{2}[A-Z0-9]{1,30}\b/g },
+];
+export function redactPii(value, extraPatterns) {
+  let out = value;
+  for (const p of PII_PATTERNS) {
+    p.regex.lastIndex = 0;
+    out = out.replace(p.regex, p.tag);
+  }
+  if (extraPatterns) {
+    for (const pat of extraPatterns) {
+      try {
+        out = out.replace(new RegExp(pat, 'g'), '[REDACTED:custom]');
+      } catch {
+        /* skip malformed patterns */
+      }
+    }
+  }
+  return out;
+}
