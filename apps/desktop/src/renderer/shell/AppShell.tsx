@@ -299,7 +299,9 @@ export function AppShell() {
             <ErrorBoundary label="ActivityPage">
               <ActivityPage />
             </ErrorBoundary>
-          ) : null}
+          ) : (
+            <div>coming soon</div>
+          )}
         </div>
         {drawerOpen && (
           <RightDrawer

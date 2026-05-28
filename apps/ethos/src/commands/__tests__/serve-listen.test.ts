@@ -25,13 +25,11 @@ afterEach(async () => {
 });
 
 async function reserveFreePort(): Promise<{ port: number; release: () => Promise<void> }> {
-  // Bind to the wildcard so we collide with @hono/node-server's default
-  // (it binds to '::' / '0.0.0.0' depending on platform). Binding to
-  // 127.0.0.1 only doesn't trigger EADDRINUSE on macOS dual-stack.
+  // Bind to 127.0.0.1 to collide with listenWithFallback's default hostname.
   const blocker = createServer();
   await new Promise<void>((resolve, reject) => {
     blocker.once('error', reject);
-    blocker.listen(0, () => resolve());
+    blocker.listen(0, '127.0.0.1', () => resolve());
   });
   const addr = blocker.address();
   if (!addr || typeof addr === 'string') {
@@ -108,7 +106,7 @@ async function reserveSpecificPort(
   const blocker = createServer();
   await new Promise<void>((resolve, reject) => {
     blocker.once('error', reject);
-    blocker.listen(port, () => resolve());
+    blocker.listen(port, '127.0.0.1', () => resolve());
   });
   return {
     port,
