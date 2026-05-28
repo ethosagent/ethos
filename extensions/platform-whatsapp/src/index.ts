@@ -51,7 +51,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
   private stopped = false;
   private reconnectAttempts = 0;
   private pairingCodeRequested = false;
-  private denyWarnEmitted = false;
+
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private messageHandler?: (message: InboundMessage) => void;
   private botJid = '';
@@ -65,6 +65,15 @@ export class WhatsAppAdapter implements PlatformAdapter {
       config.id ??
       `wa-${config.sessionDir.replace(/[^a-zA-Z0-9]/g, '').slice(-16)}`;
     this.id = `whatsapp:${this.botKey}`;
+
+    const denyUnknown = config.denyUnknown ?? true;
+    if (denyUnknown && (!config.allowedJids || config.allowedJids.length === 0)) {
+      throw new Error(
+        'platform-whatsapp: denyUnknown is true (default) but allowedJids is empty — ' +
+          'all inbound messages would be dropped. Set allowedJids to a non-empty list, ' +
+          'or set denyUnknown: false to allow all senders.',
+      );
+    }
   }
 
   async start(): Promise<void> {
@@ -172,16 +181,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
         const isDm = !jid.endsWith('@g.us');
 
         const denyUnknown = this.config.denyUnknown ?? true;
-        if (denyUnknown) {
-          if (!this.config.allowedJids || this.config.allowedJids.length === 0) {
-            if (!this.denyWarnEmitted) {
-              console.warn(
-                'platform-whatsapp: denyUnknown=true but allowedJids is empty — rejecting all senders. Set allowedJids or denyUnknown=false.',
-              );
-              this.denyWarnEmitted = true;
-            }
-            continue;
-          }
+        if (denyUnknown && this.config.allowedJids) {
           const checkJid = isDm ? jid : (msg.key.participant ?? '');
           const number = checkJid.split('@')[0].replace(/[^0-9]/g, '');
           const matched = this.config.allowedJids.some((allowed) => {

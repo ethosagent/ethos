@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WhatsAppAdapterConfig } from '../index';
+import { WhatsAppAdapter } from '../index';
 
 /**
  * Replicates the denyUnknown filter decision from WhatsAppAdapter's
@@ -61,5 +62,31 @@ describe('WhatsApp denyUnknown filter', () => {
         '12345678900@s.whatsapp.net',
       ),
     ).toBe(false);
+  });
+});
+
+describe('WhatsAppAdapter constructor validation', () => {
+  it('throws when denyUnknown defaults to true and allowedJids is absent', () => {
+    expect(() => new WhatsAppAdapter({ sessionDir: '/tmp/test-wa' })).toThrow(
+      'denyUnknown is true',
+    );
+  });
+
+  it('throws when denyUnknown=true and allowedJids is empty', () => {
+    expect(
+      () => new WhatsAppAdapter({ sessionDir: '/tmp/test-wa', denyUnknown: true, allowedJids: [] }),
+    ).toThrow('denyUnknown is true');
+  });
+
+  it('does not throw when denyUnknown=false', () => {
+    expect(
+      () => new WhatsAppAdapter({ sessionDir: '/tmp/test-wa', denyUnknown: false }),
+    ).not.toThrow();
+  });
+
+  it('does not throw when allowedJids is non-empty', () => {
+    expect(
+      () => new WhatsAppAdapter({ sessionDir: '/tmp/test-wa', allowedJids: ['1234567890'] }),
+    ).not.toThrow();
   });
 });

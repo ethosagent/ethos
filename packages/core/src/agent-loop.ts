@@ -1808,10 +1808,15 @@ export class AgentLoop {
         });
 
         const delimiterEnabled = personality.safety?.injectionDefense?.toolResultDelimiters ?? true;
-        const finalContent =
-          delimiterEnabled && result.ok
-            ? `===TOOL_RESULT_START:${p.name}===\n${llmContent}\n===TOOL_RESULT_END===`
-            : llmContent;
+        let finalContent: string;
+        if (delimiterEnabled && result.ok) {
+          const escaped = llmContent
+            .replace(/===TOOL_RESULT_START/g, '=​==TOOL_RESULT_START')
+            .replace(/===TOOL_RESULT_END/g, '=​==TOOL_RESULT_END');
+          finalContent = `===TOOL_RESULT_START:${p.name}===\n${escaped}\n===TOOL_RESULT_END===`;
+        } else {
+          finalContent = llmContent;
+        }
 
         toolResultContent.push({
           type: 'tool_result',

@@ -453,8 +453,6 @@ export interface EthosConfig {
   storage?: {
     encryption?: boolean;
   };
-  /** Deployment-level PII redaction for channels without per-bot config. */
-  privacy?: { piiRedaction?: boolean };
   /** Whether to auto-install plugins from plugins.lock on personality load.
    *  Config key: plugins.auto_install */
   pluginsAutoInstall?: boolean;

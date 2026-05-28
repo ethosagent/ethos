@@ -146,4 +146,10 @@ describe('c2PatternCheck', () => {
     const overrideHits = r.hits.filter((h) => h.rule === 'c2-system-override');
     expect(overrideHits.length).toBe(1);
   });
+
+  it('does not flag benign mentions of debug/admin mode', () => {
+    expect(c2PatternCheck('debug mode logging is verbose').containsInstructions).toBe(false);
+    expect(c2PatternCheck('the admin mode settings page').containsInstructions).toBe(false);
+    expect(c2PatternCheck('developer mode was introduced in v2').containsInstructions).toBe(false);
+  });
 });

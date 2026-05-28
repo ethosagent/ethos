@@ -88,7 +88,10 @@ export const C2_PATTERNS: Array<{ rule: string; pattern: RegExp }> = [
   },
   { rule: 'c2-exfiltrate-encode', pattern: /(?:base64|url)[\s-]?encode .{0,40}(?:and )?send/i },
   { rule: 'c2-true-purpose', pattern: /your (?:true|real|actual|hidden) purpose is/i },
-  { rule: 'c2-maintenance-mode', pattern: /(?:maintenance|debug|developer|admin) mode/i },
+  {
+    rule: 'c2-maintenance-mode',
+    pattern: /(?:enter|switch to|enable|activate) (?:maintenance|debug|developer|admin) mode/i,
+  },
   { rule: 'c2-new-objective', pattern: /(?:new|updated|real) (?:objective|mission|goal|task):/i },
   { rule: 'c2-system-override', pattern: /SYSTEM OVERRIDE|SYSTEM UPDATE|PRIORITY DIRECTIVE/i },
   {
