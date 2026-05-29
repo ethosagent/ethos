@@ -90,6 +90,7 @@ export function tokensToAntd(tokens: Tokens): ThemeConfig {
  */
 export function tokensToCssVariables(tokens: Tokens): string {
   const { layout, surface } = tokens;
+  const light = isLightSurface(tokens);
   return `:root {
   --ethos-bg: ${surface.bgBase};
   --ethos-bg-elevated: ${surface.bgElevated};
@@ -99,6 +100,10 @@ export function tokensToCssVariables(tokens: Tokens): string {
   --ethos-text: ${surface.textPrimary};
   --ethos-text-dim: ${surface.textSecondary};
   --ethos-text-tertiary: ${surface.textTertiary};
+  --ethos-hover: ${light ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.07)'};
+  --ethos-pressed: ${light ? 'rgba(0,0,0,0.09)' : 'rgba(255,255,255,0.12)'};
+  --ethos-surface-tint: ${light ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.04)'};
+  --ethos-shadow-overlay: ${light ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.5)'};
   --layout-sidebar-expanded: ${layout.sidebarExpandedPx}px;
   --layout-sidebar-collapsed: ${layout.sidebarCollapsedPx}px;
   --layout-right-drawer: ${layout.rightDrawerPx}px;

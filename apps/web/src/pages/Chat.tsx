@@ -234,11 +234,8 @@ export function Chat() {
         <MessageList
           messages={state.messages}
           currentTurn={state.currentTurn}
-          emptyHint={
-            currentSessionId
-              ? 'No messages in this session yet. Send one to get started.'
-              : 'Start the conversation. Tools, files, and skills come along.'
-          }
+          personalityId={personalityId}
+          model={model}
         />
         <TurnStatusBar
           isStreaming={state.isStreaming}
