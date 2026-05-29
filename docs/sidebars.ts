@@ -103,6 +103,7 @@ const sidebars: SidebarsConfig = {
             'building/tutorials/add-a-channel-adapter',
             'building/tutorials/first-mission-control',
             'building/tutorials/build-custom-dashboard',
+            'building/tutorials/build-a-plugin-home-panel',
           ],
         },
         {
