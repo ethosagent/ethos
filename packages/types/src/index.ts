@@ -22,6 +22,7 @@ export * from './personality';
 export * from './platform';
 export * from './plugin';
 export * from './plugin-llm';
+export * from './plugin-panel';
 export * from './plugin-ui';
 export * from './retention';
 export * from './sandbox';

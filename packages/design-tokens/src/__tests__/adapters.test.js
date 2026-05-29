@@ -66,7 +66,6 @@ describe('tokensToChalk', () => {
       },
     };
     const { tokensToChalk } = await import('../chalk');
-    // biome-ignore lint/suspicious/noExplicitAny: stub doesn't implement the full ChalkInstance surface
     const bound = tokensToChalk(stub, DEFAULT_TOKENS, 'reviewer');
     expect(bound.accent).toBe('bound(#F59E0B)');
     expect(bound.success).toBe('bound(#4ADE80)');
@@ -76,7 +75,6 @@ describe('tokensToChalk', () => {
   it('falls back to operator grey for unknown personalities', async () => {
     const stub = { hex: (h) => h };
     const { tokensToChalk } = await import('../chalk');
-    // biome-ignore lint/suspicious/noExplicitAny: stub doesn't implement the full ChalkInstance surface
     const bound = tokensToChalk(stub, DEFAULT_TOKENS, 'unknown-personality');
     expect(bound.accent).toBe('#94A3B8');
   });

@@ -106,6 +106,60 @@ export class PluginsService {
     return { plugins: manifests.map(toWirePlugin), mcpServers };
   }
 
+  async getCredential(pluginId: string, ref: string): Promise<string | null> {
+    if (!this.opts.pluginLoader) return null;
+    return this.opts.pluginLoader.getCredentialValue(pluginId, ref);
+  }
+
+  async credentialPreview(pluginId: string, ref: string): Promise<string | null> {
+    if (!this.opts.pluginLoader) return null;
+    return this.opts.pluginLoader.getCredentialPreview(pluginId, ref);
+  }
+
+  async executeTool(
+    pluginId: string,
+    toolName: string,
+    args?: Record<string, unknown>,
+    toolRegistry?: ToolRegistry,
+  ): Promise<{ ok: boolean; value?: string; error?: string; code?: string }> {
+    // Verify the tool is owned by the requesting plugin.
+    const ownerPluginId = this.opts.pluginToolOwnership?.get(toolName);
+    if (ownerPluginId !== pluginId) {
+      return { ok: false, error: `Tool "${toolName}" is not owned by plugin "${pluginId}"` };
+    }
+    if (!toolRegistry) {
+      return { ok: false, error: 'Tool registry not available' };
+    }
+    const tool = toolRegistry.get(toolName);
+    if (!tool) {
+      return { ok: false, error: `Tool "${toolName}" not found` };
+    }
+    const MAX_RESULT_CHARS = 80_000;
+    try {
+      const result = await tool.execute(args ?? {}, {
+        sessionId: `plugin-panel:${pluginId}`,
+        sessionKey: `plugin-panel:${pluginId}`,
+        platform: 'web-panel',
+        workingDir: this.opts.dataDir,
+        currentTurn: 0,
+        messageCount: 0,
+        abortSignal: AbortSignal.timeout(30_000),
+        emit: () => {},
+        resultBudgetChars: MAX_RESULT_CHARS,
+      });
+      if (result.ok) {
+        const value =
+          result.value.length > MAX_RESULT_CHARS
+            ? `${result.value.slice(0, MAX_RESULT_CHARS)}\n[truncated]`
+            : result.value;
+        return { ok: true, value };
+      }
+      return { ok: false, error: result.error, code: result.code };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   async getPageSpec(pluginId: string): Promise<PluginPageSpec | null> {
     return this.opts.pluginPages?.get(pluginId) ?? null;
   }

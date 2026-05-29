@@ -20,7 +20,11 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AddMcpModal } from '../components/mcp/AddMcpModal';
 import { McpServerActions } from '../components/mcp/McpServerActions';
-import { rpc } from '../rpc';
+import {
+  type PluginCredentialSchema,
+  PluginSettingsDrawer,
+} from '../components/PluginSettingsDrawer';
+import { client, rpc } from '../rpc';
 
 function InstallPluginSection() {
   const { notification } = AntApp.useApp();
@@ -92,6 +96,28 @@ export function Plugins() {
   const isLoading = pluginsLoading || persLoading;
   const [activeTab, setActiveTab] = useState('matrix');
   const [addMcpOpen, setAddMcpOpen] = useState(false);
+  const [settingsPluginId, setSettingsPluginId] = useState<string | null>(null);
+
+  const settingsPlugin = settingsPluginId
+    ? ((pluginsData?.plugins ?? []).find((p) => p.id === settingsPluginId) ?? null)
+    : null;
+
+  const { data: credKeysData } = useQuery({
+    queryKey: ['plugins', 'credentialKeys', settingsPluginId],
+    queryFn: () => {
+      const id = settingsPluginId;
+      if (!id) return { keys: [] };
+      return rpc.plugins.listCredentialKeys({ pluginId: id });
+    },
+    enabled: Boolean(settingsPluginId),
+  });
+
+  const credentials: PluginCredentialSchema[] = (credKeysData?.keys ?? []).map((k) => ({
+    ref: k.key,
+    label: k.label,
+    kind: k.type as 'text' | 'secret',
+    description: k.description ?? undefined,
+  }));
 
   if (pluginsError) {
     return (
@@ -123,7 +149,12 @@ export function Plugins() {
             key: 'matrix',
             label: `Plugins (${plugins.length})`,
             children: (
-              <PluginsMatrix plugins={plugins} personalities={personalities} loading={isLoading} />
+              <PluginsMatrix
+                plugins={plugins}
+                personalities={personalities}
+                loading={isLoading}
+                onSettingsOpen={setSettingsPluginId}
+              />
             ),
           },
           {
@@ -134,6 +165,19 @@ export function Plugins() {
         ]}
       />
       <AddMcpModal open={addMcpOpen} onClose={() => setAddMcpOpen(false)} />
+      {settingsPlugin && (
+        <PluginSettingsDrawer
+          pluginId={settingsPlugin.id}
+          name={settingsPlugin.name}
+          version={settingsPlugin.version}
+          description={settingsPlugin.description ?? undefined}
+          credentials={credentials}
+          tools={[]}
+          theme="dark"
+          client={client}
+          onClose={() => setSettingsPluginId(null)}
+        />
+      )}
     </div>
   );
 }
@@ -147,10 +191,12 @@ function PluginsMatrix({
   plugins,
   personalities,
   loading,
+  onSettingsOpen,
 }: {
   plugins: PluginInfo[];
   personalities: import('@ethosagent/web-contracts').Personality[];
   loading: boolean;
+  onSettingsOpen: (pluginId: string) => void;
 }) {
   const [narrow, setNarrow] = useState(() => window.innerWidth < 900);
 
@@ -195,9 +241,17 @@ function PluginsMatrix({
         />
       ) : null}
       {narrow ? (
-        <PluginsAccordion plugins={plugins} personalities={personalities} />
+        <PluginsAccordion
+          plugins={plugins}
+          personalities={personalities}
+          onSettingsOpen={onSettingsOpen}
+        />
       ) : (
-        <PluginsTable plugins={plugins} personalities={personalities} />
+        <PluginsTable
+          plugins={plugins}
+          personalities={personalities}
+          onSettingsOpen={onSettingsOpen}
+        />
       )}
     </div>
   );
@@ -210,9 +264,11 @@ function PluginsMatrix({
 function PluginsTable({
   plugins,
   personalities,
+  onSettingsOpen,
 }: {
   plugins: PluginInfo[];
   personalities: import('@ethosagent/web-contracts').Personality[];
+  onSettingsOpen: (pluginId: string) => void;
 }) {
   const navigate = useNavigate();
   const personalityCols = personalities.map((pers) => ({
@@ -262,6 +318,16 @@ function PluginsTable({
               </Button>
             ) : null,
         },
+        {
+          title: '',
+          key: 'settings',
+          width: 80,
+          render: (_: unknown, p: PluginInfo) => (
+            <Button size="small" onClick={() => onSettingsOpen(p.id)}>
+              Settings
+            </Button>
+          ),
+        },
       ]}
     />
   );
@@ -274,9 +340,11 @@ function PluginsTable({
 function PluginsAccordion({
   plugins,
   personalities,
+  onSettingsOpen,
 }: {
   plugins: PluginInfo[];
   personalities: import('@ethosagent/web-contracts').Personality[];
+  onSettingsOpen: (pluginId: string) => void;
 }) {
   const navigate = useNavigate();
   return (
@@ -303,16 +371,21 @@ function PluginsAccordion({
                 <span>{pers.name}</span>
               </div>
             ))}
-            {plugin.pluginContractMajor != null && plugin.pluginContractMajor >= 2 ? (
-              <Button
-                size="small"
-                type="link"
-                style={{ alignSelf: 'flex-start', marginTop: 4 }}
-                onClick={() => navigate(`/plugins/${encodeURIComponent(plugin.id)}`)}
-              >
-                View Page
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              {plugin.pluginContractMajor != null && plugin.pluginContractMajor >= 2 ? (
+                <Button
+                  size="small"
+                  type="link"
+                  style={{ alignSelf: 'flex-start' }}
+                  onClick={() => navigate(`/plugins/${encodeURIComponent(plugin.id)}`)}
+                >
+                  View Page
+                </Button>
+              ) : null}
+              <Button size="small" onClick={() => onSettingsOpen(plugin.id)}>
+                Settings
               </Button>
-            ) : null}
+            </div>
           </div>
         ),
       }))}

@@ -7,7 +7,6 @@ const noopLogger = {
   warn: () => {},
   error: () => {},
 };
-// biome-ignore lint/suspicious/noExplicitAny: minimal test stub
 const stubLoop = {};
 describe('EthosMcpServer.serveHttp', () => {
   it('refuses non-loopback hosts', async () => {

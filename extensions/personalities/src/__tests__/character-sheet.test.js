@@ -1,3 +1,6 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: fs_reach values are
+// literal `${self}` / `${shared}` tokens in config.yaml — they resolve at
+// AgentLoop construction, not in the registry, so the renderer sees them verbatim.
 import { describe, expect, it } from 'vitest';
 import { renderCharacterSheet } from '../character-sheet';
 

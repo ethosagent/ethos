@@ -72,7 +72,6 @@ class TestableManager extends McpManager {
       // failure tests we set `failNext` instead.
       if (this.failNext) {
         const err = this.failNext;
-        // biome-ignore lint/suspicious/noExplicitAny: test seam
         real._createTransport = async () => {
           throw err;
         };
@@ -82,7 +81,6 @@ class TestableManager extends McpManager {
     // Splice in the in-memory transport. Preserve the parent class's
     // callback wiring (onToolsChanged) — that's why we call super first
     // and only override _createTransport here.
-    // biome-ignore lint/suspicious/noExplicitAny: test seam
     real._createTransport = async () => transport;
     return real;
   }
@@ -238,12 +236,10 @@ describe('McpManager — boot-flow regression', () => {
     const { clientTransport: tAdded } = await spawnEchoServer('addedTool');
     const onToolsChanged = vi.fn();
     class BootManager extends TestableManager {
-      // biome-ignore lint/suspicious/noExplicitAny: test seam
       _buildClient(config) {
         // For boot-time configs, splice in the boot transport.
         const real = super._buildClient(config);
         if (config.name === 'boot') {
-          // biome-ignore lint/suspicious/noExplicitAny: test seam
           real._createTransport = async () => tBoot;
         }
         return real;

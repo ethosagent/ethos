@@ -156,7 +156,6 @@ export class DiscordAdapter {
       const chunks = chunkText(toNativeMarkdown(message.text), this.maxMessageLength);
       const ids = [];
       for (const chunk of chunks) {
-        // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
         const sent = await channel.send({
           content: chunk,
           allowedMentions: { parse: [] },
@@ -177,12 +176,10 @@ export class DiscordAdapter {
     try {
       const channel = await this.client.channels.fetch(chatId);
       if (channel && 'sendTyping' in channel) {
-        // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
         await channel.sendTyping();
       }
       if (this.postThinkingPlaceholder && channel && 'send' in channel) {
         if (!this.thinkingMessages.has(chatId)) {
-          // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
           const placeholder = await channel.send({
             content: 'Thinking…',
             allowedMentions: { parse: [] },
@@ -205,13 +202,11 @@ export class DiscordAdapter {
       const existingIds = this.chunkMap.get(messageId) ?? [messageId];
       const updatedIds = await reflowChunks(newChunks, existingIds, {
         edit: async (id, chunk) => {
-          // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
           const msg = await channel.messages.fetch(id);
           const edited = await msg.edit(chunk);
           return String(edited.id);
         },
         append: async (chunk) => {
-          // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
           const sent = await channel.send({
             content: chunk,
             allowedMentions: { parse: [] },
@@ -219,7 +214,6 @@ export class DiscordAdapter {
           return String(sent.id);
         },
         deleteId: async (id) => {
-          // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
           const msg = await channel.messages.fetch(id);
           await msg.delete();
         },
@@ -244,7 +238,6 @@ export class DiscordAdapter {
     try {
       const channel = await this.client.channels.fetch(input.chatId);
       if (!channel || !('send' in channel)) return { error: 'Channel not found or not sendable' };
-      // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
       const sent = await channel.send({
         content: input.content,
         components: input.components.map(toActionRowBuilder),
@@ -259,7 +252,6 @@ export class DiscordAdapter {
     try {
       const channel = await this.client.channels.fetch(input.chatId);
       if (!channel || !('messages' in channel)) return { ok: false, error: 'Channel not found' };
-      // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
       const msg = await channel.messages.fetch(input.messageId);
       await msg.edit({
         content: input.content,
@@ -325,7 +317,6 @@ export class DiscordAdapter {
         args: input.args,
       });
       const buttons = approvalPendingButtons(input.approvalId);
-      // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
       const sent = await channel.send({
         embeds: [emb],
         components: [toActionRowBuilder(buttons)],
@@ -348,7 +339,6 @@ export class DiscordAdapter {
       // approvals this is the thread channel, matching where the card was posted.
       const channel = await this.client.channels.fetch(input.chatId);
       if (!channel || !('messages' in channel)) return { ok: false, error: 'Channel not found' };
-      // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
       const msg = await channel.messages.fetch(input.messageTs);
       await msg.edit({ embeds: [emb], components: [] });
       return { ok: true, messageId: input.messageTs };
@@ -377,7 +367,6 @@ export class DiscordAdapter {
       const response = await dispatch(payload, ctx);
       await interaction.editReply({
         content: response.content,
-        // biome-ignore lint/suspicious/noExplicitAny: embed shape matches Discord API
         embeds: response.embeds,
       });
     } catch {
@@ -446,7 +435,6 @@ export class DiscordAdapter {
     try {
       const channel = await this.client.channels.fetch(chatId);
       if (channel && 'messages' in channel) {
-        // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
         const msg = await channel.messages.fetch(placeholderId);
         await msg.delete();
       }
@@ -466,7 +454,6 @@ export class DiscordAdapter {
       const channel = await this.client.channels.fetch(chatId);
       if (channel && 'messages' in channel) {
         for (const msgId of toClear) {
-          // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
           const msg = await channel.messages.fetch(msgId);
           if (this.client.user) {
             await msg.reactions.cache.get(this.receiptReaction)?.users.remove(this.client.user.id);

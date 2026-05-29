@@ -769,4 +769,68 @@ export function registerIpcHandlers(): void {
     store.set('dataDir', req.path);
     return { ok: true, restartRequired: true };
   });
+
+  // -------------------------------------------------------------------------
+  // Plugin IPC handlers — proxy to backend HTTP API
+  // -------------------------------------------------------------------------
+
+  const pluginFetch = async (rpcMethod: string, body: Record<string, unknown> = {}) => {
+    const port = store.get('backendPort', 3001);
+    const res = await fetch(`http://localhost:${port}/rpc/${rpcMethod}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  };
+
+  ipcMain.handle(IPC_CHANNELS['plugin:list'], async () => {
+    return pluginFetch('plugins.list');
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS['plugin:getCredential'],
+    async (_event, req: { pluginId: string; ref: string }) => {
+      return pluginFetch('plugins.getCredential', { pluginId: req.pluginId, ref: req.ref });
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS['plugin:setCredential'],
+    async (_event, req: { pluginId: string; ref: string; value: string }) => {
+      return pluginFetch('plugins.setCredential', {
+        pluginId: req.pluginId,
+        ref: req.ref,
+        value: req.value,
+      });
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS['plugin:credentialPreview'],
+    async (_event, req: { pluginId: string; ref: string }) => {
+      return pluginFetch('plugins.credentialPreview', { pluginId: req.pluginId, ref: req.ref });
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS['plugin:requestOAuth'],
+    async (_event, req: { pluginId: string; oauthRef: string }) => {
+      return pluginFetch('plugins.requestOAuth', {
+        pluginId: req.pluginId,
+        oauthRef: req.oauthRef,
+      });
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS['plugin:executeTool'],
+    async (_event, req: { pluginId: string; toolName: string; args: Record<string, unknown> }) => {
+      return pluginFetch('plugins.executeTool', {
+        pluginId: req.pluginId,
+        toolName: req.toolName,
+        args: req.args,
+      });
+    },
+  );
 }

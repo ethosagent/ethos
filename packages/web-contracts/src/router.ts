@@ -783,6 +783,34 @@ const PluginsInvokeToolForPageOutput = z.object({
   error: z.string().optional(),
 });
 
+const PluginsGetCredentialInput = z.object({
+  pluginId: z.string().min(1),
+  ref: z.string().min(1),
+});
+const PluginsGetCredentialOutput = z.object({
+  value: z.string().nullable(),
+});
+
+const PluginsCredentialPreviewInput = z.object({
+  pluginId: z.string().min(1),
+  ref: z.string().min(1),
+});
+const PluginsCredentialPreviewOutput = z.object({
+  preview: z.string().nullable(),
+});
+
+const PluginsExecuteToolInput = z.object({
+  pluginId: z.string().min(1),
+  toolName: z.string().min(1),
+  args: z.record(z.string(), z.unknown()).optional(),
+});
+const PluginsExecuteToolOutput = z.object({
+  ok: z.boolean(),
+  value: z.string().optional(),
+  error: z.string().optional(),
+  code: z.string().optional(),
+});
+
 /** @experimental */
 const plugins = {
   list: oc.output(PluginsListOutput),
@@ -795,6 +823,9 @@ const plugins = {
     .output(PluginsListCredentialKeysOutput),
   getPageSpec: oc.input(PluginsGetPageSpecInput).output(PluginsGetPageSpecOutput),
   invokeToolForPage: oc.input(PluginsInvokeToolForPageInput).output(PluginsInvokeToolForPageOutput),
+  getCredential: oc.input(PluginsGetCredentialInput).output(PluginsGetCredentialOutput),
+  credentialPreview: oc.input(PluginsCredentialPreviewInput).output(PluginsCredentialPreviewOutput),
+  executeTool: oc.input(PluginsExecuteToolInput).output(PluginsExecuteToolOutput),
 };
 
 // ---------------------------------------------------------------------------

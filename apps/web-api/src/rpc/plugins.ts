@@ -34,4 +34,20 @@ export const pluginsRouter = {
       context.toolRegistry,
     );
   }),
+  getCredential: os.plugins.getCredential.handler(async ({ context, input }) => {
+    const value = await context.plugins.getCredential(input.pluginId, input.ref);
+    return { value };
+  }),
+  credentialPreview: os.plugins.credentialPreview.handler(async ({ context, input }) => {
+    const preview = await context.plugins.credentialPreview(input.pluginId, input.ref);
+    return { preview };
+  }),
+  executeTool: os.plugins.executeTool.handler(async ({ context, input }) => {
+    return context.plugins.executeTool(
+      input.pluginId,
+      input.toolName,
+      input.args,
+      context.toolRegistry,
+    );
+  }),
 };

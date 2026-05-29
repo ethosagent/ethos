@@ -88,6 +88,19 @@ const api = {
       };
     },
   },
+  plugin: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS['plugin:list']),
+    getCredential: (pluginId: string, ref: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS['plugin:getCredential'], { pluginId, ref }),
+    setCredential: (pluginId: string, ref: string, value: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS['plugin:setCredential'], { pluginId, ref, value }),
+    credentialPreview: (pluginId: string, ref: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS['plugin:credentialPreview'], { pluginId, ref }),
+    requestOAuth: (pluginId: string, oauthRef: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS['plugin:requestOAuth'], { pluginId, oauthRef }),
+    executeTool: (pluginId: string, toolName: string, args: Record<string, unknown>) =>
+      ipcRenderer.invoke(IPC_CHANNELS['plugin:executeTool'], { pluginId, toolName, args }),
+  },
   file: {
     save: (req: { defaultName: string; content: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS['file:save'], req),

@@ -9,7 +9,6 @@ import { McpClient } from '../index';
  * actually connecting to a real server.
  */
 class ExposedMcpClient extends McpClient {
-  // biome-ignore lint/suspicious/noExplicitAny: test helper
   async createTransportPublic() {
     return this._createTransport();
   }

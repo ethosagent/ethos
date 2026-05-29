@@ -491,6 +491,21 @@ export class PluginLoader {
     await this.credentialStorage.remove(metaPath).catch(() => {});
   }
 
+  /** Read the raw credential value. Returns null if unset. */
+  async getCredentialValue(pluginId: string, ref: string): Promise<string | null> {
+    const credPath = join(this.dataDir, 'plugins', pluginId, 'credentials', ref);
+    return this.credentialStorage.read(credPath);
+  }
+
+  /** Return a redacted preview of a credential (first 4 + last 4 chars).
+   *  Returns null when the credential is not set. */
+  async getCredentialPreview(pluginId: string, ref: string): Promise<string | null> {
+    const raw = await this.getCredentialValue(pluginId, ref);
+    if (raw === null) return null;
+    if (raw.length <= 8) return '****';
+    return `${raw.slice(0, 4)}...${raw.slice(-4)}`;
+  }
+
   /**
    * List all credential keys for a plugin, merging manifest declarations
    * with on-disk credential state. Returns declared credentials (from

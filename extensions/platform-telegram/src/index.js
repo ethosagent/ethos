@@ -168,7 +168,6 @@ export class TelegramAdapter {
   /** JSONL-backed thread-follow tracking (Gap 4). */
   threadState;
   /** Webhook callback for external HTTP server wiring (Gap 6). */
-  // biome-ignore lint/suspicious/noExplicitAny: grammy's webhookCallback returns an Express-typed handler
   webhookCb;
   constructor(config) {
     this.bot = new Bot(config.token);
@@ -447,7 +446,6 @@ export class TelegramAdapter {
    * app.post('/telegram/webhook', adapter.webhook);
    * ```
    */
-  // biome-ignore lint/suspicious/noExplicitAny: grammy's webhookCallback returns an Express-typed handler
   get webhook() {
     return this.webhookCb;
   }

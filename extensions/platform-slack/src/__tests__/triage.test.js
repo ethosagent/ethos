@@ -62,7 +62,6 @@ describe('triageMessage', () => {
     const ctx = {
       botKey: 'bot-a',
       defaultChannelMode: 'mention_only',
-      // biome-ignore lint/suspicious/noExplicitAny: minimal stub
       channelOverrides: overrides,
     };
     const channelMessage = {
@@ -83,7 +82,6 @@ describe('triageMessage', () => {
     const ctx = {
       botKey: 'bot-a',
       defaultChannelMode: 'thread_follow',
-      // biome-ignore lint/suspicious/noExplicitAny: minimal stub
       threadState: threadState,
     };
     const inThread = {
@@ -133,7 +131,6 @@ describe('resolveChannelMode', () => {
     };
     const mode = resolveChannelMode('C1', {
       ...baseCtx,
-      // biome-ignore lint/suspicious/noExplicitAny: minimal stub
       channelOverrides: overrides,
     });
     expect(mode).toBe('all');

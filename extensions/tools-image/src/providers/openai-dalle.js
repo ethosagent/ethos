@@ -19,7 +19,6 @@ export class OpenAIDalleProvider {
   async generate(opts) {
     const key = opts.apiKey ?? this.apiKey;
     if (!key) throw new Error('OPENAI_API_KEY not provided');
-    // biome-ignore lint/suspicious/noExplicitAny: openai is an optional dep — no static types at this call site
     const mod = await import('openai');
     const OpenAI = mod.default ?? mod;
     const client = new OpenAI({ apiKey: key });

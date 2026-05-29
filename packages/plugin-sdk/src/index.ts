@@ -732,4 +732,5 @@ export type {
 } from '@ethosagent/types';
 export { ContextStore } from './context-registry';
 export { DiagnosticStore } from './diagnostic-store';
+export { LocalOAuthServer } from './local-oauth-server';
 export { OAuthCoordinatorImpl } from './oauth-coordinator';
