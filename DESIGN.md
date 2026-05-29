@@ -110,7 +110,7 @@ xl  24px
 - **Chat content max-width:** 800px (readable line-length)
 - **Onboarding step max-width:** 520px (centered, generous vertical breathing)
 - **Border-radius scale (hierarchical):**
-  - `sm: 4px` — buttons, chips, inputs
+  - `sm: 4px` — buttons, chips, tight UI chrome (NOT chat bubbles)
   - `md: 8px` — cards, modals, surface containers
   - `lg: 14px` — drawers, large surfaces
   - `full: 9999px` — pills, status dots, only on circular elements
@@ -123,6 +123,89 @@ The `Card` primitive is reserved. It appears **only** on:
 - Task tiles (Teams Control Center board)
 
 Everything else uses raw layout primitives. Tool chips are inline rows. Drawer streams are dense lists. Onboarding personality picker is stacked rows. No card grids anywhere.
+
+## Chat surface
+
+### User message bubbles
+`border-radius: 12px 12px 4px 12px` — top-heavy asymmetric radius (conversational, not boxy). The `sm` (4px) token is for chips and buttons only; never use it on chat bubbles.
+
+Background: `var(--bg-overlay)`. Padding: `10px 16px`. Max-width: 75%.
+
+### Composer
+The composer is a **unified bordered card** — not a bare textarea with a button beside it.
+
+- Container: `border: 1px solid var(--border-strong); border-radius: 12px; background: var(--bg-elevated); padding: 10px 10px 10px 16px;`
+- Send button: icon-only circular button (32px diameter, `border-radius: 9999px`, `background: var(--accent)`). Arrow SVG icon. No text label. Disabled state: `background: var(--bg-overlay)`.
+- The `border-top` line separator above the composer is removed — the card container provides visual separation.
+
+### Empty chat state
+When `messages.length === 0` and no turn is active, the chat surface shows a centered empty state (not a placeholder sentence):
+- 48px PersonalityMark SVG
+- Personality name (16px, 500 weight)
+- Model in monospace (13px, secondary)
+- "Ready to help." (14px, secondary) — no marketing copy
+- 2×2 suggestion pill grid: `border: 1px solid var(--border); border-radius: 9999px; padding: 8px 20px; background: var(--bg-elevated)`. Each pill pre-fills the composer on click.
+- Suggestion sets are per-personality — see `apps/web/src/components/chat/MessageList.tsx` for the full set.
+
+### Connection status indicator
+Three-state dot (8px circle, `border-radius: 9999px`):
+- **Connected**: `#4ADE80` (solid)
+- **Connecting**: `#F59E0B` (pulsing — reuse `thinking-bounce` keyframe)
+- **Offline**: `#F87171` (solid)
+
+Web surface: rendered in TopBar right-hand side alongside `{provider} · {model}` mono label.
+Desktop surface: rendered in sidebar bottom as an 8px dot inside a 20px glow ring (`border: 1.5px solid rgba(74,222,128,0.4)`).
+
+## Sidebar
+
+### Icons
+Every nav item **must** carry a 16px stroke SVG icon (`stroke="currentColor"`, `strokeWidth="1.5"`, `fill="none"`). Text-only nav is forbidden — the collapsed/icon-only rail must remain navigable. No emoji as nav icons.
+
+Icon assignments:
+
+| Route | Icon description |
+|---|---|
+| Chat | Speech bubble (rounded rect + tail at bottom-left) |
+| Sessions | List with leading dots (3 rows) |
+| Personalities | Person silhouette (circle head + arc shoulders) |
+| Skills | Lightning bolt / zap |
+| Memory | Brain (rounded irregular organic shape) |
+| Activity | Bar chart (3 ascending vertical bars) |
+| Cron | Clock (circle + hour/minute hands) |
+| Communications | Envelope |
+| Mesh | Three circles connected by lines |
+| Teams | Two person silhouettes |
+| Platforms | Globe / world outline |
+| MCP | Hexagon with connecting lines |
+| Batch | Stack of documents |
+| Eval | Checkmark in a box |
+| Plugins | Plug (rectangle + 2 prongs) |
+| Settings | Gear / cog (circle + teeth) |
+
+### Active state
+`background: rgba(74,158,255,0.18); border-left: 2px solid #4A9EFF; padding-left: 10px` (compensate padding for the 2px border). Text color: `var(--text-primary)` (full brightness — not dimmed blue).
+
+Previous spec of 12% opacity was too low to read; 18% is the correct value.
+
+### Section dividers
+Nav group separators are **thin lines** (`height: 1px; background: var(--border); margin: 4px 12px`) rather than uppercase label text. Retain group labels but reduce to `opacity: 0.35` and remove `text-transform: uppercase` — they become structural hints, not headings.
+
+### Desktop icon-only rail
+Desktop sidebar is 64px wide and always icon-only. Active state uses background + a 2px × 16px rounded bar flush to the left edge (not a full left-border since there's no label text to offset against).
+
+## Interaction states
+
+### Hover / pressed tints
+All hover and pressed backgrounds use **CSS variables** (not hardcoded `rgba(255,255,255,...)` values, which break in light mode):
+
+| Variable | Dark value | Light value |
+|---|---|---|
+| `--ethos-hover` | `rgba(255,255,255,0.07)` | `rgba(0,0,0,0.05)` |
+| `--ethos-pressed` | `rgba(255,255,255,0.12)` | `rgba(0,0,0,0.09)` |
+| `--ethos-surface-tint` | `rgba(255,255,255,0.04)` | `rgba(0,0,0,0.03)` |
+| `--ethos-shadow-overlay` | `rgba(0,0,0,0.5)` | `rgba(0,0,0,0.12)` |
+
+These are emitted by `tokensToCssVariables()` in `packages/design-tokens/src/antd.ts` using `isLightSurface()` to branch. **Never hardcode white-alpha tints in CSS** — always use the variable so skins work correctly.
 
 ## Motion
 
@@ -222,3 +305,10 @@ The web UI specifically must avoid these patterns. Code review checks for them.
 | 2026-04-26 | Single easing `cubic-bezier(0.16, 1, 0.3, 1)`, no springs | Reinforces honesty/utility — no marketing-app whoosh. |
 | 2026-04-26 | Cross-surface token mapping defined | Web/TUI/VS Code/email/CLI consume the same tokens, surface-specific render. Single source of truth survives surface additions. |
 | 2026-05-11 | Task tile is the third Card-primitive exemption | Plan B Control Center boards need a tile primitive — id + title + priority + assignee mark + child progress + status action row don't fit a dense list row. Same rationale as Skill / Cron exemptions: the card IS the unit of work, not decoration. Tied to the kanban primitive (`extensions/kanban-store`) and `apps/web/src/pages/TeamControlCenter.tsx`. |
+| 2026-05-29 | User bubble radius → `12px 12px 4px 12px` | sm (4px) made bubbles look like table cells. Asymmetric top-heavy radius reads as conversational. |
+| 2026-05-29 | Composer unified card | Bare textarea + text "Send" button reads as a form. Unified bordered container + circular icon send button. |
+| 2026-05-29 | Sidebar active state → 18% blue + 2px left border | Previous 12% bg was imperceptible. 18% + border gives clear "you are here" signal. |
+| 2026-05-29 | Sidebar icons mandatory | Collapsed state (64px desktop rail) is unusable without icons. Text-only nav forbidden. |
+| 2026-05-29 | Hover/pressed as CSS variables | Hardcoded `rgba(255,255,255,...)` tints are invisible in light mode. Variables flip correctly per skin. |
+| 2026-05-29 | Connection status dot | Text-only "connecting…" has no visual salience. Three-state colored dot (green/amber/red) is scannable. |
+| 2026-05-29 | Empty chat state with suggestion pills | "Start the conversation." placeholder is undesigned. Personality mark + pills sets context and invites the first message. |
