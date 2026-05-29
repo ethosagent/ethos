@@ -11,7 +11,7 @@ export function PluginSettingsPanel({
   setCredential,
   credentialPreview,
   requestOAuth,
-  theme,
+  theme: _theme,
 }) {
   return _jsxs('div', {
     style: {
@@ -124,7 +124,7 @@ function SectionLabel({ children }) {
 
 function CredentialRow({
   credential,
-  getCredential,
+  getCredential: _getCredential,
   setCredential,
   credentialPreview,
   requestOAuth,

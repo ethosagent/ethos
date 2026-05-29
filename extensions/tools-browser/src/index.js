@@ -168,10 +168,7 @@ const browserClickTool = {
       };
     }
     try {
-      await session.page
-        .getByRole(ref.role, { name: ref.name })
-        .first()
-        .click({ timeout: 10_000 });
+      await session.page.getByRole(ref.role, { name: ref.name }).first().click({ timeout: 10_000 });
       // Wait briefly for navigation/re-render
       await session.page.waitForTimeout(500);
       const { text, refs, title, url } = await snapshotPage(session.page);
