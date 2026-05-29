@@ -396,20 +396,14 @@ function NavRow({
 }
 
 function EthosMark() {
-  // Placeholder mark — replaced by the generative deterministic SVG when
-  // 26.W2 wires per-personality marks (plan: "Personality avatar:
-  // generative deterministic SVG mark").
+  // Ethos brand mark — the blue lowercase "e". Matches the desktop app icon
+  // (apps/desktop/assets/brand/ethos-icon-dark.svg).
   return (
-    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 22 22" style={{ flexShrink: 0 }}>
-      <rect x="1" y="1" width="20" height="20" rx="6" fill="#4A9EFF" />
-      <path
-        d="M7 11.5l3 3 5-6"
-        stroke="white"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-      />
+    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 512 512" style={{ flexShrink: 0 }}>
+      <g fill="none" stroke="#4A9EFF" strokeWidth="52" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M356 256 A100 100 0 1 0 326.7 326.7" />
+        <path d="M156 256 L356 256" />
+      </g>
     </svg>
   );
 }
