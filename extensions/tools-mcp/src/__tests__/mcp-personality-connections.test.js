@@ -82,7 +82,6 @@ class PersonalityTestManager extends McpManager {
     const real = super._buildClient(config);
     const factory = this.transports.get(config.name);
     if (factory) {
-      // biome-ignore lint/suspicious/noExplicitAny: test seam
       real._createTransport = async () => {
         const { clientTransport } = await factory();
         this._connectCount++;
@@ -98,7 +97,6 @@ class PersonalityTestManager extends McpManager {
     const real = super._buildClientWithSecrets(config, secrets);
     const factory = this.transports.get(config.name);
     if (factory) {
-      // biome-ignore lint/suspicious/noExplicitAny: test seam
       real._createTransport = async () => {
         const { clientTransport } = await factory();
         this._connectCount++;
@@ -218,7 +216,6 @@ describe('McpManager — backward compat (connect + getTools)', () => {
     class BootManager extends McpManager {
       _buildClient(config) {
         const real = super._buildClient(config);
-        // biome-ignore lint/suspicious/noExplicitAny: test seam
         real._createTransport = async () => clientTransport;
         return real;
       }

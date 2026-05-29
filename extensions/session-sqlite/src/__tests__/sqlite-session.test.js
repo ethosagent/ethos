@@ -163,7 +163,6 @@ describe('SQLiteSessionStore', () => {
       role: 'user',
       content: 'older quantum note',
     });
-    // biome-ignore lint/suspicious/noExplicitAny: direct DB access for test setup
     store.db
       .prepare('UPDATE messages SET timestamp = ? WHERE id = ?')
       .run('2026-05-01T00:00:00.000Z', old.id);
@@ -180,7 +179,6 @@ describe('SQLiteSessionStore', () => {
       role: 'user',
       content: 'future quantum',
     });
-    // biome-ignore lint/suspicious/noExplicitAny: direct DB access for test setup
     store.db
       .prepare('UPDATE messages SET timestamp = ? WHERE id = ?')
       .run('2099-01-01T00:00:00.000Z', future.id);
@@ -209,7 +207,6 @@ describe('SQLiteSessionStore', () => {
     const fresh = await store.createSession({ ...baseSession, key: 'fresh' });
     // Manually backdate the old session
     const yesterday = new Date(Date.now() - 86_400_000).toISOString();
-    // biome-ignore lint/suspicious/noExplicitAny: direct DB access for test setup
     store.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(yesterday, old.id);
     const cutoff = new Date(Date.now() - 3_600_000); // 1 hour ago
     const pruned = await store.pruneOldSessions(cutoff);

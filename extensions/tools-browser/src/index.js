@@ -169,7 +169,6 @@ const browserClickTool = {
     }
     try {
       await session.page
-        // biome-ignore lint/suspicious/noExplicitAny: playwright AriaRole type
         .getByRole(ref.role, { name: ref.name })
         .first()
         .click({ timeout: 10_000 });
@@ -242,7 +241,6 @@ const browserTypeTool = {
       };
     }
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: playwright AriaRole type
       const locator = session.page.getByRole(ref.role, { name: ref.name }).first();
       await locator.click({ timeout: 10_000 });
       await locator.fill(text);

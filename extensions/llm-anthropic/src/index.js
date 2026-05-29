@@ -199,7 +199,6 @@ export class AnthropicProvider {
       // Best-effort: if token counting fails, requestTokens stays undefined.
     }
     const effectiveModel = options.modelOverride ?? this.model;
-    // biome-ignore lint/suspicious/noExplicitAny: extended thinking params not yet in SDK types
     const params = {
       model: effectiveModel,
       max_tokens: options.maxTokens ?? 8096,

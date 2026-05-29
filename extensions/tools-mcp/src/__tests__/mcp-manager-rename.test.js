@@ -50,14 +50,12 @@ class TestableManager extends McpManager {
     if (!transport) {
       if (this.failNext) {
         const err = this.failNext;
-        // biome-ignore lint/suspicious/noExplicitAny: test seam
         real._createTransport = async () => {
           throw err;
         };
       }
       return real;
     }
-    // biome-ignore lint/suspicious/noExplicitAny: test seam
     real._createTransport = async () => transport;
     return real;
   }

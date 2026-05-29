@@ -1,5 +1,5 @@
-import { jsx as _jsx, jsxs as _jsxs } from 'react/jsx-runtime';
 import { useCallback, useEffect, useState } from 'react';
+import { jsx as _jsx, jsxs as _jsxs } from 'react/jsx-runtime';
 
 export function PluginSettingsPanel({
   name,
@@ -59,13 +59,17 @@ export function PluginSettingsPanel({
                 marginTop: 8,
               },
               children: credentials.map((cred) =>
-                _jsx(CredentialRow, {
-                  credential: cred,
-                  getCredential: getCredential,
-                  setCredential: setCredential,
-                  credentialPreview: credentialPreview,
-                  requestOAuth: requestOAuth,
-                }, cred.ref),
+                _jsx(
+                  CredentialRow,
+                  {
+                    credential: cred,
+                    getCredential: getCredential,
+                    setCredential: setCredential,
+                    credentialPreview: credentialPreview,
+                    requestOAuth: requestOAuth,
+                  },
+                  cred.ref,
+                ),
               ),
             }),
           ],
@@ -82,17 +86,21 @@ export function PluginSettingsPanel({
                 marginTop: 8,
               },
               children: tools.map((tool) =>
-                _jsx('span', {
-                  style: {
-                    fontSize: 11,
-                    fontFamily: 'var(--font-mono, monospace)',
-                    padding: '2px 8px',
-                    borderRadius: 'var(--radius-full, 9999px)',
-                    background: 'var(--bg-overlay, #2a2a2a)',
-                    color: 'var(--text-secondary, #9a9a98)',
+                _jsx(
+                  'span',
+                  {
+                    style: {
+                      fontSize: 11,
+                      fontFamily: 'var(--font-mono, monospace)',
+                      padding: '2px 8px',
+                      borderRadius: 'var(--radius-full, 9999px)',
+                      background: 'var(--bg-overlay, #2a2a2a)',
+                      color: 'var(--text-secondary, #9a9a98)',
+                    },
+                    children: tool,
                   },
-                  children: tool,
-                }, tool),
+                  tool,
+                ),
               ),
             }),
           ],
@@ -127,7 +135,9 @@ function CredentialRow({
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    credentialPreview(credential.ref).then(setPreview).catch(() => {});
+    credentialPreview(credential.ref)
+      .then(setPreview)
+      .catch(() => {});
   }, [credential.ref, credentialPreview]);
 
   const handleSave = useCallback(async () => {
@@ -164,9 +174,7 @@ function CredentialRow({
             _jsx('div', {
               style: {
                 fontSize: 11,
-                color: preview
-                  ? 'var(--success, #4ade80)'
-                  : 'var(--text-tertiary, #6b6b6a)',
+                color: preview ? 'var(--success, #4ade80)' : 'var(--text-tertiary, #6b6b6a)',
               },
               children: preview ?? 'Not connected',
             }),
@@ -287,7 +295,10 @@ function CredentialRow({
             }),
             _jsx('button', {
               type: 'button',
-              onClick: () => { setEditing(false); setDraft(''); },
+              onClick: () => {
+                setEditing(false);
+                setDraft('');
+              },
               style: {
                 height: 28,
                 padding: '0 8px',

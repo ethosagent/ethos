@@ -59,7 +59,6 @@ class TestMcpClient extends McpClient {
     super({ name, transport: 'stdio', command: 'unused', keepaliveSeconds: 0 });
     this._inMemoryTransport = transport;
   }
-  // biome-ignore lint/suspicious/noExplicitAny: override for test
   async _createTransport() {
     return this._inMemoryTransport;
   }
@@ -153,7 +152,6 @@ describe('McpManager', () => {
       constructor() {
         super([{ name: 'test', transport: 'stdio', command: 'unused' }]);
         // Replace the internal client with our test client
-        // biome-ignore lint/suspicious/noExplicitAny: access private for test
         this._clients = [new TestMcpClient(clientTransport)];
       }
     }
@@ -170,7 +168,6 @@ describe('McpManager', () => {
     class TestManager extends McpManager {
       constructor() {
         super([{ name: 'test', transport: 'stdio', command: 'unused' }]);
-        // biome-ignore lint/suspicious/noExplicitAny: access private for test
         this._clients = [new TestMcpClient(clientTransport)];
       }
     }
@@ -186,7 +183,6 @@ describe('McpManager', () => {
     class TestManager extends McpManager {
       constructor() {
         super([{ name: 'srv', transport: 'stdio', command: 'unused' }]);
-        // biome-ignore lint/suspicious/noExplicitAny: access private for test
         this._clients = [new TestMcpClient(clientTransport, 'srv')];
       }
     }
@@ -216,7 +212,6 @@ describe('McpManager', () => {
     class TestManager extends McpManager {
       constructor() {
         super([{ name: 'test', transport: 'stdio', command: 'unused' }]);
-        // biome-ignore lint/suspicious/noExplicitAny: access private for test
         this._clients = [new TestMcpClient(clientTransport)];
       }
     }

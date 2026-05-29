@@ -17,7 +17,6 @@ async function getDefaultEmbedder() {
   if (!_pipelinePromise) {
     _pipelinePromise = (async () => {
       const { pipeline } = await import('@xenova/transformers');
-      // biome-ignore lint/suspicious/noExplicitAny: @xenova/transformers pipeline return type is not exported
       _pipeline = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
       return _pipeline;
     })();

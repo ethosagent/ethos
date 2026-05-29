@@ -32,7 +32,6 @@ class TestMcpClient extends McpClient {
     super({ name, transport: 'stdio', command: 'unused', keepaliveSeconds: 0 });
     this._inMemoryTransport = transport;
   }
-  // biome-ignore lint/suspicious/noExplicitAny: override for test
   async _createTransport() {
     return this._inMemoryTransport;
   }
@@ -42,7 +41,6 @@ class FailingMcpClient extends McpClient {
   constructor(name) {
     super({ name, transport: 'stdio', command: 'unused', keepaliveSeconds: 0 });
   }
-  // biome-ignore lint/suspicious/noExplicitAny: override for test
   async _createTransport() {
     throw new Error('connect failed');
   }
