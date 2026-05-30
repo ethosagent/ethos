@@ -450,6 +450,7 @@ export const PluginInfoSchema = z.object({
   path: z.string(),
   /** Declared plugin contract major version, or null when the manifest doesn't pin one. */
   pluginContractMajor: z.number().int().nullable(),
+  hasHomePanel: z.boolean().optional(),
 });
 export type PluginInfo = z.infer<typeof PluginInfoSchema>;
 

@@ -29,6 +29,7 @@ export interface EthosPluginPackageJson {
      * loader hard-rejects mismatches against `PLUGIN_CONTRACT_MAJOR`.
      */
     pluginContractMajor?: number;
+    hasHomePanel?: boolean;
     id?: string;
     skills_dir?: string;
     credentials?: CredentialDeclaration[];

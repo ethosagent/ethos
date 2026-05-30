@@ -816,10 +816,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS['plugin:requestOAuth'],
     async (_event, req: { pluginId: string; oauthRef: string }) => {
-      return pluginFetch('plugins.requestOAuth', {
+      const result = await pluginFetch('plugins.requestOAuth', {
         pluginId: req.pluginId,
         oauthRef: req.oauthRef,
       });
+      if (result && typeof result.url === 'string') {
+        await shell.openExternal(result.url);
+      }
+      return result;
     },
   );
 

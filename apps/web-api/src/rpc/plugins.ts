@@ -50,4 +50,15 @@ export const pluginsRouter = {
       context.toolRegistry,
     );
   }),
+  requestOAuth: os.plugins.requestOAuth.handler(async ({ context, input }) => {
+    return context.plugins.requestOAuth(input.pluginId, input.oauthRef);
+  }),
+  completeOAuth: os.plugins.completeOAuth.handler(async ({ context, input }) => {
+    return context.plugins.completeOAuth(
+      input.pluginId,
+      input.oauthRef,
+      input.requestToken,
+      context.toolRegistry,
+    );
+  }),
 };

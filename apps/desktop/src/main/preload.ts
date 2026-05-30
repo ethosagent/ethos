@@ -100,6 +100,11 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS['plugin:requestOAuth'], { pluginId, oauthRef }),
     executeTool: (pluginId: string, toolName: string, args: Record<string, unknown>) =>
       ipcRenderer.invoke(IPC_CHANNELS['plugin:executeTool'], { pluginId, toolName, args }),
+    onOAuthComplete: (callback: (data: { oauthRef: string }) => void) => {
+      ipcRenderer.on('plugin:oauthComplete', (_event, data: { oauthRef: string }) =>
+        callback(data),
+      );
+    },
   },
   file: {
     save: (req: { defaultName: string; content: string }) =>

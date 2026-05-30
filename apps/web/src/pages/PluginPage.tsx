@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { Card, Empty, Skeleton, Statistic, Table, Typography } from 'antd';
-import { useParams } from 'react-router-dom';
+import { Button, Card, Empty, Skeleton, Statistic, Table, Typography } from 'antd';
+import { useNavigate, useParams } from 'react-router-dom';
 import { rpc } from '../rpc';
 
 // ---------------------------------------------------------------------------
@@ -15,6 +15,7 @@ import { rpc } from '../rpc';
 
 export function PluginPage() {
   const { pluginId } = useParams<{ pluginId: string }>();
+  const navigate = useNavigate();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['plugins', 'pageSpec', pluginId],
@@ -24,13 +25,28 @@ export function PluginPage() {
 
   if (isLoading) return <Skeleton active />;
   if (error) return <Typography.Text type="danger">{String(error)}</Typography.Text>;
-  if (!data?.spec) return <Empty description="This plugin has no page registered." />;
+  if (!data?.spec)
+    return (
+      <div style={{ padding: 24 }}>
+        <div style={{ marginBottom: 16 }}>
+          <Button type="text" onClick={() => navigate('/plugins')} icon={<span>←</span>}>
+            Back to Plugins
+          </Button>
+        </div>
+        <Empty description="This plugin has no page registered." />
+      </div>
+    );
 
   const { spec } = data;
   const pid = pluginId ?? '';
 
   return (
     <div style={{ padding: 24, maxWidth: 1200 }}>
+      <div style={{ marginBottom: 16 }}>
+        <Button type="text" onClick={() => navigate('/plugins')} icon={<span>←</span>}>
+          Back to Plugins
+        </Button>
+      </div>
       <Typography.Title level={3}>{spec.title}</Typography.Title>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {spec.sections.map((section) => {

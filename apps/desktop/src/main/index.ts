@@ -6,6 +6,7 @@ import { startBackend, stopBackend } from './backend';
 import { registerGlobalShortcuts, unregisterGlobalShortcuts } from './global-shortcut';
 import { registerIpcHandlers } from './ipc';
 import { showMinimizeNotification } from './notifications';
+import { registerProtocolHandler } from './protocol-handler';
 import { registerQuickChatIpc, showQuickChat } from './quick-chat-window';
 import { isBackgroundMode, logBackgroundStartup } from './startup-mode';
 import { store } from './store';
@@ -92,6 +93,26 @@ app.whenReady().then(() => {
   }
 
   registerIpcHandlers();
+
+  registerProtocolHandler({
+    getMainWindow: () => mainWindow,
+    onPluginOAuthCallback: async ({ pluginId, oauthRef, requestToken }) => {
+      try {
+        const port = store.get('backendPort', 3001);
+        await fetch(`http://localhost:${port}/rpc/plugins.completeOAuth`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pluginId, oauthRef, requestToken }),
+        });
+      } catch {
+        // fail-open: OAuth completion errors are surfaced via panel refresh
+      }
+      const win = mainWindow;
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('plugin:oauthComplete', { oauthRef });
+      }
+    },
+  });
 
   const hidden = isBackgroundMode();
 

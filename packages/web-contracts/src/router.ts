@@ -811,6 +811,24 @@ const PluginsExecuteToolOutput = z.object({
   code: z.string().optional(),
 });
 
+const PluginsRequestOAuthInput = z.object({
+  pluginId: z.string(),
+  oauthRef: z.string(),
+});
+const PluginsRequestOAuthOutput = z.object({
+  url: z.string(),
+});
+
+const PluginsCompleteOAuthInput = z.object({
+  pluginId: z.string(),
+  oauthRef: z.string(),
+  requestToken: z.string(),
+});
+const PluginsCompleteOAuthOutput = z.object({
+  ok: z.boolean(),
+  userId: z.string().optional(),
+});
+
 /** @experimental */
 const plugins = {
   list: oc.output(PluginsListOutput),
@@ -826,6 +844,8 @@ const plugins = {
   getCredential: oc.input(PluginsGetCredentialInput).output(PluginsGetCredentialOutput),
   credentialPreview: oc.input(PluginsCredentialPreviewInput).output(PluginsCredentialPreviewOutput),
   executeTool: oc.input(PluginsExecuteToolInput).output(PluginsExecuteToolOutput),
+  requestOAuth: oc.input(PluginsRequestOAuthInput).output(PluginsRequestOAuthOutput),
+  completeOAuth: oc.input(PluginsCompleteOAuthInput).output(PluginsCompleteOAuthOutput),
 };
 
 // ---------------------------------------------------------------------------

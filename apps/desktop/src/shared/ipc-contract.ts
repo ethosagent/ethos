@@ -205,12 +205,14 @@ export interface RendererEvents {
   'chat:new': undefined;
   'navigate:session': { sessionId: string };
   'oauth:callback': { code: string; state: string };
+  'plugin:oauthComplete': { oauthRef: string };
 }
 
 export const RENDERER_EVENTS = {
   'chat:new': 'chat:new',
   'navigate:session': 'navigate:session',
   'oauth:callback': 'oauth:callback',
+  'plugin:oauthComplete': 'plugin:oauthComplete',
 } as const;
 
 export type IpcChannel = keyof IpcContract;

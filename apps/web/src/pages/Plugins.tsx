@@ -16,7 +16,7 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AddMcpModal } from '../components/mcp/AddMcpModal';
 import { McpServerActions } from '../components/mcp/McpServerActions';
@@ -112,12 +112,29 @@ export function Plugins() {
     enabled: Boolean(settingsPluginId),
   });
 
-  const credentials: PluginCredentialSchema[] = (credKeysData?.keys ?? []).map((k) => ({
-    ref: k.key,
-    label: k.label,
-    kind: k.type as 'text' | 'secret',
-    description: k.description ?? undefined,
-  }));
+  const credentials = useMemo((): PluginCredentialSchema[] => {
+    if (!settingsPluginId) return [];
+    // Zerodha: hardcoded because the access token uses kind:'oauth' which
+    // listCredentialKeys doesn't surface (it only knows 'secret'/'text').
+    if (settingsPluginId === 'tools-india-broker-zerodha') {
+      return [
+        { ref: 'brokers/zerodha/apiKey', label: 'API Key', kind: 'secret' },
+        { ref: 'brokers/zerodha/apiSecret', label: 'API Secret', kind: 'secret' },
+        {
+          ref: 'brokers/zerodha/accessToken',
+          label: 'Access Token',
+          kind: 'oauth',
+          oauthRef: 'zerodha',
+        },
+      ];
+    }
+    return (credKeysData?.keys ?? []).map((k) => ({
+      ref: k.key,
+      label: k.label,
+      kind: k.type as 'text' | 'secret',
+      description: k.description ?? undefined,
+    }));
+  }, [settingsPluginId, credKeysData]);
 
   if (pluginsError) {
     return (
@@ -292,7 +309,15 @@ function PluginsTable({
           key: 'plugin',
           render: (_, p) => (
             <div>
-              <div style={{ fontWeight: 500 }}>{p.name}</div>
+              <div style={{ fontWeight: 500 }}>
+                {p.name}
+                <Typography.Text
+                  type="secondary"
+                  style={{ fontSize: 11, marginLeft: 6, fontWeight: 400 }}
+                >
+                  v{p.version}
+                </Typography.Text>
+              </div>
               <Typography.Text
                 style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12 }}
                 type="secondary"
@@ -355,6 +380,9 @@ function PluginsAccordion({
         label: (
           <span>
             <span style={{ fontWeight: 500 }}>{plugin.name}</span>{' '}
+            <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+              v{plugin.version}
+            </Typography.Text>{' '}
             <Typography.Text
               style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12 }}
               type="secondary"

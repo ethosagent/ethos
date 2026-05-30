@@ -1,4 +1,5 @@
 import { createEthosClient } from '@ethosagent/sdk';
+import type { PluginCredentialSchema } from '@ethosagent/types';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppState } from '../state/AppContext';
 import { SectionLabel } from '../ui/SectionLabel';
@@ -108,6 +109,23 @@ export function PluginsPage() {
   }, [client, plugins]);
 
   const handleBack = useCallback(() => setSelectedPluginId(null), []);
+
+  const settingsCredentials = useMemo((): PluginCredentialSchema[] => {
+    if (!settingsDrawerPlugin) return [];
+    if (settingsDrawerPlugin.id === 'tools-india-broker-zerodha') {
+      return [
+        { ref: 'brokers/zerodha/apiKey', label: 'API Key', kind: 'secret' },
+        { ref: 'brokers/zerodha/apiSecret', label: 'API Secret', kind: 'secret' },
+        {
+          ref: 'brokers/zerodha/accessToken',
+          label: 'Access Token',
+          kind: 'oauth',
+          oauthRef: 'zerodha',
+        },
+      ];
+    }
+    return [];
+  }, [settingsDrawerPlugin]);
 
   // When a plugin is selected, show its dedicated page
   if (selectedPluginId) {
@@ -239,7 +257,7 @@ export function PluginsPage() {
           name={settingsDrawerPlugin.name}
           version={settingsDrawerPlugin.version}
           description={settingsDrawerPlugin.description ?? undefined}
-          credentials={[]}
+          credentials={settingsCredentials}
           tools={[]}
           theme="dark"
           onClose={() => setSettingsDrawerPlugin(null)}

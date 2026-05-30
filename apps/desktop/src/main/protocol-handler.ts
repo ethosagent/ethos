@@ -6,6 +6,11 @@ interface ProtocolHandlerDeps {
   getMainWindow: () => BrowserWindow | null;
   oauthCoordinator?: OAuthCoordinator;
   notificationRouter?: NotificationRouter;
+  onPluginOAuthCallback?: (opts: {
+    pluginId: string;
+    oauthRef: string;
+    requestToken: string;
+  }) => Promise<void>;
 }
 
 export function registerProtocolHandler(deps: ProtocolHandlerDeps) {
@@ -21,8 +26,30 @@ export function registerProtocolHandler(deps: ProtocolHandlerDeps) {
   });
 }
 
+const PLUGIN_ID_MAP: Record<string, string> = {
+  zerodha: 'tools-india-broker-zerodha',
+};
+
 function handleProtocolUrl(url: string, deps: ProtocolHandlerDeps) {
   const parsed = new URL(url);
+
+  // Zerodha (and future plugin) OAuth callback: ethos://auth/<oauthRef>?request_token=XXX
+  if (parsed.host === 'auth') {
+    const oauthRef = parsed.pathname.replace(/^\//, '');
+    const requestToken = parsed.searchParams.get('request_token');
+    if (oauthRef && requestToken && deps.onPluginOAuthCallback) {
+      const pluginId = PLUGIN_ID_MAP[oauthRef];
+      if (pluginId) {
+        deps.onPluginOAuthCallback({ pluginId, oauthRef, requestToken }).catch(() => {});
+      }
+    }
+    const win = deps.getMainWindow();
+    if (win && !win.isDestroyed()) {
+      win.focus();
+    }
+    return;
+  }
+
   const code = parsed.searchParams.get('code');
   const state = parsed.searchParams.get('state');
   if (!code || !state) return;

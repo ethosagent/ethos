@@ -160,6 +160,36 @@ export class PluginsService {
     }
   }
 
+  async requestOAuth(pluginId: string, oauthRef: string): Promise<{ url: string }> {
+    const apiKey = await this.getCredential(pluginId, 'brokers/zerodha/apiKey');
+    if (!apiKey) {
+      throw new Error(`API key not set for plugin ${pluginId}. Configure it in Settings first.`);
+    }
+    const url = `https://kite.trade/connect/login?v=3&api_key=${apiKey}`;
+    return { url };
+  }
+
+  async completeOAuth(
+    pluginId: string,
+    oauthRef: string,
+    requestToken: string,
+    toolRegistry?: ToolRegistry,
+  ): Promise<{ ok: boolean; userId?: string }> {
+    const result = await this.executeTool(
+      pluginId,
+      'zerodha_auth_complete',
+      { request_token: requestToken },
+      toolRegistry,
+    );
+    if (!result.ok) return { ok: false };
+    try {
+      const parsed = JSON.parse(result.value ?? '{}') as { user_id?: string };
+      return { ok: true, userId: parsed.user_id };
+    } catch {
+      return { ok: true };
+    }
+  }
+
   async getPageSpec(pluginId: string): Promise<PluginPageSpec | null> {
     return this.opts.pluginPages?.get(pluginId) ?? null;
   }
@@ -247,6 +277,7 @@ function toWirePlugin(m: InstalledPluginManifest): PluginInfo {
     source: m.source,
     path: m.path,
     pluginContractMajor: m.pluginContractMajor,
+    hasHomePanel: m.hasHomePanel ?? false,
   };
 }
 

@@ -699,6 +699,7 @@ function toInstalledPluginManifest(manifest, source, pluginDir) {
     path: pluginDir,
     pluginContractMajor: manifest.ethos?.pluginContractMajor ?? null,
     dialect,
+    hasHomePanel: manifest.ethos?.hasHomePanel ?? false,
     credentials: manifest.ethos?.credentials ?? [],
   };
 }

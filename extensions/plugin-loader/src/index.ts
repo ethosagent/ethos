@@ -40,6 +40,8 @@ export interface InstalledPluginManifest {
   pluginContractMajor: number | null;
   /** Plugin dialect — ethos-native or openclaw compat shim. */
   dialect: 'ethos' | 'openclaw';
+  /** Whether the plugin ships a Home panel. */
+  hasHomePanel?: boolean;
   /** Credential declarations from the plugin's `ethos.credentials` manifest field. */
   credentials: CredentialDeclaration[];
   /** Activation status — set after activate() runs. */
@@ -924,6 +926,7 @@ function toInstalledPluginManifest(
     path: pluginDir,
     pluginContractMajor: manifest.ethos?.pluginContractMajor ?? null,
     dialect,
+    hasHomePanel: manifest.ethos?.hasHomePanel ?? false,
     credentials: manifest.ethos?.credentials ?? [],
   };
 }
