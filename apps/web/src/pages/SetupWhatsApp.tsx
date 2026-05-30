@@ -4,6 +4,7 @@ import { useParams } from 'react-router-dom';
 export function SetupWhatsApp() {
   const { botId = 'default' } = useParams();
   const [qr, setQr] = useState<string | null>(null);
+  const [pairingCode, setPairingCode] = useState<string | null>(null);
   const [paired, setPaired] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -15,12 +16,15 @@ export function SetupWhatsApp() {
         const data = JSON.parse(event.data);
         if (data.paired) {
           setPaired(true);
+          setPairingCode(null);
           source.close();
+        } else if (data.pairingCode) {
+          setPairingCode(data.pairingCode);
         } else if (data.qr) {
           setQr(data.qr);
         }
       } catch {
-        setError('Failed to parse QR data');
+        setError('Failed to parse pairing data');
       }
     };
 
@@ -53,6 +57,50 @@ export function SetupWhatsApp() {
     );
   }
 
+  if (pairingCode) {
+    return (
+      <div style={{ padding: 48, textAlign: 'center' }}>
+        <h2 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-primary)' }}>
+          Connect WhatsApp
+        </h2>
+        <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginTop: 8, marginBottom: 24 }}>
+          Enter this pairing code in WhatsApp on your phone.
+        </p>
+        <code
+          style={{
+            display: 'block',
+            margin: '0 auto',
+            maxWidth: 280,
+            padding: '16px 20px',
+            background: 'var(--bg-overlay)',
+            borderRadius: 'var(--radius-sm, 4px)',
+            fontSize: 28,
+            fontWeight: 600,
+            letterSpacing: '0.18em',
+            fontFamily: 'var(--font-mono, monospace)',
+            color: 'var(--text-primary)',
+            userSelect: 'all',
+          }}
+        >
+          {pairingCode}
+        </code>
+        <p
+          style={{
+            fontSize: 13,
+            color: 'var(--text-secondary)',
+            marginTop: 24,
+            lineHeight: 1.6,
+            maxWidth: 420,
+            marginInline: 'auto',
+          }}
+        >
+          On your phone: WhatsApp &rarr; Settings &rarr; Linked Devices &rarr; Link a Device &rarr;
+          Link with phone number instead, then enter this code.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: 48, textAlign: 'center' }}>
       <h2 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-primary)' }}>
@@ -67,7 +115,7 @@ export function SetupWhatsApp() {
             A QR code has been printed in your terminal. Scan it with WhatsApp.
           </p>
           <p style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
-            If you cannot access the terminal, copy this pairing code:
+            If you cannot access the terminal, copy this raw QR string and render it as a QR code:
           </p>
           <code
             style={{
@@ -87,7 +135,7 @@ export function SetupWhatsApp() {
           </code>
         </div>
       ) : (
-        <p style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>Waiting for QR code...</p>
+        <p style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>Waiting for pairing code...</p>
       )}
       <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 16 }}>
         Open WhatsApp &rarr; Settings &rarr; Linked Devices &rarr; Link a Device

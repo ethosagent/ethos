@@ -720,6 +720,7 @@ const platforms = {
         id: z.string().optional(),
         defaultMode: z.enum(['all', 'mention_only']).optional(),
         allowedNumbers: z.array(z.string()).optional(),
+        phoneNumber: z.string().optional(),
       }),
     )
     .output(z.object({ bot: WhatsAppEntrySchema })),

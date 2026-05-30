@@ -78,6 +78,25 @@ describe('parseConfigYaml — whatsapp.<n>.<field>', () => {
     expect(roundTripped?.whatsapp).toEqual(original.whatsapp);
   });
 
+  it('round-trips phone_number for phone-number pairing', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    const original: EthosConfig = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      apiKey: 'sk',
+      personality: 'researcher',
+      whatsapp: [{ id: 'wa1', default_mode: 'all', phone_number: '+1 555 123 4567' }],
+    };
+    await writeConfig(storage, original);
+
+    const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+    expect(raw).toContain('whatsapp.0.phone_number: +1 555 123 4567');
+
+    const roundTripped = await readRawConfig(storage);
+    expect(roundTripped?.whatsapp).toEqual(original.whatsapp);
+  });
+
   it('leaves config.whatsapp undefined when no whatsapp keys are present', async () => {
     const cfg = await loadYaml(
       [

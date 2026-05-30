@@ -129,6 +129,9 @@ export interface WhatsAppConfig {
   session_dir?: string;
   default_mode?: 'all' | 'mention_only';
   allowed_numbers?: string[];
+  /** When set, the adapter links via phone-number pairing code instead of QR.
+   *  Stored as entered; the adapter strips non-digits before requesting. */
+  phone_number?: string;
 }
 
 export interface ProviderConfig {
@@ -572,6 +575,7 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       if (wa.id) lines.push(`whatsapp.${i}.id: ${wa.id}`);
       if (wa.default_mode) lines.push(`whatsapp.${i}.default_mode: ${wa.default_mode}`);
       if (wa.session_dir) lines.push(`whatsapp.${i}.session_dir: ${wa.session_dir}`);
+      if (wa.phone_number) lines.push(`whatsapp.${i}.phone_number: ${wa.phone_number}`);
       if (wa.allowed_numbers && wa.allowed_numbers.length > 0) {
         lines.push(`whatsapp.${i}.allowed_numbers: ${wa.allowed_numbers.join(',')}`);
       }
@@ -1347,6 +1351,7 @@ function buildWhatsApps(kv: Record<number, Record<string, string>>): {
     const app: WhatsAppConfig = {};
     if (entry.id) app.id = entry.id;
     if (entry.session_dir) app.session_dir = entry.session_dir;
+    if (entry.phone_number) app.phone_number = entry.phone_number;
     if (entry.default_mode) {
       if (entry.default_mode === 'all' || entry.default_mode === 'mention_only') {
         app.default_mode = entry.default_mode;

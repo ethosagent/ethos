@@ -565,6 +565,7 @@ export class PlatformsRepository {
               .map((s) => s.trim())
               .filter(Boolean)
           : [],
+        ...(fields.phone_number ? { phoneNumber: fields.phone_number } : {}),
         paired: await this.whatsAppPaired(fields, botKey),
       });
     }
@@ -575,6 +576,7 @@ export class PlatformsRepository {
     id?: string;
     defaultMode?: 'all' | 'mention_only';
     allowedNumbers?: string[];
+    phoneNumber?: string;
   }): Promise<WhatsAppEntry> {
     const passthrough = await this.passthrough();
     const byIndex = this.parseWhatsAppIndices(passthrough);
@@ -585,6 +587,7 @@ export class PlatformsRepository {
     const id = input.id ?? `wa-${Math.random().toString(36).slice(2, 10)}`;
     const defaultMode = input.defaultMode ?? 'mention_only';
     const allowedNumbers = (input.allowedNumbers ?? []).map((s) => s.trim()).filter(Boolean);
+    const phoneNumber = input.phoneNumber?.trim() || undefined;
     const patch: Record<string, string> = {
       [`whatsapp.${nextIndex}.id`]: id,
       [`whatsapp.${nextIndex}.default_mode`]: defaultMode,
@@ -592,11 +595,15 @@ export class PlatformsRepository {
     if (allowedNumbers.length > 0) {
       patch[`whatsapp.${nextIndex}.allowed_numbers`] = allowedNumbers.join(',');
     }
+    if (phoneNumber) {
+      patch[`whatsapp.${nextIndex}.phone_number`] = phoneNumber;
+    }
     await this.opts.config.update({ passthrough: patch });
     return {
       botKey: id,
       defaultMode,
       allowedNumbers,
+      ...(phoneNumber ? { phoneNumber } : {}),
       paired: await this.whatsAppPaired({ id }, id),
     };
   }

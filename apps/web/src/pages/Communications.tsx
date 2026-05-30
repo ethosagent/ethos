@@ -546,6 +546,7 @@ interface AddWhatsAppFormValues {
   id: string;
   default_mode: 'mention_only' | 'all';
   owner_number: string;
+  phone_number: string;
 }
 
 function WhatsAppPanel() {
@@ -564,6 +565,7 @@ function WhatsAppPanel() {
       await rpc.platforms.botsAddWhatsApp({
         id: values.id,
         defaultMode: values.default_mode,
+        phoneNumber: values.phone_number.trim(),
       });
       // Owner number is stored on the channel filter, not the bot entry. Read
       // the current filter first so we don't clobber the allowlist or enabled flag.
@@ -619,12 +621,22 @@ function WhatsAppPanel() {
     {
       title: 'Pairing',
       key: 'paired',
-      render: (_: unknown, row: WhatsAppEntry) => (
-        <Badge
-          status={row.paired ? 'success' : 'default'}
-          text={row.paired ? 'Paired' : 'Not paired — restart gateway & scan QR'}
-        />
-      ),
+      render: (_: unknown, row: WhatsAppEntry) =>
+        row.paired ? (
+          <Badge status="success" text="Paired" />
+        ) : (
+          <Space direction="vertical" size={2}>
+            <Badge status="default" text="Not paired" />
+            {row.phoneNumber && (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Linking {row.phoneNumber}
+              </Typography.Text>
+            )}
+            <Typography.Link href={`/setup/whatsapp/${row.botKey}`} style={{ fontSize: 12 }}>
+              Open WhatsApp setup to get your pairing code ↗
+            </Typography.Link>
+          </Space>
+        ),
     },
     {
       title: '',
@@ -662,8 +674,9 @@ function WhatsAppPanel() {
       style={{ maxWidth: 720 }}
     >
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-        WhatsApp uses QR-code pairing via Baileys. No Cloud API credentials are needed — enable a
-        bot below, restart the gateway, then scan the QR code.
+        WhatsApp pairs via Baileys — no Cloud API credentials needed. Enable a bot with the phone
+        number to link, restart the gateway, then enter the pairing code shown in setup (or scan the
+        QR as a fallback).
       </Typography.Paragraph>
 
       {botsQuery.isLoading ? (
@@ -712,6 +725,15 @@ function WhatsAppPanel() {
             </Form.Item>
 
             <Form.Item
+              label="Phone number to link"
+              name="phone_number"
+              rules={[{ required: true, message: 'Required' }]}
+              extra="The WhatsApp number this bot links to, in E.164 format without the + (e.g. 14155551234). You'll enter a pairing code on this phone."
+            >
+              <Input autoComplete="off" placeholder="14155551234" />
+            </Form.Item>
+
+            <Form.Item
               label="Owner number"
               name="owner_number"
               rules={[{ required: true, message: 'Required' }]}
@@ -740,13 +762,8 @@ function WhatsAppPanel() {
       <Alert
         type="info"
         showIcon
-        message="Restart the gateway (or re-run `ethos serve`) to apply, then scan the QR."
+        message="Restart the gateway (or re-run `ethos serve`) to apply, then open the setup link next to a bot above to see its pairing code."
         style={{ marginTop: 16 }}
-        action={
-          <Button type="link" size="small" href="/setup/whatsapp/default">
-            Open QR setup ↗
-          </Button>
-        }
       />
 
       <AccessControlSection platform="whatsapp" />

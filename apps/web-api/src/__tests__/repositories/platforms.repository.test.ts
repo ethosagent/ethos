@@ -434,6 +434,34 @@ describe('PlatformsRepository multi-bot whatsapp', () => {
     expect(await secrets.get('whatsapp/wa-home/token')).toBeNull();
   });
 
+  it('addWhatsApp writes phone_number and round-trips it through listWhatsApp', async () => {
+    const entry = await repo.addWhatsApp({
+      id: 'wa-pair',
+      phoneNumber: '+1 555 0000',
+    });
+    expect(entry).toEqual({
+      botKey: 'wa-pair',
+      defaultMode: 'mention_only',
+      allowedNumbers: [],
+      phoneNumber: '+1 555 0000',
+      paired: false,
+    });
+
+    const yaml = await storage.read(join(DATA, 'config.yaml'));
+    expect(yaml).toContain('whatsapp.0.phone_number: +1 555 0000');
+
+    const [listed] = await repo.listWhatsApp();
+    expect(listed?.phoneNumber).toBe('+1 555 0000');
+  });
+
+  it('addWhatsApp omits phone_number when not supplied', async () => {
+    await repo.addWhatsApp({ id: 'wa-qr' });
+    const yaml = await storage.read(join(DATA, 'config.yaml'));
+    expect(yaml).not.toContain('phone_number');
+    const [listed] = await repo.listWhatsApp();
+    expect(listed?.phoneNumber).toBeUndefined();
+  });
+
   it('addWhatsApp defaults default_mode to mention_only and omits empty allowed_numbers', async () => {
     await repo.addWhatsApp({ id: 'wa-quiet' });
     const yaml = await storage.read(join(DATA, 'config.yaml'));

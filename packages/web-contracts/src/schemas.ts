@@ -426,6 +426,9 @@ export const WhatsAppEntrySchema = z.object({
   botKey: z.string(),
   defaultMode: z.enum(['all', 'mention_only']),
   allowedNumbers: z.array(z.string()),
+  /** Phone number this bot links via pairing code, when configured. Absent for
+   *  QR-linked bots. Lets the UI show which number is being paired. */
+  phoneNumber: z.string().optional(),
   /** True when the Baileys session dir for this bot is non-empty (QR pairing
    *  completed and credentials were persisted). */
   paired: z.boolean(),

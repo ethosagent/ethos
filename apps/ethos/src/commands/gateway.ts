@@ -437,6 +437,17 @@ export async function runGatewayStart(): Promise<void> {
     onWhatsAppQr: (botId, qr) => {
       import('@ethosagent/web-api').then((m) => m.setWhatsAppQr(botId, qr)).catch(() => {});
     },
+    onWhatsAppPairingCode: (botId, code) => {
+      if (code !== null) {
+        console.log(
+          `\n  ${c.bold}WhatsApp pairing code for "${botId}": ${c.cyan}${code}${c.reset}\n` +
+            `  ${c.dim}On that phone: WhatsApp → Linked Devices → Link with phone number instead → enter the code.${c.reset}\n`,
+        );
+      }
+      import('@ethosagent/web-api')
+        .then((m) => m.setWhatsAppPairingCode(botId, code))
+        .catch(() => {});
+    },
   });
 
   let gatewayRef: Gateway | null = null;
@@ -1162,7 +1173,10 @@ export async function buildAdapters(
   config: EthosConfig,
   loadAdapter: AdapterModuleLoader,
   attachmentCache?: import('@ethosagent/types').AttachmentCache,
-  opts?: { onWhatsAppQr?: (botId: string, qr: string | null) => void },
+  opts?: {
+    onWhatsAppQr?: (botId: string, qr: string | null) => void;
+    onWhatsAppPairingCode?: (botId: string, code: string | null) => void;
+  },
 ): Promise<PlatformAdapter[]> {
   config = applyPlatformShim(config).config;
   const adapters: PlatformAdapter[] = [];
@@ -1320,6 +1334,7 @@ export async function buildAdapters(
 
       for (const waCfg of config.whatsapp ?? []) {
         const onQrCb = opts?.onWhatsAppQr;
+        const onPairingCb = opts?.onWhatsAppPairingCode;
         adapters.push(
           new mod.WhatsAppAdapter({
             id: waCfg.id,
@@ -1328,6 +1343,10 @@ export async function buildAdapters(
             allowedJids: waCfg.allowed_numbers,
             cache: waCache,
             onQr: onQrCb ? (qr) => onQrCb(waCfg.id ?? 'default', qr) : undefined,
+            ...(waCfg.phone_number ? { phoneNumber: waCfg.phone_number } : {}),
+            onPairingCode: onPairingCb
+              ? (code) => onPairingCb(waCfg.id ?? 'default', code)
+              : undefined,
           }),
         );
       }

@@ -79,6 +79,7 @@ export class PlatformsService {
     id?: string;
     defaultMode?: 'all' | 'mention_only';
     allowedNumbers?: string[];
+    phoneNumber?: string;
   }): Promise<{ bot: WhatsAppEntry }> {
     return { bot: await this.opts.repo.addWhatsApp(input) };
   }

@@ -17,6 +17,11 @@ export interface WhatsAppAdapterConfig {
   allowedJids?: string[];
   cache?: AttachmentCache;
   onQr?: (qr: string | null) => void;
+  /** When set, link via phone-number pairing code instead of QR. The adapter
+   *  calls Baileys `requestPairingCode` with the digits-only number and emits
+   *  the resulting ~8-char code through `onPairingCode`. */
+  phoneNumber?: string;
+  onPairingCode?: (code: string | null) => void;
 }
 
 export class WhatsAppAdapter implements PlatformAdapter {
@@ -36,6 +41,8 @@ export class WhatsAppAdapter implements PlatformAdapter {
   private sock: unknown = null;
   private reconnecting = false;
   private stopped = false;
+  private reconnectAttempts = 0;
+  private pairingCodeRequested = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private messageHandler?: (message: InboundMessage) => void;
   private botJid = '';
@@ -65,41 +72,78 @@ export class WhatsAppAdapter implements PlatformAdapter {
 
     const sock = makeWASocket({
       auth: state,
-      printQRInTerminal: true,
       getMessage: async () => undefined,
     });
 
     sock.ev.on('creds.update', saveCreds);
 
+    // Phone-number pairing: when a number is configured and the device is not
+    // yet linked, request an ~8-char pairing code instead of rendering a QR.
+    // Baileys requires this be called before the device registers.
+    if (this.config.phoneNumber && !sock.authState.creds.registered && !this.pairingCodeRequested) {
+      // Request the code only once per process. A reconnect must never request a
+      // new one — it would invalidate the code the user is currently typing.
+      this.pairingCodeRequested = true;
+      const digits = this.config.phoneNumber.replace(/[^0-9]/g, '');
+      // Brief delay so the socket finishes opening its WS before the request.
+      setTimeout(() => {
+        sock
+          .requestPairingCode(digits)
+          .then((code) => {
+            this.config.onPairingCode?.(code);
+          })
+          .catch((err: unknown) => {
+            const detail = err instanceof Error ? err.message : String(err);
+            console.error(`[whatsapp] requestPairingCode failed: ${detail}`);
+          });
+      }, 3000);
+    }
+
     // biome-ignore lint/suspicious/noExplicitAny: Baileys ConnectionState type varies across versions
     sock.ev.on('connection.update', (update: any) => {
-      if (update.qr) {
+      if (update.qr && !this.config.phoneNumber) {
         import('qrcode-terminal')
           .then((qrterm) => {
             qrterm.generate(update.qr, { small: true });
           })
-          .catch(() => {
-            // qrcode-terminal unavailable; printQRInTerminal handles it
+          .catch((err: unknown) => {
+            const detail = err instanceof Error ? err.message : String(err);
+            console.error(`[whatsapp] QR render failed: ${detail}`);
           });
         if (this.config.onQr) this.config.onQr(update.qr);
       }
 
       if (update.connection === 'close') {
         const code = update.lastDisconnect?.error?.output?.statusCode;
+        const registered = sock.authState.creds.registered;
         if (code !== DisconnectReason.loggedOut && !this.stopped) {
+          this.reconnectAttempts += 1;
+          if (!registered && this.reconnectAttempts > 4) {
+            // Pairing keeps failing across retries — almost certainly rate-limited.
+            // Stop the spiral instead of requesting yet another code.
+            console.error(
+              '[whatsapp] pairing failed repeatedly — WhatsApp is likely rate-limiting this number from too many attempts. Stop the gateway, wait several minutes, then restart to try once more.',
+            );
+            this.config.onPairingCode?.(null);
+            this.stopped = true;
+            return;
+          }
+          const delay = Math.min(3000 * 2 ** (this.reconnectAttempts - 1), 60000);
           this.reconnecting = true;
           this.sock = null;
           this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
             this.reconnecting = false;
             this.start();
-          }, 3000);
+          }, delay);
         }
       }
 
       if (update.connection === 'open') {
+        this.reconnectAttempts = 0;
         this.botJid = sock.user?.id ?? '';
         if (this.config.onQr) this.config.onQr(null);
+        this.config.onPairingCode?.(null);
       }
     });
 
