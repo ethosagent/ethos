@@ -82,7 +82,7 @@ export function tokensToAntd(tokens) {
  *   • layout — `--layout-sidebar-expanded` etc. Same as before.
  */
 export function tokensToCssVariables(tokens) {
-  const { layout, surface } = tokens;
+  const { layout, surface, radius } = tokens;
   return `:root {
   --ethos-bg: ${surface.bgBase};
   --ethos-bg-elevated: ${surface.bgElevated};
@@ -97,6 +97,10 @@ export function tokensToCssVariables(tokens) {
   --layout-right-drawer: ${layout.rightDrawerPx}px;
   --layout-chat-max-width: ${layout.chatMaxWidthPx}px;
   --layout-onboarding-max-width: ${layout.onboardingMaxWidthPx}px;
+  --radius-sm: ${radius.sm}px;
+  --radius-md: ${radius.md}px;
+  --radius-lg: ${radius.lg}px;
+  --radius-full: ${radius.full}px;
 }`;
 }
 /**

@@ -56,7 +56,7 @@ export function PluginSettingsDrawer({
           transform: 'translate(-50%, -50%)',
           width: 480,
           maxHeight: '80vh',
-          borderRadius: 12,
+          borderRadius: 'var(--radius-lg)',
           boxShadow: '0 24px 64px rgba(0, 0, 0, 0.5)',
           background: 'var(--ethos-bg-elevated)',
           zIndex: 50,
