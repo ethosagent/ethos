@@ -11,7 +11,7 @@ import {
   type TrustTier,
 } from '@ethosagent/safety-scanner';
 import { UniversalScanner } from '@ethosagent/skills';
-import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
+import { bundledSkillsSource } from '@ethosagent/skills-library';
 import { isSafePathSegment } from '@ethosagent/storage-fs';
 import { EthosError, type Skill } from '@ethosagent/types';
 import { ethosDir } from '../config';
@@ -185,7 +185,7 @@ async function removeSkill(slug: string): Promise<void> {
 async function listSkills(args: string[] = []): Promise<void> {
   const jsonMode = args.includes('--json');
   const pool = await new UniversalScanner({
-    trustedFirstPartySources: [bundledCodingSkillsSource()],
+    trustedFirstPartySources: [bundledSkillsSource()],
   }).scan();
 
   const bySource = new Map<string, Skill[]>();

@@ -30,8 +30,8 @@ vi.mock('@ethosagent/skills', () => ({
     }
   },
 }));
-vi.mock('@ethosagent/skills-coding', () => ({
-  bundledCodingSkillsSource: () => ({}),
+vi.mock('@ethosagent/skills-library', () => ({
+  bundledSkillsSource: () => ({}),
 }));
 // Mock error-log to avoid filesystem access in the --recent-errors path.
 vi.mock('../error-log', () => ({

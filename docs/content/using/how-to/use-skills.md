@@ -34,7 +34,7 @@ Output groups skills by source. The expected labels are:
 
 | Source label | Path | Trust tier |
 |---|---|---|
-| `ethos-bundled` | shipped inside `@ethosagent/skills-coding` | trusted-repo |
+| `ethos-bundled` | shipped inside `@ethosagent/skills-library` | trusted-repo |
 | `ethos` | `~/.ethos/skills/` | trusted-repo |
 | `claude-code` | `~/.claude/skills/` | community |
 | `claude-code-project` | `./.claude/skills/` in the cwd | community |

@@ -44,7 +44,7 @@ Returns `{ ok: false, code: 'not_available' }` for unknown names or for skills t
 
 The skill set returned by `skills_list` is gated by:
 
-1. **Source discovery.** The universal scanner reads from `~/.ethos/skills/`, `~/.claude/skills/`, `~/.cursor/skills/` (community sources), plus first-party bundles like `ethos-bundled/` from `@ethosagent/skills-coding`.
+1. **Source discovery.** The universal scanner reads from `~/.ethos/skills/`, `~/.claude/skills/`, `~/.cursor/skills/` (community sources), plus first-party bundles like `ethos-bundled/` from `@ethosagent/skills-library`.
 2. **Personality `global_ingest`.** The personality config's `skills.global_ingest.mode` (`capability` / `tags` / `explicit` / `none`) plus `allow` / `deny` lists filter the candidate pool.
 3. **`required_tools` reachability.** A skill whose `required_tools` aren't all in the personality's `toolset.yaml` is filtered out (logged at INFO at boot).
 4. **Team scope (when present).** Skills authored at the team layer surface to all members of that team.
@@ -105,5 +105,5 @@ Without these tools, an agent asked "do you have a skill for handling PRs?" woul
 ## See also {#see-also}
 
 - [`use-skills`](../../using/how-to/use-skills.md) — operator how-to for installing and authoring skills.
-- [`ethos-skill-authoring`](https://github.com/MiteshSharma/ethos/blob/main/extensions/skills-coding/data/ethos-skill-authoring/SKILL.md) — the bundled skill that documents skill authoring.
+- [`ethos-skill-authoring`](https://github.com/MiteshSharma/ethos/blob/main/skills/data/framework/ethos-skill-authoring/SKILL.md) — the bundled skill that documents skill authoring.
 - [Personality registry reference](personality-registry.md) — where the `skills.global_ingest` block is documented.

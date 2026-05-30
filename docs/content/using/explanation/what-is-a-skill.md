@@ -51,7 +51,7 @@ The default sources walked at startup:
 
 | Source label | Path | Trust tier |
 |---|---|---|
-| `ethos-bundled` | `extensions/skills-coding/data/*/SKILL.md` (ships inside Ethos) | trusted-repo |
+| `ethos-bundled` | `skills/data/<category>/*/SKILL.md` (ships inside Ethos) | trusted-repo |
 | `ethos` | `~/.ethos/skills/*/SKILL.md` | trusted-repo |
 | `ethos-project` | `<cwd>/.ethos/skills/*/SKILL.md` (per-repo) | community |
 | `claude-code` | `~/.claude/skills/*/SKILL.md` | community |

@@ -8,7 +8,7 @@ import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry, firstParagraph } from '@ethosagent/personalities';
 import { initPairingDb } from '@ethosagent/safety-channel';
 import { createInjectors } from '@ethosagent/skills';
-import { bundledCodingSkillsSource } from '@ethosagent/skills-coding';
+import { bundledSkillsSource } from '@ethosagent/skills-library';
 import { readRuntime, removeRuntime } from '@ethosagent/team-supervisor';
 // Platform adapters are loaded LAZILY in runGatewayStart() — see plan/IMPROVEMENT.md P0-3.
 // Their underlying SDKs (grammy, discord.js, @slack/bolt, imapflow…) are
@@ -1071,7 +1071,7 @@ async function createSlackPersonalityCardReader() {
     userPersonalitiesDir: personalitiesDir,
   });
   const { skillsInjector } = createInjectors(registry, {
-    trustedFirstPartySources: [bundledCodingSkillsSource()],
+    trustedFirstPartySources: [bundledSkillsSource()],
   });
   return {
     async read(personalityId: string) {
@@ -1108,7 +1108,7 @@ async function createTelegramPersonalityCardReader() {
     userPersonalitiesDir: personalitiesDir,
   });
   const { skillsInjector } = createInjectors(registry, {
-    trustedFirstPartySources: [bundledCodingSkillsSource()],
+    trustedFirstPartySources: [bundledSkillsSource()],
   });
   // Lazily import the Telegram personality renderer. The import type is
   // erased at runtime; the `as` cast is safe because we catch import failure.

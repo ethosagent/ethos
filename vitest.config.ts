@@ -35,6 +35,7 @@ export default defineConfig({
       'extensions/*/src/**/*.test.ts',
       'apps/*/src/**/*.test.ts',
       'examples/plugins/*/src/**/*.test.ts',
+      'skills/src/**/*.test.ts',
     ],
   },
 });

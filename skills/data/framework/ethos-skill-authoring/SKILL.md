@@ -44,7 +44,7 @@ Skills are prose. The Ethos universal scanner discovers them, the ingest filter 
 ```
 ~/.ethos/skills/<skill-id>/SKILL.md       # user-level (any personality can ingest)
 ~/.ethos/personalities/<p>/skills/<id>/SKILL.md  # personality-scoped
-extensions/skills-coding/data/<id>/SKILL.md      # first-party bundle (repo-level)
+skills/data/<category>/<id>/SKILL.md             # first-party bundle (repo-level)
 .agents/skills/<id>/SKILL.md                     # repo-level community skill
 ```
 
