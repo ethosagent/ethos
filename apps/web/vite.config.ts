@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, type PluginOption } from 'vite';
 
 // Vite config for the web client. Two run modes:
 //
@@ -19,7 +19,7 @@ import { defineConfig } from 'vite';
 const root = resolve(__dirname, '../..');
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react()] as PluginOption[],
   root: __dirname,
   resolve: {
     alias: {
