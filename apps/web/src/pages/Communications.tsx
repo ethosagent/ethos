@@ -543,7 +543,11 @@ function WhatsAppPanel() {
       size="small"
       title="WhatsApp (Baileys)"
       extra={
-        <Typography.Link href="https://github.com/WhiskeySockets/Baileys" target="_blank" rel="noreferrer">
+        <Typography.Link
+          href="https://github.com/WhiskeySockets/Baileys"
+          target="_blank"
+          rel="noreferrer"
+        >
           Baileys docs ↗
         </Typography.Link>
       }

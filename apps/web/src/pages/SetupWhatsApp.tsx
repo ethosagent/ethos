@@ -87,9 +87,7 @@ export function SetupWhatsApp() {
           </code>
         </div>
       ) : (
-        <p style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>
-          Waiting for QR code...
-        </p>
+        <p style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>Waiting for QR code...</p>
       )}
       <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 16 }}>
         Open WhatsApp &rarr; Settings &rarr; Linked Devices &rarr; Link a Device

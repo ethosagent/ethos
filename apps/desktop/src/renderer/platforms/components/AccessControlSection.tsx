@@ -11,7 +11,7 @@ const PLATFORM_HINTS: Record<string, string> = {
   telegram: 'Send /start to @userinfobot. The number shown is your user ID.',
   slack: 'Open your Slack profile → click the … menu → "Copy member ID".',
   discord: 'Enable Developer Mode → right-click your name → "Copy User ID".',
-  email: 'Use the sender\'s full email address (globs supported: *@example.com).',
+  email: "Use the sender's full email address (globs supported: *@example.com).",
   whatsapp: 'Your WhatsApp phone number in E.164 format (e.g., +14155551234).',
 };
 

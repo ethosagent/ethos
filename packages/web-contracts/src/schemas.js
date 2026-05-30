@@ -314,7 +314,7 @@ export const PersonalitySkillSchema = z.object({
 // emitted. The setup form posts plaintext on update, then the read
 // flips to configured = true.
 // ---------------------------------------------------------------------------
-export const PlatformIdSchema = z.enum(['telegram', 'discord', 'slack', 'email']);
+export const PlatformIdSchema = z.enum(['telegram', 'discord', 'slack', 'email', 'whatsapp']);
 export const PlatformStatusSchema = z.object({
   id: PlatformIdSchema,
   /** True when every required secret field has a non-empty value. */

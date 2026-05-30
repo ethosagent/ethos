@@ -426,6 +426,6 @@ function createPassiveMcpManager(): McpManager {
 
 // Re-exports so boot code can read tokens / inspect contract surfaces directly.
 export { WebTokenRepository } from './repositories/web-token.repository';
+export { setWhatsAppQr } from './routes/setup-whatsapp';
 export type { DangerPredicate, DangerReason } from './services/approval-hook';
 export { type ChatDefaults, ChatService } from './services/chat.service';
-export { setWhatsAppQr } from './routes/setup-whatsapp';

@@ -51,10 +51,10 @@ export function parseInboundMessage(
   const text = extractText(msg);
   const botNumber = botJid.split('@')[0].split(':')[0];
   const mentionedJids = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
-  const isGroupMention = !isDm && (
-    (mentionedJids && mentionedJids.some((j) => j.split('@')[0].split(':')[0] === botNumber)) ||
-    text.includes(`@${botNumber}`)
-  );
+  const isGroupMention =
+    !isDm &&
+    ((mentionedJids && mentionedJids.some((j) => j.split('@')[0].split(':')[0] === botNumber)) ||
+      text.includes(`@${botNumber}`));
 
   const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
 
@@ -76,23 +76,15 @@ export function parseInboundMessage(
 
 function extractText(msg: RawWhatsAppMessage): string {
   if (msg.message?.conversation) return msg.message.conversation;
-  if (msg.message?.extendedTextMessage?.text)
-    return msg.message.extendedTextMessage.text;
-  if (msg.message?.imageMessage?.caption)
-    return msg.message.imageMessage.caption;
-  if (msg.message?.videoMessage?.caption)
-    return msg.message.videoMessage.caption;
+  if (msg.message?.extendedTextMessage?.text) return msg.message.extendedTextMessage.text;
+  if (msg.message?.imageMessage?.caption) return msg.message.imageMessage.caption;
+  if (msg.message?.videoMessage?.caption) return msg.message.videoMessage.caption;
   return '';
 }
 
 export function hasMedia(msg: RawWhatsAppMessage): boolean {
   const m = msg.message;
-  return !!(
-    m?.imageMessage ||
-    m?.documentMessage ||
-    m?.audioMessage ||
-    m?.videoMessage
-  );
+  return !!(m?.imageMessage || m?.documentMessage || m?.audioMessage || m?.videoMessage);
 }
 
 export function getMediaMeta(

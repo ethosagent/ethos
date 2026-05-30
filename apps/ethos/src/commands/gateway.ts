@@ -281,7 +281,10 @@ export async function runGatewayStart(): Promise<void> {
   // no `defaultBotKey` to fall back on (defaultBotKey only fires for
   // single-bot deployments). Warn at boot so operators know.
   const multiBotConfigured =
-    (config.telegram?.bots.length ?? 0) + (config.slack?.apps.length ?? 0) + (config.whatsapp?.length ?? 0) > 1;
+    (config.telegram?.bots.length ?? 0) +
+      (config.slack?.apps.length ?? 0) +
+      (config.whatsapp?.length ?? 0) >
+    1;
   const legacyAdapterConfigured =
     !!config.discordToken ||
     !!(config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost);
@@ -432,9 +435,7 @@ export async function runGatewayStart(): Promise<void> {
   // Gateway each need a reference to the other.
   const adapters = await buildAdapters(config, loadAdapterModule, attachmentCache, {
     onWhatsAppQr: (botId, qr) => {
-      import('@ethosagent/web-api')
-        .then((m) => m.setWhatsAppQr(botId, qr))
-        .catch(() => {});
+      import('@ethosagent/web-api').then((m) => m.setWhatsAppQr(botId, qr)).catch(() => {});
     },
   });
 

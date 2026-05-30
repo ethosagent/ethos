@@ -6,10 +6,7 @@ export interface ClarifyOption {
 export function buildClarifyMessage(
   question: string,
   options: ClarifyOption[],
-):
-  | { text: string }
-  | { buttonMessage: unknown }
-  | { listMessage: unknown } {
+): { text: string } | { buttonMessage: unknown } | { listMessage: unknown } {
   if (options.length === 0) {
     return { text: question };
   }
@@ -47,10 +44,7 @@ export function buildClarifyMessage(
   };
 }
 
-export function buildNumberedFallback(
-  question: string,
-  options: ClarifyOption[],
-): string {
+export function buildNumberedFallback(question: string, options: ClarifyOption[]): string {
   const lines = [question, ''];
   options.forEach((opt, i) => {
     lines.push(`${i + 1}. ${opt.label}`);

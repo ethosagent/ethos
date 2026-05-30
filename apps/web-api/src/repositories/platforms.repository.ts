@@ -74,6 +74,15 @@ const PLATFORMS: Record<PlatformId, PlatformDefinition> = {
       password: 'email/password',
     },
   },
+  // WhatsApp pairs via QR code (handled by setup-whatsapp.ts SSE), not
+  // config-form fields — so it has no settable secret fields here. The
+  // entry exists only to satisfy Record<PlatformId, …>; whatsapp is not in
+  // ALL_PLATFORM_IDS, so listStatus() never enumerates it.
+  whatsapp: {
+    fields: [],
+    toConfigKey: {},
+    secretRef: {},
+  },
 };
 
 const ALL_PLATFORM_IDS: readonly PlatformId[] = ['telegram', 'slack', 'discord', 'email'] as const;

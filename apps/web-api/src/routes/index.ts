@@ -16,8 +16,8 @@ import { authRoutes } from './auth';
 import { openAiRoutes } from './openai';
 import { openapiRoutes } from './openapi';
 import { mcpRpcPath, rpcRoutes } from './rpc';
-import { sseRoutes } from './sse';
 import { setupWhatsAppRoutes } from './setup-whatsapp';
+import { sseRoutes } from './sse';
 import { staticRoutes } from './static';
 import { systemSseRoutes } from './system-sse';
 

@@ -7,11 +7,7 @@ import type {
   PlatformAdapter,
 } from '@ethosagent/types';
 import { downloadMedia } from './media';
-import {
-  type RawWhatsAppMessage,
-  hasMedia,
-  parseInboundMessage,
-} from './message-parser';
+import { hasMedia, parseInboundMessage, type RawWhatsAppMessage } from './message-parser';
 import { resolveSessionDir } from './session-store';
 
 export interface WhatsAppAdapterConfig {
@@ -65,8 +61,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
     const makeWASocket = baileys.makeWASocket ?? baileys.default;
     const { useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = baileys;
 
-    const { state, saveCreds } =
-      await useMultiFileAuthState(sessionDir);
+    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
     const sock = makeWASocket({
       auth: state,
@@ -76,8 +71,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // biome-ignore lint/suspicious/noExplicitAny: Baileys
-    // ConnectionState type varies across versions
+    // biome-ignore lint/suspicious/noExplicitAny: Baileys ConnectionState type varies across versions
     sock.ev.on('connection.update', (update: any) => {
       if (update.qr) {
         import('qrcode-terminal')
@@ -91,8 +85,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
       }
 
       if (update.connection === 'close') {
-        const code =
-          update.lastDisconnect?.error?.output?.statusCode;
+        const code = update.lastDisconnect?.error?.output?.statusCode;
         if (code !== DisconnectReason.loggedOut && !this.stopped) {
           this.reconnecting = true;
           this.sock = null;
@@ -133,32 +126,20 @@ export class WhatsAppAdapter implements PlatformAdapter {
         }
 
         if (!isDm && this.config.defaultMode === 'mention_only') {
-          const text =
-            msg.message?.conversation ??
-            msg.message?.extendedTextMessage?.text ??
-            '';
-          const botNumber = this.botJid
-            .split('@')[0]
-            .split(':')[0];
+          const text = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text ?? '';
+          const botNumber = this.botJid.split('@')[0].split(':')[0];
           if (!text.includes(`@${botNumber}`)) continue;
         }
 
-        let attachments:
-          | import('@ethosagent/types').Attachment[]
-          | undefined;
+        let attachments: import('@ethosagent/types').Attachment[] | undefined;
         if (hasMedia(msg) && this.config.cache) {
           const sessionKey = `whatsapp:${this.botKey}:${jid}`;
           try {
             const att = await downloadMedia(
               msg,
               async (m) => {
-                // biome-ignore lint/suspicious/noExplicitAny: Baileys
-                // downloadMediaMessage signature varies across versions
-                const buffer = await (downloadMediaMessage as any)(
-                  m,
-                  'buffer',
-                  {},
-                );
+                // biome-ignore lint/suspicious/noExplicitAny: Baileys downloadMediaMessage signature varies across versions
+                const buffer = await (downloadMediaMessage as any)(m, 'buffer', {});
                 return Buffer.from(buffer);
               },
               this.config.cache,
@@ -170,22 +151,14 @@ export class WhatsAppAdapter implements PlatformAdapter {
           }
         }
 
-        const parsed = parseInboundMessage(
-          msg,
-          this.botJid,
-          this.botKey,
-          attachments,
-        );
+        const parsed = parseInboundMessage(msg, this.botJid, this.botKey, attachments);
         if (!parsed) continue;
 
         // Receipt reaction
         try {
           await (
             sock as {
-              sendMessage: (
-                jid: string,
-                content: unknown,
-              ) => Promise<unknown>;
+              sendMessage: (jid: string, content: unknown) => Promise<unknown>;
             }
           ).sendMessage(jid, {
             react: { text: '\u{1F440}', key: msg.key },
@@ -218,10 +191,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
     }
   }
 
-  async send(
-    chatId: string,
-    message: OutboundMessage,
-  ): Promise<DeliveryResult> {
+  async send(chatId: string, message: OutboundMessage): Promise<DeliveryResult> {
     if (!this.sock) return { ok: false, error: 'Not connected' };
 
     const sock = this.sock as {
@@ -246,11 +216,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
             }
           : undefined;
 
-        const sent = await sock.sendMessage(
-          chatId,
-          { text: chunk },
-          opts,
-        );
+        const sent = await sock.sendMessage(chatId, { text: chunk }, opts);
         if (!firstId) firstId = sent.key.id;
       } catch (err) {
         return {

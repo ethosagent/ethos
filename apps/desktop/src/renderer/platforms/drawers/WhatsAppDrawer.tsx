@@ -54,6 +54,7 @@ export function WhatsAppDrawer({ onBotChange }: WhatsAppDrawerProps) {
   }, [checkStatus]);
 
   // Trigger parent reload when status changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: connected is the intended change trigger, not read in the body
   useEffect(() => {
     onBotChange?.();
   }, [connected, onBotChange]);
@@ -105,9 +106,7 @@ export function WhatsAppDrawer({ onBotChange }: WhatsAppDrawerProps) {
             <code style={{ fontSize: 11, fontFamily: 'var(--font-mono)' }}>ethos gateway</code>)
           </div>
           <div>2. A QR code will appear in the terminal</div>
-          <div>
-            3. Open WhatsApp &rarr; Settings &rarr; Linked Devices &rarr; Link a Device
-          </div>
+          <div>3. Open WhatsApp &rarr; Settings &rarr; Linked Devices &rarr; Link a Device</div>
           <div>4. Scan the QR code with your phone</div>
           <div style={{ marginTop: 8, color: 'var(--text-tertiary)' }}>
             Or visit the web setup page at{' '}

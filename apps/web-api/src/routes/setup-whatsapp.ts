@@ -16,9 +16,7 @@ const listeners = new Map<string, Set<Listener>>();
 
 export function setWhatsAppQr(botId: string, qr: string | null): void {
   qrState.set(botId, qr);
-  const payload = qr
-    ? JSON.stringify({ qr })
-    : JSON.stringify({ paired: true });
+  const payload = qr ? JSON.stringify({ qr }) : JSON.stringify({ paired: true });
   const subs = listeners.get(botId);
   if (subs) {
     for (const listener of subs) {
