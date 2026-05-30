@@ -25,6 +25,7 @@ import { PluginPage } from './pages/PluginPage';
 import { Plugins } from './pages/Plugins';
 import { Sessions } from './pages/Sessions';
 import { Settings } from './pages/Settings';
+import { SetupWhatsApp } from './pages/SetupWhatsApp';
 import { SigningIn } from './pages/SigningIn';
 import { Skills } from './pages/Skills';
 import { TeamControlCenter } from './pages/TeamControlCenter';
@@ -139,6 +140,7 @@ export function App() {
           <Route path="/setup/memory" element={<Onboarding startAtStep="memory" />} />
           <Route path="/setup/personality" element={<Onboarding startAtStep="personality" />} />
           <Route path="/setup/messaging" element={<Onboarding startAtStep="messaging" />} />
+          <Route path="/setup/whatsapp/:botId" element={<SetupWhatsApp />} />
           <Route path="/signing-in" element={<SigningIn />} />
           <Route path="/oauth/callback" element={<OAuthCallback />} />
           <Route path="*" element={<Navigate to="/chat" replace />} />

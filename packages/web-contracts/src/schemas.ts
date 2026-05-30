@@ -378,7 +378,7 @@ export type PersonalitySkill = z.infer<typeof PersonalitySkillSchema>;
 // flips to configured = true.
 // ---------------------------------------------------------------------------
 
-export const PlatformIdSchema = z.enum(['telegram', 'discord', 'slack', 'email']);
+export const PlatformIdSchema = z.enum(['telegram', 'discord', 'slack', 'email', 'whatsapp']);
 export type PlatformId = z.infer<typeof PlatformIdSchema>;
 
 export const PlatformStatusSchema = z.object({

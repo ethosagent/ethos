@@ -6,9 +6,10 @@ import { DiscordDrawer } from './drawers/DiscordDrawer';
 import { EmailDrawer } from './drawers/EmailDrawer';
 import { SlackDrawer } from './drawers/SlackDrawer';
 import { TelegramDrawer } from './drawers/TelegramDrawer';
+import { WhatsAppDrawer } from './drawers/WhatsAppDrawer';
 import { PlatformRow } from './PlatformRow';
 
-type PlatformId = 'telegram' | 'slack' | 'discord' | 'email';
+type PlatformId = 'telegram' | 'slack' | 'discord' | 'email' | 'whatsapp';
 
 interface PlatformState {
   id: PlatformId;
@@ -21,9 +22,10 @@ const platformMeta: Record<PlatformId, { icon: string; name: string }> = {
   slack: { icon: '#', name: 'Slack' },
   discord: { icon: '🎮', name: 'Discord' },
   email: { icon: '✉', name: 'Email' },
+  whatsapp: { icon: '📱', name: 'WhatsApp' },
 };
 
-const platformOrder: PlatformId[] = ['telegram', 'slack', 'discord', 'email'];
+const platformOrder: PlatformId[] = ['telegram', 'slack', 'discord', 'email', 'whatsapp'];
 
 export function PlatformsPage() {
   const { state } = useAppState();
@@ -185,6 +187,13 @@ export function PlatformsPage() {
         onClose={() => setActiveDrawer(null)}
       >
         <EmailDrawer onBotChange={reload} />
+      </DrawerShell>
+      <DrawerShell
+        open={activeDrawer === 'whatsapp'}
+        title="WhatsApp"
+        onClose={() => setActiveDrawer(null)}
+      >
+        <WhatsAppDrawer onBotChange={reload} />
       </DrawerShell>
     </div>
   );

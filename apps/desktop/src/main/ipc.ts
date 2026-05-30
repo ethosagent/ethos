@@ -726,7 +726,7 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(IPC_CHANNELS['gateway:platformStatus'], async () => {
-    return { telegram: false, slack: false, discord: false };
+    return { telegram: false, slack: false, discord: false, whatsapp: false };
   });
 
   ipcMain.handle(IPC_CHANNELS['login-item:get'], async () => {

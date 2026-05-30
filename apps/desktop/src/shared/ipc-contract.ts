@@ -140,7 +140,7 @@ export interface IpcContract {
   };
   'gateway:platformStatus': {
     request: undefined;
-    response: { telegram: boolean; slack: boolean; discord: boolean };
+    response: { telegram: boolean; slack: boolean; discord: boolean; whatsapp: boolean };
   };
   'backend:authToken': { request: undefined; response: string | null };
   'login-item:get': { request: undefined; response: boolean };

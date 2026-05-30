@@ -46,6 +46,7 @@
       "@ethosagent/platform-telegram/personality": [
         "./extensions/platform-telegram/src/blocks/personality"
       ],
+      "@ethosagent/platform-whatsapp": ["./extensions/platform-whatsapp/src"],
       "@ethosagent/openclaw-compat": ["./extensions/openclaw-compat/src"],
       "@ethosagent/skills": ["./extensions/skills/src"],
       "@ethosagent/skills-coding": ["./extensions/skills-coding/src"],

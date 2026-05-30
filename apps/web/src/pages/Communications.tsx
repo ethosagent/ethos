@@ -537,6 +537,34 @@ const LEGACY_PLATFORMS: ReadonlyArray<PlatformShape> = [
   },
 ];
 
+function WhatsAppPanel() {
+  return (
+    <Card
+      size="small"
+      title="WhatsApp (Baileys)"
+      extra={
+        <Typography.Link
+          href="https://github.com/WhiskeySockets/Baileys"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Baileys docs ↗
+        </Typography.Link>
+      }
+      style={{ maxWidth: 640 }}
+    >
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        WhatsApp uses QR-code pairing via Baileys. No Cloud API credentials are needed.
+      </Typography.Paragraph>
+      <Button type="primary" href="/setup/whatsapp/default">
+        Set up WhatsApp
+      </Button>
+
+      <AccessControlSection platform="whatsapp" />
+    </Card>
+  );
+}
+
 function LegacyPlatformPanel({
   shape,
   status,
@@ -660,6 +688,7 @@ const PLATFORM_HINTS: Record<string, string> = {
   slack: 'Open your Slack profile → click the … menu → "Copy member ID".',
   discord: 'Enable Developer Mode → right-click your name → "Copy User ID".',
   email: "Use the sender's full email address (globs supported: *@example.com).",
+  whatsapp: 'Your WhatsApp phone number in E.164 format (e.g., +14155551234).',
 };
 
 function AccessControlSection({ platform }: { platform: string }) {
@@ -829,6 +858,7 @@ export function Communications() {
         items={[
           { key: 'telegram', label: 'Telegram', children: <TelegramPanel /> },
           { key: 'slack', label: 'Slack', children: <SlackPanel /> },
+          { key: 'whatsapp', label: 'WhatsApp', children: <WhatsAppPanel /> },
           ...LEGACY_PLATFORMS.map((shape) => {
             const status = statusById.get(shape.id);
             return {

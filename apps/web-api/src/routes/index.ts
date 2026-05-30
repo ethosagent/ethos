@@ -16,6 +16,7 @@ import { authRoutes } from './auth';
 import { openAiRoutes } from './openai';
 import { openapiRoutes } from './openapi';
 import { mcpRpcPath, rpcRoutes } from './rpc';
+import { setupWhatsAppRoutes } from './setup-whatsapp';
 import { sseRoutes } from './sse';
 import { staticRoutes } from './static';
 import { systemSseRoutes } from './system-sse';
@@ -218,6 +219,12 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
       }),
     );
   }
+
+  // WhatsApp QR-pairing SSE stream. Gated behind auth — the QR string is
+  // a live WhatsApp account-linking credential and must not be publicly
+  // accessible. Must be before the static SPA mount (which owns `/*`).
+  app.use('/setup/whatsapp/*', authMiddleware({ tokens: opts.tokens }));
+  app.route('/setup/whatsapp', setupWhatsAppRoutes());
 
   // Static SPA mount (must be LAST — it owns `/*` so any unmatched path
   // falls through to index.html). Skipped when `webDist` isn't supplied;
