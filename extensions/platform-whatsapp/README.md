@@ -39,9 +39,14 @@ whatsapp.0.default_mode: mention_only       # or 'all' — group reply behaviour
 whatsapp.0.allowed_numbers:                 # optional allowlist of JIDs / numbers
   - "14155551234@s.whatsapp.net"
 # whatsapp.0.session_dir: ~/.ethos/whatsapp # optional; default is ~/.ethos/whatsapp
+
+# REQUIRED — channel-filter safety gate. Without it the gateway refuses to boot.
+channel_filter.whatsapp.ownerUserId: 14155551234@s.whatsapp.net   # your WhatsApp JID (E.164 number + @s.whatsapp.net)
 ```
 
-That's the complete field list — `id`, `default_mode`, `allowed_numbers`, and `session_dir`. There are no tokens, signing secrets, or webhook URLs to configure.
+The `whatsapp.*` keys are the adapter config — `id`, `default_mode`, `allowed_numbers`, `session_dir`; there are no tokens or webhook URLs. The `channel_filter.whatsapp.ownerUserId` line is **required**: `ethos gateway start` fails closed with `FATAL: Channel adapters configured without channel_filter safety config` if it's missing. It scopes who the bot accepts messages from (set it to your own WhatsApp number's JID).
+
+> **Prefer the app? Enable from the desktop or web UI instead.** Open the web **Communications → WhatsApp** panel (or the desktop **WhatsApp** drawer), enter a bot name, reply mode, and your owner number, and click **Enable** — it writes the `whatsapp.*` and `channel_filter.whatsapp.ownerUserId` config for you (Steps 1). Then restart the gateway: on **desktop** click **Restart gateway** in the drawer and the QR appears there; on **web**, restart the gateway (or re-run `ethos serve`) and scan from the Communications page. Steps 2-4 below describe the equivalent CLI path.
 
 ### Step 2 · Start the gateway
 

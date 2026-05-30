@@ -5,6 +5,7 @@ import type {
   PlatformStatus,
   SlackAppEntry,
   TelegramBotEntry,
+  WhatsAppEntry,
 } from '@ethosagent/web-contracts';
 import type { PlatformsRepository } from '../repositories/platforms.repository';
 
@@ -67,6 +68,23 @@ export class PlatformsService {
 
   async removeSlackApp(botKey: string): Promise<{ ok: true }> {
     await this.opts.repo.removeSlackApp(botKey);
+    return { ok: true };
+  }
+
+  async listWhatsApp(): Promise<{ bots: WhatsAppEntry[] }> {
+    return { bots: await this.opts.repo.listWhatsApp() };
+  }
+
+  async addWhatsApp(input: {
+    id?: string;
+    defaultMode?: 'all' | 'mention_only';
+    allowedNumbers?: string[];
+  }): Promise<{ bot: WhatsAppEntry }> {
+    return { bot: await this.opts.repo.addWhatsApp(input) };
+  }
+
+  async removeWhatsApp(botKey: string): Promise<{ ok: true }> {
+    await this.opts.repo.removeWhatsApp(botKey);
     return { ok: true };
   }
 

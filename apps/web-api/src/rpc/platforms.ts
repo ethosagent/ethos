@@ -36,6 +36,22 @@ export const platformsRouter = {
     context.platforms.removeSlackApp(input.botKey),
   ),
 
+  botsListWhatsApp: os.platforms.botsListWhatsApp.handler(({ context }) =>
+    context.platforms.listWhatsApp(),
+  ),
+
+  botsAddWhatsApp: os.platforms.botsAddWhatsApp.handler(({ input, context }) =>
+    context.platforms.addWhatsApp({
+      id: input.id,
+      defaultMode: input.defaultMode,
+      allowedNumbers: input.allowedNumbers,
+    }),
+  ),
+
+  botsRemoveWhatsApp: os.platforms.botsRemoveWhatsApp.handler(({ input, context }) =>
+    context.platforms.removeWhatsApp(input.botKey),
+  ),
+
   getChannelFilter: os.platforms.getChannelFilter.handler(({ input, context }) =>
     context.platforms.getChannelFilter(input.platform),
   ),

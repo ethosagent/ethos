@@ -419,6 +419,19 @@ export const SlackAppEntrySchema = z.object({
 });
 export type SlackAppEntry = z.infer<typeof SlackAppEntrySchema>;
 
+// WhatsApp has no tokens/secrets and no bind — it pairs via QR code, not a
+// config-form token. An entry is just routing knobs + a `paired` flag derived
+// from whether the Baileys session dir on disk holds saved credentials.
+export const WhatsAppEntrySchema = z.object({
+  botKey: z.string(),
+  defaultMode: z.enum(['all', 'mention_only']),
+  allowedNumbers: z.array(z.string()),
+  /** True when the Baileys session dir for this bot is non-empty (QR pairing
+   *  completed and credentials were persisted). */
+  paired: z.boolean(),
+});
+export type WhatsAppEntry = z.infer<typeof WhatsAppEntrySchema>;
+
 export const ChannelPlatformFilterSchema = z.object({
   enabled: z.boolean(),
   ownerUserId: z.string(),

@@ -102,6 +102,7 @@ export interface IpcContract {
   'personalities:list': { request: undefined; response: PersonalityListItem[] };
   'backend:port': { request: undefined; response: number };
   'backend:start': { request: { port: number }; response: { started: boolean } };
+  'backend:restart': { request: undefined; response: { ok: boolean } };
   'health:check': { request: { port: number }; response: { healthy: boolean } };
   'theme:get': { request: undefined; response: 'dark' | 'light' };
   'advancedMode:get': { request: undefined; response: boolean };
@@ -224,6 +225,7 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'personalities:list': 'personalities:list',
   'backend:port': 'backend:port',
   'backend:start': 'backend:start',
+  'backend:restart': 'backend:restart',
   'health:check': 'health:check',
   'theme:get': 'theme:get',
   'advancedMode:get': 'advancedMode:get',

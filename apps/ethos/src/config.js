@@ -186,6 +186,16 @@ export async function writeConfig(storage, config) {
       }
     }
   }
+  if (config.whatsapp?.length) {
+    for (const [i, wa] of config.whatsapp.entries()) {
+      if (wa.id) lines.push(`whatsapp.${i}.id: ${wa.id}`);
+      if (wa.default_mode) lines.push(`whatsapp.${i}.default_mode: ${wa.default_mode}`);
+      if (wa.session_dir) lines.push(`whatsapp.${i}.session_dir: ${wa.session_dir}`);
+      if (wa.allowed_numbers && wa.allowed_numbers.length > 0) {
+        lines.push(`whatsapp.${i}.allowed_numbers: ${wa.allowed_numbers.join(',')}`);
+      }
+    }
+  }
   if (config.teams) {
     for (const [name, tcfg] of Object.entries(config.teams)) {
       if (tcfg.autoStop) lines.push(`teams.${name}.autoStop: true`);
@@ -344,6 +354,7 @@ function parseConfigYaml(src) {
   // plus their nested `.bind.<field>` sub-keys. Per-team config keyed by name.
   const telegramBotsKv = {};
   const slackAppsKv = {};
+  const whatsappKv = {};
   const teamsKv = {};
   // FW-16 — quick_commands.<name>.<field>: <value>
   const qcKv = {};
@@ -380,6 +391,14 @@ function parseConfigYaml(src) {
       const idx = Number(sapp[1]);
       slackAppsKv[idx] ??= {};
       slackAppsKv[idx][sapp[2]] = sapp[3].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // whatsapp.<index>.<field>: <value>
+    const wa = line.match(/^whatsapp\.(\d+)\.(\S+):\s*(.+)$/);
+    if (wa) {
+      const idx = Number(wa[1]);
+      whatsappKv[idx] ??= {};
+      whatsappKv[idx][wa[2]] = wa[3].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // teams.<name>.<field>: <value>
@@ -602,10 +621,11 @@ function parseConfigYaml(src) {
   const awsConfig = awsSecrets ? { secrets: awsSecrets } : undefined;
   const telegramResult = buildTelegramBots(telegramBotsKv);
   const slackResult = buildSlackApps(slackAppsKv);
+  const whatsappResult = buildWhatsApps(whatsappKv);
   const teams = buildTeamsConfig(teamsKv);
   const quick_commands = buildQuickCommands(qcKv);
   const channelFilter = buildChannelFilter(channelFilterKv);
-  const parseErrors = [...telegramResult.errors, ...slackResult.errors];
+  const parseErrors = [...telegramResult.errors, ...slackResult.errors, ...whatsappResult.errors];
   const parsedSchemaVersion = kv.schemaVersion ? Number(kv.schemaVersion) : undefined;
   const config = {
     schemaVersion: Number.isFinite(parsedSchemaVersion) ? parsedSchemaVersion : undefined,
@@ -645,6 +665,7 @@ function parseConfigYaml(src) {
     personalitiesConfig,
     telegram: telegramResult.bots.length > 0 ? { bots: telegramResult.bots } : undefined,
     slack: slackResult.apps.length > 0 ? { apps: slackResult.apps } : undefined,
+    whatsapp: whatsappResult.apps.length > 0 ? whatsappResult.apps : undefined,
     teams,
     evolverCronEnabled: evolverKv.cron_enabled === 'true' ? true : undefined,
     evolverSchedule: evolverKv.schedule || undefined,
@@ -872,6 +893,37 @@ function buildSlackApps(kv) {
       bind: result.bind,
       ...(entry.id ? { id: entry.id } : {}),
     });
+  }
+  return { apps, errors };
+}
+function buildWhatsApps(kv) {
+  const apps = [];
+  const errors = [];
+  for (const idx of sortedIndexes(kv)) {
+    const entry = kv[idx];
+    if (!entry) continue;
+    const label = `whatsapp[${idx}]`;
+    const app = {};
+    if (entry.id) app.id = entry.id;
+    if (entry.session_dir) app.session_dir = entry.session_dir;
+    if (entry.default_mode) {
+      if (entry.default_mode === 'all' || entry.default_mode === 'mention_only') {
+        app.default_mode = entry.default_mode;
+      } else {
+        errors.push(
+          `${label}: invalid default_mode '${entry.default_mode}' (expected 'all' or 'mention_only').`,
+        );
+        continue;
+      }
+    }
+    if (entry.allowed_numbers) {
+      const numbers = entry.allowed_numbers
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (numbers.length > 0) app.allowed_numbers = numbers;
+    }
+    apps.push(app);
   }
   return { apps, errors };
 }

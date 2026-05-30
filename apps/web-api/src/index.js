@@ -51,7 +51,12 @@ export function createWebApi(opts) {
   const storage = opts.storage ?? new FsStorage();
   const secrets =
     opts.secrets ?? new FileSecretsResolver({ dir: join(opts.dataDir, 'secrets'), storage });
-  const platformsRepo = new PlatformsRepository({ config: configRepo, secrets });
+  const platformsRepo = new PlatformsRepository({
+    config: configRepo,
+    secrets,
+    dataDir: opts.dataDir,
+    storage,
+  });
   const systemBus = new SystemEventBus();
   // --- Services (business logic) ---
   const sessionsService = new SessionsService({ sessions: sessionsRepo });

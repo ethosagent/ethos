@@ -427,6 +427,12 @@ export function registerIpcHandlers(): void {
     return { started: true };
   });
 
+  ipcMain.handle(IPC_CHANNELS['backend:restart'], () => {
+    const port = store.get('backendPort', 3001) as number;
+    restartBackend(port);
+    return { ok: true };
+  });
+
   ipcMain.handle(IPC_CHANNELS['theme:get'], () => {
     const pref = store.get('theme', 'dark');
     if (pref === 'system') {

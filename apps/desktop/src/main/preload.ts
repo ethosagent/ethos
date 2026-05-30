@@ -21,6 +21,7 @@ const api = {
   backend: {
     getPort: () => ipcRenderer.invoke(IPC_CHANNELS['backend:port']),
     start: (req: { port: number }) => ipcRenderer.invoke(IPC_CHANNELS['backend:start'], req),
+    restart: () => ipcRenderer.invoke(IPC_CHANNELS['backend:restart']),
     getAuthToken: () => ipcRenderer.invoke(IPC_CHANNELS['backend:authToken']),
   },
   health: {

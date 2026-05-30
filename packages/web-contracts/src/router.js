@@ -68,6 +68,7 @@ import {
   SlackAppEntrySchema,
   StoredMessageSchema,
   TelegramBotEntrySchema,
+  WhatsAppEntrySchema,
 } from './schemas';
 
 // oRPC contract — single source of truth for the web control plane.
@@ -633,6 +634,21 @@ const platforms = {
     )
     .output(z.object({ bot: SlackAppEntrySchema })),
   botsRemoveSlack: oc
+    .input(z.object({ botKey: z.string() }))
+    .output(z.object({ ok: z.literal(true) })),
+  // WhatsApp: no tokens/secrets and no bind. An entry is routing knobs only;
+  // pairing happens out-of-band via QR (the setup-whatsapp SSE flow).
+  botsListWhatsApp: oc.output(z.object({ bots: z.array(WhatsAppEntrySchema) })),
+  botsAddWhatsApp: oc
+    .input(
+      z.object({
+        id: z.string().optional(),
+        defaultMode: z.enum(['all', 'mention_only']).optional(),
+        allowedNumbers: z.array(z.string()).optional(),
+      }),
+    )
+    .output(z.object({ bot: WhatsAppEntrySchema })),
+  botsRemoveWhatsApp: oc
     .input(z.object({ botKey: z.string() }))
     .output(z.object({ ok: z.literal(true) })),
   getChannelFilter: oc

@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { deriveBotKey } from '@ethosagent/core';
 
 const PLATFORMS = {
@@ -38,8 +39,16 @@ const PLATFORMS = {
       password: 'email/password',
     },
   },
+  // WhatsApp pairs via QR code, not config-form fields — so it has no settable
+  // secret fields here. listStatus() special-cases it; this stub exists only so
+  // statusFor() can index PLATFORMS[id] for it.
+  whatsapp: {
+    fields: [],
+    toConfigKey: {},
+    secretRef: {},
+  },
 };
-const ALL_PLATFORM_IDS = ['telegram', 'slack', 'discord', 'email'];
+const ALL_PLATFORM_IDS = ['telegram', 'slack', 'discord', 'email', 'whatsapp'];
 // Sentinel botKey for the synthesized legacy single-bot entries
 // (telegramToken / slack*Token triple). The Communications tab can
 // pass this through removeTelegramBot / removeSlackApp and the
@@ -53,6 +62,11 @@ function extractSecretRef(value) {
   const m = value.match(/^\$\{secrets:([^}]+)\}$/);
   return m?.[1] ?? null;
 }
+// Mirrors sanitizeBotKey in extensions/platform-whatsapp/src/session-store.ts —
+// the Baileys session dir for a bot is `<sessionDir>/<sanitized botKey>/`.
+function sanitizeBotKey(key) {
+  return key.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
 export class PlatformsRepository {
   opts;
   constructor(opts) {
@@ -60,7 +74,7 @@ export class PlatformsRepository {
   }
   async listStatus() {
     const passthrough = await this.passthrough();
-    return ALL_PLATFORM_IDS.map((id) => {
+    const statuses = ALL_PLATFORM_IDS.map((id) => {
       const status = this.statusFor(id, passthrough);
       // Multi-bot platforms: also configured when indexed bot entries exist,
       // even when the legacy single-token key is absent.
@@ -76,6 +90,19 @@ export class PlatformsRepository {
       }
       return status;
     });
+    // WhatsApp's PlatformDefinition has no settable fields (it pairs via QR,
+    // not config-form tokens), so statusFor() always reports configured=false.
+    // Special-case it: configured when any `whatsapp.<n>` entry exists, and
+    // surface a `paired` indicator (any configured bot has a non-empty
+    // Baileys session dir) on the fields map — the only boolean channel the
+    // frozen PlatformStatus schema offers.
+    const wa = statuses.find((s) => s.id === 'whatsapp');
+    if (wa) {
+      const entries = await this.listWhatsApp();
+      wa.configured = entries.length > 0;
+      wa.fields = { paired: entries.some((e) => e.paired) };
+    }
+    return statuses;
   }
   async getStatus(id) {
     return this.statusFor(id, await this.passthrough());
@@ -372,6 +399,129 @@ export class PlatformsRepository {
     for (const [newIdx, [, fields]] of sorted.entries()) {
       for (const [sub, value] of Object.entries(fields)) {
         newPassthrough[`slack.apps.${newIdx}.${sub}`] = value;
+      }
+    }
+    if (Object.keys(newPassthrough).length > 0) {
+      await this.opts.config.update({ passthrough: newPassthrough });
+    }
+  }
+  // ---------------------------------------------------------------------------
+  // Multi-bot WhatsApp
+  //
+  // Unlike Telegram/Slack, WhatsApp has no tokens/secrets and no bind. An
+  // entry is just routing knobs (`id`, `default_mode`, `allowed_numbers`,
+  // `session_dir`) written as flat `whatsapp.<n>.*` passthrough keys — the
+  // exact shape apps/ethos/src/config.ts serializes and parses. Pairing is
+  // out-of-band (QR via setup-whatsapp); `paired` is derived from whether the
+  // Baileys session dir on disk holds saved credentials.
+  // ---------------------------------------------------------------------------
+  /** Parse all `whatsapp.<n>.*` passthrough keys into grouped entries. */
+  parseWhatsAppIndices(passthrough) {
+    const byIndex = new Map();
+    for (const [key, value] of Object.entries(passthrough)) {
+      const m = key.match(/^whatsapp\.(\d+)\.(.+)$/);
+      if (!m) continue;
+      const idx = Number(m[1]);
+      const sub = m[2];
+      const entry = byIndex.get(idx) ?? {};
+      entry[sub] = value;
+      byIndex.set(idx, entry);
+    }
+    return byIndex;
+  }
+  /** Default base session dir when an entry sets no `session_dir`, matching the
+   *  gateway's `waCfg.session_dir ?? join(ethosDir(), 'whatsapp')`. */
+  whatsAppBaseSessionDir(fields) {
+    return fields.session_dir ?? join(this.opts.dataDir ?? '', 'whatsapp');
+  }
+  /** botKey derivation matching the adapter:
+   *  `id ?? wa-<sanitized session-dir tail>`. */
+  whatsAppBotKey(fields) {
+    if (fields.id) return fields.id;
+    const baseDir = this.whatsAppBaseSessionDir(fields);
+    return `wa-${baseDir.replace(/[^a-zA-Z0-9]/g, '').slice(-16)}`;
+  }
+  /** True when the Baileys per-bot session dir holds saved credentials.
+   *  Requires a Storage; without one (unit tests), always false. */
+  async whatsAppPaired(fields, botKey) {
+    const storage = this.opts.storage;
+    if (!storage) return false;
+    const dir = join(this.whatsAppBaseSessionDir(fields), sanitizeBotKey(botKey));
+    return (await storage.list(dir)).length > 0;
+  }
+  async listWhatsApp() {
+    const passthrough = await this.passthrough();
+    const byIndex = this.parseWhatsAppIndices(passthrough);
+    const result = [];
+    for (const [, fields] of [...byIndex.entries()].sort(([a], [b]) => a - b)) {
+      const botKey = this.whatsAppBotKey(fields);
+      const allowedRaw = fields.allowed_numbers ?? '';
+      result.push({
+        botKey,
+        defaultMode: fields.default_mode === 'all' ? 'all' : 'mention_only',
+        allowedNumbers: allowedRaw
+          ? allowedRaw
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : [],
+        paired: await this.whatsAppPaired(fields, botKey),
+      });
+    }
+    return result;
+  }
+  async addWhatsApp(input) {
+    const passthrough = await this.passthrough();
+    const byIndex = this.parseWhatsAppIndices(passthrough);
+    const nextIndex = byIndex.size > 0 ? Math.max(...byIndex.keys()) + 1 : 0;
+    // `id` is required to disambiguate multi-bot routing (without it the
+    // adapter derives the same `wa-<dir tail>` botKey for every entry sharing
+    // a session dir). Generate a stable random one when absent.
+    const id = input.id ?? `wa-${Math.random().toString(36).slice(2, 10)}`;
+    const defaultMode = input.defaultMode ?? 'mention_only';
+    const allowedNumbers = (input.allowedNumbers ?? []).map((s) => s.trim()).filter(Boolean);
+    const patch = {
+      [`whatsapp.${nextIndex}.id`]: id,
+      [`whatsapp.${nextIndex}.default_mode`]: defaultMode,
+    };
+    if (allowedNumbers.length > 0) {
+      patch[`whatsapp.${nextIndex}.allowed_numbers`] = allowedNumbers.join(',');
+    }
+    await this.opts.config.update({ passthrough: patch });
+    return {
+      botKey: id,
+      defaultMode,
+      allowedNumbers,
+      paired: await this.whatsAppPaired({ id }, id),
+    };
+  }
+  async removeWhatsApp(botKey) {
+    const passthrough = await this.passthrough();
+    const byIndex = this.parseWhatsAppIndices(passthrough);
+    let targetIndex;
+    for (const [idx, fields] of byIndex.entries()) {
+      if (this.whatsAppBotKey(fields) === botKey) {
+        targetIndex = idx;
+        break;
+      }
+    }
+    if (targetIndex === undefined) return;
+    const toDelete = Object.keys(passthrough).filter((k) =>
+      k.startsWith(`whatsapp.${targetIndex}.`),
+    );
+    await this.opts.config.deletePassthroughKeys(toDelete);
+    await this.reindexWhatsApp();
+  }
+  async reindexWhatsApp() {
+    const passthrough = await this.passthrough();
+    const byIndex = this.parseWhatsAppIndices(passthrough);
+    const allKeys = Object.keys(passthrough).filter((k) => k.startsWith('whatsapp.'));
+    if (allKeys.length > 0) await this.opts.config.deletePassthroughKeys(allKeys);
+    const sorted = [...byIndex.entries()].sort(([a], [b]) => a - b);
+    const newPassthrough = {};
+    for (const [newIdx, [, fields]] of sorted.entries()) {
+      for (const [sub, value] of Object.entries(fields)) {
+        newPassthrough[`whatsapp.${newIdx}.${sub}`] = value;
       }
     }
     if (Object.keys(newPassthrough).length > 0) {

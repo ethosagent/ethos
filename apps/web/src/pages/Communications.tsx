@@ -1,4 +1,9 @@
-import type { BotBinding, SlackAppEntry, TelegramBotEntry } from '@ethosagent/web-contracts';
+import type {
+  BotBinding,
+  SlackAppEntry,
+  TelegramBotEntry,
+  WhatsAppEntry,
+} from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
@@ -537,7 +542,110 @@ const LEGACY_PLATFORMS: ReadonlyArray<PlatformShape> = [
   },
 ];
 
+interface AddWhatsAppFormValues {
+  id: string;
+  default_mode: 'mention_only' | 'all';
+  owner_number: string;
+}
+
 function WhatsAppPanel() {
+  const qc = useQueryClient();
+  const { notification } = AntApp.useApp();
+  const [adding, setAdding] = useState(false);
+  const [form] = Form.useForm<AddWhatsAppFormValues>();
+
+  const botsQuery = useQuery({
+    queryKey: ['platforms', 'bots', 'whatsapp'],
+    queryFn: () => rpc.platforms.botsListWhatsApp(),
+  });
+
+  const addMut = useMutation({
+    mutationFn: async (values: AddWhatsAppFormValues) => {
+      await rpc.platforms.botsAddWhatsApp({
+        id: values.id,
+        defaultMode: values.default_mode,
+      });
+      // Owner number is stored on the channel filter, not the bot entry. Read
+      // the current filter first so we don't clobber the allowlist or enabled flag.
+      const current = await rpc.platforms.getChannelFilter({ platform: 'whatsapp' });
+      const ownerUserId = `${values.owner_number.trim()}@s.whatsapp.net`;
+      await rpc.platforms.setChannelFilter({
+        platform: 'whatsapp',
+        filter: { ...current.filter, ownerUserId },
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['platforms', 'bots', 'whatsapp'] });
+      qc.invalidateQueries({ queryKey: ['platforms', 'channelFilter', 'whatsapp'] });
+      qc.invalidateQueries({ queryKey: ['platforms', 'list'] });
+      notification.success({ message: 'WhatsApp enabled', placement: 'topRight' });
+      form.resetFields();
+      setAdding(false);
+    },
+    onError: (err) =>
+      notification.error({ message: 'Enable failed', description: (err as Error).message }),
+  });
+
+  const removeMut = useMutation({
+    mutationFn: (botKey: string) => rpc.platforms.botsRemoveWhatsApp({ botKey }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['platforms', 'bots', 'whatsapp'] });
+      qc.invalidateQueries({ queryKey: ['platforms', 'list'] });
+      notification.info({ message: 'WhatsApp bot removed', placement: 'topRight' });
+    },
+    onError: (err) =>
+      notification.error({ message: 'Remove failed', description: (err as Error).message }),
+  });
+
+  const bots: WhatsAppEntry[] = botsQuery.data?.bots ?? [];
+
+  const columns = [
+    {
+      title: 'Bot ID',
+      dataIndex: 'botKey',
+      key: 'botKey',
+      render: (k: string) => (
+        <Typography.Text code style={{ fontSize: 12 }}>
+          {k}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: 'Mode',
+      dataIndex: 'defaultMode',
+      key: 'defaultMode',
+      render: (m: string) => <Tag>{m}</Tag>,
+    },
+    {
+      title: 'Pairing',
+      key: 'paired',
+      render: (_: unknown, row: WhatsAppEntry) => (
+        <Badge
+          status={row.paired ? 'success' : 'default'}
+          text={row.paired ? 'Paired' : 'Not paired — restart gateway & scan QR'}
+        />
+      ),
+    },
+    {
+      title: '',
+      key: 'actions',
+      width: 100,
+      render: (_: unknown, row: WhatsAppEntry) => (
+        <Popconfirm
+          title="Remove this WhatsApp bot?"
+          description="The bot's routing config will be deleted from config.yaml."
+          okText="Remove"
+          okButtonProps={{ danger: true }}
+          onConfirm={() => removeMut.mutate(row.botKey)}
+        >
+          <Button size="small" danger>
+            Remove
+          </Button>
+        </Popconfirm>
+      ),
+    },
+  ];
+
   return (
     <Card
       size="small"
@@ -551,14 +659,95 @@ function WhatsAppPanel() {
           Baileys docs ↗
         </Typography.Link>
       }
-      style={{ maxWidth: 640 }}
+      style={{ maxWidth: 720 }}
     >
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-        WhatsApp uses QR-code pairing via Baileys. No Cloud API credentials are needed.
+        WhatsApp uses QR-code pairing via Baileys. No Cloud API credentials are needed — enable a
+        bot below, restart the gateway, then scan the QR code.
       </Typography.Paragraph>
-      <Button type="primary" href="/setup/whatsapp/default">
-        Set up WhatsApp
-      </Button>
+
+      {botsQuery.isLoading ? (
+        <Spin />
+      ) : (
+        <Table
+          dataSource={bots}
+          columns={columns}
+          rowKey="botKey"
+          pagination={false}
+          size="small"
+          locale={{ emptyText: 'No WhatsApp bots enabled yet.' }}
+          style={{ marginBottom: bots.length > 0 ? 16 : 0 }}
+        />
+      )}
+
+      {!adding && (
+        <Button type="dashed" onClick={() => setAdding(true)} style={{ marginTop: 8 }}>
+          + Enable WhatsApp
+        </Button>
+      )}
+
+      {adding && (
+        <Card size="small" style={{ marginTop: 12, background: 'var(--ethos-bg)' }}>
+          <Form
+            form={form}
+            layout="vertical"
+            initialValues={{ default_mode: 'mention_only' }}
+            onFinish={(values) => addMut.mutate(values)}
+          >
+            <Form.Item
+              label="Name / ID"
+              name="id"
+              rules={[{ required: true, message: 'Give this bot a stable id' }]}
+            >
+              <Input autoComplete="off" placeholder="default" />
+            </Form.Item>
+
+            <Form.Item label="Reply mode" name="default_mode">
+              <Select
+                options={[
+                  { label: 'Mention only', value: 'mention_only' },
+                  { label: 'All messages', value: 'all' },
+                ]}
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="Owner number"
+              name="owner_number"
+              rules={[{ required: true, message: 'Required' }]}
+              extra="E.164 format without the + (e.g. 14155551234). Only this number can talk to the bot until you add more under Access Control."
+            >
+              <Input autoComplete="off" placeholder="14155551234" />
+            </Form.Item>
+
+            <Space>
+              <Button type="primary" htmlType="submit" loading={addMut.isPending}>
+                Enable WhatsApp
+              </Button>
+              <Button
+                onClick={() => {
+                  setAdding(false);
+                  form.resetFields();
+                }}
+              >
+                Cancel
+              </Button>
+            </Space>
+          </Form>
+        </Card>
+      )}
+
+      <Alert
+        type="info"
+        showIcon
+        message="Restart the gateway (or re-run `ethos serve`) to apply, then scan the QR."
+        style={{ marginTop: 16 }}
+        action={
+          <Button type="link" size="small" href="/setup/whatsapp/default">
+            Open QR setup ↗
+          </Button>
+        }
+      />
 
       <AccessControlSection platform="whatsapp" />
     </Card>

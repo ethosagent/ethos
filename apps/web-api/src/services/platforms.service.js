@@ -32,6 +32,16 @@ export class PlatformsService {
     await this.opts.repo.removeSlackApp(botKey);
     return { ok: true };
   }
+  async listWhatsApp() {
+    return { bots: await this.opts.repo.listWhatsApp() };
+  }
+  async addWhatsApp(input) {
+    return { bot: await this.opts.repo.addWhatsApp(input) };
+  }
+  async removeWhatsApp(botKey) {
+    await this.opts.repo.removeWhatsApp(botKey);
+    return { ok: true };
+  }
   async getChannelFilter(platform) {
     return { filter: await this.opts.repo.getChannelFilter(platform) };
   }
