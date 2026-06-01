@@ -1371,7 +1371,8 @@ export async function buildAdapters(
           throw new EthosError({
             code: 'CONFIG_INVALID',
             cause: `[whatsapp] Duplicate WhatsApp bot IDs: ${dupes.join(', ')}. Each config must have a unique id.`,
-            action: "Ensure each WhatsApp config in ~/.ethos/config.yaml has a distinct 'id' value.",
+            action:
+              "Ensure each WhatsApp config in ~/.ethos/config.yaml has a distinct 'id' value.",
           });
         }
       }
