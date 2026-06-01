@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@ethosagent/agent-bridge": "workspace:*",
+    "@ethosagent/llm-codex": "workspace:*",
     "@ethosagent/core": "workspace:*",
     "@ethosagent/design-tokens": "workspace:*",
     "@ethosagent/types": "workspace:*",

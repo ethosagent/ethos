@@ -2,7 +2,7 @@ export interface ProviderCatalogEntry {
   id: string;
   label: string;
   description: string;
-  authType: 'api-key' | 'self-hosted';
+  authType: 'api-key' | 'self-hosted' | 'device-auth';
   costType: 'api-billing' | 'pay-per-use' | 'local';
   recommended?: boolean;
   comingSoon?: boolean;
@@ -34,7 +34,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     id: 'codex',
     label: 'OpenAI Codex',
     description: 'Codex models via OpenAI account — experimental, device code auth',
-    authType: 'api-key',
+    authType: 'device-auth',
     costType: 'api-billing',
     signupUrl: 'https://openai.com',
   },

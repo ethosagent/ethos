@@ -9,7 +9,13 @@ import type {
 import { toResponsesInput, toResponsesTools } from './responses-adapter';
 
 export type { CodexCredentials } from './auth';
-export { ensureValidToken } from './auth';
+export {
+  ensureValidToken,
+  exchangeForTokens,
+  pollForAuthorization,
+  requestDeviceCode,
+  saveTokens,
+} from './auth';
 
 // ---------------------------------------------------------------------------
 // Config

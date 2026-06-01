@@ -1,8 +1,121 @@
+import {
+  exchangeForTokens,
+  pollForAuthorization,
+  requestDeviceCode,
+  saveTokens,
+} from '@ethosagent/llm-codex';
 import { PROVIDER_CATALOG } from '@ethosagent/wiring/provider-catalog';
 import { Box, Text, useInput } from 'ink';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DESIGN, GLYPHS } from '../../skin';
 import { useWizardContext } from '../context';
+
+// ---------------------------------------------------------------------------
+// Device auth flow (used for codex provider)
+// ---------------------------------------------------------------------------
+
+function DeviceAuthFlow() {
+  const { dispatch } = useWizardContext();
+  const [phase, setPhase] = useState<'loading' | 'waiting' | 'success' | 'error'>('loading');
+  const [userCode, setUserCode] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+  const [retryCount, setRetryCount] = useState(0);
+  // Stable ref so cleanup can abort the in-flight controller.
+  const abortRef = useRef<AbortController | null>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retryCount is intentional — triggers re-run on user retry
+  useEffect(() => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setPhase('loading');
+    setErrorMsg('');
+    setUserCode('');
+
+    (async () => {
+      try {
+        const { deviceAuthId, userCode: code } = await requestDeviceCode(globalThis.fetch);
+        if (controller.signal.aborted) return;
+        setUserCode(code);
+        setPhase('waiting');
+
+        const { authorizationCode, codeVerifier } = await pollForAuthorization(
+          globalThis.fetch,
+          deviceAuthId,
+          code,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+
+        const credentials = await exchangeForTokens(
+          globalThis.fetch,
+          authorizationCode,
+          codeVerifier,
+        );
+        await saveTokens(credentials);
+
+        setPhase('success');
+        dispatch({ type: 'next', patch: { apiKey: '' } });
+      } catch (err: unknown) {
+        if (controller.signal.aborted) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        setErrorMsg(msg);
+        setPhase('error');
+      }
+    })();
+
+    return () => {
+      controller.abort();
+    };
+  }, [dispatch, retryCount]);
+
+  useInput((_input, key: import('ink').Key) => {
+    if (key.escape) {
+      abortRef.current?.abort();
+      dispatch({ type: 'back' });
+      return;
+    }
+    if (key.return && phase === 'error') {
+      setRetryCount((n) => n + 1);
+    }
+  });
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text color={DESIGN.textPrimary} bold>
+        {'Sign in with your OpenAI / ChatGPT account'}
+      </Text>
+
+      {phase === 'loading' && (
+        <Text color={DESIGN.textSecondary}>{'  Requesting device code...'}</Text>
+      )}
+
+      {phase === 'waiting' && (
+        <Box flexDirection="column" gap={1}>
+          <Box flexDirection="column">
+            <Text color={DESIGN.textSecondary}>{'  1. Open this link in your browser:'}</Text>
+            <Text color={DESIGN.textTertiary}>{'     https://auth.openai.com/codex/device'}</Text>
+          </Box>
+          <Box flexDirection="column">
+            <Text color={DESIGN.textSecondary}>{'  2. Enter this one-time code:'}</Text>
+            <Text color={DESIGN.textPrimary} bold>{`     ${userCode}`}</Text>
+          </Box>
+          <Text color={DESIGN.textTertiary}>{'  Waiting for authorization... (Esc cancel)'}</Text>
+        </Box>
+      )}
+
+      {phase === 'error' && (
+        <Box flexDirection="column" gap={1}>
+          <Text color={DESIGN.error}>{`  ${GLYPHS.toolFail} ${errorMsg}`}</Text>
+          <Text color={DESIGN.textTertiary}>{'  Enter retry   Esc back'}</Text>
+        </Box>
+      )}
+
+      {phase === 'success' && <Text color={DESIGN.success}>{`  ${GLYPHS.toolOk} Authorized`}</Text>}
+    </Box>
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 export function AuthStep() {
   const { answers, dispatch } = useWizardContext();
@@ -10,6 +123,7 @@ export function AuthStep() {
   const [error, setError] = useState('');
 
   const provider = PROVIDER_CATALOG.find((p) => p.id === answers.provider);
+  const isDeviceAuth = provider?.authType === 'device-auth';
   const isSelfHosted = provider?.authType === 'self-hosted';
   // Azure needs both an endpoint and an API key — the endpoint is the user's
   // resource URL (e.g. https://my-resource.openai.azure.com), not a default.
@@ -25,6 +139,8 @@ export function AuthStep() {
   const apiKeyValue = key;
 
   useInput((input, key: import('ink').Key) => {
+    // Device-auth input is handled by <DeviceAuthFlow> — skip here.
+    if (isDeviceAuth) return;
     if (key.escape) {
       if (isAzure && azurePhase === 'apiKey') {
         // Step back to the endpoint field, not out of the step.
@@ -93,6 +209,10 @@ export function AuthStep() {
     apiKeyValue.length > 0
       ? `${'•'.repeat(Math.min(apiKeyValue.length, 20))}${apiKeyValue.length > 20 ? ` (${apiKeyValue.length} chars)` : ''}`
       : '';
+
+  if (isDeviceAuth) {
+    return <DeviceAuthFlow />;
+  }
 
   if (isAzure) {
     return (
