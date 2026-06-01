@@ -123,6 +123,12 @@ export const EvolveSkillPendingEventSchema = z.object({
   personalityId: z.string().nullable(),
   proposedAt: z.string(), // ISO-8601
 });
+export const EvolveSkillAppliedEventSchema = z.object({
+  type: z.literal('evolve.skill_applied'),
+  skillId: z.string(),
+  personalityId: z.string().nullable(),
+  appliedAt: z.string(), // ISO-8601
+});
 export const DryRunToolPlanSchema = z.object({
   toolCallId: z.string(),
   toolName: z.string(),
@@ -165,6 +171,7 @@ export const SseEventSchema = z.discriminatedUnion('type', [
   CronFiredEventSchema,
   MeshChangedEventSchema,
   EvolveSkillPendingEventSchema,
+  EvolveSkillAppliedEventSchema,
   DryRunSummaryEventSchema,
   RunStartEventSchema,
   ProtocolUpgradeRequiredEventSchema,

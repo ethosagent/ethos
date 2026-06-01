@@ -78,7 +78,7 @@ export class ImprovementFork {
     // 3. Build the restricted fork tool registry.
     const pendingDir = join(this.opts.dataDir, 'skills', '.pending', personality.id);
     const skillsDirs = personality.skillsDirs ?? [];
-    let proposed = false;
+    let proposedSkillId = null;
     const forkTools = new DefaultToolRegistry();
     // Skill tools (cast needed: Tool<T> is contravariant in T; register() takes Tool<unknown>)
     forkTools.register(createSkillReadTool({ storage: this.opts.storage, skillsDirs }));
@@ -87,8 +87,8 @@ export class ImprovementFork {
         storage: this.opts.storage,
         pendingDir,
         now: this.opts.now,
-        onProposed: () => {
-          proposed = true;
+        onProposed: (skillId) => {
+          proposedSkillId = skillId;
         },
       }),
     );
@@ -124,9 +124,23 @@ export class ImprovementFork {
     } catch {
       // Fork failures are non-fatal.
     }
-    // 6. If a skill was proposed, fire the callback.
-    if (proposed && this.opts.onSkillProposed) {
-      this.opts.onSkillProposed(`auto-${Date.now()}`, personality.id);
+    // 6. If a skill was proposed, either auto-promote or notify.
+    if (proposedSkillId) {
+      if (this.opts.autoApprove?.()) {
+        const filename = `${proposedSkillId}.md`;
+        const pendingPath = join(pendingDir, filename);
+        const liveDir = join(this.opts.dataDir, 'skills');
+        const livePath = join(liveDir, filename);
+        const content = await this.opts.storage.read(pendingPath);
+        if (content) {
+          await this.opts.storage.mkdir(liveDir);
+          await this.opts.storage.write(livePath, content);
+          await this.opts.storage.remove(pendingPath);
+          this.opts.onSkillApplied?.(proposedSkillId, personality.id);
+        }
+      } else {
+        this.opts.onSkillProposed?.(proposedSkillId, personality.id);
+      }
     }
   }
 }

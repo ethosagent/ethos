@@ -622,6 +622,9 @@ export interface CreateAgentLoopResult {
   /** Set by the web-api chat service to receive SSE notifications when the
    *  improvement fork proposes a new skill candidate. */
   setOnSkillProposed?: (fn: (skillId: string, personalityId: string) => void) => void;
+  /** Set by the web-api chat service to receive SSE notifications when the
+   *  improvement fork auto-promotes a skill to the live library. */
+  setOnSkillApplied?: (fn: (skillId: string, personalityId: string) => void) => void;
   /** v2.2 — Notification router for registering per-session adapters.
    *  CLI/TUI/web-api register a NotificationAdapter on this router so plugin
    *  monitors can deliver messages to the active surface. */
@@ -1288,8 +1291,13 @@ export async function createAgentLoop(
   // transcript and proposes memory updates or new skills when the
   // active personality opts in via `skill_evolution.enabled`.
   let onSkillProposedFn: ((skillId: string, personalityId: string) => void) | undefined;
+  let onSkillAppliedFn: ((skillId: string, personalityId: string) => void) | undefined;
 
-  const { ImprovementFork } = await import('@ethosagent/skill-evolver');
+  const { ImprovementFork, loadEvolveConfig: loadEvolveConfigFn } = await import(
+    '@ethosagent/skill-evolver'
+  );
+  const evolveConfigPath = join(dataDir, 'evolve-config.json');
+  const wiringStorage = new FsStorage();
   const improvementFork = new ImprovementFork({
     hooks,
     runtime: {
@@ -1300,12 +1308,46 @@ export async function createAgentLoop(
     },
     personalities,
     dataDir,
-    storage: new FsStorage(),
+    storage: wiringStorage,
     onSkillProposed: (skillId, personalityId) => {
       onSkillProposedFn?.(skillId, personalityId);
     },
+    autoApprove: () => {
+      // Synchronous accessor — read config from disk on each check would be
+      // async. We cache the last-loaded value and refresh it lazily. For
+      // simplicity in the wiring layer, we use a synchronous flag updated by
+      // an async refresh. The initial value is false (safe default).
+      return autoApproveCache;
+    },
+    onSkillApplied: (skillId, personalityId) => {
+      onSkillAppliedFn?.(skillId, personalityId);
+    },
   });
   improvementFork.register();
+
+  // Cache for the autoApprove flag — refreshed before each fork run by
+  // the hook, but the accessor is synchronous. Start false (safe default).
+  let autoApproveCache = false;
+  (async () => {
+    try {
+      const cfg = await loadEvolveConfigFn(evolveConfigPath, wiringStorage);
+      autoApproveCache = cfg.autoApprove;
+    } catch {
+      // Non-fatal — keep the default.
+    }
+  })();
+
+  // Refresh autoApprove cache before each fork fires. This uses a void hook
+  // that runs before the improvement fork's own agent_done handler (both are
+  // parallel via fireVoid, but the config read resolves quickly).
+  hooks.registerVoid('agent_done', async () => {
+    try {
+      const cfg = await loadEvolveConfigFn(evolveConfigPath, wiringStorage);
+      autoApproveCache = cfg.autoApprove;
+    } catch {
+      // Non-fatal.
+    }
+  });
 
   // Ch.6a — In-process watcher. Built with the default rule set
   // (rate-limit + token-budget + compounding-error + suspicious-
@@ -1434,6 +1476,9 @@ export async function createAgentLoop(
     },
     setOnSkillProposed: (fn: (skillId: string, personalityId: string) => void) => {
       onSkillProposedFn = fn;
+    },
+    setOnSkillApplied: (fn: (skillId: string, personalityId: string) => void) => {
+      onSkillAppliedFn = fn;
     },
     notificationRouter,
     pluginLoader,

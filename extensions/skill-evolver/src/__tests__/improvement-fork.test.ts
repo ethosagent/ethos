@@ -338,6 +338,210 @@ describe('ImprovementFork', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('auto-promotes when autoApprove returns true', async () => {
+    const applied: Array<{ skillId: string; personalityId: string }> = [];
+    const proposed: Array<{ skillId: string; personalityId: string }> = [];
+
+    // Mock LLM that triggers skill_propose tool call, then ends.
+    let callCount = 0;
+    const skillProposeLLM: LLMProvider = {
+      name: 'test-provider',
+      model: 'test-model',
+      supportsCaching: false,
+      supportsThinking: false,
+      maxContextTokens: 100000,
+      async *complete() {
+        callCount++;
+        if (callCount === 1) {
+          // First call: produce a tool_use for skill_propose
+          yield { type: 'tool_use_start' as const, toolCallId: 'tc1', toolName: 'skill_propose' };
+          yield {
+            type: 'tool_use_delta' as const,
+            toolCallId: 'tc1',
+            partialJson: JSON.stringify({
+              content: '# Auto skill\nDo the thing.',
+              reason: 'Works well',
+            }),
+          };
+          yield {
+            type: 'tool_use_end' as const,
+            toolCallId: 'tc1',
+            inputJson: JSON.stringify({
+              content: '# Auto skill\nDo the thing.',
+              reason: 'Works well',
+            }),
+          };
+          yield {
+            type: 'usage' as const,
+            usage: {
+              inputTokens: 10,
+              outputTokens: 5,
+              cacheReadTokens: 0,
+              cacheCreationTokens: 0,
+              estimatedCostUsd: 0,
+            },
+          };
+          yield { type: 'done' as const, finishReason: 'tool_use' as const };
+        } else {
+          // Second call (after tool result): just end the turn
+          yield { type: 'text_delta' as const, text: 'Done.' };
+          yield {
+            type: 'usage' as const,
+            usage: {
+              inputTokens: 10,
+              outputTokens: 5,
+              cacheReadTokens: 0,
+              cacheCreationTokens: 0,
+              estimatedCostUsd: 0,
+            },
+          };
+          yield { type: 'done' as const, finishReason: 'end_turn' as const };
+        }
+      },
+      async countTokens() {
+        return 100;
+      },
+    };
+
+    const hooks = new DefaultHookRegistry();
+    const fork = new ImprovementFork({
+      hooks,
+      runtime: {
+        llm: skillProposeLLM,
+        model: 'test-model',
+        memoryProvider: createMockMemoryProvider(),
+        sessionStore: createMockSessionStore([
+          { role: 'user', content: 'Hello' },
+          { role: 'assistant', content: 'World' },
+        ]),
+      },
+      personalities: makeRegistry(),
+      dataDir: '/tmp/test-evolver',
+      storage,
+      autoApprove: () => true,
+      onSkillApplied: (skillId, personalityId) => {
+        applied.push({ skillId, personalityId });
+      },
+      onSkillProposed: (skillId, personalityId) => {
+        proposed.push({ skillId, personalityId });
+      },
+    });
+    fork.register();
+
+    await hooks.fireVoid('agent_done', basePayload);
+
+    // The skill should have been auto-promoted to the live dir
+    expect(applied).toHaveLength(1);
+    expect(proposed).toHaveLength(0);
+
+    // Verify the file is in the live skills dir
+    const liveFiles = await storage.list('/tmp/test-evolver/skills');
+    const liveSkillFiles = liveFiles.filter((f) => f.endsWith('.md') && !f.startsWith('.'));
+    expect(liveSkillFiles.length).toBeGreaterThan(0);
+
+    // Verify no file remains in pending
+    const pendingFiles = await storage.list('/tmp/test-evolver/skills/.pending/engineer');
+    expect(pendingFiles).toHaveLength(0);
+  });
+
+  it('does not auto-promote when autoApprove returns false', async () => {
+    const applied: Array<{ skillId: string; personalityId: string }> = [];
+    const proposed: Array<{ skillId: string; personalityId: string }> = [];
+
+    let callCount = 0;
+    const skillProposeLLM: LLMProvider = {
+      name: 'test-provider',
+      model: 'test-model',
+      supportsCaching: false,
+      supportsThinking: false,
+      maxContextTokens: 100000,
+      async *complete() {
+        callCount++;
+        if (callCount === 1) {
+          yield { type: 'tool_use_start' as const, toolCallId: 'tc1', toolName: 'skill_propose' };
+          yield {
+            type: 'tool_use_delta' as const,
+            toolCallId: 'tc1',
+            partialJson: JSON.stringify({
+              content: '# Auto skill\nDo the thing.',
+              reason: 'Works well',
+            }),
+          };
+          yield {
+            type: 'tool_use_end' as const,
+            toolCallId: 'tc1',
+            inputJson: JSON.stringify({
+              content: '# Auto skill\nDo the thing.',
+              reason: 'Works well',
+            }),
+          };
+          yield {
+            type: 'usage' as const,
+            usage: {
+              inputTokens: 10,
+              outputTokens: 5,
+              cacheReadTokens: 0,
+              cacheCreationTokens: 0,
+              estimatedCostUsd: 0,
+            },
+          };
+          yield { type: 'done' as const, finishReason: 'tool_use' as const };
+        } else {
+          yield { type: 'text_delta' as const, text: 'Done.' };
+          yield {
+            type: 'usage' as const,
+            usage: {
+              inputTokens: 10,
+              outputTokens: 5,
+              cacheReadTokens: 0,
+              cacheCreationTokens: 0,
+              estimatedCostUsd: 0,
+            },
+          };
+          yield { type: 'done' as const, finishReason: 'end_turn' as const };
+        }
+      },
+      async countTokens() {
+        return 100;
+      },
+    };
+
+    const hooks = new DefaultHookRegistry();
+    const fork = new ImprovementFork({
+      hooks,
+      runtime: {
+        llm: skillProposeLLM,
+        model: 'test-model',
+        memoryProvider: createMockMemoryProvider(),
+        sessionStore: createMockSessionStore([
+          { role: 'user', content: 'Hello' },
+          { role: 'assistant', content: 'World' },
+        ]),
+      },
+      personalities: makeRegistry(),
+      dataDir: '/tmp/test-evolver',
+      storage,
+      autoApprove: () => false,
+      onSkillApplied: (skillId, personalityId) => {
+        applied.push({ skillId, personalityId });
+      },
+      onSkillProposed: (skillId, personalityId) => {
+        proposed.push({ skillId, personalityId });
+      },
+    });
+    fork.register();
+
+    await hooks.fireVoid('agent_done', basePayload);
+
+    // The skill should remain in pending — onSkillProposed fired, not onSkillApplied
+    expect(applied).toHaveLength(0);
+    expect(proposed).toHaveLength(1);
+
+    // Verify the file is still in the pending dir
+    const pendingFiles = await storage.list('/tmp/test-evolver/skills/.pending/engineer');
+    expect(pendingFiles.length).toBeGreaterThan(0);
+  });
+
   it('resetImprovementForkCooldowns clears cooldown state', async () => {
     const now = 1_000_000_000_000;
     const calls: number[] = [];

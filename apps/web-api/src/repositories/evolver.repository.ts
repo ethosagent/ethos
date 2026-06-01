@@ -67,6 +67,7 @@ export class EvolverRepository {
       ),
       minRunsBeforeEvolve: Math.max(0, Math.floor(config.minRunsBeforeEvolve)),
       minPatternCount: Math.max(0, Math.floor(config.minPatternCount)),
+      autoApprove: config.autoApprove ?? false,
     };
     await this.storage.write(this.configPath, `${JSON.stringify(merged, null, 2)}\n`);
     return merged;

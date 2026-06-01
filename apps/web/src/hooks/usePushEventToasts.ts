@@ -105,6 +105,12 @@ function pushEventSummary(event: import('@ethosagent/web-contracts').SseEvent): 
         description: event.skillId,
         deepLink: '/skills',
       };
+    case 'evolve.skill_applied':
+      return {
+        title: 'Skill added',
+        description: event.skillId,
+        deepLink: '/skills',
+      };
     default:
       return null;
   }
@@ -119,6 +125,8 @@ function pushEventId(event: import('@ethosagent/web-contracts').SseEvent): strin
       return `mesh:${Math.floor(Date.now() / 1000)}`;
     case 'evolve.skill_pending':
       return `skill:${event.skillId}:${event.proposedAt}`;
+    case 'evolve.skill_applied':
+      return `skill-applied:${event.skillId}:${event.appliedAt}`;
     default:
       return null;
   }

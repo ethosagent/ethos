@@ -150,6 +150,13 @@ export interface CreateWebApiOptions {
    * the improvement fork proposes a new skill candidate.
    */
   setOnSkillProposed?: (fn: (skillId: string, personalityId: string) => void) => void;
+  /**
+   * Setter from `CreateAgentLoopResult.setOnSkillApplied`. When provided,
+   * `createWebApi` registers a callback that broadcasts an
+   * `evolve.skill_applied` SSE event to all connected sessions whenever
+   * the improvement fork auto-promotes a skill to the live library.
+   */
+  setOnSkillApplied?: (fn: (skillId: string, personalityId: string) => void) => void;
 }
 
 export interface CreateWebApiResult {
@@ -328,6 +335,15 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       skillId,
       personalityId,
       proposedAt: new Date().toISOString(),
+    });
+  });
+
+  opts.setOnSkillApplied?.((skillId, personalityId) => {
+    chatService.broadcastAll({
+      type: 'evolve.skill_applied',
+      skillId,
+      personalityId,
+      appliedAt: new Date().toISOString(),
     });
   });
 

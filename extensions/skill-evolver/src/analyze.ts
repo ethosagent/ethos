@@ -18,6 +18,7 @@ export const DEFAULT_EVOLVE_CONFIG: EvolveConfig = {
   newSkillPatternThreshold: 0.8,
   minRunsBeforeEvolve: 10,
   minPatternCount: 3,
+  autoApprove: false,
 };
 
 // Cap how many high-score zero-skill tasks we hand to the LLM in one prompt.
@@ -78,6 +79,7 @@ export async function loadEvolveConfig(
       parsed.newSkillPatternThreshold ?? DEFAULT_EVOLVE_CONFIG.newSkillPatternThreshold,
     minRunsBeforeEvolve: parsed.minRunsBeforeEvolve ?? DEFAULT_EVOLVE_CONFIG.minRunsBeforeEvolve,
     minPatternCount: parsed.minPatternCount ?? DEFAULT_EVOLVE_CONFIG.minPatternCount,
+    autoApprove: parsed.autoApprove ?? DEFAULT_EVOLVE_CONFIG.autoApprove,
   };
 }
 
