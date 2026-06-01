@@ -1,3 +1,4 @@
+import { BackgroundRunner } from '@ethosagent/agent-bridge';
 import type { AgentLoop } from '@ethosagent/core';
 import { stripAnsiEscapes } from '@ethosagent/core';
 import type { ChannelFilterConfig } from '@ethosagent/safety-channel';
@@ -292,7 +293,17 @@ export interface GatewayConfig {
 
 const PLATFORM_COMMANDS: Record<
   string,
-  'new' | 'usage' | 'stop' | 'help' | 'personality' | 'allow' | 'deny' | 'communications' | 'start'
+  | 'new'
+  | 'usage'
+  | 'stop'
+  | 'help'
+  | 'personality'
+  | 'allow'
+  | 'deny'
+  | 'communications'
+  | 'start'
+  | 'queue'
+  | 'background'
 > = {
   '/new': 'new',
   '/reset': 'new',
@@ -304,6 +315,8 @@ const PLATFORM_COMMANDS: Record<
   '/deny': 'deny',
   '/communications': 'communications',
   '/start': 'start',
+  '/queue': 'queue',
+  '/background': 'background',
 };
 
 // ---------------------------------------------------------------------------
@@ -416,6 +429,11 @@ export class Gateway {
   private readonly resolveUserIdFn:
     | ((platform: string, platformUserId: string, displayLabel?: string) => Promise<string>)
     | undefined;
+  private readonly backgroundRunner: BackgroundRunner;
+  private readonly backgroundCallbacks = new Map<
+    string,
+    { adapter: PlatformAdapter; chatId: string; threadId?: string }
+  >();
 
   constructor(config: GatewayConfig) {
     // The two construction shapes are mutually exclusive. Silent
@@ -486,6 +504,20 @@ export class Gateway {
     this.attachmentCache = config.attachmentCache;
     this.adapterRegistry = config.adapters ?? new Map();
     this.resolveUserIdFn = config.resolveUserId;
+
+    this.backgroundRunner = new BackgroundRunner({ maxConcurrent: 4 });
+    this.backgroundRunner.onComplete((task) => {
+      const routing = this.backgroundCallbacks.get(task.id);
+      if (!routing) return;
+      this.backgroundCallbacks.delete(task.id);
+      const text =
+        task.status === 'done'
+          ? `📋 Background task complete:\n${task.result ?? '(no output)'}`
+          : `❌ Background task failed: ${task.error ?? 'unknown error'}`;
+      void routing.adapter
+        .send(routing.chatId, { text, threadId: routing.threadId })
+        .catch(() => {});
+    });
 
     // Clarify sweep — fires on a single timer for all bots' bridges so a
     // multi-bot deployment doesn't pile up N timers. Each bridge owns its own
@@ -963,6 +995,60 @@ export class Gateway {
       return;
     }
 
+    // --- /background command ---
+    if (cmdType === 'background') {
+      const bgText = text.slice('/background '.length).trim();
+      if (!bgText) {
+        await adapter
+          .send(message.chatId, { text: '✗ Usage: /background <prompt>' })
+          .catch(() => {});
+        return;
+      }
+      const bgSessionKey = `bg:${laneKey}:${Date.now()}`;
+      try {
+        const task = this.backgroundRunner.run(bgText, bot.loop, bgSessionKey);
+        this.backgroundCallbacks.set(task.id, {
+          adapter,
+          chatId: message.chatId,
+          threadId,
+        });
+        await adapter
+          .send(message.chatId, { text: '⏳ Background task started', threadId })
+          .catch(() => {});
+      } catch (err: unknown) {
+        const code = (err as { code?: string }).code;
+        if (code === 'BACKGROUND_QUEUE_FULL') {
+          await adapter
+            .send(message.chatId, {
+              text: '⚠ Background queue full (max 4). Wait for a task to finish.',
+              threadId,
+            })
+            .catch(() => {});
+        } else {
+          throw err;
+        }
+      }
+      return;
+    }
+
+    // --- /queue command ---
+    if (cmdType === 'queue') {
+      const queueText = text.slice('/queue '.length).trim();
+      if (!queueText) {
+        await adapter.send(message.chatId, { text: '✗ Usage: /queue <message>' }).catch(() => {});
+        return;
+      }
+      if (this.activeSinks.has(laneKey)) {
+        void lane.enqueue((signal) =>
+          this.runTurn(laneKey, lane, bot, message, adapter, queueText, threadId, signal),
+        );
+        await adapter
+          .send(message.chatId, { text: `✅ queued (position ${lane.length})`, threadId })
+          .catch(() => {});
+        return;
+      }
+    }
+
     // --- Auto-steer: if a turn is already running, push into its steer sink ---
     const activeSink = this.activeSinks.get(laneKey);
     if (activeSink) {
@@ -975,214 +1061,196 @@ export class Gateway {
 
     // --- Agent turn ---
 
-    await lane.enqueue(async (signal) => {
-      const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
-      // For team bots the coordinator personality is part of the loop;
-      // we don't override per turn. For personality bots, the binding's
-      // name is the default, and an in-lane /personality override (only
-      // possible when allowSlashSwitch is on) takes precedence.
-      const personalityId =
-        bot.binding.type === 'team'
-          ? undefined
-          : (this.personalityIds.get(laneKey) ?? bot.binding.name);
+    const turnText = cmdType === 'queue' ? text.slice('/queue '.length).trim() : text;
+    await lane.enqueue((signal) =>
+      this.runTurn(laneKey, lane, bot, message, adapter, turnText, threadId, signal),
+    );
+  }
 
-      // Track this turn so graceful shutdown can notify the user (P1-1).
-      this.activeTurns.set(laneKey, { adapter, chatId: message.chatId });
+  private async runTurn(
+    laneKey: string,
+    _lane: SessionLane,
+    bot: GatewayBotConfig,
+    message: InboundMessage,
+    adapter: PlatformAdapter,
+    text: string,
+    threadId: string | undefined,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+    const personalityId =
+      bot.binding.type === 'team'
+        ? undefined
+        : (this.personalityIds.get(laneKey) ?? bot.binding.name);
 
-      const steerSink = createSteerSink();
-      this.activeSinks.set(laneKey, steerSink);
+    this.activeTurns.set(laneKey, { adapter, chatId: message.chatId });
 
-      // Record routing keyed by `sessionKey` so the `session_start` hook
-      // (which runs inside `loop.run()` below and is the only place the
-      // `sessionId` is known) can complete the `sessionId → routing` bridge.
-      // `message.threadId` is in scope here; `activeTurns` isn't a fit
-      // because it's keyed by `laneKey` and carries no thread identifier.
-      this.sessionRouting.set(sessionKey, {
-        adapter,
-        chatId: message.chatId,
-        threadId: message.threadId ? message.threadId : undefined,
-        requesterUserId: message.userId,
-      });
+    const steerSink = createSteerSink();
+    this.activeSinks.set(laneKey, steerSink);
 
-      // Typing indicator — renew every 4 s (Telegram shows it for ~5 s)
-      await adapter.sendTyping?.(message.chatId).catch(() => {});
-      const typingTimer = setInterval(() => {
-        void adapter.sendTyping?.(message.chatId).catch(() => {});
-      }, 4_000);
+    this.sessionRouting.set(sessionKey, {
+      adapter,
+      chatId: message.chatId,
+      threadId: message.threadId ? message.threadId : undefined,
+      requesterUserId: message.userId,
+    });
 
-      try {
-        let responseText = '';
-        let errored: { error: string; code: string } | null = null;
+    await adapter.sendTyping?.(message.chatId).catch(() => {});
+    const typingTimer = setInterval(() => {
+      void adapter.sendTyping?.(message.chatId).catch(() => {});
+    }, 4_000);
 
-        // All channel messages are untrusted — deterministic trust boundary.
-        // Every message from an external channel is wrapped unconditionally;
-        // the pattern check below is telemetry-only (monitoring/alerting),
-        // not a gate for wrapping.
-        const wrapped = wrapUntrusted({ content: text, toolName: 'channel_message' });
+    try {
+      let responseText = '';
+      let errored: { error: string; code: string } | null = null;
 
-        // Channel history backfill — prepend prior context on first encounter.
-        // priorContext is channel history (user-generated) and must be wrapped
-        // as untrusted to prevent prompt injection from old messages.
-        const contextPrefix = message.priorContext
-          ? wrapUntrusted({ content: message.priorContext, toolName: 'channel_history' }).content +
-            '\n\n---\n\n'
-          : '';
+      const wrapped = wrapUntrusted({ content: text, toolName: 'channel_message' });
 
-        const loopText = contextPrefix ? `${contextPrefix}${wrapped.content}` : wrapped.content;
+      const contextPrefix = message.priorContext
+        ? wrapUntrusted({ content: message.priorContext, toolName: 'channel_history' }).content +
+          '\n\n---\n\n'
+        : '';
 
-        // Telemetry: record when known injection patterns or template tokens
-        // are detected, for monitoring/alerting. Not a trust gate.
-        const tier1 = shortPatternCheck(text);
-        if (tier1.containsInstructions || wrapped.strippedTokens > 0) {
-          this.observability?.recordInjectionFlag?.({
-            code: 'channel.injection_detected',
-            cause: tier1.containsInstructions
-              ? (tier1.hits[0]?.rule ?? 'pattern-hit')
-              : `stripped ${wrapped.strippedTokens} template token${wrapped.strippedTokens === 1 ? '' : 's'}`,
-            details: {
-              platform: message.platform,
-              chatId: message.chatId,
-              userId: message.userId,
-              ...(tier1.containsInstructions ? { hits: tier1.hits } : {}),
-            },
-          });
-        }
+      const loopText = contextPrefix ? `${contextPrefix}${wrapped.content}` : wrapped.content;
 
-        const userId =
-          message.userId && this.resolveUserIdFn
-            ? await this.resolveUserIdFn(message.platform, message.userId, message.username)
-            : undefined;
+      const tier1 = shortPatternCheck(text);
+      if (tier1.containsInstructions || wrapped.strippedTokens > 0) {
+        this.observability?.recordInjectionFlag?.({
+          code: 'channel.injection_detected',
+          cause: tier1.containsInstructions
+            ? (tier1.hits[0]?.rule ?? 'pattern-hit')
+            : `stripped ${wrapped.strippedTokens} template token${wrapped.strippedTokens === 1 ? '' : 's'}`,
+          details: {
+            platform: message.platform,
+            chatId: message.chatId,
+            userId: message.userId,
+            ...(tier1.containsInstructions ? { hits: tier1.hits } : {}),
+          },
+        });
+      }
 
-        for await (const event of bot.loop.run(loopText, {
-          sessionKey,
-          personalityId,
-          abortSignal: signal,
-          attachments: message.attachments,
-          userId,
-          steerSink,
-        })) {
-          if (event.type === 'run_start' && this.showToolCalls && adapter.canEditMessage) {
-            const existing = this.activeStatusMessages.get(laneKey);
-            if (existing) {
-              await existing.adapter
-                .editMessage?.(existing.chatId, existing.messageId, '💭 Thinking…')
-                .catch(() => {});
-            } else {
-              const sent = await adapter
-                .send(message.chatId, { text: '💭 Thinking…', threadId })
-                .catch(() => null);
-              if (sent?.messageId) {
-                this.activeStatusMessages.set(laneKey, {
-                  messageId: sent.messageId,
-                  adapter,
-                  chatId: message.chatId,
-                  threadId,
-                });
-              }
-            }
-          }
+      const userId =
+        message.userId && this.resolveUserIdFn
+          ? await this.resolveUserIdFn(message.platform, message.userId, message.username)
+          : undefined;
 
-          if (event.type === 'tool_start' && this.showToolCalls) {
-            const status = this.activeStatusMessages.get(laneKey);
-            if (status) {
-              await status.adapter
-                .editMessage?.(status.chatId, status.messageId, `⚙ ${event.toolName}…`)
-                .catch(() => {});
-            } else {
-              await adapter
-                .send(message.chatId, { text: `⚙ ${event.toolName}`, threadId })
-                .catch(() => {});
-            }
-          }
-
-          if (event.type === 'tool_end' && this.showToolCalls) {
-            const status = this.activeStatusMessages.get(laneKey);
-            if (status) {
-              const dur = `${(event.durationMs / 1000).toFixed(1)}s`;
-              await status.adapter
-                .editMessage?.(status.chatId, status.messageId, `⚙ ${event.toolName} ✓ · ${dur}`)
-                .catch(() => {});
-            }
-          }
-          if (event.type === 'text_delta') responseText += event.text;
-          if (event.type === 'usage') {
-            const u = this.usageStore.get(laneKey) ?? {
-              inputTokens: 0,
-              outputTokens: 0,
-              costUsd: 0,
-            };
-            u.inputTokens += event.inputTokens;
-            u.outputTokens += event.outputTokens;
-            u.costUsd += event.estimatedCostUsd;
-            this.usageStore.set(laneKey, u);
-          }
-          if (event.type === 'error') {
-            errored = { error: event.error, code: event.code };
-            break;
-          }
-          if (event.type === 'done') break;
-        }
-
-        if (signal.aborted) {
-          // /stop or shutdown — caller already notified the user.
-        } else if (errored) {
-          const errStatus = this.activeStatusMessages.get(laneKey);
-          if (errStatus) {
-            await errStatus.adapter
-              .editMessage?.(errStatus.chatId, errStatus.messageId, '⚠ Stopped')
+      for await (const event of bot.loop.run(loopText, {
+        sessionKey,
+        personalityId,
+        abortSignal: signal,
+        attachments: message.attachments,
+        userId,
+        steerSink,
+      })) {
+        if (event.type === 'run_start' && this.showToolCalls && adapter.canEditMessage) {
+          const existing = this.activeStatusMessages.get(laneKey);
+          if (existing) {
+            await existing.adapter
+              .editMessage?.(existing.chatId, existing.messageId, '💭 Thinking…')
               .catch(() => {});
-          }
-          // Surface error explicitly so users don't mistake a partial answer
-          // for a complete one. Aborts (code === 'aborted') are silent above.
-          const note =
-            responseText.trim().length > 0
-              ? `${responseText}\n\n⚠ Response interrupted: ${errored.error}`
-              : `⚠ Error: ${errored.error}`;
-          const sanitizedNote = stripAnsiEscapes(note);
-          if (this.outboundDedup.shouldSend(sessionKey, sanitizedNote)) {
-            await adapter.send(message.chatId, { text: sanitizedNote, threadId }).catch(() => {});
-          }
-        } else if (responseText) {
-          // Outbound dedup — suppress same (sessionId, content) within TTL.
-          // Adapters that previously rolled their own dedup go through this
-          // cache instead. See plan/phases/30-robustness.md § 30.4.
-          const sanitized = stripAnsiEscapes(responseText);
-          if (this.outboundDedup.shouldSend(sessionKey, sanitized)) {
-            // Pass the inbound thread identifier through so adapters with
-            // thread semantics (Slack) reply in the same thread. Top-level
-            // posts have no `threadId` — the value is undefined and the
-            // adapter posts at the channel root.
-            await adapter
-              .send(message.chatId, {
-                text: sanitized,
-                parseMode: 'markdown',
+          } else {
+            const sent = await adapter
+              .send(message.chatId, { text: '💭 Thinking…', threadId })
+              .catch(() => null);
+            if (sent?.messageId) {
+              this.activeStatusMessages.set(laneKey, {
+                messageId: sent.messageId,
+                adapter,
+                chatId: message.chatId,
                 threadId,
-              })
+              });
+            }
+          }
+        }
+
+        if (event.type === 'tool_start' && this.showToolCalls) {
+          const status = this.activeStatusMessages.get(laneKey);
+          if (status) {
+            await status.adapter
+              .editMessage?.(status.chatId, status.messageId, `⚙ ${event.toolName}…`)
+              .catch(() => {});
+          } else {
+            await adapter
+              .send(message.chatId, { text: `⚙ ${event.toolName}`, threadId })
               .catch(() => {});
           }
         }
-      } finally {
-        clearInterval(typingTimer);
-        this.activeTurns.delete(laneKey);
-        this.activeSinks.delete(laneKey);
 
-        const status = this.activeStatusMessages.get(laneKey);
-        if (status) {
-          await status.adapter.editMessage?.(status.chatId, status.messageId, '').catch(() => {});
-          this.activeStatusMessages.delete(laneKey);
+        if (event.type === 'tool_end' && this.showToolCalls) {
+          const status = this.activeStatusMessages.get(laneKey);
+          if (status) {
+            const dur = `${(event.durationMs / 1000).toFixed(1)}s`;
+            await status.adapter
+              .editMessage?.(status.chatId, status.messageId, `⚙ ${event.toolName} ✓ · ${dur}`)
+              .catch(() => {});
+          }
         }
+        if (event.type === 'text_delta') responseText += event.text;
+        if (event.type === 'usage') {
+          const u = this.usageStore.get(laneKey) ?? {
+            inputTokens: 0,
+            outputTokens: 0,
+            costUsd: 0,
+          };
+          u.inputTokens += event.inputTokens;
+          u.outputTokens += event.outputTokens;
+          u.costUsd += event.estimatedCostUsd;
+          this.usageStore.set(laneKey, u);
+        }
+        if (event.type === 'error') {
+          errored = { error: event.error, code: event.code };
+          break;
+        }
+        if (event.type === 'done') break;
+      }
 
-        // Tear down the approval-routing bridge for this turn. An approval
-        // fires *during* the turn (the hook awaits, the turn is paused), so
-        // the maps are guaranteed populated for the whole pending window.
-        this.sessionRouting.delete(sessionKey);
-        const sessionId = this.sessionIdByKey.get(sessionKey);
-        if (sessionId !== undefined) {
-          this.approvalRoutes.delete(sessionId);
-          this.sessionIdByKey.delete(sessionKey);
+      if (signal.aborted) {
+        // /stop or shutdown — caller already notified the user.
+      } else if (errored) {
+        const errStatus = this.activeStatusMessages.get(laneKey);
+        if (errStatus) {
+          await errStatus.adapter
+            .editMessage?.(errStatus.chatId, errStatus.messageId, '⚠ Stopped')
+            .catch(() => {});
+        }
+        const note =
+          responseText.trim().length > 0
+            ? `${responseText}\n\n⚠ Response interrupted: ${errored.error}`
+            : `⚠ Error: ${errored.error}`;
+        const sanitizedNote = stripAnsiEscapes(note);
+        if (this.outboundDedup.shouldSend(sessionKey, sanitizedNote)) {
+          await adapter.send(message.chatId, { text: sanitizedNote, threadId }).catch(() => {});
+        }
+      } else if (responseText) {
+        const sanitized = stripAnsiEscapes(responseText);
+        if (this.outboundDedup.shouldSend(sessionKey, sanitized)) {
+          await adapter
+            .send(message.chatId, {
+              text: sanitized,
+              parseMode: 'markdown',
+              threadId,
+            })
+            .catch(() => {});
         }
       }
-    });
+    } finally {
+      clearInterval(typingTimer);
+      this.activeTurns.delete(laneKey);
+      this.activeSinks.delete(laneKey);
+
+      const status = this.activeStatusMessages.get(laneKey);
+      if (status) {
+        await status.adapter.editMessage?.(status.chatId, status.messageId, '').catch(() => {});
+        this.activeStatusMessages.delete(laneKey);
+      }
+
+      this.sessionRouting.delete(sessionKey);
+      const sessionId = this.sessionIdByKey.get(sessionKey);
+      if (sessionId !== undefined) {
+        this.approvalRoutes.delete(sessionId);
+        this.sessionIdByKey.delete(sessionKey);
+      }
+    }
   }
 
   /**
