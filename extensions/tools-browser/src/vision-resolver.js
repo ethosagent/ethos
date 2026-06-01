@@ -62,7 +62,7 @@ export async function resolveByVision(screenshotB64, description, context, opts)
         ],
       });
       const textBlock = response.content.find((b) => b.type === 'text');
-      if (!textBlock || textBlock.type !== 'text') return null;
+      if (textBlock?.type !== 'text') return null;
       const coords = parseCoords(textBlock.text);
       if (!coords) return null;
       // Haiku pricing: $0.80/1M input, $4.00/1M output

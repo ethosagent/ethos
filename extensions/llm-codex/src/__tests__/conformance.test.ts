@@ -40,7 +40,7 @@ function makeMockFetch(events: Array<[string, unknown]>): typeof fetch {
   });
 }
 
-function createProvider(mockFetch: typeof fetch): CodexProvider {
+function _createProvider(_mockFetch: typeof fetch): CodexProvider {
   // Inject the mock fetch via getAccessToken (the provider uses global fetch for the API call,
   // so we need to mock globalThis.fetch).
   return new CodexProvider({

@@ -38,7 +38,7 @@ export class BackgroundRunner {
   /** Abort a running task. Returns true if the task was found and cancelled. */
   cancel(taskId) {
     const task = this.tasks.get(taskId);
-    if (!task || task.status !== 'running') return false;
+    if (task?.status !== 'running') return false;
     const controller = this.controllers.get(taskId);
     if (controller) {
       controller.abort();

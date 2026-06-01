@@ -291,7 +291,7 @@ function finalUserMessage(
 ): { index: number; text: string; attachments?: Attachment[] } | null {
   const lastIndex = messages.length - 1;
   const last = messages[lastIndex];
-  if (!last || last.role !== 'user') return null;
+  if (last?.role !== 'user') return null;
 
   if (typeof last.content === 'string') {
     if (last.content.length === 0) return null;

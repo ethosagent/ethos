@@ -3,7 +3,7 @@ import type { NotificationAdapter, NotificationRouter, NotifyOptions } from '@et
 export class DefaultNotificationRouter implements NotificationRouter {
   private readonly adapters = new Map<string, NotificationAdapter>();
 
-  async route(pluginId: string, opts: NotifyOptions): Promise<void> {
+  async route(_pluginId: string, opts: NotifyOptions): Promise<void> {
     if (opts.sessionKey === '*') return;
     const adapter = this.adapters.get(opts.sessionKey);
     if (!adapter) return;

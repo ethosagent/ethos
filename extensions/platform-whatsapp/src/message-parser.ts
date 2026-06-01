@@ -53,7 +53,7 @@ export function parseInboundMessage(
   const mentionedJids = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
   const isGroupMention =
     !isDm &&
-    ((mentionedJids && mentionedJids.some((j) => j.split('@')[0].split(':')[0] === botNumber)) ||
+    (mentionedJids?.some((j) => j.split('@')[0].split(':')[0] === botNumber) ||
       text.includes(`@${botNumber}`));
 
   const contextInfo = msg.message?.extendedTextMessage?.contextInfo;

@@ -1,6 +1,6 @@
 export class DefaultNotificationRouter {
   adapters = new Map();
-  async route(pluginId, opts) {
+  async route(_pluginId, opts) {
     if (opts.sessionKey === '*') return;
     const adapter = this.adapters.get(opts.sessionKey);
     if (!adapter) return;

@@ -344,12 +344,13 @@ export class McpService {
   async refreshToken(input: { serverName: string }) {
     const configs = await this.mcpJsonStore.read();
     const config = configs.find((c) => c.name === input.serverName);
-    if (!config?.auth || config.auth.type !== 'oauth2') {
+    const oauth2Auth = config?.auth?.type === 'oauth2' ? config.auth : null;
+    if (!oauth2Auth) {
       return { ok: false, expiresAt: null, error: 'Server does not use OAuth2 auth' };
     }
     try {
       const { refreshToken: doRefresh } = await import('@ethosagent/tools-mcp');
-      await doRefresh(input.serverName, config.auth, this.secrets);
+      await doRefresh(input.serverName, oauth2Auth, this.secrets);
       const expiresAtStr = await this.secrets
         .get(`mcp/${input.serverName}/expires_at`)
         .catch(() => null);
@@ -425,14 +426,15 @@ export class McpService {
   async scopeStatus(input: { serverName: string }) {
     const configs = await this.mcpJsonStore.read();
     const config = configs.find((c) => c.name === input.serverName);
-    if (!config?.auth || config.auth.type !== 'oauth2') {
+    const oauth2Auth = config?.auth?.type === 'oauth2' ? config.auth : null;
+    if (!oauth2Auth) {
       return {
         outcome: 'inactive' as const,
         declaredScopes: [] as string[],
         actualScopes: [] as string[],
       };
     }
-    const declaredScopes = config.auth.scopes ?? [];
+    const declaredScopes = oauth2Auth.scopes ?? [];
     return {
       outcome: 'unknown' as const,
       declaredScopes,

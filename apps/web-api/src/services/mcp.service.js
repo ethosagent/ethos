@@ -282,7 +282,7 @@ export class McpService {
   async refreshToken(input) {
     const configs = await this.mcpJsonStore.read();
     const config = configs.find((c) => c.name === input.serverName);
-    if (!config?.auth || config.auth.type !== 'oauth2') {
+    if (config.auth?.type !== 'oauth2') {
       return { ok: false, expiresAt: null, error: 'Server does not use OAuth2 auth' };
     }
     try {
@@ -355,7 +355,7 @@ export class McpService {
   async scopeStatus(input) {
     const configs = await this.mcpJsonStore.read();
     const config = configs.find((c) => c.name === input.serverName);
-    if (!config?.auth || config.auth.type !== 'oauth2') {
+    if (config.auth?.type !== 'oauth2') {
       return {
         outcome: 'inactive',
         declaredScopes: [],

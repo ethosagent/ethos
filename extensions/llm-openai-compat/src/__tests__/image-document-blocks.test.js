@@ -22,7 +22,7 @@ describe('toOpenAIMessages — image + document blocks', () => {
     const out = toOpenAIMessages(messages);
     expect(out.length).toBe(1);
     const msg = out[0];
-    if (!msg || msg.role !== 'user') throw new Error('expected user message');
+    if (msg?.role !== 'user') throw new Error('expected user message');
     expect(Array.isArray(msg.content)).toBe(true);
     if (!Array.isArray(msg.content)) throw new Error('expected array content');
     expect(msg.content).toEqual([
@@ -42,7 +42,7 @@ describe('toOpenAIMessages — image + document blocks', () => {
     ];
     const out = toOpenAIMessages(messages);
     const msg = out[0];
-    if (!msg || msg.role !== 'user' || !Array.isArray(msg.content)) {
+    if (msg?.role !== 'user' || !Array.isArray(msg.content)) {
       throw new Error('expected multipart user message');
     }
     expect(msg.content).toEqual([
@@ -63,11 +63,11 @@ describe('toOpenAIMessages — image + document blocks', () => {
         { role: 'user', content: [{ type: 'image', mediaType, data: 'XX' }] },
       ]);
       const msg = out[0];
-      if (!msg || msg.role !== 'user' || !Array.isArray(msg.content)) {
+      if (msg?.role !== 'user' || !Array.isArray(msg.content)) {
         throw new Error('expected multipart');
       }
       const part = msg.content[0];
-      if (!part || part.type !== 'image_url') throw new Error('expected image_url part');
+      if (part?.type !== 'image_url') throw new Error('expected image_url part');
       expect(part.image_url.url).toBe(`data:${mediaType};base64,XX`);
     }
   });

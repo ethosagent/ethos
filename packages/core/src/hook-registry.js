@@ -82,7 +82,7 @@ export class DefaultHookRegistry {
     for (const h of handlers) {
       try {
         const result = await h.handler(payload);
-        if (result && result.handled) {
+        if (result?.handled) {
           return result;
         }
       } catch {

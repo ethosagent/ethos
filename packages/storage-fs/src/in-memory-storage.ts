@@ -334,7 +334,7 @@ export class InMemoryStorage implements Storage {
   /** Return the recorded mode for a file (undefined if no mode was set). */
   getMode(path: string): number | undefined {
     const node = this.nodes.get(path);
-    if (!node || node.type !== 'file') return undefined;
+    if (node?.type !== 'file') return undefined;
     return node.mode;
   }
 }

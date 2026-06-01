@@ -160,7 +160,7 @@ export class PluginsService {
     }
   }
 
-  async requestOAuth(pluginId: string, oauthRef: string): Promise<{ url: string }> {
+  async requestOAuth(pluginId: string, _oauthRef: string): Promise<{ url: string }> {
     const apiKey = await this.getCredential(pluginId, 'brokers/zerodha/apiKey');
     if (!apiKey) {
       throw new Error(`API key not set for plugin ${pluginId}. Configure it in Settings first.`);
@@ -171,7 +171,7 @@ export class PluginsService {
 
   async completeOAuth(
     pluginId: string,
-    oauthRef: string,
+    _oauthRef: string,
     requestToken: string,
     toolRegistry?: ToolRegistry,
   ): Promise<{ ok: boolean; userId?: string }> {
