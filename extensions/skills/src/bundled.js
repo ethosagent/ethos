@@ -1,10 +1,9 @@
 import { join } from 'node:path';
-import type { ScanSource } from '@ethosagent/skills';
 
-export function bundledSkillsSource(): ScanSource {
+export function bundledSkillsSource() {
   return {
     label: 'ethos-bundled',
-    dir: join(import.meta.dirname, '..', 'data'),
+    dir: join(import.meta.dirname, '..', '..', '..', 'skills'),
   };
 }
 
@@ -31,6 +30,4 @@ export const BUNDLED_SKILL_IDS = [
   'framework/ethos-skill-authoring',
   'framework/native-mcp',
   'framework/codebase-inspection',
-] as const;
-
-export type BundledSkillId = (typeof BUNDLED_SKILL_IDS)[number];
+];

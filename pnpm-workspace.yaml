@@ -6,4 +6,3 @@ packages:
   - "examples/plugins/*"
   - "examples/mission-control"
   - "docs"
-  - "skills"

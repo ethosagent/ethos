@@ -14,6 +14,7 @@ export function EvolverConfigDrawer({ open, port, onClose }: EvolverConfigDrawer
   const [newSkillPatternThreshold, setNewSkillPatternThreshold] = useState(0.5);
   const [minRunsBeforeEvolve, setMinRunsBeforeEvolve] = useState(3);
   const [minPatternCount, setMinPatternCount] = useState(5);
+  const [autoApprove, setAutoApprove] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -34,6 +35,7 @@ export function EvolverConfigDrawer({ open, port, onClose }: EvolverConfigDrawer
           setNewSkillPatternThreshold(res.config.newSkillPatternThreshold);
           setMinRunsBeforeEvolve(res.config.minRunsBeforeEvolve);
           setMinPatternCount(res.config.minPatternCount);
+          setAutoApprove(res.config.autoApprove);
         }
       })
       .catch(() => {})
@@ -53,6 +55,7 @@ export function EvolverConfigDrawer({ open, port, onClose }: EvolverConfigDrawer
         newSkillPatternThreshold,
         minRunsBeforeEvolve,
         minPatternCount,
+        autoApprove,
       });
       onClose();
     } catch {
@@ -173,6 +176,20 @@ export function EvolverConfigDrawer({ open, port, onClose }: EvolverConfigDrawer
               />
               <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                 Minimum pattern occurrences before proposing a skill
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <SectionLabel>Auto-approve evolved skills</SectionLabel>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
+              <input
+                type="checkbox"
+                checked={autoApprove}
+                onChange={(e) => setAutoApprove(e.target.checked)}
+              />
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                Promote proposed skills directly to the live library without manual review
               </span>
             </div>
           </div>

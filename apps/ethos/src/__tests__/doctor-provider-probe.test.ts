@@ -31,8 +31,6 @@ vi.mock('@ethosagent/skills', () => ({
       return new Map();
     }
   },
-}));
-vi.mock('@ethosagent/skills-library', () => ({
   bundledSkillsSource: () => ({}),
 }));
 

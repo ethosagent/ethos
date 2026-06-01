@@ -29,8 +29,6 @@ vi.mock('@ethosagent/skills', () => ({
       return new Map();
     }
   },
-}));
-vi.mock('@ethosagent/skills-library', () => ({
   bundledSkillsSource: () => ({}),
 }));
 // Mock error-log to avoid filesystem access in the --recent-errors path.

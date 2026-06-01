@@ -10,8 +10,7 @@ import {
   scanSkillMd,
   type TrustTier,
 } from '@ethosagent/safety-scanner';
-import { UniversalScanner } from '@ethosagent/skills';
-import { bundledSkillsSource } from '@ethosagent/skills-library';
+import { bundledSkillsSource, UniversalScanner } from '@ethosagent/skills';
 import { isSafePathSegment } from '@ethosagent/storage-fs';
 import { EthosError, type Skill } from '@ethosagent/types';
 import { ethosDir } from '../config';

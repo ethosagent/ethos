@@ -4,6 +4,7 @@ import { MemoryGuidanceInjector } from './memory-guidance-injector';
 import { SkillsInjector } from './skills-injector';
 import { UniversalScanner } from './universal-scanner';
 
+export { BUNDLED_SKILL_IDS, bundledSkillsSource } from './bundled';
 export { checkSkillEnv, defaultWhich } from './env-resolver';
 export { FileContextInjector } from './file-context-injector';
 export { GetSkillTool } from './get-skill-tool';

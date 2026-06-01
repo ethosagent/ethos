@@ -47,7 +47,6 @@
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/skill-evolver": "workspace:*",
     "@ethosagent/skills": "workspace:*",
-    "@ethosagent/skills-library": "workspace:*",
     "@ethosagent/tools-browser": "workspace:*",
     "@ethosagent/tools-code": "workspace:*",
     "@ethosagent/tools-cron": "workspace:*",

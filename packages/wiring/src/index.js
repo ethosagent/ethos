@@ -44,8 +44,12 @@ import { PluginLoader } from '@ethosagent/plugin-loader';
 import { DiagnosticStore, OAuthCoordinatorImpl, PluginEventBus } from '@ethosagent/plugin-sdk';
 import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { createKvStoreFactory, SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import { createInjectors, PlatformFormattingInjector, UniversalScanner } from '@ethosagent/skills';
-import { bundledSkillsSource } from '@ethosagent/skills-library';
+import {
+  bundledSkillsSource,
+  createInjectors,
+  PlatformFormattingInjector,
+  UniversalScanner,
+} from '@ethosagent/skills';
 import { createCryptoStorage } from '@ethosagent/storage-crypto';
 import { FsAttachmentCache, FsStorage, REF_TO_ENV } from '@ethosagent/storage-fs';
 import { createBrowserTools } from '@ethosagent/tools-browser';

@@ -6,8 +6,7 @@ import { Gateway } from '@ethosagent/gateway';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry, firstParagraph } from '@ethosagent/personalities';
 import { initPairingDb } from '@ethosagent/safety-channel';
-import { createInjectors } from '@ethosagent/skills';
-import { bundledSkillsSource } from '@ethosagent/skills-library';
+import { bundledSkillsSource, createInjectors } from '@ethosagent/skills';
 import { readRuntime, removeRuntime } from '@ethosagent/team-supervisor';
 // Platform adapters are loaded LAZILY in runGatewayStart() — see plan/IMPROVEMENT.md P0-3.
 // Their underlying SDKs (grammy, discord.js, @slack/bolt, imapflow…) are

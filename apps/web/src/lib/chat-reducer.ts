@@ -334,6 +334,7 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
     case 'protocol.upgrade_required':
       return state;
   }
+  return state;
 }
 
 export function applyAction(state: ChatState, action: ChatAction): ChatState {

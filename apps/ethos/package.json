@@ -95,7 +95,6 @@
     "@ethosagent/safety-scanner": "workspace:*",
     "@ethosagent/secrets-aws": "workspace:*",
     "@ethosagent/skills": "workspace:*",
-    "@ethosagent/skills-library": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/session-sqlite": "workspace:*",
     "@ethosagent/team-supervisor": "workspace:*",

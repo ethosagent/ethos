@@ -752,7 +752,7 @@ async function runLogin(argv: string[]): Promise<void> {
     return;
   }
 
-  if (!config.auth || config.auth.type !== 'oauth2') {
+  if (config.auth?.type !== 'oauth2') {
     console.error(`MCP server '${serverName}' does not have OAuth 2.1 auth configured`);
     process.exitCode = 1;
     return;

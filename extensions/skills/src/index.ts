@@ -5,6 +5,7 @@ import { MemoryGuidanceInjector } from './memory-guidance-injector';
 import { SkillsInjector } from './skills-injector';
 import { type ScanSource, UniversalScanner } from './universal-scanner';
 
+export { BUNDLED_SKILL_IDS, type BundledSkillId, bundledSkillsSource } from './bundled';
 export {
   checkSkillEnv,
   defaultWhich,

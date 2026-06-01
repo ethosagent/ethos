@@ -50,7 +50,6 @@
       "@ethosagent/platform-whatsapp": ["./extensions/platform-whatsapp/src"],
       "@ethosagent/openclaw-compat": ["./extensions/openclaw-compat/src"],
       "@ethosagent/skills": ["./extensions/skills/src"],
-      "@ethosagent/skills-library": ["./skills/src"],
       "@ethosagent/tools-file": ["./extensions/tools-file/src"],
       "@ethosagent/tools-terminal": ["./extensions/tools-terminal/src"],
       "@ethosagent/tools-terminal/reducers/bash": ["./extensions/tools-terminal/src/reducers/bash"],
@@ -121,7 +120,6 @@
     "packages/safety/*/src/**/*",
     "extensions/*/src/**/*",
     "apps/*/src/**/*",
-    "skills/src/**/*",
     "vitest.config.ts"
   ],
   "exclude": [

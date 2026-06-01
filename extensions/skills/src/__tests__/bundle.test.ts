@@ -3,11 +3,11 @@ import { join } from 'node:path';
 import { UniversalScanner } from '@ethosagent/skills';
 import matter from 'gray-matter';
 import { describe, expect, it } from 'vitest';
-import { BUNDLED_SKILL_IDS, bundledSkillsSource } from '../index';
+import { BUNDLED_SKILL_IDS, bundledSkillsSource } from '../bundled';
 
 const SOURCE = bundledSkillsSource();
 
-describe('@ethosagent/skills-library bundle', () => {
+describe('@ethosagent/skills bundle', () => {
   it('points at an existing data directory', () => {
     const stat = statSync(SOURCE.dir);
     expect(stat.isDirectory()).toBe(true);

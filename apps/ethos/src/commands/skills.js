@@ -3,8 +3,7 @@ import { mkdir, open, readdir, readFile, rename, rm, stat, unlink } from 'node:f
 import { dirname, join, relative } from 'node:path';
 import { createInterface } from 'node:readline';
 import { canInstall, deriveTier, scanPluginCode, scanSkillMd } from '@ethosagent/safety-scanner';
-import { UniversalScanner } from '@ethosagent/skills';
-import { bundledSkillsSource } from '@ethosagent/skills-library';
+import { bundledSkillsSource, UniversalScanner } from '@ethosagent/skills';
 import { isSafePathSegment } from '@ethosagent/storage-fs';
 import { EthosError } from '@ethosagent/types';
 import { ethosDir } from '../config';
