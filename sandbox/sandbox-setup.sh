@@ -172,6 +172,24 @@ if [ -d "$SKILLS_SRC" ]; then
   echo "  ✅ Installed $INSTALLED skill(s)."
 fi
 
+# Check-quality hook: change-aware quality gate (lint, typecheck, scoped tests, docs)
+CHECK_QUALITY_HOOK_PATH="$HOOKS_DST/check-quality.sh"
+if [ -f "$HOOKS_SRC/check-quality.sh" ]; then
+  echo "  🔍 Installing check-quality hook..."
+  mkdir -p "$HOOKS_DST"
+  sed -e "s|{{ETHOS_DIR}}|$ETHOS_DIR|g" \
+      "$HOOKS_SRC/check-quality.sh" > "$CHECK_QUALITY_HOOK_PATH"
+  chmod +x "$CHECK_QUALITY_HOOK_PATH"
+  echo "  ✅ Quality gate hook installed at $CHECK_QUALITY_HOOK_PATH"
+fi
+
+# Session-audit hook command (sandbox-internal path via ~/.claude symlink)
+SESSION_AUDIT_HOOK_CMD=""
+if [ -f "$SKILLS_DST/session-audit/scripts/parse-transcript" ] && \
+   [ -f "$SKILLS_DST/session-audit/scripts/format-output" ]; then
+  SESSION_AUDIT_HOOK_CMD="python3 /home/agent/.claude/skills/session-audit/scripts/parse-transcript 2>/dev/null | python3 /home/agent/.claude/skills/session-audit/scripts/format-output 2>/dev/null"
+fi
+
 # Install PreToolUse hook (forbid direct edits to canonical ethos checkout)
 HOOKS_SRC="$SCRIPT_DIR/hooks"
 HOOKS_DST="$SANDBOX_DIR/.auth/claude/hooks"
@@ -201,7 +219,9 @@ echo "$EXISTING_SETTINGS" \
   | jq \
       --arg statusline "$STATUSLINE_PATH" \
       --arg hookcmd "$HOOK_PATH" \
-      --arg pretoolusehook "$PRETOOLUSE_HOOK_PATH" '
+      --arg pretoolusehook "$PRETOOLUSE_HOOK_PATH" \
+      --arg session_audit_cmd "$SESSION_AUDIT_HOOK_CMD" \
+      --arg check_quality_cmd "$CHECK_QUALITY_HOOK_PATH" '
     . as $base
     | (if ($statusline | length) > 0
          then . + {"statusLine":{"type":"command","command":$statusline}}
@@ -214,10 +234,21 @@ echo "$EXISTING_SETTINGS" \
           ]) | unique)
         })
       }
-    | (if ($hookcmd | length) > 0
-         then . + {"hooks": ((.hooks // {}) + {
-              "Stop": [{"matcher":"*","hooks":[{"type":"command","command":$hookcmd}]}]
-            })}
+    | (
+        [
+          (if ($hookcmd | length) > 0
+             then {"matcher":"*","hooks":[{"type":"command","command":$hookcmd}]}
+             else empty end),
+          (if ($session_audit_cmd | length) > 0
+             then {"matcher":"","hooks":[{"type":"command","command":$session_audit_cmd,"timeout":30}]}
+             else empty end),
+          (if ($check_quality_cmd | length) > 0
+             then {"matcher":"","hooks":[{"type":"command","command":$check_quality_cmd,"timeout":120}]}
+             else empty end)
+        ]
+      ) as $stop_hooks
+    | (if ($stop_hooks | length) > 0
+         then . + {"hooks": ((.hooks // {}) + {"Stop": $stop_hooks})}
          else . end)
     | (if ($pretoolusehook | length) > 0
          then . + {"hooks": ((.hooks // {}) + {

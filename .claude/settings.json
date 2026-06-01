@@ -1,1 +1,16 @@
-{}
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .agents/skills/session-audit/scripts/parse-transcript 2>/dev/null | python3 .agents/skills/session-audit/scripts/format-output 2>/dev/null",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

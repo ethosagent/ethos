@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""
+Read parse-transcript JSON from stdin, emit systemMessage JSON for Claude Code Stop hook.
+Silent (no output) when there are zero failures.
+"""
+import json
+import sys
+
+try:
+    d = json.load(sys.stdin)
+    cats = d.get('failure_categories', 0)
+    if cats == 0:
+        sys.exit(0)
+
+    lines = [
+        f'⚠ Session audit — {cats} failure type(s) across {d["total_tool_calls"]} tool calls:'
+    ]
+    for f in d.get('failures', []):
+        ex = f['examples'][0][:100] if f.get('examples') else ''
+        lines.append(f'  [{f["category"]}] x{f["count"]}  {ex}')
+        if f.get('suggestion'):
+            s = f['suggestion']
+            lines.append(f'    → {s.get("type", "").upper()}: {s.get("rule", "")[:80]}')
+
+    print(json.dumps({'systemMessage': '\n'.join(lines)}))
+except Exception:
+    pass

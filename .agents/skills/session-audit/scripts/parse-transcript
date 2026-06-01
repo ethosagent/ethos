@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""
+Parse the current Claude Code session transcript and classify failures.
+
+Finds the most recently modified JSONL in ~/.claude/projects/<slug>/,
+walks every tool_result block, matches error patterns, deduplicates,
+and prints a JSON report.
+"""
+
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+# ── locate transcript ──────────────────────────────────────────────────────
+
+cwd = os.getcwd()
+slug = cwd.replace('/', '-')
+transcript_dir = Path.home() / '.claude' / 'projects' / slug
+
+if not transcript_dir.exists():
+    print(json.dumps({"error": f"No transcript directory found at {transcript_dir}"}))
+    sys.exit(0)
+
+jsonl_files = sorted(transcript_dir.glob('*.jsonl'), key=lambda p: p.stat().st_mtime, reverse=True)
+if not jsonl_files:
+    print(json.dumps({"error": "No session transcripts found"}))
+    sys.exit(0)
+
+transcript_path = jsonl_files[0]
+
+# ── error patterns ─────────────────────────────────────────────────────────
+# Each entry: (category, compiled_regex, human_label)
+
+RAW_PATTERNS = [
+    ("typecheck",   r"error TS\d+:",                                   "TypeScript type error"),
+    ("typecheck",   r"tsc.*Exit status [1-9]",                         "TypeScript compilation failed"),
+    ("lint",        r"lint/[\w/]+",                                     "Biome lint error"),
+    ("lint",        r"Found \d+ errors\.",                              "Lint check failed"),
+    ("build",       r"ERR_PNPM|ELIFECYCLE.*build",                     "Build pipeline failure"),
+    ("build",       r"tsup.*error|error.*tsup",                        "tsup build error"),
+    ("test",        r"FAIL\b|Tests?\s+\d+\s+failed|AssertionError",    "Test failure"),
+    ("git-state",   r"fatal: '.*' is already (checked out|used by worktree)", "Worktree conflict"),
+    ("git-state",   r"fatal: A branch named '.*' already exists",      "Branch already exists"),
+    ("git-state",   r"error: Your local changes would be overwritten", "Dirty working tree"),
+    ("git-state",   r"fatal: not a git repository",                    "Not in a git repo"),
+    ("permission",  r"\[sandbox-agent\] Blocked",                      "Hook blocked operation"),
+    ("permission",  r"EPERM|EACCES|Permission denied",                 "Filesystem permission denied"),
+    ("dependency",  r"Cannot find module|ERR_MODULE_NOT_FOUND",        "Module not found"),
+    ("dependency",  r"Could not resolve|Failed to resolve",            "Import resolution failure"),
+    ("runtime",     r"UnhandledPromiseRejection|uncaughtException",    "Unhandled runtime error"),
+    ("runtime",     r"EthosError\b",                                   "Ethos domain error"),
+    ("exit-code",   r"Exit code [1-9]\d*\b|exit status [1-9]",        "Non-zero exit code"),
+]
+
+PATTERNS = [(cat, re.compile(pat, re.IGNORECASE), label) for cat, pat, label in RAW_PATTERNS]
+
+# ── suggestions per category ───────────────────────────────────────────────
+
+SUGGESTIONS = {
+    "typecheck": {
+        "type": "claude_md",
+        "rule": "After every implementation, run `pnpm typecheck` before reporting the task complete. Fix all TS errors before proceeding.",
+    },
+    "lint": {
+        "type": "hook",
+        "rule": "Run `pnpm lint:fix` to auto-fix and `pnpm lint` to verify before any commit. Never push unlinted code.",
+        "hook_command": f"cd {cwd} && pnpm lint 2>&1 | grep -E '^.*\\berror\\b|Found [0-9]+ errors' | grep -v WARN || true",
+    },
+    "build": {
+        "type": "claude_md",
+        "rule": "After implementation, verify the production bundle is clean: run `pnpm build` in the affected app/package before declaring done.",
+    },
+    "test": {
+        "type": "claude_md",
+        "rule": "Run `pnpm test` before declaring any implementation task complete. Fix all failing tests first.",
+    },
+    "git-state": {
+        "type": "claude_md",
+        "rule": "Before `git worktree add` or `git checkout -b <name>`, always verify first: `git worktree list` (for worktrees) and `git branch --list <name>` (for branches). Never assume a branch or worktree does not exist.",
+    },
+    "permission": {
+        "type": "claude_md",
+        "rule": "When a hook blocks an operation (sandbox-agent Blocked), do not retry with --no-verify or bypass flags. Read the hook error, understand why it fired, and fix the root cause.",
+    },
+    "dependency": {
+        "type": "claude_md",
+        "rule": "After adding, moving, or renaming packages: run `pnpm install` then `pnpm typecheck` to confirm all imports resolve cleanly.",
+    },
+    "runtime": {
+        "type": "claude_md",
+        "rule": "For runtime errors, check `~/.ethos/logs/errors.jsonl` (recent structured errors) and `~/.ethos/observability.db` for context before investigating code.",
+    },
+    "exit-code": None,  # informational only
+}
+
+# ── parse transcript ───────────────────────────────────────────────────────
+
+total_tool_calls = 0
+# category → {count, examples (deduped snippets), tool_names}
+findings: dict[str, dict] = {}
+
+def extract_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                parts.append(block.get('text', '') or block.get('content', ''))
+        return '\n'.join(parts)
+    return str(content)
+
+with open(transcript_path, encoding='utf-8', errors='replace') as f:
+    for raw_line in f:
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            obj = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+
+        msg = obj.get('message', {})
+        if not isinstance(msg, dict):
+            continue
+
+        content_blocks = msg.get('content', [])
+        if not isinstance(content_blocks, list):
+            continue
+
+        for block in content_blocks:
+            if not isinstance(block, dict):
+                continue
+
+            if block.get('type') == 'tool_use':
+                total_tool_calls += 1
+
+            if block.get('type') == 'tool_result':
+                text = extract_text(block.get('content', ''))
+                if not text:
+                    continue
+
+                # find the tool name from the preceding tool_use — approximate via sibling scan
+                # (good enough: we care about category, not exact tool attribution)
+                for cat, pattern, label in PATTERNS:
+                    match = pattern.search(text)
+                    if not match:
+                        continue
+                    snippet = text[max(0, match.start()-30):match.end()+120].strip()
+                    snippet = re.sub(r'\s+', ' ', snippet)[:250]
+                    if cat not in findings:
+                        findings[cat] = {"category": cat, "count": 0, "label": label, "examples": [], "suggestion": SUGGESTIONS.get(cat)}
+                    findings[cat]["count"] += 1
+                    if len(findings[cat]["examples"]) < 3 and snippet not in findings[cat]["examples"]:
+                        findings[cat]["examples"].append(snippet)
+                    break  # one category per block
+
+# ── output ─────────────────────────────────────────────────────────────────
+
+result = {
+    "session": str(transcript_path),
+    "total_tool_calls": total_tool_calls,
+    "failure_categories": len(findings),
+    "failures": sorted(findings.values(), key=lambda x: -x["count"]),
+}
+
+print(json.dumps(result, indent=2))
