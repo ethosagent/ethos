@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@ethosagent/design-tokens": "workspace:*",
+    "@ethosagent/llm-codex": "workspace:*",
     "@ethosagent/sdk": "workspace:*",
     "@ethosagent/ui-components": "workspace:*",
     "@ethosagent/web-contracts": "workspace:*",
