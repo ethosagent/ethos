@@ -1359,16 +1359,20 @@ export async function buildAdapters(
       if (waConfigs.length > 1) {
         const missingIds = waConfigs.filter((c) => !c.id);
         if (missingIds.length > 0) {
-          throw new Error(
-            `[whatsapp] Multiple WhatsApp configs require explicit 'id' fields. ${missingIds.length} config(s) are missing an id.`,
-          );
+          throw new EthosError({
+            code: 'CONFIG_INVALID',
+            cause: `[whatsapp] Multiple WhatsApp configs require explicit 'id' fields. ${missingIds.length} config(s) are missing an id.`,
+            action: "Add an 'id' field to each WhatsApp config in ~/.ethos/config.yaml.",
+          });
         }
         const ids = waConfigs.map((c) => c.id);
         const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
         if (dupes.length > 0) {
-          throw new Error(
-            `[whatsapp] Duplicate WhatsApp bot IDs: ${dupes.join(', ')}. Each config must have a unique id.`,
-          );
+          throw new EthosError({
+            code: 'CONFIG_INVALID',
+            cause: `[whatsapp] Duplicate WhatsApp bot IDs: ${dupes.join(', ')}. Each config must have a unique id.`,
+            action: "Ensure each WhatsApp config in ~/.ethos/config.yaml has a distinct 'id' value.",
+          });
         }
       }
 
