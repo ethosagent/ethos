@@ -111,6 +111,7 @@ const sidebars: SidebarsConfig = {
           label: 'How-to',
           collapsed: true,
           items: [
+            'building/how-to/create-a-plugin',
             'building/how-to/publish-a-plugin',
             'building/how-to/write-an-llm-provider-plugin',
             'building/how-to/write-a-memory-backend-plugin',
