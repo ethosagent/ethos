@@ -68,7 +68,8 @@ jobs:
 
       - name: Rebuild native modules for Electron
         shell: bash
-        run: npx electron-rebuild -f -w better-sqlite3
+        working-directory: apps/desktop
+        run: pnpm exec @electron/rebuild -f -w better-sqlite3
 
       - name: Build renderer + main
         run: pnpm --filter @ethosagent/desktop build
