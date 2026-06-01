@@ -11,19 +11,22 @@ import type { MemoryProvider, SecretsResolver, SessionStore, Storage } from '@et
 import type { SseEvent } from '@ethosagent/web-contracts';
 import type { IdentityMap } from '@ethosagent/wiring';
 import type { Hono } from 'hono';
+import { ChatRepository } from './features/chat/repository';
+import { type ChatDefaults, ChatService } from './features/chat/service';
+import { CompletionsRepository } from './features/completions/repository';
+import { CompletionsService } from './features/completions/service';
+import { SessionsRepository } from './features/sessions/repository';
+import { SessionsService } from './features/sessions/service';
 import type { ApiKeyAdminStore } from './middleware/bearer-auth';
 import { AllowlistRepository } from './repositories/allowlist.repository';
 import { ConfigRepository } from './repositories/config.repository';
 import { EvolverRepository } from './repositories/evolver.repository';
 import { PlatformsRepository } from './repositories/platforms.repository';
-import { SessionsRepository } from './repositories/sessions.repository';
 import { WebTokenRepository } from './repositories/web-token.repository';
 import { createRoutes } from './routes';
 import { ApiKeysService } from './services/api-keys.service';
 import { createWebApprovalHook, type DangerPredicate } from './services/approval-hook';
 import { ApprovalsService } from './services/approvals.service';
-import { type ChatDefaults, ChatService } from './services/chat.service';
-import { CompletionsService } from './services/completions.service';
 import { ConfigService } from './services/config.service';
 import { CronService } from './services/cron.service';
 import { EvolverService } from './services/evolver.service';
@@ -36,7 +39,6 @@ import { OnboardingService } from './services/onboarding.service';
 import { PersonalitiesService } from './services/personalities.service';
 import { PlatformsService } from './services/platforms.service';
 import { PluginsService } from './services/plugins.service';
-import { SessionsService } from './services/sessions.service';
 import { SkillsService } from './services/skills.service';
 import { SystemEventBus } from './services/system-event-bus';
 
@@ -180,6 +182,8 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // --- Repositories (data access only) ---
   const tokens = new WebTokenRepository({ dataDir: opts.dataDir });
   const sessionsRepo = new SessionsRepository(opts.sessionStore);
+  const chatRepo = new ChatRepository(opts.sessionStore);
+  const completionsRepo = new CompletionsRepository(opts.sessionStore);
   const configRepo = new ConfigRepository({ dataDir: opts.dataDir });
   const allowlistRepo = new AllowlistRepository({ dataDir: opts.dataDir });
   const skillsLibrary = new SkillsLibrary({
@@ -261,7 +265,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // the web chat surface so personality reloads + tool wiring reach both.
   const completionsService = new CompletionsService({
     loop: opts.agentLoop,
-    sessions: opts.sessionStore,
+    sessions: completionsRepo,
     defaults: opts.chatDefaults,
   });
 
@@ -272,7 +276,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const buffer = new SessionStreamBuffer<SseEvent>();
   const chatService = new ChatService({
     loop: opts.agentLoop,
-    sessions: sessionsRepo,
+    sessions: chatRepo,
     buffer,
     defaults: opts.chatDefaults,
     onForget: (sessionId) => approvalsService.cancelForSession(sessionId),
@@ -445,8 +449,8 @@ function createPassiveMcpManager(): McpManager {
   } as unknown as McpManager;
 }
 
+export { type ChatDefaults, ChatService } from './features/chat/service';
 // Re-exports so boot code can read tokens / inspect contract surfaces directly.
 export { WebTokenRepository } from './repositories/web-token.repository';
 export { setWhatsAppPairingCode, setWhatsAppQr } from './routes/setup-whatsapp';
 export type { DangerPredicate, DangerReason } from './services/approval-hook';
-export { type ChatDefaults, ChatService } from './services/chat.service';

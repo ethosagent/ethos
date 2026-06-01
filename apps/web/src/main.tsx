@@ -1,18 +1,18 @@
 import './styles.css';
 import { BUILTIN_SKINS, DEFAULT_TOKENS, resolveSkin } from '@ethosagent/design-tokens';
 import { tokensToAntd, tokensToCssVariables } from '@ethosagent/design-tokens/antd';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App as AntApp, ConfigProvider, type ThemeConfig } from 'antd';
 import React, { useEffect, useMemo, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './App';
+import { useConfigRetryFalse } from './features/config/api/queries';
 import {
   applyReducedMotion,
   REDUCED_MOTION_STYLESHEET,
   watchReducedMotion,
 } from './lib/reduced-motion';
-import { rpc } from './rpc';
 
 // Boot order: QueryClientProvider → Root → ConfigProvider → ...
 //
@@ -39,11 +39,7 @@ const queryClient = new QueryClient({
 function Root() {
   // Config may not exist yet (first-time onboarding). Fall back to default
   // skin so the shell still renders.
-  const configQuery = useQuery({
-    queryKey: ['config'],
-    queryFn: () => rpc.config.get(),
-    retry: false,
-  });
+  const configQuery = useConfigRetryFalse();
   const skinName = configQuery.data?.skin ?? 'default';
 
   const resolvedTokens = useMemo(() => {

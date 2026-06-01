@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import type { Storage } from '@ethosagent/types';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import type { ChatService } from '../features/chat/service';
+import type { SessionsService } from '../features/sessions/service';
 import { authMiddleware } from '../middleware/auth';
 import type { ApiKeyAuthStore } from '../middleware/bearer-auth';
 import { csrfMiddleware } from '../middleware/csrf';
@@ -10,8 +12,6 @@ import { cookieOnlyGuard, dualAuth, resolveScope } from '../middleware/dual-auth
 import { errorHandler } from '../middleware/error-envelope';
 import { rateLimitMiddleware } from '../middleware/rate-limit';
 import type { WebTokenRepository } from '../repositories/web-token.repository';
-import type { ChatService } from '../services/chat.service';
-import type { SessionsService } from '../services/sessions.service';
 import { authRoutes } from './auth';
 import { openAiRoutes } from './openai';
 import { openapiRoutes } from './openapi';
@@ -72,7 +72,7 @@ export interface ServiceContainer {
   platforms: import('../services/platforms.service').PlatformsService;
   lab: import('../services/lab.service').LabService;
   kanban: import('../services/kanban.service').KanbanService;
-  completions: import('../services/completions.service').CompletionsService;
+  completions: import('../features/completions/service').CompletionsService;
   apiKeys: import('../services/api-keys.service').ApiKeysService;
   toolRegistry?: import('@ethosagent/types').ToolRegistry;
   systemBus?: import('../services/system-event-bus').SystemEventBus;

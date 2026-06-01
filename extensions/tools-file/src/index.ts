@@ -77,6 +77,7 @@ async function checkStaleWrite(
       ok: false,
       error: `STALE_WRITE: ${abs} was read at ${readAt} but no longer exists on disk. Re-read the file before writing.`,
       code: 'STALE_WRITE',
+      conflictKey: abs,
     };
   }
 
@@ -87,6 +88,7 @@ async function checkStaleWrite(
       ok: false,
       error: `STALE_WRITE: ${abs} was read at ${readAt} but modified externally at ${modAt}. Re-read the file before writing.`,
       code: 'STALE_WRITE',
+      conflictKey: abs,
     };
   }
 

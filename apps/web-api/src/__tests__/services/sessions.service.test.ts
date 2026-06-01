@@ -1,7 +1,7 @@
 import { isEthosError } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import type { SessionsRepository } from '../../repositories/sessions.repository';
-import { SessionsService } from '../../services/sessions.service';
+import type { SessionsRepository } from '../../features/sessions/repository';
+import { SessionsService } from '../../features/sessions/service';
 
 // Service tests run with mocked repositories — no HTTP, no FS, no SQLite.
 // The repository contract is small enough to mock inline; spinning up a

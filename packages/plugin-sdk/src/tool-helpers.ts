@@ -9,7 +9,7 @@ export function ok(value: string): ToolResult {
   return { ok: true, value };
 }
 
-type ToolErrorCode = 'input_invalid' | 'not_available' | 'execution_failed';
+type ToolErrorCode = 'input_invalid' | 'not_available' | 'execution_failed' | 'STALE_WRITE';
 
 /** Shorthand for a failed tool result. */
 export function err(error: string, code: ToolErrorCode = 'execution_failed'): ToolResult {

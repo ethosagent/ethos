@@ -18,7 +18,8 @@
     "antd": "^5.22.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
-    "react-router-dom": "^6.27.0"
+    "react-router-dom": "^6.27.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

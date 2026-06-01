@@ -16,6 +16,10 @@
     "./model-catalog": {
       "import": "./src/model-catalog.ts",
       "types": "./src/model-catalog.ts"
+    },
+    "./types": {
+      "import": "./src/types.ts",
+      "types": "./src/types.ts"
     }
   },
   "scripts": {

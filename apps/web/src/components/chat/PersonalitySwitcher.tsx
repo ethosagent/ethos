@@ -1,7 +1,6 @@
 import type { Personality } from '@ethosagent/web-contracts';
-import { useQuery } from '@tanstack/react-query';
 import { Dropdown, type MenuProps } from 'antd';
-import { rpc } from '../../rpc';
+import { usePersonalitiesShort } from '../../features/personalities/api/queries';
 import { PersonalityMark } from '../ui/PersonalityMark';
 
 // Dropdown anchored in the personality bar's reserved actions slot. The
@@ -23,10 +22,7 @@ export interface PersonalitySwitcherProps {
 }
 
 export function PersonalitySwitcher({ current, onSelect }: PersonalitySwitcherProps) {
-  const { data } = useQuery({
-    queryKey: ['personalities'],
-    queryFn: () => rpc.personalities.list({}),
-  });
+  const { data } = usePersonalitiesShort();
 
   const personalities = (data?.items ?? []).filter((p) => !HIDDEN_FROM_CHAT.has(p.id));
   const items: MenuProps['items'] = personalities.map((p) => ({

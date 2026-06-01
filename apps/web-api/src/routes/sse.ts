@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import type { ChatService } from '../services/chat.service';
+import type { ChatService } from '../features/chat/service';
 
 // SSE stream for `/sse/sessions/:id`. Delegates to `ChatService.subscribe`,
 // which:

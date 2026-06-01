@@ -1,5 +1,4 @@
 import { TurnStatusBar } from '@ethosagent/ui-components';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, ConfigProvider } from 'antd';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -8,6 +7,8 @@ import { ClarifyCard } from '../components/chat/ClarifyCard';
 import { Composer } from '../components/chat/Composer';
 import { MessageList } from '../components/chat/MessageList';
 import { PersonalityBar } from '../components/chat/PersonalityBar';
+import { useSessionRenameFromChat } from '../features/sessions/api/mutations';
+import { useSessionGet } from '../features/sessions/api/queries';
 import { useActivePersonality } from '../hooks/useActivePersonality';
 import { useChat } from '../hooks/useChat';
 import { clearLastSessionId, getLastSessionId, setLastSessionId } from '../lib/lastSession';
@@ -43,8 +44,6 @@ export function Chat() {
   const { id: personalityId, model, isLoading, setOverride } = useActivePersonality();
   const { notification } = AntApp.useApp();
 
-  const queryClient = useQueryClient();
-
   const { state, currentSessionId, sendMessage, steerMessage, switchSession, resetSession } =
     useChat({
       ...(sessionParam ? { initialSessionId: sessionParam } : {}),
@@ -58,23 +57,11 @@ export function Chat() {
       },
     });
 
-  const sessionQuery = useQuery({
-    queryKey: ['sessions', 'get', currentSessionId],
-    queryFn: () => rpc.sessions.get({ id: currentSessionId ?? '' }),
-    enabled: !!currentSessionId,
-    staleTime: 30_000,
-  });
+  const sessionQuery = useSessionGet(currentSessionId);
   // undefined = no session; null = session without title; string = titled session
   const sessionTitle = currentSessionId ? (sessionQuery.data?.session.title ?? null) : undefined;
 
-  const renameMut = useMutation({
-    mutationFn: ({ id, title }: { id: string; title: string | null }) =>
-      rpc.sessions.update({ id, title }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['sessions', 'get', currentSessionId] });
-      void queryClient.invalidateQueries({ queryKey: ['sessions', 'list'] });
-    },
-  });
+  const renameMut = useSessionRenameFromChat(currentSessionId);
 
   const handleRenameSession = (title: string | null) => {
     if (!currentSessionId) return;

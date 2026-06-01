@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { z } from 'zod';
+
+/** Narrow schema for SSE events from the `/setup/whatsapp/:botId` pairing stream. */
+const WhatsAppPairingEventSchema = z.union([
+  z.object({ paired: z.literal(true) }),
+  z.object({ pairingCode: z.string() }),
+  z.object({ qr: z.string() }),
+]);
 
 export function SetupWhatsApp() {
   const { botId = 'default' } = useParams();
@@ -13,14 +21,17 @@ export function SetupWhatsApp() {
 
     source.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
-        if (data.paired) {
+        const json: unknown = JSON.parse(event.data);
+        const result = WhatsAppPairingEventSchema.safeParse(json);
+        if (!result.success) return;
+        const data = result.data;
+        if ('paired' in data) {
           setPaired(true);
           setPairingCode(null);
           source.close();
-        } else if (data.pairingCode) {
+        } else if ('pairingCode' in data) {
           setPairingCode(data.pairingCode);
-        } else if (data.qr) {
+        } else if ('qr' in data) {
           setQr(data.qr);
         }
       } catch {

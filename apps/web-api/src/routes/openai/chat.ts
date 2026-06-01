@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { EthosError } from '@ethosagent/types';
 import { type Context, Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import type { CompletionsService } from '../../features/completions/service';
 import { openAiErrorBody } from '../../middleware/bearer-auth';
-import type { CompletionsService } from '../../services/completions.service';
 import type { PersonalitiesService } from '../../services/personalities.service';
 import { type ChatCompletionRequest, ChatCompletionRequestSchema } from './schemas';
 

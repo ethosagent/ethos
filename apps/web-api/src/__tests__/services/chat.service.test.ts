@@ -3,8 +3,8 @@ import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { isEthosError } from '@ethosagent/types';
 import type { SseEvent } from '@ethosagent/web-contracts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SessionsRepository } from '../../repositories/sessions.repository';
-import { ChatService } from '../../services/chat.service';
+import { ChatRepository } from '../../features/chat/repository';
+import { ChatService } from '../../features/chat/service';
 import { makeStubAgentLoop } from '../test-helpers';
 
 // ChatService composes a real SessionStreamBuffer + SessionsRepository
@@ -13,12 +13,12 @@ import { makeStubAgentLoop } from '../test-helpers';
 
 describe('ChatService', () => {
   let store: SQLiteSessionStore;
-  let sessions: SessionsRepository;
+  let sessions: ChatRepository;
   let buffer: SessionStreamBuffer<SseEvent>;
 
   beforeEach(() => {
     store = new SQLiteSessionStore(':memory:');
-    sessions = new SessionsRepository(store);
+    sessions = new ChatRepository(store);
     buffer = new SessionStreamBuffer<SseEvent>();
   });
 

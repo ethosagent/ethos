@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
+import type { CompletionsService } from '../../features/completions/service';
 import { type ApiKeyAuthStore, bearerAuth } from '../../middleware/bearer-auth';
 import { idempotencyMiddleware } from '../../middleware/idempotency';
 import { openAiCors } from '../../middleware/openai-cors';
-import type { CompletionsService } from '../../services/completions.service';
 import type { PersonalitiesService } from '../../services/personalities.service';
 import type { IdempotencyStore } from '../../stores/idempotency-store';
 import { openAiChatRoutes } from './chat';
