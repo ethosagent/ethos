@@ -22,29 +22,30 @@ import type { UniversalScanner } from '@ethosagent/skills';
 import { compose as composeSkills } from '@ethosagent/skills/compose';
 import { createCryptoStorage } from '@ethosagent/storage-crypto';
 import { FsStorage } from '@ethosagent/storage-fs';
-import { createBrowserTools } from '@ethosagent/tools-browser';
-import { createCodeTools } from '@ethosagent/tools-code';
-import { createCronTool } from '@ethosagent/tools-cron';
+import { compose as composeBrowser } from '@ethosagent/tools-browser/compose';
+import { compose as composeCode } from '@ethosagent/tools-code/compose';
+import { compose as composeCron } from '@ethosagent/tools-cron/compose';
 import { createFileTools } from '@ethosagent/tools-file';
 import { createImageTools } from '@ethosagent/tools-image';
-import { createInteractiveTools } from '@ethosagent/tools-interactive';
+import { compose as composeInteractive } from '@ethosagent/tools-interactive/compose';
 import {
+  type AutonomyTierOf,
   createKanbanRoleGateHook,
-  createKanbanTools,
   registerPostmortemHandler,
 } from '@ethosagent/tools-kanban';
+import { compose as composeKanban } from '@ethosagent/tools-kanban/compose';
 import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
 import { createTeamMemoryTools, isSafeTopicKey } from '@ethosagent/tools-memory';
-import { createMessagingTools, type MessagingSendFn } from '@ethosagent/tools-messaging';
-import {
-  createPersonalityDesignTools,
-  createTeamDesignTools,
-} from '@ethosagent/tools-personality-design';
-import { createProcessGuardHook, createProcessTools } from '@ethosagent/tools-process';
-import { createSkillsTools } from '@ethosagent/tools-skills';
+import type { MessagingSendFn } from '@ethosagent/tools-messaging';
+import { compose as composeMessaging } from '@ethosagent/tools-messaging/compose';
+import { createTeamDesignTools } from '@ethosagent/tools-personality-design';
+import { compose as composePersonalityDesign } from '@ethosagent/tools-personality-design/compose';
+import { createProcessGuardHook } from '@ethosagent/tools-process';
+import { compose as composeProcess } from '@ethosagent/tools-process/compose';
+import { compose as composeSkillsTools } from '@ethosagent/tools-skills/compose';
 import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-terminal';
 import { createThinkDeeperTool } from '@ethosagent/tools-tier';
-import { createTodoTools, InMemoryTodoStore } from '@ethosagent/tools-todo';
+import { compose as composeTodo } from '@ethosagent/tools-todo/compose';
 import { createTtsTools } from '@ethosagent/tools-tts';
 import { createWebTools } from '@ethosagent/tools-web';
 import type {
@@ -258,11 +259,11 @@ export async function composeAllTools(
   for (const tool of createWebTools()) tools.register(tool);
 
   // One InMemoryTodoStore per process — lifetime tied to the AgentLoop.
-  const todoStore = new InMemoryTodoStore();
-  for (const tool of createTodoTools(todoStore)) tools.register(tool);
+  const { tools: todoTools } = composeTodo(wiringCtx);
+  for (const tool of todoTools) tools.register(tool);
   tools.register(createThinkDeeperTool());
 
-  for (const tool of createInteractiveTools(clarifyBridge)) tools.register(tool);
+  for (const tool of composeInteractive(wiringCtx, { clarifyBridge }).tools) tools.register(tool);
 
   // Kanban tools — wired only when the active personality actually uses them.
   let kanbanStore: KanbanStore | null = null;
@@ -270,7 +271,11 @@ export async function composeAllTools(
     const kanbanDbPath = resolveKanbanDbPath(config, dataDir, activePerson.id);
     kanbanStore = new KanbanStore(kanbanDbPath);
     const store = kanbanStore;
-    const kanbanOpts: Parameters<typeof createKanbanTools>[0] = { store, hooks };
+    const kanbanOpts: {
+      store: KanbanStore;
+      hooks?: typeof hooks;
+      autonomyTierOf?: AutonomyTierOf;
+    } = { store, hooks };
     if (config.trustPolicy?.mode === 'tiered') {
       const policy = config.trustPolicy;
       kanbanOpts.autonomyTierOf = (assignee) => {
@@ -282,10 +287,10 @@ export async function composeAllTools(
         return { tier: autonomyTier(s, policy), ratio };
       };
     }
-    for (const tool of createKanbanTools(kanbanOpts)) tools.register(tool);
+    for (const tool of composeKanban(wiringCtx, kanbanOpts).tools) tools.register(tool);
   }
 
-  for (const tool of createProcessTools(dataDir)) tools.register(tool);
+  for (const tool of composeProcess(wiringCtx).tools) tools.register(tool);
   for (const tool of createImageTools({
     openaiApiKey: config.provider === 'openai' ? config.apiKey : undefined,
   }))
@@ -294,12 +299,12 @@ export async function composeAllTools(
   // Vision tools are registered after plugin loading (they need `llm`).
 
   if (!opts.disableDocker) {
-    for (const tool of createCodeTools(sandbox)) tools.register(tool);
-    for (const tool of createBrowserTools({
+    for (const tool of composeCode(wiringCtx, { sandbox }).tools) tools.register(tool);
+    for (const tool of composeBrowser(wiringCtx, {
       visionApiKey: config.apiKey,
       visionProvider: config.provider,
       visionModel: config.model,
-    }))
+    }).tools)
       tools.register(tool);
   }
 
@@ -314,19 +319,20 @@ export async function composeAllTools(
 
   const messagingAllowlist = await loadMessagingAllowlist(dataDir);
 
-  for (const tool of createMessagingTools({
+  for (const tool of composeMessaging(wiringCtx, {
     send: async (platform, target, body, botKey) =>
       gatewaySendRef.fn(platform, target, body, botKey),
     getAllowedTargets: (personalityId) => {
       if (!personalityId) return [];
       return messagingAllowlist.get(personalityId) ?? [];
     },
-  }))
+  }).tools)
     tools.register(tool);
 
   // Cron tool — registered only when a CronScheduler was threaded through.
   if (opts.cronScheduler) {
-    for (const tool of createCronTool(opts.cronScheduler)) tools.register(tool);
+    for (const tool of composeCron(wiringCtx, { scheduler: opts.cronScheduler }).tools)
+      tools.register(tool);
   }
 
   // TTS tool — registers as unavailable when provider is null (no TTS configured).
@@ -351,23 +357,7 @@ export async function composeAllTools(
   const skillPassthrough = deriveSkillPassthrough(skillPool, activePerson, bootToolNames);
 
   // Skill introspection tools — skills_list + skill_view.
-  for (const tool of createSkillsTools({
-    listSkills: () => {
-      return [...skillPool.values()].map((s) => ({
-        name: s.name,
-        description:
-          (s.rawFrontmatter.description as string) ?? s.body.split('\n')[0]?.slice(0, 120) ?? '',
-        kind: s.dialect,
-      }));
-    },
-    getSkillContent: (name) => {
-      for (const skill of skillPool.values()) {
-        if (skill.name === name || skill.qualifiedName === name) return skill.body;
-      }
-      return null;
-    },
-  }))
-    tools.register(tool);
+  for (const tool of composeSkillsTools(wiringCtx, { skillPool }).tools) tools.register(tool);
 
   // -------------------------------------------------------------------------
   // MCP tools
@@ -449,12 +439,12 @@ export async function composeAllTools(
     }
   }
 
-  for (const tool of createPersonalityDesignTools({
+  for (const tool of composePersonalityDesign(wiringCtx, {
     toolRegistry: tools,
     storage: designStorage,
     modelCatalog: resolvedModelCatalog,
     skills: [...skillPool.values()],
-  })) {
+  }).tools) {
     tools.register(tool);
   }
   for (const tool of createTeamDesignTools({
