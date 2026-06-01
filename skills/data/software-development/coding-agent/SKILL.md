@@ -23,6 +23,12 @@ ethos:
       role: spawn the delegated CLI as a managed process so the user can audit and kill it
     - tool: process_logs
       role: surface progress to the user without blocking the chat
+    - skill: claude-code
+      role: standalone deep-dive reference for Claude Code CLI delegation
+    - skill: codex
+      role: standalone deep-dive reference for Codex CLI delegation
+    - skill: opencode
+      role: standalone deep-dive reference for OpenCode CLI delegation
   surface_metadata:
     invocation_trigger: "user says 'have Claude Code do this' / 'delegate to codex' / 'use opencode for this'; coordinator decides delegation is appropriate for large file-heavy work"
     estimated_turns: "1-5 from the orchestrator's perspective; the delegated CLI may run for many minutes internally"

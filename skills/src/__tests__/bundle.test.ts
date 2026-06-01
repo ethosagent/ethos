@@ -38,6 +38,7 @@ describe('@ethosagent/skills-library bundle', () => {
       'quality-and-testing',
       'github-workflow',
       'delegation-and-orchestration',
+      'research',
       // framework-usage covers meta-skills (`native-mcp`, `ethos-skill-authoring`)
       // — guidance for using or extending Ethos itself rather than executing a
       // coding workflow. Added in lockstep with the first-party skills that
@@ -62,6 +63,19 @@ describe('@ethosagent/skills-library bundle', () => {
     const present = new Set(readdirSync(adaptersDir));
     for (const adapter of ['claude-code.md', 'codex.md', 'opencode.md', 'pi.md']) {
       expect(present.has(adapter), `missing adapter: ${adapter}`).toBe(true);
+    }
+  });
+
+  it('arxiv skill ships the search script', () => {
+    const scriptPath = join(SOURCE.dir, 'research', 'arxiv', 'scripts', 'search_arxiv.py');
+    expect(statSync(scriptPath).isFile(), 'missing arxiv search script').toBe(true);
+  });
+
+  it('research-paper-writing ships citation and writing references', () => {
+    const refsDir = join(SOURCE.dir, 'research', 'research-paper-writing', 'references');
+    const present = new Set(readdirSync(refsDir));
+    for (const ref of ['citation-workflow.md', 'writing-guide.md']) {
+      expect(present.has(ref), `missing reference: ${ref}`).toBe(true);
     }
   });
 
