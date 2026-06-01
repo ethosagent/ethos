@@ -277,6 +277,8 @@ export async function writeConfig(storage, config) {
     if (s.endpoint) lines.push(`aws.secrets.endpoint: ${s.endpoint}`);
   }
   if (config.webBaseUrl) lines.push(`webBaseUrl: ${config.webBaseUrl}`);
+  if (config.pluginsAutoInstall !== undefined)
+    lines.push(`plugins.auto_install: ${config.pluginsAutoInstall}`);
   await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`, { mode: 0o600 });
 }
 export async function resolveConfigSecrets(config, secrets) {
@@ -539,6 +541,12 @@ function parseConfigYaml(src) {
       kv[`storage.${stg[1]}`] = stg[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // plugins.auto_install: <value>
+    const pai = line.match(/^plugins\.auto_install:\s*(.+)$/);
+    if (pai) {
+      kv['plugins.auto_install'] = pai[1].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     const m = line.match(/^(\w+):\s*(.+)$/);
     if (m) kv[m[1].trim()] = m[2].trim().replace(/^["']|["']$/g, '');
   }
@@ -703,6 +711,12 @@ function parseConfigYaml(src) {
     aws: awsConfig,
     webBaseUrl: process.env.ETHOS_PUBLIC_URL ?? kv.webBaseUrl ?? undefined,
     storage: kv['storage.encryption'] === 'true' ? { encryption: true } : undefined,
+    pluginsAutoInstall:
+      kv['plugins.auto_install'] === 'true'
+        ? true
+        : kv['plugins.auto_install'] === 'false'
+          ? false
+          : undefined,
   };
   // Stash parse errors so the strict loader can surface them at boot.
   // readRawConfig (used by CLI commands that don't gateway-boot) ignores them

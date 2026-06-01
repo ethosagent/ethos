@@ -244,6 +244,8 @@ export interface WiringConfig {
     ttlHours?: number;
     providers?: Record<string, { url: string }>;
   };
+  /** Whether to auto-install plugins from plugins.lock on personality load. */
+  pluginsAutoInstall?: boolean;
 }
 
 export type WiringProfile = 'cli' | 'tui' | 'web' | 'acp';
@@ -1182,6 +1184,13 @@ export async function createAgentLoop(
     logger: log,
   });
   await pluginLoader.loadAll();
+
+  if (activePerson.plugins?.length) {
+    const personalityDir = join(dataDir, 'personalities', activePerson.id);
+    await pluginLoader.resolveFromLockfile(personalityDir, activePerson.plugins, {
+      autoInstall: config.pluginsAutoInstall ?? true,
+    });
+  }
 
   // Merge skill dirs declared by plugins/tools into the live injector scanner
   // and the boot-time skill pool (for MCP passthrough + design tools).

@@ -10,6 +10,10 @@ import { checkPluginContractMajor, isEthosPlugin } from '@ethosagent/plugin-cont
 import { PluginApiImpl } from '@ethosagent/plugin-sdk';
 import { canInstall, deriveTier, scanPluginCode } from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
+import { readLockfile } from './lockfile';
+
+export { computeIntegrity, readLockfile, verifyIntegrity, writeLockfile } from './lockfile';
+
 export class PluginLoader {
   registries;
   storage;
@@ -277,6 +281,60 @@ export class PluginLoader {
   /** Check if a plugin is loaded. */
   isLoaded(pluginId) {
     return this.plugins.has(pluginId);
+  }
+  async resolveFromLockfile(personalityDir, pluginIds, opts = {}) {
+    const lockfile = await readLockfile(this.storage, personalityDir);
+    if (Object.keys(lockfile).length === 0) return [];
+
+    const missing = [];
+    for (const id of pluginIds) {
+      if (this.isLoaded(id)) continue;
+      const entry = lockfile[id];
+      if (!entry) continue;
+      missing.push({ id, ...entry });
+    }
+
+    if (missing.length === 0 || opts.dryRun) return missing;
+
+    if (opts.autoInstall === false) {
+      this.logger.warn(
+        `[plugin-loader] Skipping auto-install of ${missing.length} plugin(s) — plugins.auto_install is false`,
+        { component: 'plugin-loader' },
+      );
+      return missing;
+    }
+
+    for (const entry of missing) {
+      await this.installFromLockEntry(entry);
+    }
+
+    return missing;
+  }
+  async installFromLockEntry(entry) {
+    const { execSync } = await import('node:child_process');
+    const pluginsDir = join(this.dataDir, 'plugins');
+    const exactSpec = `${entry.package}@${entry.version}`;
+    const registryArg =
+      entry.registry !== 'https://registry.npmjs.org' ? `--registry=${entry.registry}` : '';
+
+    try {
+      execSync(
+        `npm install --prefix "${pluginsDir}" --ignore-scripts --no-audit ${registryArg} ${exactSpec}`.trim(),
+        { stdio: 'pipe', timeout: 60_000 },
+      );
+
+      this.logger.info(`[plugin-loader] Auto-installed plugin ${entry.id} (${exactSpec})`, {
+        component: 'plugin-loader',
+        pluginId: entry.id,
+      });
+
+      await this.loadFromNodeModules(join(pluginsDir, 'node_modules'));
+    } catch (err) {
+      this.logger.warn(
+        `[plugin-loader] Failed to auto-install plugin ${entry.id}: ${err instanceof Error ? err.message : String(err)}`,
+        { component: 'plugin-loader', pluginId: entry.id },
+      );
+    }
   }
   /** Skill source directories declared by loaded packages via `ethos.skills_dir`. */
   getPluginSkillSources() {

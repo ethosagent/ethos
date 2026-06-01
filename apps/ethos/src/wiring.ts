@@ -229,6 +229,9 @@ export async function createAgentLoop(
     ...(config.trustPolicy !== undefined ? { trustPolicy: config.trustPolicy } : {}),
     ...(config.modelCatalog ? { modelCatalogConfig: config.modelCatalog } : {}),
     ...(config.storage ? { storage: config.storage } : {}),
+    ...(config.pluginsAutoInstall !== undefined
+      ? { pluginsAutoInstall: config.pluginsAutoInstall }
+      : {}),
     secretsResolver: await getSecretsResolver(),
   };
   const result = await packageCreateAgentLoop(wiringConfig, {

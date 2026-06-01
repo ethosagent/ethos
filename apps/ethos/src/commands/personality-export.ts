@@ -97,7 +97,7 @@ function timestamp(): string {
 // ---------------------------------------------------------------------------
 
 /** Top-level files to include from the personality directory. */
-const INCLUDE_FILES = new Set(['SOUL.md', 'config.yaml', 'toolset.yaml']);
+const INCLUDE_FILES = new Set(['SOUL.md', 'config.yaml', 'toolset.yaml', 'plugins.lock']);
 
 function collectPersonalityEntries(personalityDir: string, id: string): Entry[] {
   const entries: Entry[] = [];

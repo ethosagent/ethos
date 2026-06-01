@@ -4,13 +4,22 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
+  computeIntegrity,
+  type PluginLockEntry,
+  readLockfile,
+  writeLockfile,
+} from '@ethosagent/plugin-loader';
+import {
   canInstall,
   type PluginScanPermissions,
   type ScanFinding,
   scanPluginCode,
 } from '@ethosagent/safety-scanner';
+import type { Storage } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
+import { ethosDir } from '../config';
 import { writeJson } from '../json-output';
+import { getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -33,11 +42,17 @@ export async function runPlugin(args: string[]): Promise<void> {
     case 'install': {
       const pkg = args[1];
       if (!pkg) {
-        console.log('Usage: ethos plugin install <package>');
+        console.log('Usage: ethos plugin install <package> [--personality <id>]');
+        process.exit(1);
+      }
+      const pFlagIdx = args.indexOf('--personality');
+      const personalityId = pFlagIdx >= 0 ? args[pFlagIdx + 1] : undefined;
+      if (pFlagIdx >= 0 && !personalityId) {
+        console.log('Usage: ethos plugin install <package> [--personality <id>]');
         process.exit(1);
       }
       try {
-        await installPlugin(pkg);
+        await installPlugin(pkg, personalityId);
       } catch (err) {
         if (err instanceof EthosError) {
           console.error(`${c.red}${err.cause}${c.reset}\n${c.dim}→ ${err.action}${c.reset}`);
@@ -88,7 +103,7 @@ export async function runPlugin(args: string[]): Promise<void> {
 // Install: download to temp, scan, prompt, then commit
 // ---------------------------------------------------------------------------
 
-async function installPlugin(pkg: string): Promise<void> {
+async function installPlugin(pkg: string, personalityId?: string): Promise<void> {
   const dir = pluginsDir();
   const tmpDir = join(dir, `.tmp-scan-${process.pid}`);
 
@@ -223,6 +238,27 @@ async function installPlugin(pkg: string): Promise<void> {
     process.exit(result.status ?? 1);
   }
   console.log(`\n${c.green}✓ Installed.${c.reset} Restart ethos to load the plugin.`);
+
+  if (personalityId) {
+    const lastAt = exactSpec.lastIndexOf('@');
+    const pkgName = lastAt > 0 ? exactSpec.slice(0, lastAt) : exactSpec;
+    const pkgVersion = lastAt > 0 ? exactSpec.slice(lastAt + 1) : 'unknown';
+    const pluginId = pkgName.startsWith('@') ? (pkgName.split('/')[1] ?? pkgName) : pkgName;
+    const pkgJsonPath = join(pluginsDir(), 'node_modules', pkgName, 'package.json');
+    const integrity = await computeIntegrity(pkgJsonPath);
+    const entry: PluginLockEntry = {
+      package: pkgName,
+      version: pkgVersion,
+      registry: 'https://registry.npmjs.org',
+      integrity,
+    };
+    const personalityDir = join(ethosDir(), 'personalities', personalityId);
+    const storage = getStorage();
+    await updatePersonalityPluginConfig(storage, personalityDir, pluginId, entry);
+    console.log(
+      `${c.green}✓${c.reset} Added ${c.cyan}${pluginId}${c.reset} to personality ${c.bold}${personalityId}${c.reset}.`,
+    );
+  }
 }
 
 /**
@@ -510,6 +546,37 @@ async function clearCredential(credDir: string, key: string): Promise<void> {
 // ---------------------------------------------------------------------------
 // List
 // ---------------------------------------------------------------------------
+
+export async function updatePersonalityPluginConfig(
+  storage: Storage,
+  personalityDir: string,
+  pluginId: string,
+  entry: PluginLockEntry,
+): Promise<void> {
+  const lockfile = await readLockfile(storage, personalityDir);
+  lockfile[pluginId] = entry;
+  await writeLockfile(storage, personalityDir, lockfile);
+
+  const configPath = join(personalityDir, 'config.yaml');
+  const configContent = await storage.read(configPath);
+  if (!configContent) return;
+
+  const lines = configContent.split('\n');
+  const pluginsIdx = lines.findIndex((l) => l.startsWith('plugins:'));
+
+  if (pluginsIdx >= 0) {
+    const existing = lines[pluginsIdx].replace('plugins:', '').trim();
+    const ids = existing ? existing.split(/\s+/) : [];
+    if (!ids.includes(pluginId)) {
+      ids.push(pluginId);
+      lines[pluginsIdx] = `plugins: ${ids.join(' ')}`;
+    }
+  } else {
+    lines.push(`plugins: ${pluginId}`);
+  }
+
+  await storage.write(configPath, lines.join('\n'));
+}
 
 async function listPlugins(args: string[] = []): Promise<void> {
   const jsonMode = args.includes('--json');

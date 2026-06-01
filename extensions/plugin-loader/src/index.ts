@@ -25,6 +25,10 @@ import {
 } from '@ethosagent/safety-scanner';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { HealthCheckResult, Logger, PlatformAdapter, Storage } from '@ethosagent/types';
+import { type PluginLockEntry, readLockfile } from './lockfile';
+
+export type { PluginLockEntry, PluginLockfile } from './lockfile';
+export { computeIntegrity, readLockfile, verifyIntegrity, writeLockfile } from './lockfile';
 
 export interface InstalledPluginManifest {
   /** The plugin's id — `ethos.id` if declared, else `name`. */
@@ -380,6 +384,66 @@ export class PluginLoader {
   /** Check if a plugin is loaded. */
   isLoaded(pluginId: string): boolean {
     return this.plugins.has(pluginId);
+  }
+
+  async resolveFromLockfile(
+    personalityDir: string,
+    pluginIds: string[],
+    opts: { dryRun?: boolean; autoInstall?: boolean } = {},
+  ): Promise<Array<PluginLockEntry & { id: string }>> {
+    const lockfile = await readLockfile(this.storage, personalityDir);
+    if (Object.keys(lockfile).length === 0) return [];
+
+    const missing: Array<PluginLockEntry & { id: string }> = [];
+    for (const id of pluginIds) {
+      if (this.isLoaded(id)) continue;
+      const entry = lockfile[id];
+      if (!entry) continue;
+      missing.push({ id, ...entry });
+    }
+
+    if (missing.length === 0 || opts.dryRun) return missing;
+
+    if (opts.autoInstall === false) {
+      this.logger.warn(
+        `[plugin-loader] Skipping auto-install of ${missing.length} plugin(s) — plugins.auto_install is false`,
+        { component: 'plugin-loader' },
+      );
+      return missing;
+    }
+
+    for (const entry of missing) {
+      await this.installFromLockEntry(entry);
+    }
+
+    return missing;
+  }
+
+  private async installFromLockEntry(entry: PluginLockEntry & { id: string }): Promise<void> {
+    const { execSync } = await import('node:child_process');
+    const pluginsDir = join(this.dataDir, 'plugins');
+    const exactSpec = `${entry.package}@${entry.version}`;
+    const registryArg =
+      entry.registry !== 'https://registry.npmjs.org' ? `--registry=${entry.registry}` : '';
+
+    try {
+      execSync(
+        `npm install --prefix "${pluginsDir}" --ignore-scripts --no-audit ${registryArg} ${exactSpec}`.trim(),
+        { stdio: 'pipe', timeout: 60_000 },
+      );
+
+      this.logger.info(`[plugin-loader] Auto-installed plugin ${entry.id} (${exactSpec})`, {
+        component: 'plugin-loader',
+        pluginId: entry.id,
+      });
+
+      await this.loadFromNodeModules(join(pluginsDir, 'node_modules'));
+    } catch (err) {
+      this.logger.warn(
+        `[plugin-loader] Failed to auto-install plugin ${entry.id}: ${err instanceof Error ? err.message : String(err)}`,
+        { component: 'plugin-loader', pluginId: entry.id },
+      );
+    }
   }
 
   /** Skill source directories declared by loaded packages via `ethos.skills_dir`. */
