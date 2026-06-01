@@ -12,10 +12,12 @@ export type { CodexCredentials } from './auth';
 export {
   ensureValidToken,
   exchangeForTokens,
+  loadTokens,
   pollForAuthorization,
   requestDeviceCode,
   saveTokens,
 } from './auth';
+export { CODEX_FALLBACK_MODELS } from './models';
 
 // ---------------------------------------------------------------------------
 // Config

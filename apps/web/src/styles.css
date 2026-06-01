@@ -357,6 +357,13 @@ body,
   color: var(--ethos-text);
 }
 
+.onboarding-provider-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .onboarding-provider-hint {
   grid-column: 2;
   font-size: 12px;

@@ -3,7 +3,7 @@ export interface OnboardingState {
 }
 
 export interface ValidateProviderRequest {
-  provider: 'anthropic' | 'openai' | 'openrouter' | 'azure';
+  provider: 'anthropic' | 'openai' | 'openrouter' | 'azure' | 'codex';
   apiKey: string;
   baseUrl?: string;
   model?: string;
@@ -18,7 +18,7 @@ export interface ValidateProviderResponse {
 }
 
 export interface OnboardingCompleteRequest {
-  provider: 'anthropic' | 'openai' | 'openrouter' | 'azure';
+  provider: 'anthropic' | 'openai' | 'openrouter' | 'azure' | 'codex';
   model: string;
   apiKey: string;
   personalityId: string;
@@ -38,7 +38,7 @@ export interface ChatSendRequest {
   sessionId?: string;
 }
 
-export type ProviderType = 'anthropic' | 'openai' | 'openrouter' | 'azure' | 'ollama';
+export type ProviderType = 'anthropic' | 'openai' | 'openrouter' | 'azure' | 'ollama' | 'codex';
 
 export interface ConfigGetResponse {
   provider: ProviderType;
@@ -199,6 +199,14 @@ export interface IpcContract {
     request: { pluginId: string; toolName: string; args: Record<string, unknown> };
     response: { ok: boolean; value?: string; error?: string; code?: string };
   };
+  'codex:startAuth': {
+    request: undefined;
+    response: { ok: boolean; userCode?: string; error?: string };
+  };
+  'codex:authStatus': {
+    request: undefined;
+    response: { authorized: boolean };
+  };
 }
 
 /** Main-to-renderer push events (via webContents.send, NOT ipcMain.handle) */
@@ -207,6 +215,7 @@ export interface RendererEvents {
   'navigate:session': { sessionId: string };
   'oauth:callback': { code: string; state: string };
   'plugin:oauthComplete': { oauthRef: string };
+  'codex:authComplete': { ok: boolean; error?: string };
 }
 
 export const RENDERER_EVENTS = {
@@ -214,6 +223,7 @@ export const RENDERER_EVENTS = {
   'navigate:session': 'navigate:session',
   'oauth:callback': 'oauth:callback',
   'plugin:oauthComplete': 'plugin:oauthComplete',
+  'codex:authComplete': 'codex:authComplete',
 } as const;
 
 export type IpcChannel = keyof IpcContract;
@@ -260,4 +270,6 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'plugin:credentialPreview': 'plugin:credentialPreview',
   'plugin:requestOAuth': 'plugin:requestOAuth',
   'plugin:executeTool': 'plugin:executeTool',
+  'codex:startAuth': 'codex:startAuth',
+  'codex:authStatus': 'codex:authStatus',
 };

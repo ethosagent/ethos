@@ -3,6 +3,7 @@ import type { ConfigGetResponse, ProviderType } from '../../../shared/ipc-contra
 import { SectionLabel } from '../../ui/SectionLabel';
 import { SettingRow } from '../../ui/SettingRow';
 import { ApiKeyUpdateFlow } from '../components/ApiKeyUpdateFlow';
+import { CodexAuthSection } from '../components/CodexAuthSection';
 import { ProviderDropdown } from '../components/ProviderDropdown';
 import { SaveButton } from '../components/SaveButton';
 
@@ -17,6 +18,7 @@ const PROVIDER_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'azure', label: 'Azure OpenAI' },
   { value: 'ollama', label: 'Ollama' },
   { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'codex', label: 'OpenAI Codex' },
 ];
 
 export function ProviderTab({ config, onRefresh }: ProviderTabProps) {
@@ -139,23 +141,32 @@ export function ProviderTab({ config, onRefresh }: ProviderTabProps) {
         </div>
       </div>
 
-      <div style={{ marginBottom: 24 }}>
-        <SectionLabel>API Key</SectionLabel>
-        <div style={{ marginTop: 8 }}>
-          <SettingRow label="Current key">
-            <span
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: 12,
-                color: 'var(--text-tertiary)',
-              }}
-            >
-              {keyPreview || 'Not set'}
-            </span>
-          </SettingRow>
-          <ApiKeyUpdateFlow provider={provider} onKeyUpdated={refreshKeyPreview} />
+      {provider === 'codex' ? (
+        <div style={{ marginBottom: 24 }}>
+          <SectionLabel>ChatGPT Authorization</SectionLabel>
+          <div style={{ marginTop: 8 }}>
+            <CodexAuthSection onAuthUpdated={onRefresh} />
+          </div>
         </div>
-      </div>
+      ) : (
+        <div style={{ marginBottom: 24 }}>
+          <SectionLabel>API Key</SectionLabel>
+          <div style={{ marginTop: 8 }}>
+            <SettingRow label="Current key">
+              <span
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 12,
+                  color: 'var(--text-tertiary)',
+                }}
+              >
+                {keyPreview || 'Not set'}
+              </span>
+            </SettingRow>
+            <ApiKeyUpdateFlow provider={provider} onKeyUpdated={refreshKeyPreview} />
+          </div>
+        </div>
+      )}
 
       <SaveButton disabled={!hasChanges} onSave={handleSave} />
     </div>

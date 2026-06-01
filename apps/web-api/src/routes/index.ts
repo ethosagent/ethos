@@ -13,6 +13,7 @@ import { errorHandler } from '../middleware/error-envelope';
 import { rateLimitMiddleware } from '../middleware/rate-limit';
 import type { WebTokenRepository } from '../repositories/web-token.repository';
 import { authRoutes } from './auth';
+import { codexAuthRoutes } from './codex-auth';
 import { openAiRoutes } from './openai';
 import { openapiRoutes } from './openapi';
 import { mcpRpcPath, rpcRoutes } from './rpc';
@@ -157,6 +158,10 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     '/auth',
     authRoutes({ tokens: opts.tokens, ...(opts.secureCookie ? { secureCookie: true } : {}) }),
   );
+
+  // Codex device auth — unauthenticated (user may not be onboarded yet).
+  // The flow is safe to expose: it requires explicit user action in the browser.
+  app.route('/auth/codex', codexAuthRoutes());
 
   // RPC + SSE auth: dual-auth (cookie OR bearer) when an api-key store
   // is wired; cookie-only otherwise (backward-compatible default).

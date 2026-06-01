@@ -65,7 +65,7 @@ export class OnboardingService {
 
   async state(): Promise<OnboardingState> {
     const raw = await this.opts.config.read();
-    const hasProvider = !!(raw?.provider && raw.apiKey);
+    const hasProvider = !!(raw?.provider && (raw.apiKey || raw.provider === 'codex'));
     const personalityId = raw?.personality ?? null;
 
     if (!raw) return { step: 'welcome', hasProvider: false, selectedPersonalityId: null };
@@ -77,6 +77,22 @@ export class OnboardingService {
   }
 
   async validateProvider(input: ValidateProviderInput): Promise<ValidateProviderResult> {
+    // Codex uses device auth — check tokens exist, return fallback models
+    if (input.provider === 'codex') {
+      const { loadTokens } = await import('@ethosagent/llm-codex');
+      const tokens = await loadTokens();
+      if (!tokens) {
+        return {
+          ok: false,
+          models: null,
+          error: 'Codex not authorized — complete device auth first.',
+          completionTested: false,
+        };
+      }
+      const { CODEX_FALLBACK_MODELS } = await import('@ethosagent/llm-codex');
+      return { ok: true, models: CODEX_FALLBACK_MODELS, error: null, completionTested: false };
+    }
+
     try {
       const models = await this.fetchModels(input);
       if (input.provider === 'ollama') {
@@ -141,6 +157,8 @@ export class OnboardingService {
           models[0] ??
           null
         );
+      case 'codex':
+        return models.find((m) => m.startsWith('gpt-5')) ?? models[0] ?? null;
       default:
         return (
           models.find(
@@ -197,6 +215,8 @@ export class OnboardingService {
         case 'azure':
           if (!input.baseUrl) throw new Error('baseUrl required for azure');
           return await this.openAiCompatibleModels(input.baseUrl, input.apiKey, controller.signal);
+        case 'codex':
+          throw new Error('Codex uses device auth — call validateProvider directly');
       }
     } finally {
       clearTimeout(timer);
@@ -251,6 +271,7 @@ export class OnboardingService {
     try {
       switch (input.provider) {
         case 'ollama':
+        case 'codex':
           return;
         case 'anthropic':
           await this.anthropicCompletion(input.apiKey, model, controller.signal);
@@ -277,6 +298,7 @@ export class OnboardingService {
         return input.baseUrl ?? 'https://api.openai.com/v1';
       case 'openai-compat':
       case 'azure':
+      case 'codex':
         return input.baseUrl ?? '';
       default:
         return input.baseUrl ?? '';

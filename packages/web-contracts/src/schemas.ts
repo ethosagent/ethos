@@ -155,6 +155,7 @@ export const ProviderIdSchema = z.enum([
   'openai-compat',
   'ollama',
   'azure',
+  'codex',
 ]);
 export type ProviderId = z.infer<typeof ProviderIdSchema>;
 

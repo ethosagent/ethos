@@ -1,10 +1,16 @@
-export type CatalogProviderId = 'anthropic' | 'openai' | 'openrouter' | 'openai-compat' | 'ollama';
+export type CatalogProviderId =
+  | 'anthropic'
+  | 'openai'
+  | 'openrouter'
+  | 'openai-compat'
+  | 'ollama'
+  | 'codex';
 
 export interface ProviderCatalogEntry {
   id: CatalogProviderId;
   label: string;
   description: string;
-  authType: 'api-key' | 'self-hosted';
+  authType: 'api-key' | 'self-hosted' | 'device-auth';
   recommended?: boolean;
   signupUrl?: string;
   baseUrl?: {
@@ -13,7 +19,7 @@ export interface ProviderCatalogEntry {
     keyless?: boolean;
   };
   /** The ProviderId we wire through to the server */
-  wiresAs: 'anthropic' | 'openrouter' | 'openai-compat' | 'ollama';
+  wiresAs: 'anthropic' | 'openrouter' | 'openai-compat' | 'ollama' | 'codex';
 }
 
 export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
@@ -62,10 +68,18 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     baseUrl: { default: 'http://localhost:11434', keyless: true },
     wiresAs: 'ollama',
   },
+  {
+    id: 'codex',
+    label: 'OpenAI Codex',
+    description: 'Codex models via your ChatGPT account — device code auth, no API key needed.',
+    authType: 'device-auth',
+    wiresAs: 'codex',
+  },
 ];
 
 export const API_KEY_PROVIDERS = PROVIDER_CATALOG.filter((p) => p.authType === 'api-key');
 export const SELF_HOSTED_PROVIDERS = PROVIDER_CATALOG.filter((p) => p.authType === 'self-hosted');
+export const DEVICE_AUTH_PROVIDERS = PROVIDER_CATALOG.filter((p) => p.authType === 'device-auth');
 export const RECOMMENDED_PROVIDERS = PROVIDER_CATALOG.filter((p) => p.recommended);
 export const EXPANDED_PROVIDERS = PROVIDER_CATALOG.filter(
   (p) => !p.recommended && p.authType === 'api-key',

@@ -114,6 +114,17 @@ const api = {
   gateway: {
     platformStatus: () => ipcRenderer.invoke(IPC_CHANNELS['gateway:platformStatus']),
   },
+  codex: {
+    startAuth: () => ipcRenderer.invoke(IPC_CHANNELS['codex:startAuth']),
+    authStatus: () => ipcRenderer.invoke(IPC_CHANNELS['codex:authStatus']),
+    onAuthComplete: (cb: (data: { ok: boolean; error?: string }) => void) => {
+      const listener = (_e: unknown, data: { ok: boolean; error?: string }) => cb(data);
+      ipcRenderer.on('codex:authComplete', listener);
+      return () => {
+        ipcRenderer.removeListener('codex:authComplete', listener);
+      };
+    },
+  },
   platformTest: {
     telegram: (req: { token: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS['platform:testTelegram'], req),

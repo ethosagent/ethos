@@ -2,6 +2,7 @@ import { Button } from 'antd';
 import { useState } from 'react';
 import {
   type CatalogProviderId,
+  DEVICE_AUTH_PROVIDERS,
   EXPANDED_PROVIDERS,
   RECOMMENDED_PROVIDERS,
   SELF_HOSTED_PROVIDERS,
@@ -47,6 +48,26 @@ export function ProviderStep({
             ▾ Show all providers ({EXPANDED_PROVIDERS.length})
           </button>
         ) : null}
+
+        {DEVICE_AUTH_PROVIDERS.length > 0 && (
+          <>
+            <div className="onboarding-section-label" style={{ marginTop: 16 }}>
+              CHATGPT SUBSCRIPTION
+            </div>
+            <div className="onboarding-providers">
+              {DEVICE_AUTH_PROVIDERS.map((p) => (
+                <ProviderRow
+                  key={p.id}
+                  id={p.id}
+                  label={p.label}
+                  description={p.description}
+                  selected={selected === p.id}
+                  onSelect={() => setSelected(p.id)}
+                />
+              ))}
+            </div>
+          </>
+        )}
 
         <div className="onboarding-section-label" style={{ marginTop: 16 }}>
           SELF-HOSTED
@@ -95,8 +116,10 @@ function ProviderRow({
   return (
     <label className={`onboarding-provider${selected ? ' active' : ''}`}>
       <input type="radio" name="provider" value={id} checked={selected} onChange={onSelect} />
-      <span className="onboarding-provider-label">{label}</span>
-      {recommended ? <span className="onboarding-recommended-tag">recommended</span> : null}
+      <span className="onboarding-provider-name-row">
+        <span className="onboarding-provider-label">{label}</span>
+        {recommended ? <span className="onboarding-recommended-tag">recommended</span> : null}
+      </span>
       <span className="onboarding-provider-hint">{description}</span>
     </label>
   );

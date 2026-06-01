@@ -17,6 +17,14 @@ const PROVIDER_MODELS: Record<string, string[]> = {
   openrouter: [],
   azure: [],
   ollama: [],
+  codex: [
+    'gpt-5.4',
+    'gpt-5.4-mini',
+    'gpt-5.3-codex',
+    'gpt-5.2-codex',
+    'gpt-5.1-codex-max',
+    'gpt-5.1-codex-mini',
+  ],
 };
 
 function maskApiKey(value: string): string {
@@ -299,7 +307,7 @@ export function registerIpcHandlers(): void {
         personalityId: string;
       },
     ) => {
-      const validProviders = ['anthropic', 'openai', 'openrouter', 'azure'];
+      const validProviders = ['anthropic', 'openai', 'openrouter', 'azure', 'codex'];
       const validPersonalities = ['researcher', 'engineer', 'operator', 'coach'];
 
       if (!validProviders.includes(req.provider)) {
@@ -529,7 +537,14 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS['config:update'], async (_event, req: Record<string, unknown>) => {
-    const validProviders = new Set(['anthropic', 'openai', 'openrouter', 'azure', 'ollama']);
+    const validProviders = new Set([
+      'anthropic',
+      'openai',
+      'openrouter',
+      'azure',
+      'ollama',
+      'codex',
+    ]);
     const validMemory = new Set(['markdown', 'vector']);
     const validApproval = new Set(['manual', 'smart', 'off']);
     const validVerbosity = new Set(['concise', 'balanced', 'verbose']);
@@ -843,4 +858,47 @@ export function registerIpcHandlers(): void {
       });
     },
   );
+
+  // -------------------------------------------------------------------------
+  // Codex device auth IPC handlers
+  // -------------------------------------------------------------------------
+
+  ipcMain.handle(IPC_CHANNELS['codex:startAuth'], async () => {
+    try {
+      const { requestDeviceCode, pollForAuthorization, exchangeForTokens, saveTokens } =
+        await import('@ethosagent/llm-codex');
+      const { deviceAuthId, userCode } = await requestDeviceCode(fetch);
+      // Open the auth URL in the user's default browser
+      await shell.openExternal('https://auth.openai.com/codex/device');
+      // Background poll — sends a one-time notification to renderer on completion
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 16 * 60 * 1000);
+      pollForAuthorization(fetch, deviceAuthId, userCode, controller.signal)
+        .then(({ authorizationCode, codeVerifier }) =>
+          exchangeForTokens(fetch, authorizationCode, codeVerifier),
+        )
+        .then((credentials) => saveTokens(credentials))
+        .then(() => {
+          BrowserWindow.getAllWindows()[0]?.webContents.send('codex:authComplete', { ok: true });
+        })
+        .catch((err: unknown) => {
+          BrowserWindow.getAllWindows()[0]?.webContents.send('codex:authComplete', {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      return { ok: true, userCode };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'Failed to start device auth',
+      };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS['codex:authStatus'], async () => {
+    const { loadTokens } = await import('@ethosagent/llm-codex');
+    const tokens = await loadTokens();
+    return { authorized: !!tokens };
+  });
 }
