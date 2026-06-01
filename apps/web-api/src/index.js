@@ -4,18 +4,21 @@ import { AgentMesh } from '@ethosagent/agent-mesh';
 import { SkillsLibrary } from '@ethosagent/skills';
 import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
 import { McpJsonStore } from '@ethosagent/tools-mcp';
+import { ChatRepository } from './features/chat/repository';
+import { ChatService } from './features/chat/service';
+import { CompletionsRepository } from './features/completions/repository';
+import { CompletionsService } from './features/completions/service';
+import { SessionsRepository } from './features/sessions/repository';
+import { SessionsService } from './features/sessions/service';
 import { AllowlistRepository } from './repositories/allowlist.repository';
 import { ConfigRepository } from './repositories/config.repository';
 import { EvolverRepository } from './repositories/evolver.repository';
 import { PlatformsRepository } from './repositories/platforms.repository';
-import { SessionsRepository } from './repositories/sessions.repository';
 import { WebTokenRepository } from './repositories/web-token.repository';
 import { createRoutes } from './routes';
 import { ApiKeysService } from './services/api-keys.service';
 import { createWebApprovalHook } from './services/approval-hook';
 import { ApprovalsService } from './services/approvals.service';
-import { ChatService } from './services/chat.service';
-import { CompletionsService } from './services/completions.service';
 import { ConfigService } from './services/config.service';
 import { CronService } from './services/cron.service';
 import { EvolverService } from './services/evolver.service';
@@ -28,13 +31,21 @@ import { OnboardingService } from './services/onboarding.service';
 import { PersonalitiesService } from './services/personalities.service';
 import { PlatformsService } from './services/platforms.service';
 import { PluginsService } from './services/plugins.service';
-import { SessionsService } from './services/sessions.service';
 import { SkillsService } from './services/skills.service';
 import { SystemEventBus } from './services/system-event-bus';
+
+// Public entry for `@ethosagent/web-api`. Boot code (`apps/ethos/src/commands/
+// serve.ts`) builds the dependencies it has lying around — a `SessionStore`,
+// the agent loop, the personality registry, the data dir — and hands them to
+// `createWebApi`. The package wires the layered service container internally
+// and returns a Hono app the boot script can `serve()`.
+
 export function createWebApi(opts) {
   // --- Repositories (data access only) ---
   const tokens = new WebTokenRepository({ dataDir: opts.dataDir });
   const sessionsRepo = new SessionsRepository(opts.sessionStore);
+  const chatRepo = new ChatRepository(opts.sessionStore);
+  const completionsRepo = new CompletionsRepository(opts.sessionStore);
   const configRepo = new ConfigRepository({ dataDir: opts.dataDir });
   const allowlistRepo = new AllowlistRepository({ dataDir: opts.dataDir });
   const skillsLibrary = new SkillsLibrary({
@@ -57,7 +68,9 @@ export function createWebApi(opts) {
     dataDir: opts.dataDir,
     storage,
   });
+
   const systemBus = new SystemEventBus();
+
   // --- Services (business logic) ---
   const sessionsService = new SessionsService({ sessions: sessionsRepo });
   const personalitiesService = new PersonalitiesService({
@@ -114,9 +127,10 @@ export function createWebApi(opts) {
   // the web chat surface so personality reloads + tool wiring reach both.
   const completionsService = new CompletionsService({
     loop: opts.agentLoop,
-    sessions: opts.sessionStore,
+    sessions: completionsRepo,
     defaults: opts.chatDefaults,
   });
+
   // One buffer per process — keyed internally by sessionId. Bridges are
   // owned by ChatService. The reap callback lets the bridge map drain
   // alongside the SSE buffer so a long-running server doesn't accumulate
@@ -124,7 +138,7 @@ export function createWebApi(opts) {
   const buffer = new SessionStreamBuffer();
   const chatService = new ChatService({
     loop: opts.agentLoop,
-    sessions: sessionsRepo,
+    sessions: chatRepo,
     buffer,
     defaults: opts.chatDefaults,
     onForget: (sessionId) => approvalsService.cancelForSession(sessionId),
@@ -134,6 +148,7 @@ export function createWebApi(opts) {
   buffer.onReap = (sessionId) => {
     chatService.forget(sessionId);
   };
+
   // Bridge approvals → SSE. The hook fires when the agent reaches a
   // dangerous tool call; the resolved event lets every tab on the same
   // session auto-dismiss the modal once any one of them decides.
@@ -148,6 +163,7 @@ export function createWebApi(opts) {
       decidedBy,
     });
   });
+
   // Bridge clarify → SSE. The `clarify` tool registers a pending request on
   // the loop's ClarifyBridge; present it to the browser over the same SSE
   // channel approvals use, and broadcast the resolution so the card collapses
@@ -174,6 +190,7 @@ export function createWebApi(opts) {
     });
     void clarifyBridge.sweep();
   }
+
   // E3 — improvement fork SSE. When the wiring layer's setOnSkillProposed
   // setter is threaded through, register a callback that broadcasts an
   // `evolve.skill_pending` push event to every connected session. The web
@@ -186,6 +203,7 @@ export function createWebApi(opts) {
       proposedAt: new Date().toISOString(),
     });
   });
+
   opts.setOnSkillApplied?.((skillId, personalityId) => {
     chatService.broadcastAll({
       type: 'evolve.skill_applied',
@@ -194,6 +212,7 @@ export function createWebApi(opts) {
       appliedAt: new Date().toISOString(),
     });
   });
+
   // Register the web `before_tool_call` hook on the loop. CLI/TUI/ACP
   // profiles get the synchronous terminal guard from `@ethosagent/wiring`;
   // the web profile skips that registration so this hook is the sole
@@ -208,6 +227,7 @@ export function createWebApi(opts) {
       }),
     );
   }
+
   const app = createRoutes({
     tokens,
     services: {
@@ -241,8 +261,10 @@ export function createWebApi(opts) {
     ...(opts.webBaseUrl ? { webBaseUrl: opts.webBaseUrl } : {}),
     storage,
   });
+
   return { app, chatService, systemBus };
 }
+
 /**
  * Stand-in for the CronScheduler when no real one is wired (e.g. tests,
  * ACP-only deployments). File-backed reads still work via the
@@ -267,6 +289,7 @@ function createPassiveScheduler() {
     stop: () => {},
   };
 }
+
 /**
  * Stand-in for the McpManager when no real one is wired (e.g. tests,
  * deployments where MCP isn't configured). addServer and removeServer
@@ -288,6 +311,7 @@ function createPassiveMcpManager() {
   };
 }
 
+export { ChatService } from './features/chat/service';
 // Re-exports so boot code can read tokens / inspect contract surfaces directly.
 export { WebTokenRepository } from './repositories/web-token.repository';
-export { ChatService } from './services/chat.service';
+export { setWhatsAppPairingCode, setWhatsAppQr } from './routes/setup-whatsapp';

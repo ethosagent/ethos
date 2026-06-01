@@ -1,6 +1,16 @@
+import { chatAbort } from '../features/chat/rpc/abort';
+import { chatSend } from '../features/chat/rpc/send';
+import { chatSteer } from '../features/chat/rpc/steer';
+import { sessionsDelete } from '../features/sessions/rpc/delete';
+import { sessionsExport } from '../features/sessions/rpc/export';
+import { sessionsFork } from '../features/sessions/rpc/fork';
+import { sessionsGet } from '../features/sessions/rpc/get';
+import { sessionsList } from '../features/sessions/rpc/list';
+import { sessionsPin } from '../features/sessions/rpc/pin';
+import { sessionsUnpin } from '../features/sessions/rpc/unpin';
+import { sessionsUpdate } from '../features/sessions/rpc/update';
 import { apiKeysRouter } from './api-keys';
 import { batchRouter } from './batch';
-import { chatRouter } from './chat';
 import { clarifyRouter } from './clarify';
 import { configRouter } from './config';
 import { cronRouter } from './cron';
@@ -15,9 +25,9 @@ import { onboardingRouter } from './onboarding';
 import { personalitiesRouter } from './personalities';
 import { platformsRouter } from './platforms';
 import { pluginsRouter } from './plugins';
-import { sessionsRouter } from './sessions';
 import { skillsRouter } from './skills';
 import { toolsRouter } from './tools';
+
 // Top-level oRPC router. Each namespace lives in its own file (one
 // `os.<namespace>.<method>.handler(...)` per procedure); this file only
 // composes them.
@@ -39,9 +49,23 @@ import { toolsRouter } from './tools';
 //   • platforms     — Telegram/Slack/Discord/Email connection state + setup (v1)
 //   • batch         — Lab: BatchRunner submissions + progress (v1)
 //   • eval          — Lab: EvalRunner submissions + scoring (v1)
+
 export const apiRouter = {
-  sessions: sessionsRouter,
-  chat: chatRouter,
+  sessions: {
+    list: sessionsList,
+    get: sessionsGet,
+    fork: sessionsFork,
+    delete: sessionsDelete,
+    update: sessionsUpdate,
+    export: sessionsExport,
+    pin: sessionsPin,
+    unpin: sessionsUnpin,
+  },
+  chat: {
+    send: chatSend,
+    abort: chatAbort,
+    steer: chatSteer,
+  },
   personalities: personalitiesRouter,
   config: configRouter,
   onboarding: onboardingRouter,

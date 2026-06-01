@@ -13,6 +13,10 @@
       "import": "./src/reducers/kanban-list.ts",
       "types": "./src/reducers/kanban-list.ts",
       "production": "./dist/reducers/kanban-list.js"
+    },
+    "./compose": {
+      "import": "./src/compose.ts",
+      "types": "./src/compose.ts"
     }
   },
   "scripts": {
