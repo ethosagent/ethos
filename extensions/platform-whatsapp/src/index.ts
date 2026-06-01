@@ -12,6 +12,9 @@ import { resolveSessionDir } from './session-store';
 
 export interface WhatsAppAdapterConfig {
   id?: string;
+  /** Explicit botKey supplied by the gateway so the adapter's stamped key
+   *  matches the `GatewayBotConfig` it routes to. Wins over `id` when set. */
+  botKey?: string;
   sessionDir: string;
   defaultMode?: 'all' | 'mention_only';
   allowedJids?: string[];
@@ -51,7 +54,10 @@ export class WhatsAppAdapter implements PlatformAdapter {
 
   constructor(config: WhatsAppAdapterConfig) {
     this.config = config;
-    this.botKey = config.id ?? `wa-${config.sessionDir.replace(/[^a-zA-Z0-9]/g, '').slice(-16)}`;
+    this.botKey =
+      config.botKey ??
+      config.id ??
+      `wa-${config.sessionDir.replace(/[^a-zA-Z0-9]/g, '').slice(-16)}`;
     this.id = `whatsapp:${this.botKey}`;
   }
 

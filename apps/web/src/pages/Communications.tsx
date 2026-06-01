@@ -547,17 +547,32 @@ interface AddWhatsAppFormValues {
   default_mode: 'mention_only' | 'all';
   owner_number: string;
   phone_number: string;
+  bind_type: BindType;
+  bind_name: string;
 }
 
 function WhatsAppPanel() {
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
   const [adding, setAdding] = useState(false);
+  const [bindType, setBindType] = useState<BindType>('personality');
   const [form] = Form.useForm<AddWhatsAppFormValues>();
 
   const botsQuery = useQuery({
     queryKey: ['platforms', 'bots', 'whatsapp'],
     queryFn: () => rpc.platforms.botsListWhatsApp(),
+  });
+
+  const personalitiesQuery = useQuery({
+    queryKey: ['personalities', 'list'],
+    queryFn: () => rpc.personalities.list({}),
+    enabled: adding,
+  });
+
+  const teamsQuery = useQuery({
+    queryKey: ['kanban', 'list'],
+    queryFn: () => rpc.kanban.list(),
+    enabled: adding && bindType === 'team',
   });
 
   const addMut = useMutation({
@@ -566,6 +581,7 @@ function WhatsAppPanel() {
         id: values.id,
         defaultMode: values.default_mode,
         phoneNumber: values.phone_number.trim(),
+        bind: { type: values.bind_type, name: values.bind_name } satisfies BotBinding,
       });
       // Owner number is stored on the channel filter, not the bot entry. Read
       // the current filter first so we don't clobber the allowlist or enabled flag.
@@ -619,6 +635,19 @@ function WhatsAppPanel() {
       render: (m: string) => <Tag>{m}</Tag>,
     },
     {
+      title: 'Binding',
+      key: 'bind',
+      render: (_: unknown, row: WhatsAppEntry) =>
+        row.bind ? (
+          <Space>
+            <Tag color={row.bind.type === 'personality' ? 'blue' : 'purple'}>{row.bind.type}</Tag>
+            <Typography.Text>{row.bind.name}</Typography.Text>
+          </Space>
+        ) : (
+          <Typography.Text type="secondary">—</Typography.Text>
+        ),
+    },
+    {
       title: 'Pairing',
       key: 'paired',
       render: (_: unknown, row: WhatsAppEntry) =>
@@ -657,6 +686,17 @@ function WhatsAppPanel() {
       ),
     },
   ];
+
+  const bindOptions =
+    bindType === 'personality'
+      ? (personalitiesQuery.data?.items ?? []).map((p) => ({
+          label: p.name,
+          value: p.id,
+        }))
+      : (teamsQuery.data?.teams ?? []).map((t) => ({
+          label: t.name,
+          value: t.name,
+        }));
 
   return (
     <Card
@@ -704,7 +744,7 @@ function WhatsAppPanel() {
           <Form
             form={form}
             layout="vertical"
-            initialValues={{ default_mode: 'mention_only' }}
+            initialValues={{ default_mode: 'mention_only', bind_type: 'personality' }}
             onFinish={(values) => addMut.mutate(values)}
           >
             <Form.Item
@@ -740,6 +780,39 @@ function WhatsAppPanel() {
               extra="E.164 format without the + (e.g. 14155551234). Only this number can talk to the bot until you add more under Access Control."
             >
               <Input autoComplete="off" placeholder="14155551234" />
+            </Form.Item>
+
+            <Form.Item label="Bind to" style={{ marginBottom: 8 }}>
+              <Segmented
+                options={[
+                  { label: 'Personality', value: 'personality' },
+                  { label: 'Team', value: 'team' },
+                ]}
+                value={bindType}
+                onChange={(v) => {
+                  const t = v as BindType;
+                  setBindType(t);
+                  form.setFieldValue('bind_type', t);
+                  form.setFieldValue('bind_name', undefined);
+                }}
+              />
+            </Form.Item>
+
+            <Form.Item name="bind_type" hidden>
+              <Input />
+            </Form.Item>
+
+            <Form.Item
+              name="bind_name"
+              rules={[{ required: true, message: `Select a ${bindType}` }]}
+            >
+              <Select
+                placeholder={`Select ${bindType}…`}
+                loading={
+                  bindType === 'personality' ? personalitiesQuery.isLoading : teamsQuery.isLoading
+                }
+                options={bindOptions}
+              />
             </Form.Item>
 
             <Space>

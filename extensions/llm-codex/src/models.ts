@@ -1,5 +1,4 @@
-export const CODEX_MODELS_URL =
-  'https://chatgpt.com/backend-api/codex/models?client_version=1.0.0';
+export const CODEX_MODELS_URL = 'https://chatgpt.com/backend-api/codex/models?client_version=1.0.0';
 export const CODEX_DISCOVERY_TIMEOUT_MS = 10_000;
 
 export const CODEX_FALLBACK_MODELS = [

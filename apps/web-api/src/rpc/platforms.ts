@@ -46,6 +46,7 @@ export const platformsRouter = {
       defaultMode: input.defaultMode,
       allowedNumbers: input.allowedNumbers,
       phoneNumber: input.phoneNumber,
+      bind: input.bind,
     }),
   ),
 

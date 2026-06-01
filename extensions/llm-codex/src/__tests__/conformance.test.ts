@@ -64,22 +64,13 @@ describe('CodexProvider conformance', () => {
         'response.output_item.added',
         { item: { type: 'function_call', id: 'call_1', name: 'echo' } },
       ],
-      [
-        'response.function_call_arguments.delta',
-        { delta: '{"x":' },
-      ],
-      [
-        'response.function_call_arguments.delta',
-        { delta: '1}' },
-      ],
+      ['response.function_call_arguments.delta', { delta: '{"x":' }],
+      ['response.function_call_arguments.delta', { delta: '1}' }],
       [
         'response.output_item.done',
         { item: { type: 'function_call', id: 'call_1', arguments: '{"x":1}' } },
       ],
-      [
-        'response.completed',
-        { response: { usage: { input_tokens: 10, output_tokens: 5 } } },
-      ],
+      ['response.completed', { response: { usage: { input_tokens: 10, output_tokens: 5 } } }],
     ];
 
     const mockFetch = makeMockFetch(events);
@@ -113,22 +104,13 @@ describe('CodexProvider conformance', () => {
         'response.output_item.added',
         { item: { type: 'function_call', id: 'call_X', name: 'lookup' } },
       ],
-      [
-        'response.function_call_arguments.delta',
-        { delta: '{"q":' },
-      ],
-      [
-        'response.function_call_arguments.delta',
-        { delta: '"hi"}' },
-      ],
+      ['response.function_call_arguments.delta', { delta: '{"q":' }],
+      ['response.function_call_arguments.delta', { delta: '"hi"}' }],
       [
         'response.output_item.done',
         { item: { type: 'function_call', id: 'call_X', arguments: '{"q":"hi"}' } },
       ],
-      [
-        'response.completed',
-        { response: { usage: { input_tokens: 1, output_tokens: 1 } } },
-      ],
+      ['response.completed', { response: { usage: { input_tokens: 1, output_tokens: 1 } } }],
     ];
 
     const mockFetch = makeMockFetch(events);
@@ -171,10 +153,7 @@ describe('CodexProvider conformance', () => {
   it('emits usage with cacheReadTokens=0 and cacheCreationTokens=0', async () => {
     const events: Array<[string, unknown]> = [
       ['response.output_text.delta', { delta: 'ok' }],
-      [
-        'response.completed',
-        { response: { usage: { input_tokens: 7, output_tokens: 3 } } },
-      ],
+      ['response.completed', { response: { usage: { input_tokens: 7, output_tokens: 3 } } }],
     ];
 
     const mockFetch = makeMockFetch(events);
@@ -205,10 +184,7 @@ describe('CodexProvider conformance', () => {
   it('emits done with finishReason end_turn for text-only response', async () => {
     const events: Array<[string, unknown]> = [
       ['response.output_text.delta', { delta: 'fin.' }],
-      [
-        'response.completed',
-        { response: { usage: { input_tokens: 1, output_tokens: 1 } } },
-      ],
+      ['response.completed', { response: { usage: { input_tokens: 1, output_tokens: 1 } } }],
     ];
 
     const mockFetch = makeMockFetch(events);
@@ -234,22 +210,10 @@ describe('CodexProvider conformance', () => {
 
   it('emits done with finishReason tool_use when tool calls are present', async () => {
     const events: Array<[string, unknown]> = [
-      [
-        'response.output_item.added',
-        { item: { type: 'function_call', id: 'c1', name: 'foo' } },
-      ],
-      [
-        'response.function_call_arguments.delta',
-        { delta: '{}' },
-      ],
-      [
-        'response.output_item.done',
-        { item: { type: 'function_call', id: 'c1', arguments: '{}' } },
-      ],
-      [
-        'response.completed',
-        { response: { usage: { input_tokens: 1, output_tokens: 1 } } },
-      ],
+      ['response.output_item.added', { item: { type: 'function_call', id: 'c1', name: 'foo' } }],
+      ['response.function_call_arguments.delta', { delta: '{}' }],
+      ['response.output_item.done', { item: { type: 'function_call', id: 'c1', arguments: '{}' } }],
+      ['response.completed', { response: { usage: { input_tokens: 1, output_tokens: 1 } } }],
     ];
 
     const mockFetch = makeMockFetch(events);

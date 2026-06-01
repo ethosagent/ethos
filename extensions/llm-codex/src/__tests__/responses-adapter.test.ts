@@ -35,9 +35,7 @@ describe('toResponsesInput', () => {
     const messages: Message[] = [
       {
         role: 'user',
-        content: [
-          { type: 'tool_result', tool_use_id: 'call_1', content: 'file contents here' },
-        ],
+        content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'file contents here' }],
       },
     ];
     const result = toResponsesInput(messages);

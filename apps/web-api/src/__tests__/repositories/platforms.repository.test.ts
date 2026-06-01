@@ -6,6 +6,7 @@ import { ConfigRepository } from '../../repositories/config.repository';
 import { PlatformsRepository } from '../../repositories/platforms.repository';
 
 const DATA = '/data';
+const WA_BIND = { type: 'personality', name: 'ada' } as const;
 
 describe('PlatformsRepository', () => {
   let storage: InMemoryStorage;
@@ -411,33 +412,61 @@ describe('PlatformsRepository multi-bot whatsapp', () => {
     expect(await repo.listWhatsApp()).toEqual([]);
   });
 
-  it('addWhatsApp writes flat whatsapp.<n>.* keys — no secrets, no bind', async () => {
+  it('addWhatsApp writes flat whatsapp.<n>.* keys including bind — no secrets', async () => {
     const entry = await repo.addWhatsApp({
       id: 'wa-home',
       defaultMode: 'all',
       allowedNumbers: ['111', '222'],
+      bind: WA_BIND,
     });
     expect(entry).toEqual({
       botKey: 'wa-home',
       defaultMode: 'all',
       allowedNumbers: ['111', '222'],
       paired: false,
+      bind: WA_BIND,
     });
 
     const yaml = await storage.read(join(DATA, 'config.yaml'));
     expect(yaml).toContain('whatsapp.0.id: wa-home');
     expect(yaml).toContain('whatsapp.0.default_mode: all');
     expect(yaml).toContain('whatsapp.0.allowed_numbers: 111,222');
-    // No bind, no token, no secret ref anywhere.
-    expect(yaml).not.toContain('bind');
+    expect(yaml).toContain('whatsapp.0.bind.type: personality');
+    expect(yaml).toContain('whatsapp.0.bind.name: ada');
+    // No token, no secret ref anywhere.
     expect(yaml).not.toContain('secrets:');
     expect(await secrets.get('whatsapp/wa-home/token')).toBeNull();
+  });
+
+  it('listWhatsApp reads bind.type/bind.name back into the entry', async () => {
+    await repo.addWhatsApp({ id: 'wa-bound', bind: { type: 'team', name: 'ops' } });
+    const [listed] = await repo.listWhatsApp();
+    expect(listed?.bind).toEqual({ type: 'team', name: 'ops' });
+  });
+
+  it('listWhatsApp tolerates a legacy bind-less config (bind omitted)', async () => {
+    // Simulate a config written before bind was required — no bind.* keys.
+    await configRepo.update({
+      passthrough: {
+        'whatsapp.0.id': 'wa-legacy',
+        'whatsapp.0.default_mode': 'mention_only',
+      },
+    });
+    const [listed] = await repo.listWhatsApp();
+    expect(listed).toEqual({
+      botKey: 'wa-legacy',
+      defaultMode: 'mention_only',
+      allowedNumbers: [],
+      paired: false,
+    });
+    expect(listed?.bind).toBeUndefined();
   });
 
   it('addWhatsApp writes phone_number and round-trips it through listWhatsApp', async () => {
     const entry = await repo.addWhatsApp({
       id: 'wa-pair',
       phoneNumber: '+1 555 0000',
+      bind: WA_BIND,
     });
     expect(entry).toEqual({
       botKey: 'wa-pair',
@@ -445,6 +474,7 @@ describe('PlatformsRepository multi-bot whatsapp', () => {
       allowedNumbers: [],
       phoneNumber: '+1 555 0000',
       paired: false,
+      bind: WA_BIND,
     });
 
     const yaml = await storage.read(join(DATA, 'config.yaml'));
@@ -455,7 +485,7 @@ describe('PlatformsRepository multi-bot whatsapp', () => {
   });
 
   it('addWhatsApp omits phone_number when not supplied', async () => {
-    await repo.addWhatsApp({ id: 'wa-qr' });
+    await repo.addWhatsApp({ id: 'wa-qr', bind: WA_BIND });
     const yaml = await storage.read(join(DATA, 'config.yaml'));
     expect(yaml).not.toContain('phone_number');
     const [listed] = await repo.listWhatsApp();
@@ -463,38 +493,49 @@ describe('PlatformsRepository multi-bot whatsapp', () => {
   });
 
   it('addWhatsApp defaults default_mode to mention_only and omits empty allowed_numbers', async () => {
-    await repo.addWhatsApp({ id: 'wa-quiet' });
+    await repo.addWhatsApp({ id: 'wa-quiet', bind: WA_BIND });
     const yaml = await storage.read(join(DATA, 'config.yaml'));
     expect(yaml).toContain('whatsapp.0.default_mode: mention_only');
     expect(yaml).not.toContain('allowed_numbers');
   });
 
   it('addWhatsApp generates a wa- id when none supplied', async () => {
-    const entry = await repo.addWhatsApp({});
+    const entry = await repo.addWhatsApp({ bind: WA_BIND });
     expect(entry.botKey).toMatch(/^wa-/);
   });
 
   it('addWhatsApp → listWhatsApp round-trips', async () => {
-    await repo.addWhatsApp({ id: 'wa-a', defaultMode: 'all', allowedNumbers: ['1'] });
-    await repo.addWhatsApp({ id: 'wa-b' });
+    await repo.addWhatsApp({
+      id: 'wa-a',
+      defaultMode: 'all',
+      allowedNumbers: ['1'],
+      bind: WA_BIND,
+    });
+    await repo.addWhatsApp({ id: 'wa-b', bind: WA_BIND });
 
     const entries = await repo.listWhatsApp();
     expect(entries).toEqual([
-      { botKey: 'wa-a', defaultMode: 'all', allowedNumbers: ['1'], paired: false },
-      { botKey: 'wa-b', defaultMode: 'mention_only', allowedNumbers: [], paired: false },
+      { botKey: 'wa-a', defaultMode: 'all', allowedNumbers: ['1'], paired: false, bind: WA_BIND },
+      {
+        botKey: 'wa-b',
+        defaultMode: 'mention_only',
+        allowedNumbers: [],
+        paired: false,
+        bind: WA_BIND,
+      },
     ]);
   });
 
   it('addWhatsApp appends at the next index', async () => {
-    await repo.addWhatsApp({ id: 'wa-a' });
-    await repo.addWhatsApp({ id: 'wa-b' });
+    await repo.addWhatsApp({ id: 'wa-a', bind: WA_BIND });
+    await repo.addWhatsApp({ id: 'wa-b', bind: WA_BIND });
     const yaml = await storage.read(join(DATA, 'config.yaml'));
     expect(yaml).toContain('whatsapp.0.id: wa-a');
     expect(yaml).toContain('whatsapp.1.id: wa-b');
   });
 
   it('paired flips true when the Baileys session dir is non-empty', async () => {
-    await repo.addWhatsApp({ id: 'wa-paired' });
+    await repo.addWhatsApp({ id: 'wa-paired', bind: WA_BIND });
     // Simulate Baileys having persisted credentials under the per-bot dir.
     await storage.mkdir(join(DATA, 'whatsapp', 'wa-paired'));
     await storage.write(join(DATA, 'whatsapp', 'wa-paired', 'creds.json'), '{}');
@@ -504,9 +545,9 @@ describe('PlatformsRepository multi-bot whatsapp', () => {
   });
 
   it('removeWhatsApp deletes the matching entry and re-indexes', async () => {
-    await repo.addWhatsApp({ id: 'wa-a' });
-    await repo.addWhatsApp({ id: 'wa-b' });
-    await repo.addWhatsApp({ id: 'wa-c' });
+    await repo.addWhatsApp({ id: 'wa-a', bind: WA_BIND });
+    await repo.addWhatsApp({ id: 'wa-b', bind: WA_BIND });
+    await repo.addWhatsApp({ id: 'wa-c', bind: WA_BIND });
 
     await repo.removeWhatsApp('wa-b');
 
@@ -520,13 +561,13 @@ describe('PlatformsRepository multi-bot whatsapp', () => {
   });
 
   it('removeWhatsApp is a no-op for an unknown botKey', async () => {
-    await repo.addWhatsApp({ id: 'wa-a' });
+    await repo.addWhatsApp({ id: 'wa-a', bind: WA_BIND });
     await expect(repo.removeWhatsApp('nope')).resolves.not.toThrow();
     expect(await repo.listWhatsApp()).toHaveLength(1);
   });
 
   it('listStatus reports whatsapp configured + paired from its entries', async () => {
-    await repo.addWhatsApp({ id: 'wa-x' });
+    await repo.addWhatsApp({ id: 'wa-x', bind: WA_BIND });
     await storage.mkdir(join(DATA, 'whatsapp', 'wa-x'));
     await storage.write(join(DATA, 'whatsapp', 'wa-x', 'creds.json'), '{}');
 

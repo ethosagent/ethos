@@ -108,4 +108,46 @@ describe('parseConfigYaml — whatsapp.<n>.<field>', () => {
     );
     expect(cfg.whatsapp).toBeUndefined();
   });
+
+  it('parses an optional bind and round-trips it', async () => {
+    const cfg = await loadYaml(
+      [
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'apiKey: sk',
+        'personality: researcher',
+        'whatsapp.0.id: wa1',
+        'whatsapp.0.bind.type: personality',
+        'whatsapp.0.bind.name: researcher',
+      ].join('\n'),
+    );
+    expect(cfg.whatsapp?.[0]?.bind).toEqual({ type: 'personality', name: 'researcher' });
+
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await writeConfig(storage, cfg);
+    const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+    expect(raw).toContain('whatsapp.0.bind.type: personality');
+    expect(raw).toContain('whatsapp.0.bind.name: researcher');
+
+    const roundTripped = await readRawConfig(storage);
+    expect(roundTripped?.whatsapp?.[0]?.bind).toEqual({
+      type: 'personality',
+      name: 'researcher',
+    });
+  });
+
+  it('leaves bind undefined for a whatsapp entry with no bind keys', async () => {
+    const cfg = await loadYaml(
+      [
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'apiKey: sk',
+        'personality: researcher',
+        'whatsapp.0.id: wa1',
+        'whatsapp.0.default_mode: all',
+      ].join('\n'),
+    );
+    expect(cfg.whatsapp?.[0]?.bind).toBeUndefined();
+  });
 });

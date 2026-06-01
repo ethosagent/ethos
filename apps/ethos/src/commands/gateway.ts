@@ -40,6 +40,7 @@ import {
   type SlackAppConfig,
   type TelegramBotConfig,
   validateBotBindings,
+  type WhatsAppConfig,
   writeConfig,
 } from '../config';
 import { createHealthServer } from '../health-server';
@@ -743,6 +744,21 @@ interface BuildGatewayBotsResult {
   messagingSetters: Array<(fn: MessagingSendFn) => void>;
 }
 
+/**
+ * Derive the botKey for a WhatsApp config. MUST stay byte-identical to the
+ * adapter's own fallback (`WhatsAppAdapter` in @ethosagent/platform-whatsapp)
+ * so the key the gateway routes table is built from matches the key the
+ * adapter stamps on inbound messages. WhatsApp has no token, so unlike
+ * telegram/slack there is nothing to sha256 — the key is the explicit `id`
+ * or a slug of the session directory.
+ */
+function whatsAppBotKey(waCfg: WhatsAppConfig): string {
+  return (
+    waCfg.id ??
+    `wa-${(waCfg.session_dir ?? join(ethosDir(), 'whatsapp')).replace(/[^a-zA-Z0-9]/g, '').slice(-16)}`
+  );
+}
+
 async function buildGatewayBots(
   config: EthosConfig,
   scheduler: CronScheduler,
@@ -770,6 +786,31 @@ async function buildGatewayBots(
   };
   for (const bot of config.telegram?.bots ?? []) out.push(await buildOne(bot));
   for (const app of config.slack?.apps ?? []) out.push(await buildOne(app));
+  for (const waCfg of config.whatsapp ?? []) {
+    const botKey = whatsAppBotKey(waCfg);
+    // WhatsApp bind is optional (unlike telegram/slack). A bind-less entry
+    // falls back to the default personality — but make that visible so a
+    // misconfigured bot doesn't silently answer as the wrong persona.
+    const bind = waCfg.bind ?? { type: 'personality' as const, name: config.personality };
+    if (!waCfg.bind) {
+      console.warn(
+        `[whatsapp] bot "${botKey}" has no personality bind — using the default personality "${config.personality}". Re-save it in the app to bind a personality.`,
+      );
+    }
+    let loop: AgentLoop;
+    if (bind.type === 'team') {
+      const team = await createTeamAgentLoop(config, bind.name);
+      loop = team.loop;
+    } else {
+      const result = await createAgentLoop(
+        { ...config, personality: bind.name },
+        { cronScheduler: scheduler },
+      );
+      loop = result.loop;
+      setters.push(result.setMessagingSend);
+    }
+    out.push({ botKey, loop, binding: { ...bind } });
+  }
   return { bots: out, messagingSetters: setters };
 }
 
@@ -1338,6 +1379,7 @@ export async function buildAdapters(
         adapters.push(
           new mod.WhatsAppAdapter({
             id: waCfg.id,
+            botKey: whatsAppBotKey(waCfg),
             sessionDir: waCfg.session_dir ?? join(ethosDir(), 'whatsapp'),
             defaultMode: waCfg.default_mode ?? 'mention_only',
             allowedJids: waCfg.allowed_numbers,

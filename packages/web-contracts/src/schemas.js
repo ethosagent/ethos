@@ -344,9 +344,11 @@ export const SlackAppEntrySchema = z.object({
   signingSecretConfigured: z.boolean(),
   bind: BotBindingSchema,
 });
-// WhatsApp has no tokens/secrets and no bind — it pairs via QR code, not a
-// config-form token. An entry is just routing knobs + a `paired` flag derived
-// from whether the Baileys session dir on disk holds saved credentials.
+// WhatsApp pairs via QR code, not a config-form token — an entry is routing
+// knobs + a `paired` flag derived from whether the Baileys session dir on disk
+// holds saved credentials. Saving a bot requires a `bind` (see the
+// botsAddWhatsApp router input), but `bind` is optional on the entry so that
+// listing a legacy bind-less config doesn't throw.
 export const WhatsAppEntrySchema = z.object({
   botKey: z.string(),
   defaultMode: z.enum(['all', 'mention_only']),
@@ -357,6 +359,9 @@ export const WhatsAppEntrySchema = z.object({
   /** True when the Baileys session dir for this bot is non-empty (QR pairing
    *  completed and credentials were persisted). */
   paired: z.boolean(),
+  /** Personality/team this bot routes to. Required when saving via
+   *  botsAddWhatsApp; optional here so legacy bind-less configs still list. */
+  bind: BotBindingSchema.optional(),
 });
 export const ChannelPlatformFilterSchema = z.object({
   enabled: z.boolean(),

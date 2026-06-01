@@ -195,6 +195,13 @@ export async function writeConfig(storage, config) {
       if (wa.allowed_numbers && wa.allowed_numbers.length > 0) {
         lines.push(`whatsapp.${i}.allowed_numbers: ${wa.allowed_numbers.join(',')}`);
       }
+      if (wa.bind) {
+        lines.push(`whatsapp.${i}.bind.type: ${wa.bind.type}`);
+        lines.push(`whatsapp.${i}.bind.name: ${wa.bind.name}`);
+        if (wa.bind.allowSlashSwitch) {
+          lines.push(`whatsapp.${i}.bind.allowSlashSwitch: true`);
+        }
+      }
     }
   }
   if (config.teams) {
@@ -392,6 +399,14 @@ function parseConfigYaml(src) {
       const idx = Number(sapp[1]);
       slackAppsKv[idx] ??= {};
       slackAppsKv[idx][sapp[2]] = sapp[3].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // whatsapp.<index>.bind.<field>: <value>
+    const wabind = line.match(/^whatsapp\.(\d+)\.bind\.(\S+):\s*(.+)$/);
+    if (wabind) {
+      const idx = Number(wabind[1]);
+      whatsappKv[idx] ??= {};
+      whatsappKv[idx][`bind.${wabind[2]}`] = wabind[3].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // whatsapp.<index>.<field>: <value>
@@ -925,6 +940,17 @@ function buildWhatsApps(kv) {
         .filter(Boolean);
       if (numbers.length > 0) app.allowed_numbers = numbers;
     }
+    // WhatsApp bind is optional. Only build (and validate) a binding when the
+    // operator supplied both bind.type and bind.name; otherwise leave it
+    // undefined so the gateway falls back to the default personality.
+    if (entry['bind.type'] && entry['bind.name']) {
+      const result = buildBotBinding(entry, label);
+      if (result.errors.length > 0) {
+        errors.push(...result.errors);
+        continue;
+      }
+      if (result.bind) app.bind = result.bind;
+    }
     apps.push(app);
   }
   return { apps, errors };
@@ -1063,6 +1089,12 @@ export function validateBotBindings(config, deps) {
   }
   for (const [i, app] of (config.slack?.apps ?? []).entries()) {
     checkBind(`slack.apps[${i}]`, app.id, app.bind, deriveBotKey(app));
+  }
+  for (const [i, wa] of (config.whatsapp ?? []).entries()) {
+    // WhatsApp bind is optional — skip entries without one. WhatsApp has no
+    // token, so derive the botKey from the explicit id (positional fallback).
+    if (!wa.bind) continue;
+    checkBind(`whatsapp[${i}]`, wa.id, wa.bind, wa.id ?? `whatsapp[${i}]`);
   }
   for (const name of Object.keys(config.teams ?? {})) {
     rejectUnsafeIdent(`teams.<key>`, name, errors);

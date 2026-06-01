@@ -16,33 +16,41 @@ function contentBlockToItems(block: MessageContent, role: 'user' | 'assistant'):
       return [{ role, content: block.text }];
 
     case 'tool_use':
-      return [{
-        type: 'function_call',
-        id: block.id,
-        name: block.name,
-        arguments: typeof block.input === 'string' ? block.input : JSON.stringify(block.input),
-      }];
+      return [
+        {
+          type: 'function_call',
+          id: block.id,
+          name: block.name,
+          arguments: typeof block.input === 'string' ? block.input : JSON.stringify(block.input),
+        },
+      ];
 
     case 'tool_result':
-      return [{
-        type: 'function_call_output',
-        call_id: block.tool_use_id,
-        output: block.content,
-      }];
+      return [
+        {
+          type: 'function_call_output',
+          call_id: block.tool_use_id,
+          output: block.content,
+        },
+      ];
 
     case 'image':
       // Responses API does not have a native image block — send as a data URI
       // inside a user text message so the model still receives it.
-      return [{
-        role: 'user',
-        content: `[image: data:${block.mediaType};base64,${block.data}]`,
-      }];
+      return [
+        {
+          role: 'user',
+          content: `[image: data:${block.mediaType};base64,${block.data}]`,
+        },
+      ];
 
     case 'document':
-      return [{
-        role: 'user',
-        content: `[document: data:${block.mediaType};base64,${block.data}]`,
-      }];
+      return [
+        {
+          role: 'user',
+          content: `[document: data:${block.mediaType};base64,${block.data}]`,
+        },
+      ];
 
     default: {
       const _exhaustive: never = block;

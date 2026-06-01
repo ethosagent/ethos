@@ -8,8 +8,8 @@ import type {
 } from '@ethosagent/types';
 import { toResponsesInput, toResponsesTools } from './responses-adapter';
 
-export { ensureValidToken } from './auth';
 export type { CodexCredentials } from './auth';
+export { ensureValidToken } from './auth';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -223,11 +223,13 @@ export class CodexProvider implements LLMProvider {
         }
 
         case 'response.output_item.done': {
-          const item = payload.item as {
-            type?: string;
-            id?: string;
-            arguments?: string;
-          } | undefined;
+          const item = payload.item as
+            | {
+                type?: string;
+                id?: string;
+                arguments?: string;
+              }
+            | undefined;
           if (item?.type === 'function_call' && item.id) {
             yield {
               type: 'tool_use_end',
@@ -241,12 +243,14 @@ export class CodexProvider implements LLMProvider {
         }
 
         case 'response.completed': {
-          const resp = payload.response as {
-            usage?: {
-              input_tokens?: number;
-              output_tokens?: number;
-            };
-          } | undefined;
+          const resp = payload.response as
+            | {
+                usage?: {
+                  input_tokens?: number;
+                  output_tokens?: number;
+                };
+              }
+            | undefined;
           const inputTokens = resp?.usage?.input_tokens ?? 0;
           const outputTokens = resp?.usage?.output_tokens ?? 0;
 

@@ -103,6 +103,9 @@ async function loadAdapterModule(modulePath, label) {
       case '@ethosagent/platform-discord/clarify-surface':
         mod = await import('@ethosagent/platform-discord/clarify-surface');
         break;
+      case '@ethosagent/platform-whatsapp':
+        mod = await import('@ethosagent/platform-whatsapp');
+        break;
       default:
         throw new EthosError({
           code: 'INTERNAL',
@@ -211,6 +214,7 @@ export async function runGatewayStart() {
     (config.slackBotToken && config.slackAppToken && config.slackSigningSecret) ||
     (config.telegram?.bots.length ?? 0) > 0 ||
     (config.slack?.apps.length ?? 0) > 0 ||
+    (config.whatsapp?.length ?? 0) > 0 ||
     hasEmailConfig;
   if (!hasAnyPlatform) {
     console.log(
@@ -224,7 +228,10 @@ export async function runGatewayStart() {
   // no `defaultBotKey` to fall back on (defaultBotKey only fires for
   // single-bot deployments). Warn at boot so operators know.
   const multiBotConfigured =
-    (config.telegram?.bots.length ?? 0) + (config.slack?.apps.length ?? 0) > 1;
+    (config.telegram?.bots.length ?? 0) +
+      (config.slack?.apps.length ?? 0) +
+      (config.whatsapp?.length ?? 0) >
+    1;
   const legacyAdapterConfigured =
     !!config.discordToken ||
     !!(config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost);
@@ -362,7 +369,22 @@ export async function runGatewayStart() {
   // surface's `getSessionRouting` closes over a mutable holder filled in
   // right after Gateway construction — necessary because the surface and the
   // Gateway each need a reference to the other.
-  const adapters = await buildAdapters(config, loadAdapterModule, attachmentCache);
+  const adapters = await buildAdapters(config, loadAdapterModule, attachmentCache, {
+    onWhatsAppQr: (botId, qr) => {
+      import('@ethosagent/web-api').then((m) => m.setWhatsAppQr(botId, qr)).catch(() => {});
+    },
+    onWhatsAppPairingCode: (botId, code) => {
+      if (code !== null) {
+        console.log(
+          `\n  ${c.bold}WhatsApp pairing code for "${botId}": ${c.cyan}${code}${c.reset}\n` +
+            `  ${c.dim}On that phone: WhatsApp → Linked Devices → Link with phone number instead → enter the code.${c.reset}\n`,
+        );
+      }
+      import('@ethosagent/web-api')
+        .then((m) => m.setWhatsAppPairingCode(botId, code))
+        .catch(() => {});
+    },
+  });
   let gatewayRef = null;
   const telegramClarifySurfaces = await buildTelegramClarifySurfaces(
     bots,
@@ -618,6 +640,20 @@ export async function runGatewayStart() {
   // Keep the process alive (adapter polling runs async)
   await new Promise(() => {});
 }
+/**
+ * Derive the botKey for a WhatsApp config. MUST stay byte-identical to the
+ * adapter's own fallback (`WhatsAppAdapter` in @ethosagent/platform-whatsapp)
+ * so the key the gateway routes table is built from matches the key the
+ * adapter stamps on inbound messages. WhatsApp has no token, so unlike
+ * telegram/slack there is nothing to sha256 — the key is the explicit `id`
+ * or a slug of the session directory.
+ */
+function whatsAppBotKey(waCfg) {
+  return (
+    waCfg.id ??
+    `wa-${(waCfg.session_dir ?? join(ethosDir(), 'whatsapp')).replace(/[^a-zA-Z0-9]/g, '').slice(-16)}`
+  );
+}
 async function buildGatewayBots(config, scheduler) {
   const out = [];
   const setters = [];
@@ -642,6 +678,31 @@ async function buildGatewayBots(config, scheduler) {
   };
   for (const bot of config.telegram?.bots ?? []) out.push(await buildOne(bot));
   for (const app of config.slack?.apps ?? []) out.push(await buildOne(app));
+  for (const waCfg of config.whatsapp ?? []) {
+    const botKey = whatsAppBotKey(waCfg);
+    // WhatsApp bind is optional (unlike telegram/slack). A bind-less entry
+    // falls back to the default personality — but make that visible so a
+    // misconfigured bot doesn't silently answer as the wrong persona.
+    const bind = waCfg.bind ?? { type: 'personality', name: config.personality };
+    if (!waCfg.bind) {
+      console.warn(
+        `[whatsapp] bot "${botKey}" has no personality bind — using the default personality "${config.personality}". Re-save it in the app to bind a personality.`,
+      );
+    }
+    let loop;
+    if (bind.type === 'team') {
+      const team = await createTeamAgentLoop(config, bind.name);
+      loop = team.loop;
+    } else {
+      const result = await createAgentLoop(
+        { ...config, personality: bind.name },
+        { cronScheduler: scheduler },
+      );
+      loop = result.loop;
+      setters.push(result.setMessagingSend);
+    }
+    out.push({ botKey, loop, binding: { ...bind } });
+  }
   return { bots: out, messagingSetters: setters };
 }
 /**
@@ -987,7 +1048,7 @@ async function createTelegramGreetingProvider() {
     },
   };
 }
-export async function buildAdapters(config, loadAdapter, attachmentCache) {
+export async function buildAdapters(config, loadAdapter, attachmentCache, opts) {
   config = applyPlatformShim(config).config;
   const adapters = [];
   if ((config.telegram?.bots.length ?? 0) > 0) {
@@ -1092,6 +1153,51 @@ export async function buildAdapters(config, loadAdapter, attachmentCache) {
           smtpPort: config.emailSmtpPort ?? 587,
         }),
       );
+    }
+  }
+  if ((config.whatsapp?.length ?? 0) > 0) {
+    const mod = await loadAdapter('@ethosagent/platform-whatsapp', 'WhatsApp');
+    if (mod) {
+      let waCache = attachmentCache;
+      if (!waCache) {
+        const { FsAttachmentCache } = await import('@ethosagent/storage-fs');
+        waCache = new FsAttachmentCache(getStorage(), join(ethosDir(), 'cache', 'attachments'));
+      }
+      const waConfigs = config.whatsapp ?? [];
+      if (waConfigs.length > 1) {
+        const missingIds = waConfigs.filter((c) => !c.id);
+        if (missingIds.length > 0) {
+          throw new Error(
+            `[whatsapp] Multiple WhatsApp configs require explicit 'id' fields. ${missingIds.length} config(s) are missing an id.`,
+          );
+        }
+        const ids = waConfigs.map((c) => c.id);
+        const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
+        if (dupes.length > 0) {
+          throw new Error(
+            `[whatsapp] Duplicate WhatsApp bot IDs: ${dupes.join(', ')}. Each config must have a unique id.`,
+          );
+        }
+      }
+      for (const waCfg of config.whatsapp ?? []) {
+        const onQrCb = opts?.onWhatsAppQr;
+        const onPairingCb = opts?.onWhatsAppPairingCode;
+        adapters.push(
+          new mod.WhatsAppAdapter({
+            id: waCfg.id,
+            botKey: whatsAppBotKey(waCfg),
+            sessionDir: waCfg.session_dir ?? join(ethosDir(), 'whatsapp'),
+            defaultMode: waCfg.default_mode ?? 'mention_only',
+            allowedJids: waCfg.allowed_numbers,
+            cache: waCache,
+            onQr: onQrCb ? (qr) => onQrCb(waCfg.id ?? 'default', qr) : undefined,
+            ...(waCfg.phone_number ? { phoneNumber: waCfg.phone_number } : {}),
+            onPairingCode: onPairingCb
+              ? (code) => onPairingCb(waCfg.id ?? 'default', code)
+              : undefined,
+          }),
+        );
+      }
     }
   }
   return adapters;

@@ -1,6 +1,7 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppState } from '../../state/AppContext';
+import { PersonalityBindingRow } from '../../ui/PersonalityBindingRow';
 import { AccessControlSection } from '../components/AccessControlSection';
 import { BotRow } from '../components/BotRow';
 
@@ -58,6 +59,7 @@ export function WhatsAppDrawer({ onBotChange }: WhatsAppDrawerProps) {
   const [defaultMode, setDefaultMode] = useState<'all' | 'mention_only'>('mention_only');
   const [ownerNumber, setOwnerNumber] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [personalityId, setPersonalityId] = useState<string | null>(null);
   const [enabling, setEnabling] = useState(false);
   const [error, setError] = useState('');
   const [restarting, setRestarting] = useState(false);
@@ -118,10 +120,11 @@ export function WhatsAppDrawer({ onBotChange }: WhatsAppDrawerProps) {
     id.trim().length > 0 &&
     ownerNumber.trim().length > 0 &&
     phoneNumber.trim().length > 0 &&
+    personalityId !== null &&
     !enabling;
 
   const handleEnable = useCallback(async () => {
-    if (!canEnable) return;
+    if (!canEnable || !personalityId) return;
     setEnabling(true);
     setError('');
     try {
@@ -129,6 +132,7 @@ export function WhatsAppDrawer({ onBotChange }: WhatsAppDrawerProps) {
         id: id.trim(),
         defaultMode,
         phoneNumber: phoneNumber.trim(),
+        bind: { type: 'personality', name: personalityId },
       });
       // Owner number lives on the channel filter, not the bot entry. Read the
       // current filter first so we don't clobber the allowlist or enabled flag.
@@ -142,6 +146,7 @@ export function WhatsAppDrawer({ onBotChange }: WhatsAppDrawerProps) {
       setOwnerNumber('');
       setPhoneNumber('');
       setDefaultMode('mention_only');
+      setPersonalityId(null);
       await reload();
       onBotChange?.();
     } catch (err) {
@@ -149,7 +154,17 @@ export function WhatsAppDrawer({ onBotChange }: WhatsAppDrawerProps) {
     } finally {
       setEnabling(false);
     }
-  }, [canEnable, client, id, defaultMode, ownerNumber, phoneNumber, reload, onBotChange]);
+  }, [
+    canEnable,
+    client,
+    id,
+    defaultMode,
+    ownerNumber,
+    phoneNumber,
+    personalityId,
+    reload,
+    onBotChange,
+  ]);
 
   const handleRestart = useCallback(async () => {
     setRestarting(true);
@@ -296,6 +311,8 @@ export function WhatsAppDrawer({ onBotChange }: WhatsAppDrawerProps) {
               until you add more under Access Control.
             </div>
           </div>
+
+          <PersonalityBindingRow value={personalityId} onChange={setPersonalityId} />
 
           <button
             type="button"

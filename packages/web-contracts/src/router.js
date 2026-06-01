@@ -636,8 +636,8 @@ const platforms = {
   botsRemoveSlack: oc
     .input(z.object({ botKey: z.string() }))
     .output(z.object({ ok: z.literal(true) })),
-  // WhatsApp: no tokens/secrets and no bind. An entry is routing knobs only;
-  // pairing happens out-of-band via QR (the setup-whatsapp SSE flow).
+  // WhatsApp: no tokens/secrets. An entry is routing knobs + a personality/team
+  // `bind`; pairing happens out-of-band via QR (the setup-whatsapp SSE flow).
   botsListWhatsApp: oc.output(z.object({ bots: z.array(WhatsAppEntrySchema) })),
   botsAddWhatsApp: oc
     .input(
@@ -646,6 +646,7 @@ const platforms = {
         defaultMode: z.enum(['all', 'mention_only']).optional(),
         allowedNumbers: z.array(z.string()).optional(),
         phoneNumber: z.string().optional(),
+        bind: BotBindingSchema,
       }),
     )
     .output(z.object({ bot: WhatsAppEntrySchema })),

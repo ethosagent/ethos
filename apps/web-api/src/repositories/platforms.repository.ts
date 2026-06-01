@@ -556,6 +556,14 @@ export class PlatformsRepository {
     for (const [, fields] of [...byIndex.entries()].sort(([a], [b]) => a - b)) {
       const botKey = this.whatsAppBotKey(fields);
       const allowedRaw = fields.allowed_numbers ?? '';
+      // `bind` is required when saving via botsAddWhatsApp but optional on the
+      // entry — a legacy bind-less config lists without one.
+      const bindType = fields['bind.type'];
+      const bindName = fields['bind.name'];
+      const bind: BotBinding | undefined =
+        bindName && (bindType === 'personality' || bindType === 'team')
+          ? { type: bindType, name: bindName }
+          : undefined;
       result.push({
         botKey,
         defaultMode: fields.default_mode === 'all' ? 'all' : 'mention_only',
@@ -567,6 +575,7 @@ export class PlatformsRepository {
           : [],
         ...(fields.phone_number ? { phoneNumber: fields.phone_number } : {}),
         paired: await this.whatsAppPaired(fields, botKey),
+        ...(bind ? { bind } : {}),
       });
     }
     return result;
@@ -577,6 +586,7 @@ export class PlatformsRepository {
     defaultMode?: 'all' | 'mention_only';
     allowedNumbers?: string[];
     phoneNumber?: string;
+    bind: BotBinding;
   }): Promise<WhatsAppEntry> {
     const passthrough = await this.passthrough();
     const byIndex = this.parseWhatsAppIndices(passthrough);
@@ -588,9 +598,12 @@ export class PlatformsRepository {
     const defaultMode = input.defaultMode ?? 'mention_only';
     const allowedNumbers = (input.allowedNumbers ?? []).map((s) => s.trim()).filter(Boolean);
     const phoneNumber = input.phoneNumber?.trim() || undefined;
+    const bind = input.bind;
     const patch: Record<string, string> = {
       [`whatsapp.${nextIndex}.id`]: id,
       [`whatsapp.${nextIndex}.default_mode`]: defaultMode,
+      [`whatsapp.${nextIndex}.bind.type`]: bind.type,
+      [`whatsapp.${nextIndex}.bind.name`]: bind.name,
     };
     if (allowedNumbers.length > 0) {
       patch[`whatsapp.${nextIndex}.allowed_numbers`] = allowedNumbers.join(',');
@@ -605,6 +618,7 @@ export class PlatformsRepository {
       allowedNumbers,
       ...(phoneNumber ? { phoneNumber } : {}),
       paired: await this.whatsAppPaired({ id }, id),
+      bind,
     };
   }
 

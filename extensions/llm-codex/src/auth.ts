@@ -1,7 +1,7 @@
-import { readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 export interface CodexCredentials {
   accessToken: string;
   refreshToken: string;
@@ -33,9 +33,7 @@ export interface DeviceCodeResponse {
   userCode: string;
 }
 
-export async function requestDeviceCode(
-  fetchFn: FetchFn,
-): Promise<DeviceCodeResponse> {
+export async function requestDeviceCode(fetchFn: FetchFn): Promise<DeviceCodeResponse> {
   const res = await fetchFn(DEVICE_CODE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -44,9 +42,7 @@ export async function requestDeviceCode(
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(
-      `Device code request failed (${res.status}): ${body}`,
-    );
+    throw new Error(`Device code request failed (${res.status}): ${body}`);
   }
 
   const json = (await res.json()) as {
@@ -107,9 +103,7 @@ export async function pollForAuthorization(
     }
 
     const body = await res.text();
-    throw new Error(
-      `Authorization poll failed (${res.status}): ${body}`,
-    );
+    throw new Error(`Authorization poll failed (${res.status}): ${body}`);
   }
 
   throw new Error('Authorization timed out after 15 minutes');
@@ -216,18 +210,14 @@ export async function loadTokens(): Promise<CodexCredentials | null> {
   }
 
   // Attempt import from Codex CLI (~/.codex/auth.json)
-  const codexImport = await importFromFile(
-    join(homedir(), '.codex', 'auth.json'),
-  );
+  const codexImport = await importFromFile(join(homedir(), '.codex', 'auth.json'));
   if (codexImport) {
     await saveTokens(codexImport);
     return codexImport;
   }
 
   // Attempt import from Hermes (~/.hermes/auth.json)
-  const hermesImport = await importFromFile(
-    join(homedir(), '.hermes', 'auth.json'),
-  );
+  const hermesImport = await importFromFile(join(homedir(), '.hermes', 'auth.json'));
   if (hermesImport) {
     await saveTokens(hermesImport);
     return hermesImport;
@@ -236,9 +226,7 @@ export async function loadTokens(): Promise<CodexCredentials | null> {
   return null;
 }
 
-export async function saveTokens(
-  credentials: CodexCredentials,
-): Promise<void> {
+export async function saveTokens(credentials: CodexCredentials): Promise<void> {
   const filePath = tokensPath();
   const dir = join(filePath, '..');
   await mkdir(dir, { recursive: true });
@@ -262,18 +250,15 @@ export async function saveTokens(
 // Proactive refresh — check JWT exp claim
 // ---------------------------------------------------------------------------
 
-export function isTokenExpiringSoon(
-  credentials: CodexCredentials,
-  bufferSeconds = 120,
-): boolean {
+export function isTokenExpiringSoon(credentials: CodexCredentials, bufferSeconds = 120): boolean {
   try {
     const parts = credentials.accessToken.split('.');
     const payload = parts[1];
     if (!payload) return true;
 
-    const decoded = JSON.parse(
-      Buffer.from(payload, 'base64url').toString('utf-8'),
-    ) as { exp?: number };
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8')) as {
+      exp?: number;
+    };
 
     if (typeof decoded.exp !== 'number') return true;
 
@@ -289,14 +274,10 @@ export function isTokenExpiringSoon(
 // ensureValidToken — load, refresh if needed, save
 // ---------------------------------------------------------------------------
 
-export async function ensureValidToken(
-  fetchFn: FetchFn,
-): Promise<CodexCredentials> {
+export async function ensureValidToken(fetchFn: FetchFn): Promise<CodexCredentials> {
   const credentials = await loadTokens();
   if (!credentials) {
-    throw new Error(
-      'No Codex credentials found. Run the device auth flow first.',
-    );
+    throw new Error('No Codex credentials found. Run the device auth flow first.');
   }
 
   if (!isTokenExpiringSoon(credentials)) {
@@ -313,23 +294,17 @@ export async function ensureValidToken(
 // ---------------------------------------------------------------------------
 
 /** Import credentials from a Codex CLI or Hermes auth.json file. */
-async function importFromFile(
-  filePath: string,
-): Promise<CodexCredentials | null> {
+async function importFromFile(filePath: string): Promise<CodexCredentials | null> {
   try {
     const raw = await readFile(filePath, 'utf-8');
     const json = JSON.parse(raw) as Record<string, unknown>;
 
     // Both codex and hermes store tokens with snake_case keys
     const accessToken =
-      (json.access_token as string | undefined) ??
-      (json.accessToken as string | undefined);
+      (json.access_token as string | undefined) ?? (json.accessToken as string | undefined);
     const refreshTokenVal =
-      (json.refresh_token as string | undefined) ??
-      (json.refreshToken as string | undefined);
-    const idToken =
-      (json.id_token as string | undefined) ??
-      (json.idToken as string | undefined);
+      (json.refresh_token as string | undefined) ?? (json.refreshToken as string | undefined);
+    const idToken = (json.id_token as string | undefined) ?? (json.idToken as string | undefined);
 
     if (!accessToken || !refreshTokenVal || !idToken) {
       return null;
@@ -349,9 +324,7 @@ async function importFromFile(
         (json.expiresAt as string | undefined) ??
         extractExpiresAt(accessToken),
       updatedAt:
-        (json.updated_at as string | undefined) ??
-        (json.updatedAt as string | undefined) ??
-        now,
+        (json.updated_at as string | undefined) ?? (json.updatedAt as string | undefined) ?? now,
     };
   } catch {
     return null;
@@ -365,9 +338,9 @@ function extractAccountId(idToken: string): string {
     const payload = parts[1];
     if (!payload) return '';
 
-    const decoded = JSON.parse(
-      Buffer.from(payload, 'base64url').toString('utf-8'),
-    ) as { sub?: string };
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8')) as {
+      sub?: string;
+    };
     return decoded.sub ?? '';
   } catch {
     return '';
@@ -381,9 +354,9 @@ function extractExpiresAt(accessToken: string): string {
     const payload = parts[1];
     if (!payload) return new Date().toISOString();
 
-    const decoded = JSON.parse(
-      Buffer.from(payload, 'base64url').toString('utf-8'),
-    ) as { exp?: number };
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8')) as {
+      exp?: number;
+    };
 
     if (typeof decoded.exp !== 'number') return new Date().toISOString();
     return new Date(decoded.exp * 1_000).toISOString();
