@@ -1,6 +1,8 @@
-NVM_INSTALLED := $(shell test -f "$(HOME)/.nvm/nvm.sh"; echo $$?)
-NODE_VERSION  := $(shell cat .nvmrc 2>/dev/null || echo 22)
-PNPM_VERSION  := 10.33.0
+NVM_INSTALLED    := $(shell test -f "$(HOME)/.nvm/nvm.sh"; echo $$?)
+NODE_VERSION     := $(shell cat .nvmrc 2>/dev/null || echo 22)
+PNPM_VERSION     := 10.33.0
+ELECTRON_VERSION := $(shell ls node_modules/.pnpm/ 2>/dev/null | grep '^electron@[0-9]' | head -1 | sed 's/electron@//;s/_.*//')
+BETTER_SQLITE3   := $(shell ls -d node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 2>/dev/null | head -1)
 
 # Source nvm and select the project's node version automatically. Every
 # target that runs node/pnpm prefixes its command with $(NVM_EXEC), so
@@ -28,6 +30,8 @@ help:
 	@echo "  setup-pnpm         - Install pnpm globally"
 	@echo "  setup-gstack       - Install/update gstack Claude Code skills"
 	@echo "  prepare            - pnpm install (frozen lockfile)"
+	@echo "  sqlite-for-node    - Swap better-sqlite3 to Node ABI (use before web-dev / pnpm dev)"
+	@echo "  sqlite-for-electron- Swap better-sqlite3 to Electron ABI (use before desktop pnpm dev)"
 	@echo ""
 	@echo "Development"
 	@echo "  dev                - Start ethos in interactive chat mode (TUI when TTY)"
@@ -125,6 +129,23 @@ prepare:
 	@echo "Installing git hooks via lefthook..."
 	@$(NVM_EXEC) pnpm dlx lefthook install >/dev/null 2>&1 || echo "  (lefthook install skipped; not in a git repo)"
 	@echo "Dependencies installed."
+
+# better-sqlite3 ships one binary in the pnpm virtual store shared by both
+# the CLI (plain Node) and the desktop app (Electron). Their ABIs differ, so
+# you need to swap the binary when switching between the two workflows.
+#
+#   make sqlite-for-node      — after working on desktop, before make web-dev / pnpm dev
+#   make sqlite-for-electron  — before pnpm dev in apps/desktop
+#
+sqlite-for-node:
+	@echo "Rebuilding better-sqlite3 for Node $(NODE_VERSION) (ABI for CLI / web-dev)..."
+	@$(NVM_EXEC) cd $(BETTER_SQLITE3) && npx prebuild-install --force 2>/dev/null
+	@echo "Done — run 'make web-dev' or 'pnpm dev' as normal."
+
+sqlite-for-electron:
+	@echo "Rebuilding better-sqlite3 for Electron $(ELECTRON_VERSION) (ABI for desktop dev)..."
+	@$(NVM_EXEC) cd $(BETTER_SQLITE3) && npx prebuild-install --runtime electron --target $(ELECTRON_VERSION) --arch arm64 --force 2>/dev/null
+	@echo "Done — run 'pnpm dev' inside apps/desktop."
 
 # ---------- dev ----------
 
