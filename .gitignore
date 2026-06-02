@@ -24,3 +24,8 @@ apps/ethos/web
 ethos-data/
 .ethos-data/
 apps/desktop/dist-electron/
+
+# JS mirror files — compiled from TS source, not committed
+# (standalone .js files with no .ts counterpart are still tracked)
+src/**/*.js
+src/**/*.js.map
