@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .agents/skills/session-audit/scripts/parse-transcript 2>/dev/null | python3 .agents/skills/session-audit/scripts/format-output 2>/dev/null",
+            "command": "out=$(python3 .agents/skills/session-audit/scripts/parse-transcript 2>/dev/null | python3 .agents/skills/session-audit/scripts/format-output 2>/dev/null); [ -z \"$out\" ] && echo '{\"suppressOutput\":true}' || echo \"$out\"",
             "timeout": 30
           }
         ]

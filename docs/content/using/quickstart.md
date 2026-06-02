@@ -22,7 +22,7 @@ By the end you have:
 
 ## Prereqs
 
-- macOS or Linux with a shell you trust. Windows works through WSL2.
+- macOS, Linux, or Windows 10/11. On Windows, the native installer works without WSL — see [Install on Windows](./how-to/install-on-windows.md) for the dedicated guide. The steps below show the macOS/Linux path.
 - An API key from one of: Anthropic, OpenRouter, Ollama (running locally), or Gemini. The wizard accepts any of them; the rest of these docs assume Anthropic for the examples but every step works the same elsewhere.
 - Node 24 or newer. The recommended install script handles this for you — skip ahead if you already have Node.
 
@@ -62,6 +62,8 @@ Expected output (the exact number changes per release):
 ```
 
 If `ethos: command not found`, your `PATH` does not include the global `npm` bin directory. `npm config get prefix` prints the prefix; add `<prefix>/bin` to your shell's rc file (`~/.zshrc`, `~/.bashrc`), open a new shell, and try again.
+
+**On Windows**, use the PowerShell one-liner instead of the `curl` command above — see [Install on Windows](./how-to/install-on-windows.md).
 
 If you installed through `nvm`, the binary lives under `~/.nvm/versions/node/v24.x.x/bin/`. That path is on `PATH` only inside shells that source `nvm.sh` — service managers like `launchd` and `systemd` do not, which matters in the Telegram tutorial later.
 
@@ -214,6 +216,8 @@ Everything else (`mcp.json`, `communications.json`, `keys.json`, `skills/`) is c
 You have a working agent. The next tutorial walks you through the turn cycle conceptually while you do it: send three messages, watch tool calls render, check usage, exit and reopen to verify session persistence, switch personality.
 
 - [Build your first agent](./tutorials/first-agent.md) — three messages, two personalities, ten minutes.
+- [Install on Windows](./how-to/install-on-windows.md) — native Windows install via PowerShell, no WSL or admin rights needed.
+- [Install on Windows (WSL2)](./how-to/install-on-windows-wsl2.md) — WSL2 path for the dashboard terminal pane and a full POSIX environment.
 - [Deploy in production](./how-to/deploy-in-production.md) — bots and dashboard running on a mini PC or VPS, surviving reboots, in three commands.
 - [Use skills](./how-to/use-skills.md) — discover and install skills from Claude Code, OpenClaw, Hermes, and other sources.
 - [config.yaml reference](./reference/config-yaml.md) — every field the file accepts, if you want to read ahead.

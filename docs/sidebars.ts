@@ -35,6 +35,8 @@ const sidebars: SidebarsConfig = {
           label: 'How-to',
           collapsed: true,
           items: [
+            'using/how-to/install-on-windows',
+            'using/how-to/install-on-windows-wsl2',
             'using/how-to/configure-providers',
             'using/how-to/deploy-in-production',
             'using/how-to/deploy-on-ec2',
