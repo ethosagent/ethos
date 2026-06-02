@@ -49,7 +49,7 @@ jobs:
           npm pkg set version="${{ inputs.version }}"
 
       - name: Install Python setuptools (node-gyp requires distutils, removed in Python 3.12)
-        run: pip3 install setuptools
+        run: pip3 install setuptools --break-system-packages
 
       - name: Build renderer + main
         run: pnpm --filter @ethosagent/desktop build
