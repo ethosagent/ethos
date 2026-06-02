@@ -1,8 +1,9 @@
-import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { serve as honoServe } from '@hono/node-server';
+import { join } from 'node:path';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { FsStorage } from '@ethosagent/storage-fs';
+import { createWebApi } from '@ethosagent/web-api';
+import type { WiringConfig } from '@ethosagent/wiring';
 import {
   createAgentLoop,
   createDangerPredicate,
@@ -10,8 +11,7 @@ import {
   createSessionStore,
   IdentityMap,
 } from '@ethosagent/wiring';
-import { createWebApi } from '@ethosagent/web-api';
-import type { WiringConfig } from '@ethosagent/wiring';
+import { serve as honoServe } from '@hono/node-server';
 import { getKeychainValue } from './keychain';
 import { store } from './store';
 
