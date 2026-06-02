@@ -9,7 +9,7 @@ export default defineConfig({
         entry: 'src/main/index.ts',
       },
       rollupOptions: {
-        external: ['@ethosagent/llm-codex'],
+        external: ['@ethosagent/llm-codex', 'better-sqlite3'],
       },
     },
   },

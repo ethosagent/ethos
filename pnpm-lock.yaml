@@ -76,15 +76,33 @@ importers:
       '@ethosagent/llm-codex':
         specifier: workspace:*
         version: link:../../extensions/llm-codex
+      '@ethosagent/personalities':
+        specifier: workspace:*
+        version: link:../../extensions/personalities
       '@ethosagent/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+      '@ethosagent/session-sqlite':
+        specifier: workspace:*
+        version: link:../../extensions/session-sqlite
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
       '@ethosagent/ui-components':
         specifier: workspace:*
         version: link:../../packages/ui-components
+      '@ethosagent/web-api':
+        specifier: workspace:*
+        version: link:../web-api
       '@ethosagent/web-contracts':
         specifier: workspace:*
         version: link:../../packages/web-contracts
+      '@ethosagent/wiring':
+        specifier: workspace:*
+        version: link:../../packages/wiring
+      '@hono/node-server':
+        specifier: ^2.0.0
+        version: 2.0.4(hono@4.12.23)
       croner:
         specifier: ^9.0.0
         version: 9.1.0
