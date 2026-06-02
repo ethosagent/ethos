@@ -73,6 +73,9 @@ importers:
       '@ethosagent/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@ethosagent/llm-codex':
+        specifier: workspace:*
+        version: link:../../extensions/llm-codex
       '@ethosagent/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk

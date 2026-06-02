@@ -8,6 +8,9 @@ export default defineConfig({
       lib: {
         entry: 'src/main/index.ts',
       },
+      rollupOptions: {
+        external: ['@ethosagent/llm-codex'],
+      },
     },
   },
   preload: {
