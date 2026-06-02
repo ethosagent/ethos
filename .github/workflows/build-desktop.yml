@@ -52,6 +52,8 @@ jobs:
         run: pnpm --filter @ethosagent/desktop build
 
       - name: Package artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: pnpm --filter @ethosagent/desktop package -- --publish never
 
       - name: Upload artifacts
@@ -59,11 +61,11 @@ jobs:
         with:
           name: ${{ matrix.artifact-name }}
           path: |
-            apps/desktop/dist/*.dmg
-            apps/desktop/dist/*.zip
-            apps/desktop/dist/*.exe
-            apps/desktop/dist/*.AppImage
-            apps/desktop/dist/*.yml
+            apps/desktop/dist-electron/*.dmg
+            apps/desktop/dist-electron/*.zip
+            apps/desktop/dist-electron/*.exe
+            apps/desktop/dist-electron/*.AppImage
+            apps/desktop/dist-electron/*.yml
           if-no-files-found: error
 
   release:
