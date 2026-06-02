@@ -36,6 +36,8 @@ help:
 	@echo "Development"
 	@echo "  dev                - Start ethos in interactive chat mode (TUI when TTY)"
 	@echo "  tui                - Alias for dev (explicit TUI entry point)"
+	@echo "  desktop-dev        - Electron dev (swaps SQLite to Electron ABI automatically)"
+	@echo "  desktop-build      - Build + package macOS app to apps/desktop/dist-electron/"
 	@echo "  web-dev               - Web UI dev: Vite HMR :5173 + ethos serve :3000 (recommended for active development)"
 	@echo "  web-build             - Build the SPA to apps/web/dist"
 	@echo "  web                   - Build SPA + run ethos serve with mounted static (single port :3000)"
@@ -146,6 +148,22 @@ sqlite-for-electron:
 	@echo "Rebuilding better-sqlite3 for Electron $(ELECTRON_VERSION) (ABI for desktop dev)..."
 	@$(NVM_EXEC) cd $(BETTER_SQLITE3) && npx prebuild-install --runtime electron --target $(ELECTRON_VERSION) --arch arm64 --force 2>/dev/null
 	@echo "Done — run 'pnpm dev' inside apps/desktop."
+
+# ---------- desktop ----------
+
+desktop-dev: sqlite-for-electron
+	@echo "Starting Electron dev (renderer at http://localhost:5173/)..."
+	@$(NVM_EXEC) pnpm --filter @ethosagent/desktop dev
+
+# Builds the Vite bundles then packages a macOS .app + .zip via electron-builder.
+# Skips code signing for local builds (set CSC_* env vars to enable signing).
+# After the build: open apps/desktop/dist-electron/mac-arm64/Ethos.app
+desktop-build: sqlite-for-electron
+	@echo "Building desktop app..."
+	@CSC_IDENTITY_AUTO_DISCOVERY=false $(NVM_EXEC) pnpm --filter @ethosagent/desktop build
+	@echo "Packaging macOS app..."
+	@CSC_IDENTITY_AUTO_DISCOVERY=false $(NVM_EXEC) pnpm --filter @ethosagent/desktop package
+	@echo "Done. Open: apps/desktop/dist-electron/mac-arm64/Ethos.app"
 
 # ---------- dev ----------
 
