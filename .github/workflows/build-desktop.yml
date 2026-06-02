@@ -92,7 +92,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          mapfile -t FILES < <(find artifacts -type f | sort)
           gh release create "v${{ inputs.version }}" \
             --title "v${{ inputs.version }}" \
             --generate-notes \
-            $(find artifacts -type f | sort)
+            "${FILES[@]}"
