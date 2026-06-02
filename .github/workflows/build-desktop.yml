@@ -48,11 +48,6 @@ jobs:
           cd apps/desktop
           npm pkg set version="${{ inputs.version }}"
 
-      - name: Rebuild native modules for Electron
-        shell: bash
-        working-directory: apps/desktop
-        run: pnpm exec electron-rebuild -f -w better-sqlite3
-
       - name: Build renderer + main
         run: pnpm --filter @ethosagent/desktop build
 

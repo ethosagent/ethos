@@ -3,6 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "author": "Mitesh Sharma",
+  "description": "Ethos desktop app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MiteshSharma/ethos.git"
+  },
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
