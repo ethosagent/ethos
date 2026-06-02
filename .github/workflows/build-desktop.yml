@@ -49,7 +49,6 @@ jobs:
           npm pkg set version="${{ inputs.version }}"
 
       - name: Install Python setuptools (node-gyp requires distutils, removed in Python 3.12)
-        if: runner.os == 'macOS'
         run: pip3 install setuptools
 
       - name: Build renderer + main
