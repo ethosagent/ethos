@@ -7,9 +7,8 @@ name: build-desktop
 #      `release` workflow first if needed).
 #   2. GitHub → Actions → build-desktop → Run workflow → enter version (e.g. 0.0.1)
 #
-# The workflow tags the commit, creates a draft GitHub Release, builds
-# platform-specific artifacts on macOS and Windows, uploads them via
-# electron-builder, then marks the release as non-draft.
+# The workflow builds on macOS and Windows in parallel. Only if BOTH succeed
+# does it create the git tag, publish the GitHub Release, and upload artifacts.
 
 on:
   workflow_dispatch:
@@ -20,39 +19,22 @@ on:
         type: string
 
 permissions:
-  contents: write    # push the tag + create/update the GitHub Release
+  contents: write    # push tag + create/update GitHub Release
 
 concurrency:
   group: build-desktop
   cancel-in-progress: false   # never overlap desktop builds
 
 jobs:
-  tag-release:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Create and push tag
-        run: |
-          git tag "v${{ inputs.version }}"
-          git push origin "v${{ inputs.version }}"
-
-      - name: Create draft GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "v${{ inputs.version }}" \
-            --title "v${{ inputs.version }}" \
-            --generate-notes \
-            --draft
-
   build:
-    needs: tag-release
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-2022]
+        include:
+          - os: macos-14
+            artifact-name: desktop-mac
+          - os: windows-2022
+            artifact-name: desktop-win
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -74,19 +56,43 @@ jobs:
       - name: Build renderer + main
         run: pnpm --filter @ethosagent/desktop build
 
-      - name: Package and publish artifacts
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm --filter @ethosagent/desktop package -- --publish always
+      - name: Package artifacts
+        run: pnpm --filter @ethosagent/desktop package -- --publish never
 
-  finalize-release:
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: |
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.AppImage
+            apps/desktop/dist/*.yml
+          if-no-files-found: error
+
+  release:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Mark release as non-draft
+      - name: Create and push tag
+        run: |
+          git tag "v${{ inputs.version }}"
+          git push origin "v${{ inputs.version }}"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create GitHub Release and upload artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "v${{ inputs.version }}" --draft=false
+        run: |
+          gh release create "v${{ inputs.version }}" \
+            --title "v${{ inputs.version }}" \
+            --generate-notes \
+            $(find artifacts -type f | sort)
