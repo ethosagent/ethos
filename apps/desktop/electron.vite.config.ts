@@ -9,7 +9,17 @@ export default defineConfig({
         entry: 'src/main/index.ts',
       },
       rollupOptions: {
-        external: ['@ethosagent/llm-codex', 'better-sqlite3'],
+        // Workspace packages (@ethosagent/*) ship .ts source — they must be
+        // bundled into the main process bundle, not loaded from node_modules at
+        // runtime (where Electron's Node.js would reject the .ts extension).
+        // Exceptions: llm-codex (dynamic import, stays external) and
+        // better-sqlite3 (native .node file, can't be bundled by Rollup).
+        external: (id: string) => {
+          if (id === 'better-sqlite3' || id === '@ethosagent/llm-codex') return true;
+          if (id.startsWith('@ethosagent/')) return false;
+          if (id.startsWith('node:') || id === 'electron') return true;
+          return !id.startsWith('.') && !id.startsWith('/') && !id.startsWith('\0');
+        },
       },
     },
   },
