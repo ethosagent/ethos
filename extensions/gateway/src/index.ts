@@ -1147,36 +1147,11 @@ export class Gateway {
         userId,
         steerSink,
       })) {
-        if (event.type === 'run_start' && this.showToolCalls && adapter.canEditMessage) {
-          const existing = this.activeStatusMessages.get(laneKey);
-          if (existing) {
-            await existing.adapter
-              .editMessage?.(existing.chatId, existing.messageId, '💭 Thinking…')
-              .catch(() => {});
-          } else {
-            const sent = await adapter
-              .send(message.chatId, { text: '💭 Thinking…', threadId })
-              .catch(() => null);
-            if (sent?.messageId) {
-              this.activeStatusMessages.set(laneKey, {
-                messageId: sent.messageId,
-                adapter,
-                chatId: message.chatId,
-                threadId,
-              });
-            }
-          }
-        }
-
         if (event.type === 'tool_start' && this.showToolCalls) {
           const status = this.activeStatusMessages.get(laneKey);
           if (status) {
             await status.adapter
               .editMessage?.(status.chatId, status.messageId, `⚙ ${event.toolName}…`)
-              .catch(() => {});
-          } else {
-            await adapter
-              .send(message.chatId, { text: `⚙ ${event.toolName}`, threadId })
               .catch(() => {});
           }
         }

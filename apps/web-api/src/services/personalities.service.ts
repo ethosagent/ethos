@@ -7,7 +7,7 @@ import {
   type UpdatePersonalityPatch,
 } from '@ethosagent/personalities';
 import type { PersonalitySkillRecord, SkillsLibrary } from '@ethosagent/skills';
-import { mcpTokenSecretRef } from '@ethosagent/tools-mcp';
+import { type McpJsonStore, mcpTokenSecretRef } from '@ethosagent/tools-mcp';
 import { EthosError } from '@ethosagent/types';
 import type { McpPolicy, Personality, PersonalitySkill } from '@ethosagent/web-contracts';
 
@@ -20,6 +20,7 @@ export interface PersonalitiesServiceOptions {
   personalities: FilePersonalityRegistry;
   library: SkillsLibrary;
   secrets?: import('@ethosagent/types').SecretsResolver;
+  mcpJsonStore?: McpJsonStore;
 }
 
 export class PersonalitiesService {
@@ -157,6 +158,17 @@ export class PersonalitiesService {
     const { PersonalityScopedSecrets } = await import('@ethosagent/storage-fs');
     const scoped = new PersonalityScopedSecrets(this.opts.secrets, personalityId);
     await scoped.set(mcpTokenSecretRef(server), token);
+    // If the server entry in mcp.json has no bearer auth block, add one now so
+    // the McpClient actually sends the Authorization header.
+    if (this.opts.mcpJsonStore) {
+      const config = await this.opts.mcpJsonStore.get(server);
+      if (config && config.auth?.type !== 'bearer') {
+        await this.opts.mcpJsonStore.upsert(server, {
+          ...config,
+          auth: { type: 'bearer' as const },
+        });
+      }
+    }
   }
 
   async mcpDeleteToken(personalityId: string, server: string): Promise<void> {

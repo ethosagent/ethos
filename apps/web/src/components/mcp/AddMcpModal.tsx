@@ -155,6 +155,7 @@ export function AddMcpModal({ open, onClose }: Props) {
         url: customUrl.trim(),
         name: customName.trim(),
         transport: 'streamable-http',
+        authType: 'bearer',
         ...(bearerToken.trim() ? { token: bearerToken.trim() } : {}),
         ...(resultLimit ? { mcpResultLimitChars: resultLimit } : {}),
       });
@@ -323,7 +324,8 @@ export function AddMcpModal({ open, onClose }: Props) {
               )}
               {serverType === 'direct' && (
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Connects directly without OAuth. If the server requires a token, paste it above.
+                  Connects directly without OAuth. Paste the token now or set it later on the
+                  personality page.
                 </Typography.Text>
               )}
             </Space>

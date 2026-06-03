@@ -865,11 +865,14 @@ export class McpManager {
    *
    * Returns the union of tools from all connected servers.
    */
-  async getToolsForPersonality(personalityId: string): Promise<Tool[]> {
+  async getToolsForPersonality(personalityId: string, serverNames?: string[]): Promise<Tool[]> {
     const tools: Tool[] = [];
+    const configs = serverNames
+      ? this._configs.filter((c) => serverNames.includes(c.name))
+      : this._configs;
 
     await Promise.allSettled(
-      this._configs.map(async (config) => {
+      configs.map(async (config) => {
         let client: McpClient;
         if (this._isOAuthTransport(config.transport)) {
           const key = `${personalityId}::${config.name}`;

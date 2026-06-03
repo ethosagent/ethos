@@ -145,8 +145,9 @@ describe('AgentLoop — Ch.3a provenance wrapping', () => {
     const last = second[second.length - 1];
     const block = Array.isArray(last?.content) ? last.content[0] : null;
     const content = block && 'content' in block ? block.content : '';
-    expect(content).toBe('owner-authored content');
+    expect(content).toContain('owner-authored content');
     expect(content).not.toContain('<untrusted');
+    expect(content).toContain('===TOOL_RESULT_START:memory_read===');
   });
 
   it('strips chat-template tokens BEFORE wrapping', async () => {
@@ -174,7 +175,8 @@ describe('AgentLoop — Ch.3a provenance wrapping', () => {
     expect(content).not.toContain('<|im_start|>');
     expect(content).not.toContain('<|im_end|>');
     expect(content).toContain('[STRIPPED-TEMPLATE-TOKEN]');
-    expect(content).toMatch(/^<untrusted /);
+    expect(content).toContain('<untrusted ');
+    expect(content).toContain('===TOOL_RESULT_START:web_extract===');
   });
 
   it('prepends the injection-defense prelude to the system prompt', async () => {

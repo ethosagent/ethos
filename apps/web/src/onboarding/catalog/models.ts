@@ -69,6 +69,19 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     contextWindow: 1_000_000,
   },
   // Ollama (no fixed catalog — users get their local models)
+  // Codex
+  { providerId: 'codex', modelId: 'gpt-5.4', label: 'GPT-5.4', contextWindow: 0 },
+  {
+    providerId: 'codex',
+    modelId: 'gpt-5.4-mini',
+    label: 'GPT-5.4 Mini',
+    contextWindow: 0,
+    default: true,
+  },
+  { providerId: 'codex', modelId: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', contextWindow: 0 },
+  { providerId: 'codex', modelId: 'gpt-5.2-codex', label: 'GPT-5.2 Codex', contextWindow: 0 },
+  { providerId: 'codex', modelId: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max', contextWindow: 0 },
+  { providerId: 'codex', modelId: 'gpt-5.1-codex-mini', label: 'GPT-5.1 Codex Mini', contextWindow: 0 },
 ];
 
 export function modelsForProvider(providerId: CatalogProviderId): ModelCatalogEntry[] {

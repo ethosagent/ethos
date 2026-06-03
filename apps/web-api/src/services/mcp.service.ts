@@ -67,7 +67,7 @@ export class McpService {
       } = { mcpUrl: input.url };
       if (input.personalityId !== undefined) startOpts.personalityId = input.personalityId;
       if (input.name !== undefined) startOpts.name = input.name;
-      if (redirectUri !== undefined) startOpts.redirectUri = `${redirectUri}/oauth/callback`;
+      if (redirectUri !== undefined) startOpts.redirectUri = redirectUri;
       const result = await this.flow.start(startOpts);
       return {
         ok: true as const,
@@ -214,6 +214,7 @@ export class McpService {
     command?: string;
     args?: string[];
     env?: Record<string, string>;
+    authType?: 'bearer' | 'none';
     token?: string;
     mcpResultLimitChars?: number;
   }) {
@@ -255,7 +256,7 @@ export class McpService {
       transport: input.transport,
       url: input.url,
       created_via: 'ui' as const,
-      ...(input.token ? { auth: { type: 'bearer' as const } } : {}),
+      ...(input.token || input.authType === 'bearer' ? { auth: { type: 'bearer' as const } } : {}),
       ...(input.mcpResultLimitChars !== undefined
         ? { mcpResultLimitChars: input.mcpResultLimitChars }
         : {}),

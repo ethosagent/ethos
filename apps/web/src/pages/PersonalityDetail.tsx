@@ -474,6 +474,17 @@ function McpSection({
                     Update token
                   </Button>
                 ) : null}
+                {server.auth_type === 'none' && server.transport !== 'stdio' ? (
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setBearerTokenInput('');
+                      setBearerTokenServer(server.name);
+                    }}
+                  >
+                    Set bearer token
+                  </Button>
+                ) : null}
               </div>
             ) : null}
             {server.auth_status === 'authorized' || server.auth_status === 'expired' ? (

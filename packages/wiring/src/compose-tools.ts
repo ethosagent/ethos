@@ -380,7 +380,7 @@ export async function composeAllTools(
       for (const name of removedNames) tools.unregister(name);
     },
   });
-  const mcpTools = await mcpManager.getToolsForPersonality(activePerson.id);
+  const mcpTools = await mcpManager.getToolsForPersonality(activePerson.id, activePerson.mcp_servers);
   for (const tool of mcpTools) tools.register(tool);
 
   // Eagerly connect MCP servers for all other personalities so switching
@@ -389,7 +389,7 @@ export async function composeAllTools(
   for (const p of personalities.list()) {
     if (p.id === activePerson.id) continue;
     if (!p.mcp_servers?.length) continue;
-    const pTools = await mcpManager.getToolsForPersonality(p.id);
+    const pTools = await mcpManager.getToolsForPersonality(p.id, p.mcp_servers);
     for (const tool of pTools) tools.register(tool);
   }
 

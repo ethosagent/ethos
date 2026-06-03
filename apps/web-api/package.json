@@ -21,6 +21,7 @@
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/eval-harness": "workspace:*",
     "@ethosagent/kanban-store": "workspace:*",
+    "@ethosagent/llm-codex": "workspace:*",
     "@ethosagent/memory-markdown": "workspace:*",
     "@ethosagent/personalities": "workspace:*",
     "@ethosagent/plugin-contract": "workspace:*",

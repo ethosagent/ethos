@@ -224,10 +224,12 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
 
   // --- Services (business logic) ---
   const sessionsService = new SessionsService({ sessions: sessionsRepo });
+  const sharedMcpJsonStore = new McpJsonStore(storage);
   const personalitiesService = new PersonalitiesService({
     personalities: opts.personalities,
     library: skillsLibrary,
     secrets,
+    mcpJsonStore: sharedMcpJsonStore,
   });
   const configService = new ConfigService({ config: configRepo });
   const onboardingService = new OnboardingService({
@@ -268,7 +270,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       update: (id, patch) => personalitiesService.update(id, patch),
     },
     secrets,
-    mcpJsonStore: new McpJsonStore(storage),
+    mcpJsonStore: sharedMcpJsonStore,
     redirectUri: opts.webBaseUrl
       ? `${opts.webBaseUrl}/oauth/callback`
       : 'http://localhost:3000/oauth/callback',
