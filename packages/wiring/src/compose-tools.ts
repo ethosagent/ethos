@@ -380,7 +380,10 @@ export async function composeAllTools(
       for (const name of removedNames) tools.unregister(name);
     },
   });
-  const mcpTools = await mcpManager.getToolsForPersonality(activePerson.id, activePerson.mcp_servers);
+  const mcpTools = await mcpManager.getToolsForPersonality(
+    activePerson.id,
+    activePerson.mcp_servers,
+  );
   for (const tool of mcpTools) tools.register(tool);
 
   // Eagerly connect MCP servers for all other personalities so switching
