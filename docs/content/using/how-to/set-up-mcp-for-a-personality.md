@@ -1,11 +1,11 @@
 ---
 title: "Set up MCP for a personality"
-description: "Register an MCP server, acquire a per-personality token via CLI or web OAuth, and verify the tools surface in chat."
+description: "Register an MCP server, acquire a per-personality OAuth token or set a bearer API key, and verify the tools surface in chat."
 kind: how-to
 audience: user
 slug: set-up-mcp-for-a-personality
 time: "10 min"
-updated: 2026-05-22
+updated: 2026-06-03
 ---
 
 ## Task
@@ -135,6 +135,43 @@ If the server is not already in the personality's `mcp_servers:` list, the UI pr
 
 Navigate to the **Chat** tab, select the personality, and ask: "What MCP tools do you have?"
 
+## Steps — Bearer token servers
+
+Bearer token servers accept a static API key with no OAuth consent screen. Skip the `mcp login` step entirely.
+
+### 1. Register the server
+
+Add the server to `~/.ethos/mcp.json` with `"auth": { "type": "bearer" }`. The entry needs no OAuth endpoints:
+
+```json
+{
+  "name": "lookout",
+  "transport": "streamable-http",
+  "url": "https://lookout.example.com/mcp",
+  "auth": { "type": "bearer" }
+}
+```
+
+### 2. Attach the server to the personality
+
+```bash
+ethos personality mcp engineer --attach lookout
+```
+
+### 3. Set the token
+
+Open the personality detail page in the web UI. The server row shows **Set token**. Paste the API key and confirm. The token is stored at:
+
+```text
+~/.ethos/personalities/engineer/mcp/lookout/access_token
+```
+
+To replace the token later, click **Update token** on the same row. The change takes effect on the next MCP request — no restart required.
+
+### 4. Test
+
+Click **Test connection** on the server row. A successful result lists the available tools. A `401` response means the token is wrong or has been rotated — update it with **Update token**.
+
 ## Verify
 
 Two checks confirm end-to-end setup:
@@ -169,6 +206,10 @@ ethos personality create engineer
 ```
 
 Then reload the MCP tab.
+
+**Bearer server shows "Missing" in web UI** — No token is stored for this personality. Open the personality detail page and click **Set token** on the server row.
+
+**`401 Unauthorized` on a bearer server** — The token is wrong or has been rotated. Open the personality detail page and click **Update token** to replace it.
 
 ## See also
 

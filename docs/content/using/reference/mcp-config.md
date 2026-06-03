@@ -1,10 +1,10 @@
 ---
 title: "MCP config reference"
-description: "Field-by-field reference for ~/.ethos/mcp.json: transports, OAuth, env sandboxing, secret indirection, personality scoping."
+description: "Field-by-field reference for ~/.ethos/mcp.json: transports, OAuth 2.1, bearer token auth, env sandboxing, secret indirection, personality scoping."
 kind: reference
 audience: user
 slug: mcp-config
-updated: 2026-05-22
+updated: 2026-06-03
 ---
 
 ## Synopsis {#synopsis}
@@ -77,7 +77,7 @@ Every entry carries these fields. The `transport` choice gates which transport-s
 | `transport` | `'stdio' \| 'streamable-http' \| 'sse'` | — | yes | Subprocess vs HTTP. `sse` is deprecated and removed in the next minor — switch to `streamable-http`. |
 | `keepaliveSeconds` | number | `30` | no | Period between ping frames; `0` disables. |
 | `connectTimeoutMs` | number | `10000` | no | Initial handshake budget. Failed handshakes auto-reconnect with backoff. |
-| `auth` | object | — | no | OAuth 2.1 config. HTTP only. See [OAuth 2.1](#oauth). |
+| `auth` | object | — | no | Auth block. `oauth2` or `bearer`. HTTP only. See [OAuth 2.1](#oauth), [Bearer auth](#bearer). |
 
 ### stdio fields {#stdio-fields}
 
@@ -139,6 +139,40 @@ Token storage paths (per-personality, owner-only 0600):
 Tokens are scoped to each personality. Two personalities using the same MCP server hold independent tokens — revoking one does not affect the other.
 
 Source of truth: [`oauth.ts`](https://github.com/MiteshSharma/ethos/blob/main/extensions/tools-mcp/src/oauth.ts).
+
+## Bearer token auth {#bearer}
+
+Servers that accept a static API key use `auth.type: "bearer"`. Ethos reads the token from the personality's secrets store and attaches it as `Authorization: Bearer <token>` on every request. There is no browser flow and no refresh loop — update the token file and it takes effect on the next MCP request.
+
+```json
+{
+  "name": "lookout",
+  "transport": "streamable-http",
+  "url": "https://lookout.example.com/mcp",
+  "auth": { "type": "bearer" }
+}
+```
+
+Token storage path (per-personality, owner-only 0600):
+
+| Path | Contents |
+|---|---|
+| `~/.ethos/personalities/<id>/mcp/<name>/access_token` | API key |
+
+### Setting the token via the web UI {#bearer-web}
+
+Open the personality detail page. Each bearer-auth server row shows **Set token** (when no token is stored) or **Update token** (when one exists). Paste the key and confirm. The connection status updates on the next status poll; no daemon restart is needed.
+
+### Per-personality vs global token {#bearer-vs-global}
+
+The `auth.type: "bearer"` pattern and the `headers` secret-indirection pattern both send the same `Authorization` header — they differ in where the token resolves from.
+
+| Pattern | Token path | Scope |
+|---|---|---|
+| `auth.type: "bearer"` | `personalities/<id>/mcp/<name>/access_token` | Per-personality. Independent tokens per personality. |
+| `headers: { Authorization: "Bearer ${secrets:ref}" }` | `secrets/<ref>` | Global. All personalities share one token. |
+
+Use `auth.type: "bearer"` when different personalities need separate API keys for the same server. Use the `headers` pattern when a single key covers all personalities.
 
 ## Sandboxed environment {#sandbox}
 
@@ -300,6 +334,27 @@ Stored once with `ethos secrets set stripe/api_key sk_live_…`. The header valu
 
 First connect opens a browser for the PKCE flow. Tokens land at `~/.ethos/personalities/<id>/mcp/linear/{access_token,refresh_token,expires_at}` (where `<id>` is the personality that ran `ethos mcp login`) and refresh silently thereafter.
 
+### Lookout (HTTP, bearer token) {#example-bearer}
+
+```json
+{
+  "name": "lookout",
+  "transport": "streamable-http",
+  "url": "https://lookout.example.com/mcp",
+  "auth": { "type": "bearer" }
+}
+```
+
+After registering the server, set the per-personality token from the personality detail page (**Set token**), or write the file directly:
+
+```bash
+mkdir -p ~/.ethos/secrets/personalities/<id>/mcp/lookout
+printf '%s' 'tok_…' > ~/.ethos/secrets/personalities/<id>/mcp/lookout/access_token
+chmod 0600 ~/.ethos/secrets/personalities/<id>/mcp/lookout/access_token
+```
+
+Click **Test connection** on the server row to verify tools surface correctly.
+
 ## Common errors {#errors}
 
 | Symptom | Cause | Fix |
@@ -310,6 +365,7 @@ First connect opens a browser for the PKCE flow. Tokens land at `~/.ethos/person
 | HTTP server returns 401 on every call | Token expired or wrong | Re-issue and update the secret with `ethos secrets set`; for OAuth, run `ethos mcp logout <name> --personality <id>` and reconnect |
 | Server can't read `~/.ssh` or `~/.aws` | Sandboxed env strips the operator's `HOME` | This is intentional. If the server legitimately needs a file, copy it into `~/.ethos/mcp-runtime/<name>/` or pass the path via an env var listed in `mcpEnvPassthrough` |
 | Credential env var "missing" inside the server | Credential-pattern strip removed it | Add the var name to `mcpEnvPassthrough` |
+| Bearer server shows `missing` status in web UI | Token file not found for this personality | Open the personality detail page and click **Set token**, or write `~/.ethos/secrets/personalities/<id>/mcp/<name>/access_token` directly (mode 0600) |
 | Tool name `mcp__<a>__<tool>` resolves but personality can't call it | Personality's `toolset.yaml` lacks the entry | Add `- mcp__<a>__<tool>` to the personality's toolset, OR omit the per-tool list to inherit everything the server exposes |
 
 ## See also {#see-also}

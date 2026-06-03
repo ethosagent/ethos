@@ -18,6 +18,8 @@ That single decision pays off four ways:
 
 Three personalities ship by default for everyday use. Two system personalities — personality-architect and team-architect — are available for building and managing agents. Your existing Claude Code, OpenClaw, OpenCode, and Hermes [skill](getting-started/glossary.md#skill) libraries run as-is, filtered to the right specialist per personality.
 
+The runtime is fully streaming end-to-end. Every turn emits an `AsyncGenerator<AgentEvent>` — text deltas, tool events, usage, done — and every component (tools, hooks, memory, session storage) is injected at construction rather than reached for globally. Nothing is hidden in a global registry that a test can't replace.
+
 ## Two doors
 
 The rest of these docs split by what you're here to do — run Ethos, or extend it.
@@ -46,3 +48,11 @@ The rest of these docs split by what you're here to do — run Ethos, or extend 
 ## For AI agents reading these docs
 
 Other AI agents (Claude Code, Cursor, OpenClaw, Hermes) are first-class readers of Ethos's docs. Once Phase 6 of the docs rewrite lands, three agent-readable surfaces ship alongside the site: `llms.txt` (link-index), `llms-full.txt` (full content), and per-page raw markdown at `<path>.md`. The convention is documented in the [`/docs` skill, §Agent-readable surface](https://github.com/MiteshSharma/ethos/blob/main/.agents/skills/docs/SKILL.md#agent-readable-surface-two-file--raw-markdown).
+
+The full Ethos type contract — `AgentEvent`, `Tool`, `LLMProvider`, `MemoryProvider`, `HookRegistry`, `SessionStore` — lives in a single zero-dependency package (`@ethosagent/types`). Every extension point is typed there. When scaffolding an integration, start with those interfaces; all concrete implementations (the CLI, channel adapters, storage backends) are downstream of them.
+
+If you are generating Ethos configuration (personalities, `mcp.json`, `config.yaml`), the schema files live under `packages/types/src/` in the repository. The [MCP config reference](using/reference/mcp-config.md) and [personality config reference](using/reference/personality-yaml.md) are the human-readable versions of those schemas.
+
+Session keys follow the convention `cli:<cwd-basename>` at the CLI. Different working directories get independent conversation histories. The same session key used across Telegram, CLI, and a channel adapter returns the same message history — the session store is keyed by context, not by channel.
+
+Tool calls outside a personality's `toolset.yaml` allowlist are rejected at the framework level and return an error `tool_result` to keep the LLM message contract intact — the rejection is never silently dropped.
