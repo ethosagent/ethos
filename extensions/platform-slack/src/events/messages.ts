@@ -148,7 +148,7 @@ export function registerMessageEvents(
     if (result.envelope && triage.backfillState) {
       const channelId = result.envelope.chatId;
       const threadTs = result.envelope.threadId;
-      if (!triage.backfillState.hasDone(channelId, threadTs)) {
+      if (threadTs && !triage.backfillState.hasDone(channelId, threadTs)) {
         const priorContext = await fetchSlackHistory(app.client, channelId, threadTs, triggeringTs);
         await triage.backfillState.mark(channelId, threadTs);
         if (priorContext) {
@@ -165,7 +165,7 @@ export function registerMessageEvents(
     if (result.envelope && triage.backfillState) {
       const channelId = result.envelope.chatId;
       const threadTs = result.envelope.threadId;
-      if (!triage.backfillState.hasDone(channelId, threadTs)) {
+      if (threadTs && !triage.backfillState.hasDone(channelId, threadTs)) {
         const priorContext = await fetchSlackHistory(app.client, channelId, threadTs, triggeringTs);
         await triage.backfillState.mark(channelId, threadTs);
         if (priorContext) {
