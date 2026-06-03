@@ -38,7 +38,7 @@ const MCP_COOKIE_MAX_AGE = 600; // 10 minutes
  * Centralising the separator here means a regression breaks every MCP path
  * at once, which the mcp/cancel route test catches.
  */
-export function mcpRpcPath(procedure: 'start' | 'cancel'): string {
+export function mcpRpcPath(procedure: 'start' | 'cancel' | 'reconnect'): string {
   return `/rpc/mcp/${procedure}`;
 }
 
@@ -107,7 +107,7 @@ export function rpcRoutes(opts: RpcRoutesOptions) {
     // the body after the handler consumes the original.
     const path = new URL(c.req.url).pathname;
     let startReqClone: Request | undefined;
-    if (path === mcpRpcPath('start')) {
+    if (path === mcpRpcPath('start') || path === mcpRpcPath('reconnect')) {
       startReqClone = c.req.raw.clone();
     }
 
@@ -138,19 +138,22 @@ export function rpcRoutes(opts: RpcRoutesOptions) {
 
     // mcp.start — set cookie with `<state>.<personalityId>` so
     // complete/status can recover both from the HttpOnly cookie.
-    if (path === mcpRpcPath('start') && response.ok) {
+    if ((path === mcpRpcPath('start') || path === mcpRpcPath('reconnect')) && response.ok) {
       try {
         const cloned = response.clone();
         const body = await cloned.json();
-        const state: unknown = body?.state;
-        if (body?.ok === true && typeof state === 'string') {
+        // oRPC wraps the payload as {"json":{...}} on the wire.
+        const payload = body?.json ?? body;
+        const state: unknown = payload?.state;
+        if (payload?.ok === true && typeof state === 'string') {
           // Read personalityId from the cloned request body.
           let reqPersonalityId = '';
           if (startReqClone) {
             try {
               const reqBody = await startReqClone.json();
-              if (typeof reqBody?.personalityId === 'string') {
-                reqPersonalityId = reqBody.personalityId;
+              const reqPayload = reqBody?.json ?? reqBody;
+              if (typeof reqPayload?.personalityId === 'string') {
+                reqPersonalityId = reqPayload.personalityId;
               }
             } catch {
               /* best-effort */
@@ -159,14 +162,19 @@ export function rpcRoutes(opts: RpcRoutesOptions) {
           const cookieValue = reqPersonalityId ? `${state}.${reqPersonalityId}` : String(state);
           const headers = new Headers(response.headers);
           const secure = c.req.url.startsWith('https');
+          // Clear any stale cookie at the old Path=/rpc scope to avoid conflicts.
+          headers.append(
+            'Set-Cookie',
+            `${MCP_PENDING_COOKIE}=; HttpOnly; SameSite=Lax; Path=/rpc; Max-Age=0`,
+          );
           headers.append(
             'Set-Cookie',
             [
               `${MCP_PENDING_COOKIE}=${cookieValue}`,
               'HttpOnly',
               secure ? 'Secure' : '',
-              'SameSite=Strict',
-              'Path=/rpc',
+              'SameSite=Lax',
+              'Path=/',
               `Max-Age=${MCP_COOKIE_MAX_AGE}`,
             ]
               .filter(Boolean)
@@ -190,13 +198,13 @@ export function rpcRoutes(opts: RpcRoutesOptions) {
     // observing the terminal `connected` state during the install flow's
     // terminal-retention window. Only an explicit mcp.cancel (user aborted)
     // clears it. A stale cookie after a completed flow is harmless — it is
-    // HttpOnly, SameSite=Strict, scoped to Path=/rpc, gets overwritten by
+    // HttpOnly, SameSite=Lax, scoped to Path=/rpc, gets overwritten by
     // the next mcp.start, and the server-side flow state self-expires.
     if (path === mcpRpcPath('cancel')) {
       const headers = new Headers(response.headers);
       headers.append(
         'Set-Cookie',
-        `${MCP_PENDING_COOKIE}=; HttpOnly; SameSite=Strict; Path=/rpc; Max-Age=0`,
+        `${MCP_PENDING_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`,
       );
       return new Response(response.body, {
         status: response.status,

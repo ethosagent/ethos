@@ -128,6 +128,7 @@ export interface McpServerConfig {
           registration_endpoint: string;
           client_id_issued_at?: number;
           registration_client_uri?: string;
+          redirect_uri?: string;
         };
       }
     | { type: 'bearer' };
@@ -1294,6 +1295,67 @@ export class McpManager {
         // Token updated but reconnect failed — token is stored, will work on next connect
       }
     });
+  }
+
+  /**
+   * Invalidate cached per-personality OAuth clients for a server after
+   * re-auth so the next `getToolsForPersonality` reconnects with the new token.
+   */
+  invalidatePersonalityClients(serverName: string): void {
+    for (const [key, client] of this._oauthClients) {
+      if (key.endsWith(`::${serverName}`)) {
+        client.disconnect().catch(() => {});
+        this._oauthClients.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Invalidate the cached per-personality OAuth client for `serverName` and
+   * immediately reconnect it with the fresh token. Notifies the tool registry
+   * (via `_onToolsChanged`) so the running agent session picks up the new tools
+   * without a restart.
+   *
+   * Safety: if the reconnect fails (no tools returned for this server), the
+   * existing tool registrations are left intact — a failed reconnect must not
+   * silently de-register working tools.
+   */
+  async reconnectPersonality(serverName: string, personalityId: string): Promise<void> {
+    const prefix = `mcp__${serverName}__`;
+    const oldNames = this._tools.filter((t) => t.name.startsWith(prefix)).map((t) => t.name);
+    const key = `${personalityId}::${serverName}`;
+
+    // Evict the stale client so getToolsForPersonality creates a fresh one.
+    // Keep a reference for rollback in case the reconnect fails.
+    const prevClient = this._oauthClients.get(key);
+    if (prevClient) {
+      this._oauthClients.delete(key);
+    }
+
+    // Reconnect with the new token and get the tool list.
+    const newTools = await this.getToolsForPersonality(personalityId);
+    const added = newTools.filter((t) => t.name.startsWith(prefix));
+
+    if (added.length > 0) {
+      // Reconnect succeeded — update the registry and clean up the old client.
+      if (this._onToolsChanged) {
+        this._onToolsChanged(added, oldNames);
+      }
+      if (prevClient) {
+        prevClient.disconnect().catch(() => {});
+      }
+    } else {
+      // Reconnect returned no tools for this server (connection failed).
+      // Restore the previous client so the old tools remain usable; do NOT
+      // call _onToolsChanged, which would de-register them.
+      if (prevClient && !this._oauthClients.has(key)) {
+        this._oauthClients.set(key, prevClient);
+      }
+      this.logger.warn(
+        `[ethos] MCP reconnect returned no tools for '${serverName}' (personality '${personalityId}') — keeping existing connection`,
+        { component: 'tools-mcp', server: serverName, personality: personalityId },
+      );
+    }
   }
 
   /**

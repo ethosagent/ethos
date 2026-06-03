@@ -38,7 +38,7 @@ export async function buildAgentLoop(
   const { dataDir, log } = wiringCtx;
   const { infra, toolsResult, pluginsResult, llm, profile } = deps;
   const { memoryProviders, personalities, hooks, sessionCompose, tools } = infra;
-  const { gatewaySendRef, injectors } = toolsResult;
+  const { gatewaySendRef, injectors, mcpManager } = toolsResult;
   const {
     pluginLoader,
     pluginRegistries,
@@ -333,6 +333,7 @@ export async function buildAgentLoop(
   return {
     loop,
     toolRegistry: tools,
+    mcpManager,
     setMessagingSend: (fn) => {
       ref.fn = fn;
     },

@@ -9,6 +9,7 @@ import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { FsStorage } from '@ethosagent/storage-fs';
+import type { McpManager } from '@ethosagent/tools-mcp';
 import { EthosError, type ToolRegistry } from '@ethosagent/types';
 import { type ChatService, createWebApi, WebTokenRepository } from '@ethosagent/web-api';
 import {
@@ -17,10 +18,10 @@ import {
   createSessionStore,
   IdentityMap,
 } from '@ethosagent/wiring';
-import { type EthosConfig, ethosDir } from '../config';
+import { type EthosConfig, ethosDir, readConfig } from '../config';
 import { emitReady } from '../logger';
 import { notifyReady, startWatchdog } from '../sd-notify';
-import { createAgentLoop, createTeamAgentLoop } from '../wiring';
+import { createAgentLoop, createTeamAgentLoop, getSecretsResolver, getStorage } from '../wiring';
 import { parseFlagValue, parsePort } from './serve-helpers';
 import { listenWithFallback } from './serve-listen';
 
@@ -35,10 +36,94 @@ const ACP_PORT_DEFAULT = 3001;
 const WEB_PORT_DEFAULT = 3000;
 const WEB_PORT_FALLBACK_ATTEMPTS = 5;
 
-export async function runServe(args: string[], config: EthosConfig): Promise<void> {
+export async function runServe(args: string[], config: EthosConfig | null): Promise<void> {
   const acpPort = parsePort(parseFlagValue(args, ['--port']), ACP_PORT_DEFAULT);
   const webPort = parsePort(parseFlagValue(args, ['--web-port']), WEB_PORT_DEFAULT);
   const webHost = parseFlagValue(args, ['--web-host']) ?? process.env.ETHOS_WEB_HOST ?? '127.0.0.1';
+
+  const dir = ethosDir();
+
+  // Onboarding mode: no config yet — start the web server with a stub loop
+  // so the UI can run the onboarding wizard.
+  if (config === null) {
+    const session = createSessionStore({ dataDir: dir });
+    const personalities = await createPersonalityRegistry({ userPersonalitiesDir: dir });
+    await personalities.loadFromDirectory(join(dir, 'personalities'));
+    const identityMap = new IdentityMap({ storage: new FsStorage(), dataDir: dir });
+    // Lazy loader: stays as a stub until onboarding writes config, then
+    // boots the real agent loop on the first chat request and caches it.
+    let realLoop: AgentLoop | null = null;
+    const stubLoop = {
+      run: async function* (text: string, opts: Record<string, unknown> = {}) {
+        if (!realLoop) {
+          const secrets = await getSecretsResolver();
+          const loaded = await readConfig(getStorage(), secrets);
+          if (loaded) {
+            const { loop } = await createAgentLoop(loaded);
+            realLoop = loop;
+          }
+        }
+        if (realLoop) {
+          yield* realLoop.run(text, opts as never);
+        } else {
+          yield {
+            type: 'error' as const,
+            error: 'Setup required — complete onboarding first.',
+            code: 'SETUP_REQUIRED',
+          };
+        }
+      },
+    } as unknown as AgentLoop;
+
+    const webDist = locateWebDist(parseFlagValue(args, ['--web-dist']));
+    const created = createWebApi({
+      dataDir: dir,
+      sessionStore: session,
+      memoryProvider: createMemoryProvider({ dataDir: dir }),
+      identityMap,
+      agentLoop: stubLoop,
+      personalities,
+      chatDefaults: { model: 'setup-required', provider: 'setup-required' },
+      ...(webDist ? { webDist } : {}),
+    });
+    const webApp = created.app;
+    const tokens = new WebTokenRepository({ dataDir: dir });
+    const token = await tokens.getOrCreate();
+    const { server, port } = await listenWithFallback(
+      webApp,
+      webPort,
+      WEB_PORT_FALLBACK_ATTEMPTS,
+      webHost,
+    );
+    const displayHost = webHost === '0.0.0.0' ? 'localhost' : webHost;
+    console.log(`ethos web UI (onboarding mode) listening on http://${displayHost}:${port}`);
+    if (webDist) {
+      console.log(`  open: http://${displayHost}:${port}/auth/exchange?t=${token}`);
+    } else {
+      console.log(`  auth token: ${token}`);
+      console.log('  no SPA build found — run `pnpm --filter @ethosagent/web dev` for HMR,');
+      console.log(`    then visit http://localhost:5173/auth/exchange?t=${token}`);
+    }
+
+    emitReady('serve');
+    notifyReady();
+    const stopWatchdog = startWatchdog();
+
+    const webShutdown = () =>
+      new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    const cleanup = async () => {
+      if (stopWatchdog) stopWatchdog();
+      await webShutdown();
+      process.exit(0);
+    };
+    process.on('SIGTERM', () => void cleanup());
+    process.on('SIGINT', () => void cleanup());
+
+    await new Promise(() => {});
+    return;
+  }
 
   const personalityOverride = parseFlagValue(args, ['--personality']);
   if (personalityOverride) config = { ...config, personality: personalityOverride };
@@ -60,11 +145,11 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     | undefined;
   const meshName = parseFlagValue(args, ['--mesh']) ?? 'default';
 
-  const dir = ethosDir();
   const loopProfile = 'web';
 
   let loop: AgentLoop;
   let toolRegistry: ToolRegistry | undefined;
+  let mcpManager: McpManager | undefined;
   let activeMeshName: string;
   let activePersonality: string;
   let setOnSkillProposed:
@@ -143,6 +228,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     );
     loop = result.loop;
     toolRegistry = result.toolRegistry;
+    mcpManager = result.mcpManager;
     setOnSkillProposed = result.setOnSkillProposed;
   } else if (teamFlag) {
     // Chat UX: `ethos serve --team <name>` → run as the team's coordinator.
@@ -171,6 +257,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     });
     loop = result.loop;
     toolRegistry = result.toolRegistry;
+    mcpManager = result.mcpManager;
     setOnSkillProposed = result.setOnSkillProposed;
   }
   const session = createSessionStore({ dataDir: dir });
@@ -253,6 +340,7 @@ export async function runServe(args: string[], config: EthosConfig): Promise<voi
     ...(skillsCatalogDir ? { catalogDir: skillsCatalogDir } : {}),
     ...(cronScheduler ? { cronScheduler } : {}),
     ...(toolRegistry ? { toolRegistry } : {}),
+    ...(mcpManager ? { mcpManager } : {}),
     apiKeys,
     listTeams: async () => listRegisteredTeams(dir),
     ...(webDist ? { webDist } : {}),

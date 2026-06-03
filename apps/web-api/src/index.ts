@@ -61,8 +61,9 @@ export interface CreateWebApiOptions {
    *  Optional — when omitted, `memory.listUsers` returns empty. */
   identityMap?: IdentityMap;
   /** Agent loop the chat surface drives. Must already be wired with tools,
-   *  hooks, providers etc. (typically via `@ethosagent/wiring`). */
-  agentLoop: AgentLoop;
+   *  hooks, providers etc. (typically via `@ethosagent/wiring`). When omitted
+   *  (onboarding mode), a stub loop that yields a SETUP_REQUIRED error is used. */
+  agentLoop?: AgentLoop;
   /** Personality registry — shared with the loop so hot-reloads (mtime cache)
    *  reach both surfaces. Must be a `FilePersonalityRegistry` so the web-api's
    *  Personalities tab can drive its CRUD methods (create / update / delete /
@@ -179,6 +180,18 @@ export interface CreateWebApiResult {
 }
 
 export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
+  const agentLoop: AgentLoop =
+    opts.agentLoop ??
+    ({
+      run: async function* () {
+        yield {
+          type: 'error' as const,
+          error: 'Setup required — complete onboarding first.',
+          code: 'SETUP_REQUIRED',
+        };
+      },
+    } as unknown as AgentLoop);
+
   // --- Repositories (data access only) ---
   const tokens = new WebTokenRepository({ dataDir: opts.dataDir });
   const sessionsRepo = new SessionsRepository(opts.sessionStore);
@@ -260,11 +273,11 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       : 'http://localhost:3000/oauth/callback',
   });
   const platformsService = new PlatformsService({ repo: platformsRepo });
-  const labService = new LabService({ dataDir: opts.dataDir, loop: opts.agentLoop });
+  const labService = new LabService({ dataDir: opts.dataDir, loop: agentLoop });
   // F3+F4 — drives `POST /v1/chat/completions`. Shares the AgentLoop with
   // the web chat surface so personality reloads + tool wiring reach both.
   const completionsService = new CompletionsService({
-    loop: opts.agentLoop,
+    loop: agentLoop,
     sessions: completionsRepo,
     defaults: opts.chatDefaults,
   });
@@ -275,7 +288,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // an AgentBridge per session forever (memory leak otherwise).
   const buffer = new SessionStreamBuffer<SseEvent>();
   const chatService = new ChatService({
-    loop: opts.agentLoop,
+    loop: agentLoop,
     sessions: chatRepo,
     buffer,
     defaults: opts.chatDefaults,
@@ -307,7 +320,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // channel approvals use, and broadcast the resolution so the card collapses
   // on every tab. A boot sweep clears rows that expired while the process
   // was down.
-  const clarifyBridge = opts.agentLoop.clarifyBridge;
+  const clarifyBridge = agentLoop.clarifyBridge;
   if (clarifyBridge) {
     clarifyBridge.setPresenter((req) => {
       chatService.broadcast(req.sessionId, {
@@ -357,7 +370,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // gatekeeper for dangerous calls. Without a predicate (e.g. tests) every
   // tool call passes through unattended.
   if (opts.dangerPredicate) {
-    opts.agentLoop.hooks.registerModifying(
+    agentLoop.hooks.registerModifying(
       'before_tool_call',
       createWebApprovalHook({
         approvals: approvalsService,
@@ -444,8 +457,10 @@ function createPassiveMcpManager(): McpManager {
     getTools: () => [],
     getToolsForPersonality: async () => [],
     listServers: () => [],
-    addServer: async () => notConfigured(),
+    addServer: async () => {},
     removeServer: async () => notConfigured(),
+    invalidatePersonalityClients: () => {},
+    reconnectPersonality: async () => {},
   } as unknown as McpManager;
 }
 

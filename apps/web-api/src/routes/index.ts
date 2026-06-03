@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Storage } from '@ethosagent/types';
 import { Hono } from 'hono';
+import { getCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
 import type { ChatService } from '../features/chat/service';
 import type { SessionsService } from '../features/sessions/service';
@@ -230,6 +231,66 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   // accessible. Must be before the static SPA mount (which owns `/*`).
   app.use('/setup/whatsapp/*', authMiddleware({ tokens: opts.tokens }));
   app.route('/setup/whatsapp', setupWhatsAppRoutes());
+
+  // MCP OAuth callback — server-side handler so the popup never needs to load
+  // the full SPA. Reads code+state, calls mcp.complete(), returns a tiny HTML
+  // page that posts the result to the opener and closes.
+  app.get('/oauth/callback', async (c) => {
+    const code = c.req.query('code');
+    const state = c.req.query('state');
+    const error = c.req.query('error');
+    const errorDescription = c.req.query('error_description');
+
+    // Parse the pending-state cookie (format: `<state>` or `<state>.<personalityId>`)
+    const rawCookie = getCookie(c, 'ethos_mcp_pending');
+    let pendingState: string | undefined;
+    if (rawCookie) {
+      const dot = rawCookie.indexOf('.');
+      pendingState = dot !== -1 ? rawCookie.slice(0, dot) : rawCookie;
+    }
+
+    let msg: Record<string, string | undefined>;
+
+    if (error) {
+      const detail = errorDescription ? `${error}: ${errorDescription}` : error;
+      msg = { type: 'ethos:mcp_oauth_error', state: state ?? pendingState, code: error, detail };
+    } else if (!code || !state) {
+      msg = {
+        type: 'ethos:mcp_oauth_error',
+        state: pendingState,
+        code: 'invalid_callback',
+        detail: 'Missing code or state parameter',
+      };
+    } else {
+      const result = await opts.services.mcp.complete({ code, state }, pendingState);
+      if ('ok' in result && result.ok === false) {
+        const r = result as { code: string; detail?: string };
+        msg = { type: 'ethos:mcp_oauth_error', state, code: r.code, detail: r.detail };
+      } else {
+        const r = result as { serverName: string };
+        msg = { type: 'ethos:mcp_oauth_success', state, serverName: r.serverName };
+      }
+    }
+
+    const msgJson = JSON.stringify(msg);
+    const html = `<!DOCTYPE html>
+<html><head><title>Ethos Auth</title></head><body>
+<script>
+(function(){
+  var msg = ${msgJson};
+  if (window.opener) {
+    try { window.opener.postMessage(msg, '*'); } catch(e) {}
+    setTimeout(function(){ window.close(); }, 500);
+  } else {
+    window.location.replace('/');
+  }
+})();
+</script>
+<p>Completing authorization&hellip;</p>
+</body></html>`;
+
+    return c.html(html);
+  });
 
   // Static SPA mount (must be LAST — it owns `/*` so any unmatched path
   // falls through to index.html). Skipped when `webDist` isn't supplied;

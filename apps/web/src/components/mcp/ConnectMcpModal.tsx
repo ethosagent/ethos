@@ -31,6 +31,7 @@ export function ConnectMcpModal({
   const [errorMsg, setErrorMsg] = useState('');
   const popupRef = useRef<Window | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollingStartRef = useRef<number>(0);
 
   // Fetch global server registry
   const { data: listData, isLoading: listLoading } = useQuery({
@@ -60,6 +61,7 @@ export function ConnectMcpModal({
 
   const startPolling = useCallback(() => {
     if (pollingRef.current) clearInterval(pollingRef.current);
+    pollingStartRef.current = Date.now();
     pollingRef.current = setInterval(async () => {
       try {
         const result = await rpc.mcp.status();
@@ -71,9 +73,11 @@ export function ConnectMcpModal({
           setErrorMsg(result.error ?? 'Connection failed');
           setStep('select');
         } else if (result.status === 'expired') {
-          stopPolling();
-          setErrorMsg('Authorization session expired. Please retry.');
-          setStep('select');
+          if (Date.now() - pollingStartRef.current >= 5 * 60 * 1000) {
+            stopPolling();
+            setErrorMsg('Authorization session expired. Please retry.');
+            setStep('select');
+          }
         }
       } catch {
         // Keep polling
@@ -86,7 +90,12 @@ export function ConnectMcpModal({
     if (step !== 'oauth') return;
 
     function handleMessage(event: MessageEvent) {
-      if (event.origin !== window.location.origin) return;
+      try {
+        const h = new URL(event.origin).hostname;
+        if (h !== 'localhost' && h !== '127.0.0.1') return;
+      } catch {
+        return;
+      }
       const msg = event.data as Record<string, unknown> | null;
       if (!msg || typeof msg !== 'object') return;
 

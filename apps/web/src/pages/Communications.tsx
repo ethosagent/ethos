@@ -1081,12 +1081,17 @@ function AccessControlSection({ platform }: { platform: string }) {
                     <Button onClick={addId}>Add</Button>
                   </Space.Compact>
                 </div>
-
-                <Button type="primary" loading={saveMut.isPending} onClick={() => saveMut.mutate()}>
-                  Save access control
-                </Button>
               </>
             )}
+
+            <Button
+              type="primary"
+              style={{ marginTop: 16 }}
+              loading={saveMut.isPending}
+              onClick={() => saveMut.mutate()}
+            >
+              Save access control
+            </Button>
 
             {saved && (
               <Alert

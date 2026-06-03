@@ -138,6 +138,7 @@ interface PendingSession {
   status: InstallFlowStatus;
   errorReason?: string;
   connectedAt?: Date;
+  reauth?: boolean;
 }
 
 /**
@@ -221,13 +222,76 @@ export class McpInstallFlow {
     // name is an in-flight collision too.
     const existing = await this.mcpJsonStore.get(serverName);
     if (existing) {
+      const auth = existing.auth;
+      if (
+        auth?.type === 'oauth2' &&
+        auth.client_id &&
+        auth.authorization_endpoint &&
+        auth.token_endpoint &&
+        auth.dcr?.registration_endpoint
+      ) {
+        // Server is already registered — this is a re-auth flow. Reuse the
+        // stored client_id and endpoints; skip discovery and DCR.
+        const redirectUri = auth.dcr?.redirect_uri ?? opts.redirectUri ?? this.redirectUri;
+        const codeVerifier = generateCodeVerifier();
+        const codeChallenge = generateCodeChallenge(codeVerifier);
+        const state = randomBytes(32).toString('base64url');
+
+        const oauthConfig: OAuthConfig = {
+          authorization_endpoint: auth.authorization_endpoint,
+          token_endpoint: auth.token_endpoint,
+          client_id: auth.client_id,
+        };
+        if (auth.revocation_endpoint) oauthConfig.revocation_endpoint = auth.revocation_endpoint;
+        if (auth.scopes && auth.scopes.length > 0) oauthConfig.scopes = auth.scopes;
+
+        const discoveredMetadata: DiscoveredOAuthMetadata = {
+          authorization_endpoint: auth.authorization_endpoint,
+          token_endpoint: auth.token_endpoint,
+          registration_endpoint: auth.dcr.registration_endpoint,
+          ...(auth.revocation_endpoint ? { revocation_endpoint: auth.revocation_endpoint } : {}),
+          ...(auth.scopes ? { scopes_supported: auth.scopes } : {}),
+        };
+
+        const authorizeUrl = buildAuthorizationUrl(oauthConfig, redirectUri, state, codeChallenge);
+        const createdAt = this.now();
+        const expiresAt = new Date(createdAt.getTime() + this.pendingTtlMs);
+
+        const session: PendingSession = {
+          state,
+          mcpUrl: existing.url ?? opts.mcpUrl,
+          serverName,
+          redirectUri,
+          codeVerifier,
+          clientId: auth.client_id,
+          tokenEndpoint: auth.token_endpoint,
+          authorizationEndpoint: auth.authorization_endpoint,
+          dcrMetadata: {
+            registration_endpoint: auth.dcr.registration_endpoint,
+            ...(auth.dcr.client_id_issued_at !== undefined
+              ? { client_id_issued_at: auth.dcr.client_id_issued_at }
+              : {}),
+            ...(auth.dcr.registration_client_uri !== undefined
+              ? { registration_client_uri: auth.dcr.registration_client_uri }
+              : {}),
+          },
+          oauthConfig,
+          discoveredMetadata,
+          createdAt,
+          expiresAt,
+          status: 'pending',
+          reauth: true,
+          ...(opts.personalityId !== undefined ? { personalityId: opts.personalityId } : {}),
+          ...(auth.scopes && auth.scopes.length > 0 ? { scopes: auth.scopes } : {}),
+        };
+        this.pending.set(state, session);
+        return { state, authorizeUrl, serverName, expiresAt };
+      }
+
       throw new EthosError({
         code: 'INVALID_INPUT',
         cause: `MCP server '${serverName}' already exists in mcp.json`,
         action: 'Pick a different `name`, or remove the existing entry first.',
-        // `kind: 'name_taken'` is a wire-stable discriminator the web-api
-        // service uses to map this to a UI error code. Kept in `details` so
-        // it does not collide with EthosError's typed `code` field.
         details: { serverName, kind: 'name_taken' },
       });
     }
@@ -294,7 +358,7 @@ export class McpInstallFlow {
     const createdAt = this.now();
     const expiresAt = new Date(createdAt.getTime() + this.pendingTtlMs);
 
-    const dcrMetadata = buildDcrPersistedShape(registrationEndpoint, dcrResult);
+    const dcrMetadata = buildDcrPersistedShape(registrationEndpoint, dcrResult, redirectUri);
 
     // Persist the placeholder mcp.json entry BEFORE storing the pending
     // session — once written it becomes the rollback target. The placeholder
@@ -394,7 +458,7 @@ export class McpInstallFlow {
       session.status = 'error';
       session.connectedAt = this.now();
       session.errorReason = err instanceof Error ? err.message : String(err);
-      await this.rollbackPlaceholder(session.serverName);
+      if (!session.reauth) await this.rollbackPlaceholder(session.serverName);
       this.pending.delete(opts.state);
       throw err;
     }
@@ -411,24 +475,31 @@ export class McpInstallFlow {
       session.status = 'error';
       session.connectedAt = this.now();
       session.errorReason = err instanceof Error ? err.message : String(err);
-      await this.rollbackPlaceholder(session.serverName);
+      if (!session.reauth) await this.rollbackPlaceholder(session.serverName);
       this.pending.delete(opts.state);
       throw err;
     }
 
-    // Step 3 — call mcpManager.addServer. All-or-nothing per the plan: if
-    // connect or listTools fails, revoke tokens + roll back placeholder.
-    try {
-      const serverConfig = buildPersistedConfigFromSession(session);
-      await this.mcpManager.addServer(serverConfig);
-    } catch (err) {
-      await this.bestEffortDeleteTokens(session.serverName, session.personalityId);
-      session.status = 'error';
-      session.connectedAt = this.now();
-      session.errorReason = err instanceof Error ? err.message : String(err);
-      await this.rollbackPlaceholder(session.serverName);
-      this.pending.delete(opts.state);
-      throw err;
+    // Step 3 — add/reconnect the server in the MCP manager.
+    // For re-auth, the server is already registered — skip addServer (it throws for
+    // duplicates) and instead evict the stale per-personality client so the next
+    // getToolsForPersonality call reconnects with the fresh token.
+    if (session.reauth) {
+      await this.mcpManager.reconnectPersonality(session.serverName, session.personalityId ?? '');
+    } else {
+      // New server: all-or-nothing. If connect or listTools fails, roll back tokens + placeholder.
+      try {
+        const serverConfig = buildPersistedConfigFromSession(session);
+        await this.mcpManager.addServer(serverConfig);
+      } catch (err) {
+        await this.bestEffortDeleteTokens(session.serverName, session.personalityId);
+        session.status = 'error';
+        session.connectedAt = this.now();
+        session.errorReason = err instanceof Error ? err.message : String(err);
+        await this.rollbackPlaceholder(session.serverName);
+        this.pending.delete(opts.state);
+        throw err;
+      }
     }
 
     // Mark terminal. Keep the session in the map for terminalRetentionMs so
@@ -467,7 +538,7 @@ export class McpInstallFlow {
     // Only roll back the placeholder for sessions that never reached a
     // terminal-connected state. A successfully-connected server is operator-
     // owned at this point and `cancel` must not silently uninstall it.
-    if (session.status === 'pending') {
+    if (session.status === 'pending' && !session.reauth) {
       await this.rollbackPlaceholder(session.serverName);
     }
     this.pending.delete(state);
@@ -627,16 +698,19 @@ function deriveServerName(mcpUrl: string): string {
 function buildDcrPersistedShape(
   registrationEndpoint: string,
   dcr: DcrResponse,
+  redirectUri: string,
 ): {
   registration_endpoint: string;
   client_id_issued_at?: number;
   registration_client_uri?: string;
+  redirect_uri?: string;
 } {
   const shape: {
     registration_endpoint: string;
     client_id_issued_at?: number;
     registration_client_uri?: string;
-  } = { registration_endpoint: registrationEndpoint };
+    redirect_uri?: string;
+  } = { registration_endpoint: registrationEndpoint, redirect_uri: redirectUri };
   if (dcr.client_id_issued_at !== undefined) shape.client_id_issued_at = dcr.client_id_issued_at;
   if (dcr.registration_client_uri !== undefined) {
     shape.registration_client_uri = dcr.registration_client_uri;

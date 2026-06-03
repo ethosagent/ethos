@@ -42,8 +42,9 @@ export function AddMcpModal({ open, onClose }: Props) {
   const [stdioName, setStdioName] = useState('');
   const [resultLimit, setResultLimit] = useState<number | null>(null);
 
-  // Start mutation — calls mcp.start to trigger discovery + definition write,
-  // then cancels the pending session (we only want the definition, not auth).
+  // Start mutation — calls mcp.start to trigger discovery + definition write.
+  // The placeholder written by mcp.start() persists in mcp.json as a valid
+  // registration; auth happens later via the ConnectMcpModal OAuth flow.
   const startMutation = useMutation({
     mutationFn: (input: { url: string; name?: string }) => rpc.mcp.start(input),
     onSuccess: (result) => {
@@ -53,9 +54,8 @@ export function AddMcpModal({ open, onClose }: Props) {
         return;
       }
       setServerName(result.serverName);
-      // Cancel the pending session — we don't want to open the auth flow.
-      rpc.mcp.cancel({ state: result.state }).catch(() => {});
       queryClient.invalidateQueries({ queryKey: ['plugins'] });
+      queryClient.invalidateQueries({ queryKey: ['mcp', 'list'] });
       setStep('done');
     },
     onError: (err) => {

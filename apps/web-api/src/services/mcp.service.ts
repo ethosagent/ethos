@@ -67,7 +67,7 @@ export class McpService {
       } = { mcpUrl: input.url };
       if (input.personalityId !== undefined) startOpts.personalityId = input.personalityId;
       if (input.name !== undefined) startOpts.name = input.name;
-      if (redirectUri !== undefined) startOpts.redirectUri = redirectUri;
+      if (redirectUri !== undefined) startOpts.redirectUri = `${redirectUri}/oauth/callback`;
       const result = await this.flow.start(startOpts);
       return {
         ok: true as const,

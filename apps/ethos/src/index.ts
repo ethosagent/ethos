@@ -472,7 +472,12 @@ try {
     }
 
     case 'serve': {
-      const config = await loadRequiredConfig();
+      const secrets = await getSecretsResolver();
+      const config = (await readConfig(getStorage(), secrets)) ?? null;
+      if (config?.logs?.rotation) {
+        const { setRotationConfig } = await import('./error-log');
+        setRotationConfig(config.logs.rotation);
+      }
       await runServe(args.slice(1), config);
       break;
     }

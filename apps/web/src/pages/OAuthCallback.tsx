@@ -1,16 +1,14 @@
 import { Alert, Button, Spin, Typography } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { z } from 'zod';
 import { rpc } from '../rpc';
 
-const OAuthPayloadSchema = z.object({
-  code: z.string().nullish(),
-  state: z.string().nullish(),
-  error: z.string().nullish(),
-  error_description: z.string().nullish(),
-});
-type OAuthPayload = z.infer<typeof OAuthPayloadSchema>;
+interface OAuthPayload {
+  code?: string | null;
+  state?: string | null;
+  error?: string | null;
+  error_description?: string | null;
+}
 
 type Status = 'completing' | 'success' | 'error';
 
@@ -25,23 +23,13 @@ export function OAuthCallback() {
     if (didRun.current) return;
     didRun.current = true;
 
-    const raw = sessionStorage.getItem('ethos:mcp_oauth_callback');
-    sessionStorage.removeItem('ethos:mcp_oauth_callback');
-
-    if (!raw) {
-      setStatus('error');
-      setErrorMsg('OAuth callback parameters missing — please retry from the UI.');
-      return;
-    }
-
-    let payload: OAuthPayload;
-    try {
-      payload = OAuthPayloadSchema.parse(JSON.parse(raw));
-    } catch {
-      setStatus('error');
-      setErrorMsg('Failed to parse OAuth callback data.');
-      return;
-    }
+    const searchParams = new URLSearchParams(window.location.search);
+    const payload: OAuthPayload = {
+      code: searchParams.get('code'),
+      state: searchParams.get('state'),
+      error: searchParams.get('error'),
+      error_description: searchParams.get('error_description'),
+    };
 
     if (payload.error) {
       // Upstream provider returned an error

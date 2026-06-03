@@ -41,6 +41,7 @@ function McpSection({
   const [oauthState, setOauthState] = useState('');
   const popupRef = useRef<Window | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollingStartRef = useRef<number>(0);
 
   const { data, isLoading } = useQuery({
     queryKey: ['mcp', 'personalityServers', personalityId],
@@ -89,7 +90,7 @@ function McpSection({
   });
 
   const reconnectMut = useMutation({
-    mutationFn: (input: { name: string }) => rpc.mcp.reconnect(input),
+    mutationFn: (input: { name: string; personalityId?: string }) => rpc.mcp.reconnect(input),
     onSuccess: (result, variables) => {
       if (!result.ok) {
         notification.error({
@@ -129,6 +130,7 @@ function McpSection({
 
   const startPolling = useCallback(() => {
     if (pollingRef.current) clearInterval(pollingRef.current);
+    pollingStartRef.current = Date.now();
     pollingRef.current = setInterval(async () => {
       try {
         const result = await rpc.mcp.status();
@@ -143,9 +145,12 @@ function McpSection({
           setOauthServer(null);
           notification.error({ message: 'Authentication failed', description: result.error });
         } else if (result.status === 'expired') {
-          stopPolling();
-          setOauthServer(null);
-          notification.error({ message: 'Authorization session expired' });
+          if (Date.now() - pollingStartRef.current >= 5 * 60 * 1000) {
+            stopPolling();
+            setOauthServer(null);
+            setOauthState('');
+            notification.error({ message: 'Authorization session expired' });
+          }
         }
       } catch {
         // Keep polling
@@ -158,7 +163,12 @@ function McpSection({
     if (!oauthServer) return;
 
     function handleMessage(event: MessageEvent) {
-      if (event.origin !== window.location.origin) return;
+      try {
+        const h = new URL(event.origin).hostname;
+        if (h !== 'localhost' && h !== '127.0.0.1') return;
+      } catch {
+        return;
+      }
       const msg = event.data as Record<string, unknown> | null;
       if (!msg || typeof msg !== 'object') return;
 
@@ -212,7 +222,7 @@ function McpSection({
   };
 
   const handleAuthenticate = (serverName: string) => {
-    reconnectMut.mutate({ name: serverName });
+    reconnectMut.mutate({ name: serverName, personalityId });
   };
 
   const servers = data?.servers ?? [];

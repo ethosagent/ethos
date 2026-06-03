@@ -225,6 +225,8 @@ export interface ComposeToolsResult {
   injectors: ContextInjector[];
   /** Universal scanner (needed by loadPlugins for plugin skill merging). */
   skillScanner: UniversalScanner;
+  /** McpManager instance — threaded to the web-api so re-auth hits the live manager. */
+  mcpManager: McpManager;
 }
 
 export interface ComposeToolsDeps {
@@ -381,6 +383,16 @@ export async function composeAllTools(
   const mcpTools = await mcpManager.getToolsForPersonality(activePerson.id);
   for (const tool of mcpTools) tools.register(tool);
 
+  // Eagerly connect MCP servers for all other personalities so switching
+  // personalities in a single `ethos serve` process has access to their tools.
+  // (The boot personality's token is tried first above; others follow here.)
+  for (const p of personalities.list()) {
+    if (p.id === activePerson.id) continue;
+    if (!p.mcp_servers?.length) continue;
+    const pTools = await mcpManager.getToolsForPersonality(p.id);
+    for (const tool of pTools) tools.register(tool);
+  }
+
   if (mcpConfig.length > 0) {
     const attached = activePerson.mcp_servers ?? [];
     if (attached.length === 0) {
@@ -507,5 +519,6 @@ export async function composeAllTools(
     skillPool,
     injectors,
     skillScanner,
+    mcpManager,
   };
 }

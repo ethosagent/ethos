@@ -10,6 +10,7 @@ import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import type { TeamRole } from '@ethosagent/tools-kanban';
+import type { McpManager } from '@ethosagent/tools-mcp';
 import type { MessagingSendFn } from '@ethosagent/tools-messaging';
 import type {
   GlobalMemoryStore,
@@ -530,6 +531,9 @@ export { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrou
 export interface CreateAgentLoopResult {
   loop: AgentLoop;
   toolRegistry: ToolRegistry;
+  /** The McpManager instance from tool composition. Pass to createWebApi so
+   *  re-auth via the web UI hits the live manager and updates the tool registry. */
+  mcpManager: McpManager;
   /** Replace the messaging tool's send implementation with the real gateway.
    *  Called from gateway.ts after Gateway construction. Scoped to this loop
    *  instance — multiple loops in the same process are independent. */

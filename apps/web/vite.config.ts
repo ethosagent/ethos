@@ -40,6 +40,9 @@ export default defineConfig({
       },
       '/auth': 'http://localhost:3000',
       '/openapi': 'http://localhost:3000',
+      // OAuth callback — proxy to the API server so the server-side handler
+      // runs regardless of whether the DCR redirect_uri points to :5173 or :3000.
+      '/oauth': 'http://localhost:3000',
     },
   },
   build: {
