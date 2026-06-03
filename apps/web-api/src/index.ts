@@ -227,6 +227,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const personalitiesService = new PersonalitiesService({
     personalities: opts.personalities,
     library: skillsLibrary,
+    secrets,
   });
   const configService = new ConfigService({ config: configRepo });
   const onboardingService = new OnboardingService({

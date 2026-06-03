@@ -1,6 +1,17 @@
 import type { McpPolicy } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { App as AntApp, Button, Result, Spin, Switch, Tag, Tooltip, Typography } from 'antd';
+import {
+  App as AntApp,
+  Button,
+  Input,
+  Modal,
+  Result,
+  Spin,
+  Switch,
+  Tag,
+  Tooltip,
+  Typography,
+} from 'antd';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ConnectMcpModal } from '../components/mcp/ConnectMcpModal';
@@ -39,6 +50,24 @@ function McpSection({
   // OAuth flow state
   const [oauthServer, setOauthServer] = useState<string | null>(null);
   const [oauthState, setOauthState] = useState('');
+  const [testingServer, setTestingServer] = useState<string | null>(null);
+  const [bearerTokenServer, setBearerTokenServer] = useState<string | null>(null);
+  const [bearerTokenInput, setBearerTokenInput] = useState('');
+  const [testResult, setTestResult] = useState<{
+    serverName: string;
+    ok: boolean;
+    tools: { name: string; description?: string }[];
+    /** Raw error message from the thrown exception or the API. */
+    error?: string;
+    /** Classified failure kind — drives the guidance copy in the modal. */
+    errorKind?:
+      | 'auth_missing'
+      | 'auth_rejected'
+      | 'no_tools'
+      | 'timeout'
+      | 'connection_refused'
+      | 'unknown';
+  } | null>(null);
   const popupRef = useRef<Window | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingStartRef = useRef<number>(0);
@@ -117,6 +146,22 @@ function McpSection({
     onError: (err) =>
       notification.error({
         message: 'Authentication failed',
+        description: err instanceof Error ? err.message : String(err),
+      }),
+  });
+
+  const setTokenMut = useMutation({
+    mutationFn: ({ server, token }: { server: string; token: string }) =>
+      rpc.personalities.mcpSetToken({ personalityId, server, token }),
+    onSuccess: () => {
+      setBearerTokenServer(null);
+      setBearerTokenInput('');
+      qc.invalidateQueries({ queryKey: ['mcp', 'personalityServers', personalityId] });
+      notification.success({ message: 'Token saved', placement: 'topRight' });
+    },
+    onError: (err) =>
+      notification.error({
+        message: 'Failed to save token',
         description: err instanceof Error ? err.message : String(err),
       }),
   });
@@ -219,6 +264,44 @@ function McpSection({
       return { ...prev, [serverName]: { ...st, selected } };
     });
     setDirty(true);
+  };
+
+  const handleTest = async (serverName: string) => {
+    setTestingServer(serverName);
+    try {
+      const result = await rpc.mcp.serverTools({ personalityId, serverName });
+      if (result.available && result.tools.length > 0) {
+        setTestResult({ serverName, ok: true, tools: result.tools });
+      } else {
+        const server = data?.servers.find((s) => s.name === serverName);
+        const authMissing = server?.auth_status === 'missing';
+        setTestResult({
+          serverName,
+          ok: false,
+          tools: [],
+          error: authMissing
+            ? 'No authentication token is configured for this server.'
+            : 'Server connected but returned no tools.',
+          errorKind: authMissing ? 'auth_missing' : 'no_tools',
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const lower = msg.toLowerCase();
+      const errorKind =
+        lower.includes('timeout') || lower.includes('timed out')
+          ? 'timeout'
+          : lower.includes('401') || lower.includes('unauthorized')
+            ? 'auth_rejected'
+            : lower.includes('403') || lower.includes('forbidden')
+              ? 'auth_rejected'
+              : lower.includes('econnrefused') || lower.includes('connection refused')
+                ? 'connection_refused'
+                : 'unknown';
+      setTestResult({ serverName, ok: false, tools: [], error: msg, errorKind });
+    } finally {
+      setTestingServer(null);
+    }
   };
 
   const handleAuthenticate = (serverName: string) => {
@@ -331,7 +414,19 @@ function McpSection({
               )}
             </div>
 
-            {server.auth_status === 'missing' ? (
+            {server.auth_status === 'missing' && server.auth_type === 'bearer' ? (
+              <div style={{ paddingLeft: 0, paddingTop: 4 }}>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setBearerTokenInput('');
+                    setBearerTokenServer(server.name);
+                  }}
+                >
+                  Set token
+                </Button>
+              </div>
+            ) : server.auth_status === 'missing' ? (
               <div style={{ paddingLeft: 0, paddingTop: 4 }}>
                 <Button
                   size="small"
@@ -357,6 +452,30 @@ function McpSection({
               </div>
             ) : null}
 
+            {server.auth_status === 'authorized' ? (
+              <div
+                style={{ paddingLeft: 0, paddingTop: 4, marginBottom: 4, display: 'flex', gap: 8 }}
+              >
+                <Button
+                  size="small"
+                  loading={testingServer === server.name}
+                  onClick={() => handleTest(server.name)}
+                >
+                  Test connection
+                </Button>
+                {server.auth_type === 'bearer' ? (
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setBearerTokenInput('');
+                      setBearerTokenServer(server.name);
+                    }}
+                  >
+                    Update token
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
             {server.auth_status === 'authorized' || server.auth_status === 'expired' ? (
               <ServerToolChecklist
                 personalityId={personalityId}
@@ -381,6 +500,135 @@ function McpSection({
         </Button>
       ) : null}
 
+      <Modal
+        open={bearerTokenServer !== null}
+        title={`Bearer Token — ${bearerTokenServer ?? ''}`}
+        onCancel={() => setBearerTokenServer(null)}
+        onOk={() => {
+          if (bearerTokenServer && bearerTokenInput.trim()) {
+            setTokenMut.mutate({ server: bearerTokenServer, token: bearerTokenInput.trim() });
+          }
+        }}
+        okText="Save token"
+        confirmLoading={setTokenMut.isPending}
+        okButtonProps={{ disabled: !bearerTokenInput.trim() }}
+        width={460}
+      >
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 12 }}>
+          Paste the bearer token for this server. It is stored securely and sent as an{' '}
+          <Typography.Text code style={{ fontSize: 11 }}>
+            Authorization: Bearer …
+          </Typography.Text>{' '}
+          header on every request.
+        </Typography.Paragraph>
+        <Input.Password
+          value={bearerTokenInput}
+          onChange={(e) => setBearerTokenInput(e.target.value)}
+          placeholder="Paste bearer token"
+          autoFocus
+        />
+      </Modal>
+      <Modal
+        open={testResult !== null}
+        onCancel={() => setTestResult(null)}
+        footer={
+          <Button type="primary" onClick={() => setTestResult(null)}>
+            Close
+          </Button>
+        }
+        title={`Test Connection — ${testResult?.serverName ?? ''}`}
+        width={520}
+      >
+        {testResult?.ok ? (
+          <div>
+            <Result
+              status="success"
+              title="Connected"
+              subTitle={`${testResult.tools.length} tool${testResult.tools.length === 1 ? '' : 's'} available`}
+              style={{ paddingBlock: 16 }}
+            />
+            <div
+              style={{
+                maxHeight: 280,
+                overflowY: 'auto',
+                border: '1px solid var(--color-border, #f0f0f0)',
+                borderRadius: 6,
+                padding: '8px 12px',
+              }}
+            >
+              {testResult.tools.map((t) => (
+                <div key={t.name} style={{ marginBottom: 6 }}>
+                  <Typography.Text code style={{ fontSize: 11 }}>
+                    {t.name}
+                  </Typography.Text>
+                  {t.description ? (
+                    <Typography.Text
+                      type="secondary"
+                      style={{ fontSize: 11, marginLeft: 8, display: 'inline' }}
+                    >
+                      {t.description}
+                    </Typography.Text>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <Result
+            status="error"
+            title="Connection Failed"
+            subTitle={(() => {
+              switch (testResult?.errorKind) {
+                case 'auth_missing':
+                  return 'No authentication token configured.';
+                case 'auth_rejected':
+                  return 'Server rejected the credentials.';
+                case 'no_tools':
+                  return 'Server connected but returned no tools.';
+                case 'timeout':
+                  return 'Server did not respond within 10 seconds.';
+                case 'connection_refused':
+                  return 'Connection refused — server may be down.';
+                default:
+                  return 'An unexpected error occurred.';
+              }
+            })()}
+            extra={
+              <div style={{ textAlign: 'left', maxWidth: 420, margin: '0 auto' }}>
+                {testResult?.error ? (
+                  <Typography.Text
+                    code
+                    style={{
+                      display: 'block',
+                      fontSize: 11,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all',
+                      marginBottom: 12,
+                    }}
+                  >
+                    {testResult.error}
+                  </Typography.Text>
+                ) : null}
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {testResult?.errorKind === 'auth_missing' &&
+                    'Set a bearer token via Edit Personality, or use Authenticate to complete OAuth.'}
+                  {testResult?.errorKind === 'auth_rejected' &&
+                    'The token may be expired or have insufficient permissions. Update the bearer token or re-authenticate.'}
+                  {testResult?.errorKind === 'no_tools' &&
+                    'The token might lack the required permissions, or this account has no tools on this server.'}
+                  {testResult?.errorKind === 'timeout' &&
+                    'Check that the server URL is correct and the server is reachable from this machine.'}
+                  {testResult?.errorKind === 'connection_refused' &&
+                    'Verify the server URL and port. The server may not be running or may be blocking connections.'}
+                  {testResult?.errorKind === 'unknown' &&
+                    'Check the server URL, authentication settings, and network connectivity.'}
+                </Typography.Text>
+              </div>
+            }
+            style={{ paddingBlock: 16 }}
+          />
+        )}
+      </Modal>
       <ConnectMcpModal
         open={connectOpen}
         personalityId={personalityId}

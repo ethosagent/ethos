@@ -926,71 +926,6 @@ function WizardPluginsTab({
 // MCP Tokens — set / remove bearer tokens for attached MCP servers
 // ---------------------------------------------------------------------------
 
-function McpTokenRow({ personalityId, server }: { personalityId: string; server: string }) {
-  const [token, setToken] = useState('');
-  const { message } = AntApp.useApp();
-
-  const setMutation = useMutation({
-    mutationFn: () => rpc.personalities.mcpSetToken({ personalityId, server, token }),
-    onSuccess: () => {
-      message.success(`Token saved for ${server}`);
-      setToken('');
-    },
-    onError: (err: Error) => message.error(err.message),
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: () => rpc.personalities.mcpDeleteToken({ personalityId, server }),
-    onSuccess: () => message.success(`Token removed for ${server}`),
-    onError: (err: Error) => message.error(err.message),
-  });
-
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <Typography.Text strong style={{ minWidth: 120 }}>
-        {server}
-      </Typography.Text>
-      <Input.Password
-        placeholder="Bearer token"
-        value={token}
-        onChange={(e) => setToken(e.target.value)}
-        style={{ flex: 1 }}
-      />
-      <Button
-        type="primary"
-        size="small"
-        disabled={!token}
-        loading={setMutation.isPending}
-        onClick={() => setMutation.mutate()}
-      >
-        Save
-      </Button>
-      <Button
-        danger
-        size="small"
-        loading={deleteMutation.isPending}
-        onClick={() => deleteMutation.mutate()}
-      >
-        Remove
-      </Button>
-    </div>
-  );
-}
-
-function McpTokensPanel({ personalityId, servers }: { personalityId: string; servers: string[] }) {
-  if (servers.length === 0) {
-    return <Typography.Text type="secondary">No MCP servers attached.</Typography.Text>;
-  }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {servers.map((server) => (
-        <McpTokenRow key={server} personalityId={personalityId} server={server} />
-      ))}
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Edit modal — three tabs (Identity / Toolset / Config) + Skills sub-surface
 // ---------------------------------------------------------------------------
@@ -1061,13 +996,6 @@ export function EditModal({ id, onClose }: { id: string; onClose: () => void }) 
               label: 'Plugins',
               children: (
                 <PluginsAttachPanel id={id} initialPlugins={data.personality.plugins ?? []} />
-              ),
-            },
-            {
-              key: 'mcpTokens',
-              label: 'MCP Tokens',
-              children: (
-                <McpTokensPanel personalityId={id} servers={data.personality.mcp_servers ?? []} />
               ),
             },
           ]}
@@ -1858,20 +1786,19 @@ export function ServerToolChecklist({
   onDiscovered: (tools: string[]) => void;
   onToggle: (toolName: string) => void;
 }) {
-  // Auto-fetch ALL pages on mount so the policy is never based on a partial
-  // discovery. The "Load more" button remains as a UI convenience for
-  // rendering, but onDiscovered is only called once the full set is assembled.
   const [allTools, setAllTools] = useState<{ name: string; description?: string }[]>([]);
   const [displayCount, setDisplayCount] = useState(50);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [available, setAvailable] = useState(false);
   const fetchedRef = useRef(false);
 
   const stableOnDiscovered = useCallback(onDiscovered, [onDiscovered]);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (fetchedRef.current) return;
     fetchedRef.current = true;
+    setLoading(true);
     let cancelled = false;
 
     async function fetchAllTools() {
@@ -1901,13 +1828,34 @@ export function ServerToolChecklist({
       }
     }
 
-    fetchAllTools().catch(() => {
+    const timeout = new Promise<void>((_, reject) =>
+      setTimeout(() => reject(new Error('timed out')), 10_000),
+    );
+    Promise.race([fetchAllTools(), timeout]).catch(() => {
       if (!cancelled) setLoading(false);
     });
     return () => {
       cancelled = true;
     };
   }, [personalityId, serverName, stableOnDiscovered]);
+
+  if (!expanded) {
+    return (
+      <div style={{ paddingLeft: 24, paddingTop: 2 }}>
+        <Button
+          type="link"
+          size="small"
+          style={{ padding: 0, fontSize: 11, height: 'auto' }}
+          onClick={() => {
+            setExpanded(true);
+            load();
+          }}
+        >
+          Configure tools ▾
+        </Button>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -1923,7 +1871,7 @@ export function ServerToolChecklist({
         type="secondary"
         style={{ fontSize: 11, display: 'block', paddingLeft: 24, paddingTop: 2 }}
       >
-        Tool list unavailable — the server is not connected. All of its tools remain allowed.
+        Tool list unavailable — the server may not be reachable. All tools remain allowed.
       </Typography.Text>
     );
   }

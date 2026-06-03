@@ -199,6 +199,7 @@ export class McpService {
           transport: config?.transport,
           url: typeof config?.url === 'string' ? config.url : undefined,
           auth_status: authStatus,
+          auth_type: (config?.auth?.type ?? 'none') as 'oauth2' | 'bearer' | 'none',
         };
       }),
     );
@@ -481,14 +482,20 @@ export class McpService {
     secrets: SecretsResolver,
     config?: { auth?: { type: string } },
   ): Promise<'none' | 'authorized' | 'expired' | 'missing'> {
-    if (config?.auth?.type !== 'oauth2') return 'none';
-    const token = await secrets.get(`mcp/${serverName}/access_token`).catch(() => null);
-    if (!token) return 'missing';
-    const expiresAtStr = await secrets.get(`mcp/${serverName}/expires_at`).catch(() => null);
-    if (expiresAtStr) {
-      return Date.now() >= Number(expiresAtStr) ? 'expired' : 'authorized';
+    if (config?.auth?.type === 'oauth2') {
+      const token = await secrets.get(`mcp/${serverName}/access_token`).catch(() => null);
+      if (!token) return 'missing';
+      const expiresAtStr = await secrets.get(`mcp/${serverName}/expires_at`).catch(() => null);
+      if (expiresAtStr) {
+        return Date.now() >= Number(expiresAtStr) ? 'expired' : 'authorized';
+      }
+      return 'authorized';
     }
-    return 'authorized';
+    if (config?.auth?.type === 'bearer') {
+      const token = await secrets.get(`mcp/${serverName}/access_token`).catch(() => null);
+      return token ? 'authorized' : 'missing';
+    }
+    return 'none';
   }
 
   async reconnect(input: { name: string; personalityId?: string }) {

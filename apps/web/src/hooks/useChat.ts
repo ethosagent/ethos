@@ -86,11 +86,13 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     if (historyLoadedFor.current === currentSessionId) return;
 
     let cancelled = false;
-    historyLoadedFor.current = currentSessionId;
     rpc.sessions
       .get({ id: currentSessionId })
       .then((res) => {
         if (cancelled) return;
+        // Mark as loaded only after success so a Strict Mode
+        // cancel+remount cycle retries rather than skipping.
+        historyLoadedFor.current = currentSessionId;
         dispatch({ kind: 'action', action: { type: 'history-loaded', messages: res.messages } });
       })
       .catch((err: unknown) => {

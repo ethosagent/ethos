@@ -687,6 +687,7 @@ export const McpPersonalityServersOutputSchema = z.object({
       transport: z.string().optional(),
       url: z.string().optional(),
       auth_status: z.enum(['authorized', 'expired', 'missing']),
+      auth_type: z.enum(['oauth2', 'bearer', 'none']).optional(),
     }),
   ),
 });
