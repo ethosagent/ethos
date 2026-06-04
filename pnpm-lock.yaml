@@ -103,6 +103,12 @@ importers:
       '@hono/node-server':
         specifier: ^2.0.0
         version: 2.0.4(hono@4.12.23)
+      argon2:
+        specifier: ^0.43.0
+        version: 0.43.1
+      better-sqlite3:
+        specifier: ^12.9.0
+        version: 12.10.0
       croner:
         specifier: ^9.0.0
         version: 9.1.0
