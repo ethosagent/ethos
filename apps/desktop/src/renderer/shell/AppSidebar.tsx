@@ -1,48 +1,47 @@
-import React, { useState } from 'react';
+import type { Session } from '@ethosagent/web-contracts';
+import type React from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { SessionRow } from '../chat/SessionRow';
 import { useAppState } from '../state/AppContext';
 
-interface AppSidebarProps {
+export interface AppSidebarProps {
   route: string;
   onNavigate: (route: string) => void;
-  drawerOpen: boolean;
-  onToggleDrawer: () => void;
   backendConnected: boolean;
+  sessions: Session[];
+  pinnedSessions: Session[];
+  loading: boolean;
+  search: string;
+  setSearch: (q: string) => void;
+  activeSessionId: string | null;
+  onSelectSession: (id: string) => void;
+  onNewChat: () => void;
+  loadMore: () => void;
+  hasMore: boolean;
+  onRenameSession: (id: string, title: string) => void;
+  onForkSession: (id: string) => void;
+  onExportSession: (id: string) => void;
+  onDeleteSession: (id: string) => void;
+  onPinSession: (id: string) => void;
+  onUnpinSession: (id: string) => void;
 }
 
 interface NavItem {
   id: string;
   label: string;
+  hint?: string;
   icon: React.ReactNode;
 }
 
-const DEFAULT_ITEMS: NavItem[] = [
-  {
-    id: 'chat',
-    label: 'Chat',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={18}
-        height={18}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M15 2H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3l3 3 3-3h3a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1Z" />
-      </svg>
-    ),
-  },
+const NAV_ITEMS: NavItem[] = [
   {
     id: 'personalities',
     label: 'Personalities',
     icon: (
       <svg
         aria-hidden="true"
-        width={18}
-        height={18}
+        width={16}
+        height={16}
         viewBox="0 0 18 18"
         fill="none"
         stroke="currentColor"
@@ -56,93 +55,14 @@ const DEFAULT_ITEMS: NavItem[] = [
     ),
   },
   {
-    id: 'memory',
-    label: 'Memory',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={18}
-        height={18}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M9 3C7 3 5.5 4 5 5.5c-.8.1-2.5.8-2.5 2.5S4 10 5 10c-.2.6-.3 1.3 0 2 .3.7 1 1 1.5 1H9m0-10c2 0 3.5 1 4 2.5.8.1 2.5.8 2.5 2.5S14 10 13 10c.2.6.3 1.3 0 2-.3.7-1 1-1.5 1H9m0-10v10" />
-      </svg>
-    ),
-  },
-  {
-    id: 'cron',
-    label: 'Cron',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={18}
-        height={18}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <circle cx="9" cy="9" r="7" />
-        <polyline points="9,5 9,9 12,11" />
-      </svg>
-    ),
-  },
-  {
-    id: 'activity',
-    label: 'Activity',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={18}
-        height={18}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <rect x="2" y="11" width="3" height="5" rx="1" />
-        <rect x="7.5" y="7" width="3" height="9" rx="1" />
-        <rect x="13" y="3" width="3" height="13" rx="1" />
-      </svg>
-    ),
-  },
-  {
-    id: 'platforms',
-    label: 'Platforms',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={18}
-        height={18}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <circle cx="9" cy="9" r="7" />
-        <path d="M2 9h14M9 2c-2 2-3 4.5-3 7s1 5 3 7M9 2c2 2 3 4.5 3 7s-1 5-3 7" />
-      </svg>
-    ),
-  },
-  {
     id: 'skills',
-    label: 'Skills',
+    label: 'Skills & Tools',
+    hint: 'Skills · MCP · Plugins',
     icon: (
       <svg
         aria-hidden="true"
-        width={18}
-        height={18}
+        width={16}
+        height={16}
         viewBox="0 0 18 18"
         fill="none"
         stroke="currentColor"
@@ -155,13 +75,13 @@ const DEFAULT_ITEMS: NavItem[] = [
     ),
   },
   {
-    id: 'mcp',
-    label: 'MCP',
+    id: 'memory',
+    label: 'Memory',
     icon: (
       <svg
         aria-hidden="true"
-        width={18}
-        height={18}
+        width={16}
+        height={16}
         viewBox="0 0 18 18"
         fill="none"
         stroke="currentColor"
@@ -169,21 +89,18 @@ const DEFAULT_ITEMS: NavItem[] = [
         strokeLinecap="round"
         strokeLinejoin="round"
       >
-        <polygon points="9,2 15.5,5.5 15.5,12.5 9,16 2.5,12.5 2.5,5.5" />
-        <line x1="9" y1="6" x2="9" y2="12" />
-        <line x1="6" y1="7.5" x2="12" y2="10.5" />
-        <line x1="12" y1="7.5" x2="6" y2="10.5" />
+        <path d="M9 3C7 3 5.5 4 5 5.5c-.8.1-2.5.8-2.5 2.5S4 10 5 10c-.2.6-.3 1.3 0 2 .3.7 1 1 1.5 1H9m0-10c2 0 3.5 1 4 2.5.8.1 2.5.8 2.5 2.5S14 10 13 10c.2.6.3 1.3 0 2-.3.7-1 1-1.5 1H9m0-10v10" />
       </svg>
     ),
   },
   {
-    id: 'plugins',
-    label: 'Plugins',
+    id: 'platforms',
+    label: 'Platforms',
     icon: (
       <svg
         aria-hidden="true"
-        width={18}
-        height={18}
+        width={16}
+        height={16}
         viewBox="0 0 18 18"
         fill="none"
         stroke="currentColor"
@@ -191,28 +108,8 @@ const DEFAULT_ITEMS: NavItem[] = [
         strokeLinecap="round"
         strokeLinejoin="round"
       >
-        <path d="M6 2v4M12 2v4M5 6h8l-1 5a3 3 0 0 1-6 0L5 6Z" />
-        <line x1="9" y1="11" x2="9" y2="16" />
-      </svg>
-    ),
-  },
-  {
-    id: 'settings',
-    label: 'Settings',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={18}
-        height={18}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <circle cx="9" cy="9" r="2.5" />
-        <path d="M9 1.5v2M9 14.5v2M1.5 9h2M14.5 9h2M3.4 3.4l1.4 1.4M13.2 13.2l1.4 1.4M3.4 14.6l1.4-1.4M13.2 4.8l1.4-1.4" />
+        <circle cx="9" cy="9" r="7" />
+        <path d="M2 9h14M9 2c-2 2-3 4.5-3 7s1 5 3 7M9 2c2 2 3 4.5 3 7s-1 5-3 7" />
       </svg>
     ),
   },
@@ -225,8 +122,8 @@ const ADVANCED_ITEMS: NavItem[] = [
     icon: (
       <svg
         aria-hidden="true"
-        width={18}
-        height={18}
+        width={16}
+        height={16}
         viewBox="0 0 18 18"
         fill="none"
         stroke="currentColor"
@@ -247,8 +144,8 @@ const ADVANCED_ITEMS: NavItem[] = [
     icon: (
       <svg
         aria-hidden="true"
-        width={18}
-        height={18}
+        width={16}
+        height={16}
         viewBox="0 0 18 18"
         fill="none"
         stroke="currentColor"
@@ -268,8 +165,8 @@ const ADVANCED_ITEMS: NavItem[] = [
     icon: (
       <svg
         aria-hidden="true"
-        width={18}
-        height={18}
+        width={16}
+        height={16}
         viewBox="0 0 18 18"
         fill="none"
         stroke="currentColor"
@@ -288,8 +185,8 @@ const ADVANCED_ITEMS: NavItem[] = [
     icon: (
       <svg
         aria-hidden="true"
-        width={18}
-        height={18}
+        width={16}
+        height={16}
         viewBox="0 0 18 18"
         fill="none"
         stroke="currentColor"
@@ -305,13 +202,35 @@ const ADVANCED_ITEMS: NavItem[] = [
     ),
   },
   {
+    id: 'teams',
+    label: 'Teams',
+    icon: (
+      <svg
+        aria-hidden="true"
+        width={16}
+        height={16}
+        viewBox="0 0 18 18"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="6" cy="6" r="2.5" />
+        <circle cx="12" cy="6" r="2.5" />
+        <path d="M1 15c0-2.5 2.2-4.5 5-4.5s5 2 5 4.5" />
+        <path d="M10 15c0-2.5 2.2-4.5 5-4.5s5 2 5 4.5" />
+      </svg>
+    ),
+  },
+  {
     id: 'api-keys',
     label: 'API Keys',
     icon: (
       <svg
         aria-hidden="true"
-        width={18}
-        height={18}
+        width={16}
+        height={16}
         viewBox="0 0 18 18"
         fill="none"
         stroke="currentColor"
@@ -330,167 +249,457 @@ const ADVANCED_ITEMS: NavItem[] = [
 export function AppSidebar({
   route,
   onNavigate,
-  drawerOpen,
-  onToggleDrawer,
   backendConnected,
+  sessions,
+  pinnedSessions,
+  loading,
+  search,
+  setSearch,
+  activeSessionId,
+  onSelectSession,
+  onNewChat,
+  loadMore,
+  hasMore,
+  onRenameSession,
+  onForkSession,
+  onExportSession,
+  onDeleteSession,
+  onPinSession,
+  onUnpinSession,
 }: AppSidebarProps) {
   const { state } = useAppState();
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [hoveredNavId, setHoveredNavId] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const unpinnedSessions = sessions.filter((s) => !s.pinned);
+
+  const handleScroll = useCallback(() => {
+    const el = listRef.current;
+    if (!el || !hasMore) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distFromBottom < 40) {
+      loadMore();
+    }
+  }, [hasMore, loadMore]);
 
   return (
     <nav
       style={{
-        width: 64,
-        minWidth: 64,
+        width: 240,
+        minWidth: 240,
         height: '100%',
         backgroundColor: 'var(--bg-elevated)',
         borderRight: '1px solid var(--border-subtle)',
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'center',
-        paddingTop: 12,
-        gap: 4,
-        overflowY: 'auto',
-        overflowX: 'hidden',
+        overflow: 'hidden',
       }}
     >
-      {DEFAULT_ITEMS.map((item) => (
-        <React.Fragment key={item.id}>
-          {(item.id === 'cron' || item.id === 'platforms') && (
-            <div
-              style={{
-                width: 32,
-                height: 1,
-                background: 'var(--border-subtle)',
-                margin: '4px 0',
-              }}
-            />
-          )}
-          <SidebarItem
-            item={item}
-            active={route === item.id}
-            hovered={hoveredId === item.id}
-            onNavigate={onNavigate}
-            onHover={setHoveredId}
-          />
-        </React.Fragment>
-      ))}
-
-      <div style={{ marginTop: 'auto', paddingBottom: 8 }}>
+      {/* Header */}
+      <div
+        style={{
+          height: 48,
+          minHeight: 48,
+          display: 'flex',
+          alignItems: 'center',
+          padding: '0 14px',
+          borderBottom: '1px solid var(--border-subtle)',
+          gap: 8,
+        }}
+      >
         <div
           style={{
-            width: 40,
-            height: 40,
+            width: 20,
+            height: 20,
+            borderRadius: '50%',
+            background: '#4A9EFF',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
+            flexShrink: 0,
           }}
-          title={backendConnected ? 'Backend connected' : 'Backend disconnected'}
         >
           <div
             style={{
-              position: 'relative',
-              width: 24,
-              height: 24,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: 'var(--bg-elevated)',
             }}
-          >
-            <div
-              style={{
-                position: 'absolute',
-                width: 20,
-                height: 20,
-                borderRadius: '50%',
-                border: `1.5px solid ${backendConnected ? 'rgba(74, 222, 128, 0.4)' : 'rgba(248, 113, 113, 0.3)'}`,
-              }}
-            />
-            <div
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                background: backendConnected ? '#4ADE80' : '#F87171',
-                position: 'relative',
-              }}
-            />
-          </div>
+          />
         </div>
+        <span
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 14,
+            fontWeight: 600,
+            color: 'var(--text-primary)',
+          }}
+        >
+          Ethos
+        </span>
+      </div>
+
+      {/* New session button */}
+      <div style={{ padding: '8px 10px 0' }}>
         <button
           type="button"
-          onClick={onToggleDrawer}
+          onClick={onNewChat}
           style={{
-            width: 40,
-            height: 40,
+            width: '100%',
+            height: 32,
+            borderRadius: 'var(--radius-sm)',
+            background: 'rgba(74, 158, 255, 0.1)',
+            border: '1px solid rgba(74, 158, 255, 0.25)',
+            fontFamily: 'var(--font-display)',
+            fontSize: 13,
+            fontWeight: 500,
+            color: 'var(--info)',
+            cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            border: 'none',
-            borderRadius: 'var(--radius-sm)',
-            background: drawerOpen ? 'var(--bg-overlay)' : 'transparent',
-            color: drawerOpen ? 'var(--accent)' : 'var(--text-tertiary)',
-            cursor: 'pointer',
+            gap: 6,
           }}
-          aria-label="Toggle activity drawer"
-          title="Activity drawer"
         >
           <svg
             aria-hidden="true"
-            width={16}
-            height={16}
-            viewBox="0 0 16 16"
+            width={12}
+            height={12}
+            viewBox="0 0 12 12"
             fill="none"
             stroke="currentColor"
-            strokeWidth={1.5}
+            strokeWidth={1.8}
             strokeLinecap="round"
           >
-            <line x1="2" y1="4" x2="14" y2="4" />
-            <line x1="2" y1="8" x2="14" y2="8" />
-            <line x1="2" y1="12" x2="14" y2="12" />
+            <line x1="6" y1="1" x2="6" y2="11" />
+            <line x1="1" y1="6" x2="11" y2="6" />
           </svg>
+          New session
         </button>
       </div>
 
-      {state.advancedMode && (
-        <>
-          <div
+      {/* Agent section label */}
+      <div
+        style={{
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          color: 'var(--text-tertiary)',
+          padding: '10px 12px 4px',
+          fontFamily: 'var(--font-display)',
+        }}
+      >
+        Agent
+      </div>
+
+      {/* Nav items */}
+      {NAV_ITEMS.map((item) => (
+        <NavRow
+          key={item.id}
+          item={item}
+          active={route === item.id}
+          hovered={hoveredNavId === item.id}
+          onNavigate={onNavigate}
+          onHover={setHoveredNavId}
+        />
+      ))}
+
+      {/* Divider */}
+      <div style={{ height: 1, background: 'var(--border-subtle)', margin: '6px 0' }} />
+
+      {/* Search */}
+      <div style={{ padding: '0 10px 4px', position: 'relative' }}>
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search sessions..."
+          style={{
+            width: '100%',
+            height: 32,
+            borderRadius: 'var(--radius-sm)',
+            background: 'var(--bg-overlay)',
+            border: '1px solid var(--border-subtle)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 12,
+            color: 'var(--text-primary)',
+            padding: '0 28px 0 10px',
+            outline: 'none',
+            boxSizing: 'border-box',
+          }}
+        />
+        {search && (
+          <button
+            type="button"
+            onClick={() => setSearch('')}
             style={{
-              width: 32,
-              height: 1,
-              backgroundColor: 'var(--border-subtle)',
-              margin: '8px 0',
-            }}
-          />
-          <div
-            style={{
-              fontSize: 8,
-              fontWeight: 700,
-              letterSpacing: '0.1em',
+              position: 'absolute',
+              right: 16,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              background: 'none',
+              border: 'none',
               color: 'var(--text-tertiary)',
+              fontSize: 14,
+              cursor: 'pointer',
+              padding: 0,
+              lineHeight: 1,
+            }}
+            aria-label="Clear search"
+          >
+            ×
+          </button>
+        )}
+      </div>
+
+      {/* Session list */}
+      <div
+        ref={listRef}
+        onScroll={handleScroll}
+        style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}
+      >
+        {pinnedSessions.length > 0 && (
+          <>
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                color: 'var(--text-tertiary)',
+                padding: '8px 10px 2px',
+                fontFamily: 'var(--font-display)',
+              }}
+            >
+              Pinned
+            </div>
+            {pinnedSessions.map((s) => (
+              <SessionRow
+                key={s.id}
+                session={s}
+                active={s.id === activeSessionId}
+                onSelect={() => onSelectSession(s.id)}
+                onRename={(title) => onRenameSession(s.id, title)}
+                onFork={() => onForkSession(s.id)}
+                onExport={() => onExportSession(s.id)}
+                onDelete={() => onDeleteSession(s.id)}
+                onPin={() => onPinSession(s.id)}
+                onUnpin={() => onUnpinSession(s.id)}
+              />
+            ))}
+          </>
+        )}
+
+        {unpinnedSessions.length > 0 && (
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '0.08em',
               textTransform: 'uppercase',
-              marginBottom: 4,
+              color: 'var(--text-tertiary)',
+              padding: '8px 10px 2px',
+              fontFamily: 'var(--font-display)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
             }}
           >
-            LAB
+            Sessions
+            <span
+              style={{
+                fontSize: 9,
+                fontWeight: 600,
+                background: 'var(--bg-overlay)',
+                color: 'var(--text-tertiary)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '1px 5px',
+                lineHeight: '14px',
+              }}
+            >
+              {unpinnedSessions.length}
+            </span>
           </div>
-          {ADVANCED_ITEMS.map((item) => (
-            <SidebarItem
-              key={item.id}
-              item={item}
-              active={route === item.id}
-              hovered={hoveredId === item.id}
-              onNavigate={onNavigate}
-              onHover={setHoveredId}
-            />
-          ))}
-        </>
-      )}
+        )}
+        {unpinnedSessions.map((s) => (
+          <SessionRow
+            key={s.id}
+            session={s}
+            active={s.id === activeSessionId}
+            onSelect={() => onSelectSession(s.id)}
+            onRename={(title) => onRenameSession(s.id, title)}
+            onFork={() => onForkSession(s.id)}
+            onExport={() => onExportSession(s.id)}
+            onDelete={() => onDeleteSession(s.id)}
+            onPin={() => onPinSession(s.id)}
+            onUnpin={() => onUnpinSession(s.id)}
+          />
+        ))}
+
+        {sessions.length === 0 && !loading && !search && (
+          <div
+            style={{
+              padding: '24px 16px',
+              textAlign: 'center',
+              fontFamily: 'var(--font-display)',
+              fontSize: 13,
+              color: 'var(--text-tertiary)',
+              lineHeight: 1.5,
+            }}
+          >
+            No sessions yet. Start a conversation.
+          </div>
+        )}
+
+        {sessions.length === 0 && !loading && search && (
+          <div
+            style={{
+              padding: '24px 16px',
+              textAlign: 'center',
+              fontFamily: 'var(--font-display)',
+              fontSize: 13,
+              color: 'var(--text-tertiary)',
+              lineHeight: 1.5,
+            }}
+          >
+            No sessions match &apos;{search}&apos;.
+          </div>
+        )}
+
+        {loading && (
+          <div
+            style={{
+              padding: '12px 16px',
+              textAlign: 'center',
+              fontFamily: 'var(--font-display)',
+              fontSize: 12,
+              color: 'var(--text-tertiary)',
+            }}
+          >
+            Loading...
+          </div>
+        )}
+
+        {hasMore && !loading && sessions.length > 0 && (
+          <button
+            type="button"
+            onClick={loadMore}
+            style={{
+              display: 'block',
+              width: '100%',
+              padding: '8px 10px',
+              fontFamily: 'var(--font-display)',
+              fontSize: 12,
+              color: 'var(--info)',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              textAlign: 'left',
+            }}
+          >
+            View all sessions →
+          </button>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div
+        style={{
+          borderTop: '1px solid var(--border-subtle)',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        {state.advancedMode && (
+          <>
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                color: 'var(--text-tertiary)',
+                padding: '8px 12px 4px',
+                fontFamily: 'var(--font-display)',
+              }}
+            >
+              Lab
+            </div>
+            {ADVANCED_ITEMS.map((item) => (
+              <NavRow
+                key={item.id}
+                item={item}
+                active={route === item.id}
+                hovered={hoveredNavId === item.id}
+                onNavigate={onNavigate}
+                onHover={setHoveredNavId}
+              />
+            ))}
+          </>
+        )}
+
+        <NavRow
+          item={{
+            id: 'settings',
+            label: 'Settings',
+            icon: (
+              <svg
+                aria-hidden="true"
+                width={16}
+                height={16}
+                viewBox="0 0 18 18"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="9" cy="9" r="2.5" />
+                <path d="M9 1.5v2M9 14.5v2M1.5 9h2M14.5 9h2M3.4 3.4l1.4 1.4M13.2 13.2l1.4 1.4M3.4 14.6l1.4-1.4M13.2 4.8l1.4-1.4" />
+              </svg>
+            ),
+          }}
+          active={route === 'settings'}
+          hovered={hoveredNavId === 'settings'}
+          onNavigate={onNavigate}
+          onHover={setHoveredNavId}
+        />
+
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '6px 14px 8px',
+          }}
+        >
+          <div
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              background: backendConnected ? '#4ADE80' : '#F87171',
+              flexShrink: 0,
+            }}
+          />
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              color: 'var(--text-tertiary)',
+            }}
+          >
+            {backendConnected ? 'connected' : 'disconnected'}
+          </span>
+        </div>
+      </div>
     </nav>
   );
 }
 
-interface SidebarItemProps {
+interface NavRowProps {
   item: NavItem;
   active: boolean;
   hovered: boolean;
@@ -498,72 +707,67 @@ interface SidebarItemProps {
   onHover: (id: string | null) => void;
 }
 
-function SidebarItem({ item, active, hovered, onNavigate, onHover }: SidebarItemProps) {
+function NavRow({ item, active, hovered, onNavigate, onHover }: NavRowProps) {
   return (
-    <div style={{ position: 'relative' }}>
-      <button
-        type="button"
-        onClick={() => onNavigate(item.id)}
-        onMouseEnter={() => onHover(item.id)}
-        onMouseLeave={() => onHover(null)}
-        style={{
-          width: 40,
-          height: 40,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          border: 'none',
-          borderRadius: 'var(--radius-sm)',
-          background: active
-            ? 'rgba(74, 158, 255, 0.18)'
-            : hovered
-              ? 'var(--ethos-hover)'
-              : 'transparent',
-          color: active ? 'var(--info)' : 'var(--text-secondary)',
-          cursor: 'pointer',
-          position: 'relative',
-          transition: `background-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease)`,
-        }}
-        aria-label={item.label}
-      >
-        {active && (
-          <div
-            style={{
-              position: 'absolute',
-              left: 0,
-              top: '50%',
-              transform: 'translateY(-50%)',
-              width: 2,
-              height: 16,
-              backgroundColor: 'var(--info)',
-              borderRadius: 1,
-            }}
-          />
-        )}
-        {item.icon}
-      </button>
-      {hovered && (
-        <div
+    <button
+      type="button"
+      onClick={() => onNavigate(item.id)}
+      onMouseEnter={() => onHover(item.id)}
+      onMouseLeave={() => onHover(null)}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        height: 36,
+        padding: active ? '0 12px 0 10px' : '0 12px',
+        gap: 8,
+        background: active
+          ? 'rgba(74, 158, 255, 0.18)'
+          : hovered
+            ? 'var(--ethos-hover)'
+            : 'transparent',
+        borderLeft: active ? '2px solid #4A9EFF' : '2px solid transparent',
+        border: 'none',
+        borderLeftWidth: 2,
+        borderLeftStyle: 'solid',
+        borderLeftColor: active ? '#4A9EFF' : 'transparent',
+        color: active ? 'var(--info)' : 'var(--text-secondary)',
+        cursor: 'pointer',
+        width: '100%',
+        textAlign: 'left',
+        font: 'inherit',
+        transition: 'background-color var(--motion-fast) var(--ease)',
+      }}
+    >
+      <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>{item.icon}</span>
+      <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <span
           style={{
-            position: 'absolute',
-            left: 52,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            backgroundColor: 'var(--bg-overlay)',
-            color: 'var(--text-primary)',
-            fontSize: 11,
-            fontWeight: 500,
-            padding: '4px 8px',
-            borderRadius: 'var(--radius-sm)',
+            fontFamily: 'var(--font-display)',
+            fontSize: 13,
+            fontWeight: 400,
             whiteSpace: 'nowrap',
-            pointerEvents: 'none',
-            zIndex: 100,
-            border: '1px solid var(--border-subtle)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
           }}
         >
           {item.label}
-        </div>
-      )}
-    </div>
+        </span>
+        {item.hint && (
+          <span
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 10,
+              color: 'var(--text-tertiary)',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              marginTop: -2,
+            }}
+          >
+            {item.hint}
+          </span>
+        )}
+      </span>
+    </button>
   );
 }

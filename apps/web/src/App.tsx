@@ -4,7 +4,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { MobileTabBar } from './components/MobileTabBar';
 import { RightDrawer } from './components/RightDrawer';
 import { Sidebar } from './components/Sidebar';
-import { TopBar } from './components/TopBar';
+import { StatusBar } from './components/StatusBar';
 import { useOnboardingState } from './features/config/api/queries';
 import { usePushEventToasts } from './hooks/usePushEventToasts';
 import { useSessionTitleSync } from './hooks/useSessionTitleSync';
@@ -107,7 +107,6 @@ export function App() {
   return (
     <div className={shellClass}>
       <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
-      <TopBar drawerOpen={drawerOpen} onToggleDrawer={() => setDrawerOpen((v) => !v)} />
       <main className="app-main">
         <Routes>
           <Route path="/" element={<Navigate to="/chat" replace />} />
@@ -145,6 +144,7 @@ export function App() {
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
       </main>
+      <StatusBar />
       <RightDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <CommandPalette
         open={paletteOpen}

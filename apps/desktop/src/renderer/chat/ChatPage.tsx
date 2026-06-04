@@ -6,14 +6,17 @@ import { useAppState } from '../state/AppContext';
 import { ChatThread } from './ChatThread';
 import { Composer } from './Composer';
 import { PersonalityBar } from './PersonalityBar';
-import { SessionsPanel } from './SessionsPanel';
 import type { ApprovalState, ClarifyState, ToolCallState, UsageState } from './types';
-import { useSessionList } from './useSessionList';
 import { useSSEStream } from './useSSEStream';
 
 const CLIENT_ID = crypto.randomUUID();
 
-export function ChatPage() {
+interface ChatPageProps {
+  onSessionCreated?: () => void;
+  onForkSession?: (id?: string) => void;
+}
+
+export function ChatPage({ onSessionCreated, onForkSession }: ChatPageProps) {
   const { state, setActiveSessionId, setActivePersonalityId } = useAppState();
   const { port, activeSessionId, activePersonalityId, desktopUserId, lastTitledSession } = state;
 
@@ -21,10 +24,6 @@ export function ChatPage() {
 
   const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
-  // Session list
-  const sessionList = useSessionList({ baseUrl });
-
-  // Chat state
   const [messages, setMessages] = useState<StoredMessage[]>([]);
   const [streamingText, setStreamingText] = useState('');
   const [streamingThinking, setStreamingThinking] = useState('');
@@ -39,23 +38,6 @@ export function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
 
-  // Layout state
-  const [showSessionsPanel, setShowSessionsPanel] = useState(true);
-  const [windowWidth, setWindowWidth] = useState(
-    typeof window !== 'undefined' ? window.innerWidth : 1200,
-  );
-
-  const isNarrow = windowWidth < 1100;
-  const showPanel = showSessionsPanel && !isNarrow;
-
-  useEffect(() => {
-    function handleResize() {
-      setWindowWidth(window.innerWidth);
-    }
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
   useEffect(() => {
     const saved = localStorage.getItem('ethos:lastPersonalityId');
     if (saved && !state.activePersonalityId) {
@@ -63,7 +45,21 @@ export function ChatPage() {
     }
   }, [state.activePersonalityId, setActivePersonalityId]);
 
-  // Stall detection: track the last time an SSE event arrived
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on session switch
+  useEffect(() => {
+    setStreamingText('');
+    setStreamingThinking('');
+    setToolCalls(new Map());
+    setUsage(null);
+    setError(null);
+    setStreaming(false);
+    setPendingApproval(null);
+    setPendingClarify(null);
+    setTurnStartedAt(null);
+    setCurrentOp(null);
+    setElapsedMs(0);
+  }, [activeSessionId]);
+
   const lastStreamEventAtRef = useRef<number | null>(null);
   const [, setTick] = useState(0);
 
@@ -87,7 +83,6 @@ export function ChatPage() {
     return () => clearInterval(id);
   }, [turnStartedAt]);
 
-  // SSE event handler
   const handleSSEEvent = useCallback(
     (event: SseEvent) => {
       switch (event.type) {
@@ -119,7 +114,6 @@ export function ChatPage() {
           if (event.audience !== 'user') break;
           setToolCalls((prev) => {
             const next = new Map(prev);
-            // Find the most recent running tool with this name
             for (const [id, tc] of next) {
               if (tc.name === event.toolName && tc.status === 'running') {
                 next.set(id, { ...tc, progressMessage: event.message });
@@ -232,11 +226,9 @@ export function ChatPage() {
     [activeSessionId],
   );
 
-  // Keep a ref to streamingText for use inside handleSSEEvent's 'done' case
   const streamingTextRef = useRef(streamingText);
   streamingTextRef.current = streamingText;
 
-  // SSE stream
   useSSEStream({
     baseUrl,
     sessionId: activeSessionId,
@@ -244,12 +236,10 @@ export function ChatPage() {
     onError: (err) => {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[sse] connection error:', msg, err);
-      // Only surface if we were actually streaming — avoids false positives on reconnect
       setError((prev) => prev ?? (streaming ? `Connection error: ${msg}` : null));
     },
   });
 
-  // Load session history when activeSessionId changes
   useEffect(() => {
     if (!activeSessionId) {
       setMessages([]);
@@ -281,26 +271,22 @@ export function ChatPage() {
     };
   }, [activeSessionId, client, setActivePersonalityId]);
 
-  // Send message (or steer if streaming)
   const handleSend = useCallback(
     async (text: string) => {
       if (streaming) {
-        // Steer: redirect the running turn
         try {
           const res = await client.rpc.chat.steer({
             sessionId: activeSessionId ?? '',
             text,
           });
           if (res.ok) {
-            return; // steer accepted
+            return;
           }
-          // Turn ended between submit and RPC — fall through to normal send
         } catch {
           // Fall through to normal send
         }
       }
 
-      // Normal send path
       const userMsg: StoredMessage = {
         id: `user-${Date.now()}`,
         sessionId: activeSessionId ?? '',
@@ -331,7 +317,7 @@ export function ChatPage() {
 
         if (!activeSessionId) {
           setActiveSessionId(res.sessionId);
-          sessionList.refresh();
+          onSessionCreated?.();
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -346,13 +332,12 @@ export function ChatPage() {
       activePersonalityId,
       client,
       setActiveSessionId,
-      sessionList,
       desktopUserId,
       streaming,
+      onSessionCreated,
     ],
   );
 
-  // Abort
   const handleAbort = useCallback(async () => {
     if (!activeSessionId) return;
     try {
@@ -362,7 +347,6 @@ export function ChatPage() {
     }
   }, [activeSessionId, client]);
 
-  // Approve / deny
   const handleApprove = useCallback(
     async (approvalId: string) => {
       try {
@@ -392,7 +376,6 @@ export function ChatPage() {
     [client],
   );
 
-  // Clarify respond
   const handleClarifyRespond = useCallback(
     async (requestId: string, answer: string) => {
       try {
@@ -408,9 +391,7 @@ export function ChatPage() {
     [client],
   );
 
-  // Retry
   const handleRetry = useCallback(() => {
-    // Re-send the last user message
     const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
     if (lastUserMsg) {
       setError(null);
@@ -418,112 +399,42 @@ export function ChatPage() {
     }
   }, [messages, handleSend]);
 
-  // New chat
   const handleNewChat = useCallback(() => {
     setActiveSessionId(null);
     setMessages([]);
-    setStreamingText('');
-    setStreamingThinking('');
-    setToolCalls(new Map());
-    setUsage(null);
-    setError(null);
-    setStreaming(false);
     setSessionTitle(null);
-    setPendingApproval(null);
-    setPendingClarify(null);
-    setTurnStartedAt(null);
-    setCurrentOp(null);
-    setElapsedMs(0);
-  }, [setActiveSessionId]);
+    onSessionCreated?.();
+  }, [setActiveSessionId, onSessionCreated]);
 
-  // Select session
-  const handleSelectSession = useCallback(
-    (id: string) => {
-      if (id === activeSessionId) return;
-      setActiveSessionId(id);
-      setStreamingText('');
-      setStreamingThinking('');
-      setToolCalls(new Map());
-      setUsage(null);
-      setError(null);
-      setStreaming(false);
-      setPendingApproval(null);
-      setPendingClarify(null);
-      setTurnStartedAt(null);
-      setCurrentOp(null);
-      setElapsedMs(0);
+  const handleForkSession = useCallback(
+    (id?: string) => {
+      if (onForkSession) {
+        onForkSession(id);
+      }
     },
-    [activeSessionId, setActiveSessionId],
+    [onForkSession],
   );
 
-  // React to system session.titled events propagated from the app-shell-level SSE connection.
   useEffect(() => {
     if (!lastTitledSession) return;
-    sessionList.refresh();
+    onSessionCreated?.();
     if (lastTitledSession.sessionId === activeSessionId) {
       setSessionTitle(lastTitledSession.title);
     }
-  }, [lastTitledSession, activeSessionId, sessionList]);
+  }, [lastTitledSession, activeSessionId, onSessionCreated]);
 
-  // Session title change
   const handleTitleChange = useCallback(
     async (title: string) => {
       setSessionTitle(title);
       if (!activeSessionId) return;
       try {
         await client.rpc.sessions.update({ id: activeSessionId, title });
-        sessionList.refresh();
+        onSessionCreated?.();
       } catch {
         // best-effort
       }
     },
-    [activeSessionId, client, sessionList],
-  );
-
-  // Session rename from panel
-  const handleRenameSession = useCallback(
-    async (id: string, title: string) => {
-      try {
-        await client.rpc.sessions.update({ id, title });
-        if (id === activeSessionId) setSessionTitle(title);
-        sessionList.refresh();
-      } catch {
-        // best-effort
-      }
-    },
-    [client, activeSessionId, sessionList],
-  );
-
-  // Fork session
-  const handleForkSession = useCallback(
-    async (id?: string) => {
-      const targetId = id ?? activeSessionId;
-      if (!targetId) return;
-      try {
-        const res = await client.rpc.sessions.fork({ id: targetId });
-        setActiveSessionId(res.session.id);
-        sessionList.refresh();
-      } catch {
-        // best-effort
-      }
-    },
-    [activeSessionId, client, setActiveSessionId, sessionList],
-  );
-
-  // Delete session
-  const handleDeleteSession = useCallback(
-    async (id: string) => {
-      try {
-        await client.rpc.sessions.delete({ id });
-        if (id === activeSessionId) {
-          handleNewChat();
-        }
-        sessionList.refresh();
-      } catch {
-        // best-effort
-      }
-    },
-    [activeSessionId, client, sessionList, handleNewChat],
+    [activeSessionId, client, onSessionCreated],
   );
 
   const handleSwitchPersonality = useCallback(
@@ -535,118 +446,57 @@ export function ChatPage() {
     [setActivePersonalityId],
   );
 
-  // Pin / unpin session
-  const handlePinSession = useCallback(
-    async (id: string) => {
-      try {
-        await client.rpc.sessions.pin({ id });
-        sessionList.refresh();
-      } catch {
-        // best-effort
-      }
-    },
-    [client, sessionList],
-  );
-
-  const handleUnpinSession = useCallback(
-    async (id: string) => {
-      try {
-        await client.rpc.sessions.unpin({ id });
-        sessionList.refresh();
-      } catch {
-        // best-effort
-      }
-    },
-    [client, sessionList],
-  );
-
-  // Export session
-  const handleExportSession = useCallback(
-    async (id: string) => {
-      try {
-        const res = await client.rpc.sessions.export({ id, format: 'markdown' });
-        await window.ethos.file.save({ defaultName: res.filename, content: res.content });
-      } catch {
-        // best-effort
-      }
-    },
-    [client],
-  );
-
   return (
-    <div style={{ display: 'flex', height: '100vh', width: '100%' }}>
-      {showPanel && (
-        <SessionsPanel
-          sessions={sessionList.sessions}
-          loading={sessionList.loading}
-          search={sessionList.search}
-          setSearch={sessionList.setSearch}
-          activeSessionId={activeSessionId}
-          onSelectSession={handleSelectSession}
-          onNewChat={handleNewChat}
-          loadMore={sessionList.loadMore}
-          hasMore={sessionList.hasMore}
-          onRenameSession={handleRenameSession}
-          onForkSession={(id) => handleForkSession(id)}
-          onExportSession={handleExportSession}
-          onDeleteSession={handleDeleteSession}
-          onPinSession={handlePinSession}
-          onUnpinSession={handleUnpinSession}
-        />
-      )}
+    <div
+      style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        minWidth: 0,
+        height: '100%',
+      }}
+    >
+      <PersonalityBar
+        personalityId={activePersonalityId}
+        port={port}
+        onSwitchPersonality={handleSwitchPersonality}
+        sessionTitle={sessionTitle}
+        onTitleChange={handleTitleChange}
+        onNewSession={handleNewChat}
+        onForkSession={() => handleForkSession()}
+        streaming={streaming}
+        currentOp={currentOp}
+      />
 
-      <div
-        style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          minWidth: 0,
-        }}
-      >
-        <PersonalityBar
-          personalityId={activePersonalityId}
-          port={port}
-          onSwitchPersonality={handleSwitchPersonality}
-          sessionTitle={sessionTitle}
-          onTitleChange={handleTitleChange}
-          onNewSession={handleNewChat}
-          onForkSession={() => handleForkSession()}
-          streaming={streaming}
-          showSessionsButton={isNarrow}
-          onToggleSessions={() => setShowSessionsPanel((v) => !v)}
-          currentOp={currentOp}
-        />
+      <ChatThread
+        messages={messages}
+        streamingText={streamingText}
+        streamingThinking={streamingThinking}
+        toolCalls={toolCalls}
+        pendingApproval={pendingApproval}
+        pendingClarify={pendingClarify}
+        usage={usage}
+        streaming={streaming}
+        onApprove={handleApprove}
+        onDeny={handleDeny}
+        onClarifyRespond={handleClarifyRespond}
+        onRetry={handleRetry}
+        error={error}
+      />
 
-        <ChatThread
-          messages={messages}
-          streamingText={streamingText}
-          streamingThinking={streamingThinking}
-          toolCalls={toolCalls}
-          pendingApproval={pendingApproval}
-          pendingClarify={pendingClarify}
-          usage={usage}
-          streaming={streaming}
-          onApprove={handleApprove}
-          onDeny={handleDeny}
-          onClarifyRespond={handleClarifyRespond}
-          onRetry={handleRetry}
-          error={error}
-        />
+      <TurnStatusBar isStreaming={streaming} currentOp={currentOp} elapsedMs={elapsedMs} />
 
-        <TurnStatusBar isStreaming={streaming} currentOp={currentOp} elapsedMs={elapsedMs} />
+      {isStalled ? (
+        <div className="chat-stall-notice">Still working — this is taking longer than usual…</div>
+      ) : null}
 
-        {isStalled ? (
-          <div className="chat-stall-notice">Still working — this is taking longer than usual…</div>
-        ) : null}
-
-        <Composer
-          onSend={handleSend}
-          onAbort={handleAbort}
-          streaming={streaming}
-          personalityName={activePersonalityId ?? undefined}
-          steerMode={streaming}
-        />
-      </div>
+      <Composer
+        onSend={handleSend}
+        onAbort={handleAbort}
+        streaming={streaming}
+        personalityName={activePersonalityId ?? undefined}
+        steerMode={streaming}
+      />
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import { createEthosClient } from '@ethosagent/sdk';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityPage } from '../activity/ActivityPage';
 import { ChatPage } from '../chat/ChatPage';
+import { useSessionList } from '../chat/useSessionList';
 import { CronPage } from '../cron/CronPage';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { ApiKeysPage } from '../lab/api-keys/ApiKeysPage';
@@ -20,6 +21,7 @@ import { useAppState } from '../state/AppContext';
 import { AppSidebar } from './AppSidebar';
 import { CommandPalette } from './CommandPalette';
 import { RightDrawer } from './RightDrawer';
+import { StatusBar } from './StatusBar';
 import { type Toast, ToastContainer } from './ToastContainer';
 import { useDrawerStream } from './useDrawerStream';
 
@@ -41,8 +43,14 @@ type ShellRoute =
   | 'api-keys';
 
 export function AppShell() {
-  const { setPort, setAdvancedMode, setDesktopUserId, setLastTitledSession, setActiveSessionId } =
-    useAppState();
+  const {
+    state,
+    setPort,
+    setAdvancedMode,
+    setDesktopUserId,
+    setLastTitledSession,
+    setActiveSessionId,
+  } = useAppState();
   const [route, setRoute] = useState<ShellRoute>('chat');
   const [healthy, setHealthy] = useState(false);
   const [backendConnected, setBackendConnected] = useState(false);
@@ -52,13 +60,112 @@ export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  // Must be called unconditionally (React hooks rule). Returns empty state when
-  // no activeSessionId is set.
   const drawerState = useDrawerStream();
+
+  const baseUrl = `http://localhost:${resolvedPort}`;
+  const sessionList = useSessionList({ baseUrl });
+
+  const client = useMemo(
+    () =>
+      createEthosClient({ baseUrl: `http://localhost:${resolvedPort}`, fetch: globalThis.fetch }),
+    [resolvedPort],
+  );
+
+  const pinnedSessions = useMemo(
+    () => sessionList.sessions.filter((s) => s.pinned),
+    [sessionList.sessions],
+  );
+
+  const handleNewChat = useCallback(() => {
+    setActiveSessionId(null);
+  }, [setActiveSessionId]);
+
+  const handleSelectSession = useCallback(
+    (id: string) => {
+      setActiveSessionId(id);
+      setRoute('chat');
+    },
+    [setActiveSessionId],
+  );
+
+  const handleRenameSession = useCallback(
+    async (id: string, title: string) => {
+      try {
+        await client.rpc.sessions.update({ id, title });
+        sessionList.refresh();
+      } catch {
+        // best-effort
+      }
+    },
+    [client, sessionList],
+  );
+
+  const handleForkSession = useCallback(
+    async (id: string) => {
+      try {
+        const res = await client.rpc.sessions.fork({ id });
+        setActiveSessionId(res.session.id);
+        sessionList.refresh();
+      } catch {
+        // best-effort
+      }
+    },
+    [client, setActiveSessionId, sessionList],
+  );
+
+  const handleDeleteSession = useCallback(
+    async (id: string) => {
+      try {
+        await client.rpc.sessions.delete({ id });
+        if (id === state.activeSessionId) {
+          setActiveSessionId(null);
+        }
+        sessionList.refresh();
+      } catch {
+        // best-effort
+      }
+    },
+    [client, state.activeSessionId, setActiveSessionId, sessionList],
+  );
+
+  const handlePinSession = useCallback(
+    async (id: string) => {
+      try {
+        await client.rpc.sessions.pin({ id });
+        sessionList.refresh();
+      } catch {
+        // best-effort
+      }
+    },
+    [client, sessionList],
+  );
+
+  const handleUnpinSession = useCallback(
+    async (id: string) => {
+      try {
+        await client.rpc.sessions.unpin({ id });
+        sessionList.refresh();
+      } catch {
+        // best-effort
+      }
+    },
+    [client, sessionList],
+  );
+
+  const handleExportSession = useCallback(
+    async (id: string) => {
+      try {
+        const res = await client.rpc.sessions.export({ id, format: 'markdown' });
+        await window.ethos.file.save({ defaultName: res.filename, content: res.content });
+      } catch {
+        // best-effort
+      }
+    },
+    [client],
+  );
 
   useEffect(() => {
     async function bootstrap() {
-      // Load advanced mode from persisted settings
       try {
         const enabled = await window.ethos.settings.getAdvancedMode();
         setAdvancedMode(enabled);
@@ -66,7 +173,6 @@ export function AppShell() {
         // Keep default false
       }
 
-      // Resolve port via IPC
       let resolvedPort = 3001;
       try {
         resolvedPort = await window.ethos.backend.getPort();
@@ -76,21 +182,17 @@ export function AppShell() {
       setPort(resolvedPort);
       setResolvedPort(resolvedPort);
 
-      // Start the backend
       try {
         await window.ethos.backend.start({ port: resolvedPort });
       } catch {
         // Backend may already be running
       }
 
-      // Poll health until healthy
       const poll = setInterval(async () => {
         try {
           const { healthy: isHealthy } = await window.ethos.health.check({ port: resolvedPort });
           if (isHealthy) {
             clearInterval(poll);
-            // Exchange the backend auth token to set the ethos_auth cookie.
-            // Without this, all /rpc/* and /sse/* calls fail with 401.
             try {
               const token = await window.ethos.backend.getAuthToken();
               if (token) {
@@ -100,10 +202,8 @@ export function AppShell() {
                 );
               }
             } catch {
-              // best-effort — existing cookie may still be valid
+              // best-effort
             }
-            // Resolve the desktop user's internal userId (seeded by serve.ts on startup).
-            // Used by ChatPage (to scope USER.md writes) and MemoryPage (user dropdown).
             try {
               const sdkClient = createEthosClient({
                 baseUrl: `http://localhost:${resolvedPort}`,
@@ -162,15 +262,15 @@ export function AppShell() {
         };
         if (data.type === 'session.titled' && data.sessionId && data.title) {
           setLastTitledSession({ sessionId: data.sessionId, title: data.title });
+          sessionList.refresh();
         }
       } catch {
         // ignore
       }
     };
     return () => source.close();
-  }, [healthy, resolvedPort, setLastTitledSession]);
+  }, [healthy, resolvedPort, setLastTitledSession, sessionList]);
 
-  // Toast generation: fire a toast for each new notification that arrives in the drawer.
   const prevNotifCountRef = useRef(0);
   useEffect(() => {
     const count = drawerState.notifications.length;
@@ -184,7 +284,6 @@ export function AppShell() {
     prevNotifCountRef.current = count;
   }, [drawerState.notifications]);
 
-  // ⌘K / Ctrl+K global handler
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -232,84 +331,113 @@ export function AppShell() {
 
   return (
     <>
-      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-        <AppSidebar
-          route={route}
-          onNavigate={(r) => setRoute(r as ShellRoute)}
-          drawerOpen={drawerOpen}
-          onToggleDrawer={() => setDrawerOpen((v) => !v)}
-          backendConnected={backendConnected}
-        />
-        <div style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
-          {route === 'settings' ? (
-            <SettingsPage />
-          ) : route === 'chat' ? (
-            <ErrorBoundary label="ChatPage">
-              <ChatPage />
-            </ErrorBoundary>
-          ) : route === 'personalities' ? (
-            <ErrorBoundary label="PersonalitiesPage">
-              <PersonalitiesPage />
-            </ErrorBoundary>
-          ) : route === 'mcp' ? (
-            <ErrorBoundary label="McpPage">
-              <McpPage />
-            </ErrorBoundary>
-          ) : route === 'plugins' ? (
-            <ErrorBoundary label="PluginsPage">
-              <PluginsPage />
-            </ErrorBoundary>
-          ) : route === 'memory' ? (
-            <ErrorBoundary label="MemoryPage">
-              <MemoryPage />
-            </ErrorBoundary>
-          ) : route === 'cron' ? (
-            <ErrorBoundary label="CronPage">
-              <CronPage />
-            </ErrorBoundary>
-          ) : route === 'platforms' ? (
-            <ErrorBoundary label="PlatformsPage">
-              <PlatformsPage />
-            </ErrorBoundary>
-          ) : route === 'skills' ? (
-            <ErrorBoundary label="SkillsPage">
-              <SkillsPage />
-            </ErrorBoundary>
-          ) : route === 'batch-eval' ? (
-            <ErrorBoundary label="BatchPage">
-              <BatchPage />
-            </ErrorBoundary>
-          ) : route === 'kanban' ? (
-            <ErrorBoundary label="KanbanPage">
-              <KanbanPage />
-            </ErrorBoundary>
-          ) : route === 'observability' ? (
-            <ErrorBoundary label="ObservabilityPage">
-              <ObservabilityPage />
-            </ErrorBoundary>
-          ) : route === 'mesh' ? (
-            <ErrorBoundary label="MeshPage">
-              <MeshPage />
-            </ErrorBoundary>
-          ) : route === 'api-keys' ? (
-            <ErrorBoundary label="ApiKeysPage">
-              <ApiKeysPage />
-            </ErrorBoundary>
-          ) : route === 'activity' ? (
-            <ErrorBoundary label="ActivityPage">
-              <ActivityPage />
-            </ErrorBoundary>
-          ) : (
-            <div>coming soon</div>
+      <div
+        style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}
+      >
+        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+          <AppSidebar
+            route={route}
+            onNavigate={(r) => setRoute(r as ShellRoute)}
+            backendConnected={backendConnected}
+            sessions={sessionList.sessions}
+            pinnedSessions={pinnedSessions}
+            loading={sessionList.loading}
+            search={sessionList.search}
+            setSearch={sessionList.setSearch}
+            activeSessionId={state.activeSessionId}
+            onSelectSession={handleSelectSession}
+            onNewChat={handleNewChat}
+            loadMore={sessionList.loadMore}
+            hasMore={sessionList.hasMore}
+            onRenameSession={handleRenameSession}
+            onForkSession={handleForkSession}
+            onExportSession={handleExportSession}
+            onDeleteSession={handleDeleteSession}
+            onPinSession={handlePinSession}
+            onUnpinSession={handleUnpinSession}
+          />
+          <div style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
+            {route === 'settings' ? (
+              <SettingsPage />
+            ) : route === 'chat' ? (
+              <ErrorBoundary label="ChatPage">
+                <ChatPage
+                  onSessionCreated={() => sessionList.refresh()}
+                  onForkSession={(id?: string) => {
+                    const targetId = id ?? state.activeSessionId;
+                    if (targetId) handleForkSession(targetId);
+                  }}
+                />
+              </ErrorBoundary>
+            ) : route === 'personalities' ? (
+              <ErrorBoundary label="PersonalitiesPage">
+                <PersonalitiesPage />
+              </ErrorBoundary>
+            ) : route === 'mcp' ? (
+              <ErrorBoundary label="McpPage">
+                <McpPage />
+              </ErrorBoundary>
+            ) : route === 'plugins' ? (
+              <ErrorBoundary label="PluginsPage">
+                <PluginsPage />
+              </ErrorBoundary>
+            ) : route === 'memory' ? (
+              <ErrorBoundary label="MemoryPage">
+                <MemoryPage />
+              </ErrorBoundary>
+            ) : route === 'cron' ? (
+              <ErrorBoundary label="CronPage">
+                <CronPage />
+              </ErrorBoundary>
+            ) : route === 'platforms' ? (
+              <ErrorBoundary label="PlatformsPage">
+                <PlatformsPage />
+              </ErrorBoundary>
+            ) : route === 'skills' ? (
+              <ErrorBoundary label="SkillsPage">
+                <SkillsPage />
+              </ErrorBoundary>
+            ) : route === 'batch-eval' ? (
+              <ErrorBoundary label="BatchPage">
+                <BatchPage />
+              </ErrorBoundary>
+            ) : route === 'kanban' ? (
+              <ErrorBoundary label="KanbanPage">
+                <KanbanPage />
+              </ErrorBoundary>
+            ) : route === 'observability' ? (
+              <ErrorBoundary label="ObservabilityPage">
+                <ObservabilityPage />
+              </ErrorBoundary>
+            ) : route === 'mesh' ? (
+              <ErrorBoundary label="MeshPage">
+                <MeshPage />
+              </ErrorBoundary>
+            ) : route === 'api-keys' ? (
+              <ErrorBoundary label="ApiKeysPage">
+                <ApiKeysPage />
+              </ErrorBoundary>
+            ) : route === 'activity' ? (
+              <ErrorBoundary label="ActivityPage">
+                <ActivityPage />
+              </ErrorBoundary>
+            ) : (
+              <div>coming soon</div>
+            )}
+          </div>
+          {drawerOpen && (
+            <RightDrawer
+              state={drawerState}
+              onNavigate={(r) => setRoute(r as ShellRoute)}
+              onClose={() => setDrawerOpen(false)}
+            />
           )}
         </div>
-        {drawerOpen && (
-          <RightDrawer
-            state={drawerState}
-            onNavigate={(r) => setRoute(r as ShellRoute)}
-            onClose={() => setDrawerOpen(false)}
-          />
-        )}
+        <StatusBar
+          backendConnected={backendConnected}
+          providerModel=""
+          onNavigate={(r) => setRoute(r as ShellRoute)}
+        />
       </div>
       <CommandPalette
         open={paletteOpen}
