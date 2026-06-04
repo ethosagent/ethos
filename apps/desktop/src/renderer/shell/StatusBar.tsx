@@ -113,42 +113,44 @@ export function StatusBar({
 
       <div style={{ flex: 1 }} />
 
-      {sidebarCollapsed && (
-        <button
-          type="button"
-          onClick={onToggleSidebar}
-          onMouseEnter={() => setHoveredPill('sidebar')}
-          onMouseLeave={() => setHoveredPill(null)}
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11,
-            color: 'var(--text-secondary)',
-            background: hoveredPill === 'sidebar' ? 'var(--bg-overlay)' : 'transparent',
-            border: 'none',
-            borderRadius: 'var(--radius-sm)',
-            padding: '2px 6px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-          }}
-          aria-label="Show sidebar"
+      <button
+        type="button"
+        onClick={onToggleSidebar}
+        onMouseEnter={() => setHoveredPill('sidebar')}
+        onMouseLeave={() => setHoveredPill(null)}
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          color: 'var(--text-secondary)',
+          background: !sidebarCollapsed
+            ? 'var(--bg-overlay)'
+            : hoveredPill === 'sidebar'
+              ? 'var(--bg-overlay)'
+              : 'transparent',
+          border: 'none',
+          borderRadius: 'var(--radius-sm)',
+          padding: '2px 6px',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+        }}
+        aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+      >
+        <svg
+          aria-hidden="true"
+          width={14}
+          height={14}
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
         >
-          <svg
-            aria-hidden="true"
-            width={14}
-            height={14}
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={1.5}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <rect x="1" y="2" width="14" height="12" rx="1.5" />
-            <line x1="5.5" y1="2" x2="5.5" y2="14" />
-          </svg>
-        </button>
-      )}
+          <rect x="1" y="2" width="14" height="12" rx="1.5" />
+          <line x1="5.5" y1="2" x2="5.5" y2="14" />
+        </svg>
+      </button>
 
       <button
         type="button"

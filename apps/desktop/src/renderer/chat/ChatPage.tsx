@@ -39,7 +39,7 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
 
   const isNewSessionAssignment = useRef(false);
-  const lastManualTitleRef = useRef<string | null>(null);
+  const lastManualTitleRef = useRef<{ sessionId: string; title: string } | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('ethos:lastPersonalityId');
@@ -70,6 +70,7 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
       isNewSessionAssignment.current = false;
       return;
     }
+    lastManualTitleRef.current = null;
     resetChatState();
   }, [activeSessionId, resetChatState]);
 
@@ -431,7 +432,8 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
   useEffect(() => {
     if (!lastTitledSession) return;
     if (lastTitledSession.sessionId === activeSessionId) {
-      if (lastManualTitleRef.current !== null) {
+      const manual = lastManualTitleRef.current;
+      if (manual && manual.sessionId === activeSessionId) {
         lastManualTitleRef.current = null;
         return;
       }
@@ -441,9 +443,9 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
 
   const handleTitleChange = useCallback(
     async (title: string) => {
-      lastManualTitleRef.current = title;
       setSessionTitle(title);
       if (!activeSessionId) return;
+      lastManualTitleRef.current = { sessionId: activeSessionId, title };
       try {
         await client.rpc.sessions.update({ id: activeSessionId, title });
         setLastTitledSession({ sessionId: activeSessionId, title });
