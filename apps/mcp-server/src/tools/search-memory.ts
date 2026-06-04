@@ -17,17 +17,23 @@ export async function searchMemory(
 ): Promise<MemorySearchResult[]> {
   if (provider) {
     const ctx = {
-      scopeId: scope ?? 'all',
+      scopeId: 'memory',
       sessionId: '',
       sessionKey: '',
       platform: 'mcp',
       workingDir: '',
     };
     const entries = await provider.search(query, ctx, { limit });
-    return entries.map((entry) => ({
-      store: (entry.key === 'USER.md' ? 'user' : 'memory') as 'memory' | 'user',
-      snippet: entry.content,
-    }));
+    return entries
+      .filter((entry) => {
+        if (scope === 'memory') return entry.key !== 'USER.md';
+        if (scope === 'user') return entry.key === 'USER.md';
+        return true;
+      })
+      .map((entry) => ({
+        store: (entry.key === 'USER.md' ? 'user' : 'memory') as 'memory' | 'user',
+        snippet: entry.content,
+      }));
   }
 
   const results: MemorySearchResult[] = [];

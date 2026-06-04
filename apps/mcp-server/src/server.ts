@@ -1,6 +1,5 @@
 import { type FSWatcher, watch } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
-import { join } from 'node:path';
 import type { AgentLoop } from '@ethosagent/core';
 import type { MemoryProvider, SessionStore } from '@ethosagent/types';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -59,15 +58,16 @@ export class EthosMcpServer {
     this._registerHandlers();
 
     if (config.memoryProvider) {
-      for (const file of ['MEMORY.md', 'USER.md']) {
-        try {
-          const watcher = watch(join(config.dataDir, file), () => {
-            this._server.sendResourceUpdated({ uri: `ethos://memory/${file}` });
-          });
-          this._watchers.push(watcher);
-        } catch {
-          // File may not exist yet
-        }
+      const memoryFiles = new Set(['MEMORY.md', 'USER.md']);
+      try {
+        const watcher = watch(config.dataDir, (_event, filename) => {
+          if (filename && memoryFiles.has(filename)) {
+            this._server.sendResourceUpdated({ uri: `ethos://memory/${filename}` });
+          }
+        });
+        this._watchers.push(watcher);
+      } catch {
+        // dataDir may not exist yet
       }
     }
   }
@@ -152,7 +152,7 @@ export class EthosMcpServer {
               isError: true,
             };
           }
-          const result = await readMemory(memoryProvider, safeArgs.key ?? '', safeArgs.scope);
+          const result = await readMemory(memoryProvider, safeArgs.key ?? '');
           return { content: [{ type: 'text' as const, text: result }] };
         }
 
@@ -169,7 +169,6 @@ export class EthosMcpServer {
             safeArgs.key ?? '',
             safeArgs.content,
             safeArgs.substring_match,
-            safeArgs.scope,
           );
           const isError = result.startsWith('input_invalid');
           return {

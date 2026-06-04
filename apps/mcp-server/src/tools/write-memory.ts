@@ -11,7 +11,6 @@ export const writeMemoryToolDef = {
       key: { type: 'string' },
       content: { type: 'string', description: 'Required for add and replace.' },
       substring_match: { type: 'string', description: 'Required for remove.' },
-      scope: { type: 'string', description: 'scopeId override.' },
     },
     required: ['action', 'key'],
   },
@@ -23,9 +22,8 @@ export async function writeMemory(
   key: string,
   content?: string,
   substringMatch?: string,
-  scope?: string,
 ): Promise<string> {
-  if ((action === 'add' || action === 'replace') && !content) {
+  if ((action === 'add' || action === 'replace') && content === undefined) {
     return `input_invalid: content is required for action "${action}"`;
   }
   if (action === 'remove' && !substringMatch) {
@@ -49,7 +47,7 @@ export async function writeMemory(
   }
 
   const ctx = {
-    scopeId: scope ?? 'memory',
+    scopeId: 'memory',
     sessionId: '',
     sessionKey: '',
     platform: 'mcp',

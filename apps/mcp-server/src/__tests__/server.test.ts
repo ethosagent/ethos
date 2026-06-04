@@ -10,7 +10,9 @@ import { zed } from '../clients/zed';
 import { getPromptMessages, PROMPTS } from '../prompts';
 import { listResources } from '../resources';
 import { listPersonalities } from '../tools/list-personalities';
+import { readMemory } from '../tools/read-memory';
 import { searchMemory } from '../tools/search-memory';
+import { writeMemory } from '../tools/write-memory';
 
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `ethos-mcp-test-${Date.now()}`);
@@ -126,5 +128,101 @@ describe('client adapters', () => {
     const servers = cfg.mcpServers as Array<Record<string, unknown>>;
     expect(servers.filter((s) => s.name === 'ethos')).toHaveLength(1);
     expect(servers.find((s) => s.name === 'ethos')?.command).toBe('new');
+  });
+});
+
+function mockProvider(overrides: Partial<Parameters<typeof readMemory>[0]> = {}) {
+  return {
+    prefetch: async (_ctx: unknown) => null,
+    read: async (_key: string, _ctx: unknown) => null,
+    search: async (_query: string, _ctx: unknown, _opts?: unknown) => [],
+    sync: async (_updates: unknown[], _ctx: unknown) => {},
+    list: async (_ctx: unknown, _opts?: unknown) => [],
+    ...overrides,
+  } as Parameters<typeof readMemory>[0];
+}
+
+describe('readMemory', () => {
+  it('returns content from provider', async () => {
+    const provider = mockProvider({
+      read: async (key: string, _ctx: unknown) => ({ key, content: `content of ${key}` }),
+    });
+    const result = await readMemory(provider, 'MEMORY.md');
+    expect(result).toBe('content of MEMORY.md');
+  });
+
+  it('returns not-found message when key is absent', async () => {
+    const provider = mockProvider();
+    const result = await readMemory(provider, 'missing.md');
+    expect(result).toContain('No content found');
+  });
+});
+
+describe('writeMemory', () => {
+  it('calls provider.sync with add action', async () => {
+    const synced: unknown[] = [];
+    const provider = mockProvider({
+      sync: async (updates: unknown[], _ctx: unknown) => {
+        synced.push(...(updates as unknown[]));
+      },
+    });
+    const result = await writeMemory(provider, 'add', 'MEMORY.md', 'new content');
+    expect(result).toContain('Memory updated');
+    expect(synced).toHaveLength(1);
+  });
+
+  it('rejects add without content', async () => {
+    const provider = mockProvider();
+    const result = await writeMemory(provider, 'add', 'MEMORY.md');
+    expect(result).toContain('input_invalid');
+  });
+
+  it('rejects remove without substring_match', async () => {
+    const provider = mockProvider();
+    const result = await writeMemory(provider, 'remove', 'MEMORY.md');
+    expect(result).toContain('input_invalid');
+  });
+
+  it('allows replace with empty string content', async () => {
+    const synced: unknown[] = [];
+    const provider = mockProvider({
+      sync: async (updates: unknown[], _ctx: unknown) => {
+        synced.push(...(updates as unknown[]));
+      },
+    });
+    const result = await writeMemory(provider, 'replace', 'MEMORY.md', '');
+    expect(result).toContain('Memory updated');
+    expect(synced).toHaveLength(1);
+  });
+
+  it('handles delete action', async () => {
+    const synced: unknown[] = [];
+    const provider = mockProvider({
+      sync: async (updates: unknown[], _ctx: unknown) => {
+        synced.push(...(updates as unknown[]));
+      },
+    });
+    const result = await writeMemory(provider, 'delete', 'MEMORY.md');
+    expect(result).toContain('Memory updated');
+  });
+});
+
+describe('searchMemory with provider', () => {
+  it('uses provider.search and filters by scope', async () => {
+    const provider = mockProvider({
+      search: async (_query: string, _ctx: unknown, _opts?: unknown) => [
+        { key: 'MEMORY.md', content: 'project notes' },
+        { key: 'USER.md', content: 'user info' },
+      ],
+    });
+    const dir = makeTmpDir();
+    const memoryOnly = await searchMemory(dir, 'test', 'memory', provider);
+    expect(memoryOnly.every((r) => r.store === 'memory')).toBe(true);
+
+    const userOnly = await searchMemory(dir, 'test', 'user', provider);
+    expect(userOnly.every((r) => r.store === 'user')).toBe(true);
+
+    const all = await searchMemory(dir, 'test', 'all', provider);
+    expect(all.length).toBe(2);
   });
 });

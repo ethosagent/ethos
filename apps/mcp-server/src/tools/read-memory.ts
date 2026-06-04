@@ -7,23 +7,14 @@ export const readMemoryToolDef = {
     type: 'object' as const,
     properties: {
       key: { type: 'string', description: 'Memory key, e.g. "MEMORY.md" or "architecture.md"' },
-      scope: {
-        type: 'string',
-        description:
-          'scopeId, e.g. "personality:researcher" or "team:engineering". Defaults to server default scope.',
-      },
     },
     required: ['key'],
   },
 };
 
-export async function readMemory(
-  provider: MemoryProvider,
-  key: string,
-  scope?: string,
-): Promise<string> {
+export async function readMemory(provider: MemoryProvider, key: string): Promise<string> {
   const ctx = {
-    scopeId: scope ?? 'memory',
+    scopeId: 'memory',
     sessionId: '',
     sessionKey: '',
     platform: 'mcp',
