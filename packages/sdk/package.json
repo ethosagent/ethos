@@ -1,6 +1,6 @@
 {
   "name": "@ethosagent/sdk",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "type": "module",
   "description": "TypeScript SDK for building Mission Control dashboards on Ethos",
   "license": "MIT",
