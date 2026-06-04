@@ -6,6 +6,16 @@ import type {
   ToolDefinitionLite,
 } from '@ethosagent/types';
 import OpenAI from 'openai';
+import { streamTextToolCalls } from './text-tool-call-transport';
+import { buildChatCompletionsParamsAsync, streamChatCompletions } from './transport';
+
+export { streamTextToolCalls } from './text-tool-call-transport';
+export type { ChatCompletionsStreamParams } from './transport';
+export {
+  buildChatCompletionsParams,
+  buildChatCompletionsParamsAsync,
+  streamChatCompletions,
+} from './transport';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -17,6 +27,7 @@ export interface OpenAICompatProviderConfig {
   apiKey: string;
   baseUrl: string;
   maxContextTokens?: number;
+  toolCallFormat?: 'openai' | 'text-xml';
 }
 
 // ---------------------------------------------------------------------------
@@ -208,15 +219,20 @@ export class OpenAICompatProvider implements LLMProvider {
   readonly maxContextTokens: number;
   readonly supportsCaching = false;
   readonly supportsThinking = false;
+  readonly supportsVision = { images: true, documents: false };
+  readonly supportsCacheBreakpoints = false;
+  readonly supportsTokenCounting: 'real' | 'estimated' = 'estimated';
 
   private readonly client: OpenAI;
   private readonly gemini: boolean;
+  private readonly toolCallFormat: 'openai' | 'text-xml';
 
   constructor(config: OpenAICompatProviderConfig) {
     this.name = config.name;
     this.model = config.model;
     this.maxContextTokens = config.maxContextTokens ?? 128_000;
     this.gemini = isGeminiEndpoint(config.baseUrl);
+    this.toolCallFormat = config.toolCallFormat ?? 'openai';
     this.client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseUrl,
@@ -228,118 +244,22 @@ export class OpenAICompatProvider implements LLMProvider {
     tools: ToolDefinitionLite[],
     options: CompletionOptions,
   ): AsyncIterable<CompletionChunk> {
-    const oaiMessages = toOpenAIMessages(messages, options.system);
-
-    const oaiTools: OpenAI.Chat.ChatCompletionTool[] = tools.map((t) => ({
-      type: 'function',
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: this.gemini ? normalizeGeminiSchema(t.parameters) : t.parameters,
-      },
-    }));
-
-    // Per-slice token computation (P1 observability) — best-effort, never blocks the call.
-    let requestTokens: { system: number; tools: number; messages: number } | undefined;
-    try {
-      const systemText = options.system ?? '';
-      const toolsText = oaiTools.length > 0 ? JSON.stringify(oaiTools) : '';
-      const [sysTk, toolsTk, msgTk] = await Promise.all([
-        systemText ? this.countTokens([{ role: 'user', content: systemText }]) : 0,
-        toolsText ? this.countTokens([{ role: 'user', content: toolsText }]) : 0,
-        this.countTokens(messages),
-      ]);
-      requestTokens = { system: sysTk, tools: toolsTk, messages: msgTk };
-    } catch {
-      // Best-effort: if token counting fails, requestTokens stays undefined.
-    }
-
-    const effectiveModel = options.modelOverride ?? this.model;
-    const params: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
-      model: effectiveModel,
-      messages: oaiMessages,
-      stream: true,
-      stream_options: { include_usage: true },
-      ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
-      ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-      ...(options.topP !== undefined ? { top_p: options.topP } : {}),
-      ...(options.seed !== undefined ? { seed: options.seed } : {}),
-      ...(options.stopSequences ? { stop: options.stopSequences } : {}),
-      ...(oaiTools.length > 0 ? { tools: oaiTools } : {}),
-    };
-
-    const stream = await this.client.chat.completions.create(params, {
-      signal: options.abortSignal,
+    const params = await buildChatCompletionsParamsAsync(messages, tools, options, this.model, {
+      gemini: this.gemini,
+      countTokens: (msgs) => this.countTokens(msgs),
     });
 
-    // Track streaming tool calls by index (OpenAI streams them as deltas)
-    const pendingTools = new Map<number, { id: string; name: string; args: string }>();
-
-    for await (const chunk of stream) {
-      const choice = chunk.choices[0];
-
-      // Usage chunk (comes on its own chunk when stream_options.include_usage=true)
-      if (!choice && chunk.usage) {
-        yield {
-          type: 'usage',
-          usage: {
-            inputTokens: chunk.usage.prompt_tokens,
-            outputTokens: chunk.usage.completion_tokens,
-            cacheReadTokens: 0,
-            cacheCreationTokens: 0,
-            estimatedCostUsd: estimateCostOpenAI(
-              effectiveModel,
-              chunk.usage.prompt_tokens,
-              chunk.usage.completion_tokens,
-            ),
-            requestTokens,
-          },
-        };
-        continue;
-      }
-
-      if (!choice) continue;
-
-      const delta = choice.delta;
-
-      if (delta.content) {
-        yield { type: 'text_delta', text: delta.content };
-      }
-
-      // Stream tool call deltas
-      for (const tc of delta.tool_calls ?? []) {
-        const idx = tc.index;
-
-        if (!pendingTools.has(idx)) {
-          // First delta for this tool call — has id and name
-          const id = tc.id ?? '';
-          const name = tc.function?.name ?? '';
-          pendingTools.set(idx, { id, name, args: '' });
-          yield { type: 'tool_use_start', toolCallId: id, toolName: name };
-        }
-
-        const pending = pendingTools.get(idx);
-        if (pending && tc.function?.arguments) {
-          pending.args += tc.function.arguments;
-          yield {
-            type: 'tool_use_delta',
-            toolCallId: pending.id,
-            partialJson: tc.function.arguments,
-          };
-        }
-      }
-
-      // Finish
-      if (choice.finish_reason === 'tool_calls' || choice.finish_reason === 'stop') {
-        for (const [, tc] of pendingTools) {
-          yield { type: 'tool_use_end', toolCallId: tc.id, inputJson: tc.args };
-        }
-        pendingTools.clear();
-        yield {
-          type: 'done',
-          finishReason: choice.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn',
-        };
-      }
+    if (this.toolCallFormat === 'text-xml') {
+      // Strip structured tools so the model uses text-based XML tool calls
+      const paramsNoTools = {
+        ...params,
+        oaiParams: { ...params.oaiParams, tools: undefined },
+      };
+      yield* streamTextToolCalls(
+        streamChatCompletions(this.client, paramsNoTools, options.abortSignal),
+      );
+    } else {
+      yield* streamChatCompletions(this.client, params, options.abortSignal);
     }
   }
 

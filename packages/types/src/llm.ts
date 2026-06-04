@@ -14,7 +14,7 @@ export type CompletionChunk =
   | { type: 'tool_use_start'; toolCallId: string; toolName: string }
   | { type: 'tool_use_delta'; toolCallId: string; partialJson: string }
   | { type: 'tool_use_end'; toolCallId: string; inputJson: string }
-  | { type: 'usage'; usage: TokenUsage }
+  | { type: 'usage'; usage: TokenUsage; metadata?: Record<string, unknown> }
   | { type: 'done'; finishReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' };
 
 export interface Message {
@@ -64,6 +64,12 @@ export interface LLMProvider {
   readonly maxContextTokens: number;
   readonly supportsCaching: boolean;
   readonly supportsThinking: boolean;
+  supportsVision?: {
+    images: boolean;
+    documents: boolean;
+  };
+  supportsCacheBreakpoints?: boolean;
+  supportsTokenCounting?: 'real' | 'estimated';
   complete(
     messages: Message[],
     tools: ToolDefinitionLite[],
