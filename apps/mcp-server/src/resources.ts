@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { assertWithinBase } from '@ethosagent/core';
+import type { MemoryProvider } from '@ethosagent/types';
 import { assertSafeId } from '@ethosagent/types';
 
 export interface McpResource {
@@ -61,13 +62,39 @@ export function listResources(dataDir: string): McpResource[] {
   return resources;
 }
 
-export function readResource(uri: string, dataDir: string): string {
+export async function readResource(
+  uri: string,
+  dataDir: string,
+  provider?: MemoryProvider,
+): Promise<string> {
   // ethos://memory/MEMORY.md
   if (uri === 'ethos://memory/MEMORY.md') {
+    if (provider) {
+      const ctx = {
+        scopeId: 'memory',
+        sessionId: '',
+        sessionKey: '',
+        platform: 'mcp',
+        workingDir: '',
+      };
+      const entry = await provider.read('MEMORY.md', ctx);
+      return entry?.content ?? '';
+    }
     const p = join(dataDir, 'MEMORY.md');
     return existsSync(p) ? readFileSync(p, 'utf8') : '';
   }
   if (uri === 'ethos://memory/USER.md') {
+    if (provider) {
+      const ctx = {
+        scopeId: 'memory',
+        sessionId: '',
+        sessionKey: '',
+        platform: 'mcp',
+        workingDir: '',
+      };
+      const entry = await provider.read('USER.md', ctx);
+      return entry?.content ?? '';
+    }
     const p = join(dataDir, 'USER.md');
     return existsSync(p) ? readFileSync(p, 'utf8') : '';
   }

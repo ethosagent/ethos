@@ -40,24 +40,24 @@ describe('listPersonalities', () => {
 });
 
 describe('searchMemory', () => {
-  it('returns empty array when files absent', () => {
+  it('returns empty array when files absent', async () => {
     const dir = makeTmpDir();
-    expect(searchMemory(dir, 'hello')).toEqual([]);
+    expect(await searchMemory(dir, 'hello')).toEqual([]);
   });
 
-  it('finds matching lines in MEMORY.md', () => {
+  it('finds matching lines in MEMORY.md', async () => {
     const dir = makeTmpDir();
     writeFileSync(join(dir, 'MEMORY.md'), 'line one\nthe keyword line\nline three\n');
-    const results = searchMemory(dir, 'keyword');
+    const results = await searchMemory(dir, 'keyword');
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]?.snippet).toContain('keyword');
   });
 
-  it('scopes to user file when scope=user', () => {
+  it('scopes to user file when scope=user', async () => {
     const dir = makeTmpDir();
     writeFileSync(join(dir, 'MEMORY.md'), 'secret in memory\n');
     writeFileSync(join(dir, 'USER.md'), 'secret in user\n');
-    const results = searchMemory(dir, 'secret', 'user');
+    const results = await searchMemory(dir, 'secret', 'user');
     expect(results.every((r) => r.store === 'user')).toBe(true);
   });
 });

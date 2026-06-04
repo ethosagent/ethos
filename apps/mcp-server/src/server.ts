@@ -1,6 +1,8 @@
+import { type FSWatcher, watch } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
+import { join } from 'node:path';
 import type { AgentLoop } from '@ethosagent/core';
-import type { SessionStore } from '@ethosagent/types';
+import type { MemoryProvider, SessionStore } from '@ethosagent/types';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -11,6 +13,8 @@ import {
   ListResourcesRequestSchema,
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
+  SubscribeRequestSchema,
+  UnsubscribeRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import type { McpLogger } from './logger';
 import { getPromptMessages, PROMPTS } from './prompts';
@@ -20,8 +24,10 @@ import { getMessages, getMessagesToolDef } from './tools/get-messages';
 import { getSession, getSessionToolDef } from './tools/get-session';
 import { listPersonalities, listPersonalitiesToolDef } from './tools/list-personalities';
 import { listSessions, listSessionsToolDef } from './tools/list-sessions';
+import { readMemory, readMemoryToolDef } from './tools/read-memory';
 import { searchMemory, searchMemoryToolDef } from './tools/search-memory';
 import { searchSessions, searchSessionsToolDef } from './tools/search-sessions';
+import { writeMemory, writeMemoryToolDef } from './tools/write-memory';
 
 export interface EthosMcpServerConfig {
   loop: AgentLoop;
@@ -29,26 +35,52 @@ export interface EthosMcpServerConfig {
   logger: McpLogger;
   version?: string;
   sessionStore?: SessionStore;
+  memoryProvider?: MemoryProvider;
+  enableMemoryWrite?: boolean;
 }
 
 export class EthosMcpServer {
   private _server: Server;
   private _config: EthosMcpServerConfig;
+  private _watchers: FSWatcher[] = [];
 
   constructor(config: EthosMcpServerConfig) {
     this._config = config;
     this._server = new Server(
       { name: 'ethos', version: config.version ?? 'dev' },
-      { capabilities: { tools: {}, resources: {}, prompts: {} } },
+      {
+        capabilities: {
+          tools: {},
+          resources: config.memoryProvider ? { subscribe: true } : {},
+          prompts: {},
+        },
+      },
     );
     this._registerHandlers();
+
+    if (config.memoryProvider) {
+      for (const file of ['MEMORY.md', 'USER.md']) {
+        try {
+          const watcher = watch(join(config.dataDir, file), () => {
+            this._server.sendResourceUpdated({ uri: `ethos://memory/${file}` });
+          });
+          this._watchers.push(watcher);
+        } catch {
+          // File may not exist yet
+        }
+      }
+    }
   }
 
   private _registerHandlers(): void {
-    const { loop, dataDir, logger, sessionStore } = this._config;
+    const { loop, dataDir, logger, sessionStore, memoryProvider, enableMemoryWrite } = this._config;
 
     const sessionToolDefs = sessionStore
       ? [listSessionsToolDef, getSessionToolDef, getMessagesToolDef, searchSessionsToolDef]
+      : [];
+
+    const memoryToolDefs = memoryProvider
+      ? [readMemoryToolDef, ...(enableMemoryWrite ? [writeMemoryToolDef] : [])]
       : [];
 
     this._server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -57,6 +89,7 @@ export class EthosMcpServer {
         listPersonalitiesToolDef,
         searchMemoryToolDef,
         ...sessionToolDefs,
+        ...memoryToolDefs,
       ],
     }));
 
@@ -96,10 +129,11 @@ export class EthosMcpServer {
         }
 
         if (name === 'search_memory') {
-          const results = searchMemory(
+          const results = await searchMemory(
             dataDir,
             safeArgs.query ?? '',
             safeArgs.scope as 'memory' | 'user' | 'all' | undefined,
+            memoryProvider,
           );
           return {
             content: [
@@ -108,6 +142,39 @@ export class EthosMcpServer {
                 text: JSON.stringify(results, null, 2),
               },
             ],
+          };
+        }
+
+        if (name === 'read_memory') {
+          if (!memoryProvider) {
+            return {
+              content: [{ type: 'text' as const, text: 'Memory provider not configured' }],
+              isError: true,
+            };
+          }
+          const result = await readMemory(memoryProvider, safeArgs.key ?? '', safeArgs.scope);
+          return { content: [{ type: 'text' as const, text: result }] };
+        }
+
+        if (name === 'write_memory') {
+          if (!memoryProvider || !enableMemoryWrite) {
+            return {
+              content: [{ type: 'text' as const, text: 'Memory write not enabled' }],
+              isError: true,
+            };
+          }
+          const result = await writeMemory(
+            memoryProvider,
+            safeArgs.action as 'add' | 'replace' | 'remove' | 'delete',
+            safeArgs.key ?? '',
+            safeArgs.content,
+            safeArgs.substring_match,
+            safeArgs.scope,
+          );
+          const isError = result.startsWith('input_invalid');
+          return {
+            content: [{ type: 'text' as const, text: result }],
+            ...(isError ? { isError: true } : {}),
           };
         }
 
@@ -200,7 +267,7 @@ export class EthosMcpServer {
     this._server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       const { uri } = request.params;
       logger.info('resource_read', { uri });
-      const text = readResource(uri, dataDir);
+      const text = await readResource(uri, dataDir, memoryProvider);
       return {
         contents: [{ uri, mimeType: 'text/plain', text }],
       };
@@ -217,6 +284,19 @@ export class EthosMcpServer {
       const messages = getPromptMessages(name, safeArgs);
       return { messages };
     });
+
+    if (memoryProvider) {
+      this._server.setRequestHandler(SubscribeRequestSchema, async () => ({}));
+      this._server.setRequestHandler(UnsubscribeRequestSchema, async () => ({}));
+    }
+  }
+
+  async close(): Promise<void> {
+    for (const w of this._watchers) {
+      w.close();
+    }
+    this._watchers = [];
+    await this._server.close();
   }
 
   async start(): Promise<void> {

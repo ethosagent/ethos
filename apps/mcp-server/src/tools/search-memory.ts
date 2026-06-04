@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { MemoryProvider } from '@ethosagent/types';
 
 export interface MemorySearchResult {
   store: 'memory' | 'user';
@@ -7,11 +8,28 @@ export interface MemorySearchResult {
 }
 
 /** Simple substring search over MEMORY.md and USER.md. */
-export function searchMemory(
+export async function searchMemory(
   dataDir: string,
   query: string,
   scope?: 'memory' | 'user' | 'all',
-): MemorySearchResult[] {
+  provider?: MemoryProvider,
+  limit = 10,
+): Promise<MemorySearchResult[]> {
+  if (provider) {
+    const ctx = {
+      scopeId: scope ?? 'all',
+      sessionId: '',
+      sessionKey: '',
+      platform: 'mcp',
+      workingDir: '',
+    };
+    const entries = await provider.search(query, ctx, { limit });
+    return entries.map((entry) => ({
+      store: (entry.key === 'USER.md' ? 'user' : 'memory') as 'memory' | 'user',
+      snippet: entry.content,
+    }));
+  }
+
   const results: MemorySearchResult[] = [];
   const lower = query.toLowerCase();
 
