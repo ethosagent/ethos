@@ -33,6 +33,12 @@ export interface UseChatOptions {
    * refresh stays on the same conversation.
    */
   onSessionCreated?: (sessionId: string) => void;
+  /**
+   * The current session's string key. When a `cron.fired` SSE event arrives
+   * with a matching sessionKey, history is reloaded so the cron turn appears
+   * in chat.
+   */
+  sessionKey?: string;
 }
 
 export interface UseChatResult {
@@ -117,6 +123,15 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     const sub = subscribeToSession(currentSessionId, {
       onEvent: (event) => {
         dispatch({ kind: 'event', event });
+        // When a cron job that ran in this session fires, reload history so
+        // the cron turn appears inline in the chat.
+        if (
+          event.type === 'cron.fired' &&
+          (event as { sessionKey?: string }).sessionKey &&
+          (event as { sessionKey?: string }).sessionKey === opts.sessionKey
+        ) {
+          historyLoadedFor.current = null;
+        }
       },
       onError: () => {
         // Surface stays open — EventSource auto-reconnects. We don't set
@@ -126,7 +141,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
       },
     });
     return () => sub.close();
-  }, [currentSessionId]);
+  }, [currentSessionId, opts.sessionKey]);
 
   // 3. Send a user message. Optimistically appends the user bubble,
   //    fires chat.send, and lets SSE drive the assistant response.

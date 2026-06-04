@@ -44,10 +44,16 @@ export function Chat() {
   const { id: personalityId, model, isLoading, setOverride } = useActivePersonality();
   const { notification } = AntApp.useApp();
 
+  // Pre-fetch the session key from the URL param so we can thread it into
+  // useChat. React Query deduplicates this with the sessionQuery below when
+  // currentSessionId matches sessionParam.
+  const sessionParamQuery = useSessionGet(sessionParam ?? null);
+
   const { state, currentSessionId, sendMessage, steerMessage, switchSession, resetSession } =
     useChat({
       ...(sessionParam ? { initialSessionId: sessionParam } : {}),
       personalityId,
+      sessionKey: sessionParamQuery.data?.session.key,
       onSessionCreated: (id) => {
         // Mirror the server-assigned id into the URL so refresh stays on
         // this conversation. `replace` (not `push`) keeps Back from

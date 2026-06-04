@@ -175,7 +175,13 @@ export const createCronTools = createCronTool;
  * Gateway session keys follow `${platform}:${botKey}:${chatId}`.
  */
 function extractOrigin(ctx: { platform: string; sessionKey: string }): JobOrigin | undefined {
-  if (!ctx.platform || ctx.platform === 'cli' || ctx.platform === 'web') return undefined;
+  if (!ctx.platform || ctx.platform === 'cli') return undefined;
+  // Web chat: store the full sessionKey so the cron runner can replay output
+  // into the originating chat session.
+  if (ctx.platform === 'web') {
+    return ctx.sessionKey ? { platform: 'web', chatId: ctx.sessionKey } : undefined;
+  }
+  // Channel adapters: gateway session keys follow `${platform}:${botKey}:${chatId}`.
   const parts = ctx.sessionKey.split(':');
   if (parts.length >= 3) {
     const chatId = parts[2];

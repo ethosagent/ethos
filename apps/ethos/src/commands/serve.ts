@@ -189,7 +189,11 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       const pers = cronPersonalities.get(pid);
       const toolsetOverride = pers?.toolset?.filter((t: string) => t !== 'cron');
 
-      const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
+      // Use the originating web chat's session key so messages land in that
+      // session's history and the client can reload to show the cron turn.
+      const webOrigin =
+        job.origin?.platform === 'web' && job.origin.chatId ? job.origin.chatId : null;
+      const sessionKey = webOrigin ?? `cron:${job.id}:${new Date().toISOString()}`;
       const ranAt = new Date().toISOString();
       let output = '';
       for await (const event of loop.run(job.prompt, {
@@ -205,6 +209,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
           jobId: job.id,
           ranAt,
           outputPath: null,
+          ...(webOrigin ? { sessionKey: webOrigin } : {}),
         });
       }
       return { jobId: job.id, ranAt, output, sessionKey };

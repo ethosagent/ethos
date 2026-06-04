@@ -327,22 +327,39 @@ export class CronScheduler {
     const jobs = await this.readJobs();
 
     for (const job of jobs) {
-      if (job.status !== 'active' || !job.nextRunAt) continue;
+      if (job.status !== 'active') continue;
+
+      // Bug 3 fix: active job with no nextRunAt — try to recompute it.
+      if (!job.nextRunAt) {
+        const upcoming = nextRunForSchedule(job.schedule, now, new Date(job.createdAt));
+        if (upcoming) {
+          await this.patchJob(job.id, { nextRunAt: upcoming.toISOString() }).catch(() => {});
+        } else {
+          // One-shot schedule has fully elapsed — retire the job.
+          await this.patchJob(job.id, { status: 'done' }).catch(() => {});
+        }
+        continue;
+      }
 
       const due = new Date(job.nextRunAt);
       if (now < due) continue;
 
-      // Missed run handling
-      if (job.missedRunPolicy === 'skip') {
-        // Don't run the missed job, just update nextRunAt to the next future time
+      // Bug 1+2 fix: only apply skip policy when the job is genuinely overdue
+      // (server was down for more than one full tick interval). A job that fired
+      // within the normal tick window is not "missed" — execute it.
+      const missedByMs = now.getTime() - due.getTime();
+      if (job.missedRunPolicy === 'skip' && missedByMs > this.tickIntervalMs) {
         const upcoming = nextRunForSchedule(job.schedule, now, new Date(job.createdAt));
-        await this.patchJob(job.id, { nextRunAt: upcoming?.toISOString() }).catch(() => {});
+        if (upcoming) {
+          await this.patchJob(job.id, { nextRunAt: upcoming.toISOString() }).catch(() => {});
+        } else {
+          await this.patchJob(job.id, { status: 'done' }).catch(() => {});
+        }
         continue;
       }
 
-      // run-once: claim the job by advancing nextRunAt BEFORE executing.
-      // If the patch fails (lock contention, disk error), we skip this tick
-      // — better than double-firing because the schedule never advanced.
+      // Claim the job by advancing nextRunAt BEFORE executing so a crash
+      // mid-run doesn't double-fire on the next tick.
       const upcoming = nextRunForSchedule(job.schedule, now, new Date(job.createdAt));
       try {
         await this.patchJob(job.id, {
@@ -372,7 +389,7 @@ export class CronScheduler {
         continue;
       }
 
-      // After successful execution: increment runCount and check retirement
+      // After successful execution: increment runCount and check retirement.
       const updatedRunCount = (job.runCount ?? 0) + 1;
       const repeat = job.repeat ?? { kind: 'forever' };
       const patchData: Partial<CronJob> = { runCount: updatedRunCount };

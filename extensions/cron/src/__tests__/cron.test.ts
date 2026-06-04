@@ -452,11 +452,13 @@ describe('CronScheduler tick', () => {
       missedRunPolicy: 'skip',
     });
 
-    // Force nextRunAt to the past
+    // Force nextRunAt to more than one tick interval in the past so the skip
+    // policy fires (missedByMs > tickIntervalMs). The test scheduler uses
+    // tickIntervalMs: 999_999, so we go 2 × that into the past.
     // Access internal method via cast
     // biome-ignore lint/suspicious/noExplicitAny: test access to private method
     await (scheduler as any).patchJob(job.id, {
-      nextRunAt: new Date(Date.now() - 60_000).toISOString(),
+      nextRunAt: new Date(Date.now() - 2_000_000).toISOString(),
     });
 
     // Manually trigger tick

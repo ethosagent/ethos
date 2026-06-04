@@ -106,6 +106,7 @@ export const CronFiredEventSchema = z.object({
   jobId: z.string(),
   ranAt: z.string(), // ISO-8601
   outputPath: z.string().nullable(),
+  sessionKey: z.string().optional(),
 });
 
 // The `clarify` tool asked the user a question mid-turn. Pushed (not a turn
