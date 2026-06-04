@@ -76,8 +76,13 @@ export function AppShell() {
     [sessionList.sessions],
   );
 
+  const handleSessionListRefresh = useCallback(() => {
+    sessionList.refresh();
+  }, [sessionList]);
+
   const handleNewChat = useCallback(() => {
     setActiveSessionId(null);
+    setRoute('chat');
   }, [setActiveSessionId]);
 
   const handleSelectSession = useCallback(
@@ -93,11 +98,14 @@ export function AppShell() {
       try {
         await client.rpc.sessions.update({ id, title });
         sessionList.refresh();
+        if (id === state.activeSessionId) {
+          setLastTitledSession({ sessionId: id, title });
+        }
       } catch {
         // best-effort
       }
     },
-    [client, sessionList],
+    [client, sessionList, state.activeSessionId, setLastTitledSession],
   );
 
   const handleForkSession = useCallback(
@@ -362,7 +370,7 @@ export function AppShell() {
             ) : route === 'chat' ? (
               <ErrorBoundary label="ChatPage">
                 <ChatPage
-                  onSessionCreated={() => sessionList.refresh()}
+                  onSessionCreated={handleSessionListRefresh}
                   onForkSession={(id?: string) => {
                     const targetId = id ?? state.activeSessionId;
                     if (targetId) handleForkSession(targetId);

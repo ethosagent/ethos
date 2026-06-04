@@ -38,6 +38,8 @@ export function ChatPage({ onSessionCreated, onForkSession }: ChatPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
 
+  const isNewSessionAssignment = useRef(false);
+
   useEffect(() => {
     const saved = localStorage.getItem('ethos:lastPersonalityId');
     if (saved && !state.activePersonalityId) {
@@ -47,6 +49,10 @@ export function ChatPage({ onSessionCreated, onForkSession }: ChatPageProps) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on session switch
   useEffect(() => {
+    if (isNewSessionAssignment.current) {
+      isNewSessionAssignment.current = false;
+      return;
+    }
     setStreamingText('');
     setStreamingThinking('');
     setToolCalls(new Map());
@@ -316,6 +322,7 @@ export function ChatPage({ onSessionCreated, onForkSession }: ChatPageProps) {
         });
 
         if (!activeSessionId) {
+          isNewSessionAssignment.current = true;
           setActiveSessionId(res.sessionId);
           onSessionCreated?.();
         }
@@ -417,11 +424,10 @@ export function ChatPage({ onSessionCreated, onForkSession }: ChatPageProps) {
 
   useEffect(() => {
     if (!lastTitledSession) return;
-    onSessionCreated?.();
     if (lastTitledSession.sessionId === activeSessionId) {
       setSessionTitle(lastTitledSession.title);
     }
-  }, [lastTitledSession, activeSessionId, onSessionCreated]);
+  }, [lastTitledSession, activeSessionId]);
 
   const handleTitleChange = useCallback(
     async (title: string) => {
