@@ -1,7 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Ethos">
-  <rect x="16" y="16" width="480" height="480" rx="96" fill="#FAFAF7" stroke="#E8E8E4" stroke-width="2"/>
-  <g fill="none" stroke="#4A9EFF" stroke-width="46" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M356 256 A100 100 0 1 0 326.7 326.7"/>
-    <path d="M156 256 L356 256"/>
-  </g>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="#FAFAF7"/>
+  <path fill="#4A9EFF" fill-rule="evenodd"
+    d="M256 81 A175 175 0 1 1 256 431 A175 175 0 1 1 256 81 Z
+       M256 178 A78 78 0 1 0 256 334 A78 78 0 1 0 256 178 Z"/>
 </svg>

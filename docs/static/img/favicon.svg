@@ -1,4 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#7C3AED"/>
-  <text x="16" y="23" font-family="ui-monospace,monospace" font-size="19" font-weight="bold" fill="white" text-anchor="middle">e</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" role="img" aria-label="Ethos">
+  <path fill="#4A9EFF" fill-rule="evenodd"
+    d="M8 1 A7 7 0 1 1 8 15 A7 7 0 1 1 8 1 Z
+       M8 5.5 A2.5 2.5 0 1 0 8 10.5 A2.5 2.5 0 1 0 8 5.5 Z"/>
 </svg>
