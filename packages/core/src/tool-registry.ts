@@ -340,7 +340,12 @@ export class DefaultToolRegistry implements ToolRegistry {
         // Toolset (allowedTools) only gates built-in tools — see toDefinitions
         // for the rationale. MCP and plugin tools are gated by passesFilter().
         const isMcpOrPluginTool = call.name.startsWith('mcp__') || entry.pluginId !== undefined;
-        if (!isMcpOrPluginTool && allowedTools && !allowedTools.includes(call.name)) {
+        if (
+          !isMcpOrPluginTool &&
+          !entry.tool.alwaysInclude &&
+          allowedTools &&
+          !allowedTools.includes(call.name)
+        ) {
           return {
             toolCallId: call.toolCallId,
             name: call.name,

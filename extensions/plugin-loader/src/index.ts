@@ -437,6 +437,14 @@ export class PluginLoader {
         pluginId: entry.id,
       });
 
+      // Rebuild native addons (e.g. better-sqlite3) — safe: only recompiles C++,
+      // does not run arbitrary lifecycle scripts.
+      try {
+        execSync(`npm rebuild --prefix "${pluginsDir}"`, { stdio: 'pipe', timeout: 60_000 });
+      } catch {
+        // best-effort — if rebuild fails the plugin may still load without native deps
+      }
+
       await this.loadFromNodeModules(join(pluginsDir, 'node_modules'));
     } catch (err) {
       this.logger.warn(
