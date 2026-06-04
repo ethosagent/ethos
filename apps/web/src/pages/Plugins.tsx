@@ -1,4 +1,4 @@
-import type { McpServerInfo, PluginInfo } from '@ethosagent/web-contracts';
+import type { PluginInfo } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
@@ -8,18 +8,12 @@ import {
   Collapse,
   Empty,
   Input,
-  Popconfirm,
   Skeleton,
   Table,
-  Tabs,
-  Tag,
-  Tooltip,
   Typography,
 } from 'antd';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AddMcpModal } from '../components/mcp/AddMcpModal';
-import { McpServerActions } from '../components/mcp/McpServerActions';
 import {
   type PluginCredentialSchema,
   PluginSettingsDrawer,
@@ -70,10 +64,8 @@ function InstallPluginSection() {
 
 // Plugins page — global matrix of plugins × personalities.
 //
-// Two surfaces:
-//   1. Matrix tab: Antd Table, rows = plugins, cols = personalities.
-//      Below 900px: pivots to per-plugin Collapse accordion.
-//   2. MCP Servers tab: read-only list of configured MCP servers.
+// Antd Table, rows = plugins, cols = personalities.
+// Below 900px: pivots to per-plugin Collapse accordion.
 //
 // Attachment toggles call personalities.update({ plugins: [...] })
 // optimistically per-personality per-plugin. Rollback on error.
@@ -94,8 +86,6 @@ export function Plugins() {
   });
 
   const isLoading = pluginsLoading || persLoading;
-  const [activeTab, setActiveTab] = useState('matrix');
-  const [addMcpOpen, setAddMcpOpen] = useState(false);
   const [settingsPluginId, setSettingsPluginId] = useState<string | null>(null);
 
   const settingsPlugin = settingsPluginId
@@ -145,43 +135,17 @@ export function Plugins() {
   }
 
   const plugins = pluginsData?.plugins ?? [];
-  const mcpServers = pluginsData?.mcpServers ?? [];
   const personalities = personalitiesData?.items ?? [];
 
   return (
     <div className="plugins-tab">
       <InstallPluginSection />
-      <Tabs
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        tabBarExtraContent={
-          activeTab === 'mcp' ? (
-            <Button size="small" type="primary" onClick={() => setAddMcpOpen(true)}>
-              Add MCP
-            </Button>
-          ) : undefined
-        }
-        items={[
-          {
-            key: 'matrix',
-            label: `Plugins (${plugins.length})`,
-            children: (
-              <PluginsMatrix
-                plugins={plugins}
-                personalities={personalities}
-                loading={isLoading}
-                onSettingsOpen={setSettingsPluginId}
-              />
-            ),
-          },
-          {
-            key: 'mcp',
-            label: `MCP Servers (${mcpServers.length})`,
-            children: <McpTable servers={mcpServers} />,
-          },
-        ]}
+      <PluginsMatrix
+        plugins={plugins}
+        personalities={personalities}
+        loading={isLoading}
+        onSettingsOpen={setSettingsPluginId}
       />
-      <AddMcpModal open={addMcpOpen} onClose={() => setAddMcpOpen(false)} />
       {settingsPlugin && (
         <PluginSettingsDrawer
           pluginId={settingsPlugin.id}
@@ -481,190 +445,5 @@ function AttachCell({
       onChange={(e) => toggle(e.target.checked)}
       aria-label={`Attach ${plugin.name} to ${personality.name}`}
     />
-  );
-}
-
-// ---------------------------------------------------------------------------
-// MCP Servers tab — with delete action
-// ---------------------------------------------------------------------------
-
-function McpTable({ servers }: { servers: McpServerInfo[] }) {
-  const qc = useQueryClient();
-  const { notification } = AntApp.useApp();
-
-  const deleteMut = useMutation({
-    mutationFn: (name: string) => rpc.mcp.delete({ name }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['plugins'] });
-      qc.invalidateQueries({ queryKey: ['mcp', 'list'] });
-    },
-    onError: (err) => {
-      notification.error({
-        message: 'Delete failed',
-        description: err instanceof Error ? err.message : String(err),
-      });
-    },
-  });
-
-  if (servers.length === 0) {
-    return (
-      <Empty
-        image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description={
-          <span>
-            No MCP servers configured. Click <strong>Add MCP</strong> above, or run{' '}
-            <Typography.Text code>ethos mcp add</Typography.Text> from the CLI.
-          </span>
-        }
-      />
-    );
-  }
-
-  return (
-    <Table<McpServerInfo>
-      rowKey="name"
-      dataSource={servers}
-      pagination={false}
-      size="small"
-      columns={[
-        {
-          title: 'Name',
-          dataIndex: 'name',
-          key: 'name',
-          render: (name: string) => <strong>{name}</strong>,
-        },
-        {
-          title: 'Transport',
-          dataIndex: 'transport',
-          key: 'transport',
-          width: 150,
-          render: (t: string) => (
-            <span>
-              <Tag bordered={false}>{t}</Tag>
-              {t === 'sse' ? (
-                <Tag color="warning" bordered={false} style={{ fontSize: 11, marginLeft: 4 }}>
-                  deprecated
-                </Tag>
-              ) : null}
-            </span>
-          ),
-        },
-        {
-          title: 'Endpoint',
-          key: 'endpoint',
-          render: (_, server) =>
-            server.transport === 'stdio' ? (
-              server.command ? (
-                <Typography.Text code style={{ fontSize: 11 }}>
-                  {server.command}
-                </Typography.Text>
-              ) : (
-                <Typography.Text type="secondary">missing command</Typography.Text>
-              )
-            ) : server.url ? (
-              <Typography.Text code style={{ fontSize: 11 }}>
-                {server.url}
-              </Typography.Text>
-            ) : (
-              <Typography.Text type="secondary">missing url</Typography.Text>
-            ),
-        },
-        {
-          title: 'Auth',
-          key: 'auth',
-          width: 100,
-          render: (_, server) => {
-            const s = server.auth_status;
-            if (!s || s === 'none') return <Tag bordered={false}>none</Tag>;
-            if (s === 'authorized')
-              return (
-                <Tag color="green" bordered={false}>
-                  authorized
-                </Tag>
-              );
-            if (s === 'expired')
-              return (
-                <Tag color="orange" bordered={false}>
-                  expired
-                </Tag>
-              );
-            if (s === 'missing')
-              return (
-                <Tag color="red" bordered={false}>
-                  missing
-                </Tag>
-              );
-            if (s === 'pending')
-              return (
-                <Tag color="blue" bordered={false}>
-                  pending
-                </Tag>
-              );
-            return null;
-          },
-        },
-        {
-          title: 'Attached to',
-          key: 'attached',
-          render: (_: unknown, server: McpServerInfo) => (
-            <AttachedPersonalitiesCell serverName={server.name} />
-          ),
-        },
-        {
-          title: '',
-          key: 'actions',
-          width: 260,
-          render: (_, server) => (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <McpServerActions
-                serverName={server.name}
-                transport={server.transport}
-                authStatus={server.auth_status}
-              />
-              <Popconfirm
-                title="Remove this server?"
-                description="This removes the server definition and any stored tokens. Personalities that reference it will lose the connection."
-                okText="Remove"
-                okButtonProps={{ danger: true }}
-                onConfirm={() => deleteMut.mutate(server.name)}
-              >
-                <Button
-                  size="small"
-                  danger
-                  loading={
-                    deleteMut.isPending &&
-                    (deleteMut.variables as string | undefined) === server.name
-                  }
-                >
-                  Remove
-                </Button>
-              </Popconfirm>
-            </div>
-          ),
-        },
-      ]}
-    />
-  );
-}
-
-function AttachedPersonalitiesCell({ serverName }: { serverName: string }) {
-  const { data } = useQuery({
-    queryKey: ['personalities', 'list'],
-    queryFn: () => rpc.personalities.list({}),
-  });
-  const attached = (data?.items ?? []).filter((p) => (p.mcp_servers ?? []).includes(serverName));
-  if (attached.length === 0) {
-    return <Typography.Text type="secondary">none</Typography.Text>;
-  }
-  return (
-    <Tooltip title={attached.map((p) => p.id).join(', ')}>
-      <span>
-        {attached
-          .slice(0, 3)
-          .map((p) => p.name)
-          .join(', ')}
-        {attached.length > 3 ? ` +${attached.length - 3}` : ''}
-      </span>
-    </Tooltip>
   );
 }

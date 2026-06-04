@@ -14,6 +14,7 @@ import { Chat } from './pages/Chat';
 import { Communications } from './pages/Communications';
 import { Cron } from './pages/Cron';
 import { Eval } from './pages/Eval';
+import { Mcp } from './pages/Mcp';
 import { Memory } from './pages/Memory';
 import { Mesh } from './pages/Mesh';
 import { OAuthCallback } from './pages/OAuthCallback';
@@ -122,6 +123,7 @@ export function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/memory" element={<Memory />} />
           <Route path="/plugins" element={<Plugins />} />
+          <Route path="/mcp" element={<Mcp />} />
           <Route path="/plugins/:pluginId" element={<PluginPage />} />
           <Route path="/communications" element={<Communications />} />
           <Route path="/personalities" element={<Personalities />} />

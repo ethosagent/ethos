@@ -92,16 +92,13 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               label="Personalities"
               active={pathname === '/personalities' || pathname.startsWith('/personalities/')}
             />
+            <NavRow path="/skills" label="Skills" active={pathname === '/skills'} />
             <NavRow
-              path="/skills"
-              label="Skills & Tools"
-              hint="Skills · MCP · Plugins"
-              active={
-                pathname === '/skills' ||
-                pathname === '/plugins' ||
-                pathname.startsWith('/plugins/')
-              }
+              path="/plugins"
+              label="Plugins"
+              active={pathname === '/plugins' || pathname.startsWith('/plugins/')}
             />
+            <NavRow path="/mcp" label="MCP Servers" active={pathname === '/mcp'} />
             <NavRow path="/memory" label="Memory" active={pathname === '/memory'} />
             <NavRow
               path="/communications"

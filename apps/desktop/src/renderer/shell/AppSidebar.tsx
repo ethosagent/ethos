@@ -56,8 +56,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     id: 'skills',
-    label: 'Skills & Tools',
-    hint: 'Skills · MCP · Plugins',
+    label: 'Skills',
     icon: (
       <svg
         aria-hidden="true"
@@ -71,6 +70,50 @@ const NAV_ITEMS: NavItem[] = [
         strokeLinejoin="round"
       >
         <polyline points="11,2 6,10 10,10 7,16 13,7 9,7 11,2" />
+      </svg>
+    ),
+  },
+  {
+    id: 'plugins',
+    label: 'Plugins',
+    icon: (
+      <svg
+        aria-hidden="true"
+        width={16}
+        height={16}
+        viewBox="0 0 18 18"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="3" y="3" width="5" height="5" rx="1" />
+        <rect x="10" y="3" width="5" height="5" rx="1" />
+        <rect x="3" y="10" width="5" height="5" rx="1" />
+        <path d="M12.5 11v3M11 12.5h3" />
+      </svg>
+    ),
+  },
+  {
+    id: 'mcp',
+    label: 'MCP Servers',
+    icon: (
+      <svg
+        aria-hidden="true"
+        width={16}
+        height={16}
+        viewBox="0 0 18 18"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="2" y="3" width="14" height="5" rx="1.5" />
+        <rect x="2" y="10" width="14" height="5" rx="1.5" />
+        <circle cx="5" cy="5.5" r="0.75" fill="currentColor" stroke="none" />
+        <circle cx="5" cy="12.5" r="0.75" fill="currentColor" stroke="none" />
       </svg>
     ),
   },
