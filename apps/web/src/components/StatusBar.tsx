@@ -10,7 +10,7 @@ export function StatusBar() {
       ? 'offline'
       : 'connected';
 
-  const statusLabel = isLoading ? 'connecting…' : error ? 'offline' : 'Gateway ready';
+  const statusLabel = isLoading ? 'connecting…' : error ? 'offline' : 'Backend connected';
 
   const providerModel = data ? `${data.provider} · ${data.model}` : '—';
 

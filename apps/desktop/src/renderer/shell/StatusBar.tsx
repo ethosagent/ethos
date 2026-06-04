@@ -39,7 +39,7 @@ export function StatusBar({ backendConnected, providerModel, onNavigate }: Statu
             color: 'var(--text-tertiary)',
           }}
         >
-          {backendConnected ? 'Gateway ready' : 'offline'}
+          {backendConnected ? 'Backend connected' : 'offline'}
         </span>
       </div>
 
