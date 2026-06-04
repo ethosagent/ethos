@@ -33,7 +33,7 @@
     "@docusaurus/module-type-aliases": "3.10.1",
     "@docusaurus/tsconfig": "3.10.1",
     "@docusaurus/types": "3.10.1",
-    "@types/node": "^22.10.0",
+    "@types/node": "^25.9.1",
     "@types/react": "^19.0.0",
     "tsx": "^4.21.0",
     "typescript": "~6.0.2"
