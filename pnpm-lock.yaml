@@ -426,6 +426,9 @@ importers:
       '@ethosagent/kanban-store':
         specifier: workspace:*
         version: link:../../extensions/kanban-store
+      '@ethosagent/llm-codex':
+        specifier: workspace:*
+        version: link:../../extensions/llm-codex
       '@ethosagent/memory-markdown':
         specifier: workspace:*
         version: link:../../extensions/memory-markdown
