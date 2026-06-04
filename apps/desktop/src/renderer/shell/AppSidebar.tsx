@@ -328,27 +328,19 @@ export function AppSidebar({
           gap: 8,
         }}
       >
-        <div
-          style={{
-            width: 20,
-            height: 20,
-            borderRadius: '50%',
-            background: '#4A9EFF',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-          }}
+        <svg
+          aria-hidden="true"
+          width={20}
+          height={20}
+          viewBox="0 0 16 16"
+          style={{ flexShrink: 0 }}
         >
-          <div
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: '50%',
-              background: 'var(--bg-elevated)',
-            }}
+          <path
+            fill="#4A9EFF"
+            fillRule="evenodd"
+            d="M8 1 A7 7 0 1 1 8 15 A7 7 0 1 1 8 1 Z M8 5.5 A2.5 2.5 0 1 0 8 10.5 A2.5 2.5 0 1 0 8 5.5 Z"
           />
-        </div>
+        </svg>
         <span
           style={{
             fontFamily: 'var(--font-display)',

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/static/img/logo.svg" alt="Ethos" width="80" height="80" />
+</p>
+
 # Ethos
 
 [![CI](https://github.com/MiteshSharma/ethos/actions/workflows/ci.yml/badge.svg)](https://github.com/MiteshSharma/ethos/actions/workflows/ci.yml)
