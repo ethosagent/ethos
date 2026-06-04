@@ -3,6 +3,10 @@ import type { CompletionChunk } from '@ethosagent/types';
 const OPEN_TAG = '<tool_call>';
 const CLOSE_TAG = '</tool_call>';
 
+/** Maximum buffered bytes inside a single tool_call block before treating it
+ *  as malformed and degrading to plain text output. */
+const MAX_TOOL_CALL_SIZE = 64_000;
+
 export async function* streamTextToolCalls(
   upstream: AsyncIterable<CompletionChunk>,
 ): AsyncIterable<CompletionChunk> {
@@ -10,14 +14,16 @@ export async function* streamTextToolCalls(
   let insideToolCall = false;
   let toolCallCounter = 0;
   let hasToolCalls = false;
+  let heldDone: CompletionChunk | null = null;
 
   for await (const chunk of upstream) {
+    if (chunk.type === 'done') {
+      // Hold done — we'll emit it after flushing the buffer
+      heldDone = hasToolCalls ? { ...chunk, finishReason: 'tool_use' } : chunk;
+      continue;
+    }
+
     if (chunk.type !== 'text_delta') {
-      // Adjust done finishReason if we emitted tool calls
-      if (chunk.type === 'done' && hasToolCalls) {
-        yield { ...chunk, finishReason: 'tool_use' };
-        continue;
-      }
       yield chunk;
       continue;
     }
@@ -46,6 +52,14 @@ export async function* streamTextToolCalls(
       }
 
       if (insideToolCall) {
+        // Guard: if the buffer exceeds the size limit, treat as malformed
+        if (buffer.length > MAX_TOOL_CALL_SIZE) {
+          yield { type: 'text_delta', text: `${OPEN_TAG}${buffer}` };
+          buffer = '';
+          insideToolCall = false;
+          continue;
+        }
+
         const closeIdx = buffer.indexOf(CLOSE_TAG);
         if (closeIdx === -1) {
           // Haven't seen close tag yet — wait for more data
@@ -75,7 +89,7 @@ export async function* streamTextToolCalls(
     }
   }
 
-  // Flush remaining buffer
+  // Flush remaining buffer (before done)
   if (buffer.length > 0) {
     if (insideToolCall) {
       // Unclosed tool_call — emit as text (graceful degradation)
@@ -83,5 +97,10 @@ export async function* streamTextToolCalls(
     } else {
       yield { type: 'text_delta', text: buffer };
     }
+  }
+
+  // Emit held done event after buffer flush
+  if (heldDone) {
+    yield heldDone;
   }
 }

@@ -255,6 +255,33 @@ export class OpenAICompatProvider implements LLMProvider {
         ...params,
         oaiParams: { ...params.oaiParams, tools: undefined },
       };
+
+      // Inject tool definitions into the system prompt so the model knows
+      // what tools are available and how to invoke them via text XML.
+      if (tools.length > 0) {
+        const toolDocs = tools
+          .map(
+            (t) =>
+              `<tool>\n  <name>${t.name}</name>\n  <description>${t.description}</description>\n  <parameters>${JSON.stringify(t.parameters)}</parameters>\n</tool>`,
+          )
+          .join('\n');
+        const toolPrompt = `\n\nYou have access to the following tools:\n<tools>\n${toolDocs}\n</tools>\n\nTo use a tool, output:\n<tool_call>\n{"name": "<tool_name>", "arguments": {<args>}}\n</tool_call>`;
+
+        const existingSystem = paramsNoTools.oaiParams.messages.find((m) => m.role === 'system');
+        if (
+          existingSystem &&
+          'content' in existingSystem &&
+          typeof existingSystem.content === 'string'
+        ) {
+          existingSystem.content += toolPrompt;
+        } else {
+          paramsNoTools.oaiParams.messages.unshift({
+            role: 'system',
+            content: toolPrompt,
+          });
+        }
+      }
+
       yield* streamTextToolCalls(
         streamChatCompletions(this.client, paramsNoTools, options.abortSignal),
       );

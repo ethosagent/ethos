@@ -12,6 +12,15 @@ async function collect(stream: AsyncIterable<CompletionChunk>): Promise<Completi
   return result;
 }
 
+/** findLastIndex polyfill for ES2022 targets. */
+function lastIndexOf(arr: CompletionChunk[], predicate: (c: CompletionChunk) => boolean): number {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const item = arr[i];
+    if (item && predicate(item)) return i;
+  }
+  return -1;
+}
+
 describe('streamTextToolCalls', () => {
   it('parses a single tool_call block into tool_use events', async () => {
     const xml =
@@ -152,5 +161,74 @@ describe('streamTextToolCalls', () => {
     };
     const chunks = await collect(streamTextToolCalls(makeChunks(usage)));
     expect(chunks).toEqual([usage]);
+  });
+
+  it('emits done AFTER remaining buffer text is flushed', async () => {
+    const chunks = await collect(
+      streamTextToolCalls(
+        makeChunks(
+          { type: 'text_delta', text: 'trailing text' },
+          { type: 'done', finishReason: 'end_turn' },
+        ),
+      ),
+    );
+
+    // Find the indices of the last text_delta and the done event
+    const lastTextIdx = lastIndexOf(chunks, (c) => c.type === 'text_delta');
+    const doneIdx = chunks.findIndex((c) => c.type === 'done');
+    expect(lastTextIdx).toBeGreaterThanOrEqual(0);
+    expect(doneIdx).toBeGreaterThanOrEqual(0);
+    expect(doneIdx).toBeGreaterThan(lastTextIdx);
+  });
+
+  it('emits done AFTER unclosed tool_call buffer is flushed as text', async () => {
+    const chunks = await collect(
+      streamTextToolCalls(
+        makeChunks(
+          { type: 'text_delta', text: '<tool_call>partial content' },
+          { type: 'done', finishReason: 'end_turn' },
+        ),
+      ),
+    );
+
+    const textChunks = chunks.filter((c) => c.type === 'text_delta') as Array<
+      Extract<CompletionChunk, { type: 'text_delta' }>
+    >;
+    const allText = textChunks.map((c) => c.text).join('');
+    expect(allText).toBe('<tool_call>partial content');
+
+    const lastTextIdx = lastIndexOf(chunks, (c) => c.type === 'text_delta');
+    const doneIdx = chunks.findIndex((c) => c.type === 'done');
+    expect(doneIdx).toBeGreaterThan(lastTextIdx);
+  });
+
+  it('degrades oversized tool_call block to plain text', async () => {
+    // Build a payload larger than 64 000 bytes inside a tool_call block
+    const bigPayload = 'x'.repeat(65_000);
+    const chunks = await collect(
+      streamTextToolCalls(
+        makeChunks(
+          { type: 'text_delta', text: `<tool_call>${bigPayload}` },
+          { type: 'done', finishReason: 'end_turn' },
+        ),
+      ),
+    );
+
+    // Should NOT produce any tool_use events
+    expect(chunks.filter((c) => c.type === 'tool_use_start')).toHaveLength(0);
+
+    // The oversized content should be emitted as text
+    const textChunks = chunks.filter((c) => c.type === 'text_delta') as Array<
+      Extract<CompletionChunk, { type: 'text_delta' }>
+    >;
+    const allText = textChunks.map((c) => c.text).join('');
+    expect(allText).toContain(bigPayload);
+
+    // done should still be emitted and NOT have finishReason adjusted
+    const done = chunks.find((c) => c.type === 'done') as Extract<
+      CompletionChunk,
+      { type: 'done' }
+    >;
+    expect(done.finishReason).toBe('end_turn');
   });
 });
