@@ -1,4 +1,5 @@
 import { TurnStatusBar } from '@ethosagent/ui-components';
+import { useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, ConfigProvider } from 'antd';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -43,6 +44,7 @@ export function Chat() {
   const sessionParam = searchParams.get('session') ?? undefined;
   const { id: personalityId, model, isLoading, setOverride } = useActivePersonality();
   const { notification } = AntApp.useApp();
+  const queryClient = useQueryClient();
 
   // Pre-fetch the session key from the URL param so we can thread it into
   // useChat. React Query deduplicates this with the sessionQuery below when
@@ -55,11 +57,9 @@ export function Chat() {
       personalityId,
       sessionKey: sessionParamQuery.data?.session.key,
       onSessionCreated: (id) => {
-        // Mirror the server-assigned id into the URL so refresh stays on
-        // this conversation. `replace` (not `push`) keeps Back from
-        // bouncing the user out of an empty chat.
         setSearchParams({ session: id }, { replace: true });
         setLastSessionId(id);
+        void queryClient.invalidateQueries({ queryKey: ['sessions', 'list'] });
       },
     });
 
@@ -90,11 +90,14 @@ export function Chat() {
     if (sessionParam) setLastSessionId(sessionParam);
   }, [sessionParam]);
 
-  // When navigating to a different session, reset the personality override
-  // so we don't bleed the previous session's manual switch into the new one.
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally session-key only
   useEffect(() => {
     setOverride(null);
+    if (sessionParam && sessionParam !== currentSessionId) {
+      switchSession(sessionParam);
+    } else if (!sessionParam && currentSessionId) {
+      resetSession();
+    }
   }, [sessionParam]);
 
   // Restore the personality that was last used with this session.

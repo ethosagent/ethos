@@ -225,7 +225,7 @@ function SessionRow({
   session: { id: string; title: string | null; key: string; updatedAt: string };
   active: boolean;
 }) {
-  const label = session.title ?? session.key;
+  const label = session.title ?? 'Untitled session';
   const time = formatRelativeTime(session.updatedAt);
   return (
     <Link
