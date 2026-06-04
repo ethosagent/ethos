@@ -202,28 +202,6 @@ const ADVANCED_ITEMS: NavItem[] = [
     ),
   },
   {
-    id: 'teams',
-    label: 'Teams',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={16}
-        height={16}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <circle cx="6" cy="6" r="2.5" />
-        <circle cx="12" cy="6" r="2.5" />
-        <path d="M1 15c0-2.5 2.2-4.5 5-4.5s5 2 5 4.5" />
-        <path d="M10 15c0-2.5 2.2-4.5 5-4.5s5 2 5 4.5" />
-      </svg>
-    ),
-  },
-  {
     id: 'api-keys',
     label: 'API Keys',
     icon: (

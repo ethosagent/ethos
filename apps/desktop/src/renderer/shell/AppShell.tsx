@@ -64,6 +64,7 @@ export function AppShell() {
 
   const baseUrl = `http://localhost:${resolvedPort}`;
   const sessionList = useSessionList({ baseUrl });
+  const sessionListRefresh = sessionList.refresh;
 
   const client = useMemo(
     () =>
@@ -77,8 +78,8 @@ export function AppShell() {
   );
 
   const handleSessionListRefresh = useCallback(() => {
-    sessionList.refresh();
-  }, [sessionList]);
+    sessionListRefresh();
+  }, [sessionListRefresh]);
 
   const handleNewChat = useCallback(() => {
     setActiveSessionId(null);
@@ -97,7 +98,7 @@ export function AppShell() {
     async (id: string, title: string) => {
       try {
         await client.rpc.sessions.update({ id, title });
-        sessionList.refresh();
+        sessionListRefresh();
         if (id === state.activeSessionId) {
           setLastTitledSession({ sessionId: id, title });
         }
@@ -105,7 +106,7 @@ export function AppShell() {
         // best-effort
       }
     },
-    [client, sessionList, state.activeSessionId, setLastTitledSession],
+    [client, sessionListRefresh, state.activeSessionId, setLastTitledSession],
   );
 
   const handleForkSession = useCallback(
@@ -113,12 +114,13 @@ export function AppShell() {
       try {
         const res = await client.rpc.sessions.fork({ id });
         setActiveSessionId(res.session.id);
-        sessionList.refresh();
+        sessionListRefresh();
+        setRoute('chat');
       } catch {
         // best-effort
       }
     },
-    [client, setActiveSessionId, sessionList],
+    [client, setActiveSessionId, sessionListRefresh],
   );
 
   const handleDeleteSession = useCallback(
@@ -128,36 +130,36 @@ export function AppShell() {
         if (id === state.activeSessionId) {
           setActiveSessionId(null);
         }
-        sessionList.refresh();
+        sessionListRefresh();
       } catch {
         // best-effort
       }
     },
-    [client, state.activeSessionId, setActiveSessionId, sessionList],
+    [client, state.activeSessionId, setActiveSessionId, sessionListRefresh],
   );
 
   const handlePinSession = useCallback(
     async (id: string) => {
       try {
         await client.rpc.sessions.pin({ id });
-        sessionList.refresh();
+        sessionListRefresh();
       } catch {
         // best-effort
       }
     },
-    [client, sessionList],
+    [client, sessionListRefresh],
   );
 
   const handleUnpinSession = useCallback(
     async (id: string) => {
       try {
         await client.rpc.sessions.unpin({ id });
-        sessionList.refresh();
+        sessionListRefresh();
       } catch {
         // best-effort
       }
     },
-    [client, sessionList],
+    [client, sessionListRefresh],
   );
 
   const handleExportSession = useCallback(
@@ -270,14 +272,14 @@ export function AppShell() {
         };
         if (data.type === 'session.titled' && data.sessionId && data.title) {
           setLastTitledSession({ sessionId: data.sessionId, title: data.title });
-          sessionList.refresh();
+          sessionListRefresh();
         }
       } catch {
         // ignore
       }
     };
     return () => source.close();
-  }, [healthy, resolvedPort, setLastTitledSession, sessionList]);
+  }, [healthy, resolvedPort, setLastTitledSession, sessionListRefresh]);
 
   const prevNotifCountRef = useRef(0);
   useEffect(() => {

@@ -99,7 +99,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           <input
             type="text"
             className="sidebar-search-input"
-            placeholder="Search sessions..."
+            placeholder="Filter recent..."
             value={sessionSearch}
             onChange={(e) => setSessionSearch(e.target.value)}
           />

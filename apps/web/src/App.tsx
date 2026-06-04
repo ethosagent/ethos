@@ -144,7 +144,7 @@ export function App() {
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
       </main>
-      <StatusBar />
+      <StatusBar drawerOpen={drawerOpen} onToggleDrawer={() => setDrawerOpen((v) => !v)} />
       <RightDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <CommandPalette
         open={paletteOpen}
