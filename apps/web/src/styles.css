@@ -2680,15 +2680,13 @@ textarea {
 @media (max-width: 767.98px) {
   .app-shell {
     grid-template-columns: 1fr;
-    grid-template-rows: 1fr 60px;
+    grid-template-rows: 1fr 28px 60px;
     grid-template-areas:
       "main"
+      "statusbar"
       "tabbar";
   }
   .sidebar {
-    display: none;
-  }
-  .statusbar {
     display: none;
   }
   .app-main {

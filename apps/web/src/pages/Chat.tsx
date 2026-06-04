@@ -1,7 +1,7 @@
 import { TurnStatusBar } from '@ethosagent/ui-components';
 import { useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, ConfigProvider } from 'antd';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ApprovalModal } from '../components/chat/ApprovalModal';
 import { ClarifyCard } from '../components/chat/ClarifyCard';
@@ -90,8 +90,13 @@ export function Chat() {
     if (sessionParam) setLastSessionId(sessionParam);
   }, [sessionParam]);
 
+  const initialMount = useRef(true);
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally session-key only
   useEffect(() => {
+    if (initialMount.current) {
+      initialMount.current = false;
+      return;
+    }
     setOverride(null);
     if (sessionParam && sessionParam !== currentSessionId) {
       switchSession(sessionParam);

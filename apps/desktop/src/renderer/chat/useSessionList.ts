@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 interface UseSessionListOptions {
   baseUrl: string;
+  enabled?: boolean;
 }
 
 interface UseSessionListResult {
@@ -21,7 +22,7 @@ const PAGE_SIZE = 50;
 const DEBOUNCE_MS = 200;
 
 export function useSessionList(opts: UseSessionListOptions): UseSessionListResult {
-  const { baseUrl } = opts;
+  const { baseUrl, enabled = true } = opts;
 
   const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
@@ -66,11 +67,11 @@ export function useSessionList(opts: UseSessionListOptions): UseSessionListResul
     [client],
   );
 
-  // Reset and fetch when search changes
   useEffect(() => {
+    if (enabled === false) return;
     setCursor(null);
     fetchSessions(debouncedSearch, null, false);
-  }, [debouncedSearch, fetchSessions]);
+  }, [debouncedSearch, fetchSessions, enabled]);
 
   const loadMore = useCallback(() => {
     if (loading || !hasMore || !cursor) return;

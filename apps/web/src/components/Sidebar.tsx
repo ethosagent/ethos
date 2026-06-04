@@ -15,7 +15,23 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const [searchParams] = useSearchParams();
   const activeSessionId = searchParams.get('session');
   const [sessionSearch, setSessionSearch] = useState('');
-  const [advancedMode, setAdvancedMode] = useState(false);
+  const [advancedMode, setAdvancedMode] = useState(() => {
+    try {
+      return localStorage.getItem('ethos:advancedMode') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleAdvancedMode = () => {
+    setAdvancedMode((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem('ethos:advancedMode', String(next));
+      } catch {}
+      return next;
+    });
+  };
 
   const { data: sessionsData } = useRecentSessions(SIDEBAR_SESSION_LIMIT);
   const { error: configError, isLoading: configLoading } = useConfig();
@@ -151,7 +167,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             <button
               type="button"
               className="sidebar-advanced-toggle-btn"
-              onClick={() => setAdvancedMode((v) => !v)}
+              onClick={toggleAdvancedMode}
             >
               {advancedMode ? 'Simple' : 'Advanced'}
             </button>
@@ -239,7 +255,9 @@ function SessionRow({
 }
 
 function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+  const ms = new Date(iso).getTime();
+  if (Number.isNaN(ms)) return '';
+  const diff = Date.now() - ms;
   if (diff < 60_000) return 'now';
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;

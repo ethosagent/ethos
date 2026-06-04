@@ -12,12 +12,12 @@ import { useSSEStream } from './useSSEStream';
 const CLIENT_ID = crypto.randomUUID();
 
 interface ChatPageProps {
-  onSessionCreated?: () => void;
+  onSessionListDirty?: () => void;
   onForkSession?: (id?: string) => void;
 }
 
-export function ChatPage({ onSessionCreated, onForkSession }: ChatPageProps) {
-  const { state, setActiveSessionId, setActivePersonalityId } = useAppState();
+export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
+  const { state, setActiveSessionId, setActivePersonalityId, setLastTitledSession } = useAppState();
   const { port, activeSessionId, activePersonalityId, desktopUserId, lastTitledSession } = state;
 
   const baseUrl = `http://localhost:${port}`;
@@ -39,6 +39,7 @@ export function ChatPage({ onSessionCreated, onForkSession }: ChatPageProps) {
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
 
   const isNewSessionAssignment = useRef(false);
+  const lastManualTitleRef = useRef<string | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('ethos:lastPersonalityId');
@@ -47,12 +48,8 @@ export function ChatPage({ onSessionCreated, onForkSession }: ChatPageProps) {
     }
   }, [state.activePersonalityId, setActivePersonalityId]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on session switch
-  useEffect(() => {
-    if (isNewSessionAssignment.current) {
-      isNewSessionAssignment.current = false;
-      return;
-    }
+  const resetChatState = useCallback(() => {
+    setMessages([]);
     setStreamingText('');
     setStreamingThinking('');
     setToolCalls(new Map());
@@ -64,7 +61,17 @@ export function ChatPage({ onSessionCreated, onForkSession }: ChatPageProps) {
     setTurnStartedAt(null);
     setCurrentOp(null);
     setElapsedMs(0);
-  }, [activeSessionId]);
+    setSessionTitle(null);
+  }, []);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on session switch
+  useEffect(() => {
+    if (isNewSessionAssignment.current) {
+      isNewSessionAssignment.current = false;
+      return;
+    }
+    resetChatState();
+  }, [activeSessionId, resetChatState]);
 
   const lastStreamEventAtRef = useRef<number | null>(null);
   const [, setTick] = useState(0);
@@ -324,7 +331,7 @@ export function ChatPage({ onSessionCreated, onForkSession }: ChatPageProps) {
         if (!activeSessionId) {
           isNewSessionAssignment.current = true;
           setActiveSessionId(res.sessionId);
-          onSessionCreated?.();
+          onSessionListDirty?.();
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -341,7 +348,7 @@ export function ChatPage({ onSessionCreated, onForkSession }: ChatPageProps) {
       setActiveSessionId,
       desktopUserId,
       streaming,
-      onSessionCreated,
+      onSessionListDirty,
     ],
   );
 
@@ -408,10 +415,9 @@ export function ChatPage({ onSessionCreated, onForkSession }: ChatPageProps) {
 
   const handleNewChat = useCallback(() => {
     setActiveSessionId(null);
-    setMessages([]);
-    setSessionTitle(null);
-    onSessionCreated?.();
-  }, [setActiveSessionId, onSessionCreated]);
+    resetChatState();
+    onSessionListDirty?.();
+  }, [setActiveSessionId, resetChatState, onSessionListDirty]);
 
   const handleForkSession = useCallback(
     (id?: string) => {
@@ -425,22 +431,28 @@ export function ChatPage({ onSessionCreated, onForkSession }: ChatPageProps) {
   useEffect(() => {
     if (!lastTitledSession) return;
     if (lastTitledSession.sessionId === activeSessionId) {
+      if (lastManualTitleRef.current !== null) {
+        lastManualTitleRef.current = null;
+        return;
+      }
       setSessionTitle(lastTitledSession.title);
     }
   }, [lastTitledSession, activeSessionId]);
 
   const handleTitleChange = useCallback(
     async (title: string) => {
+      lastManualTitleRef.current = title;
       setSessionTitle(title);
       if (!activeSessionId) return;
       try {
         await client.rpc.sessions.update({ id: activeSessionId, title });
-        onSessionCreated?.();
+        setLastTitledSession({ sessionId: activeSessionId, title });
+        onSessionListDirty?.();
       } catch {
         // best-effort
       }
     },
-    [activeSessionId, client, onSessionCreated],
+    [activeSessionId, client, onSessionListDirty, setLastTitledSession],
   );
 
   const handleSwitchPersonality = useCallback(

@@ -59,11 +59,13 @@ export function AppShell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [providerModel, setProviderModel] = useState('');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const drawerState = useDrawerStream();
 
   const baseUrl = `http://localhost:${resolvedPort}`;
-  const sessionList = useSessionList({ baseUrl });
+  const sessionList = useSessionList({ baseUrl, enabled: healthy });
   const sessionListRefresh = sessionList.refresh;
 
   const client = useMemo(
@@ -260,6 +262,16 @@ export function AppShell() {
 
   useEffect(() => {
     if (!healthy) return;
+    client.rpc.config
+      .get({})
+      .then((cfg) => {
+        setProviderModel(`${cfg.provider} · ${cfg.model}`);
+      })
+      .catch(() => {});
+  }, [healthy, client]);
+
+  useEffect(() => {
+    if (!healthy) return;
     const source = new EventSource(`http://localhost:${resolvedPort}/sse/system`, {
       withCredentials: true,
     });
@@ -295,6 +307,20 @@ export function AppShell() {
   }, [drawerState.notifications]);
 
   useEffect(() => {
+    let lastNarrow = window.innerWidth < 900;
+    setSidebarCollapsed(lastNarrow);
+    const onResize = () => {
+      const narrow = window.innerWidth < 900;
+      if (narrow !== lastNarrow) {
+        lastNarrow = narrow;
+        setSidebarCollapsed(narrow);
+      }
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
@@ -307,6 +333,14 @@ export function AppShell() {
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [paletteOpen]);
+
+  const handleForkSessionFromChat = useCallback(
+    (id?: string) => {
+      const targetId = id ?? state.activeSessionId;
+      if (targetId) handleForkSession(targetId);
+    },
+    [state.activeSessionId, handleForkSession],
+  );
 
   const handleNewChatFromPalette = useCallback(() => {
     setRoute('chat');
@@ -345,38 +379,37 @@ export function AppShell() {
         style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}
       >
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-          <AppSidebar
-            route={route}
-            onNavigate={(r) => setRoute(r as ShellRoute)}
-            backendConnected={backendConnected}
-            sessions={sessionList.sessions}
-            pinnedSessions={pinnedSessions}
-            loading={sessionList.loading}
-            search={sessionList.search}
-            setSearch={sessionList.setSearch}
-            activeSessionId={state.activeSessionId}
-            onSelectSession={handleSelectSession}
-            onNewChat={handleNewChat}
-            loadMore={sessionList.loadMore}
-            hasMore={sessionList.hasMore}
-            onRenameSession={handleRenameSession}
-            onForkSession={handleForkSession}
-            onExportSession={handleExportSession}
-            onDeleteSession={handleDeleteSession}
-            onPinSession={handlePinSession}
-            onUnpinSession={handleUnpinSession}
-          />
+          {!sidebarCollapsed && (
+            <AppSidebar
+              route={route}
+              onNavigate={(r) => setRoute(r as ShellRoute)}
+              backendConnected={backendConnected}
+              sessions={sessionList.sessions}
+              pinnedSessions={pinnedSessions}
+              loading={sessionList.loading}
+              search={sessionList.search}
+              setSearch={sessionList.setSearch}
+              activeSessionId={state.activeSessionId}
+              onSelectSession={handleSelectSession}
+              onNewChat={handleNewChat}
+              loadMore={sessionList.loadMore}
+              hasMore={sessionList.hasMore}
+              onRenameSession={handleRenameSession}
+              onForkSession={handleForkSession}
+              onExportSession={handleExportSession}
+              onDeleteSession={handleDeleteSession}
+              onPinSession={handlePinSession}
+              onUnpinSession={handleUnpinSession}
+            />
+          )}
           <div style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
             {route === 'settings' ? (
               <SettingsPage />
             ) : route === 'chat' ? (
               <ErrorBoundary label="ChatPage">
                 <ChatPage
-                  onSessionCreated={handleSessionListRefresh}
-                  onForkSession={(id?: string) => {
-                    const targetId = id ?? state.activeSessionId;
-                    if (targetId) handleForkSession(targetId);
-                  }}
+                  onSessionListDirty={handleSessionListRefresh}
+                  onForkSession={handleForkSessionFromChat}
                 />
               </ErrorBoundary>
             ) : route === 'personalities' ? (
@@ -445,8 +478,12 @@ export function AppShell() {
         </div>
         <StatusBar
           backendConnected={backendConnected}
-          providerModel=""
+          providerModel={providerModel}
           onNavigate={(r) => setRoute(r as ShellRoute)}
+          drawerOpen={drawerOpen}
+          onToggleDrawer={() => setDrawerOpen((v) => !v)}
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
         />
       </div>
       <CommandPalette
