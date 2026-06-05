@@ -99,19 +99,6 @@ function buildContextMenu(): Menu {
       label: 'Open Ethos',
       click: showWindow,
     },
-    {
-      label: 'New chat',
-      click: () => {
-        const win = getWindow?.();
-        if (win && !win.isDestroyed()) {
-          win.show();
-          win.focus();
-          win.webContents.send('chat:new');
-        } else {
-          ensureWindow?.();
-        }
-      },
-    },
     { type: 'separator' },
     updateItem,
     { type: 'separator' },
