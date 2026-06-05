@@ -1348,6 +1348,191 @@ body,
   font-size: 12px;
 }
 
+/* Cron card layout — replaces the Ant Design Table with flex-column cards. */
+
+.cron-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cron-card {
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition:
+    border-color 80ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 80ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.cron-card:hover {
+  border-color: var(--ethos-border-strong);
+}
+
+.cron-card--paused {
+  opacity: 0.75;
+}
+
+.cron-card--paused:hover {
+  opacity: 1;
+}
+
+.cron-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cron-card-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ethos-text);
+}
+
+.cron-card-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 9999px;
+  letter-spacing: 0.02em;
+}
+
+.cron-card-badge--active {
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--ethos-success);
+  border: 1px solid rgba(74, 222, 128, 0.28);
+}
+
+.cron-card-badge--paused {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--ethos-warning);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+}
+
+.cron-run-now-btn {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--ethos-border);
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: var(--ethos-text-dim);
+  cursor: pointer;
+  transition:
+    color 80ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 80ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.cron-run-now-btn:hover {
+  color: var(--ethos-text);
+  border-color: var(--ethos-border-strong);
+}
+
+.cron-run-now-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cron-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--ethos-text-tertiary);
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.cron-card-meta-sep {
+  color: var(--ethos-text-tertiary);
+  opacity: 0.5;
+}
+
+.cron-card-personality {
+  color: var(--ethos-info);
+  font-family: "Geist", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 12px;
+}
+
+.cron-card-deliver-badge {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: capitalize;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(74, 158, 255, 0.1);
+  color: var(--ethos-info);
+  border: 1px solid rgba(74, 158, 255, 0.2);
+}
+
+.cron-card-desc {
+  font-size: 12px;
+  color: var(--ethos-text-dim);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cron-card-desc-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.cron-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 80ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.cron-card:hover .cron-card-actions {
+  opacity: 1;
+}
+
+.cron-card-action-btn {
+  background: transparent;
+  border: 1px solid var(--ethos-border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--ethos-text-dim);
+  cursor: pointer;
+  transition:
+    color 80ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 80ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.cron-card-action-btn:hover {
+  color: var(--ethos-text);
+  border-color: var(--ethos-border-strong);
+}
+
+.cron-card-action-btn--danger:hover {
+  color: var(--ethos-error);
+  border-color: var(--ethos-error);
+}
+
+.cron-card-empty {
+  text-align: center;
+  padding: 32px 16px;
+  font-size: 13px;
+  color: var(--ethos-text-dim);
+}
+
 .cron-history {
   display: flex;
   flex-direction: column;

@@ -52,7 +52,7 @@ const EVENT_TYPE_TEXT_COLORS: Record<ActivityEvent['type'], string> = {
   done: 'var(--success)',
   error: 'var(--error)',
   'tool.approval_required': 'var(--warning)',
-  'cron.fired': '#a050ff',
+  'cron.fired': 'var(--purple)',
 };
 
 const EVENT_TYPE_DOT_COLORS: Record<ActivityEvent['type'], string> = {
@@ -61,7 +61,7 @@ const EVENT_TYPE_DOT_COLORS: Record<ActivityEvent['type'], string> = {
   done: 'var(--success)',
   error: 'var(--error)',
   'tool.approval_required': 'var(--warning)',
-  'cron.fired': '#a050ff',
+  'cron.fired': 'var(--purple)',
 };
 
 function groupMatchesFilter(group: ConversationGroup, filter: TypeFilter): boolean {

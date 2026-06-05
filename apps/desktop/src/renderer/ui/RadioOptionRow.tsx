@@ -34,7 +34,7 @@ export function RadioOptionRow({ selected, onClick, accentColor, children }: Rad
         transition: `border-color var(--motion-fast) var(--ease), background-color var(--motion-fast) var(--ease)`,
         backgroundColor: selected
           ? accentColor
-            ? `${accentColor}0F`
+            ? `color-mix(in srgb, ${accentColor} 6%, transparent)`
             : 'rgba(74,158,255,0.06)'
           : 'transparent',
       }}

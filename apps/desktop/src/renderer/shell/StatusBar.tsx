@@ -40,7 +40,7 @@ export function StatusBar({
             width: 6,
             height: 6,
             borderRadius: '50%',
-            background: backendConnected ? '#4ADE80' : '#F87171',
+            background: backendConnected ? 'var(--success)' : 'var(--error)',
             flexShrink: 0,
           }}
         />

@@ -3,15 +3,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   App as AntApp,
   Button,
-  Dropdown,
   Form,
   Input,
-  type MenuProps,
   Modal,
   Popconfirm,
   Select,
   Spin,
-  Table,
   Typography,
 } from 'antd';
 import { useState } from 'react';
@@ -94,92 +91,17 @@ export function Cron() {
         </div>
       </header>
 
-      <Table<CronJob>
-        rowKey="id"
-        dataSource={jobs}
-        pagination={false}
-        size="small"
-        expandable={{
-          expandedRowRender: (job) => <RunHistory jobId={job.id} />,
-        }}
-        locale={{
-          emptyText: 'No cron jobs yet. Create one to schedule a recurring agent task.',
-        }}
-        columns={[
-          {
-            title: 'Name',
-            dataIndex: 'name',
-            render: (v: string, row) => (
-              <span style={{ fontWeight: row.status === 'paused' ? 400 : 500 }}>
-                {v}
-                {row.status === 'paused' ? (
-                  <span className="cron-status-paused"> · paused</span>
-                ) : null}
-              </span>
-            ),
-          },
-          {
-            title: 'Schedule',
-            dataIndex: 'schedule',
-            width: 160,
-            render: (v: string) => <span className="sessions-mono">{v}</span>,
-          },
-          {
-            title: 'Personality',
-            dataIndex: 'personalityId',
-            width: 130,
-            render: (v: string) => v,
-          },
-          {
-            title: 'Trigger',
-            dataIndex: 'deliver',
-            width: 110,
-            render: (v: string | null) =>
-              v ? (
-                <span
-                  style={{
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 11,
-                    color: 'var(--text-secondary)',
-                    textTransform: 'capitalize',
-                  }}
-                >
-                  {v}
-                </span>
-              ) : null,
-          },
-          {
-            title: 'Next run',
-            dataIndex: 'nextRunAt',
-            width: 180,
-            render: (v: string | null, row) =>
-              row.status === 'paused' ? (
-                <span className="cron-muted">—</span>
-              ) : v ? (
-                <span className="sessions-mono">{formatRelativeFuture(v)}</span>
-              ) : (
-                <span className="cron-muted">never</span>
-              ),
-          },
-          {
-            title: 'Last run',
-            dataIndex: 'lastRunAt',
-            width: 160,
-            render: (v: string | null) =>
-              v ? (
-                <span className="sessions-mono">{formatRelativePast(v)}</span>
-              ) : (
-                <span className="cron-muted">never</span>
-              ),
-          },
-          {
-            title: '',
-            width: 56,
-            align: 'right' as const,
-            render: (_v, row) => <RowActions job={row} />,
-          },
-        ]}
-      />
+      {jobs.length === 0 ? (
+        <div className="cron-card-empty">
+          No cron jobs yet. Create one to schedule a recurring agent task.
+        </div>
+      ) : (
+        <div className="cron-card-list">
+          {jobs.map((job) => (
+            <CronCard key={job.id} job={job} />
+          ))}
+        </div>
+      )}
 
       {createOpen ? <CreateJobModal open onClose={() => setCreateOpen(false)} /> : null}
     </div>
@@ -187,10 +109,11 @@ export function Cron() {
 }
 
 // ---------------------------------------------------------------------------
-// Row actions (run-now / pause / resume / delete)
+// CronCard — card-based layout for each job
 // ---------------------------------------------------------------------------
 
-function RowActions({ job }: { job: CronJob }) {
+function CronCard({ job }: { job: CronJob }) {
+  const [expanded, setExpanded] = useState(false);
   const queryClient = useQueryClient();
   const { notification } = AntApp.useApp();
 
@@ -229,59 +152,101 @@ function RowActions({ job }: { job: CronJob }) {
     onError: (err) => surfaceError(notification, 'Delete failed', err),
   });
 
-  const items: MenuProps['items'] = [
-    { key: 'run', label: 'Run now' },
-    {
-      key: 'toggle',
-      label: job.status === 'paused' ? 'Resume' : 'Pause',
-    },
-    {
-      key: 'delete',
-      label: (
-        <Popconfirm
-          title="Delete this job?"
-          description="The schedule and run history are removed."
-          okText="Delete"
-          okButtonProps={{ danger: true, loading: remove.isPending }}
-          cancelText="Cancel"
-          onConfirm={(e) => {
-            e?.stopPropagation();
-            remove.mutate();
-          }}
-        >
-          <span style={{ color: '#f87171' }}>Delete</span>
-        </Popconfirm>
-      ),
-    },
-  ];
+  const isPaused = job.status === 'paused';
+  const cardClass = `cron-card${isPaused ? ' cron-card--paused' : ''}`;
 
   return (
-    <div
-      role="toolbar"
-      aria-label="Job actions"
-      className="sessions-row-actions"
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => e.stopPropagation()}
-    >
-      <Dropdown
-        menu={{
-          items,
-          onClick: ({ key, domEvent }) => {
-            domEvent.stopPropagation();
-            if (key === 'run') runNow.mutate();
-            else if (key === 'toggle') {
-              if (job.status === 'paused') resume.mutate();
-              else pause.mutate();
-            }
-          },
+    <div>
+      <div
+        className={cardClass}
+        onClick={() => setExpanded((p) => !p)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') setExpanded((p) => !p);
         }}
-        trigger={['click']}
-        placement="bottomRight"
+        role="button"
+        tabIndex={0}
       >
-        <button type="button" className="sessions-row-trigger" aria-label="Job actions">
-          <DotsIcon />
-        </button>
-      </Dropdown>
+        {/* Row 1: name + badge + run-now */}
+        <div className="cron-card-top">
+          <span className="cron-card-name">{job.name}</span>
+          <span
+            className={`cron-card-badge ${isPaused ? 'cron-card-badge--paused' : 'cron-card-badge--active'}`}
+          >
+            {isPaused ? 'Paused' : 'Active'}
+          </span>
+          <button
+            type="button"
+            className="cron-run-now-btn"
+            disabled={runNow.isPending}
+            onClick={(e) => {
+              e.stopPropagation();
+              runNow.mutate();
+            }}
+          >
+            {runNow.isPending ? 'Running...' : 'Run now'}
+          </button>
+        </div>
+
+        {/* Row 2: schedule · personality · deliver badge · next run */}
+        <div className="cron-card-meta">
+          <span>{job.schedule}</span>
+          <span className="cron-card-meta-sep">&middot;</span>
+          <span className="cron-card-personality">{job.personalityId}</span>
+          {job.deliver ? (
+            <>
+              <span className="cron-card-meta-sep">&middot;</span>
+              <span className="cron-card-deliver-badge">{job.deliver}</span>
+            </>
+          ) : null}
+          <span className="cron-card-meta-sep">&middot;</span>
+          <span>
+            {isPaused
+              ? 'paused'
+              : job.nextRunAt
+                ? `next: ${formatRelativeFuture(job.nextRunAt)}`
+                : 'next: never'}
+          </span>
+        </div>
+
+        {/* Row 3: prompt description + hover actions */}
+        <div className="cron-card-desc">
+          <span className="cron-card-desc-text">{job.prompt}</span>
+          <div
+            className="cron-card-actions"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="cron-card-action-btn"
+              disabled={pause.isPending || resume.isPending}
+              onClick={() => {
+                if (isPaused) resume.mutate();
+                else pause.mutate();
+              }}
+            >
+              {isPaused ? 'Resume' : 'Pause'}
+            </button>
+            <Popconfirm
+              title="Delete this job?"
+              description="The schedule and run history are removed."
+              okText="Delete"
+              okButtonProps={{ danger: true, loading: remove.isPending }}
+              cancelText="Cancel"
+              onConfirm={(e) => {
+                e?.stopPropagation();
+                remove.mutate();
+              }}
+            >
+              <button type="button" className="cron-card-action-btn cron-card-action-btn--danger">
+                Delete
+              </button>
+            </Popconfirm>
+          </div>
+        </div>
+      </div>
+
+      {expanded ? <RunHistory jobId={job.id} /> : null}
     </div>
   );
 }
@@ -453,16 +418,6 @@ function RunHistory({ jobId }: { jobId: string }) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function DotsIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true">
-      <circle cx="3" cy="7" r="1.3" />
-      <circle cx="7" cy="7" r="1.3" />
-      <circle cx="11" cy="7" r="1.3" />
-    </svg>
-  );
-}
 
 function formatRelativePast(iso: string): string {
   const then = new Date(iso).getTime();

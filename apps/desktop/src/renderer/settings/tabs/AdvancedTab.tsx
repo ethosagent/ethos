@@ -106,7 +106,7 @@ export function AdvancedTab({ config, onRefresh }: AdvancedTabProps) {
               key={opt.value}
               selected={config.approvalMode === opt.value}
               onClick={() => autoSave({ approvalMode: opt.value })}
-              accentColor="#f59e0b"
+              accentColor="var(--warning)"
             >
               <div style={{ flex: 1 }}>
                 <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }}>

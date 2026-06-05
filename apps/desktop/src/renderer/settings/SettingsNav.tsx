@@ -55,7 +55,7 @@ export function SettingsNav({ activeTab, onTabChange }: SettingsNavProps) {
               height: 36,
               padding: '0 16px',
               border: 'none',
-              borderLeft: isActive ? '2px solid #94A3B8' : '2px solid transparent',
+              borderLeft: isActive ? '2px solid var(--accent)' : '2px solid transparent',
               backgroundColor: isActive || isHovered ? 'var(--bg-overlay)' : 'transparent',
               color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
               fontSize: 13,

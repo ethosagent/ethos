@@ -1,5 +1,4 @@
 import type { Session } from '@ethosagent/web-contracts';
-import type React from 'react';
 import { useCallback, useRef, useState } from 'react';
 import { SessionRow } from '../chat/SessionRow';
 import { useAppState } from '../state/AppContext';
@@ -30,241 +29,24 @@ interface NavItem {
   id: string;
   label: string;
   hint?: string;
-  icon: React.ReactNode;
+  emoji: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  {
-    id: 'personalities',
-    label: 'Personalities',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={16}
-        height={16}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <circle cx="9" cy="6" r="3" />
-        <path d="M2 16c0-3.314 3.134-6 7-6s7 2.686 7 6" />
-      </svg>
-    ),
-  },
-  {
-    id: 'skills',
-    label: 'Skills',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={16}
-        height={16}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <polyline points="11,2 6,10 10,10 7,16 13,7 9,7 11,2" />
-      </svg>
-    ),
-  },
-  {
-    id: 'plugins',
-    label: 'Plugins',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={16}
-        height={16}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <rect x="3" y="3" width="5" height="5" rx="1" />
-        <rect x="10" y="3" width="5" height="5" rx="1" />
-        <rect x="3" y="10" width="5" height="5" rx="1" />
-        <path d="M12.5 11v3M11 12.5h3" />
-      </svg>
-    ),
-  },
-  {
-    id: 'mcp',
-    label: 'MCP Servers',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={16}
-        height={16}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <rect x="2" y="3" width="14" height="5" rx="1.5" />
-        <rect x="2" y="10" width="14" height="5" rx="1.5" />
-        <circle cx="5" cy="5.5" r="0.75" fill="currentColor" stroke="none" />
-        <circle cx="5" cy="12.5" r="0.75" fill="currentColor" stroke="none" />
-      </svg>
-    ),
-  },
-  {
-    id: 'memory',
-    label: 'Memory',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={16}
-        height={16}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M9 3C7 3 5.5 4 5 5.5c-.8.1-2.5.8-2.5 2.5S4 10 5 10c-.2.6-.3 1.3 0 2 .3.7 1 1 1.5 1H9m0-10c2 0 3.5 1 4 2.5.8.1 2.5.8 2.5 2.5S14 10 13 10c.2.6.3 1.3 0 2-.3.7-1 1-1.5 1H9m0-10v10" />
-      </svg>
-    ),
-  },
-  {
-    id: 'platforms',
-    label: 'Platforms',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={16}
-        height={16}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <circle cx="9" cy="9" r="7" />
-        <path d="M2 9h14M9 2c-2 2-3 4.5-3 7s1 5 3 7M9 2c2 2 3 4.5 3 7s-1 5-3 7" />
-      </svg>
-    ),
-  },
+  { id: 'personalities', label: 'Personalities', emoji: '◎' },
+  { id: 'skills', label: 'Skills', emoji: '⚡' },
+  { id: 'plugins', label: 'Plugins', emoji: '⊕' },
+  { id: 'mcp', label: 'MCP Servers', emoji: '⬡' },
+  { id: 'memory', label: 'Memory', emoji: '🧠' },
+  { id: 'platforms', label: 'Platforms', emoji: '⇄' },
 ];
 
 const ADVANCED_ITEMS: NavItem[] = [
-  {
-    id: 'batch-eval',
-    label: 'Batch / Eval',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={16}
-        height={16}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <rect x="3" y="2" width="12" height="14" rx="1.5" />
-        <line x1="6" y1="7" x2="12" y2="7" />
-        <line x1="6" y1="10" x2="12" y2="10" />
-        <line x1="6" y1="13" x2="9" y2="13" />
-      </svg>
-    ),
-  },
-  {
-    id: 'kanban',
-    label: 'Kanban',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={16}
-        height={16}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <rect x="1" y="2" width="4" height="8" rx="1" />
-        <rect x="7" y="2" width="4" height="11" rx="1" />
-        <rect x="13" y="2" width="4" height="6" rx="1" />
-      </svg>
-    ),
-  },
-  {
-    id: 'observability',
-    label: 'Observability',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={16}
-        height={16}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M1 11 L5 7 L9 9 L13 5 L17 8" />
-        <circle cx="17" cy="8" r="1.2" fill="currentColor" stroke="none" />
-      </svg>
-    ),
-  },
-  {
-    id: 'mesh',
-    label: 'Mesh',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={16}
-        height={16}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-      >
-        <circle cx="4" cy="9" r="2" />
-        <circle cx="14" cy="4" r="2" />
-        <circle cx="14" cy="14" r="2" />
-        <line x1="6" y1="8" x2="12" y2="5" />
-        <line x1="6" y1="10" x2="12" y2="13" />
-      </svg>
-    ),
-  },
-  {
-    id: 'api-keys',
-    label: 'API Keys',
-    icon: (
-      <svg
-        aria-hidden="true"
-        width={16}
-        height={16}
-        viewBox="0 0 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <circle cx="7" cy="8" r="4" />
-        <line x1="10.8" y1="11" x2="17" y2="16" />
-        <line x1="14" y1="13.5" x2="15.5" y2="12" />
-      </svg>
-    ),
-  },
+  { id: 'batch-eval', label: 'Batch / Eval', emoji: '⊞' },
+  { id: 'kanban', label: 'Kanban', emoji: '▦' },
+  { id: 'observability', label: 'Observability', emoji: '◈' },
+  { id: 'mesh', label: 'Mesh', emoji: '⬡' },
+  { id: 'api-keys', label: 'API Keys', emoji: '⚿' },
 ];
 
 export function AppSidebar({
@@ -657,22 +439,7 @@ export function AppSidebar({
           item={{
             id: 'settings',
             label: 'Settings',
-            icon: (
-              <svg
-                aria-hidden="true"
-                width={16}
-                height={16}
-                viewBox="0 0 18 18"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="9" cy="9" r="2.5" />
-                <path d="M9 1.5v2M9 14.5v2M1.5 9h2M14.5 9h2M3.4 3.4l1.4 1.4M13.2 13.2l1.4 1.4M3.4 14.6l1.4-1.4M13.2 4.8l1.4-1.4" />
-              </svg>
-            ),
+            emoji: '⚙',
           }}
           active={route === 'settings'}
           hovered={hoveredNavId === 'settings'}
@@ -693,7 +460,7 @@ export function AppSidebar({
               width: 6,
               height: 6,
               borderRadius: '50%',
-              background: backendConnected ? '#4ADE80' : '#F87171',
+              background: backendConnected ? 'var(--success)' : 'var(--error)',
               flexShrink: 0,
             }}
           />
@@ -738,11 +505,10 @@ function NavRow({ item, active, hovered, onNavigate, onHover }: NavRowProps) {
           : hovered
             ? 'var(--ethos-hover)'
             : 'transparent',
-        borderLeft: active ? '2px solid #4A9EFF' : '2px solid transparent',
         border: 'none',
         borderLeftWidth: 2,
         borderLeftStyle: 'solid',
-        borderLeftColor: active ? '#4A9EFF' : 'transparent',
+        borderLeftColor: active ? 'var(--info)' : 'transparent',
         color: active ? 'var(--info)' : 'var(--text-secondary)',
         cursor: 'pointer',
         width: '100%',
@@ -751,7 +517,9 @@ function NavRow({ item, active, hovered, onNavigate, onHover }: NavRowProps) {
         transition: 'background-color var(--motion-fast) var(--ease)',
       }}
     >
-      <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>{item.icon}</span>
+      <span style={{ flexShrink: 0, fontSize: 14, lineHeight: 1, width: 18, textAlign: 'center' }}>
+        {item.emoji}
+      </span>
       <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <span
           style={{
