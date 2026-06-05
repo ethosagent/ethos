@@ -117,7 +117,8 @@ export type ChatAction =
    * after fork. Without this, the new session would briefly render with
    * the old session's messages until the history fetch completes.
    */
-  | { type: 'reset' };
+  | { type: 'reset' }
+  | { type: 'undo-turns'; count: number };
 
 export function applyEvent(state: ChatState, event: SseEvent, now: number): ChatState {
   switch (event.type) {
@@ -393,6 +394,22 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
 
     case 'reset': {
       return initialChatState;
+    }
+
+    case 'undo-turns': {
+      const msgs = state.messages;
+      let remaining = action.count;
+      let end = msgs.length;
+      while (end > 0 && remaining > 0) {
+        const last = msgs[end - 1];
+        if (end >= 2 && last?.role === 'assistant' && msgs[end - 2]?.role === 'user') {
+          end -= 2;
+          remaining--;
+        } else {
+          end--;
+        }
+      }
+      return { ...state, messages: msgs.slice(0, end) };
     }
   }
 }

@@ -121,6 +121,7 @@ export interface SessionStore {
   recordTurnStart(sessionId: string): Promise<{ turnNumber: number; lastCompactionTurn: number }>;
   /** Record the turn at which a compaction fired (for the cooldown gate). */
   recordCompactionTurn(sessionId: string, turnNumber: number): Promise<void>;
+  undoTurns(sessionId: string, n: number): Promise<number>;
   pruneOldSessions(olderThan: Date): Promise<number>;
   vacuum(): Promise<void>;
 }

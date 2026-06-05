@@ -7,6 +7,8 @@ tags: [document, chart, visualization, png, vega-lite]
 required_tools: [terminal, write_file]
 
 ethos:
+  external_cli_alternatives:
+    - vl2png
   category: document
   default_personalities: []
   prerequisites:

@@ -7,6 +7,8 @@ tags: [coding, github, review]
 required_tools: [terminal, read_file]
 
 ethos:
+  external_cli_alternatives:
+    - gh
   category: github-workflow
   default_personalities: [reviewer, engineer]
   prerequisites:

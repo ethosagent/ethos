@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import type { AttachmentPreview } from '../lib/attachments';
 import {
   applyAction,
   applyEvent,
@@ -46,7 +47,7 @@ export interface UseChatResult {
   /** Server-assigned session id once a turn has run. Null on a fresh chat
    *  before the user types anything. */
   currentSessionId: string | null;
-  sendMessage: (text: string) => Promise<void>;
+  sendMessage: (text: string, attachments?: AttachmentPreview[]) => Promise<void>;
   /** Steer the running turn. Returns true if accepted, false if the turn
    *  already ended or the RPC failed. */
   steerMessage: (text: string) => Promise<boolean>;
@@ -64,6 +65,9 @@ export interface UseChatResult {
    * session on the server. Used by the "New session" affordance.
    */
   resetSession: () => void;
+  /** Soft-delete the last N user+assistant turn pairs. Returns the
+   *  number of pairs actually removed. */
+  undoTurns: (n?: number) => Promise<number>;
 }
 
 type Reducer = (state: ChatState, op: ReducerOp) => ChatState;
@@ -151,9 +155,9 @@ export function useChat(opts: UseChatOptions): UseChatResult {
   const onSessionCreated = opts.onSessionCreated;
   const personalityId = opts.personalityId;
   const sendMessage = useCallback(
-    async (text: string): Promise<void> => {
+    async (text: string, attachments?: AttachmentPreview[]): Promise<void> => {
       const trimmed = text.trim();
-      if (!trimmed) return;
+      if (!trimmed && !attachments?.length) return;
 
       const userMessageId = `user-${Date.now()}`;
       dispatch({
@@ -172,6 +176,16 @@ export function useChat(opts: UseChatOptions): UseChatResult {
           clientId: getClientId(),
           text: trimmed,
           ...(personalityId ? { personalityId } : {}),
+          ...(attachments?.length
+            ? {
+                attachments: attachments.map((a) => ({
+                  type: a.type,
+                  data: a.data ?? '',
+                  mimeType: a.mimeType,
+                  name: a.name,
+                })),
+              }
+            : {}),
         });
         if (!currentSessionId && response.sessionId !== currentSessionId) {
           // We just created this session locally — the user message lives in
@@ -241,6 +255,22 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     historyLoadedFor.current = null;
   }, []);
 
+  const undoTurns = useCallback(
+    async (n = 1): Promise<number> => {
+      if (!currentSessionId) return 0;
+      try {
+        const res = await rpc.sessions.undoTurns({ id: currentSessionId, n });
+        if (res.removed > 0) {
+          dispatch({ kind: 'action', action: { type: 'undo-turns', count: res.removed } });
+        }
+        return res.removed;
+      } catch {
+        return 0;
+      }
+    },
+    [currentSessionId],
+  );
+
   return {
     state,
     currentSessionId,
@@ -249,5 +279,6 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     abortTurn,
     switchSession,
     resetSession,
+    undoTurns,
   };
 }

@@ -172,7 +172,7 @@ describe('web_extract — SSRF protection', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('execution_failed');
-      expect(result.error).toMatch(/HOST_NOT_ALLOWED/);
+      expect(result.error).toMatch(/SSRF blocked/);
     }
   });
 

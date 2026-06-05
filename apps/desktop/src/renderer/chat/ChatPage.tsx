@@ -7,6 +7,7 @@ import { ChatThread } from './ChatThread';
 import { Composer } from './Composer';
 import { PersonalityBar } from './PersonalityBar';
 import type { ApprovalState, ClarifyState, ToolCallState, UsageState } from './types';
+import { type AttachmentPreview, fileToPreview } from './types';
 import { useSSEStream } from './useSSEStream';
 
 const CLIENT_ID = crypto.randomUUID();
@@ -37,6 +38,7 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<AttachmentPreview[]>([]);
 
   const isNewSessionAssignment = useRef(false);
   const lastManualTitleRef = useRef<{ sessionId: string; title: string } | null>(null);
@@ -62,6 +64,7 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
     setCurrentOp(null);
     setElapsedMs(0);
     setSessionTitle(null);
+    setPendingAttachments([]);
   }, []);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on session switch
@@ -285,6 +288,19 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
     };
   }, [activeSessionId, client, setActivePersonalityId]);
 
+  const handleAttach = useCallback(async (files: File[]) => {
+    const previews = await Promise.all(files.map(fileToPreview));
+    setPendingAttachments((prev) => [...prev, ...previews]);
+  }, []);
+
+  const handleRemoveAttachment = useCallback((localId: string) => {
+    setPendingAttachments((prev) => {
+      const a = prev.find((x) => x.localId === localId);
+      if (a?.previewUrl) URL.revokeObjectURL(a.previewUrl);
+      return prev.filter((x) => x.localId !== localId);
+    });
+  }, []);
+
   const handleSend = useCallback(
     async (text: string) => {
       if (streaming) {
@@ -338,7 +354,21 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
           clientId: CLIENT_ID,
           personalityId: activePersonalityId ?? undefined,
           userId: desktopUserId ?? undefined,
+          attachments:
+            pendingAttachments.length > 0
+              ? pendingAttachments.map((a) => ({
+                  type: a.type,
+                  data: a.data,
+                  mimeType: a.mimeType,
+                  name: a.name,
+                }))
+              : undefined,
         });
+
+        for (const a of pendingAttachments) {
+          if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
+        }
+        setPendingAttachments([]);
 
         if (!activeSessionId) {
           isNewSessionAssignment.current = true;
@@ -361,6 +391,7 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
       desktopUserId,
       streaming,
       onSessionListDirty,
+      pendingAttachments,
     ],
   );
 
@@ -513,6 +544,7 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
         onClarifyRespond={handleClarifyRespond}
         onRetry={handleRetry}
         error={error}
+        onAttach={handleAttach}
       />
 
       <TurnStatusBar isStreaming={streaming} currentOp={currentOp} elapsedMs={elapsedMs} />
@@ -527,6 +559,9 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
         streaming={streaming}
         personalityName={activePersonalityId ?? undefined}
         steerMode={streaming}
+        attachments={pendingAttachments}
+        onAttach={handleAttach}
+        onRemoveAttachment={handleRemoveAttachment}
       />
     </div>
   );

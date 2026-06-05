@@ -1,39 +1,13 @@
-export interface ToolCallState {
-  name: string;
-  args: unknown;
-  status: 'running' | 'ok' | 'error';
-  durationMs?: number;
-  result?: string;
-  progressMessage?: string;
-}
-
-export interface ApprovalState {
-  approvalId: string;
-  toolName: string;
-  args: unknown;
-  reason: string | null;
-}
-
-export interface ClarifyState {
-  requestId: string;
-  question: string;
-  options?: string[];
-  defaultAnswer?: string;
-}
-
-export interface UsageState {
-  inputTokens: number;
-  outputTokens: number;
-  estimatedCostUsd: number;
-}
+export type UploadState = 'uploading' | 'ready' | 'error';
 
 export interface AttachmentPreview {
   localId: string;
+  state: UploadState;
   type: 'image' | 'file';
   mimeType: string;
   name: string;
   sizeBytes: number;
-  data: string;
+  data?: string;
   previewUrl?: string;
 }
 
@@ -43,6 +17,7 @@ export function fileToPreview(file: File): Promise<AttachmentPreview> {
     reader.onload = () =>
       resolve({
         localId: crypto.randomUUID(),
+        state: 'ready',
         type: file.type.startsWith('image/') ? 'image' : 'file',
         mimeType: file.type || 'application/octet-stream',
         name: file.name,

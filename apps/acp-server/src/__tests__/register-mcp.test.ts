@@ -82,6 +82,9 @@ function makeStore(): SessionStore {
     async pruneOldSessions(_olderThan) {
       return 0;
     },
+    async undoTurns() {
+      return 0;
+    },
     async vacuum() {},
   };
 }

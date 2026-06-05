@@ -11,6 +11,7 @@ const COMMANDS = [
   { name: 'fork', description: 'Fork this session' },
   { name: 'personality', description: 'Switch personality' },
   { name: 'abort', description: 'Abort the current turn' },
+  { name: 'undo', description: 'Undo last N turns (default 1)' },
 ];
 
 export function SlashCommandPopover({ onCommand, onClose, filter }: SlashCommandPopoverProps) {

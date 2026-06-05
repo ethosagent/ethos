@@ -151,6 +151,9 @@ const sessions = {
   export: oc.input(SessionExportInput).output(SessionExportOutput),
   pin: oc.input(SessionPinInput).output(SessionPinOutput),
   unpin: oc.input(SessionPinInput).output(SessionPinOutput),
+  undoTurns: oc
+    .input(z.object({ id: z.string(), n: z.number().int().min(1).default(1) }))
+    .output(z.object({ removed: z.number() })),
 };
 
 // ---------------------------------------------------------------------------
@@ -340,6 +343,16 @@ const ChatSendInput = z.object({
    *  stream emits a `dry_run_summary` event with the tool plan instead of
    *  running the tools. */
   dryRun: z.boolean().optional(),
+  attachments: z
+    .array(
+      z.object({
+        type: z.enum(['image', 'file']),
+        data: z.string(),
+        mimeType: z.string(),
+        name: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 const ChatSendOutput = z.object({
   sessionId: z.string(),

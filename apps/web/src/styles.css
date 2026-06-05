@@ -4003,3 +4003,85 @@ textarea {
 .ethos-html * {
   max-width: 100%;
 }
+
+/* ── Composer attachment support ───────────────────────────────────── */
+
+.composer-add-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  border: 1px solid var(--ethos-border-strong);
+  color: var(--ethos-text-tertiary);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.composer-add-btn:hover {
+  background: var(--ethos-hover);
+  color: var(--ethos-text-dim);
+}
+
+.composer-attachments {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 8px 0;
+  width: 100%;
+}
+
+.composer-attachment-chip {
+  position: relative;
+  border-radius: var(--radius-sm, 4px);
+  overflow: hidden;
+  background: var(--ethos-bg-overlay);
+}
+
+.composer-attachment-chip img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  display: block;
+}
+
+.composer-attachment-filename {
+  display: block;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--ethos-text-dim);
+  max-width: 120px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-attachment-chip button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ethos-bg);
+  border: none;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--ethos-text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.composer-attachment-chip.uploading {
+  opacity: 0.6;
+}
+
+.composer-attachment-chip.error {
+  outline: 1px solid var(--ethos-error);
+}

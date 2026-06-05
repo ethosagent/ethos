@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SlashCommandPopover } from './SlashCommandPopover';
+import type { AttachmentPreview } from './types';
 
 interface ComposerProps {
   onSend: (text: string) => void;
@@ -7,6 +8,9 @@ interface ComposerProps {
   streaming: boolean;
   personalityName?: string;
   steerMode?: boolean;
+  attachments?: AttachmentPreview[];
+  onAttach?: (files: File[]) => void;
+  onRemoveAttachment?: (localId: string) => void;
 }
 
 export function Composer({
@@ -15,11 +19,15 @@ export function Composer({
   streaming,
   personalityName,
   steerMode,
+  attachments,
+  onAttach,
+  onRemoveAttachment,
 }: ComposerProps) {
   const [text, setText] = useState('');
   const [showSlash, setShowSlash] = useState(false);
   const [slashFilter, setSlashFilter] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current;
@@ -37,12 +45,38 @@ export function Composer({
     adjustHeight();
   }, [text, adjustHeight]);
 
+  const hasAttachments = (attachments?.length ?? 0) > 0;
+
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
-    if (!trimmed || (!steerMode && streaming)) return;
+    if ((!trimmed && !hasAttachments) || (!steerMode && streaming)) return;
     onSend(trimmed);
     setText('');
-  }, [text, streaming, steerMode, onSend]);
+  }, [text, streaming, steerMode, onSend, hasAttachments]);
+
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      const items = Array.from(e.clipboardData.items);
+      const imageFiles = items
+        .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter((f): f is File => f !== null);
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        onAttach?.(imageFiles);
+      }
+    },
+    [onAttach],
+  );
+
+  const handleFileInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files ?? []);
+      if (files.length > 0) onAttach?.(files);
+      e.target.value = '';
+    },
+    [onAttach],
+  );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -110,11 +144,89 @@ export function Composer({
         </div>
       )}
 
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        onChange={handleFileInputChange}
+        style={{ display: 'none' }}
+      />
+
+      {attachments && attachments.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '6px 0 4px' }}>
+          {attachments.map((a) => (
+            <div
+              key={a.localId}
+              style={{
+                position: 'relative',
+                borderRadius: 'var(--radius-sm)',
+                overflow: 'hidden',
+                background: 'var(--bg-overlay)',
+              }}
+            >
+              {a.type === 'image' && a.previewUrl ? (
+                <img
+                  src={a.previewUrl}
+                  alt={a.name}
+                  style={{
+                    width: 48,
+                    height: 48,
+                    objectFit: 'cover',
+                    display: 'block',
+                  }}
+                />
+              ) : (
+                <span
+                  style={{
+                    display: 'block',
+                    padding: '6px 8px',
+                    fontSize: 11,
+                    fontFamily: 'var(--font-mono)',
+                    color: 'var(--text-secondary)',
+                    maxWidth: 120,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {a.name}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => onRemoveAttachment?.(a.localId)}
+                aria-label="Remove"
+                style={{
+                  position: 'absolute',
+                  top: 2,
+                  right: 2,
+                  width: 14,
+                  height: 14,
+                  borderRadius: '50%',
+                  background: 'var(--bg-base)',
+                  border: 'none',
+                  fontSize: 10,
+                  cursor: 'pointer',
+                  color: 'var(--text-secondary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <textarea
         ref={textareaRef}
         value={text}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
         placeholder={placeholder}
         rows={1}
         style={{
@@ -140,15 +252,39 @@ export function Composer({
           marginTop: 4,
         }}
       >
-        <span
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 11,
-            color: 'var(--text-tertiary)',
-          }}
-        >
-          / commands · Shift↵ new line
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Attach file"
+            style={{
+              width: 22,
+              height: 22,
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--border-subtle)',
+              background: 'none',
+              color: 'var(--text-tertiary)',
+              fontSize: 14,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              lineHeight: 1,
+              padding: 0,
+            }}
+          >
+            +
+          </button>
+          <span
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 11,
+              color: 'var(--text-tertiary)',
+            }}
+          >
+            / commands · Shift↵ new line
+          </span>
+        </div>
 
         {streaming ? (
           <div style={{ display: 'flex', gap: 6 }}>
@@ -202,19 +338,19 @@ export function Composer({
           <button
             type="button"
             onClick={handleSend}
-            disabled={!text.trim()}
+            disabled={!text.trim() && !hasAttachments}
             style={{
               height: 28,
               minWidth: 60,
               borderRadius: 'var(--radius-sm)',
-              background: text.trim() ? 'var(--info)' : 'var(--bg-overlay)',
-              color: text.trim() ? '#ffffff' : 'var(--text-tertiary)',
+              background: text.trim() || hasAttachments ? 'var(--info)' : 'var(--bg-overlay)',
+              color: text.trim() || hasAttachments ? '#ffffff' : 'var(--text-tertiary)',
               border: 'none',
               fontFamily: 'var(--font-display)',
               fontSize: 13,
               fontWeight: 500,
-              cursor: text.trim() ? 'pointer' : 'default',
-              opacity: text.trim() ? 1 : 0.5,
+              cursor: text.trim() || hasAttachments ? 'pointer' : 'default',
+              opacity: text.trim() || hasAttachments ? 1 : 0.5,
             }}
           >
             Send
