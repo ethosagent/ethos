@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MarkPreview } from './components/MarkPreview';
+import { PersonalityRingAvatar } from '../ui/PersonalityRingAvatar';
 
 interface PersonalityListItem {
   id: string;
@@ -53,7 +53,7 @@ export function PersonalityListRow({
         gap: 10,
       }}
     >
-      <MarkPreview personalityId={personality.id} size={28} />
+      <PersonalityRingAvatar personalityId={personality.id} size={32} />
       <div
         style={{
           flex: 1,

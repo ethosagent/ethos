@@ -1,5 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { PersonalityRingAvatar } from '../ui/PersonalityRingAvatar';
 
 interface PersonalityBarProps {
   personalityId: string | null;
@@ -13,11 +14,6 @@ interface PersonalityBarProps {
   currentOp?: string | null;
   showSessionsButton?: boolean;
   onToggleSessions?: () => void;
-}
-
-function getInitials(id: string | null): string {
-  if (!id) return '?';
-  return id.slice(0, 2).toUpperCase();
 }
 
 export function PersonalityBar({
@@ -157,30 +153,7 @@ export function PersonalityBar({
           }}
           aria-label="Switch personality"
         >
-          <div
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: '50%',
-              background: 'rgba(74, 158, 255, 0.2)',
-              border: '1.5px solid var(--info)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-            }}
-          >
-            <span
-              style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: 11,
-                fontWeight: 600,
-                color: 'var(--info)',
-              }}
-            >
-              {getInitials(personalityId)}
-            </span>
-          </div>
+          <PersonalityRingAvatar personalityId={personalityId ?? 'researcher'} size={28} />
           <span
             style={{
               fontFamily: 'var(--font-display)',
