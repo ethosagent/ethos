@@ -74,7 +74,6 @@ export function PluginsPage() {
   const [installError, setInstallError] = useState<string | null>(null);
   const installInputRef = useRef<HTMLInputElement>(null);
 
-
   // Fetch plugin list
   const fetchPlugins = useCallback(() => {
     setLoading(true);
@@ -108,7 +107,7 @@ export function PluginsPage() {
     } finally {
       setInstalling(false);
     }
-  }, [client, packageSpec]);
+  }, [client, packageSpec, fetchPlugins]);
 
   // Fetch page specs for all plugins
   useEffect(() => {
