@@ -108,7 +108,24 @@ export function Personalities() {
       title: 'Description',
       dataIndex: 'description',
       key: 'description',
-      render: (d: string | null) => (d ? d : <Typography.Text type="secondary">—</Typography.Text>),
+      render: (d: string | null) =>
+        d ? (
+          <span
+            style={{
+              display: '-webkit-box',
+              WebkitLineClamp: 1,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              fontSize: 12,
+              color: 'var(--ethos-text-dim)',
+            }}
+          >
+            {d}
+          </span>
+        ) : (
+          <Typography.Text type="secondary">—</Typography.Text>
+        ),
     },
     {
       title: 'Model',

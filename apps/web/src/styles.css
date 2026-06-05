@@ -3966,6 +3966,16 @@ textarea {
   color: var(--ethos-text-dim);
 }
 
+/* ── Personality table rows — fixed height, truncated description ─── */
+
+.personalities-tab .ant-table-row td {
+  height: 56px;
+  max-height: 56px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  vertical-align: middle;
+}
+
 /* ── Page action button — standardised "create new" CTA ──────────── */
 
 .page-action-btn {
