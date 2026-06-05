@@ -30,11 +30,18 @@ export function ToolChip({ tool }: ToolChipProps) {
         aria-expanded={expanded}
         aria-label={ariaLabel}
       >
-        <StatusIcon status={tool.status} />
+        <span className="tool-chip-gear" aria-hidden="true">
+          &#x2699;
+        </span>
         <span className="tool-chip-name">{tool.toolName}</span>
-        {argsPreview ? <span className="tool-chip-args">{argsPreview}</span> : null}
-        {tool.durationMs !== undefined ? (
-          <span className="tool-chip-duration">{formatDuration(tool.durationMs)}</span>
+        {tool.status === 'failed' ? (
+          <span className="tool-chip-error-label">&middot; error</span>
+        ) : tool.durationMs !== undefined ? (
+          <span className="tool-chip-duration">&middot; {formatDuration(tool.durationMs)}</span>
+        ) : tool.status === 'running' ? (
+          <span className="tool-chip-duration">
+            &middot; <span className="tool-chip-spinner" />
+          </span>
         ) : null}
       </button>
       {expanded ? <ToolChipDetail tool={tool} /> : null}
@@ -72,35 +79,6 @@ function ToolChipSection({ label, children }: { label: string; children: React.R
       <span className="tool-chip-section-label">{label}</span>
       {children}
     </div>
-  );
-}
-
-function StatusIcon({ status }: { status: ToolBlock['status'] }) {
-  if (status === 'pending-approval') {
-    return (
-      <span className="tool-chip-status" aria-hidden="true">
-        ?
-      </span>
-    );
-  }
-  if (status === 'running') {
-    return (
-      <span className="tool-chip-status" aria-hidden="true">
-        <span className="tool-chip-spinner" />
-      </span>
-    );
-  }
-  if (status === 'ok') {
-    return (
-      <span className="tool-chip-status" aria-hidden="true">
-        ✓
-      </span>
-    );
-  }
-  return (
-    <span className="tool-chip-status" aria-hidden="true">
-      ✗
-    </span>
   );
 }
 

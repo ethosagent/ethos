@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { AssistantTurn, ChatMessage } from '../../lib/chat-reducer';
+import { PersonalityRingAvatar } from '../ui/PersonalityRingAvatar';
 import { AssistantBubble, UserBubble } from './MessageBubble';
 
 // Scrollable history. Auto-scrolls to the bottom as content arrives —
@@ -12,9 +13,17 @@ export interface MessageListProps {
   currentTurn: AssistantTurn | null;
   personalityId?: string;
   model?: string;
+  /** Called when the user clicks a suggestion pill in the empty state. */
+  onPillClick?: (text: string) => void;
 }
 
-export function MessageList({ messages, currentTurn, personalityId, model }: MessageListProps) {
+export function MessageList({
+  messages,
+  currentTurn,
+  personalityId,
+  model,
+  onPillClick,
+}: MessageListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const pinnedToBottomRef = useRef(true);
 
@@ -37,7 +46,7 @@ export function MessageList({ messages, currentTurn, personalityId, model }: Mes
   }, [messages.length, currentTurn]);
 
   if (messages.length === 0 && !currentTurn) {
-    return <EmptyState personalityId={personalityId} model={model} />;
+    return <EmptyState personalityId={personalityId} model={model} onPillClick={onPillClick} />;
   }
 
   // Derived "thinking" state: the user just sent a message, no SSE event
@@ -86,16 +95,32 @@ const DEFAULT_PILLS = [
   'Run a skill',
 ] as const;
 
-function EmptyState({ personalityId, model }: { personalityId?: string; model?: string }) {
+function EmptyState({
+  personalityId,
+  model,
+  onPillClick,
+}: {
+  personalityId?: string;
+  model?: string;
+  onPillClick?: (text: string) => void;
+}) {
+  const displayName = personalityId ? capitalize(personalityId) : '';
   return (
     <div className="message-list-empty">
-      <PersonalityMark />
-      {personalityId ? <div className="empty-state-name">{personalityId}</div> : null}
+      {personalityId ? (
+        <PersonalityRingAvatar personalityId={personalityId} name={displayName} size={56} />
+      ) : null}
+      {personalityId ? <div className="empty-state-name">{personalityId.toUpperCase()}</div> : null}
       {model ? <div className="empty-state-model">{model}</div> : null}
       <div className="empty-state-tagline">Ready to help.</div>
       <div className="empty-state-pills">
         {DEFAULT_PILLS.map((p) => (
-          <button key={p} type="button" className="empty-state-pill">
+          <button
+            key={p}
+            type="button"
+            className="empty-state-pill"
+            onClick={() => onPillClick?.(p)}
+          >
             {p}
           </button>
         ))}
@@ -104,26 +129,6 @@ function EmptyState({ personalityId, model }: { personalityId?: string; model?: 
   );
 }
 
-function PersonalityMark() {
-  return (
-    <svg
-      className="empty-state-mark"
-      width="48"
-      height="48"
-      viewBox="0 0 48 48"
-      fill="none"
-      aria-hidden="true"
-    >
-      <rect width="48" height="48" rx="7.68" fill="#4A9EFF" opacity="0.133" />
-      <rect x="0" y="0" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.93" />
-      <rect x="38.4" y="0" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.93" />
-      <rect x="9.6" y="9.6" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.81" />
-      <rect x="28.8" y="9.6" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.81" />
-      <rect x="19.2" y="19.2" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.55" />
-      <rect x="9.6" y="28.8" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.68" />
-      <rect x="28.8" y="28.8" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.68" />
-      <rect x="0" y="38.4" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.55" />
-      <rect x="38.4" y="38.4" width="9.6" height="9.6" fill="#4A9EFF" opacity="0.55" />
-    </svg>
-  );
+function capitalize(s: string): string {
+  return s ? s[0]?.toUpperCase() + s.slice(1) : '';
 }

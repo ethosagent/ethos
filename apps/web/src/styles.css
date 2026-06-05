@@ -1703,57 +1703,43 @@ body {
 .personality-bar {
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--ethos-border);
-  background: var(--ethos-bg-elevated);
-}
-
-.personality-bar-stripe {
-  height: 3px;
-  width: 100%;
-  flex-shrink: 0;
+  height: var(--personality-bar-height);
+  border-bottom: 2px solid var(--blue);
+  background: var(--bg-elevated);
 }
 
 .personality-bar-content {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
+  gap: 8px;
+  padding: 0 16px;
+  height: 100%;
 }
 
 .personality-bar-left {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
-}
-
-.personality-bar-center {
+  gap: 8px;
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   min-width: 0;
-  padding: 0 16px;
-}
-
-.personality-bar-identity {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 
 .personality-bar-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
-  color: var(--ethos-text);
-  letter-spacing: -0.005em;
+  color: var(--text-primary);
+  white-space: nowrap;
 }
 
-.personality-bar-model {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--ethos-text-dim);
-  font-variant-numeric: tabular-nums;
+.personality-bar-slash {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  margin: 0 2px;
+  user-select: none;
+}
+
+.personality-bar-rename-input {
+  max-width: 16rem;
 }
 
 .personality-bar-session-title {
@@ -1761,13 +1747,13 @@ body {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  max-width: 400px;
+  max-width: 280px;
 }
 
 .personality-bar-session-name {
   font-size: 13px;
-  font-weight: 500;
-  color: var(--ethos-text);
+  font-weight: 400;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1805,12 +1791,51 @@ body {
 .personality-bar-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
-.personality-switcher-trigger,
 .personality-bar-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.personality-bar-new-label {
+  white-space: nowrap;
+}
+
+.personality-switcher-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 80ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.personality-switcher-trigger:hover {
+  background: var(--ethos-hover);
+  color: var(--text-primary);
+}
+
+.personality-switcher-trigger:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+.personality-bar-overflow-wrap {
+  position: relative;
+}
+
+.personality-bar-overflow-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1819,21 +1844,57 @@ body {
   border-radius: 4px;
   background: transparent;
   border: 1px solid transparent;
-  color: var(--ethos-text-dim);
+  color: var(--text-secondary);
   cursor: pointer;
-  transition: background-color 80ms cubic-bezier(0.16, 1, 0.3, 1);
+  font-size: 16px;
+  line-height: 1;
+  transition: background-color var(--motion-fast) var(--ease);
 }
 
-.personality-switcher-trigger:hover,
-.personality-bar-new:hover {
+.personality-bar-overflow-trigger:hover {
   background: var(--ethos-hover);
-  color: var(--ethos-text);
+  color: var(--text-primary);
 }
 
-.personality-switcher-trigger:focus-visible,
-.personality-bar-new:focus-visible {
-  outline: 2px solid var(--accent, #4a9eff);
-  outline-offset: 1px;
+.personality-bar-overflow-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  min-width: 120px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.personality-bar-overflow-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color var(--motion-fast) var(--ease);
+}
+
+.personality-bar-overflow-item:hover {
+  background: var(--ethos-hover);
+}
+
+.personality-bar-overflow-item--danger {
+  color: var(--red);
+}
+
+.personality-bar-overflow-item--danger:hover {
+  background: rgba(248, 113, 113, 0.1);
 }
 
 .personality-menu-row {
@@ -1858,7 +1919,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 24px 0;
+  padding: 24px 16px;
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 .message-list-empty {
@@ -1872,72 +1936,67 @@ body {
   overflow-y: auto;
 }
 
-.empty-state-mark {
-  width: 48px;
-  height: 48px;
-  flex-shrink: 0;
-}
-
 .empty-state-name {
-  font-size: 16px;
+  font-family: var(--font-mono);
+  font-size: 13px;
   font-weight: 500;
-  color: var(--ethos-text);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
   margin-top: 16px;
 }
 
 .empty-state-model {
   font-family: var(--font-mono);
-  font-size: 13px;
-  color: var(--ethos-text-dim);
+  font-size: 11px;
+  color: var(--text-tertiary);
   margin-top: 4px;
 }
 
 .empty-state-tagline {
-  font-size: 14px;
-  color: var(--ethos-text-dim);
-  margin-top: 6px;
+  font-size: 16px;
+  font-style: italic;
+  color: var(--text-secondary);
+  margin-top: 8px;
 }
 
 .empty-state-pills {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 8px;
   margin-top: 20px;
-  width: 100%;
-  max-width: 480px;
+  max-width: 520px;
 }
 
 .empty-state-pill {
-  border: 1px solid var(--ethos-border);
+  border: 1px solid var(--border-strong);
   border-radius: 9999px;
-  padding: 8px 20px;
-  font-size: 13px;
-  color: var(--ethos-text);
-  background: var(--ethos-bg-elevated);
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
   cursor: pointer;
   text-align: center;
-  font-family: var(--font-display);
+  font-family: var(--font-mono);
   transition:
-    background 0.12s ease,
-    border-color 0.12s ease;
+    background var(--motion-fast) var(--ease),
+    border-color var(--motion-fast) var(--ease);
 }
 
 .empty-state-pill:hover {
   background: var(--ethos-hover);
-  border-color: var(--ethos-border-strong);
+  border-color: var(--blue);
 }
 
 .empty-state-pill:focus-visible {
-  outline: 2px solid #4a9eff;
+  outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
 
 .message-row {
   display: flex;
-  padding: 0 24px;
-  max-width: var(--layout-chat-max-width);
   width: 100%;
-  margin: 0 auto;
 }
 
 .message-row-user {
@@ -1949,8 +2008,8 @@ body {
 }
 
 .message-user {
-  background: var(--ethos-bg-overlay, #2a2a2a);
-  color: var(--ethos-text);
+  background: var(--bg-overlay);
+  color: var(--text-primary);
   border-radius: 12px 12px 4px 12px;
   padding: 10px 16px;
   max-width: 75%;
@@ -1969,10 +2028,11 @@ body {
 }
 
 .message-assistant {
-  color: var(--ethos-text);
+  color: var(--text-primary);
   font-size: 14px;
   line-height: 1.55;
   max-width: 100%;
+  background: transparent;
 }
 
 /* "Agent is thinking" placeholder — three dots that pulse in sequence
@@ -2047,9 +2107,9 @@ textarea {
 
 .streaming-cursor {
   display: inline-block;
-  width: 8px;
-  height: 1em;
-  background: currentColor;
+  width: 2px;
+  height: 14px;
+  background: var(--blue);
   margin-left: 2px;
   vertical-align: text-bottom;
   animation: streaming-cursor-blink 0.9s step-end infinite;
@@ -2082,15 +2142,15 @@ textarea {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  padding: 10px 10px 10px 16px;
-  border: 1px solid var(--ethos-border-strong);
+  padding: 8px;
+  border: 1px solid var(--border-strong);
   border-radius: 12px;
-  background: var(--ethos-bg-elevated);
-  transition: border-color 0.15s ease;
+  background: var(--bg-elevated);
+  transition: border-color var(--motion-fast) var(--ease);
 }
 
 .composer-card:focus-within {
-  border-color: #4a9eff;
+  border-color: var(--blue);
 }
 
 .composer-card .ant-input,
@@ -2345,19 +2405,19 @@ textarea {
 .tool-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   padding: 3px 8px;
-  border-radius: 4px;
-  border: 1px solid var(--ethos-border);
-  background: var(--ethos-bg-elevated);
-  color: var(--ethos-text);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   max-width: 100%;
   text-align: left;
-  transition: background-color 80ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background-color var(--motion-fast) var(--ease);
 }
 
 .tool-chip:hover {
@@ -2369,33 +2429,15 @@ textarea {
   outline-offset: 1px;
 }
 
-.tool-chip-status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
+.tool-chip-gear {
+  font-size: 12px;
   flex-shrink: 0;
-  font-size: 11px;
+  color: var(--text-secondary);
 }
 
-.tool-chip-running .tool-chip-status {
-  color: var(--ethos-text-dim);
-}
-
-.tool-chip-ok .tool-chip-status {
-  color: #4ade80;
-}
-
-.tool-chip-failed .tool-chip-status {
-  color: #f87171;
-}
-
-/* Pending-approval chip variant — distinct from running, ok, failed.
-   Uses the warning amber from the semantic palette since it signals
-   "waiting on you" rather than "running" or "done". */
-.tool-chip-pending-approval .tool-chip-status {
-  color: #f59e0b;
+.tool-chip-error-label {
+  color: var(--red);
+  font-weight: 500;
 }
 
 .tool-chip-name {
@@ -2413,9 +2455,8 @@ textarea {
 }
 
 .tool-chip-duration {
-  color: var(--ethos-text-dim);
+  color: var(--text-tertiary);
   font-size: 11px;
-  margin-left: 4px;
 }
 
 /* Spinner for the running state. Pure rotation, no layout impact. */
@@ -4105,6 +4146,25 @@ textarea {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-tertiary);
+}
+
+/* ── Code blocks in chat (02-chat spec) ─────────────────────────── */
+
+.message-assistant pre {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+
+.message-assistant pre code {
+  display: block;
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-x: auto;
 }
 
 /* ── HTML renderer scope ─────────────────────────────────────────── */

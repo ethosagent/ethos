@@ -1,13 +1,11 @@
-import { personalityAccent } from '@ethosagent/design-tokens';
 import { Input } from 'antd';
 import { useState } from 'react';
-import { PersonalityMark } from '../ui/PersonalityMark';
+import { PersonalityRingAvatar } from '../ui/PersonalityRingAvatar';
 import { PersonalitySwitcher } from './PersonalitySwitcher';
 
-// The chat tab's identity affordance — DESIGN.md memorable thing made
-// concrete. A 3-4px accent stripe at the top edge claims the surface
-// for the active personality; the mark + name + model below it tells
-// you who you're talking to without you having to read the page header.
+// 02-chat redesign: 44px personality bar with bottom blue stripe.
+// Left: PersonalityRingAvatar (28px) + name (13px/500) + dropdown caret
+// + optional "/ session title". Right: "New session" ghost button + overflow.
 
 export interface PersonalityBarProps {
   personalityId: string;
@@ -24,22 +22,24 @@ export interface PersonalityBarProps {
   sessionTitle?: string | null;
   /** Called after the user confirms a new title (empty string → pass null to clear). */
   onRenameSession?: (title: string | null) => void;
+  /** Called when user picks an overflow action. */
+  onOverflowAction?: (action: 'export' | 'fork' | 'delete') => void;
 }
 
 export function PersonalityBar({
   personalityId,
   name,
-  model,
   onSwitchPersonality,
   onNewSession,
   sessionTitle,
   onRenameSession,
+  onOverflowAction,
 }: PersonalityBarProps) {
-  const accent = personalityAccent(personalityId);
   const displayName = name ?? capitalize(personalityId);
 
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
+  const [overflowOpen, setOverflowOpen] = useState(false);
 
   const startEdit = () => {
     setEditValue(sessionTitle ?? '');
@@ -55,18 +55,14 @@ export function PersonalityBar({
 
   return (
     <div className="personality-bar">
-      <div className="personality-bar-stripe" style={{ background: accent }} />
       <div className="personality-bar-content">
         <div className="personality-bar-left">
-          <PersonalityMark personalityId={personalityId} size={32} />
-          <div className="personality-bar-identity">
-            <span className="personality-bar-name">{displayName}</span>
-            {model ? <span className="personality-bar-model">{model}</span> : null}
-          </div>
-        </div>
+          <PersonalityRingAvatar personalityId={personalityId} name={displayName} size={28} />
+          <span className="personality-bar-name">{displayName}</span>
+          <PersonalitySwitcher current={personalityId} onSelect={onSwitchPersonality} />
 
-        <div className="personality-bar-center">
-          {sessionTitle !== undefined || editing ? (
+          {/* Session title after a separator slash */}
+          {sessionTitle !== undefined ? (
             editing ? (
               <Input
                 size="small"
@@ -78,25 +74,29 @@ export function PersonalityBar({
                 onKeyDown={(e) => {
                   if (e.key === 'Escape') setEditing(false);
                 }}
-                style={{ fontSize: 13, textAlign: 'center', maxWidth: 320 }}
+                className="personality-bar-rename-input"
+                style={{ fontSize: 13 }}
               />
             ) : (
-              <div className="personality-bar-session-title">
-                <span className="personality-bar-session-name">
-                  {sessionTitle ?? 'Untitled session'}
-                </span>
-                {onRenameSession ? (
-                  <button
-                    type="button"
-                    className="personality-bar-rename"
-                    onClick={startEdit}
-                    aria-label="Rename session"
-                    title="Rename session"
-                  >
-                    <PencilIcon />
-                  </button>
-                ) : null}
-              </div>
+              <>
+                <span className="personality-bar-slash">/</span>
+                <div className="personality-bar-session-title">
+                  <span className="personality-bar-session-name">
+                    {sessionTitle ?? 'Untitled session'}
+                  </span>
+                  {onRenameSession ? (
+                    <button
+                      type="button"
+                      className="personality-bar-rename"
+                      onClick={startEdit}
+                      aria-label="Rename session"
+                      title="Rename session"
+                    >
+                      <PencilIcon />
+                    </button>
+                  ) : null}
+                </div>
+              </>
             )
           ) : null}
         </div>
@@ -104,14 +104,61 @@ export function PersonalityBar({
         <div className="personality-bar-actions">
           <button
             type="button"
-            className="personality-bar-new"
+            className="personality-bar-new btn-ghost"
             onClick={onNewSession}
             aria-label="New session"
             title="New session"
           >
             <PlusIcon />
+            <span className="personality-bar-new-label">New session</span>
           </button>
-          <PersonalitySwitcher current={personalityId} onSelect={onSwitchPersonality} />
+
+          {/* Overflow menu */}
+          <div className="personality-bar-overflow-wrap">
+            <button
+              type="button"
+              className="personality-bar-overflow-trigger"
+              onClick={() => setOverflowOpen((v) => !v)}
+              aria-label="More actions"
+              aria-expanded={overflowOpen}
+            >
+              &#x22EE;
+            </button>
+            {overflowOpen ? (
+              <div className="personality-bar-overflow-menu">
+                <button
+                  type="button"
+                  className="personality-bar-overflow-item"
+                  onClick={() => {
+                    setOverflowOpen(false);
+                    onOverflowAction?.('export');
+                  }}
+                >
+                  Export
+                </button>
+                <button
+                  type="button"
+                  className="personality-bar-overflow-item"
+                  onClick={() => {
+                    setOverflowOpen(false);
+                    onOverflowAction?.('fork');
+                  }}
+                >
+                  Fork
+                </button>
+                <button
+                  type="button"
+                  className="personality-bar-overflow-item personality-bar-overflow-item--danger"
+                  onClick={() => {
+                    setOverflowOpen(false);
+                    onOverflowAction?.('delete');
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

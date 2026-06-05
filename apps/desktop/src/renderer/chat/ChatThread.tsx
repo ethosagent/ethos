@@ -1,5 +1,6 @@
 import type { StoredMessage } from '@ethosagent/web-contracts';
 import { useCallback, useEffect, useRef } from 'react';
+import { PersonalityRingAvatar } from '../ui/PersonalityRingAvatar';
 import { AssistantMessage } from './AssistantMessage';
 import { MessageBubble } from './MessageBubble';
 import type { ApprovalState, ClarifyState, ToolCallState, UsageState } from './types';
@@ -17,8 +18,19 @@ interface ChatThreadProps {
   onDeny: (approvalId: string) => void;
   onClarifyRespond: (requestId: string, answer: string) => void;
   onRetry: () => void;
+  onSend?: (text: string) => void;
   error?: string | null;
+  personalityId?: string | null;
+  personalityName?: string | null;
+  modelLabel?: string | null;
 }
+
+const SUGGESTION_PILLS = [
+  'Summarize my last session',
+  'What can you help with?',
+  'Draft an email',
+  'Explain a concept',
+];
 
 export function ChatThread({
   messages,
@@ -33,7 +45,11 @@ export function ChatThread({
   onDeny,
   onClarifyRespond,
   onRetry,
+  onSend,
   error,
+  personalityId,
+  personalityName,
+  modelLabel,
 }: ChatThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -62,8 +78,8 @@ export function ChatThread({
       style={{
         flex: 1,
         overflowY: 'auto',
-        padding: '24px 32px',
-        maxWidth: 800,
+        padding: '24px 16px',
+        maxWidth: 720,
         width: '100%',
         margin: '0 auto',
       }}
@@ -142,15 +158,91 @@ export function ChatThread({
         <div
           style={{
             display: 'flex',
+            flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
             height: '100%',
-            color: 'var(--text-tertiary)',
-            fontFamily: 'var(--font-display)',
-            fontSize: 14,
+            gap: 12,
           }}
         >
-          Start a conversation
+          <PersonalityRingAvatar
+            personalityId={personalityId ?? 'default'}
+            name={personalityName ?? 'Default'}
+            size={56}
+          />
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              fontWeight: 500,
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            {personalityName ?? 'Default'}
+          </span>
+          {modelLabel && (
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 10,
+                color: 'var(--text-tertiary)',
+              }}
+            >
+              {modelLabel}
+            </span>
+          )}
+          <span
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 14,
+              color: 'var(--text-tertiary)',
+              marginTop: 4,
+            }}
+          >
+            Ready to help.
+          </span>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 8,
+              justifyContent: 'center',
+              marginTop: 8,
+              maxWidth: 400,
+            }}
+          >
+            {SUGGESTION_PILLS.map((pill) => (
+              <button
+                key={pill}
+                type="button"
+                onClick={() => onSend?.(pill)}
+                style={{
+                  background: 'var(--bg-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-full)',
+                  padding: '6px 14px',
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 12,
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  transition:
+                    'border-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease)',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--blue)';
+                  (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-subtle)';
+                  (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)';
+                }}
+              >
+                {pill}
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -10,10 +10,6 @@ interface ToolCallRowProps {
   progressMessage?: string;
 }
 
-function truncate(str: string, max: number): string {
-  return str.length > max ? `${str.slice(0, max)}...` : str;
-}
-
 function formatArgs(args: unknown): string {
   try {
     return JSON.stringify(args);
@@ -22,11 +18,9 @@ function formatArgs(args: unknown): string {
   }
 }
 
-const statusIcons: Record<string, { icon: string; color: string }> = {
-  running: { icon: '⏳', color: 'var(--text-tertiary)' },
-  ok: { icon: '✓', color: 'var(--success)' },
-  error: { icon: '✗', color: 'var(--error)' },
-};
+function formatDuration(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+}
 
 export function ToolCallRow({
   name,
@@ -42,84 +36,87 @@ export function ToolCallRow({
   const toggle = useCallback(() => setExpanded((v) => !v), []);
   const toggleFullResult = useCallback(() => setShowFullResult((v) => !v), []);
 
-  const statusInfo = statusIcons[status] ?? statusIcons.running;
-  const argsStr = formatArgs(args);
-  const preview = status === 'running' && progressMessage ? progressMessage : truncate(argsStr, 80);
-  const durationLabel = durationMs != null ? `${(durationMs / 1000).toFixed(1)}s` : '';
+  const isError = status === 'error';
+  const isRunning = status === 'running';
+
+  const chipLabel = isRunning
+    ? (progressMessage ?? name)
+    : isError
+      ? `${name} · error`
+      : durationMs != null
+        ? `${name} · ${formatDuration(durationMs)}`
+        : name;
+
   const resultText = result ?? '';
   const resultTruncated = resultText.length > 2000 && !showFullResult;
 
   return (
-    <div style={{ marginLeft: 12, marginTop: 4, marginBottom: 4 }}>
+    <div style={{ marginTop: 4, marginBottom: 4 }}>
       <button
         type="button"
         tabIndex={0}
         onClick={toggle}
         onKeyDown={(e) => e.key === 'Enter' && toggle()}
         style={{
-          display: 'flex',
+          display: 'inline-flex',
           alignItems: 'center',
-          gap: 8,
-          height: 36,
+          gap: 6,
+          height: 26,
           cursor: 'pointer',
           userSelect: 'none',
-          background: 'none',
-          border: 'none',
-          padding: 0,
-          width: '100%',
+          background: 'var(--bg-elevated)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 4,
+          padding: '0 8px',
           font: 'inherit',
-          color: 'inherit',
+          color: isError ? 'var(--error)' : 'var(--text-secondary)',
           textAlign: 'left',
         }}
       >
-        <span style={{ fontSize: 14, color: statusInfo.color, width: 18, textAlign: 'center' }}>
-          {statusInfo.icon}
-        </span>
         <span
           style={{
             fontFamily: 'var(--font-mono)',
-            fontSize: 12,
-            color: 'var(--text-secondary)',
-            flexShrink: 0,
+            fontSize: 11,
+            lineHeight: 1,
           }}
         >
-          {name}
-        </span>
-        <span
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 12,
-            color: 'var(--text-tertiary)',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            flex: 1,
-            minWidth: 0,
-          }}
-        >
-          {preview}
+          {'⚙'}
         </span>
         <span
           style={{
             fontFamily: 'var(--font-mono)',
             fontSize: 11,
-            color: 'var(--text-tertiary)',
-            flexShrink: 0,
+            whiteSpace: 'nowrap',
           }}
         >
-          {durationLabel}
+          {chipLabel}
         </span>
+        {isRunning && (
+          <span
+            style={{
+              display: 'inline-block',
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              border: '1.5px solid var(--text-tertiary)',
+              borderTopColor: 'transparent',
+              animation: 'tool-spin 0.7s linear infinite',
+            }}
+          />
+        )}
         <span
           style={{
-            fontSize: 12,
+            fontSize: 10,
             color: 'var(--text-tertiary)',
             transition: 'transform 160ms var(--ease)',
             transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+            marginLeft: 2,
           }}
         >
           {'▶'}
         </span>
       </button>
+      <style>{`@keyframes tool-spin { to { transform: rotate(360deg); } }`}</style>
       <div
         style={{
           maxHeight: expanded ? 600 : 0,
@@ -127,7 +124,7 @@ export function ToolCallRow({
           transition: 'max-height 240ms var(--ease)',
         }}
       >
-        <div style={{ padding: '8px 0 8px 26px' }}>
+        <div style={{ padding: '8px 0 8px 12px' }}>
           <div
             style={{
               fontFamily: 'var(--font-mono)',
@@ -153,7 +150,7 @@ export function ToolCallRow({
               color: 'var(--text-secondary)',
             }}
           >
-            {JSON.stringify(args, null, 2)}
+            {formatArgs(args)}
           </pre>
           {resultText && (
             <>

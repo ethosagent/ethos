@@ -17,6 +17,7 @@ export function Composer({
   steerMode,
 }: ComposerProps) {
   const [text, setText] = useState('');
+  const [focused, setFocused] = useState(false);
   const [showSlash, setShowSlash] = useState(false);
   const [slashFilter, setSlashFilter] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -91,13 +92,14 @@ export function Composer({
       ? `Message ${personalityName}...`
       : 'Message...';
 
+  const hasText = text.trim().length > 0;
+
   return (
     <div
       style={{
         position: 'relative',
+        padding: '10px 16px 12px',
         background: 'var(--bg-base)',
-        borderTop: '1px solid var(--border-subtle)',
-        padding: '10px 16px 8px',
       }}
     >
       {showSlash && (
@@ -110,34 +112,137 @@ export function Composer({
         </div>
       )}
 
-      <textarea
-        ref={textareaRef}
-        value={text}
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder}
-        rows={1}
+      <div
         style={{
-          width: '100%',
-          resize: 'none',
-          border: 'none',
-          outline: 'none',
-          background: 'var(--bg-base)',
-          fontFamily: 'var(--font-display)',
-          fontSize: 14,
-          color: 'var(--text-primary)',
-          lineHeight: '22px',
-          caretColor: 'var(--info)',
-          padding: '6px 0',
+          display: 'flex',
+          alignItems: 'flex-end',
+          gap: 8,
+          background: 'var(--bg-elevated)',
+          border: `1px solid ${focused ? 'var(--blue)' : 'var(--border-strong)'}`,
+          borderRadius: 12,
+          padding: '8px 8px 8px 14px',
+          transition: 'border-color var(--motion-fast) var(--ease)',
         }}
-      />
+      >
+        <textarea
+          ref={textareaRef}
+          value={text}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          placeholder={placeholder}
+          rows={1}
+          style={{
+            flex: 1,
+            resize: 'none',
+            border: 'none',
+            outline: 'none',
+            background: 'transparent',
+            fontFamily: 'var(--font-display)',
+            fontSize: 14,
+            color: 'var(--text-primary)',
+            lineHeight: '22px',
+            caretColor: 'var(--info)',
+            padding: '4px 0',
+          }}
+        />
+
+        {streaming ? (
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+            {steerMode && (
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={!hasText}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: '50%',
+                  background: hasText ? 'var(--info)' : 'var(--bg-overlay)',
+                  color: hasText ? '#ffffff' : 'var(--text-tertiary)',
+                  border: 'none',
+                  cursor: hasText ? 'pointer' : 'default',
+                  opacity: hasText ? 1 : 0.5,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 14,
+                  flexShrink: 0,
+                }}
+                aria-label="Steer"
+              >
+                ↗
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onAbort}
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: '50%',
+                background: 'var(--accent)',
+                color: 'var(--bg-base)',
+                border: 'none',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 10,
+                flexShrink: 0,
+              }}
+              aria-label="Stop"
+            >
+              ■
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={!hasText}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: '50%',
+              background: hasText ? 'var(--info)' : 'var(--bg-overlay)',
+              color: hasText ? '#ffffff' : 'var(--text-tertiary)',
+              border: 'none',
+              cursor: hasText ? 'pointer' : 'default',
+              opacity: hasText ? 1 : 0.5,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              transition:
+                'background var(--motion-fast) var(--ease), opacity var(--motion-fast) var(--ease)',
+            }}
+            aria-label="Send"
+          >
+            <svg
+              aria-hidden="true"
+              width={16}
+              height={16}
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <title>Send</title>
+              <path d="M8 14V2M8 2L3 7M8 2l5 5" />
+            </svg>
+          </button>
+        )}
+      </div>
 
       <div
         style={{
           display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginTop: 4,
+          justifyContent: 'center',
+          marginTop: 6,
         }}
       >
         <span
@@ -149,77 +254,6 @@ export function Composer({
         >
           / commands · Shift↵ new line
         </span>
-
-        {streaming ? (
-          <div style={{ display: 'flex', gap: 6 }}>
-            {steerMode && (
-              <button
-                type="button"
-                onClick={handleSend}
-                disabled={!text.trim()}
-                style={{
-                  height: 28,
-                  minWidth: 60,
-                  borderRadius: 'var(--radius-sm)',
-                  background: text.trim() ? 'var(--info)' : 'var(--bg-overlay)',
-                  color: text.trim() ? '#ffffff' : 'var(--text-tertiary)',
-                  border: 'none',
-                  fontFamily: 'var(--font-display)',
-                  fontSize: 13,
-                  fontWeight: 500,
-                  cursor: text.trim() ? 'pointer' : 'default',
-                  opacity: text.trim() ? 1 : 0.5,
-                }}
-              >
-                Steer
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={onAbort}
-              style={{
-                height: 28,
-                minWidth: 60,
-                borderRadius: 'var(--radius-sm)',
-                background: 'var(--accent)',
-                color: 'var(--bg-base)',
-                border: 'none',
-                fontFamily: 'var(--font-display)',
-                fontSize: 13,
-                fontWeight: 500,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 4,
-              }}
-            >
-              <span style={{ fontSize: 10 }}>■</span>
-              Stop
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!text.trim()}
-            style={{
-              height: 28,
-              minWidth: 60,
-              borderRadius: 'var(--radius-sm)',
-              background: text.trim() ? 'var(--info)' : 'var(--bg-overlay)',
-              color: text.trim() ? '#ffffff' : 'var(--text-tertiary)',
-              border: 'none',
-              fontFamily: 'var(--font-display)',
-              fontSize: 13,
-              fontWeight: 500,
-              cursor: text.trim() ? 'pointer' : 'default',
-              opacity: text.trim() ? 1 : 0.5,
-            }}
-          >
-            Send
-          </button>
-        )}
       </div>
     </div>
   );

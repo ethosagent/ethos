@@ -56,9 +56,9 @@ export function MessageBubble({ content, timestamp, isSteer }: MessageBubbleProp
       )}
       <div
         style={{
-          maxWidth: '60%',
+          maxWidth: '75%',
           background: 'var(--bg-overlay)',
-          borderRadius: 'var(--radius-md)',
+          borderRadius: '12px 12px 4px 12px',
           padding: '10px 14px',
           fontFamily: 'var(--font-display)',
           fontSize: 14,

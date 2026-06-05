@@ -1,25 +1,20 @@
-import { useEffect, useState } from 'react';
-
 export function StreamCursor() {
-  const [visible, setVisible] = useState(true);
-
-  useEffect(() => {
-    const id = setInterval(() => setVisible((v) => !v), 530);
-    return () => clearInterval(id);
-  }, []);
-
   return (
-    <span
-      style={{
-        opacity: visible ? 1 : 0,
-        fontFamily: 'var(--font-mono)',
-        fontSize: 14,
-        color: 'var(--text-primary)',
-        transition: 'opacity 100ms',
-      }}
-      aria-hidden
-    >
-      |
-    </span>
+    <>
+      <span
+        style={{
+          display: 'inline-block',
+          width: 2,
+          height: '1em',
+          background: 'var(--blue)',
+          borderRadius: 1,
+          verticalAlign: 'text-bottom',
+          marginLeft: 1,
+          animation: 'stream-cursor-blink 1s step-end infinite',
+        }}
+        aria-hidden
+      />
+      <style>{`@keyframes stream-cursor-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }`}</style>
+    </>
   );
 }
