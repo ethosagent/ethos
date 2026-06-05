@@ -8,6 +8,7 @@ files:
   - dist/renderer/**
   - node_modules/**
 mac:
+  icon: build/icon.icns
   category: public.app-category.productivity
   target:
     - target: dmg
@@ -16,9 +17,11 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   hardenedRuntime: true
 win:
+  icon: build/icon.ico
   target: nsis
   signingHashAlgorithms: [sha256]
 linux:
+  icon: build/icon.png
   target: AppImage
 publish:
   provider: github
