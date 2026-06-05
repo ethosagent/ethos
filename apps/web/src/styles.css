@@ -3969,10 +3969,9 @@ textarea {
 /* ── Personality table rows — fixed height, truncated description ─── */
 
 .personalities-tab .ant-table-row td {
-  height: 56px;
-  max-height: 56px;
-  padding-top: 8px;
-  padding-bottom: 8px;
+  height: 64px;
+  padding-top: 10px;
+  padding-bottom: 10px;
   vertical-align: middle;
 }
 

@@ -15,9 +15,11 @@ import {
   Button,
   Checkbox,
   Divider,
+  Dropdown,
   Empty,
   Form,
   Input,
+  type MenuProps,
   Modal,
   Popconfirm,
   Select,
@@ -113,12 +115,13 @@ export function Personalities() {
           <span
             style={{
               display: '-webkit-box',
-              WebkitLineClamp: 1,
+              WebkitLineClamp: 2,
               WebkitBoxOrient: 'vertical',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               fontSize: 12,
               color: 'var(--ethos-text-dim)',
+              lineHeight: 1.5,
             }}
           >
             {d}
@@ -131,28 +134,32 @@ export function Personalities() {
       title: 'Model',
       dataIndex: 'model',
       key: 'model',
-      width: 200,
+      width: 140,
       render: (m: string | { trivial?: string; default?: string; deep?: string } | null) =>
         m ? (
-          <Typography.Text code>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ethos-text-dim)' }}>
             {typeof m === 'string' ? m : (m.default ?? m.trivial ?? m.deep ?? '—')}
-          </Typography.Text>
+          </span>
         ) : (
-          <Typography.Text type="secondary">—</Typography.Text>
+          <span style={{ color: 'var(--ethos-text-dim)' }}>—</span>
         ),
     },
     {
       title: 'Tools',
       dataIndex: 'toolset',
       key: 'toolset',
-      width: 100,
+      width: 60,
       align: 'right' as const,
-      render: (t: string[] | null) => t?.length ?? 0,
+      render: (t: string[] | null) => (
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ethos-text-dim)' }}>
+          {t?.length ?? 0}
+        </span>
+      ),
     },
     {
       title: '',
       key: 'actions',
-      width: 240,
+      width: 48,
       render: (_: unknown, p: Personality) => (
         <PersonalityRowActions
           personality={p}
@@ -244,7 +251,7 @@ function PersonalityRowActions({
   onDuplicate: () => void;
 }) {
   const qc = useQueryClient();
-  const { notification } = AntApp.useApp();
+  const { notification, modal } = AntApp.useApp();
   const deleteMut = useMutation({
     mutationFn: (id: string) => rpc.personalities.delete({ id }),
     onSuccess: () => {
@@ -256,32 +263,58 @@ function PersonalityRowActions({
       notification.error({ message: 'Delete failed', description: (err as Error).message }),
   });
 
+  const items: MenuProps['items'] = [
+    ...(personality.builtin
+      ? []
+      : [{ key: 'edit', label: '✎ Edit' }]),
+    { key: 'duplicate', label: '⧉ Duplicate' },
+    ...(personality.builtin
+      ? []
+      : [
+          { type: 'divider' as const },
+          { key: 'delete', label: '🗑 Delete', danger: true },
+        ]),
+  ];
+
   return (
-    <div style={{ display: 'flex', gap: 8 }}>
-      {personality.builtin ? null : (
-        <Button size="small" onClick={onEdit}>
-          Edit
-        </Button>
-      )}
-      <Tooltip title={personality.builtin ? 'Built-in — duplicate to edit.' : undefined}>
-        <Button size="small" onClick={onDuplicate}>
-          Duplicate
-        </Button>
-      </Tooltip>
-      {personality.builtin ? null : (
-        <Popconfirm
-          title={`Delete ${personality.name}?`}
-          description="The directory under ~/.ethos/personalities/ is removed."
-          onConfirm={() => deleteMut.mutate(personality.id)}
-          okText="Delete"
-          okButtonProps={{ danger: true }}
-        >
-          <Button size="small" danger loading={deleteMut.isPending}>
-            Delete
-          </Button>
-        </Popconfirm>
-      )}
-    </div>
+    <Dropdown
+      menu={{
+        items,
+        onClick: ({ key, domEvent }) => {
+          domEvent.stopPropagation();
+          if (key === 'edit') onEdit();
+          else if (key === 'duplicate') onDuplicate();
+          else if (key === 'delete') {
+            modal.confirm({
+              title: `Delete ${personality.name}?`,
+              content: 'The directory under ~/.ethos/personalities/ is removed.',
+              okText: 'Delete',
+              okButtonProps: { danger: true },
+              onOk: () => deleteMut.mutate(personality.id),
+            });
+          }
+        },
+      }}
+      trigger={['click']}
+      placement="bottomRight"
+    >
+      <button
+        type="button"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'none',
+          border: 'none',
+          color: 'var(--ethos-text-dim)',
+          cursor: 'pointer',
+          padding: '2px 6px',
+          borderRadius: 4,
+          fontSize: 16,
+          lineHeight: 1,
+        }}
+      >
+        ⋯
+      </button>
+    </Dropdown>
   );
 }
 
