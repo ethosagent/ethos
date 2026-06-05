@@ -1,15 +1,30 @@
-interface StatusDotProps {
-  status: 'connected' | 'connecting' | 'offline';
-  size?: number;
-}
+type StatusName = 'connected' | 'connecting' | 'offline';
 
-const STATUS_COLORS = {
+const STATUS_COLORS: Record<StatusName, string> = {
   connected: 'var(--green)',
   connecting: 'var(--amber)',
   offline: 'var(--red)',
 };
 
-export function StatusDot({ status, size = 8 }: StatusDotProps) {
+interface StatusDotByNameProps {
+  status: StatusName;
+  color?: never;
+  size?: number;
+}
+
+interface StatusDotByColorProps {
+  status?: never;
+  color: string;
+  size?: number;
+}
+
+type StatusDotProps = StatusDotByNameProps | StatusDotByColorProps;
+
+export function StatusDot(props: StatusDotProps) {
+  const size = props.size ?? 8;
+  const bg = props.color ?? STATUS_COLORS[props.status];
+  const isConnecting = 'status' in props && props.status === 'connecting';
+
   return (
     <span
       style={{
@@ -17,9 +32,9 @@ export function StatusDot({ status, size = 8 }: StatusDotProps) {
         width: size,
         height: size,
         borderRadius: '50%',
-        background: STATUS_COLORS[status],
+        background: bg,
         flexShrink: 0,
-        animation: status === 'connecting' ? 'status-dot-pulse 1s ease-in-out infinite' : undefined,
+        animation: isConnecting ? 'status-dot-pulse 1s ease-in-out infinite' : undefined,
       }}
     />
   );

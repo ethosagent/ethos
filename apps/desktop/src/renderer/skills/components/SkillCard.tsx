@@ -127,8 +127,26 @@ export function SkillCard({
         </button>
       </div>
 
-      {/* Row 1: name + import/installed */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      {/* Row 1: icon circle + name + import/installed */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: '50%',
+            background: 'rgba(74, 158, 255, 0.12)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            color: 'var(--blue)',
+            fontWeight: 600,
+          }}
+        >
+          {skill.name.charAt(0).toUpperCase()}
+        </div>
         <span
           style={{
             fontFamily: 'var(--font-mono)',

@@ -6,6 +6,12 @@ import { SectionLabel } from '../ui/SectionLabel';
 import { PluginHomeDrawer } from './PluginHomeDrawer';
 import { PluginSettingsDrawer } from './PluginSettingsDrawer';
 
+interface PersonalityInfo {
+  id: string;
+  name: string;
+  plugins?: string[] | null;
+}
+
 // ---------------------------------------------------------------------------
 // Types mirroring web-contracts schemas
 // ---------------------------------------------------------------------------
@@ -63,21 +69,25 @@ export function PluginsPage() {
   );
 
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
+  const [personalities, setPersonalities] = useState<PersonalityInfo[]>([]);
   const [pageSpecs, setPageSpecs] = useState<Map<string, PageSpec>>(new Map());
   const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [homeDrawerPlugin, setHomeDrawerPlugin] = useState<PluginInfo | null>(null);
   const [settingsDrawerPlugin, setSettingsDrawerPlugin] = useState<PluginInfo | null>(null);
 
-  // Fetch plugin list
+  // Fetch plugin list + personalities
   useEffect(() => {
     let stale = false;
     setLoading(true);
-    client.rpc.plugins
-      .list({})
-      .then((res: { plugins: PluginInfo[] }) => {
+    Promise.all([
+      client.rpc.plugins.list({}).then((res: { plugins: PluginInfo[] }) => {
         if (!stale) setPlugins(res.plugins);
-      })
+      }),
+      client.rpc.personalities.list({}).then((res: { items: PersonalityInfo[] }) => {
+        if (!stale) setPersonalities(res.items);
+      }),
+    ])
       .catch(() => {})
       .finally(() => {
         if (!stale) setLoading(false);
@@ -231,6 +241,7 @@ export function PluginsPage() {
                     key={plugin.id}
                     plugin={plugin}
                     hasPage={pageSpecs.has(plugin.id)}
+                    personalities={personalities}
                     onOpen={() => setSelectedPluginId(plugin.id)}
                     onOpenHome={() => setHomeDrawerPlugin(plugin)}
                     onOpenSettings={() => setSettingsDrawerPlugin(plugin)}
@@ -356,29 +367,46 @@ function PluginCard({
 function PluginListRow({
   plugin,
   hasPage,
+  personalities,
   onOpen,
   onOpenHome,
   onOpenSettings,
 }: {
   plugin: PluginInfo;
   hasPage: boolean;
+  personalities: PersonalityInfo[];
   onOpen: () => void;
   onOpenHome: () => void;
   onOpenSettings: () => void;
 }) {
+  const usedBy = personalities.filter((p) => (p.plugins ?? []).includes(plugin.id));
+
   return (
     <div
       style={{
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '8px 12px',
+        padding: '10px 12px',
         borderBottom: '1px solid var(--border-subtle)',
         fontSize: 13,
+        minHeight: 52,
+        gap: 12,
       }}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{plugin.name}</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+          <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{plugin.name}</span>
+          <span
+            style={{
+              fontSize: 11,
+              color: 'var(--text-tertiary)',
+              fontFamily: 'var(--font-mono)',
+            }}
+          >
+            v{plugin.version}
+          </span>
+        </div>
         <span
           style={{
             fontSize: 11,
@@ -386,10 +414,44 @@ function PluginListRow({
             fontFamily: 'var(--font-mono)',
           }}
         >
-          {plugin.id}@{plugin.version} · {plugin.source}
+          {plugin.id} · {plugin.source}
         </span>
+        {/* Used by pills */}
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+          {usedBy.length > 0 ? (
+            usedBy.map((p) => (
+              <span
+                key={p.id}
+                style={{
+                  fontSize: 10,
+                  fontWeight: 500,
+                  color: 'var(--blue)',
+                  border: '1px solid var(--blue)',
+                  borderRadius: 9999,
+                  padding: '2px 8px',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {p.name}
+              </span>
+            ))
+          ) : (
+            <span
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                fontSize: 11,
+                color: 'var(--text-secondary)',
+              }}
+            >
+              <span style={{ color: 'var(--warning)', fontSize: 13 }}>&#9888;</span>
+              Not used by any personality
+            </span>
+          )}
+        </div>
       </div>
-      <div style={{ display: 'flex', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
         {plugin.hasHomePanel && (
           <button type="button" onClick={onOpenHome} style={rowButtonStyle}>
             Home

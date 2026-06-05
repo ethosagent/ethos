@@ -86,12 +86,12 @@ export function EvolverQueueTab({ port, onPendingCountChange }: EvolverQueueTabP
   };
 
   return (
-    <div>
+    <div style={{ padding: '12px 16px' }}>
       <div>
-        <SectionLabel>Pending review</SectionLabel>
-        <div style={{ marginTop: 8 }}>
+        <SectionLabel>PENDING REVIEW</SectionLabel>
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {pending.length === 0 ? (
-            <div style={{ fontSize: 14, color: 'var(--text-tertiary)' }}>
+            <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>
               No skills awaiting review.
             </div>
           ) : (
@@ -107,15 +107,17 @@ export function EvolverQueueTab({ port, onPendingCountChange }: EvolverQueueTabP
         </div>
       </div>
 
-      <div style={{ marginTop: 24 }}>
-        <SectionLabel>Run history</SectionLabel>
+      <div style={{ marginTop: 20 }}>
+        <SectionLabel>RUN HISTORY</SectionLabel>
         <div>
           {history.length === 0 ? (
-            <div style={{ fontSize: 14, color: 'var(--text-tertiary)', marginTop: 8 }}>
+            <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 8 }}>
               No evolver runs yet.
             </div>
           ) : (
-            history.map((run, i) => <EvolverHistoryRow key={run.ranAt ?? i} entry={run} />)
+            history.map((run, i) => (
+              <EvolverHistoryRow key={run.ranAt ?? i} entry={run} even={i % 2 === 0} />
+            ))
           )}
         </div>
       </div>

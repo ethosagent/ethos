@@ -5,9 +5,10 @@ interface EvolverHistoryRowProps {
     newSkillsProposed: number;
     skipped: { kind: string; target: string; reason: string }[];
   };
+  even?: boolean;
 }
 
-export function EvolverHistoryRow({ entry }: EvolverHistoryRowProps) {
+export function EvolverHistoryRow({ entry, even }: EvolverHistoryRowProps) {
   const date = new Date(entry.ranAt);
   const dateStr = date.toLocaleString('en-US', {
     month: 'short',
@@ -17,13 +18,18 @@ export function EvolverHistoryRow({ entry }: EvolverHistoryRowProps) {
     hour12: true,
   });
 
+  const total = entry.rewritesProposed + entry.newSkillsProposed;
+  const badgeColor = total > 0 ? 'var(--green)' : 'var(--text-tertiary)';
+  const badgeLabel = total > 0 ? 'proposed' : 'no changes';
+
   return (
     <div
       style={{
         display: 'flex',
         alignItems: 'center',
         height: 36,
-        borderBottom: '1px solid var(--border-subtle)',
+        padding: '0 8px',
+        background: even ? 'var(--bg-elevated)' : 'transparent',
       }}
     >
       <span
@@ -32,7 +38,7 @@ export function EvolverHistoryRow({ entry }: EvolverHistoryRowProps) {
           fontSize: 11,
           color: 'var(--text-tertiary)',
           fontVariantNumeric: 'tabular-nums',
-          width: 120,
+          width: 140,
           flexShrink: 0,
         }}
       >
@@ -51,10 +57,15 @@ export function EvolverHistoryRow({ entry }: EvolverHistoryRowProps) {
         style={{
           fontFamily: 'var(--font-mono)',
           fontSize: 11,
-          color: 'var(--text-tertiary)',
+          fontWeight: 500,
+          color: badgeColor,
+          backgroundColor: total > 0 ? 'rgba(74, 222, 128, 0.10)' : 'var(--bg-overlay)',
+          padding: '2px 8px',
+          borderRadius: 4,
+          whiteSpace: 'nowrap',
         }}
       >
-        {entry.skipped.length} skipped
+        {badgeLabel}
       </span>
     </div>
   );
