@@ -8,7 +8,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App as AntApp,
-  Badge,
   Button,
   Card,
   Divider,
@@ -20,12 +19,11 @@ import {
   Space,
   Spin,
   Switch,
-  Table,
-  Tabs,
   Tag,
   Typography,
 } from 'antd';
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { rpc } from '../rpc';
 
 type BindType = 'personality' | 'team';
@@ -37,6 +35,187 @@ interface AddBotFormValues {
   signingSecret?: string;
   bindType: BindType;
   bindName: string;
+}
+
+type PlatformTabId = 'telegram' | 'slack' | 'discord' | 'email' | 'whatsapp';
+
+const PLATFORM_TABS: { id: PlatformTabId; label: string; icon: string; description: string }[] = [
+  {
+    id: 'telegram',
+    label: 'Telegram',
+    icon: '✈',
+    description: 'Connect your Telegram bots to receive and send messages through Ethos.',
+  },
+  {
+    id: 'slack',
+    label: 'Slack',
+    icon: '#',
+    description: 'Connect your Slack workspace to receive and send messages through Ethos.',
+  },
+  {
+    id: 'discord',
+    label: 'Discord',
+    icon: '🎮',
+    description: 'Connect your Discord server to receive and send messages through Ethos.',
+  },
+  {
+    id: 'email',
+    label: 'Email',
+    icon: '✉',
+    description: 'Configure SMTP/IMAP to receive and send email messages through Ethos.',
+  },
+  {
+    id: 'whatsapp',
+    label: 'WhatsApp',
+    icon: '📱',
+    description: 'Connect your WhatsApp number to receive and send messages through Ethos.',
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Label prefix badge (personality / team)
+// ---------------------------------------------------------------------------
+
+function LabelPrefixBadge({ type }: { type: 'personality' | 'team' }) {
+  const isPersonality = type === 'personality';
+  return (
+    <span
+      style={{
+        fontSize: 9,
+        fontFamily: 'var(--font-mono)',
+        fontWeight: 500,
+        textTransform: 'uppercase',
+        background: isPersonality ? 'rgba(74,158,255,0.12)' : 'rgba(245,158,11,0.12)',
+        color: isPersonality ? 'var(--blue)' : 'var(--amber)',
+        padding: '1px 5px',
+        borderRadius: 3,
+      }}
+    >
+      {type}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Platform stub (unconnected state)
+// ---------------------------------------------------------------------------
+
+function PlatformStub({
+  icon,
+  name,
+  description,
+  onConnect,
+}: {
+  icon: string;
+  name: string;
+  description: string;
+  onConnect: () => void;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: 300,
+        gap: 12,
+      }}
+    >
+      <div
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: '50%',
+          backgroundColor: 'var(--bg-elevated)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 20,
+        }}
+      >
+        {icon}
+      </div>
+      <div style={{ fontSize: 16, fontWeight: 500, color: 'var(--text-primary)' }}>{name}</div>
+      <div
+        style={{
+          fontSize: 13,
+          color: 'var(--text-secondary)',
+          textAlign: 'center',
+          maxWidth: 300,
+        }}
+      >
+        {description}
+      </div>
+      <Button
+        type="primary"
+        size="small"
+        style={{ fontSize: 12, padding: '8px 14px', height: 'auto' }}
+        onClick={onConnect}
+      >
+        Connect {name}
+      </Button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Masked token preview
+// ---------------------------------------------------------------------------
+
+function TokenPreview({ tokenConfigured, botKey }: { tokenConfigured: boolean; botKey: string }) {
+  const lastFour = botKey.length >= 4 ? botKey.slice(-4) : botKey;
+  return (
+    <span
+      style={{
+        fontFamily: 'var(--font-mono)',
+        fontSize: 12,
+        color: 'var(--text-secondary)',
+      }}
+    >
+      {tokenConfigured ? `••••••${lastFour}` : '—'}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Status dot inline
+// ---------------------------------------------------------------------------
+
+function StatusIndicator({
+  status,
+}: {
+  status: 'connected' | 'disconnected' | 'error' | 'not-configured';
+}) {
+  const colorMap: Record<string, string> = {
+    connected: 'var(--green)',
+    disconnected: 'var(--text-tertiary)',
+    error: 'var(--red)',
+    'not-configured': 'var(--text-tertiary)',
+  };
+  const labelMap: Record<string, string> = {
+    connected: 'Connected',
+    disconnected: 'Disconnected',
+    error: 'Error',
+    'not-configured': 'Not configured',
+  };
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <span
+        style={{
+          display: 'inline-block',
+          width: 6,
+          height: 6,
+          borderRadius: '50%',
+          backgroundColor: colorMap[status] ?? 'var(--text-tertiary)',
+          flexShrink: 0,
+        }}
+      />
+      <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+        {labelMap[status] ?? status}
+      </span>
+    </span>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -97,39 +276,35 @@ function TelegramPanel() {
 
   const columns = [
     {
-      title: 'Bot ID',
-      dataIndex: 'botKey',
-      key: 'botKey',
-      render: (k: string) => (
-        <Typography.Text code style={{ fontSize: 12 }}>
-          {k}
-        </Typography.Text>
-      ),
-    },
-    {
-      title: 'Token',
-      key: 'token',
+      title: 'TOKEN PREVIEW',
+      key: 'tokenPreview',
+      width: 160,
       render: (_: unknown, row: TelegramBotEntry) => (
-        <Badge
-          status={row.tokenConfigured ? 'success' : 'default'}
-          text={row.tokenConfigured ? 'configured' : 'missing'}
-        />
+        <TokenPreview tokenConfigured={row.tokenConfigured} botKey={row.botKey} />
       ),
     },
     {
-      title: 'Binding',
+      title: 'PERSONALITY / TEAM',
       key: 'bind',
       render: (_: unknown, row: TelegramBotEntry) => (
-        <Space>
-          <Tag color={row.bind.type === 'personality' ? 'blue' : 'purple'}>{row.bind.type}</Tag>
-          <Typography.Text>{row.bind.name}</Typography.Text>
+        <Space size={6}>
+          <LabelPrefixBadge type={row.bind.type as 'personality' | 'team'} />
+          <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>{row.bind.name}</span>
         </Space>
+      ),
+    },
+    {
+      title: 'STATUS',
+      key: 'status',
+      width: 100,
+      render: (_: unknown, row: TelegramBotEntry) => (
+        <StatusIndicator status={row.tokenConfigured ? 'connected' : 'disconnected'} />
       ),
     },
     {
       title: '',
       key: 'actions',
-      width: 100,
+      width: 80,
       render: (_: unknown, row: TelegramBotEntry) => (
         <Popconfirm
           title="Remove this bot?"
@@ -138,8 +313,8 @@ function TelegramPanel() {
           okButtonProps={{ danger: true }}
           onConfirm={() => removeMut.mutate(row.botKey)}
         >
-          <Button size="small" danger>
-            Remove
+          <Button size="small" type="text" danger style={{ fontSize: 14 }}>
+            {'×'}
           </Button>
         </Popconfirm>
       ),
@@ -157,36 +332,104 @@ function TelegramPanel() {
           value: t.name,
         }));
 
-  return (
-    <Card
-      size="small"
-      title="Telegram bots"
-      extra={
-        <Typography.Link href="https://core.telegram.org/bots" target="_blank" rel="noreferrer">
-          Setup guide ↗
-        </Typography.Link>
-      }
-      style={{ maxWidth: 720 }}
-    >
-      {botsQuery.isLoading ? (
+  if (botsQuery.isLoading) {
+    return (
+      <div style={{ display: 'grid', placeItems: 'center', height: 200 }}>
         <Spin />
-      ) : (
-        <Table
-          dataSource={bots}
-          columns={columns}
-          rowKey="botKey"
-          pagination={false}
-          size="small"
-          locale={{ emptyText: 'No bots configured yet.' }}
-          style={{ marginBottom: bots.length > 0 ? 16 : 0 }}
-        />
-      )}
+      </div>
+    );
+  }
 
-      {!adding && (
-        <Button type="dashed" onClick={() => setAdding(true)} style={{ marginTop: 8 }}>
+  return (
+    <div style={{ maxWidth: 720 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 12,
+        }}
+      >
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+          {bots.length} bot{bots.length !== 1 ? 's' : ''} configured
+        </span>
+        <Button type="primary" size="small" onClick={() => setAdding(true)}>
           + Add Telegram bot
         </Button>
-      )}
+      </div>
+
+      <table
+        style={{
+          width: '100%',
+          borderCollapse: 'collapse',
+          tableLayout: 'fixed',
+        }}
+      >
+        <thead>
+          <tr>
+            {columns.map((col) => (
+              <th
+                key={col.key}
+                style={{
+                  fontSize: 11,
+                  fontFamily: 'var(--font-mono)',
+                  fontWeight: 500,
+                  textTransform: 'uppercase',
+                  color: 'var(--text-tertiary)',
+                  textAlign: 'left',
+                  padding: '6px 12px',
+                  borderBottom: '1px solid var(--border-subtle)',
+                  width: col.width ?? 'auto',
+                }}
+              >
+                {col.title}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {bots.map((bot) => (
+            <tr
+              key={bot.botKey}
+              style={{ height: 40, borderBottom: '1px solid var(--border-subtle)' }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--ethos-hover)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+              }}
+            >
+              {columns.map((col) => (
+                <td
+                  key={col.key}
+                  style={{
+                    padding: '0 12px',
+                    borderBottom: '1px solid var(--border-subtle)',
+                    width: col.width ?? 'auto',
+                  }}
+                >
+                  {col.render(undefined, bot)}
+                </td>
+              ))}
+            </tr>
+          ))}
+          {bots.length === 0 && (
+            <tr>
+              <td
+                colSpan={columns.length}
+                style={{
+                  padding: '24px 12px',
+                  textAlign: 'center',
+                  color: 'var(--text-tertiary)',
+                  fontSize: 13,
+                }}
+              >
+                No bots configured yet.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
 
       {adding && (
         <Card size="small" style={{ marginTop: 12, background: 'var(--ethos-bg)' }}>
@@ -255,7 +498,7 @@ function TelegramPanel() {
       )}
 
       <AccessControlSection platform="telegram" />
-    </Card>
+    </div>
   );
 }
 
@@ -319,40 +562,41 @@ function SlackPanel() {
 
   const columns = [
     {
-      title: 'Bot ID',
-      dataIndex: 'botKey',
-      key: 'botKey',
-      render: (k: string) => (
-        <Typography.Text code style={{ fontSize: 12 }}>
-          {k}
-        </Typography.Text>
-      ),
-    },
-    {
-      title: 'Tokens',
-      key: 'tokens',
+      title: 'TOKEN PREVIEW',
+      key: 'tokenPreview',
+      width: 160,
       render: (_: unknown, row: SlackAppEntry) => (
-        <Space size="small">
-          <Badge status={row.botTokenConfigured ? 'success' : 'default'} text="bot" />
-          <Badge status={row.appTokenConfigured ? 'success' : 'default'} text="app" />
-          <Badge status={row.signingSecretConfigured ? 'success' : 'default'} text="secret" />
-        </Space>
+        <TokenPreview tokenConfigured={row.botTokenConfigured} botKey={row.botKey} />
       ),
     },
     {
-      title: 'Binding',
+      title: 'PERSONALITY / TEAM',
       key: 'bind',
       render: (_: unknown, row: SlackAppEntry) => (
-        <Space>
-          <Tag color={row.bind.type === 'personality' ? 'blue' : 'purple'}>{row.bind.type}</Tag>
-          <Typography.Text>{row.bind.name}</Typography.Text>
+        <Space size={6}>
+          <LabelPrefixBadge type={row.bind.type as 'personality' | 'team'} />
+          <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>{row.bind.name}</span>
         </Space>
+      ),
+    },
+    {
+      title: 'STATUS',
+      key: 'status',
+      width: 100,
+      render: (_: unknown, row: SlackAppEntry) => (
+        <StatusIndicator
+          status={
+            row.botTokenConfigured && row.appTokenConfigured && row.signingSecretConfigured
+              ? 'connected'
+              : 'disconnected'
+          }
+        />
       ),
     },
     {
       title: '',
       key: 'actions',
-      width: 100,
+      width: 80,
       render: (_: unknown, row: SlackAppEntry) => (
         <Popconfirm
           title="Remove this Slack app?"
@@ -361,8 +605,8 @@ function SlackPanel() {
           okButtonProps={{ danger: true }}
           onConfirm={() => removeMut.mutate(row.botKey)}
         >
-          <Button size="small" danger>
-            Remove
+          <Button size="small" type="text" danger style={{ fontSize: 14 }}>
+            {'×'}
           </Button>
         </Popconfirm>
       ),
@@ -380,36 +624,104 @@ function SlackPanel() {
           value: t.name,
         }));
 
-  return (
-    <Card
-      size="small"
-      title="Slack apps"
-      extra={
-        <Typography.Link href="https://api.slack.com/apps" target="_blank" rel="noreferrer">
-          Setup guide ↗
-        </Typography.Link>
-      }
-      style={{ maxWidth: 720 }}
-    >
-      {botsQuery.isLoading ? (
+  if (botsQuery.isLoading) {
+    return (
+      <div style={{ display: 'grid', placeItems: 'center', height: 200 }}>
         <Spin />
-      ) : (
-        <Table
-          dataSource={apps}
-          columns={columns}
-          rowKey="botKey"
-          pagination={false}
-          size="small"
-          locale={{ emptyText: 'No Slack apps configured yet.' }}
-          style={{ marginBottom: apps.length > 0 ? 16 : 0 }}
-        />
-      )}
+      </div>
+    );
+  }
 
-      {!adding && (
-        <Button type="dashed" onClick={() => setAdding(true)} style={{ marginTop: 8 }}>
+  return (
+    <div style={{ maxWidth: 720 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 12,
+        }}
+      >
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+          {apps.length} app{apps.length !== 1 ? 's' : ''} configured
+        </span>
+        <Button type="primary" size="small" onClick={() => setAdding(true)}>
           + Add Slack app
         </Button>
-      )}
+      </div>
+
+      <table
+        style={{
+          width: '100%',
+          borderCollapse: 'collapse',
+          tableLayout: 'fixed',
+        }}
+      >
+        <thead>
+          <tr>
+            {columns.map((col) => (
+              <th
+                key={col.key}
+                style={{
+                  fontSize: 11,
+                  fontFamily: 'var(--font-mono)',
+                  fontWeight: 500,
+                  textTransform: 'uppercase',
+                  color: 'var(--text-tertiary)',
+                  textAlign: 'left',
+                  padding: '6px 12px',
+                  borderBottom: '1px solid var(--border-subtle)',
+                  width: col.width ?? 'auto',
+                }}
+              >
+                {col.title}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {apps.map((app) => (
+            <tr
+              key={app.botKey}
+              style={{ height: 40, borderBottom: '1px solid var(--border-subtle)' }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--ethos-hover)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+              }}
+            >
+              {columns.map((col) => (
+                <td
+                  key={col.key}
+                  style={{
+                    padding: '0 12px',
+                    borderBottom: '1px solid var(--border-subtle)',
+                    width: col.width ?? 'auto',
+                  }}
+                >
+                  {col.render(undefined, app)}
+                </td>
+              ))}
+            </tr>
+          ))}
+          {apps.length === 0 && (
+            <tr>
+              <td
+                colSpan={columns.length}
+                style={{
+                  padding: '24px 12px',
+                  textAlign: 'center',
+                  color: 'var(--text-tertiary)',
+                  fontSize: 13,
+                }}
+              >
+                No Slack apps configured yet.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
 
       {adding && (
         <Card size="small" style={{ marginTop: 12, background: 'var(--ethos-bg)' }}>
@@ -493,7 +805,7 @@ function SlackPanel() {
       )}
 
       <AccessControlSection platform="slack" />
-    </Card>
+    </div>
   );
 }
 
@@ -619,70 +931,65 @@ function WhatsAppPanel() {
 
   const columns = [
     {
-      title: 'Bot ID',
-      dataIndex: 'botKey',
-      key: 'botKey',
-      render: (k: string) => (
-        <Typography.Text code style={{ fontSize: 12 }}>
-          {k}
-        </Typography.Text>
+      title: 'TOKEN PREVIEW',
+      key: 'tokenPreview',
+      width: 160,
+      render: (_: unknown, row: WhatsAppEntry) => (
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 12,
+            color: 'var(--text-secondary)',
+          }}
+        >
+          {row.botKey}
+        </span>
       ),
     },
     {
-      title: 'Mode',
-      dataIndex: 'defaultMode',
-      key: 'defaultMode',
-      render: (m: string) => <Tag>{m}</Tag>,
-    },
-    {
-      title: 'Binding',
+      title: 'PERSONALITY / TEAM',
       key: 'bind',
       render: (_: unknown, row: WhatsAppEntry) =>
         row.bind ? (
-          <Space>
-            <Tag color={row.bind.type === 'personality' ? 'blue' : 'purple'}>{row.bind.type}</Tag>
-            <Typography.Text>{row.bind.name}</Typography.Text>
+          <Space size={6}>
+            <LabelPrefixBadge type={row.bind.type as 'personality' | 'team'} />
+            <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>{row.bind.name}</span>
           </Space>
         ) : (
-          <Typography.Text type="secondary">—</Typography.Text>
+          <Typography.Text type="secondary">{'—'}</Typography.Text>
         ),
     },
     {
-      title: 'Pairing',
-      key: 'paired',
-      render: (_: unknown, row: WhatsAppEntry) =>
-        row.paired ? (
-          <Badge status="success" text="Paired" />
-        ) : (
-          <Space direction="vertical" size={2}>
-            <Badge status="default" text="Not paired" />
-            {row.phoneNumber && (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Linking {row.phoneNumber}
-              </Typography.Text>
-            )}
-            <Typography.Link href={`/setup/whatsapp/${row.botKey}`} style={{ fontSize: 12 }}>
-              Open WhatsApp setup to get your pairing code ↗
-            </Typography.Link>
-          </Space>
-        ),
+      title: 'STATUS',
+      key: 'status',
+      width: 100,
+      render: (_: unknown, row: WhatsAppEntry) => (
+        <StatusIndicator status={row.paired ? 'connected' : 'disconnected'} />
+      ),
     },
     {
       title: '',
       key: 'actions',
-      width: 100,
+      width: 80,
       render: (_: unknown, row: WhatsAppEntry) => (
-        <Popconfirm
-          title="Remove this WhatsApp bot?"
-          description="The bot's routing config will be deleted from config.yaml."
-          okText="Remove"
-          okButtonProps={{ danger: true }}
-          onConfirm={() => removeMut.mutate(row.botKey)}
-        >
-          <Button size="small" danger>
-            Remove
-          </Button>
-        </Popconfirm>
+        <Space size={4}>
+          {!row.paired && row.phoneNumber && (
+            <Typography.Link href={`/setup/whatsapp/${row.botKey}`} style={{ fontSize: 12 }}>
+              Pair
+            </Typography.Link>
+          )}
+          <Popconfirm
+            title="Remove this WhatsApp bot?"
+            description="The bot's routing config will be deleted from config.yaml."
+            okText="Remove"
+            okButtonProps={{ danger: true }}
+            onConfirm={() => removeMut.mutate(row.botKey)}
+          >
+            <Button size="small" type="text" danger style={{ fontSize: 14 }}>
+              {'×'}
+            </Button>
+          </Popconfirm>
+        </Space>
       ),
     },
   ];
@@ -698,46 +1005,104 @@ function WhatsAppPanel() {
           value: t.name,
         }));
 
-  return (
-    <Card
-      size="small"
-      title="WhatsApp (Baileys)"
-      extra={
-        <Typography.Link
-          href="https://github.com/WhiskeySockets/Baileys"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Baileys docs ↗
-        </Typography.Link>
-      }
-      style={{ maxWidth: 720 }}
-    >
-      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-        WhatsApp pairs via Baileys — no Cloud API credentials needed. Enable a bot with the phone
-        number to link, restart the gateway, then enter the pairing code shown in setup (or scan the
-        QR as a fallback).
-      </Typography.Paragraph>
-
-      {botsQuery.isLoading ? (
+  if (botsQuery.isLoading) {
+    return (
+      <div style={{ display: 'grid', placeItems: 'center', height: 200 }}>
         <Spin />
-      ) : (
-        <Table
-          dataSource={bots}
-          columns={columns}
-          rowKey="botKey"
-          pagination={false}
-          size="small"
-          locale={{ emptyText: 'No WhatsApp bots enabled yet.' }}
-          style={{ marginBottom: bots.length > 0 ? 16 : 0 }}
-        />
-      )}
+      </div>
+    );
+  }
 
-      {!adding && (
-        <Button type="dashed" onClick={() => setAdding(true)} style={{ marginTop: 8 }}>
+  return (
+    <div style={{ maxWidth: 720 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 12,
+        }}
+      >
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+          {bots.length} bot{bots.length !== 1 ? 's' : ''} configured
+        </span>
+        <Button type="primary" size="small" onClick={() => setAdding(true)}>
           + Enable WhatsApp
         </Button>
-      )}
+      </div>
+
+      <table
+        style={{
+          width: '100%',
+          borderCollapse: 'collapse',
+          tableLayout: 'fixed',
+        }}
+      >
+        <thead>
+          <tr>
+            {columns.map((col) => (
+              <th
+                key={col.key}
+                style={{
+                  fontSize: 11,
+                  fontFamily: 'var(--font-mono)',
+                  fontWeight: 500,
+                  textTransform: 'uppercase',
+                  color: 'var(--text-tertiary)',
+                  textAlign: 'left',
+                  padding: '6px 12px',
+                  borderBottom: '1px solid var(--border-subtle)',
+                  width: col.width ?? 'auto',
+                }}
+              >
+                {col.title}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {bots.map((bot) => (
+            <tr
+              key={bot.botKey}
+              style={{ height: 40, borderBottom: '1px solid var(--border-subtle)' }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--ethos-hover)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+              }}
+            >
+              {columns.map((col) => (
+                <td
+                  key={col.key}
+                  style={{
+                    padding: '0 12px',
+                    borderBottom: '1px solid var(--border-subtle)',
+                    width: col.width ?? 'auto',
+                  }}
+                >
+                  {col.render(undefined, bot)}
+                </td>
+              ))}
+            </tr>
+          ))}
+          {bots.length === 0 && (
+            <tr>
+              <td
+                colSpan={columns.length}
+                style={{
+                  padding: '24px 12px',
+                  textAlign: 'center',
+                  color: 'var(--text-tertiary)',
+                  fontSize: 13,
+                }}
+              >
+                No WhatsApp bots enabled yet.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
 
       {adding && (
         <Card size="small" style={{ marginTop: 12, background: 'var(--ethos-bg)' }}>
@@ -840,7 +1205,7 @@ function WhatsAppPanel() {
       />
 
       <AccessControlSection platform="whatsapp" />
-    </Card>
+    </div>
   );
 }
 
@@ -896,25 +1261,7 @@ function LegacyPlatformPanel({
   const overallConfigured = status?.configured ?? false;
 
   return (
-    <Card
-      size="small"
-      title={
-        <span>
-          {shape.label}{' '}
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {overallConfigured ? '· connected' : '· not configured'}
-          </Typography.Text>
-        </span>
-      }
-      extra={
-        shape.helpUrl ? (
-          <Typography.Link href={shape.helpUrl} target="_blank" rel="noreferrer">
-            Setup guide ↗
-          </Typography.Link>
-        ) : null
-      }
-      style={{ maxWidth: 640 }}
-    >
+    <div style={{ maxWidth: 640 }}>
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
         Stored values are never sent back to this page. Enter a new value to rotate; leave a field
         blank to keep its current value.
@@ -954,7 +1301,7 @@ function LegacyPlatformPanel({
       </Form>
 
       <AccessControlSection platform={shape.id} />
-    </Card>
+    </div>
   );
 }
 
@@ -1109,14 +1456,23 @@ function AccessControlSection({ platform }: { platform: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Root Communications component
+// Root Communications component — tab-per-platform layout
 // ---------------------------------------------------------------------------
 
 export function Communications() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab') as PlatformTabId | null;
+  const activeTab =
+    tabParam && PLATFORM_TABS.some((t) => t.id === tabParam) ? tabParam : 'telegram';
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['platforms', 'list'],
     queryFn: () => rpc.platforms.list(),
   });
+
+  const handleTabChange = (tab: PlatformTabId) => {
+    setSearchParams({ tab });
+  };
 
   if (isLoading) {
     return (
@@ -1135,32 +1491,99 @@ export function Communications() {
 
   const statusById = new Map((data?.platforms ?? []).map((p) => [p.id, p] as const));
 
+  const renderTabContent = (tabId: PlatformTabId) => {
+    const meta = PLATFORM_TABS.find((t) => t.id === tabId);
+    if (!meta) return null;
+
+    // Multi-bot platforms use their own panel when configured
+    if (tabId === 'telegram') return <TelegramPanel />;
+    if (tabId === 'slack') return <SlackPanel />;
+    if (tabId === 'whatsapp') return <WhatsAppPanel />;
+
+    // Legacy platforms (discord, email)
+    const shape = LEGACY_PLATFORMS.find((s) => s.id === tabId);
+    if (!shape) return null;
+    const status = statusById.get(shape.id);
+
+    if (!status?.configured) {
+      return (
+        <PlatformStub
+          icon={meta.icon}
+          name={meta.label}
+          description={meta.description}
+          onConnect={() => {
+            /* Legacy panels handle their own inline form */
+          }}
+        />
+      );
+    }
+
+    return <LegacyPlatformPanel shape={shape} status={status} />;
+  };
+
   return (
-    <div className="comms-tab">
-      <Tabs
-        defaultActiveKey="telegram"
-        items={[
-          { key: 'telegram', label: 'Telegram', children: <TelegramPanel /> },
-          { key: 'slack', label: 'Slack', children: <SlackPanel /> },
-          { key: 'whatsapp', label: 'WhatsApp', children: <WhatsAppPanel /> },
-          ...LEGACY_PLATFORMS.map((shape) => {
-            const status = statusById.get(shape.id);
-            return {
-              key: shape.id,
-              label: (
-                <span>
-                  {shape.label}{' '}
-                  <Badge
-                    status={status?.configured ? 'success' : 'default'}
-                    style={{ marginLeft: 6 }}
-                  />
-                </span>
-              ),
-              children: <LegacyPlatformPanel shape={shape} status={status} />,
-            };
-          }),
-        ]}
-      />
+    <div style={{ padding: '0 24px' }}>
+      {/* Page header */}
+      <div style={{ marginBottom: 4 }}>
+        <h1
+          style={{
+            margin: 0,
+            fontSize: 20,
+            fontWeight: 600,
+            color: 'var(--text-primary)',
+            fontFamily: 'var(--font-display)',
+          }}
+        >
+          Platforms
+        </h1>
+        <div
+          style={{
+            fontSize: 13,
+            color: 'var(--text-secondary)',
+            marginTop: 2,
+          }}
+        >
+          Configure messaging channels
+        </div>
+      </div>
+
+      {/* Tab bar */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          borderBottom: '1px solid var(--border-subtle)',
+          marginBottom: 16,
+        }}
+      >
+        {PLATFORM_TABS.map((tab) => {
+          const isActive = tab.id === activeTab;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => handleTabChange(tab.id)}
+              style={{
+                background: 'none',
+                border: 'none',
+                borderBottom: isActive ? '2px solid var(--blue)' : '2px solid transparent',
+                cursor: 'pointer',
+                padding: '8px 16px',
+                fontSize: 13,
+                color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
+                fontWeight: isActive ? 500 : 400,
+                fontFamily: 'var(--font-display)',
+                transition: `color var(--motion-fast) var(--ease)`,
+              }}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tab content */}
+      <div>{renderTabContent(activeTab)}</div>
     </div>
   );
 }
