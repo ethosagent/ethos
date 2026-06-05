@@ -267,7 +267,7 @@ function PersonalityRowActions({
   });
 
   const items: MenuProps['items'] = [
-    ...(personality.builtin ? [] : [{ key: 'edit', label: '✎ Edit' }]),
+    { key: 'edit', label: '✎ Edit' },
     { key: 'duplicate', label: '⧉ Duplicate' },
     ...(personality.builtin
       ? []
