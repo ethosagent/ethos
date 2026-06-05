@@ -2,6 +2,8 @@ import { personalityAccent } from '@ethosagent/design-tokens';
 import { useMemo, useState } from 'react';
 import { PersonalityListRow } from './PersonalityListRow';
 
+const SYSTEM_IDS = new Set(['personality-architect', 'team-architect']);
+
 interface PersonalityListItem {
   id: string;
   name: string;
@@ -25,8 +27,6 @@ export function PersonalityList({
   onWizard,
 }: PersonalityListProps) {
   const [search, setSearch] = useState('');
-
-  const SYSTEM_IDS = new Set(['personality-architect', 'team-architect']);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
