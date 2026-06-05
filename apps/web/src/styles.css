@@ -1550,29 +1550,59 @@ body {
   white-space: pre-wrap;
 }
 
-/* Sessions tab — search + dense table + load-more. The "Cards earn
-   existence" rule (DESIGN.md) says no card grid; sessions are dense rows
-   in a table primitive, mono columns for IDs / model / tokens / cost /
-   timestamps so numeric data is column-aligned. */
+/* Sessions tab — 03-sessions redesign. Dense custom table with pinned
+   section, column headers, and context-menu actions. No Antd Table. */
 
 .sessions-tab {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 0;
 }
 
-.sessions-toolbar {
+/* v2 toolbar — 48px height */
+.sessions-toolbar-v2 {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
+  height: 48px;
+  padding: 0 0 12px;
+}
+
+.sessions-toolbar-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.sessions-search-input {
+  flex: 1;
+  max-width: 420px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color var(--motion-fast) var(--ease);
+}
+
+.sessions-search-input:focus {
+  border-color: var(--blue);
+}
+
+.sessions-search-input::placeholder {
+  color: var(--text-tertiary);
 }
 
 .sessions-count {
   font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: var(--ethos-text-dim);
+  color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
 .sessions-mono {
@@ -1581,79 +1611,140 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.sessions-num {
-  text-align: right;
-  display: inline-block;
-  width: 100%;
+.sessions-tertiary {
+  color: var(--text-tertiary);
 }
 
-.sessions-name-cell {
-  display: inline-flex;
+/* Column header row */
+.sessions-col-headers {
+  display: flex;
   align-items: center;
-  gap: 4px;
-  max-width: 100%;
+  height: 32px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 8px;
 }
 
-.sessions-name {
-  appearance: none;
-  background: transparent;
+.sessions-col-hdr {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  user-select: none;
+}
+
+/* Column widths — shared between headers and data rows */
+.sessions-col-name {
+  flex: 1;
+  min-width: 0;
+}
+.sessions-col-personality {
+  width: 140px;
+  flex-shrink: 0;
+}
+.sessions-col-model {
+  width: 140px;
+  flex-shrink: 0;
+}
+.sessions-col-tokens {
+  width: 100px;
+  flex-shrink: 0;
+  text-align: right;
+}
+.sessions-col-cost {
+  width: 80px;
+  flex-shrink: 0;
+  text-align: right;
+}
+.sessions-col-updated {
+  width: 100px;
+  flex-shrink: 0;
+}
+.sessions-col-actions {
+  width: 40px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+/* Data rows — rendered as <button> for a11y */
+.sessions-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 40px;
+  padding: 0 8px;
   border: none;
-  padding: 0;
-  margin: 0;
-  font: inherit;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
   color: inherit;
+  font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease);
+}
+
+.sessions-row:hover {
+  background: var(--ethos-hover);
+}
+
+.sessions-row:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+
+/* Pinned rows */
+.sessions-row--pinned {
+  background: rgba(74, 158, 255, 0.04);
+}
+
+.sessions-row--pinned:hover {
+  background: rgba(74, 158, 255, 0.08);
+}
+
+.sessions-pinned-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.sessions-pin-icon {
+  color: var(--amber);
+  font-size: 10px;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.sessions-cell {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.sessions-name:focus-visible {
-  outline: 2px solid var(--accent, #4a9eff);
-  outline-offset: 1px;
-  border-radius: 3px;
+.sessions-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.sessions-name-edit {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  border-radius: 3px;
-  background: transparent;
-  border: none;
-  color: var(--ethos-text-dim);
-  cursor: pointer;
-  opacity: 0;
-  transition:
-    opacity 80ms cubic-bezier(0.16, 1, 0.3, 1),
-    background-color 80ms cubic-bezier(0.16, 1, 0.3, 1),
-    color 80ms cubic-bezier(0.16, 1, 0.3, 1);
+.sessions-rename-input {
+  background: var(--bg-elevated);
+  border: 1px solid var(--blue);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: var(--text-primary);
+  outline: none;
+  max-width: 220px;
 }
 
-.ant-table-row:hover .sessions-name-edit,
-.sessions-name-edit:focus-visible {
-  opacity: 1;
-}
-
-.sessions-name-edit:hover {
-  background: var(--ethos-hover);
-  color: var(--ethos-text);
-}
-
-.sessions-name-edit:focus-visible {
-  outline: 2px solid var(--accent, #4a9eff);
-  outline-offset: 1px;
-}
-
-.sessions-row-actions {
-  display: inline-flex;
-}
-
-.sessions-row-trigger {
+/* Actions trigger — hidden until row hover */
+.sessions-actions-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1661,19 +1752,29 @@ body {
   height: 24px;
   border-radius: 4px;
   background: transparent;
-  border: 1px solid transparent;
-  color: var(--ethos-text-dim);
+  border: none;
+  color: var(--text-tertiary);
   cursor: pointer;
-  transition: background-color 80ms cubic-bezier(0.16, 1, 0.3, 1);
+  font-size: 16px;
+  letter-spacing: 2px;
+  opacity: 0;
+  transition:
+    opacity var(--motion-fast) var(--ease),
+    background-color var(--motion-fast) var(--ease);
 }
 
-.sessions-row-trigger:hover {
+.sessions-row:hover .sessions-actions-trigger,
+.sessions-actions-trigger:focus-visible {
+  opacity: 1;
+}
+
+.sessions-actions-trigger:hover {
   background: var(--ethos-hover);
-  color: var(--ethos-text);
+  color: var(--text-primary);
 }
 
-.sessions-row-trigger:focus-visible {
-  outline: 2px solid var(--accent, #4a9eff);
+.sessions-actions-trigger:focus-visible {
+  outline: 2px solid var(--blue);
   outline-offset: 1px;
 }
 
@@ -1681,6 +1782,22 @@ body {
   display: flex;
   justify-content: center;
   padding: 16px 0;
+}
+
+.sessions-loading {
+  display: grid;
+  place-items: center;
+  height: 200px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.sessions-empty {
+  display: grid;
+  place-items: center;
+  height: 200px;
+  color: var(--text-tertiary);
+  font-size: 13px;
 }
 
 /* The chat tab fills its main pane and stacks: personality bar on top,
@@ -4177,4 +4294,250 @@ textarea {
 }
 .ethos-html * {
   max-width: 100%;
+}
+
+/* ── Personalities page (04-personalities redesign) ────────────────── */
+
+.personalities-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-width: 960px;
+}
+
+.personalities-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.personalities-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.personalities-subtitle {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.personalities-count {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.personality-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  transition: background-color var(--motion-fast) var(--ease);
+}
+
+.personality-row:hover {
+  background: var(--ethos-hover);
+}
+
+.personality-row:last-child {
+  border-bottom: none;
+}
+
+.personality-row-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--blue);
+  text-decoration: none;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+}
+
+.personality-row-name:hover {
+  text-decoration: underline;
+}
+
+.personality-row-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.personality-row-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.personality-row-badges {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.personality-row-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease);
+  flex-shrink: 0;
+}
+
+.personality-row:hover .personality-row-actions {
+  opacity: 1;
+}
+
+.personality-row-actions:focus-within {
+  opacity: 1;
+}
+
+/* ── Personality detail page ───────────────────────────────────────── */
+
+.personality-detail {
+  padding: 24px;
+  max-width: 960px;
+}
+
+.personality-detail-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  margin-bottom: 20px;
+  font-family: inherit;
+  transition: color var(--motion-fast) var(--ease);
+}
+
+.personality-detail-back:hover {
+  color: var(--text-primary);
+}
+
+.personality-detail-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.personality-detail-identity-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.personality-detail-name {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.personality-detail-id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.personality-detail-desc {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.personality-detail-badges {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.personality-detail-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 24px;
+  padding: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  margin-bottom: 24px;
+}
+
+.personality-detail-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.personality-detail-meta-label {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+.personality-detail-meta-value {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.personality-detail-soul {
+  margin-bottom: 24px;
+}
+
+.personality-detail-soul-label {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+}
+
+.personality-detail-soul-box {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.personality-detail-section-title {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  margin: 0 0 12px;
 }
