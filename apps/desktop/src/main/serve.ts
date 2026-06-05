@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
@@ -58,6 +59,17 @@ export async function startServer(port: number): Promise<void> {
   const identityMap = new IdentityMap({ storage: new FsStorage(), dataDir });
   await identityMap.resolve('desktop', 'desktop', 'Desktop');
 
+  const skillsCatalogDir = (() => {
+    const candidates = [
+      join(__dirname, '..', '..', 'skills'),
+      join(__dirname, '..', '..', '..', '..', 'skills'),
+    ];
+    for (const c of candidates) {
+      if (existsSync(c)) return c;
+    }
+    return undefined;
+  })();
+
   const { app: webApp } = createWebApi({
     dataDir,
     sessionStore: session,
@@ -68,6 +80,7 @@ export async function startServer(port: number): Promise<void> {
     chatDefaults: { model, provider },
     dangerPredicate: createDangerPredicate(),
     toolRegistry,
+    ...(skillsCatalogDir ? { catalogDir: skillsCatalogDir } : {}),
   });
 
   await new Promise<void>((resolve, reject) => {
