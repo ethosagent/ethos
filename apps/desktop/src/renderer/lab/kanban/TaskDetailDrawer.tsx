@@ -56,7 +56,18 @@ export function TaskDetailDrawer({ task, open, onClose, onStatusChange }: TaskDe
           {task.title}
         </div>
 
-        <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{task.title}</div>
+        {task.body && (
+          <div
+            style={{
+              fontSize: 13,
+              color: 'var(--text-secondary)',
+              lineHeight: 1.5,
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {task.body}
+          </div>
+        )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <Chip
@@ -73,8 +84,8 @@ export function TaskDetailDrawer({ task, open, onClose, onStatusChange }: TaskDe
               fontFamily: 'var(--font-mono)',
               background: 'var(--bg-base)',
               color: 'var(--text-secondary)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 4,
+              border: '1px solid var(--border-strong)',
+              borderRadius: 'var(--radius-sm)',
               padding: '0 8px',
               outline: 'none',
             }}
@@ -88,11 +99,24 @@ export function TaskDetailDrawer({ task, open, onClose, onStatusChange }: TaskDe
           </select>
         </div>
 
-        {task.assignee && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{task.assignee}</span>
-          </div>
-        )}
+        {/* Detail fields */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            background: 'var(--bg-base)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-md)',
+            padding: 12,
+          }}
+        >
+          <DetailRow label="Assignee" value={task.assignee ?? 'unassigned'} />
+          <DetailRow label="Priority" value={`P${task.priority}`} />
+          <DetailRow label="Workspace" value={task.workspaceMode} />
+          <DetailRow label="Created" value={new Date(task.createdAt).toLocaleString()} />
+          <DetailRow label="Updated" value={new Date(task.updatedAt).toLocaleString()} />
+        </div>
 
         <button
           type="button"
@@ -106,19 +130,36 @@ export function TaskDetailDrawer({ task, open, onClose, onStatusChange }: TaskDe
           style={{
             height: 36,
             width: '100%',
-            background: selectedStatus ? 'var(--accent)' : 'var(--bg-overlay)',
+            background: selectedStatus ? 'var(--accent, var(--blue))' : 'var(--bg-overlay)',
             color: selectedStatus ? '#fff' : 'var(--text-tertiary)',
             border: 'none',
             borderRadius: 'var(--radius-sm)',
             fontSize: 13,
             fontWeight: 500,
             cursor: selectedStatus ? 'pointer' : 'default',
-            transition: 'background var(--motion-fast) var(--ease)',
+            transition: 'background 80ms ease',
           }}
         >
           Update status
         </button>
       </div>
     </DrawerShell>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{label}</span>
+      <span
+        style={{
+          fontSize: 12,
+          fontFamily: 'var(--font-mono)',
+          color: 'var(--text-secondary)',
+        }}
+      >
+        {value}
+      </span>
+    </div>
   );
 }

@@ -15,6 +15,10 @@ export function KanbanColumn({ name, tasks, onTaskClick }: KanbanColumnProps) {
         flexShrink: 0,
         display: 'flex',
         flexDirection: 'column',
+        background: 'var(--bg-elevated)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 'var(--radius-md)',
+        padding: 12,
       }}
     >
       <div
@@ -23,11 +27,13 @@ export function KanbanColumn({ name, tasks, onTaskClick }: KanbanColumnProps) {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          marginBottom: 8,
         }}
       >
         <span
           style={{
-            fontSize: 11,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 12,
             fontWeight: 500,
             textTransform: 'uppercase',
             color: 'var(--text-tertiary)',
@@ -41,9 +47,12 @@ export function KanbanColumn({ name, tasks, onTaskClick }: KanbanColumnProps) {
             fontFamily: 'var(--font-mono)',
             fontSize: 11,
             color: 'var(--text-tertiary)',
+            background: 'var(--bg-overlay)',
+            padding: '2px 6px',
+            borderRadius: 'var(--radius-sm)',
           }}
         >
-          ({tasks.length})
+          {tasks.length}
         </span>
       </div>
 
@@ -54,7 +63,7 @@ export function KanbanColumn({ name, tasks, onTaskClick }: KanbanColumnProps) {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: 14,
+              fontSize: 12,
               color: 'var(--text-tertiary)',
               paddingTop: 24,
             }}

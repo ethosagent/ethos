@@ -1,9 +1,19 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppState } from '../../state/AppContext';
+import { StatusDot } from '../../ui/StatusDot';
 import { KanbanBoard } from './KanbanBoard';
 import type { KanbanTask } from './KanbanTaskTile';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
+
+interface TeamInfo {
+  name: string;
+  description: string;
+  health?: string;
+  memberCount?: number;
+  runningCount?: number;
+  dispatchMode?: string;
+}
 
 export function KanbanPage() {
   const { state } = useAppState();
@@ -14,7 +24,7 @@ export function KanbanPage() {
     [port],
   );
 
-  const [teams, setTeams] = useState<Array<{ name: string; description: string }>>([]);
+  const [teams, setTeams] = useState<TeamInfo[]>([]);
   const [selectedTeam, setSelectedTeam] = useState<string>('');
   const [tasks, setTasks] = useState<KanbanTask[]>([]);
   const [selectedTask, setSelectedTask] = useState<KanbanTask | null>(null);
@@ -88,16 +98,33 @@ export function KanbanPage() {
     [client, selectedTeam, loadBoard],
   );
 
+  const inProgressCount = useMemo(
+    () => tasks.filter((t) => t.status === 'running').length,
+    [tasks],
+  );
+
+  const doneThisWeekCount = useMemo(() => {
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return tasks.filter((t) => {
+      if (t.status !== 'done') return false;
+      const updated = new Date(t.updatedAt).getTime();
+      return Number.isFinite(updated) && updated >= weekAgo;
+    }).length;
+  }, [tasks]);
+
+  const currentTeam = teams.find((t) => t.name === selectedTeam);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Header with team selector and stats */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
-          height: 40,
-          padding: '0 16px',
+          gap: 12,
+          padding: '12px 16px',
           flexShrink: 0,
+          borderBottom: '1px solid var(--border-subtle)',
         }}
       >
         <h3
@@ -108,8 +135,38 @@ export function KanbanPage() {
             color: 'var(--text-primary)',
           }}
         >
-          Kanban
+          Teams
         </h3>
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+          {teams.length} {teams.length === 1 ? 'team' : 'teams'}
+        </span>
+        <span style={{ flex: 1 }} />
+
+        {/* Online status for selected team */}
+        {currentTeam && (
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 11,
+              color: 'var(--text-secondary)',
+            }}
+          >
+            <StatusDot
+              color={
+                currentTeam.health === 'running'
+                  ? 'var(--success, #4ade80)'
+                  : 'var(--text-tertiary)'
+              }
+              size={8}
+            />
+            {currentTeam.health === 'running' && (currentTeam.runningCount ?? 0) > 0
+              ? `${currentTeam.runningCount} online`
+              : 'offline'}
+          </span>
+        )}
+
         <select
           value={selectedTeam}
           onChange={(e) => setSelectedTeam(e.target.value)}
@@ -121,7 +178,7 @@ export function KanbanPage() {
             background: 'var(--bg-base)',
             color: 'var(--text-secondary)',
             border: '1px solid var(--border-subtle)',
-            borderRadius: 4,
+            borderRadius: 'var(--radius-sm)',
             padding: '0 8px',
             outline: 'none',
           }}
@@ -134,6 +191,48 @@ export function KanbanPage() {
           ))}
         </select>
       </div>
+
+      {/* Stats strip */}
+      {selectedTeam && (
+        <div
+          style={{
+            display: 'flex',
+            gap: 24,
+            padding: '12px 16px',
+            borderBottom: '1px solid var(--border-subtle)',
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <span
+              style={{
+                fontSize: 24,
+                fontWeight: 700,
+                color: 'var(--text-primary)',
+                fontVariantNumeric: 'tabular-nums',
+                lineHeight: 1,
+              }}
+            >
+              {inProgressCount}
+            </span>
+            <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>in progress</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <span
+              style={{
+                fontSize: 24,
+                fontWeight: 700,
+                color: 'var(--text-primary)',
+                fontVariantNumeric: 'tabular-nums',
+                lineHeight: 1,
+              }}
+            >
+              {doneThisWeekCount}
+            </span>
+            <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>done this week</span>
+          </div>
+        </div>
+      )}
 
       <KanbanBoard tasks={tasks} onTaskClick={handleTaskClick} />
 

@@ -29,81 +29,112 @@ const priorityStyles: Record<number, { color: string; bg: string }> = {
 
 const defaultPStyle = { color: 'var(--text-tertiary)', bg: 'var(--bg-overlay)' };
 
+const STATUS_BADGE: Record<string, { color: string; bg: string }> = {
+  done: { color: 'var(--success, #4ade80)', bg: 'rgba(74, 222, 128, 0.10)' },
+  running: { color: 'var(--info, #4a9eff)', bg: 'rgba(74, 158, 255, 0.10)' },
+  blocked: { color: 'var(--error, #f87171)', bg: 'rgba(248, 113, 113, 0.10)' },
+  needs_revision: { color: 'var(--warning, #f59e0b)', bg: 'rgba(245, 158, 11, 0.10)' },
+  ready: { color: 'var(--success, #4ade80)', bg: 'rgba(74, 222, 128, 0.10)' },
+};
+
+const DEFAULT_BADGE = { color: 'var(--text-tertiary)', bg: 'var(--bg-overlay)' };
+
 export function KanbanTaskTile({ task, onClick }: KanbanTaskTileProps) {
   const pStyle = priorityStyles[task.priority] ?? defaultPStyle;
-  const isRunning = task.status === 'running';
-  const isBlocked = task.status === 'blocked';
+  const badge = STATUS_BADGE[task.status] ?? DEFAULT_BADGE;
 
   return (
-    <>
-      <style>{`@keyframes ethos-pulse { 0%, 100% { opacity: 0.4 } 50% { opacity: 1 } }`}</style>
-      <button
-        type="button"
-        onClick={() => onClick(task.id)}
+    <button
+      type="button"
+      onClick={() => onClick(task.id)}
+      className="kanban-task-tile"
+      style={{
+        backgroundColor: 'var(--bg-base)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 'var(--radius-sm)',
+        padding: 12,
+        marginBottom: 8,
+        cursor: 'pointer',
+        textAlign: 'left',
+        width: '100%',
+        display: 'block',
+        transition: 'border-color 80ms ease',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = 'var(--border-strong)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = 'var(--border-subtle)';
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span
+          style={{
+            flex: 1,
+            fontSize: 13,
+            fontWeight: 500,
+            color: 'var(--text-primary)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {task.title}
+        </span>
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10,
+            color: pStyle.color,
+            backgroundColor: pStyle.bg,
+            borderRadius: 'var(--radius-sm)',
+            padding: '4px 8px',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
+          }}
+        >
+          P{task.priority}
+        </span>
+      </div>
+
+      <div
         style={{
-          backgroundColor: 'var(--bg-elevated)',
-          border: '1px solid var(--border-subtle)',
-          borderRadius: 8,
-          padding: '12px 14px',
-          marginBottom: 12,
-          cursor: 'pointer',
-          borderLeft: isRunning
-            ? '2px solid var(--info)'
-            : isBlocked
-              ? '2px solid var(--error)'
-              : '1px solid var(--border-subtle)',
-          animation: isRunning ? 'ethos-pulse 1.4s ease-in-out infinite' : undefined,
-          textAlign: 'left',
-          width: '100%',
-          display: 'block',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginTop: 8,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {/* Status badge */}
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            fontWeight: 500,
+            color: badge.color,
+            backgroundColor: badge.bg,
+            padding: '2px 8px',
+            borderRadius: 'var(--radius-sm)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {task.status.replace('_', ' ')}
+        </span>
+
+        {task.assignee && (
           <span
             style={{
-              flex: 1,
-              fontSize: 13,
-              fontWeight: 500,
-              color: 'var(--text-primary)',
+              fontSize: 11,
+              color: 'var(--text-tertiary)',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
             }}
           >
-            {task.title}
+            {task.assignee}
           </span>
-          <span
-            style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: 10,
-              color: pStyle.color,
-              backgroundColor: pStyle.bg,
-              borderRadius: 4,
-              padding: '4px 8px',
-              whiteSpace: 'nowrap',
-              flexShrink: 0,
-            }}
-          >
-            P{task.priority}
-          </span>
-        </div>
-
-        {task.assignee && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
-            <span
-              style={{
-                fontSize: 11,
-                color: 'var(--text-tertiary)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {task.assignee}
-            </span>
-          </div>
         )}
-      </button>
-    </>
+      </div>
+    </button>
   );
 }
