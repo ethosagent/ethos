@@ -1,21 +1,46 @@
 import type { MeshAgent } from '@ethosagent/web-contracts';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { App as AntApp, Button, Empty, Form, Input, Spin, Table, Tag, Typography } from 'antd';
+import { App as AntApp, Button, Empty, Form, Input, Spin, Typography } from 'antd';
+import { type MeshNode, MeshTopology } from '../components/ui/MeshTopology';
+import { StatusDot } from '../components/ui/StatusDot';
 import { rpc } from '../rpc';
 
 // Mesh tab — swarm pillar of v0.5.
 //
-// Two parts: a live table of registered agents (heartbeat-filtered, so
-// stale registrations drop off automatically after 30s), and a route
-// test that asks the mesh to pick a peer for a given capability without
-// actually dispatching a task.
+// Two parts: an SVG topology canvas showing gateway + agent nodes,
+// and a status table. Below: route test for capability-based routing.
+
+function agentToNode(agent: MeshAgent): MeshNode {
+  const elapsed = Date.now() - new Date(agent.lastSeenAt).getTime();
+  let status: MeshNode['status'] = 'healthy';
+  if (elapsed > 30_000) status = 'error';
+  else if (elapsed > 15_000) status = 'reconnecting';
+
+  return {
+    id: agent.agentId,
+    name: agent.agentId,
+    type: 'agent',
+    status,
+  };
+}
+
+function statusForAgent(agent: MeshAgent): 'connected' | 'connecting' | 'offline' {
+  const elapsed = Date.now() - new Date(agent.lastSeenAt).getTime();
+  if (elapsed > 30_000) return 'offline';
+  if (elapsed > 15_000) return 'connecting';
+  return 'connected';
+}
+
+function statusLabel(s: 'connected' | 'connecting' | 'offline'): string {
+  if (s === 'connected') return 'Healthy';
+  if (s === 'connecting') return 'Reconnecting';
+  return 'Offline';
+}
 
 export function Mesh() {
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['mesh', 'list'],
     queryFn: () => rpc.mesh.list(),
-    // The mesh's own staleness window is 30s — refresh at half that so
-    // a peer dropping off shows up within 15s without polling too hard.
     refetchInterval: 15_000,
   });
 
@@ -36,75 +61,175 @@ export function Mesh() {
 
   const agents = data?.agents ?? [];
 
+  const topologyNodes: MeshNode[] = [
+    { id: 'gateway', name: 'gateway', type: 'gateway', status: 'healthy' },
+    ...agents.map(agentToNode),
+  ];
+
   return (
-    <div className="mesh-tab">
-      <header className="mesh-toolbar">
-        <span className="mesh-count">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Page header */}
+      <div>
+        <h1
+          style={{
+            fontSize: 20,
+            fontWeight: 600,
+            color: 'var(--text-primary)',
+            margin: 0,
+            lineHeight: 1.3,
+          }}
+        >
+          Mesh
+        </h1>
+        <p
+          style={{
+            fontSize: 13,
+            color: 'var(--text-secondary)',
+            margin: '2px 0 0',
+          }}
+        >
+          Agent network topology
+        </p>
+      </div>
+
+      {/* SVG topology canvas */}
+      <MeshTopology nodes={topologyNodes} />
+
+      {/* Status table */}
+      <div
+        style={{
+          maxHeight: 200,
+          overflowY: 'auto',
+          marginTop: 0,
+        }}
+      >
+        {/* Column headers */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            height: 28,
+            borderBottom: '1px solid var(--border-subtle)',
+          }}
+        >
+          <span style={{ ...colHeader, flex: 1 }}>NODE</span>
+          <span style={{ ...colHeader, width: 120 }}>STATUS</span>
+          <span style={{ ...colHeader, width: 80 }}>SESSIONS</span>
+          <span style={{ ...colHeader, width: 80 }}>LATENCY</span>
+        </div>
+
+        {agents.length === 0 ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="No mesh peers registered. Run another `ethos serve` to see it here."
+            style={{ padding: '24px 0' }}
+          />
+        ) : (
+          agents.map((agent) => {
+            const s = statusForAgent(agent);
+            return (
+              <div
+                key={agent.agentId}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  height: 36,
+                  borderBottom: '1px solid var(--border-subtle)',
+                }}
+              >
+                <span
+                  style={{
+                    flex: 1,
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 12,
+                    color: 'var(--text-primary)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {agent.agentId}
+                </span>
+                <span
+                  style={{
+                    width: 120,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    flexShrink: 0,
+                  }}
+                >
+                  <StatusDot status={s} size={8} />
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 12,
+                      color: 'var(--text-secondary)',
+                    }}
+                  >
+                    {statusLabel(s)}
+                  </span>
+                </span>
+                <span
+                  style={{
+                    width: 80,
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 12,
+                    color: 'var(--text-tertiary)',
+                    fontVariantNumeric: 'tabular-nums',
+                    flexShrink: 0,
+                  }}
+                >
+                  {agent.activeSessions}
+                </span>
+                <span
+                  style={{
+                    width: 80,
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 12,
+                    color: 'var(--text-tertiary)',
+                    fontVariantNumeric: 'tabular-nums',
+                    flexShrink: 0,
+                  }}
+                >
+                  &mdash;
+                </span>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Toolbar: refresh + count */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 12,
+            color: 'var(--text-tertiary)',
+          }}
+        >
           {agents.length} {agents.length === 1 ? 'agent' : 'agents'} live
         </span>
-        <Button onClick={() => void refetch()} loading={isFetching}>
+        <Button size="small" onClick={() => void refetch()} loading={isFetching}>
           Refresh
         </Button>
-      </header>
+      </div>
 
-      <Table<MeshAgent>
-        rowKey="agentId"
-        dataSource={agents}
-        pagination={false}
-        size="small"
-        locale={{
-          emptyText: (
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description="No mesh peers registered. Run another `ethos serve` to see it here."
-            />
-          ),
-        }}
-        columns={[
-          {
-            title: 'Agent',
-            dataIndex: 'agentId',
-            key: 'agentId',
-            render: (id: string) => <Typography.Text code>{id}</Typography.Text>,
-          },
-          {
-            title: 'Capabilities',
-            dataIndex: 'capabilities',
-            key: 'capabilities',
-            render: (caps: string[]) =>
-              caps.length === 0 ? (
-                <Typography.Text type="secondary">—</Typography.Text>
-              ) : (
-                <span style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {caps.map((c) => (
-                    <Tag key={c} bordered={false}>
-                      {c}
-                    </Tag>
-                  ))}
-                </span>
-              ),
-          },
-          {
-            title: 'Active',
-            dataIndex: 'activeSessions',
-            key: 'activeSessions',
-            width: 80,
-            align: 'right',
-          },
-          {
-            title: 'Last seen',
-            dataIndex: 'lastSeenAt',
-            key: 'lastSeenAt',
-            width: 140,
-            render: (iso: string) => formatRelative(iso),
-          },
-        ]}
-      />
-
+      {/* Route test */}
       <RouteTest />
     </div>
   );
 }
+
+const colHeader: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 500,
+  textTransform: 'uppercase',
+  letterSpacing: '0.08em',
+  fontFamily: 'var(--font-mono)',
+  color: 'var(--text-tertiary)',
+};
 
 function RouteTest() {
   const { notification } = AntApp.useApp();
@@ -132,8 +257,19 @@ function RouteTest() {
   });
 
   return (
-    <section className="mesh-route-test" style={{ marginTop: 24 }}>
-      <Typography.Title level={5}>Route test</Typography.Title>
+    <section style={{ marginTop: 8 }}>
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 500,
+          textTransform: 'uppercase',
+          letterSpacing: '0.08em',
+          color: 'var(--text-tertiary)',
+          marginBottom: 8,
+        }}
+      >
+        ROUTE TEST
+      </div>
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
         Pick the agent the mesh would route a task to, given a capability. Doesn't dispatch any
         work.
@@ -154,14 +290,4 @@ function RouteTest() {
       </Form>
     </section>
   );
-}
-
-function formatRelative(iso: string): string {
-  const ts = new Date(iso).getTime();
-  if (!Number.isFinite(ts)) return iso;
-  const diff = Date.now() - ts;
-  if (diff < 1_000) return 'just now';
-  if (diff < 60_000) return `${Math.floor(diff / 1_000)}s ago`;
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  return new Date(iso).toLocaleString();
 }
