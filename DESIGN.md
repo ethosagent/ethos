@@ -20,10 +20,10 @@
 
 ## Typography
 
-- **Display / UI:** `Inter` — 400 (regular) / 500 (medium) / 600 (semibold). No italics in UI chrome.
-- **Mono / code / tool args / data:** `JetBrains Mono` 400 / 500. Used for: model names, tool names, tool arguments, kbd hints, file paths, tabular numbers, timestamps.
-- **Loading:** loaded from Google Fonts CDN (`Inter:wght@400;500;600` + `JetBrains+Mono:wght@400;500`). System font fallback `'Inter', system-ui, sans-serif` and `'JetBrains Mono', ui-monospace, monospace`. Never `Roboto`, `system-ui`, `-apple-system` as the primary display font.
-- **Why:** Inter is the workhorse proportional for dense UI — extensive OpenType features, tabular figures, and a large x-height that reads well at 11-14px. JetBrains Mono has ligature-free clarity and a generous character set for code and tool output.
+- **Display / UI:** `Geist` — 400 (regular) / 500 (medium) / 600 (semibold). No italics in UI chrome.
+- **Mono / code / tool args / data:** `Geist Mono` 400. Used for: model names, tool names, tool arguments, kbd hints, file paths, tabular numbers, timestamps.
+- **Loading:** self-hosted via npm `geist` package on web; system font fallback `'Geist', system-ui, sans-serif` and `'Geist Mono', monospace`. Never `Inter`, `Roboto`, `system-ui`, `-apple-system` as the primary display font.
+- **Why:** Geist is the current right pair for serious developer tools. The mono is excellent and the proportional has restraint without being neutral.
 
 ### Scale
 
@@ -250,7 +250,7 @@ Ethos lives across surfaces. The single source of truth is hex values and font c
 | accent · operator | `#94A3B8` | `\x1b[38;5;247m` | (same) | (same) | `chalk.hex('#94A3B8')` |
 | bg-base (dark) | `#0F0F0F` | (terminal default) | `--vscode-editor-background` | (light only) | (terminal default) |
 | text-primary (dark) | `#E8E8E6` | `\x1b[38;5;253m` | `--vscode-foreground` | `#1A1A1A` | (terminal default) |
-| mono | `JetBrains Mono` | (terminal mono font) | `editor.fontFamily` | `monospace` fallback | (terminal default) |
+| mono | `Geist Mono` | (terminal mono font) | `editor.fontFamily` | `monospace` fallback | (terminal default) |
 
 ### Per-surface notes
 
@@ -281,7 +281,7 @@ The web UI specifically must avoid these patterns. Code review checks for them.
 | Decorative blobs, floating circles, wavy SVG dividers | Filler | Empty space; let typography lead |
 | Emoji as design elements | Lazy decoration | Status icons (✓/✗/⏳) only, never decorative |
 | Colored left-border on cards | "We have to differentiate cards somehow" | Cards earn existence; differentiate via content |
-| `system-ui` / `-apple-system` as primary display font | "I gave up on typography" signal | Inter + JetBrains Mono |
+| `system-ui` / `-apple-system` as primary display font | "I gave up on typography" signal | Geist + Geist Mono |
 | Generic hero copy | Indistinguishable from every SaaS site | Specific, in-product language |
 | Hover states that change layout | Layout thrash | `prefers-reduced-motion` honored; only opacity/color/transform |
 
@@ -296,7 +296,7 @@ The web UI specifically must avoid these patterns. Code review checks for them.
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-04-26 | Initial design system created | `/design-consultation` run after `/plan-design-review` (Phase 26), `/plan-ceo-review` (Phase 26), and `/plan-eng-review` (Phase 26). Memorable thing: "the agent team is present." |
-| 2026-04-26 | Inter + JetBrains Mono | Inter is the workhorse proportional for dense UI; JetBrains Mono has ligature-free clarity. Loaded from Google Fonts CDN. |
+| 2026-04-26 | Geist + Geist Mono | Dev-tool standard. Self-hosted via npm `geist` (local-first respects local-first ethos). |
 | 2026-04-26 | Dark mode primary, light supported | Terminal-adjacent users live in dark mode. Light is read-only-mostly support. |
 | 2026-04-26 | Per-personality accent system | Distinguishing wedge vs anonymous chatbots. The chat tab fingerprint changes per active agent. |
 | 2026-04-26 | Generative SVG marks (5×5 mirror-symmetric, hash from personality ID) | Every personality gets identity from creation, no asset pipeline, custom personalities included. |

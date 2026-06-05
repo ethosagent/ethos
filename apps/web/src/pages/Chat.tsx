@@ -222,10 +222,6 @@ export function Chat() {
     resetSession();
   };
 
-  // Pill text: when the user clicks a suggestion pill in the empty state,
-  // we inject the text into the composer (spec: "Clicking pill populates composer").
-  const [pillText, setPillText] = useState('');
-
   return (
     <ConfigProvider theme={personalityTheme(personalityId)}>
       <div className="chat-tab">
@@ -248,7 +244,6 @@ export function Chat() {
           currentTurn={state.currentTurn}
           personalityId={personalityId}
           model={model}
-          onPillClick={setPillText}
         />
         <TurnStatusBar
           isStreaming={state.isStreaming}
@@ -273,7 +268,6 @@ export function Chat() {
             placeholder={state.isStreaming ? 'Steer the agent…' : 'Send a message…'}
             isStreaming={state.isStreaming}
             onAbort={() => void abortTurn()}
-            injectedText={pillText}
           />
         </div>
       </div>

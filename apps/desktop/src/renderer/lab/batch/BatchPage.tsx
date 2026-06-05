@@ -18,17 +18,58 @@ export function BatchPage() {
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
+        padding: '0 24px',
       }}
     >
-      {/* Tab bar */}
       <div
         style={{
+          height: 40,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexShrink: 0,
+          paddingTop: 8,
+        }}
+      >
+        <h3
+          style={{
+            margin: 0,
+            fontSize: 20,
+            fontWeight: 600,
+            color: 'var(--text-primary)',
+          }}
+        >
+          Batch / Eval
+        </h3>
+        <button
+          type="button"
+          onClick={() => {
+            /* reset state — re-mount tab via key */
+            setActiveTab((t) => t);
+          }}
+          style={{
+            height: 28,
+            padding: '0 12px',
+            borderRadius: 4,
+            border: '1px solid var(--border-subtle)',
+            background: 'transparent',
+            color: 'var(--text-secondary)',
+            fontSize: 13,
+            cursor: 'pointer',
+          }}
+        >
+          New run
+        </button>
+      </div>
+
+      <div
+        style={{
+          height: 40,
           display: 'flex',
           alignItems: 'flex-end',
           gap: 0,
           flexShrink: 0,
           borderBottom: '1px solid var(--border-subtle)',
-          padding: '0 24px',
         }}
       >
         {tabs.map((tab) => (
@@ -55,8 +96,7 @@ export function BatchPage() {
         ))}
       </div>
 
-      {/* Two-panel content */}
-      <div style={{ flex: 1, overflow: 'hidden' }}>
+      <div style={{ flex: 1, overflow: 'auto', paddingTop: 20 }}>
         {activeTab === 'batch' ? <BatchTab /> : <EvalTab />}
       </div>
     </div>

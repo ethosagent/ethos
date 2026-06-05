@@ -1,10 +1,7 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useConfig } from '../features/config/api/queries';
 import { useRecentSessions } from '../features/sessions/api/queries';
-import { PersonalityPickerModal } from './PersonalityPickerModal';
-import { SessionContextMenu } from './SessionContextMenu';
-import { StatusDot } from './ui/StatusDot';
 
 export interface SidebarProps {
   collapsed: boolean;
@@ -20,24 +17,17 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const [sessionSearch, setSessionSearch] = useState('');
   const [advancedMode, setAdvancedMode] = useState(() => {
     try {
-      return localStorage.getItem('ethos:sidebar:advanced') === 'true';
+      return localStorage.getItem('ethos:advancedMode') === 'true';
     } catch {
       return false;
     }
   });
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{
-    sessionId: string;
-    pinned: boolean;
-    x: number;
-    y: number;
-  } | null>(null);
 
   const toggleAdvancedMode = () => {
     setAdvancedMode((v) => {
       const next = !v;
       try {
-        localStorage.setItem('ethos:sidebar:advanced', String(next));
+        localStorage.setItem('ethos:advancedMode', String(next));
       } catch {}
       return next;
     });
@@ -75,14 +65,6 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       ? 'offline'
       : 'connected';
 
-  const handleSessionContextMenu = useCallback(
-    (e: React.MouseEvent, sessionId: string, isPinned: boolean) => {
-      e.preventDefault();
-      setContextMenu({ sessionId, pinned: isPinned, x: e.clientX, y: e.clientY });
-    },
-    [],
-  );
-
   return (
     <nav className="sidebar" aria-label="Primary navigation">
       <button
@@ -99,13 +81,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
       {!collapsed && (
         <>
-          <button
-            type="button"
-            className="sidebar-new-btn sidebar-new-btn--dashed"
-            onClick={() => setPickerOpen(true)}
-          >
+          <Link to="/chat" className="sidebar-new-btn">
             + New session
-          </button>
+          </Link>
 
           <div className="sidebar-section-label">Agent</div>
           <div className="sidebar-nav">
@@ -121,8 +99,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               active={pathname === '/plugins' || pathname.startsWith('/plugins/')}
             />
             <NavRow path="/mcp" label="MCP Servers" active={pathname === '/mcp'} />
-            <NavRow path="/memory" label="Brain" active={pathname === '/memory'} />
-            <NavRow path="/cron" label="Cron" active={pathname === '/cron'} />
+            <NavRow path="/memory" label="Memory" active={pathname === '/memory'} />
             <NavRow
               path="/communications"
               label="Platforms"
@@ -135,7 +112,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           <input
             type="text"
             className="sidebar-search-input"
-            placeholder="Filter sessions..."
+            placeholder="Filter recent..."
             value={sessionSearch}
             onChange={(e) => setSessionSearch(e.target.value)}
           />
@@ -145,13 +122,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               <>
                 <div className="sidebar-section-label">PINNED</div>
                 {filteredPinned.map((s) => (
-                  <SessionRow
-                    key={s.id}
-                    session={s}
-                    active={activeSessionId === s.id}
-                    pinned
-                    onContextMenu={handleSessionContextMenu}
-                  />
+                  <SessionRow key={s.id} session={s} active={activeSessionId === s.id} />
                 ))}
               </>
             )}
@@ -160,13 +131,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               SESSIONS <span className="sidebar-session-count">{filteredUnpinned.length}</span>
             </div>
             {filteredUnpinned.map((s) => (
-              <SessionRow
-                key={s.id}
-                session={s}
-                active={activeSessionId === s.id}
-                pinned={false}
-                onContextMenu={handleSessionContextMenu}
-              />
+              <SessionRow key={s.id} session={s} active={activeSessionId === s.id} />
             ))}
 
             <Link to="/sessions" className="sidebar-view-all">
@@ -203,7 +168,10 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             >
               {advancedMode ? 'Simple' : 'Advanced'}
             </button>
-            <StatusDot status={connectionState} size={6} />
+            <span
+              className={`sidebar-connected sb-dot sb-dot--${connectionState}`}
+              aria-hidden="true"
+            />
           </div>
         </>
       )}
@@ -240,20 +208,6 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           </Link>
         </div>
       )}
-
-      <PersonalityPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} />
-      {contextMenu && (
-        <SessionContextMenu
-          sessionId={contextMenu.sessionId}
-          position={{ x: contextMenu.x, y: contextMenu.y }}
-          pinned={contextMenu.pinned}
-          onClose={() => setContextMenu(null)}
-          onRename={() => {
-            // Rename handled inline — close menu for now
-            setContextMenu(null);
-          }}
-        />
-      )}
     </nav>
   );
 }
@@ -280,13 +234,9 @@ function NavRow({
 function SessionRow({
   session,
   active,
-  pinned,
-  onContextMenu,
 }: {
-  session: { id: string; title: string | null; key: string; updatedAt: string; pinned: boolean };
+  session: { id: string; title: string | null; key: string; updatedAt: string };
   active: boolean;
-  pinned: boolean;
-  onContextMenu: (e: React.MouseEvent, sessionId: string, pinned: boolean) => void;
 }) {
   const label = session.title ?? 'Untitled session';
   const time = formatRelativeTime(session.updatedAt);
@@ -294,13 +244,7 @@ function SessionRow({
     <Link
       to={`/chat?session=${session.id}`}
       className={`sidebar-session-row${active ? ' active' : ''}`}
-      onContextMenu={(e) => onContextMenu(e, session.id, pinned)}
     >
-      {pinned ? (
-        <span className="sidebar-session-pin" role="img" aria-label="Pinned">
-          ★
-        </span>
-      ) : null}
       <span className="sidebar-session-name">{label}</span>
       <span className="sidebar-session-time">{time}</span>
     </Link>

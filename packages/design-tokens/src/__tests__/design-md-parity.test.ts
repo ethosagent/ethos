@@ -121,9 +121,9 @@ describe('DEFAULT_TOKENS parity with DESIGN.md', () => {
   });
 
   describe('typography', () => {
-    it('uses Inter + JetBrains Mono per DESIGN.md', () => {
-      expect(DEFAULT_TOKENS.typography.fontDisplay).toMatch(/Inter/);
-      expect(DEFAULT_TOKENS.typography.fontMono).toMatch(/JetBrains Mono/);
+    it('uses Geist + Geist Mono per DESIGN.md', () => {
+      expect(DEFAULT_TOKENS.typography.fontDisplay).toMatch(/Geist/);
+      expect(DEFAULT_TOKENS.typography.fontMono).toMatch(/Geist Mono/);
     });
 
     it('h1 / body / micro / mono px sizes match DESIGN.md', () => {

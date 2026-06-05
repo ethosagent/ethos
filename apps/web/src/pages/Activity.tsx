@@ -1,9 +1,7 @@
 import type { SseEvent } from '@ethosagent/web-contracts';
 import { useQuery } from '@tanstack/react-query';
-import { Empty, Select, Spin } from 'antd';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { EventBadge } from '../components/ui/EventBadge';
-import { FilterChip } from '../components/ui/FilterChip';
+import { Empty, Select, Spin, Tag, Typography } from 'antd';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { rpc } from '../rpc';
 import { subscribeToSession } from '../sse';
 
@@ -17,24 +15,56 @@ interface ActivityEvent {
   raw: unknown;
 }
 
+interface ConversationGroup {
+  id: string;
+  sessionId: string;
+  sessionTitle: string | null;
+  startedAt: number;
+  completedAt: number | null;
+  turnCount: number | null;
+  events: ActivityEvent[];
+  isLive: boolean;
+}
+
 type TypeFilter = 'all' | 'tools' | 'turns' | 'errors' | 'approvals' | 'cron';
 
-const TYPE_FILTERS: Array<{ value: TypeFilter; label: string; color?: string }> = [
+const MAX_EVENTS = 50;
+
+const TYPE_FILTERS: Array<{ value: TypeFilter; label: string }> = [
   { value: 'all', label: 'All' },
-  { value: 'tools', label: 'Tools', color: 'var(--blue)' },
-  { value: 'turns', label: 'Turns', color: 'var(--slate)' },
-  { value: 'errors', label: 'Errors', color: 'var(--red)' },
-  { value: 'approvals', label: 'Approvals', color: 'var(--amber)' },
-  { value: 'cron', label: 'Cron', color: 'var(--purple)' },
+  { value: 'tools', label: 'Tools' },
+  { value: 'turns', label: 'Turns' },
+  { value: 'errors', label: 'Errors' },
+  { value: 'approvals', label: 'Approvals' },
+  { value: 'cron', label: 'Cron' },
 ];
 
-function eventMatchesFilter(evt: ActivityEvent, filter: TypeFilter): boolean {
+const DOT_CLASS_MAP: Record<ActivityEvent['type'], string> = {
+  tool_start: 'tool_start',
+  tool_end: 'tool_end',
+  done: 'done',
+  error: 'error',
+  'tool.approval_required': 'approval',
+  'cron.fired': 'cron',
+};
+
+const TYPE_COLORS: Record<ActivityEvent['type'], string> = {
+  tool_start: 'blue',
+  tool_end: 'blue',
+  done: 'green',
+  error: 'red',
+  'tool.approval_required': 'orange',
+  'cron.fired': 'purple',
+};
+
+function groupMatchesFilter(group: ConversationGroup, filter: TypeFilter): boolean {
   if (filter === 'all') return true;
-  if (filter === 'tools') return evt.type === 'tool_start' || evt.type === 'tool_end';
-  if (filter === 'turns') return evt.type === 'done';
-  if (filter === 'errors') return evt.type === 'error';
-  if (filter === 'approvals') return evt.type === 'tool.approval_required';
-  if (filter === 'cron') return evt.type === 'cron.fired';
+  if (filter === 'tools')
+    return group.events.some((e) => e.type === 'tool_start' || e.type === 'tool_end');
+  if (filter === 'turns') return group.events.some((e) => e.type === 'done');
+  if (filter === 'errors') return group.events.some((e) => e.type === 'error');
+  if (filter === 'approvals') return group.events.some((e) => e.type === 'tool.approval_required');
+  if (filter === 'cron') return group.events.some((e) => e.type === 'cron.fired');
   return false;
 }
 
@@ -51,14 +81,14 @@ function convertSseEvent(
         ...base,
         id: `${sessionId}-${event.toolCallId}-start`,
         type: 'tool_start',
-        summary: `${event.toolName}(${formatArgs(event)})`,
+        summary: `Tool started: ${event.toolName}`,
       };
     case 'tool_end':
       return {
         ...base,
         id: `${sessionId}-${event.toolCallId}-end`,
         type: 'tool_end',
-        summary: `${event.toolName} → ${event.ok ? 'ok' : 'error'}`,
+        summary: `Tool ${event.ok ? 'completed' : 'failed'}: ${event.toolName} (${event.durationMs}ms)`,
       };
     case 'done':
       return {
@@ -72,14 +102,14 @@ function convertSseEvent(
         ...base,
         id: `${sessionId}-error-${Date.now()}`,
         type: 'error',
-        summary: String(event.error),
+        summary: `Error: ${event.error}`,
       };
     case 'tool.approval_required':
       return {
         ...base,
         id: `${sessionId}-approval-${event.request.approvalId}`,
         type: 'tool.approval_required',
-        summary: `[waiting] ${event.request.toolName}`,
+        summary: `Approval needed: ${event.request.toolName}`,
       };
     case 'cron.fired':
       return {
@@ -93,33 +123,17 @@ function convertSseEvent(
   }
 }
 
-function formatArgs(event: { toolName: string; args?: unknown }): string {
-  const args = event.args;
-  if (!args || typeof args !== 'object') return '';
-  const entries = Object.entries(args as Record<string, unknown>);
-  if (entries.length === 0) return '';
-  const parts = entries.map(([k, v]) => {
-    const val = typeof v === 'string' ? v : JSON.stringify(v);
-    const truncated = val && val.length > 30 ? `${val.slice(0, 30)}…` : val;
-    return `${k}: ${truncated}`;
-  });
-  const joined = parts.join(', ');
-  return joined.length > 80 ? `${joined.slice(0, 80)}…` : joined;
+function formatRelative(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return 'just now';
+  const min = Math.floor(diff / 60_000);
+  if (min < 60) return `${min}m ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  return new Date(ts).toLocaleDateString();
 }
-
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
-const MAX_EVENTS = 500;
-
-// ─── Event detail expansion ───
-
-type EventRow =
-  | { key: string; kind: 'text'; value: string }
-  | { key: string; kind: 'args'; args: unknown }
-  | { key: string; kind: 'pre'; text: string };
 
 function TruncatedPre({ text, maxLen = 400 }: { text: string; maxLen?: number }) {
   const truncated = text.length > maxLen;
@@ -150,6 +164,11 @@ function ArgsBlock({ args }: { args: unknown }) {
   );
 }
 
+type EventRow =
+  | { key: string; kind: 'text'; value: string }
+  | { key: string; kind: 'args'; args: unknown }
+  | { key: string; kind: 'pre'; text: string };
+
 function EventDetail({ event }: { event: ActivityEvent }) {
   const raw = event.raw as Record<string, unknown>;
   const rows: EventRow[] = [];
@@ -161,7 +180,7 @@ function EventDetail({ event }: { event: ActivityEvent }) {
       break;
     case 'tool_end':
       rows.push({ key: 'tool', kind: 'text', value: String(raw.toolName ?? '') });
-      rows.push({ key: 'status', kind: 'text', value: String(raw.ok ? 'ok' : 'failed') });
+      rows.push({ key: 'status', kind: 'text', value: String(raw.ok ? '✓ ok' : '✗ failed') });
       rows.push({ key: 'duration', kind: 'text', value: `${String(raw.durationMs ?? 0)}ms` });
       if (raw.result) rows.push({ key: 'result', kind: 'pre', text: String(raw.result) });
       break;
@@ -207,19 +226,12 @@ function EventDetail({ event }: { event: ActivityEvent }) {
   );
 }
 
-// ─── Main page ───
-
 export function Activity() {
-  const [events, setEvents] = useState<ActivityEvent[]>([]);
+  const [groups, setGroups] = useState<ConversationGroup[]>([]);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [sessionFilter, setSessionFilter] = useState<string | null>(null);
+  const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
-
-  // Auto-scroll state
-  const streamRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const [autoScroll, setAutoScroll] = useState(true);
-  const [newEventCount, setNewEventCount] = useState(0);
 
   const { data: sessionsData, isLoading } = useQuery({
     queryKey: ['sessions', 'list', { limit: 10 }],
@@ -227,17 +239,73 @@ export function Activity() {
   });
 
   const sessions = sessionsData?.items ?? [];
+
   const activeSessionId = sessionFilter ?? sessions[0]?.id ?? null;
 
-  const appendEvent = useCallback(
-    (evt: ActivityEvent) => {
-      setEvents((prev) => [...prev, evt].slice(-MAX_EVENTS));
-      if (!autoScroll) {
-        setNewEventCount((c) => c + 1);
-      }
-    },
-    [autoScroll],
+  const completedGroupCount = useMemo(
+    () => groups.filter((g) => !g.isLive && g.sessionId === activeSessionId).length,
+    [groups, activeSessionId],
   );
+
+  const { data: sessionData } = useQuery({
+    queryKey: ['sessions', 'get', activeSessionId, completedGroupCount],
+    queryFn: () => rpc.sessions.get({ id: activeSessionId ?? '' }),
+    enabled: !!activeSessionId,
+  });
+
+  const userMessages = useMemo(
+    () => (sessionData?.messages ?? []).filter((m) => m.role === 'user'),
+    [sessionData],
+  );
+
+  const appendEvent = useCallback((evt: ActivityEvent) => {
+    setGroups((prev) => {
+      // cron.fired: standalone group, not part of a turn
+      if (evt.type === 'cron.fired') {
+        const g: ConversationGroup = {
+          id: evt.id,
+          sessionId: evt.sessionId,
+          sessionTitle: evt.sessionTitle,
+          startedAt: evt.timestamp,
+          completedAt: evt.timestamp,
+          turnCount: null,
+          events: [evt],
+          isLive: false,
+        };
+        return [g, ...prev].slice(0, MAX_EVENTS);
+      }
+
+      // Find existing live group for this session
+      const liveIdx = prev.findIndex((g) => g.sessionId === evt.sessionId && g.isLive);
+      if (liveIdx >= 0) {
+        const done = evt.type === 'done';
+        return prev.map((g, i) => {
+          if (i !== liveIdx) return g;
+          return {
+            ...g,
+            events: [...g.events, evt],
+            isLive: !done,
+            completedAt: done ? evt.timestamp : null,
+            turnCount: done ? ((evt.raw as { turnCount?: number }).turnCount ?? null) : g.turnCount,
+          };
+        });
+      }
+
+      // Start a new group
+      const newGroup: ConversationGroup = {
+        id: `${evt.sessionId}-${evt.timestamp}`,
+        sessionId: evt.sessionId,
+        sessionTitle: evt.sessionTitle,
+        startedAt: evt.timestamp,
+        completedAt: evt.type === 'done' ? evt.timestamp : null,
+        turnCount:
+          evt.type === 'done' ? ((evt.raw as { turnCount?: number }).turnCount ?? null) : null,
+        events: [evt],
+        isLive: evt.type !== 'done',
+      };
+      return [newGroup, ...prev].slice(0, MAX_EVENTS);
+    });
+  }, []);
 
   useEffect(() => {
     if (!activeSessionId) return;
@@ -255,48 +323,11 @@ export function Activity() {
     return () => sub.close();
   }, [activeSessionId, sessions, appendEvent]);
 
-  // Auto-scroll via IntersectionObserver
-  useEffect(() => {
-    const bottom = bottomRef.current;
-    if (!bottom) return;
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setAutoScroll(true);
-          setNewEventCount(0);
-        } else {
-          setAutoScroll(false);
-        }
-      },
-      { root: streamRef.current, threshold: 0.1 },
-    );
-
-    observer.observe(bottom);
-    return () => observer.disconnect();
-  }, []);
-
-  // Scroll to bottom when autoScroll is true and events change
-  const eventCount = events.length;
-  useEffect(() => {
-    if (autoScroll && eventCount > 0) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [eventCount, autoScroll]);
-
-  const filtered = useMemo(() => {
-    return events.filter((evt) => {
-      if (!eventMatchesFilter(evt, typeFilter)) return false;
-      if (sessionFilter && evt.sessionId !== sessionFilter) return false;
-      return true;
-    });
-  }, [events, typeFilter, sessionFilter]);
-
-  const scrollToBottom = () => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    setAutoScroll(true);
-    setNewEventCount(0);
-  };
+  const filtered = groups.filter((group) => {
+    if (!groupMatchesFilter(group, typeFilter)) return false;
+    if (sessionFilter && group.sessionId !== sessionFilter) return false;
+    return true;
+  });
 
   if (isLoading) {
     return (
@@ -307,15 +338,16 @@ export function Activity() {
   }
 
   return (
-    <div className="obs-page">
-      {/* Header */}
-      <header className="obs-header">
-        <h1 className="obs-title">Observability</h1>
+    <div className="activity-page">
+      <header className="activity-toolbar">
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          Activity
+        </Typography.Title>
         <Select
           allowClear
-          placeholder="All sessions"
+          placeholder="Most recent session"
           size="small"
-          style={{ width: 160 }}
+          style={{ width: 220 }}
           value={sessionFilter}
           onChange={(v) => setSessionFilter(v ?? null)}
           options={sessions.map((s) => ({
@@ -325,51 +357,97 @@ export function Activity() {
         />
       </header>
 
-      {/* Filter chips */}
-      <div className="obs-chip-bar">
+      <div className="activity-filter-bar">
         {TYPE_FILTERS.map((f) => (
-          <FilterChip
+          <button
             key={f.value}
-            label={f.label}
-            active={typeFilter === f.value}
-            color={f.color}
+            type="button"
+            className={`activity-filter-chip${typeFilter === f.value ? ' active' : ''}`}
             onClick={() => setTypeFilter(f.value)}
-          />
+          >
+            {f.label}
+          </button>
         ))}
       </div>
 
-      {/* Event stream */}
-      <div className="obs-stream" ref={streamRef}>
+      <div className="activity-timeline">
         {filtered.length === 0 ? (
           <Empty description="No activity yet. Events will appear as sessions stream." />
         ) : (
-          filtered.map((evt) => {
-            const expanded = expandedEventId === evt.id;
+          filtered.map((group) => {
+            const toolCount = group.events.filter((e) => e.type === 'tool_start').length;
+            const hasError = group.events.some((e) => e.type === 'error');
+            const session = group.sessionTitle || group.sessionId.slice(0, 8);
+            const toolPart =
+              toolCount > 0 ? ` · ${toolCount} tool call${toolCount !== 1 ? 's' : ''}` : '';
+            const userMsg = group.turnCount != null ? userMessages[group.turnCount - 1] : null;
+            const promptText = userMsg?.content
+              ? userMsg.content.trim().replace(/\s+/g, ' ')
+              : null;
+            const MAX_PROMPT = 60;
+            const truncatedPrompt = promptText
+              ? promptText.length > MAX_PROMPT
+                ? `${promptText.slice(0, MAX_PROMPT)}…`
+                : promptText
+              : null;
+            const groupLabel = truncatedPrompt
+              ? `Turn ${group.turnCount}: ${truncatedPrompt}${toolPart}`
+              : `${session}${group.turnCount != null ? ` · Turn ${group.turnCount}` : ''}${toolPart}`;
+            const expandedGroup = expandedGroupId === group.id;
+
             return (
-              <div key={evt.id}>
+              <div key={group.id} className="activity-group">
                 <button
                   type="button"
-                  className={`obs-event-line${expanded ? ' obs-event-line--expanded' : ''}`}
-                  onClick={() => setExpandedEventId(expanded ? null : evt.id)}
+                  className={`activity-group-header${expandedGroup ? ' activity-group-header--expanded' : ''}`}
+                  onClick={() => setExpandedGroupId(expandedGroup ? null : group.id)}
                 >
-                  <span className="obs-event-ts">{formatTime(evt.timestamp)}</span>
-                  <EventBadge eventType={evt.type} />
-                  <span className="obs-event-content">{evt.summary}</span>
+                  <div className="activity-group-meta">
+                    <span
+                      className={`activity-event-dot activity-event-dot--${group.isLive ? 'tool_start' : hasError ? 'error' : 'done'}${group.isLive ? ' activity-event-dot--pulse' : ''}`}
+                    />
+                    <span className="activity-group-time">{formatRelative(group.startedAt)}</span>
+                    <Tag color={group.isLive ? 'processing' : hasError ? 'red' : 'green'}>
+                      {group.isLive ? 'live' : hasError ? 'error' : 'done'}
+                    </Tag>
+                    <span className="activity-group-summary">{groupLabel}</span>
+                  </div>
+                  <span className="activity-group-chevron">{expandedGroup ? '▲' : '▼'}</span>
                 </button>
-                {expanded && <EventDetail event={evt} />}
+
+                {expandedGroup && (
+                  <div className="activity-group-events">
+                    {group.events.map((evt) => {
+                      const expandedEvt = expandedEventId === evt.id;
+                      return (
+                        <div key={evt.id}>
+                          <button
+                            type="button"
+                            className={`activity-subevent${expandedEvt ? ' activity-subevent--expanded' : ''}`}
+                            onClick={() => setExpandedEventId(expandedEvt ? null : evt.id)}
+                          >
+                            <span
+                              className={`activity-event-dot activity-event-dot--${DOT_CLASS_MAP[evt.type]}`}
+                            />
+                            <Tag
+                              color={TYPE_COLORS[evt.type]}
+                              style={{ fontSize: 11, lineHeight: '18px' }}
+                            >
+                              {evt.type}
+                            </Tag>
+                            <span className="activity-subevent-summary">{evt.summary}</span>
+                          </button>
+                          {expandedEvt && <EventDetail event={evt} />}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })
         )}
-        <div ref={bottomRef} />
       </div>
-
-      {/* New events indicator */}
-      {newEventCount > 0 && (
-        <button type="button" className="obs-new-events" onClick={scrollToBottom}>
-          ↓ {newEventCount} new event{newEventCount !== 1 ? 's' : ''}
-        </button>
-      )}
     </div>
   );
 }

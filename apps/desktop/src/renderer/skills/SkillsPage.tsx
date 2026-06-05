@@ -66,7 +66,7 @@ export function SkillsPage() {
                 gap: 6,
                 background: 'none',
                 border: 'none',
-                borderBottom: isActive ? '2px solid var(--blue)' : '2px solid transparent',
+                borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
                 cursor: 'pointer',
                 padding: '8px 12px',
                 fontSize: 13,

@@ -106,8 +106,8 @@ export const DEFAULT_TOKENS: Tokens = {
     info: '#4A9EFF',
   },
   typography: {
-    fontDisplay: "'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    fontMono: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontDisplay: "'Geist', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    fontMono: "'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
     scale: {
       h1: { px: 32, weight: 600, lineHeight: 1.2, tracking: '-0.01em' },
       h2: { px: 24, weight: 600, lineHeight: 1.25, tracking: '0' },

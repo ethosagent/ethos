@@ -15,7 +15,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ConnectMcpModal } from '../components/mcp/ConnectMcpModal';
-import { PersonalityRingAvatar } from '../components/ui/PersonalityRingAvatar';
+import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { rpc } from '../rpc';
 import {
   EditModal,
@@ -689,69 +689,68 @@ export function PersonalityDetail() {
       : model
         ? (model.default ?? model.trivial ?? model.deep ?? null)
         : null;
-  const fsReachDisplay = personality.fs_reach
-    ? [
-        ...(personality.fs_reach.read ?? []).map((p: string) => `R ${p}`),
-        ...(personality.fs_reach.write ?? []).map((p: string) => `W ${p}`),
-      ].join(', ') || 'none'
-    : 'default';
-  const toolsetDisplay = personality.toolset ? `${personality.toolset.length} tools` : 'default';
 
   return (
-    <div className="personality-detail">
-      <button
-        type="button"
-        className="personality-detail-back"
+    <div style={{ padding: 24, maxWidth: 960 }}>
+      <Button
+        type="link"
         onClick={() => navigate('/personalities')}
+        style={{ paddingLeft: 0, marginBottom: 16 }}
       >
-        ← Personalities
-      </button>
+        &larr; Personalities
+      </Button>
 
-      <div className="personality-detail-identity">
-        <PersonalityRingAvatar personalityId={personality.id} name={personality.name} size={56} />
-        <div className="personality-detail-identity-text">
-          <h2 className="personality-detail-name">{personality.name}</h2>
-          <span className="personality-detail-id">{personality.id}</span>
-          {personality.description ? (
-            <span className="personality-detail-desc">{personality.description}</span>
-          ) : null}
-          <div className="personality-detail-badges">
-            {personality.builtin ? <span className="badge badge-dim">BUILT-IN</span> : null}
-            {personality.system ? <span className="badge badge-dim">SYSTEM</span> : null}
+      <div style={{ marginBottom: 32 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+          <PersonalityMark personalityId={personality.id} size={48} />
+          <div>
+            <Typography.Title level={3} style={{ margin: 0 }}>
+              {personality.name}
+            </Typography.Title>
+            <Typography.Text
+              type="secondary"
+              style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12 }}
+            >
+              {personality.id}
+            </Typography.Text>
           </div>
         </div>
-        {personality.builtin ? null : (
-          <button type="button" className="btn btn-ghost" onClick={() => setEditModalOpen(true)}>
-            Edit personality
-          </button>
-        )}
-      </div>
 
-      <div className="personality-detail-meta-grid">
-        <div className="personality-detail-meta-item">
-          <span className="personality-detail-meta-label">Model</span>
-          <span className="personality-detail-meta-value">{modelDisplay ?? 'default'}</span>
+        {personality.description ? (
+          <Typography.Paragraph type="secondary">{personality.description}</Typography.Paragraph>
+        ) : null}
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'auto 1fr',
+            gap: '8px 24px',
+            fontSize: 14,
+          }}
+        >
+          {modelDisplay ? (
+            <>
+              <Typography.Text type="secondary">Model</Typography.Text>
+              <Typography.Text code>{modelDisplay}</Typography.Text>
+            </>
+          ) : null}
+          {personality.fs_reach !== undefined && personality.fs_reach !== null ? (
+            <>
+              <Typography.Text type="secondary">FS reach</Typography.Text>
+              <Typography.Text>
+                {[
+                  ...(personality.fs_reach.read ?? []).map((p: string) => `R ${p}`),
+                  ...(personality.fs_reach.write ?? []).map((p: string) => `W ${p}`),
+                ].join(', ') || 'none'}
+              </Typography.Text>
+            </>
+          ) : null}
         </div>
-        <div className="personality-detail-meta-item">
-          <span className="personality-detail-meta-label">Memory scope</span>
-          <span className="personality-detail-meta-value">per-personality</span>
-        </div>
-        <div className="personality-detail-meta-item">
-          <span className="personality-detail-meta-label">FS reach</span>
-          <span className="personality-detail-meta-value">{fsReachDisplay}</span>
-        </div>
-        <div className="personality-detail-meta-item">
-          <span className="personality-detail-meta-label">Toolset</span>
-          <span className="personality-detail-meta-value">{toolsetDisplay}</span>
+
+        <div style={{ marginTop: 16 }}>
+          <Button onClick={() => setEditModalOpen(true)}>Edit personality</Button>
         </div>
       </div>
-
-      {data.soulMd ? (
-        <div className="personality-detail-soul">
-          <div className="personality-detail-soul-label">SOUL.md</div>
-          <pre className="personality-detail-soul-box">{data.soulMd}</pre>
-        </div>
-      ) : null}
 
       {!personality.builtin && <McpSection personalityId={id} mcpPolicy={data.mcpPolicy} />}
 
@@ -761,7 +760,6 @@ export function PersonalityDetail() {
           onClose={() => {
             setEditModalOpen(false);
             qc.invalidateQueries({ queryKey: ['personalities', 'get', id] });
-            qc.invalidateQueries({ queryKey: ['personalities', 'characterSheet', id] });
           }}
         />
       ) : null}

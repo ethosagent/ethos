@@ -1,6 +1,6 @@
 import { personalityAccent } from '@ethosagent/design-tokens';
 import { Input } from 'antd';
-import { type KeyboardEvent, useEffect, useState } from 'react';
+import { type KeyboardEvent, useState } from 'react';
 
 // Sticky composer at the bottom of the chat surface. Three keyboard
 // rules, all standard chat UX:
@@ -8,9 +8,10 @@ import { type KeyboardEvent, useEffect, useState } from 'react';
 //   • Shift+Enter → newline.
 //   • Cmd/Ctrl+Enter → also send (the user-was-using-newlines path).
 //
-// 02-chat redesign: bg-elevated card with border-strong, 12px radius,
-// 8px padding; focus → blue border; auto-grow textarea (min 20px, max 120px);
-// 32px circular send button.
+// The accent caret is the subtlest personality fingerprint in the
+// product — `caret-color: var(--accent)` flows from the per-personality
+// ConfigProvider wrapper above this component. People notice it without
+// being able to say why.
 
 export interface ComposerProps {
   personalityId: string;
@@ -22,9 +23,6 @@ export interface ComposerProps {
   placeholder?: string;
   isStreaming?: boolean;
   onAbort?: () => void;
-  /** Text injected from outside (e.g. clicking an empty-state pill).
-   *  When this value changes, it replaces the current composer text. */
-  injectedText?: string;
 }
 
 export function Composer({
@@ -34,16 +32,9 @@ export function Composer({
   placeholder,
   isStreaming,
   onAbort,
-  injectedText,
 }: ComposerProps) {
   const [text, setText] = useState('');
   const accent = personalityAccent(personalityId);
-  // When injectedText changes (and is non-empty), replace the composer text.
-  useEffect(() => {
-    if (injectedText) {
-      setText(injectedText);
-    }
-  }, [injectedText]);
 
   const handleSend = () => {
     const trimmed = text.trim();

@@ -1,9 +1,27 @@
 import type { Session } from '@ethosagent/web-contracts';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { MenuProps } from 'antd';
+import { Button, Dropdown, Input, Popconfirm, Spin, Table } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { SessionContextMenu } from '../components/SessionContextMenu';
-import { useSessionRename } from '../features/sessions/api/mutations';
+import {
+  useSessionDelete,
+  useSessionExport,
+  useSessionFork,
+  useSessionRename,
+} from '../features/sessions/api/mutations';
 import { useSessionList } from '../features/sessions/api/queries';
+
+// Sessions tab — list, search, paginate, fork, delete. The chat tab uses
+// the URL `?session=<id>` deep link as the wire, so all the actions here
+// boil down to:
+//   • Open   → navigate to /chat?session=<id>
+//   • Fork   → rpc.sessions.fork → navigate to the new id
+//   • Delete → rpc.sessions.delete → invalidate this list
+//
+// FTS5 search is wired in `apps/web-api`; the input below feeds
+// `q` directly. Debouncing is local — 400ms after the last keystroke
+// before triggering a refetch — so typing fast doesn't fire a refetch
+// per character.
 
 const SEARCH_DEBOUNCE_MS = 400;
 
@@ -14,12 +32,9 @@ export function Sessions() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
-  const [contextMenu, setContextMenu] = useState<{
-    sessionId: string;
-    pinned: boolean;
-    position: { x: number; y: number };
-  } | null>(null);
 
+  // Debounce the input — TanStack Query's queryKey changes drive the
+  // refetch, so we only update the key after the user pauses typing.
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(t);
@@ -30,33 +45,22 @@ export function Sessions() {
 
   const flat = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
 
-  const pinned = useMemo(() => flat.filter((s) => s.pinned), [flat]);
-  const unpinned = useMemo(() => flat.filter((s) => !s.pinned), [flat]);
+  // --- mutations ---
+
+  const deleteMut = useSessionDelete();
+
+  const forkMut = useSessionFork();
 
   const renameMut = useSessionRename();
 
-  const handleRenameCommit = useCallback(
-    (id: string, value: string) => {
-      renameMut.mutate({ id, title: value.trim() || null });
-      setEditingId(null);
-    },
-    [renameMut],
-  );
+  const exportMut = useSessionExport();
 
-  const openContextMenu = useCallback((e: React.MouseEvent, session: Session) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setContextMenu({
-      sessionId: session.id,
-      pinned: session.pinned,
-      position: { x: e.clientX, y: e.clientY },
-    });
-  }, []);
+  // --- render ---
 
   if (error) {
     return (
       <div style={{ padding: 24 }}>
-        <span style={{ color: 'var(--red)' }}>
+        <span style={{ color: '#f87171' }}>
           Failed to load sessions: {(error as Error).message}
         </span>
       </div>
@@ -65,241 +69,291 @@ export function Sessions() {
 
   return (
     <div className="sessions-tab">
-      {/* Toolbar */}
-      <header className="sessions-toolbar-v2">
-        <span className="sessions-toolbar-title">Sessions</span>
-        <input
-          type="text"
-          className="sessions-search-input"
-          placeholder="Search sessions…"
+      <header className="sessions-toolbar">
+        <Input.Search
+          placeholder="Search sessions (FTS5 over message content)…"
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
-          aria-label="Search sessions"
+          allowClear
+          loading={isFetching && !isFetchingNextPage}
+          style={{ maxWidth: 480 }}
         />
+        <Button type="primary" onClick={() => navigate('/chat')} style={{ marginLeft: 8 }}>
+          New Session
+        </Button>
         <span className="sessions-count">
           {flat.length} {flat.length === 1 ? 'session' : 'sessions'}
           {hasNextPage ? '+' : ''}
         </span>
-        <button type="button" className="btn btn-blue" onClick={() => navigate('/chat')}>
-          + New Session
-        </button>
       </header>
 
       {isLoading ? (
-        <div className="sessions-loading">{isFetching ? 'Loading…' : ''}</div>
-      ) : flat.length === 0 ? (
-        <div className="sessions-empty">
-          {debouncedSearch
-            ? `No sessions match “${debouncedSearch}”.`
-            : 'No sessions yet. Start a chat to create one.'}
+        <div style={{ display: 'grid', placeItems: 'center', height: 200 }}>
+          <Spin />
         </div>
       ) : (
         <>
-          {/* Column headers */}
-          <div className="sessions-col-headers">
-            <span className="sessions-col-hdr sessions-col-name">Name</span>
-            <span className="sessions-col-hdr sessions-col-personality">Personality</span>
-            <span className="sessions-col-hdr sessions-col-model">Model</span>
-            <span className="sessions-col-hdr sessions-col-tokens">Tokens</span>
-            <span className="sessions-col-hdr sessions-col-cost">Cost</span>
-            <span className="sessions-col-hdr sessions-col-updated">Updated</span>
-            <span className="sessions-col-hdr sessions-col-actions"> </span>
-          </div>
+          <Table<Session>
+            rowKey="id"
+            dataSource={flat}
+            pagination={false}
+            size="small"
+            locale={{
+              emptyText: debouncedSearch
+                ? `No sessions match "${debouncedSearch}".`
+                : 'No sessions yet. Start a chat to create one.',
+            }}
+            onRow={(record) => ({
+              onClick: (e) => {
+                // Don't navigate when the click is on the action menu trigger.
+                const target = e.target as HTMLElement;
+                if (target.closest('.sessions-row-actions')) return;
+                navigate(`/chat?session=${record.id}`);
+              },
+              style: { cursor: 'pointer' },
+            })}
+            columns={[
+              {
+                title: 'Name',
+                key: 'name',
+                ellipsis: true,
+                render: (_v: unknown, row: Session) => {
+                  if (editingId === row.id) {
+                    return (
+                      <Input
+                        size="small"
+                        value={editingValue}
+                        autoFocus
+                        onChange={(e) => setEditingValue(e.target.value)}
+                        onPressEnter={() => {
+                          renameMut.mutate({ id: row.id, title: editingValue.trim() || null });
+                          setEditingId(null);
+                        }}
+                        onBlur={() => {
+                          renameMut.mutate({ id: row.id, title: editingValue.trim() || null });
+                          setEditingId(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') setEditingId(null);
+                        }}
+                        style={{ maxWidth: 220 }}
+                      />
+                    );
+                  }
+                  const label = row.title ?? `${row.id.slice(0, 8)}…`;
+                  const startEdit = () => {
+                    setEditingId(row.id);
+                    setEditingValue(row.title ?? '');
+                  };
+                  return (
+                    <span className="sessions-name-cell">
+                      <button
+                        type="button"
+                        className="sessions-name"
+                        title={row.title ?? undefined}
+                        onDoubleClick={startEdit}
+                        onKeyDown={(e) => {
+                          if (e.key === 'F2') startEdit();
+                        }}
+                      >
+                        {label}
+                      </button>
+                      <button
+                        type="button"
+                        className="sessions-name-edit"
+                        aria-label="Rename session"
+                        title="Rename"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startEdit();
+                        }}
+                      >
+                        <PencilIcon />
+                      </button>
+                    </span>
+                  );
+                },
+              },
+              {
+                title: 'ID',
+                dataIndex: 'id',
+                width: 120,
+                render: (v: string) => <span className="sessions-mono">{v.slice(0, 8)}…</span>,
+              },
+              {
+                title: 'Personality',
+                dataIndex: 'personalityId',
+                width: 140,
+                render: (v: string | null) => v ?? '—',
+              },
+              {
+                title: 'Model',
+                dataIndex: 'model',
+                ellipsis: true,
+                render: (v: string) => <span className="sessions-mono">{v}</span>,
+              },
+              {
+                title: 'Tokens',
+                width: 140,
+                render: (_v, row) => (
+                  <span className="sessions-mono sessions-num">
+                    {formatTokens(row.usage.inputTokens + row.usage.outputTokens)}
+                  </span>
+                ),
+              },
+              {
+                title: 'Cost',
+                width: 90,
+                render: (_v, row) => (
+                  <span className="sessions-mono sessions-num">
+                    {formatCost(row.usage.estimatedCostUsd)}
+                  </span>
+                ),
+              },
+              {
+                title: 'Updated',
+                dataIndex: 'updatedAt',
+                width: 180,
+                render: (v: string) => <span className="sessions-mono">{formatRelative(v)}</span>,
+              },
+              {
+                title: '',
+                width: 56,
+                align: 'right' as const,
+                render: (_v, row) => (
+                  <RowActions
+                    id={row.id}
+                    onOpen={() => navigate(`/chat?session=${row.id}`)}
+                    onRename={() => {
+                      setEditingId(row.id);
+                      setEditingValue(row.title ?? '');
+                    }}
+                    onFork={() =>
+                      forkMut.mutate(row.id, {
+                        onSuccess: (result) => navigate(`/chat?session=${result.session.id}`),
+                      })
+                    }
+                    onExport={() => exportMut.mutate(row.id)}
+                    onDelete={() => deleteMut.mutate(row.id)}
+                    deleting={deleteMut.isPending && deleteMut.variables === row.id}
+                  />
+                ),
+              },
+            ]}
+          />
 
-          {/* Pinned section */}
-          {pinned.length > 0 && (
-            <div className="sessions-pinned-section">
-              {pinned.map((s) => (
-                <SessionRow
-                  key={s.id}
-                  session={s}
-                  isPinned
-                  editingId={editingId}
-                  editingValue={editingValue}
-                  onSetEditingId={setEditingId}
-                  onSetEditingValue={setEditingValue}
-                  onRenameCommit={handleRenameCommit}
-                  onNavigate={navigate}
-                  onContextMenu={openContextMenu}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Regular rows */}
-          {unpinned.map((s) => (
-            <SessionRow
-              key={s.id}
-              session={s}
-              isPinned={false}
-              editingId={editingId}
-              editingValue={editingValue}
-              onSetEditingId={setEditingId}
-              onSetEditingValue={setEditingValue}
-              onRenameCommit={handleRenameCommit}
-              onNavigate={navigate}
-              onContextMenu={openContextMenu}
-            />
-          ))}
-
-          {/* Load more */}
-          {hasNextPage && (
+          {hasNextPage ? (
             <div className="sessions-loadmore">
-              <button
-                type="button"
-                className="btn btn-ghost"
+              <Button
                 onClick={() => fetchNextPage()}
+                loading={isFetchingNextPage}
                 disabled={isFetchingNextPage}
               >
-                {isFetchingNextPage ? 'Loading…' : 'Load more'}
-              </button>
+                Load more
+              </Button>
             </div>
-          )}
+          ) : null}
         </>
-      )}
-
-      {/* Context menu */}
-      {contextMenu && (
-        <SessionContextMenu
-          sessionId={contextMenu.sessionId}
-          position={contextMenu.position}
-          pinned={contextMenu.pinned}
-          onClose={() => setContextMenu(null)}
-          onRename={() => {
-            const session = flat.find((s) => s.id === contextMenu.sessionId);
-            if (session) {
-              setEditingId(session.id);
-              setEditingValue(session.title ?? '');
-            }
-          }}
-        />
       )}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Session row
-// ---------------------------------------------------------------------------
-
-interface SessionRowProps {
-  session: Session;
-  isPinned: boolean;
-  editingId: string | null;
-  editingValue: string;
-  onSetEditingId: (id: string | null) => void;
-  onSetEditingValue: (val: string) => void;
-  onRenameCommit: (id: string, val: string) => void;
-  onNavigate: (path: string) => void;
-  onContextMenu: (e: React.MouseEvent, session: Session) => void;
+interface RowActionsProps {
+  id: string;
+  onOpen: () => void;
+  onRename: () => void;
+  onFork: () => void;
+  onExport: () => void;
+  onDelete: () => void;
+  deleting: boolean;
 }
 
-function SessionRow({
-  session,
-  isPinned,
-  editingId,
-  editingValue,
-  onSetEditingId,
-  onSetEditingValue,
-  onRenameCommit,
-  onNavigate,
-  onContextMenu,
-}: SessionRowProps) {
-  const isEditing = editingId === session.id;
-  const renameRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (isEditing && renameRef.current) {
-      renameRef.current.focus();
-    }
-  }, [isEditing]);
-
-  const handleRowClick = (e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (target.closest('.sessions-actions-trigger') || target.closest('.session-context-menu')) {
-      return;
-    }
-    if (isEditing) return;
-    onNavigate(`/chat?session=${session.id}`);
-  };
-
-  const label = session.title ?? `${session.id.slice(0, 8)}…`;
+function RowActions({
+  id,
+  onOpen,
+  onRename,
+  onFork,
+  onExport,
+  onDelete,
+  deleting,
+}: RowActionsProps) {
+  const items: MenuProps['items'] = [
+    { key: 'open', label: 'Open' },
+    { key: 'rename', label: 'Rename' },
+    { key: 'fork', label: 'Fork' },
+    { key: 'export', label: 'Export as Markdown' },
+    {
+      key: 'delete',
+      label: (
+        <Popconfirm
+          title="Delete this session?"
+          description="The conversation history is permanently removed."
+          okText="Delete"
+          okButtonProps={{ danger: true, loading: deleting }}
+          cancelText="Cancel"
+          onConfirm={(e) => {
+            e?.stopPropagation();
+            onDelete();
+          }}
+        >
+          <span style={{ color: '#f87171' }}>Delete</span>
+        </Popconfirm>
+      ),
+    },
+  ];
 
   return (
-    <button
-      type="button"
-      className={`sessions-row${isPinned ? ' sessions-row--pinned' : ''}`}
-      onClick={handleRowClick}
+    <div
+      role="toolbar"
+      aria-label={`Actions for ${id}`}
+      className="sessions-row-actions"
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
     >
-      {/* Name */}
-      <span className="sessions-cell sessions-col-name">
-        {isPinned && (
-          <span className="sessions-pin-icon" title="Pinned">
-            &#9733;
-          </span>
-        )}
-        {isEditing ? (
-          <input
-            ref={renameRef}
-            type="text"
-            className="sessions-rename-input"
-            value={editingValue}
-            onChange={(e) => onSetEditingValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                onRenameCommit(session.id, editingValue);
-              }
-              if (e.key === 'Escape') {
-                onSetEditingId(null);
-              }
-            }}
-            onBlur={() => onRenameCommit(session.id, editingValue)}
-            onClick={(e) => e.stopPropagation()}
-          />
-        ) : (
-          <span className="sessions-row-name" title={session.title ?? undefined}>
-            {label}
-          </span>
-        )}
-      </span>
-
-      {/* Personality */}
-      <span className="sessions-cell sessions-col-personality sessions-mono">
-        {session.personalityId ?? '—'}
-      </span>
-
-      {/* Model */}
-      <span className="sessions-cell sessions-col-model sessions-mono sessions-tertiary">
-        {session.model}
-      </span>
-
-      {/* Tokens */}
-      <span className="sessions-cell sessions-col-tokens sessions-mono sessions-tertiary">
-        {formatTokens(session.usage.inputTokens + session.usage.outputTokens)}
-      </span>
-
-      {/* Cost */}
-      <span className="sessions-cell sessions-col-cost sessions-mono sessions-tertiary">
-        {formatCost(session.usage.estimatedCostUsd)}
-      </span>
-
-      {/* Updated */}
-      <span className="sessions-cell sessions-col-updated sessions-mono sessions-tertiary">
-        {formatRelative(session.updatedAt)}
-      </span>
-
-      {/* Actions */}
-      <span className="sessions-cell sessions-col-actions">
-        <button
-          type="button"
-          className="sessions-actions-trigger"
-          aria-label={`Actions for ${session.title ?? session.id.slice(0, 8)}`}
-          onClick={(e) => onContextMenu(e, session)}
-        >
-          &#x22EF;
+      <Dropdown
+        menu={{
+          items,
+          onClick: ({ key, domEvent }) => {
+            domEvent.stopPropagation();
+            if (key === 'open') onOpen();
+            else if (key === 'rename') onRename();
+            else if (key === 'fork') onFork();
+            else if (key === 'export') onExport();
+            // delete handled by the Popconfirm inside the menu item
+          },
+        }}
+        trigger={['click']}
+        placement="bottomRight"
+      >
+        <button type="button" className="sessions-row-trigger" aria-label="Row actions">
+          <DotsIcon />
         </button>
-      </span>
-    </button>
+      </Dropdown>
+    </div>
+  );
+}
+
+function DotsIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true">
+      <circle cx="3" cy="7" r="1.3" />
+      <circle cx="7" cy="7" r="1.3" />
+      <circle cx="11" cy="7" r="1.3" />
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+      <path
+        d="M10 1.5l2.5 2.5L4.5 12H2v-2.5L10 1.5z"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
@@ -308,14 +362,15 @@ function SessionRow({
 // ---------------------------------------------------------------------------
 
 function formatTokens(n: number): string {
-  if (n === 0) return '—';
-  return n.toLocaleString('en-US');
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
 function formatCost(usd: number): string {
   if (usd === 0) return '—';
-  if (usd < 0.001) return '<$0.001';
-  return `$${usd.toFixed(3)}`;
+  if (usd < 0.01) return `<$0.01`;
+  return `$${usd.toFixed(2)}`;
 }
 
 function formatRelative(iso: string): string {

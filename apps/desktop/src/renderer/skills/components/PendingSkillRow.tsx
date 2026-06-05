@@ -43,9 +43,7 @@ export function PendingSkillRow({ candidate, onApprove, onReject }: PendingSkill
     <div
       ref={rowRef}
       style={{
-        background: 'var(--bg-elevated)',
-        border: '1px solid var(--border-subtle)',
-        borderRadius: 8,
+        borderBottom: '1px solid var(--border-subtle)',
         overflow: 'hidden',
         opacity: dismissed ? 0 : 1,
         maxHeight: dismissed ? 0 : 600,
@@ -108,17 +106,16 @@ export function PendingSkillRow({ candidate, onApprove, onReject }: PendingSkill
           onClick={handleApprove}
           style={{
             background: 'none',
-            border: '1px solid rgba(74, 158, 255, 0.3)',
+            border: 'none',
             cursor: 'pointer',
             height: 28,
-            padding: '0 12px',
+            padding: '0 8px',
             borderRadius: 'var(--radius-sm)',
             fontSize: 12,
-            fontWeight: 500,
-            color: 'var(--blue)',
+            color: 'var(--success)',
           }}
         >
-          Approve
+          Approve ✓
         </button>
 
         <div style={{ width: 8 }} />
@@ -128,17 +125,16 @@ export function PendingSkillRow({ candidate, onApprove, onReject }: PendingSkill
           onClick={handleReject}
           style={{
             background: 'none',
-            border: '1px solid rgba(248, 113, 113, 0.3)',
+            border: 'none',
             cursor: 'pointer',
             height: 28,
-            padding: '0 12px',
+            padding: '0 8px',
             borderRadius: 'var(--radius-sm)',
             fontSize: 12,
-            fontWeight: 500,
-            color: 'var(--red)',
+            color: 'var(--error)',
           }}
         >
-          Reject
+          Reject ✗
         </button>
       </div>
 

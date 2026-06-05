@@ -12,19 +12,6 @@ interface AgentTableProps {
   onRegister: () => void;
 }
 
-function statusForAgent(agent: MeshAgent): 'connected' | 'connecting' | 'offline' {
-  const elapsed = Date.now() - new Date(agent.lastSeenAt).getTime();
-  if (elapsed > 30_000) return 'offline';
-  if (elapsed > 15_000) return 'connecting';
-  return 'connected';
-}
-
-function statusLabel(s: 'connected' | 'connecting' | 'offline'): string {
-  if (s === 'connected') return 'Healthy';
-  if (s === 'connecting') return 'Reconnecting';
-  return 'Offline';
-}
-
 export function AgentTable({ agents, onRegister }: AgentTableProps) {
   return (
     <div>
@@ -45,7 +32,7 @@ export function AgentTable({ agents, onRegister }: AgentTableProps) {
             color: 'var(--text-tertiary)',
           }}
         >
-          STATUS
+          AGENT REGISTRY
         </div>
         <button
           type="button"
@@ -53,7 +40,7 @@ export function AgentTable({ agents, onRegister }: AgentTableProps) {
           style={{
             height: 28,
             padding: '0 12px',
-            borderRadius: 'var(--radius-sm, 4px)',
+            borderRadius: 4,
             border: '1px solid var(--border-subtle)',
             background: 'transparent',
             color: 'var(--text-primary)',
@@ -65,7 +52,6 @@ export function AgentTable({ agents, onRegister }: AgentTableProps) {
         </button>
       </div>
 
-      {/* Column headers */}
       <div
         style={{
           display: 'flex',
@@ -74,124 +60,96 @@ export function AgentTable({ agents, onRegister }: AgentTableProps) {
           borderBottom: '1px solid var(--border-subtle)',
         }}
       >
-        <span style={{ ...headerStyle, flex: 1 }}>NODE</span>
-        <span style={{ ...headerStyle, width: 120 }}>STATUS</span>
-        <span style={{ ...headerStyle, width: 80 }}>SESSIONS</span>
-        <span style={{ ...headerStyle, width: 80 }}>LATENCY</span>
+        <span style={{ ...headerStyle, width: 200 }}>AGENT ID</span>
+        <span style={{ ...headerStyle, flex: 1 }}>CAPABILITIES</span>
+        <span style={{ ...headerStyle, width: 60 }}>STATUS</span>
+        <span style={{ ...headerStyle, width: 120 }}>LAST SEEN</span>
       </div>
 
-      <div style={{ maxHeight: 200, overflowY: 'auto' }}>
-        {agents.length === 0 ? (
-          <div style={{ padding: '24px 0', fontSize: 13, color: 'var(--text-secondary)' }}>
-            No agents registered.{' '}
-            <button
-              type="button"
-              onClick={onRegister}
+      {agents.length === 0 ? (
+        <div style={{ padding: '24px 0', fontSize: 13, color: 'var(--text-secondary)' }}>
+          No agents registered.{' '}
+          <button
+            type="button"
+            onClick={onRegister}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--info)',
+              cursor: 'pointer',
+              fontSize: 'inherit',
+              padding: 0,
+            }}
+          >
+            Register an agent &rarr;
+          </button>
+        </div>
+      ) : (
+        agents.map((agent) => (
+          <div
+            key={agent.agentId}
+            style={{
+              height: 40,
+              borderBottom: '1px solid var(--border-subtle)',
+              display: 'flex',
+              alignItems: 'center',
+            }}
+          >
+            <span
               style={{
-                background: 'none',
-                border: 'none',
-                color: 'var(--info)',
-                cursor: 'pointer',
-                fontSize: 'inherit',
-                padding: 0,
+                fontFamily: 'var(--font-mono)',
+                fontSize: 13,
+                color: 'var(--text-primary)',
+                width: 200,
+                flexShrink: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
               }}
             >
-              Register an agent &rarr;
-            </button>
+              {agent.agentId}
+            </span>
+            <span
+              style={{
+                flex: 1,
+                fontSize: 12,
+                color: 'var(--text-secondary)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {agent.capabilities.join(', ')}
+            </span>
+            <span style={{ width: 60, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+              <StatusDot
+                color={agent.activeSessions > 0 ? 'var(--success)' : 'var(--error)'}
+                size={6}
+              />
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 11,
+                color: 'var(--text-tertiary)',
+                width: 120,
+                flexShrink: 0,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {agent.lastSeenAt}
+            </span>
           </div>
-        ) : (
-          agents.map((agent) => {
-            const s = statusForAgent(agent);
-            return (
-              <div
-                key={agent.agentId}
-                style={{
-                  height: 36,
-                  borderBottom: '1px solid var(--border-subtle)',
-                  display: 'flex',
-                  alignItems: 'center',
-                }}
-              >
-                <span
-                  style={{
-                    flex: 1,
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 12,
-                    color: 'var(--text-primary)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {agent.agentId}
-                </span>
-                <span
-                  style={{
-                    width: 120,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    flexShrink: 0,
-                  }}
-                >
-                  <StatusDot
-                    color={
-                      s === 'connected'
-                        ? 'var(--success)'
-                        : s === 'connecting'
-                          ? 'var(--warning)'
-                          : 'var(--error)'
-                    }
-                    size={8}
-                  />
-                  <span
-                    style={{
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 12,
-                      color: 'var(--text-secondary)',
-                    }}
-                  >
-                    {statusLabel(s)}
-                  </span>
-                </span>
-                <span
-                  style={{
-                    width: 80,
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 12,
-                    color: 'var(--text-tertiary)',
-                    fontVariantNumeric: 'tabular-nums',
-                    flexShrink: 0,
-                  }}
-                >
-                  {agent.activeSessions}
-                </span>
-                <span
-                  style={{
-                    width: 80,
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 12,
-                    color: 'var(--text-tertiary)',
-                    fontVariantNumeric: 'tabular-nums',
-                    flexShrink: 0,
-                  }}
-                >
-                  &mdash;
-                </span>
-              </div>
-            );
-          })
-        )}
-      </div>
+        ))
+      )}
     </div>
   );
 }
 
 const headerStyle: React.CSSProperties = {
-  fontSize: 11,
+  fontSize: 10,
   fontWeight: 500,
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
-  fontFamily: 'var(--font-mono)',
   color: 'var(--text-tertiary)',
 };

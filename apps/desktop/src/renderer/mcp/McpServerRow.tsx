@@ -168,16 +168,11 @@ export function McpServerRow({
         <span
           style={{
             fontFamily: 'var(--font-mono)',
-            fontSize: 11,
+            fontSize: 12,
             color: 'var(--text-tertiary)',
-            backgroundColor: 'var(--bg-elevated)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 4,
-            padding: '2px 6px',
-            whiteSpace: 'nowrap',
           }}
         >
-          — tools
+          —
         </span>
       </div>
 

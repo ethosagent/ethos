@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { SectionLabel } from '../ui/SectionLabel';
+import { MemoryEditor } from './MemoryEditor';
+import { MemoryView } from './MemoryView';
 import { useMemory } from './useMemory';
 
 interface MemoryPanelProps {
@@ -10,17 +13,36 @@ interface MemoryPanelProps {
   onDirtyChange?: (store: string, isDirty: boolean) => void;
 }
 
-function countMatches(text: string, q: string): number {
-  if (!q) return 0;
-  const lower = text.toLowerCase();
-  const needle = q.toLowerCase();
-  let count = 0;
-  let idx = lower.indexOf(needle);
-  while (idx !== -1) {
-    count++;
-    idx = lower.indexOf(needle, idx + needle.length);
-  }
-  return count;
+type Mode = 'view' | 'edit';
+
+function useRelativeTime(iso: string | null): string {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (!iso) return '';
+
+  const diffMs = now - new Date(iso).getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHr = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHr / 24);
+
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+
+  if (diffDay > 0) return rtf.format(-diffDay, 'day');
+  if (diffHr > 0) return rtf.format(-diffHr, 'hour');
+  if (diffMin > 0) return rtf.format(-diffMin, 'minute');
+  return rtf.format(-diffSec, 'second');
+}
+
+function wordCount(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
 }
 
 const skeletonKeyframes = `
@@ -61,245 +83,231 @@ export function MemoryPanel({
   emptyText,
   onDirtyChange,
 }: MemoryPanelProps) {
-  const { content, loading, error, reload, save } = useMemory(store, personalityId, userId);
+  const { content, modifiedAt, loading, error, reload, save } = useMemory(
+    store,
+    personalityId,
+    userId,
+  );
+  const [mode, setMode] = useState<Mode>('view');
   const [draft, setDraft] = useState('');
-  const [savedContent, setSavedContent] = useState('');
   const [saving, setSaving] = useState(false);
-  const [search, setSearch] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [dirty, setDirty] = useState(false);
 
-  // Sync from loaded content
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset when data changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset edit state when selection changes
   useEffect(() => {
+    setMode('view');
+    setDraft('');
+    setDirty(false);
+  }, [personalityId, userId]);
+
+  const handleEdit = useCallback(() => {
     setDraft(content);
-    setSavedContent(content);
-    setSearch('');
-  }, [content, personalityId, userId]);
+    setMode('edit');
+    setDirty(false);
+  }, [content]);
 
-  const dirty = draft !== savedContent;
-
-  useEffect(() => {
-    onDirtyChange?.(store, dirty);
-  }, [store, dirty, onDirtyChange]);
+  const handleCancel = useCallback(() => {
+    setDraft('');
+    setMode('view');
+    setDirty(false);
+  }, []);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
     const ok = await save(draft);
     setSaving(false);
     if (ok) {
-      setSavedContent(draft);
+      setMode('view');
+      setDirty(false);
     }
   }, [draft, save]);
 
-  const handleRevert = useCallback(() => {
-    if (!dirty) return;
-    setDraft(savedContent);
-  }, [dirty, savedContent]);
+  const handleDraftChange = useCallback((value: string) => {
+    setDraft(value);
+    setDirty(true);
+  }, []);
 
-  const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(draft);
-    } catch {
-      // clipboard may not be available
-    }
-  }, [draft]);
+  const isDirty = mode === 'edit' && dirty;
 
-  const handleClear = useCallback(async () => {
-    const confirmed = window.confirm('This will clear all memory. Are you sure?');
-    if (!confirmed) return;
-    setDraft('');
-    setSaving(true);
-    const ok = await save('');
-    setSaving(false);
-    if (ok) {
-      setSavedContent('');
-    }
-  }, [save]);
+  useEffect(() => {
+    onDirtyChange?.(store, isDirty);
+  }, [store, isDirty, onDirtyChange]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === 'Tab') {
-        e.preventDefault();
-        const textarea = textareaRef.current;
-        if (!textarea) return;
-        const start = textarea.selectionStart;
-        const end = textarea.selectionEnd;
-        const value = textarea.value;
-        const updated = `${value.substring(0, start)}  ${value.substring(end)}`;
-        setDraft(updated);
-        requestAnimationFrame(() => {
-          textarea.selectionStart = start + 2;
-          textarea.selectionEnd = start + 2;
-        });
-      }
-
-      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-        e.preventDefault();
-        handleSave();
-      }
-    },
-    [handleSave],
-  );
-
-  const matchCount = search ? countMatches(draft, search) : 0;
-
-  if (loading) {
-    return (
-      <div style={{ flex: 1, padding: 16 }}>
-        <SkeletonLoader />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 16 }}>
-        <span style={{ fontSize: 13, color: 'var(--error)' }}>{error}</span>
-        <button
-          type="button"
-          onClick={reload}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: 'var(--info)',
-            fontSize: 13,
-            cursor: 'pointer',
-            padding: 0,
-            fontFamily: 'var(--font-display)',
-            textAlign: 'left',
-          }}
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
-
-  const actionBtnStyle: React.CSSProperties = {
-    background: 'none',
-    border: 'none',
-    color: 'var(--text-secondary)',
-    fontSize: 11,
-    cursor: 'pointer',
-    padding: '4px 8px',
-    fontFamily: 'var(--font-display)',
-    borderRadius: 4,
-  };
+  const relativeTime = useRelativeTime(modifiedAt);
+  const displayContent = mode === 'edit' ? draft : content;
+  const words = wordCount(displayContent);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-      {/* Editor toolbar */}
+    <div
+      style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'var(--bg-elevated)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 8,
+        minWidth: 0,
+      }}
+    >
+      {/* Header */}
       <div
         style={{
+          height: 36,
+          padding: '0 16px',
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
-          marginBottom: 12,
+          justifyContent: 'space-between',
+          borderBottom: '1px solid var(--border-subtle)',
+          flexShrink: 0,
+        }}
+      >
+        <SectionLabel>{label}</SectionLabel>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {mode === 'view' ? (
+            <button
+              type="button"
+              onClick={handleEdit}
+              disabled={loading}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--info)',
+                fontSize: 12,
+                cursor: loading ? 'default' : 'pointer',
+                padding: 0,
+                fontFamily: 'var(--font-display)',
+                opacity: loading ? 0.5 : 1,
+              }}
+            >
+              Edit
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving}
+                style={{
+                  background: 'none',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                  fontSize: 12,
+                  fontFamily: 'var(--font-display)',
+                  height: 24,
+                  borderRadius: 4,
+                  padding: '0 8px',
+                  cursor: saving ? 'default' : 'pointer',
+                  opacity: saving ? 0.5 : 1,
+                }}
+              >
+                {saving ? 'Saving...' : 'Done'}
+              </button>
+              <button
+                type="button"
+                onClick={handleCancel}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-tertiary)',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  padding: 0,
+                  fontFamily: 'var(--font-display)',
+                }}
+              >
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Content */}
+      <div
+        style={{
+          flex: 1,
+          padding: 16,
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        {loading ? (
+          <SkeletonLoader />
+        ) : error ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ fontSize: 13, color: 'var(--error)' }}>{error}</span>
+            <button
+              type="button"
+              onClick={reload}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--info)',
+                fontSize: 13,
+                cursor: 'pointer',
+                padding: 0,
+                fontFamily: 'var(--font-display)',
+                textAlign: 'left',
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        ) : mode === 'edit' ? (
+          <MemoryEditor content={draft} onChange={handleDraftChange} onSave={handleSave} />
+        ) : content ? (
+          <MemoryView content={content} />
+        ) : (
+          <div
+            style={{
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 14,
+              color: 'var(--text-tertiary)',
+              textAlign: 'center',
+              padding: '0 24px',
+            }}
+          >
+            {emptyText}
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div
+        style={{
+          height: 28,
+          padding: '0 16px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          borderTop: '1px solid var(--border-subtle)',
           flexShrink: 0,
         }}
       >
         <span
           style={{
             fontFamily: 'var(--font-mono)',
-            fontSize: 13,
-            fontWeight: 500,
-            color: 'var(--text-primary)',
-            flex: 1,
+            fontSize: 11,
+            color: 'var(--text-tertiary)',
+            fontVariantNumeric: 'tabular-nums',
           }}
         >
-          {label}
-          {dirty ? <span style={{ color: 'var(--blue)', marginLeft: 4 }}>*</span> : null}
+          {modifiedAt ? `Updated ${relativeTime}` : 'Never updated'}
         </span>
-
-        {/* Search */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <input
-            type="text"
-            placeholder="Search..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{
-              width: 160,
-              background: 'var(--bg-elevated)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 4,
-              padding: '4px 8px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 11,
-              color: 'var(--text-primary)',
-              outline: 'none',
-            }}
-          />
-          {search ? (
-            <span
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: 11,
-                color: 'var(--text-tertiary)',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {matchCount} match{matchCount === 1 ? '' : 'es'}
-            </span>
-          ) : null}
-        </div>
-
-        {/* Action buttons */}
-        <button type="button" onClick={handleCopy} style={actionBtnStyle}>
-          Copy
-        </button>
-        <button
-          type="button"
-          onClick={handleRevert}
-          disabled={!dirty}
-          style={{ ...actionBtnStyle, opacity: dirty ? 1 : 0.4 }}
-        >
-          Revert
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={!dirty || saving}
+        <span
           style={{
-            ...actionBtnStyle,
-            color: dirty ? 'var(--blue)' : 'var(--text-secondary)',
-            opacity: dirty && !saving ? 1 : 0.4,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            color: 'var(--text-tertiary)',
           }}
         >
-          {saving ? 'Saving...' : 'Save'}
-        </button>
-        <button
-          type="button"
-          onClick={handleClear}
-          style={{ ...actionBtnStyle, color: 'var(--text-tertiary)' }}
-        >
-          Clear
-        </button>
+          {words} {words === 1 ? 'word' : 'words'}
+        </span>
       </div>
-
-      {/* Textarea editor */}
-      <textarea
-        ref={textareaRef}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={handleKeyDown}
-        spellCheck={false}
-        placeholder={emptyText}
-        style={{
-          flex: 1,
-          width: '100%',
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--border-subtle)',
-          borderRadius: 6,
-          padding: 16,
-          fontFamily: 'var(--font-mono)',
-          fontSize: 12,
-          lineHeight: 1.7,
-          color: 'var(--text-primary)',
-          resize: 'none',
-          outline: 'none',
-        }}
-      />
     </div>
   );
 }

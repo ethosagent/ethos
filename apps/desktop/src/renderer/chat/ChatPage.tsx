@@ -512,10 +512,7 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
         onDeny={handleDeny}
         onClarifyRespond={handleClarifyRespond}
         onRetry={handleRetry}
-        onSend={handleSend}
         error={error}
-        personalityId={activePersonalityId}
-        personalityName={activePersonalityId}
       />
 
       <TurnStatusBar isStreaming={streaming} currentOp={currentOp} elapsedMs={elapsedMs} />

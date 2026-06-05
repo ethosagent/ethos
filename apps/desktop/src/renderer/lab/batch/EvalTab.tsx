@@ -5,6 +5,11 @@ import { ProgressBar } from '../../ui/ProgressBar';
 import { BatchResultsTable } from './BatchResultsTable';
 import { FileDropZone } from './FileDropZone';
 
+interface PersonalityOption {
+  id: string;
+  name: string;
+}
+
 interface RunStatus {
   id: string;
   status: 'running' | 'pending' | 'completed' | 'failed';
@@ -27,39 +32,6 @@ interface EvalResult {
 
 type Scorer = 'exact' | 'contains' | 'regex' | 'llm';
 
-const fieldLabelStyle: React.CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 11,
-  fontWeight: 500,
-  textTransform: 'uppercase',
-  letterSpacing: '0.05em',
-  color: 'var(--text-tertiary)',
-  marginBottom: 6,
-};
-
-const selectStyle: React.CSSProperties = {
-  width: '100%',
-  fontSize: 13,
-  color: 'var(--text-primary)',
-  background: 'var(--bg-elevated)',
-  border: '1px solid var(--border-strong)',
-  borderRadius: 'var(--radius-sm)',
-  padding: '7px 10px',
-  outline: 'none',
-};
-
-const numberInputStyle: React.CSSProperties = {
-  width: 80,
-  fontFamily: 'var(--font-mono)',
-  fontSize: 13,
-  color: 'var(--text-primary)',
-  background: 'var(--bg-elevated)',
-  border: '1px solid var(--border-strong)',
-  borderRadius: 'var(--radius-sm)',
-  padding: '7px 10px',
-  outline: 'none',
-};
-
 export function EvalTab() {
   const { state } = useAppState();
   const { port } = state;
@@ -70,17 +42,39 @@ export function EvalTab() {
   );
 
   const [tasksContent, setTasksContent] = useState<string | null>(null);
-  const [tasksName, setTasksName] = useState<string | null>(null);
-  const [tasksSize, setTasksSize] = useState<number | null>(null);
   const [expectedContent, setExpectedContent] = useState<string | null>(null);
-  const [expectedName, setExpectedName] = useState<string | null>(null);
-  const [expectedSize, setExpectedSize] = useState<number | null>(null);
+  const [personalities, setPersonalities] = useState<PersonalityOption[]>([]);
+  const [personalityId, setPersonalityId] = useState('');
   const [concurrency, setConcurrency] = useState(4);
   const [scorer, setScorer] = useState<Scorer>('contains');
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<RunStatus | null>(null);
   const [runResults, setRunResults] = useState<EvalResult[] | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await client.rpc.personalities.list({});
+        if (cancelled) return;
+        const items = res.items.map((p: { id: string; name: string }) => ({
+          id: p.id,
+          name: p.name,
+        }));
+        setPersonalities(items);
+        if (items.length > 0 && !personalityId) {
+          setPersonalityId(res.defaultId ?? items[0].id);
+        }
+      } catch {
+        // best-effort
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [client, personalityId]);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -181,42 +175,11 @@ export function EvalTab() {
     }
   }, [client, activeRunId]);
 
-  const handleTasksFile = useCallback((content: string, name: string, size: number) => {
-    setTasksContent(content);
-    setTasksName(name);
-    setTasksSize(size);
-  }, []);
-
-  const handleClearTasks = useCallback(() => {
-    setTasksContent(null);
-    setTasksName(null);
-    setTasksSize(null);
-  }, []);
-
-  const handleExpectedFile = useCallback((content: string, name: string, size: number) => {
-    setExpectedContent(content);
-    setExpectedName(name);
-    setExpectedSize(size);
-  }, []);
-
-  const handleClearExpected = useCallback(() => {
-    setExpectedContent(null);
-    setExpectedName(null);
-    setExpectedSize(null);
-  }, []);
-
   const progress =
     runStatus && runStatus.total > 0 ? (runStatus.passed + runStatus.failed) / runStatus.total : 0;
   const isRunning = runStatus?.status === 'running' || runStatus?.status === 'pending';
   const isDone = runStatus && !isRunning;
   const canStart = tasksContent && expectedContent && !isRunning;
-
-  const scorerOptions: { value: Scorer; label: string }[] = [
-    { value: 'contains', label: 'Contains' },
-    { value: 'exact', label: 'Exact match' },
-    { value: 'regex', label: 'Regex' },
-    { value: 'llm', label: 'LLM judge' },
-  ];
 
   function formatEta(): string {
     if (!runStatus || !isRunning) return '...';
@@ -231,153 +194,159 @@ export function EvalTab() {
     return `${Math.round(secs / 60)}m ${secs % 60}s`;
   }
 
+  const scorerOptions: { value: Scorer; label: string }[] = [
+    { value: 'contains', label: 'Contains' },
+    { value: 'exact', label: 'Exact' },
+    { value: 'regex', label: 'Regex' },
+    { value: 'llm', label: 'LLM' },
+  ];
+
   return (
-    <div style={{ display: 'flex', height: '100%' }}>
-      {/* Left config panel */}
-      <div
-        style={{
-          width: 280,
-          flexShrink: 0,
-          borderRight: '1px solid var(--border-subtle)',
-          padding: '20px 16px',
-          background: 'var(--bg-base)',
-          overflowY: 'auto',
-        }}
-      >
-        <FileDropZone
-          label="Tasks (.jsonl)"
-          fileName={tasksName}
-          fileSize={tasksSize}
-          onFile={handleTasksFile}
-          onClear={handleClearTasks}
-        />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <FileDropZone label="Tasks (.jsonl)" onFile={setTasksContent} />
+      <FileDropZone label="Expected outputs (.jsonl)" onFile={setExpectedContent} />
 
-        <div style={{ marginTop: 16 }}>
-          <FileDropZone
-            label="Expected outputs (.jsonl)"
-            fileName={expectedName}
-            fileSize={expectedSize}
-            onFile={handleExpectedFile}
-            onClear={handleClearExpected}
-          />
-        </div>
-
-        <div style={{ marginTop: 16 }}>
-          <div style={fieldLabelStyle}>Scoring method</div>
-          <select
-            value={scorer}
-            onChange={(e) => setScorer(e.target.value as Scorer)}
-            style={selectStyle}
-          >
-            {scorerOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div style={{ marginTop: 14 }}>
-          <div style={fieldLabelStyle}>Concurrency</div>
-          <input
-            type="number"
-            min={1}
-            max={20}
-            value={concurrency}
-            onChange={(e) => setConcurrency(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
-            style={numberInputStyle}
-          />
-        </div>
-
-        <button
-          type="button"
-          onClick={handleStart}
-          disabled={!canStart}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, height: 32 }}>
+        <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Personality</span>
+        <select
+          value={personalityId}
+          onChange={(e) => setPersonalityId(e.target.value)}
           style={{
-            width: '100%',
-            marginTop: 24,
-            padding: 10,
-            borderRadius: 'var(--radius-sm)',
-            border: 'none',
-            background: canStart ? 'var(--blue)' : 'var(--bg-overlay)',
-            color: canStart ? '#fff' : 'var(--text-tertiary)',
+            width: 200,
             fontSize: 13,
-            fontWeight: 500,
-            cursor: canStart ? 'pointer' : 'default',
-            transition: 'background var(--motion-fast) var(--ease)',
+            color: 'var(--text-primary)',
+            background: 'var(--bg-elevated)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 4,
+            padding: '4px 8px',
+            outline: 'none',
           }}
         >
-          Run eval
-        </button>
+          {personalities.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+
+        <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Concurrency</span>
+        <input
+          type="number"
+          min={1}
+          max={16}
+          value={concurrency}
+          onChange={(e) => setConcurrency(Math.max(1, Math.min(16, Number(e.target.value) || 1)))}
+          style={{
+            width: 60,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 12,
+            textAlign: 'center',
+            color: 'var(--text-primary)',
+            background: 'var(--bg-elevated)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 4,
+            padding: '4px 8px',
+            outline: 'none',
+          }}
+        />
       </div>
 
-      {/* Right results panel */}
-      <div
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: 32 }}>
+        <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Scorer</span>
+        <div style={{ display: 'flex', gap: 0 }}>
+          {scorerOptions.map((opt, i) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setScorer(opt.value)}
+              style={{
+                height: 28,
+                padding: '0 12px',
+                fontSize: 12,
+                fontWeight: scorer === opt.value ? 600 : 400,
+                color: scorer === opt.value ? 'var(--accent)' : 'var(--text-secondary)',
+                background: scorer === opt.value ? 'var(--bg-elevated)' : 'transparent',
+                border: '1px solid var(--border-subtle)',
+                borderRight:
+                  i === scorerOptions.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+                borderRadius:
+                  i === 0
+                    ? 'var(--radius-full) 0 0 var(--radius-full)'
+                    : i === scorerOptions.length - 1
+                      ? '0 var(--radius-full) var(--radius-full) 0'
+                      : '0',
+                cursor: 'pointer',
+                transition: 'all var(--motion-fast) var(--ease)',
+              }}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={handleStart}
+        disabled={!canStart}
         style={{
-          flex: 1,
-          padding: '20px 24px',
-          background: 'var(--bg-base)',
-          overflowY: 'auto',
+          height: 36,
+          width: '100%',
+          marginTop: 12,
+          borderRadius: 'var(--radius-sm)',
+          border: 'none',
+          background: canStart ? 'var(--accent)' : 'var(--bg-overlay)',
+          color: canStart ? '#fff' : 'var(--text-tertiary)',
+          fontSize: 13,
+          fontWeight: 600,
+          cursor: canStart ? 'pointer' : 'default',
+          transition: 'background var(--motion-fast) var(--ease)',
         }}
       >
-        {activeRunId && isRunning ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              Running&hellip; {runStatus ? runStatus.passed + runStatus.failed : 0}/
-              {runStatus?.total ?? 0} completed
-            </span>
-            <ProgressBar value={progress} color="var(--blue)" />
-            <span
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: 12,
-                color: 'var(--text-tertiary)',
-              }}
-            >
-              ETA {formatEta()}
-            </span>
-          </div>
-        ) : isDone && runResults ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <BatchResultsTable results={runResults} showExpected showScore />
-            <button
-              type="button"
-              onClick={handleDownload}
-              style={{
-                height: 32,
-                padding: '0 16px',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-subtle)',
-                background: 'transparent',
-                color: 'var(--text-primary)',
-                fontSize: 13,
-                cursor: 'pointer',
-                alignSelf: 'flex-start',
-              }}
-            >
-              Download results
-            </button>
-          </div>
-        ) : (
-          <div
+        Start eval
+      </button>
+
+      {activeRunId && isRunning && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <span style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>
+            Run {activeRunId.slice(0, 8)}
+          </span>
+          <ProgressBar value={progress} />
+          <span
             style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: '100%',
-              gap: 4,
+              fontFamily: 'var(--font-mono)',
+              fontSize: 12,
+              color: 'var(--text-tertiary)',
             }}
           >
-            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-              Eval results will appear here
-            </span>
-            <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
-              Run an eval to see results.
-            </span>
-          </div>
-        )}
-      </div>
+            {runStatus ? runStatus.passed + runStatus.failed : 0} / {runStatus?.total ?? 0} complete
+            &middot; ETA {formatEta()}
+          </span>
+        </div>
+      )}
+
+      {isDone && runResults && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <BatchResultsTable results={runResults} showExpected showScore />
+          <button
+            type="button"
+            onClick={handleDownload}
+            style={{
+              height: 32,
+              padding: '0 16px',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--border-subtle)',
+              background: 'transparent',
+              color: 'var(--text-primary)',
+              fontSize: 13,
+              cursor: 'pointer',
+              alignSelf: 'flex-start',
+            }}
+          >
+            Download results
+          </button>
+        </div>
+      )}
     </div>
   );
 }

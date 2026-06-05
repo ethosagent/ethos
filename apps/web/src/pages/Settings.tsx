@@ -4,12 +4,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   App as AntApp,
   Button,
+  Card,
   Checkbox,
   Form,
   Input,
   Modal,
+  Radio,
+  Select,
   Space,
   Spin,
+  Switch,
   Table,
   Tag,
   Tooltip,
@@ -18,14 +22,13 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MonoBadge } from '../components/ui/MonoBadge';
 import { rpc } from '../rpc';
 
-// Settings — single scrollable form redesign (09-settings.md).
+// Settings tab — read/write surface for ~/.ethos/config.yaml.
 //
 // Two visibility modes:
-//   Default   — provider chain, personality, memory mode, theme.
-//   Advanced  — adds model routing table.
+//   • Default   — provider, personality, memory mode.
+//   • Advanced  — adds base URL, modelRouting record.
 //
 // The raw API key never crosses the wire on read; the server returns
 // `apiKeyPreview` (e.g. `sk-…abc1`) so users can confirm "which key" is
@@ -48,7 +51,6 @@ interface ProviderRow {
   baseUrl: string;
   testStatus: 'idle' | 'testing' | 'success' | 'error';
   testError?: string;
-  editing: boolean;
 }
 
 function emptyRow(): ProviderRow {
@@ -60,7 +62,6 @@ function emptyRow(): ProviderRow {
     apiKeyPreview: '',
     baseUrl: '',
     testStatus: 'idle',
-    editing: true,
   };
 }
 
@@ -80,9 +81,9 @@ function rowsFromConfig(
       apiKeyPreview: p.apiKeyPreview,
       baseUrl: p.baseUrl ?? '',
       testStatus: 'idle' as const,
-      editing: false,
     }));
   }
+  // Backward compat: populate from single-field config
   if (legacyProvider) {
     return [
       {
@@ -93,7 +94,6 @@ function rowsFromConfig(
         apiKeyPreview: legacyApiKeyPreview ?? '',
         baseUrl: legacyBaseUrl ?? '',
         testStatus: 'idle' as const,
-        editing: false,
       },
     ];
   }
@@ -101,27 +101,66 @@ function rowsFromConfig(
 }
 
 // ---------------------------------------------------------------------------
-// Model routing state
+// Inline test button for a single provider row
 // ---------------------------------------------------------------------------
 
-interface RoutingOverride {
-  _id: number;
-  personality: string;
-  model: string;
-}
+function RowTestButton({
+  row,
+  onStatusChange,
+}: {
+  row: ProviderRow;
+  onStatusChange: (status: ProviderRow['testStatus'], error?: string) => void;
+}) {
+  const handleTest = async () => {
+    if (!row.provider || !row.apiKey) return;
+    onStatusChange('testing');
+    try {
+      const result = await rpc.onboarding.validateProvider({
+        provider: row.provider as
+          | 'anthropic'
+          | 'openai'
+          | 'openrouter'
+          | 'openai-compat'
+          | 'ollama'
+          | 'azure',
+        apiKey: row.apiKey,
+        ...(row.baseUrl ? { baseUrl: row.baseUrl } : {}),
+      });
+      if (result.ok) {
+        onStatusChange('success');
+      } else {
+        onStatusChange('error', result.error ?? 'Validation failed');
+      }
+    } catch (err) {
+      onStatusChange('error', (err as Error).message);
+    }
+  };
 
-let nextRoutingId = 1;
+  const hasKey = row.apiKey.length > 0;
 
-function routingFromConfig(routing: Record<string, string>): RoutingOverride[] {
-  return Object.entries(routing).map(([personality, model]) => ({
-    _id: nextRoutingId++,
-    personality,
-    model,
-  }));
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <Tooltip
+        title={hasKey ? 'Test connection with the new API key' : 'Enter a new API key to test'}
+      >
+        <Button
+          size="small"
+          onClick={handleTest}
+          loading={row.testStatus === 'testing'}
+          disabled={!hasKey}
+        >
+          Test
+        </Button>
+      </Tooltip>
+      {row.testStatus === 'success' && <Tag color="success">Connected</Tag>}
+      {row.testStatus === 'error' && <Tag color="error">{row.testError ?? 'Failed'}</Tag>}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
-// Form shape
+// Form shape (no longer includes provider/model/apiKey/baseUrl — those live
+// in the provider chain state)
 // ---------------------------------------------------------------------------
 
 interface FormShape {
@@ -130,60 +169,13 @@ interface FormShape {
   skin: string;
 }
 
-// ---------------------------------------------------------------------------
-// Drag state helpers for HTML5 DnD
-// ---------------------------------------------------------------------------
-
-function useDragReorder<T>(_items: T[], setItems: React.Dispatch<React.SetStateAction<T[]>>) {
-  const dragIdx = useRef<number | null>(null);
-
-  const onDragStart = useCallback((idx: number) => {
-    dragIdx.current = idx;
-  }, []);
-
-  const onDragOver = useCallback(
-    (e: React.DragEvent, idx: number) => {
-      e.preventDefault();
-      const from = dragIdx.current;
-      if (from === null || from === idx) return;
-      setItems((prev) => {
-        const next = [...prev];
-        const dragged = next[from];
-        if (!dragged) return prev;
-        next.splice(from, 1);
-        next.splice(idx, 0, dragged);
-        dragIdx.current = idx;
-        return next;
-      });
-    },
-    [setItems],
-  );
-
-  const onDragEnd = useCallback(() => {
-    dragIdx.current = null;
-  }, []);
-
-  return { onDragStart, onDragOver, onDragEnd };
-}
-
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
-
 export function Settings() {
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
   const navigate = useNavigate();
-  const [showAdvanced, setShowAdvanced] = useState(() => {
-    try {
-      return localStorage.getItem('ethos:settings:advanced') === 'true';
-    } catch {
-      return false;
-    }
-  });
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [form] = Form.useForm<FormShape>();
   const [providerRows, setProviderRows] = useState<ProviderRow[]>([emptyRow()]);
-  const [routingOverrides, setRoutingOverrides] = useState<RoutingOverride[]>([]);
   const hydratedRef = useRef(false);
 
   const configQuery = useQuery({
@@ -196,19 +188,6 @@ export function Settings() {
     queryFn: () => rpc.personalities.list({}),
   });
 
-  // Persist advanced toggle
-  const toggleAdvanced = useCallback(() => {
-    setShowAdvanced((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem('ethos:settings:advanced', String(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  }, []);
-
   // Hydrate form + provider rows whenever config data arrives or refreshes.
   useEffect(() => {
     if (configQuery.data) {
@@ -217,6 +196,7 @@ export function Settings() {
         memory: configQuery.data.memory,
         skin: configQuery.data.skin,
       });
+      // Only hydrate provider rows on first load or when data changes identity
       if (!hydratedRef.current) {
         setProviderRows(
           rowsFromConfig(
@@ -225,12 +205,6 @@ export function Settings() {
             configQuery.data.model,
             configQuery.data.apiKeyPreview,
             configQuery.data.baseUrl,
-          ),
-        );
-        const routing = configQuery.data.modelRouting ?? {};
-        setRoutingOverrides(
-          routingFromConfig(
-            Object.fromEntries(Object.entries(routing).filter(([k]) => k !== '__fallbackChain')),
           ),
         );
         hydratedRef.current = true;
@@ -242,58 +216,26 @@ export function Settings() {
     setProviderRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
   }, []);
 
+  const moveRow = useCallback((index: number, direction: -1 | 1) => {
+    setProviderRows((prev) => {
+      const next = [...prev];
+      const target = index + direction;
+      if (target < 0 || target >= next.length) return prev;
+      const a = next[index];
+      const b = next[target];
+      if (!a || !b) return prev;
+      next[index] = b;
+      next[target] = a;
+      return next;
+    });
+  }, []);
+
   const removeRow = useCallback((index: number) => {
     setProviderRows((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const addRow = useCallback(() => {
     setProviderRows((prev) => [...prev, emptyRow()]);
-  }, []);
-
-  const drag = useDragReorder(providerRows, setProviderRows);
-
-  const handleTest = useCallback(
-    async (row: ProviderRow, idx: number) => {
-      if (!row.provider || !row.apiKey) return;
-      updateRow(idx, { testStatus: 'testing' });
-      try {
-        const result = await rpc.onboarding.validateProvider({
-          provider: row.provider as
-            | 'anthropic'
-            | 'openai'
-            | 'openrouter'
-            | 'openai-compat'
-            | 'ollama'
-            | 'azure',
-          apiKey: row.apiKey,
-          ...(row.baseUrl ? { baseUrl: row.baseUrl } : {}),
-        });
-        if (result.ok) {
-          updateRow(idx, { testStatus: 'success' });
-        } else {
-          updateRow(idx, {
-            testStatus: 'error',
-            testError: result.error ?? 'Validation failed',
-          });
-        }
-      } catch (err) {
-        updateRow(idx, { testStatus: 'error', testError: (err as Error).message });
-      }
-    },
-    [updateRow],
-  );
-
-  // Routing overrides
-  const updateRouting = useCallback((index: number, patch: Partial<RoutingOverride>) => {
-    setRoutingOverrides((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
-  }, []);
-
-  const removeRouting = useCallback((index: number) => {
-    setRoutingOverrides((prev) => prev.filter((_, i) => i !== index));
-  }, []);
-
-  const addRouting = useCallback(() => {
-    setRoutingOverrides((prev) => [...prev, { _id: nextRoutingId++, personality: '', model: '' }]);
   }, []);
 
   const updateMut = useMutation({
@@ -331,6 +273,7 @@ export function Settings() {
       return;
     }
 
+    // Build the providers array for the update
     const providers = providerRows.map((row) => {
       const entry: { provider: string; model?: string; apiKey?: string; baseUrl?: string } = {
         provider: row.provider,
@@ -341,20 +284,18 @@ export function Settings() {
       return entry;
     });
 
-    const modelRouting: Record<string, string> = {};
-    for (const override of routingOverrides) {
-      if (override.personality && override.model) {
-        modelRouting[override.personality] = override.model;
-      }
-    }
-
     const patch: Parameters<typeof rpc.config.update>[0] = {
+      // Backward compat: also write the legacy single-provider fields from primary
       provider: primary.provider,
       model: primary.model,
       personality: values.personality,
       memory: values.memory,
       skin: values.skin,
-      modelRouting,
+      modelRouting: Object.fromEntries(
+        Object.entries(configQuery.data?.modelRouting ?? {}).filter(
+          ([k]) => k !== '__fallbackChain',
+        ),
+      ),
       providers,
     };
     if (primary.apiKey) patch.apiKey = primary.apiKey;
@@ -364,286 +305,211 @@ export function Settings() {
   };
 
   return (
-    <div className="settings-page">
-      <header className="settings-header">
-        <h2 className="settings-title">Settings</h2>
-        <button type="button" className="settings-advanced-btn" onClick={toggleAdvanced}>
-          {showAdvanced ? 'Hide advanced' : 'Show advanced'}
-          <span
-            className="settings-advanced-chevron"
-            style={{ transform: showAdvanced ? 'rotate(180deg)' : 'rotate(0deg)' }}
-          >
-            ▾
-          </span>
-        </button>
+    <div className="settings-tab">
+      <header className="settings-toolbar">
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          Settings
+        </Typography.Title>
+        <span className="settings-advanced-toggle">
+          <span className="settings-advanced-label">Show advanced</span>
+          <Switch checked={showAdvanced} onChange={setShowAdvanced} />
+        </span>
       </header>
 
-      <Form<FormShape> form={form} layout="vertical" onFinish={onFinish}>
-        {/* ── Provider Chain ───────────────────────────────────────── */}
-        <div className="settings-section">
-          <span className="settings-section-label">Provider chain</span>
-          <div className="settings-provider-list">
-            {providerRows.map((row, idx) => (
-              // biome-ignore lint/a11y/noStaticElementInteractions: drag-reorderable row uses HTML5 DnD
+      <Form<FormShape> form={form} layout="vertical" onFinish={onFinish} style={{ maxWidth: 640 }}>
+        <Card title="Provider chain" size="small" style={{ marginBottom: 16 }}>
+          {providerRows.map((row, idx) => {
+            const label = idx === 0 ? 'Primary' : `Fallback ${idx}`;
+            return (
               <div
                 key={row._id}
-                className="settings-provider-row"
-                draggable
-                onDragStart={() => drag.onDragStart(idx)}
-                onDragOver={(e) => drag.onDragOver(e, idx)}
-                onDragEnd={drag.onDragEnd}
+                style={{
+                  border: '1px solid var(--ethos-border, #d9d9d9)',
+                  borderRadius: 6,
+                  padding: 12,
+                  marginBottom: 12,
+                }}
               >
-                <span className="settings-drag-handle" title="Drag to reorder">
-                  ⠿
-                </span>
-                <span className="settings-provider-name">{row.provider || '—'}</span>
-                <span className="settings-provider-model">{row.model || '—'}</span>
-                <span className="settings-provider-key">
-                  {row.apiKeyPreview || (row.apiKey ? '••••' : '—')}
-                </span>
-                {idx === 0 ? (
-                  <MonoBadge label="✓ active" variant="green" />
-                ) : (
-                  <MonoBadge label="standby" variant="dim" />
-                )}
-                <span className="settings-provider-actions">
-                  <button
-                    type="button"
-                    className="btn-ghost settings-action-btn"
-                    disabled={!row.apiKey}
-                    onClick={() => handleTest(row, idx)}
-                  >
-                    {row.testStatus === 'testing' ? '...' : 'Test'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-ghost settings-action-btn"
-                    onClick={() => updateRow(idx, { editing: !row.editing })}
-                  >
-                    {row.editing ? 'Done' : 'Edit'}
-                  </button>
-                  {providerRows.length > 1 && (
-                    <button
-                      type="button"
-                      className="settings-action-btn settings-action-remove"
-                      onClick={() => removeRow(idx)}
-                    >
-                      ×
-                    </button>
-                  )}
-                </span>
-                {row.testStatus === 'success' && (
-                  <span className="settings-test-result" style={{ color: 'var(--green)' }}>
-                    Connected
-                  </span>
-                )}
-                {row.testStatus === 'error' && (
-                  <span className="settings-test-result" style={{ color: 'var(--red)' }}>
-                    {row.testError ?? 'Failed'}
-                  </span>
-                )}
-
-                {row.editing && (
-                  <div className="settings-provider-edit">
-                    <div className="settings-provider-edit-row">
-                      <span className="settings-field-label">Provider</span>
-                      <input
-                        className="input settings-field-input"
-                        placeholder="anthropic | openrouter | openai-compat | ollama"
-                        value={row.provider}
-                        onChange={(e) => updateRow(idx, { provider: e.target.value })}
-                      />
-                    </div>
-                    <div className="settings-provider-edit-row">
-                      <span className="settings-field-label">Model</span>
-                      <input
-                        className="input input-mono settings-field-input"
-                        placeholder="e.g. claude-opus-4-7"
-                        value={row.model}
-                        onChange={(e) => updateRow(idx, { model: e.target.value })}
-                      />
-                    </div>
-                    <div className="settings-provider-edit-row">
-                      <span className="settings-field-label">API Key</span>
-                      <input
-                        type="password"
-                        className="input input-mono settings-field-input"
-                        autoComplete="off"
-                        placeholder={row.apiKeyPreview || 'paste new key'}
-                        value={row.apiKey}
-                        onChange={(e) =>
-                          updateRow(idx, { apiKey: e.target.value, testStatus: 'idle' })
-                        }
-                      />
-                    </div>
-                    {showAdvanced && (
-                      <div className="settings-provider-edit-row">
-                        <span className="settings-field-label">Base URL</span>
-                        <input
-                          className="input input-mono settings-field-input"
-                          placeholder="https://openrouter.ai/api/v1"
-                          value={row.baseUrl}
-                          onChange={(e) => updateRow(idx, { baseUrl: e.target.value })}
-                        />
-                      </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 8,
+                  }}
+                >
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    {label}
+                  </Typography.Text>
+                  <Space size={4}>
+                    {idx > 0 && (
+                      <Tooltip title="Move up">
+                        <Button size="small" onClick={() => moveRow(idx, -1)}>
+                          Up
+                        </Button>
+                      </Tooltip>
                     )}
+                    {idx < providerRows.length - 1 && (
+                      <Tooltip title="Move down">
+                        <Button size="small" onClick={() => moveRow(idx, 1)}>
+                          Down
+                        </Button>
+                      </Tooltip>
+                    )}
+                    {idx > 0 && (
+                      <Tooltip title="Remove this fallback">
+                        <Button size="small" danger onClick={() => removeRow(idx)}>
+                          Remove
+                        </Button>
+                      </Tooltip>
+                    )}
+                  </Space>
+                </div>
+
+                <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Provider
+                    </Typography.Text>
+                    <Input
+                      size="small"
+                      placeholder="anthropic | openrouter | openai-compat | ollama"
+                      value={row.provider}
+                      onChange={(e) => updateRow(idx, { provider: e.target.value })}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Model
+                    </Typography.Text>
+                    <Input
+                      size="small"
+                      placeholder="e.g. claude-opus-4-7"
+                      value={row.model}
+                      onChange={(e) => updateRow(idx, { model: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 8 }}>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    API key
+                  </Typography.Text>
+                  <Input.Password
+                    size="small"
+                    autoComplete="off"
+                    placeholder={row.apiKeyPreview || 'paste new key'}
+                    value={row.apiKey}
+                    onChange={(e) => updateRow(idx, { apiKey: e.target.value, testStatus: 'idle' })}
+                  />
+                  {row.apiKeyPreview && !row.apiKey && (
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      Active: {row.apiKeyPreview}
+                    </Typography.Text>
+                  )}
+                </div>
+
+                {showAdvanced && (
+                  <div style={{ marginBottom: 8 }}>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Base URL
+                    </Typography.Text>
+                    <Input
+                      size="small"
+                      placeholder="https://openrouter.ai/api/v1"
+                      value={row.baseUrl}
+                      onChange={(e) => updateRow(idx, { baseUrl: e.target.value })}
+                    />
                   </div>
                 )}
-              </div>
-            ))}
-          </div>
-          <button type="button" className="settings-add-provider" onClick={addRow}>
-            ＋ Add provider
-          </button>
-        </div>
 
-        {/* ── Default Personality ──────────────────────────────────── */}
-        <div className="settings-inline-row">
-          <span className="settings-row-label">Default personality</span>
+                <RowTestButton
+                  row={row}
+                  onStatusChange={(status, error) =>
+                    updateRow(idx, { testStatus: status, testError: error })
+                  }
+                />
+              </div>
+            );
+          })}
+          <Button type="dashed" size="small" onClick={addRow} style={{ width: '100%' }}>
+            Add fallback
+          </Button>
+        </Card>
+
+        <Card title="Default personality" size="small" style={{ marginBottom: 16 }}>
           <Form.Item
+            label="Personality"
             name="personality"
             rules={[{ required: true, message: 'Required' }]}
-            style={{ margin: 0 }}
+            extra="Used when chat doesn't override per-session."
           >
-            <select className="settings-select">
-              {personalities.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                  {p.builtin ? ' (built-in)' : ''}
-                </option>
-              ))}
-            </select>
+            <Select
+              loading={personalitiesQuery.isLoading}
+              options={personalities.map((p) => ({
+                label: `${p.name}${p.builtin ? ' (built-in)' : ''}`,
+                value: p.id,
+              }))}
+              showSearch
+              optionFilterProp="label"
+            />
           </Form.Item>
-        </div>
+        </Card>
 
-        {/* ── Memory Mode ─────────────────────────────────────────── */}
-        <div className="settings-inline-row">
-          <span className="settings-row-label">Memory mode</span>
-          <Form.Item name="memory" style={{ margin: 0 }}>
-            <MemoryRadioGroup />
-          </Form.Item>
-        </div>
-
-        {/* ── Theme ───────────────────────────────────────────────── */}
-        <div className="settings-inline-row">
-          <span className="settings-row-label">Theme</span>
-          <Form.Item name="skin" style={{ margin: 0 }}>
-            <select className="settings-select">
-              {BUILTIN_SKIN_NAMES.map((name) => (
-                <option key={name} value={name}>
-                  {name} — {BUILTIN_SKINS[name].description}
-                </option>
-              ))}
-            </select>
-          </Form.Item>
-        </div>
-
-        {/* ── Advanced ────────────────────────────────────────────── */}
-        {showAdvanced && (
-          <div className="settings-section" style={{ marginTop: 24 }}>
-            <span className="settings-section-label">Advanced</span>
-            <div className="settings-routing-table">
-              <div className="settings-routing-header">
-                <span className="settings-routing-col" style={{ flex: 1 }}>
-                  Personality
-                </span>
-                <span className="settings-routing-col" style={{ width: 200 }}>
-                  Model Override
-                </span>
-                <span className="settings-routing-col" style={{ width: 40 }} />
-              </div>
-              {routingOverrides.map((override, idx) => (
-                <div key={override._id} className="settings-routing-row">
-                  <input
-                    className="input settings-routing-input"
-                    style={{ flex: 1 }}
-                    placeholder="personality id"
-                    value={override.personality}
-                    onChange={(e) => updateRouting(idx, { personality: e.target.value })}
-                  />
-                  <input
-                    className="input input-mono settings-routing-input"
-                    style={{ width: 200 }}
-                    placeholder="model override"
-                    value={override.model}
-                    onChange={(e) => updateRouting(idx, { model: e.target.value })}
-                  />
-                  <button
-                    type="button"
-                    className="settings-action-btn settings-action-remove"
-                    onClick={() => removeRouting(idx)}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-              {routingOverrides.length === 0 && (
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: '8px 0' }}>
-                  No per-personality overrides set.
-                </div>
-              )}
-            </div>
-            <button type="button" className="settings-add-provider" onClick={addRouting}>
-              ＋ Add override
-            </button>
-          </div>
-        )}
-
-        {/* ── Save ────────────────────────────────────────────────── */}
-        <div className="settings-save-row">
-          <button
-            type="submit"
-            className="btn btn-blue settings-save-btn"
-            disabled={updateMut.isPending}
+        <Card title="Appearance" size="small" style={{ marginBottom: 16 }}>
+          <Form.Item
+            label="Skin"
+            name="skin"
+            extra="DESIGN.md baseline plus named overrides. Applies across all surfaces (Web, TUI)."
           >
-            {updateMut.isPending ? 'Saving...' : 'Save settings'}
-          </button>
-        </div>
+            <Select
+              options={BUILTIN_SKIN_NAMES.map((name) => ({
+                value: name,
+                label: `${name} — ${BUILTIN_SKINS[name].description}`,
+              }))}
+            />
+          </Form.Item>
+        </Card>
+
+        <Card title="Memory" size="small" style={{ marginBottom: 16 }}>
+          <Form.Item
+            label="Memory mode"
+            name="memory"
+            extra="Markdown is human-editable in ~/.ethos/MEMORY.md. Vector uses local embeddings."
+          >
+            <Radio.Group>
+              <Radio.Button value="markdown">Markdown</Radio.Button>
+              <Radio.Button value="vector">Vector</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+        </Card>
+
+        {showAdvanced ? (
+          <Card title="Model routing" size="small" style={{ marginBottom: 16 }}>
+            <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+              Per-personality model overrides. Edit ~/.ethos/config.yaml directly to add entries —
+              this surface lists the current overrides; full editing lands later.
+            </Typography.Paragraph>
+            <ModelRoutingView routing={configQuery.data?.modelRouting ?? {}} />
+          </Card>
+        ) : null}
+
+        <Form.Item>
+          <Button type="primary" htmlType="submit" loading={updateMut.isPending}>
+            Save
+          </Button>
+        </Form.Item>
       </Form>
 
-      {/* ── Setup wizard link ──────────────────────────────────────── */}
-      <div className="settings-section" style={{ marginTop: 32 }}>
-        <span className="settings-section-label">Setup</span>
-        <div style={{ marginTop: 8 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 8px' }}>
-            Re-run the guided setup to change your provider, model, personality, or messaging
-            credentials.
-          </p>
-          <button type="button" className="btn btn-ghost" onClick={() => navigate('/onboarding')}>
-            Run setup wizard
-          </button>
-        </div>
-      </div>
+      <Card title="Setup wizard" size="small" style={{ maxWidth: 640, marginTop: 8 }}>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 0, marginBottom: 12 }}>
+          Re-run the guided setup to change your provider, model, personality, or messaging
+          credentials.
+        </Typography.Paragraph>
+        <Button onClick={() => navigate('/onboarding')}>Run setup wizard</Button>
+      </Card>
 
       <ApiKeysSection />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Memory radio group — styled as ghost-bordered toggle buttons
-// ---------------------------------------------------------------------------
-
-function MemoryRadioGroup({
-  value,
-  onChange,
-}: {
-  value?: string;
-  onChange?: (val: string) => void;
-}) {
-  const options = ['markdown', 'vector'] as const;
-  return (
-    <div className="settings-radio-group">
-      {options.map((opt) => (
-        <button
-          key={opt}
-          type="button"
-          className={`settings-radio-btn ${value === opt ? 'settings-radio-btn--active' : ''}`}
-          onClick={() => onChange?.(opt)}
-        >
-          {opt.charAt(0).toUpperCase() + opt.slice(1)}
-        </button>
-      ))}
     </div>
   );
 }
@@ -834,15 +700,17 @@ function ApiKeysSection() {
   return (
     <div style={{ marginTop: 32 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8 }}>
-        <span className="settings-section-label">API Keys</span>
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          API Keys
+        </Typography.Title>
         <Button type="primary" size="small" onClick={() => setCreateOpen(true)}>
           Create API Key
         </Button>
       </div>
-      <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 16px' }}>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0, marginBottom: 16 }}>
         Bearer tokens for external Mission Controls. Each key is scoped to specific operations and
         origins.
-      </p>
+      </Typography.Paragraph>
 
       <Table<ApiKeyMetadata>
         columns={columns}
@@ -997,5 +865,23 @@ function ApiKeysSection() {
         }
       `}</style>
     </div>
+  );
+}
+
+function ModelRoutingView({ routing }: { routing: Record<string, string> }) {
+  const entries = Object.entries(routing);
+  if (entries.length === 0) {
+    return <Typography.Text type="secondary">No per-personality overrides set.</Typography.Text>;
+  }
+  return (
+    <ul style={{ margin: 0, paddingLeft: 16 }}>
+      {entries.map(([personality, model]) => (
+        <li key={personality} style={{ fontSize: 13, color: 'var(--ethos-text)' }}>
+          <Typography.Text code>{personality}</Typography.Text>
+          {' → '}
+          <Typography.Text code>{model}</Typography.Text>
+        </li>
+      ))}
+    </ul>
   );
 }

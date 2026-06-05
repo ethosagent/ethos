@@ -1,6 +1,5 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { PersonalityRingAvatar } from '../ui/PersonalityRingAvatar';
 
 interface PersonalityBarProps {
   personalityId: string | null;
@@ -14,6 +13,11 @@ interface PersonalityBarProps {
   currentOp?: string | null;
   showSessionsButton?: boolean;
   onToggleSessions?: () => void;
+}
+
+function getInitials(id: string | null): string {
+  if (!id) return '?';
+  return id.slice(0, 2).toUpperCase();
 }
 
 export function PersonalityBar({
@@ -50,8 +54,7 @@ export function PersonalityBar({
       .catch(() => {});
   }, [client]);
 
-  const personalityName =
-    personalities.find((p) => p.id === personalityId)?.name ?? personalityId ?? 'Default';
+  const titleText = sessionTitle ?? 'New session';
 
   const handleTitleClick = useCallback(() => {
     if (streaming) return;
@@ -107,10 +110,10 @@ export function PersonalityBar({
   return (
     <div
       style={{
-        height: 44,
+        height: 36,
         width: '100%',
         background: 'var(--bg-elevated)',
-        borderBottom: '2px solid var(--blue)',
+        borderBottom: '2px solid var(--accent)',
         display: 'flex',
         alignItems: 'center',
         padding: '0 12px',
@@ -137,8 +140,7 @@ export function PersonalityBar({
         </button>
       )}
 
-      {/* Left: avatar + name + dropdown + optional session title */}
-      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ position: 'relative' }}>
         <button
           type="button"
           onClick={() => setPickerOpen((v) => !v)}
@@ -155,11 +157,30 @@ export function PersonalityBar({
           }}
           aria-label="Switch personality"
         >
-          <PersonalityRingAvatar
-            personalityId={personalityId ?? 'default'}
-            name={personalityName}
-            size={28}
-          />
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: '50%',
+              background: 'rgba(74, 158, 255, 0.2)',
+              border: '1.5px solid var(--info)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <span
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: 11,
+                fontWeight: 600,
+                color: 'var(--info)',
+              }}
+            >
+              {getInitials(personalityId)}
+            </span>
+          </div>
           <span
             style={{
               fontFamily: 'var(--font-display)',
@@ -168,76 +189,17 @@ export function PersonalityBar({
               color: 'var(--text-primary)',
             }}
           >
-            {personalityName}
+            {personalities.find((p) => p.id === personalityId)?.name ?? personalityId ?? 'Default'}
           </span>
           <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>▾</span>
         </button>
-
-        {sessionTitle && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: 12,
-                color: 'var(--text-tertiary)',
-              }}
-            >
-              /
-            </span>
-            {editingTitle ? (
-              <input
-                ref={inputRef}
-                value={titleDraft}
-                onChange={(e) => setTitleDraft(e.target.value)}
-                onKeyDown={handleTitleKeyDown}
-                onBlur={handleTitleCommit}
-                style={{
-                  fontFamily: 'var(--font-display)',
-                  fontSize: 13,
-                  fontWeight: 400,
-                  color: 'var(--text-primary)',
-                  background: 'var(--bg-overlay)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-sm)',
-                  padding: '2px 8px',
-                  outline: 'none',
-                  maxWidth: 220,
-                  width: '100%',
-                }}
-              />
-            ) : (
-              <button
-                type="button"
-                tabIndex={0}
-                onClick={handleTitleClick}
-                onKeyDown={(e) => e.key === 'Enter' && handleTitleClick()}
-                style={{
-                  fontFamily: 'var(--font-display)',
-                  fontSize: 13,
-                  fontWeight: 400,
-                  color: 'var(--text-secondary)',
-                  cursor: streaming ? 'default' : 'pointer',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  maxWidth: 220,
-                  background: 'none',
-                  border: 'none',
-                  padding: 0,
-                }}
-              >
-                {sessionTitle}
-              </button>
-            )}
-          </div>
-        )}
 
         {pickerOpen && (
           <div
             ref={pickerRef}
             style={{
               position: 'absolute',
-              top: 40,
+              top: 36,
               left: 0,
               zIndex: 30,
               background: 'var(--bg-elevated)',
@@ -289,8 +251,65 @@ export function PersonalityBar({
         )}
       </div>
 
-      {/* Spacer */}
-      <div style={{ flex: 1 }} />
+      <span
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          color: 'var(--text-tertiary)',
+          flexShrink: 0,
+        }}
+      >
+        {''}
+      </span>
+
+      <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 0 }}>
+        {editingTitle ? (
+          <input
+            ref={inputRef}
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onKeyDown={handleTitleKeyDown}
+            onBlur={handleTitleCommit}
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 13,
+              fontWeight: 400,
+              color: 'var(--text-primary)',
+              background: 'var(--bg-overlay)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '2px 8px',
+              outline: 'none',
+              textAlign: 'center',
+              maxWidth: 280,
+              width: '100%',
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            tabIndex={0}
+            onClick={handleTitleClick}
+            onKeyDown={(e) => e.key === 'Enter' && handleTitleClick()}
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 13,
+              fontWeight: 400,
+              color: 'var(--text-secondary)',
+              cursor: streaming ? 'default' : 'pointer',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              maxWidth: 280,
+              background: 'none',
+              border: 'none',
+              padding: 0,
+            }}
+          >
+            {titleText}
+          </button>
+        )}
+      </div>
 
       {currentOp && (
         <div
@@ -324,36 +343,6 @@ export function PersonalityBar({
           {currentOp}
         </div>
       )}
-
-      {/* Right: "New session" ghost button + overflow menu */}
-      <button
-        type="button"
-        onClick={onNewSession}
-        style={{
-          background: 'transparent',
-          color: 'var(--text-secondary)',
-          border: '1px solid var(--border-strong)',
-          borderRadius: 'var(--radius-sm)',
-          fontFamily: 'var(--font-display)',
-          fontSize: 12,
-          fontWeight: 500,
-          padding: '4px 10px',
-          cursor: 'pointer',
-          flexShrink: 0,
-          transition:
-            'border-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease)',
-        }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLElement).style.borderColor = 'var(--blue)';
-          (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)';
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-strong)';
-          (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)';
-        }}
-      >
-        New session
-      </button>
 
       <div style={{ position: 'relative' }}>
         <button
@@ -414,6 +403,34 @@ export function PersonalityBar({
               }}
             >
               Fork session
+            </button>
+            <button
+              type="button"
+              tabIndex={-1}
+              onClick={() => {
+                setMenuOpen(false);
+                onNewSession();
+              }}
+              style={{
+                display: 'block',
+                width: '100%',
+                padding: '6px 14px',
+                fontFamily: 'var(--font-display)',
+                fontSize: 13,
+                color: 'var(--text-primary)',
+                cursor: 'pointer',
+                background: 'transparent',
+                border: 'none',
+                textAlign: 'left',
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.background = 'var(--bg-overlay)';
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.background = 'transparent';
+              }}
+            >
+              New session
             </button>
           </div>
         )}

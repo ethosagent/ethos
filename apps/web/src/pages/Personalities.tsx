@@ -13,6 +13,7 @@ import {
   App as AntApp,
   Button,
   Checkbox,
+  Divider,
   Empty,
   Form,
   Input,
@@ -24,39 +25,39 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PersonalityRingAvatar } from '../components/ui/PersonalityRingAvatar';
 import { rpc } from '../rpc';
+
+// Personalities tab — v1.
+//
+// List of all personalities (built-in + user-created) with three
+// row-level actions:
+//   • Edit       — opens a 3-tab modal (Identity / Toolset / Config).
+//                  Skills sub-surface lives there too. Built-ins are
+//                  read-only here; the action becomes "Duplicate."
+//   • Duplicate  — copies the personality into ~/.ethos/personalities/
+//                  under a new id, opens the editor on the copy.
+//   • Delete     — only for user-created personalities.
+//
+// Plus a "New personality" button at the top → tabbed create wizard.
+//
+// Live preview chat (plan: side-pane disposable session) is deferred
+// to v1.x — the chat plumbing has assumptions about persistent
+// session state that need a wider refactor to disposable mode.
 
 export function Personalities() {
   const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [duplicatePrompt, setDuplicatePrompt] = useState<Personality | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<Personality | null>(null);
 
   const listQuery = useQuery({
     queryKey: ['personalities', 'list'],
     queryFn: () => rpc.personalities.list({}),
-  });
-
-  const qc = useQueryClient();
-  const { notification } = AntApp.useApp();
-  const deleteMut = useMutation({
-    mutationFn: (id: string) => rpc.personalities.delete({ id }),
-    onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
-      qc.invalidateQueries({ queryKey: ['palette', 'personalities'] });
-      notification.success({ message: `Deleted personality ${id}`, placement: 'topRight' });
-      setConfirmDelete(null);
-    },
-    onError: (err) => {
-      notification.error({ message: 'Delete failed', description: (err as Error).message });
-      setConfirmDelete(null);
-    },
   });
 
   if (listQuery.isLoading) {
@@ -68,119 +69,115 @@ export function Personalities() {
   }
   if (listQuery.error) {
     return (
-      <div style={{ color: 'var(--red)', fontSize: 14 }}>
+      <Typography.Text type="danger">
         Failed to load personalities: {(listQuery.error as Error).message}
-      </div>
+      </Typography.Text>
     );
   }
 
   const personalities = listQuery.data?.items ?? [];
   const defaultId = listQuery.data?.defaultId ?? null;
-  const totalCount = personalities.length;
+  const userPersonalities = personalities.filter((p) => !p.system);
+  const systemPersonalities = personalities.filter((p) => p.system);
+
+  const columns = [
+    {
+      title: 'Name',
+      dataIndex: 'name',
+      key: 'name',
+      render: (name: string, p: Personality) => (
+        <div>
+          <div style={{ fontWeight: 500 }}>
+            {name} {p.id === defaultId ? <Tag color="blue">default</Tag> : null}{' '}
+            {p.builtin ? <Tag>built-in</Tag> : null}
+          </div>
+          <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>{p.id}</div>
+        </div>
+      ),
+    },
+    {
+      title: 'Description',
+      dataIndex: 'description',
+      key: 'description',
+      render: (d: string | null) => (d ? d : <Typography.Text type="secondary">—</Typography.Text>),
+    },
+    {
+      title: 'Model',
+      dataIndex: 'model',
+      key: 'model',
+      width: 200,
+      render: (m: string | { trivial?: string; default?: string; deep?: string } | null) =>
+        m ? (
+          <Typography.Text code>
+            {typeof m === 'string' ? m : (m.default ?? m.trivial ?? m.deep ?? '—')}
+          </Typography.Text>
+        ) : (
+          <Typography.Text type="secondary">—</Typography.Text>
+        ),
+    },
+    {
+      title: 'Tools',
+      dataIndex: 'toolset',
+      key: 'toolset',
+      width: 100,
+      align: 'right' as const,
+      render: (t: string[] | null) => t?.length ?? 0,
+    },
+    {
+      title: '',
+      key: 'actions',
+      width: 240,
+      render: (_: unknown, p: Personality) => (
+        <PersonalityRowActions
+          personality={p}
+          onEdit={() => navigate(`/personalities/${p.id}`)}
+          onDuplicate={() => setDuplicatePrompt(p)}
+        />
+      ),
+    },
+  ];
 
   return (
     <div className="personalities-tab">
       <header className="personalities-toolbar">
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <h2 className="personalities-title">Personalities</h2>
-          <span className="personalities-subtitle">
-            {totalCount} {totalCount === 1 ? 'personality' : 'personalities'}
-          </span>
-        </div>
-        <button type="button" className="btn btn-blue" onClick={() => setCreateOpen(true)}>
-          + New personality
-        </button>
+        <span className="personalities-count">
+          {userPersonalities.length}{' '}
+          {userPersonalities.length === 1 ? 'personality' : 'personalities'}
+        </span>
+        <Button type="primary" onClick={() => setCreateOpen(true)}>
+          New personality
+        </Button>
       </header>
 
-      {personalities.length === 0 ? (
-        <div
-          style={{
-            padding: '48px 0',
-            textAlign: 'center',
-            color: 'var(--text-tertiary)',
-            fontSize: 14,
-          }}
-        >
-          No personalities loaded. Run <code>ethos setup</code> first.
-        </div>
-      ) : (
-        <div>
-          {personalities.map((p) => (
-            <div key={p.id} className="personality-row">
-              <PersonalityRingAvatar personalityId={p.id} name={p.name} size={32} />
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 2,
-                  minWidth: 0,
-                  flex: '0 0 auto',
-                  maxWidth: 180,
-                }}
-              >
-                <button
-                  type="button"
-                  className="personality-row-name"
-                  onClick={() => navigate(`/personalities/${p.id}`)}
-                >
-                  {p.name}
-                </button>
-                <span className="personality-row-id">{p.id}</span>
-              </div>
-              <span className="personality-row-desc">{p.description ?? '—'}</span>
-              <div className="personality-row-badges">
-                {p.id === defaultId ? <span className="badge badge-green">DEFAULT</span> : null}
-                {p.builtin ? <span className="badge badge-dim">BUILT-IN</span> : null}
-              </div>
-              <div className="personality-row-actions">
-                {p.builtin ? null : (
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => navigate(`/personalities/${p.id}`)}
-                  >
-                    Edit
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => setDuplicatePrompt(p)}
-                >
-                  Duplicate
-                </button>
-                {p.builtin ? null : (
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    style={{ color: 'var(--red)' }}
-                    onClick={() => setConfirmDelete(p)}
-                  >
-                    Delete
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <Table<Personality>
+        rowKey="id"
+        dataSource={userPersonalities}
+        pagination={false}
+        size="small"
+        locale={{
+          emptyText: (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="No personalities loaded. Run `ethos setup` first."
+            />
+          ),
+        }}
+        columns={columns}
+      />
 
-      {confirmDelete ? (
-        <Modal
-          open
-          title={`Delete ${confirmDelete.name}?`}
-          onCancel={() => setConfirmDelete(null)}
-          onOk={() => deleteMut.mutate(confirmDelete.id)}
-          okText="Delete"
-          okButtonProps={{ danger: true, loading: deleteMut.isPending }}
-          destroyOnClose
-        >
-          <p>
-            The directory under <code>~/.ethos/personalities/</code> is removed. This cannot be
-            undone.
-          </p>
-        </Modal>
+      {systemPersonalities.length > 0 ? (
+        <>
+          <Divider orientation="left">System</Divider>
+          <Table<Personality>
+            rowKey="id"
+            dataSource={systemPersonalities}
+            pagination={false}
+            size="small"
+            columns={columns}
+          />
+        </>
       ) : null}
+
       {createOpen ? (
         <CreateWizard
           existingIds={new Set(personalities.map((p) => p.id))}
@@ -201,6 +198,61 @@ export function Personalities() {
           }}
         />
       ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Row actions
+// ---------------------------------------------------------------------------
+
+function PersonalityRowActions({
+  personality,
+  onEdit,
+  onDuplicate,
+}: {
+  personality: Personality;
+  onEdit: () => void;
+  onDuplicate: () => void;
+}) {
+  const qc = useQueryClient();
+  const { notification } = AntApp.useApp();
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => rpc.personalities.delete({ id }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
+      qc.invalidateQueries({ queryKey: ['palette', 'personalities'] });
+      notification.success({ message: `Deleted ${personality.name}`, placement: 'topRight' });
+    },
+    onError: (err) =>
+      notification.error({ message: 'Delete failed', description: (err as Error).message }),
+  });
+
+  return (
+    <div style={{ display: 'flex', gap: 8 }}>
+      {personality.builtin ? null : (
+        <Button size="small" onClick={onEdit}>
+          Edit
+        </Button>
+      )}
+      <Tooltip title={personality.builtin ? 'Built-in — duplicate to edit.' : undefined}>
+        <Button size="small" onClick={onDuplicate}>
+          Duplicate
+        </Button>
+      </Tooltip>
+      {personality.builtin ? null : (
+        <Popconfirm
+          title={`Delete ${personality.name}?`}
+          description="The directory under ~/.ethos/personalities/ is removed."
+          onConfirm={() => deleteMut.mutate(personality.id)}
+          okText="Delete"
+          okButtonProps={{ danger: true }}
+        >
+          <Button size="small" danger loading={deleteMut.isPending}>
+            Delete
+          </Button>
+        </Popconfirm>
+      )}
     </div>
   );
 }

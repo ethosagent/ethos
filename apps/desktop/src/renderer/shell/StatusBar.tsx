@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { StatusDot } from '../ui/StatusDot';
 
 interface StatusBarProps {
   backendConnected: boolean;
@@ -9,7 +8,6 @@ interface StatusBarProps {
   onToggleDrawer: () => void;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
-  personalityName?: string;
 }
 
 export function StatusBar({
@@ -20,12 +18,8 @@ export function StatusBar({
   onToggleDrawer,
   sidebarCollapsed,
   onToggleSidebar,
-  personalityName,
 }: StatusBarProps) {
   const [hoveredPill, setHoveredPill] = useState<string | null>(null);
-
-  // Split providerModel into personality name and model for right-side display
-  const modelDisplay = providerModel || '';
 
   return (
     <div
@@ -40,9 +34,16 @@ export function StatusBar({
         gap: 8,
       }}
     >
-      {/* Left: StatusDot + status text */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <StatusDot color={backendConnected ? '#4ADE80' : '#F87171'} />
+        <div
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            background: backendConnected ? '#4ADE80' : '#F87171',
+            flexShrink: 0,
+          }}
+        />
         <span
           style={{
             fontFamily: 'var(--font-mono)',
@@ -54,7 +55,6 @@ export function StatusBar({
         </span>
       </div>
 
-      {/* Separator */}
       <div
         style={{
           width: 1,
@@ -64,7 +64,6 @@ export function StatusBar({
         }}
       />
 
-      {/* Activity + Cron buttons */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
         <button
           type="button"
@@ -112,10 +111,8 @@ export function StatusBar({
         </button>
       </div>
 
-      {/* Spacer */}
       <div style={{ flex: 1 }} />
 
-      {/* Sidebar toggle */}
       <button
         type="button"
         onClick={onToggleSidebar}
@@ -155,7 +152,6 @@ export function StatusBar({
         </svg>
       </button>
 
-      {/* Drawer toggle */}
       <button
         type="button"
         onClick={onToggleDrawer}
@@ -195,8 +191,7 @@ export function StatusBar({
         </svg>
       </button>
 
-      {/* Right: personality name + model in mono */}
-      {(personalityName || modelDisplay) && (
+      {providerModel && (
         <span
           style={{
             fontFamily: 'var(--font-mono)',
@@ -204,9 +199,7 @@ export function StatusBar({
             color: 'var(--text-tertiary)',
           }}
         >
-          {personalityName && modelDisplay
-            ? `${personalityName} · ${modelDisplay}`
-            : (personalityName ?? modelDisplay)}
+          {providerModel}
         </span>
       )}
     </div>

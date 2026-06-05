@@ -10,7 +10,7 @@ import { BUILTIN_SKINS, resolveSkin, type SkinRegistry } from './skins';
 // Rules enforced:
 //   1. No purple/violet/indigo accents (hue 270-290°).
 //   2. WCAG textPrimary/bgBase contrast ratio ≥ 7 (DESIGN.md targets ~14).
-//   3. Font family must include "Inter" (skins MUST NOT touch typography in v1).
+//   3. Font family must include "Geist" (skins MUST NOT touch typography in v1).
 //   4. Radius scale stays at {4, 8, 14, 9999}.
 //   5. Motion durations within [0, 500] ms (0 disables motion, 500 caps).
 
@@ -104,8 +104,7 @@ const MIN_CONTRAST = 7; // WCAG AAA for body text — DESIGN.md targets ~14:1
 const RADIUS_SCALE = new Set([4, 8, 14, 9999]);
 const MOTION_MIN_MS = 0;
 const MOTION_MAX_MS = 500;
-const ALLOWED_DISPLAY_FONT = 'Inter'; // substring match — Inter must appear in fontDisplay
-const ALLOWED_MONO_FONT = 'JetBrains Mono'; // JetBrains Mono must appear in fontMono
+const ALLOWED_FONT_TOKEN = 'Geist'; // substring match — Geist or Geist Mono both pass
 
 export function validateTokens(tokens: Tokens): ValidationResult {
   const findings: ValidationFinding[] = [];
@@ -132,20 +131,20 @@ export function validateTokens(tokens: Tokens): ValidationResult {
     });
   }
 
-  // Rule 3 — typography stays Inter + JetBrains Mono. Skins MUST NOT
-  // swap the font family in v1; if they do, we reject so non-approved
-  // fonts can never reach a surface without a one-off design review.
-  if (!tokens.typography.fontDisplay.includes(ALLOWED_DISPLAY_FONT)) {
+  // Rule 3 — typography stays Geist. Skins MUST NOT swap the font family
+  // in v1; if they do, we reject so non-Geist fonts can never reach a
+  // surface without a one-off design review.
+  if (!tokens.typography.fontDisplay.includes(ALLOWED_FONT_TOKEN)) {
     findings.push({
       code: 'font-family-forbidden',
-      message: `fontDisplay "${tokens.typography.fontDisplay}" does not include "${ALLOWED_DISPLAY_FONT}" — typography is frozen in v1`,
+      message: `fontDisplay "${tokens.typography.fontDisplay}" does not include "${ALLOWED_FONT_TOKEN}" — typography is frozen in v1`,
       path: 'typography.fontDisplay',
     });
   }
-  if (!tokens.typography.fontMono.includes(ALLOWED_MONO_FONT)) {
+  if (!tokens.typography.fontMono.includes(ALLOWED_FONT_TOKEN)) {
     findings.push({
       code: 'font-family-forbidden',
-      message: `fontMono "${tokens.typography.fontMono}" does not include "${ALLOWED_MONO_FONT}" — typography is frozen in v1`,
+      message: `fontMono "${tokens.typography.fontMono}" does not include "${ALLOWED_FONT_TOKEN}" — typography is frozen in v1`,
       path: 'typography.fontMono',
     });
   }

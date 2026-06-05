@@ -2,33 +2,34 @@ import { type DragEvent, useCallback, useRef, useState } from 'react';
 
 interface FileDropZoneProps {
   label?: string;
-  fileName?: string | null;
-  fileSize?: number | null;
-  onFile: (content: string, name: string, size: number) => void;
-  onClear?: () => void;
+  onFile: (content: string) => void;
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-export function FileDropZone({ label, fileName, fileSize, onFile, onClear }: FileDropZoneProps) {
+export function FileDropZone({ label, onFile }: FileDropZoneProps) {
   const [hovering, setHovering] = useState(false);
+  const [preview, setPreview] = useState<string[] | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileContent = useCallback(
+    (text: string) => {
+      const lines = text.split('\n').filter(Boolean);
+      setPreview(lines.slice(0, 3));
+      onFile(text);
+    },
+    [onFile],
+  );
 
   const readFile = useCallback(
     (file: File) => {
       const reader = new FileReader();
       reader.onload = () => {
         if (typeof reader.result === 'string') {
-          onFile(reader.result, file.name, file.size);
+          handleFileContent(reader.result);
         }
       };
       reader.readAsText(file);
     },
-    [onFile],
+    [handleFileContent],
   );
 
   const handleBrowse = useCallback(() => {
@@ -71,9 +72,8 @@ export function FileDropZone({ label, fileName, fileSize, onFile, onClear }: Fil
       {label && (
         <div
           style={{
-            fontFamily: 'var(--font-mono)',
             fontSize: 11,
-            fontWeight: 500,
+            fontWeight: 600,
             textTransform: 'uppercase',
             letterSpacing: '0.05em',
             color: 'var(--text-tertiary)',
@@ -90,92 +90,51 @@ export function FileDropZone({ label, fileName, fileSize, onFile, onClear }: Fil
         onChange={handleInputChange}
         style={{ display: 'none' }}
       />
-      {fileName ? (
-        <div
+      <button
+        type="button"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onClick={handleBrowse}
+        style={{
+          width: '100%',
+          height: 80,
+          borderRadius: 8,
+          border: hovering ? '1px dashed var(--info)' : '1px dashed var(--border-strong)',
+          background: hovering ? 'var(--bg-elevated)' : 'transparent',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 4,
+          cursor: 'pointer',
+          transition:
+            'border var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease)',
+          boxSizing: 'border-box',
+        }}
+      >
+        <span style={{ fontSize: 16, color: 'var(--text-tertiary)' }}>&#9636;</span>
+        <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+          Drop a .jsonl file here, or{' '}
+          <span style={{ color: 'var(--info)', textDecoration: 'none' }}>browse</span>
+        </span>
+      </button>
+      {preview && (
+        <pre
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '10px 12px',
-            border: '1px solid var(--border-strong)',
-            borderRadius: 'var(--radius-sm)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 12,
             background: 'var(--bg-elevated)',
+            borderRadius: 8,
+            padding: 12,
+            marginTop: 12,
+            overflow: 'auto',
+            color: 'var(--text-secondary)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
           }}
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-            <span
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: 12,
-                color: 'var(--text-primary)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {fileName}
-            </span>
-            {fileSize != null && (
-              <span
-                style={{
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 11,
-                  color: 'var(--text-tertiary)',
-                }}
-              >
-                {formatSize(fileSize)}
-              </span>
-            )}
-          </div>
-          {onClear && (
-            <button
-              type="button"
-              onClick={onClear}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: 'var(--text-tertiary)',
-                fontSize: 18,
-                cursor: 'pointer',
-                padding: '0 4px',
-                lineHeight: 1,
-              }}
-            >
-              &times;
-            </button>
-          )}
-        </div>
-      ) : (
-        <button
-          type="button"
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onClick={handleBrowse}
-          style={{
-            width: '100%',
-            borderRadius: 'var(--radius-md)',
-            border: hovering ? '2px dashed var(--blue)' : '2px dashed var(--border-strong)',
-            background: hovering ? 'rgba(74,158,255,0.05)' : 'transparent',
-            padding: '32px 16px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 4,
-            cursor: 'pointer',
-            transition:
-              'border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease)',
-            boxSizing: 'border-box',
-          }}
-        >
-          <span style={{ fontSize: 20, color: 'var(--text-tertiary)' }}>&#8593;</span>
-          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-            Drop a JSONL file or click to upload
-          </span>
-          <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-            One JSON object per line
-          </span>
-        </button>
+          {preview.join('\n')}
+        </pre>
       )}
     </div>
   );

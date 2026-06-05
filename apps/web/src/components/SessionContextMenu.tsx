@@ -87,10 +87,10 @@ export function SessionContextMenu({
       style={{ top: position.y, left: position.x }}
     >
       <button type="button" className="session-context-menu-item" onClick={handlePin}>
-        {pinned ? '⊘ Unpin' : '★ Pin'}
+        {pinned ? '⊘ Unpin' : '📌 Pin'}
       </button>
       <button type="button" className="session-context-menu-item" onClick={handleCopyId}>
-        ⎘ Copy ID
+        ⧉ Copy ID
       </button>
       <button type="button" className="session-context-menu-item" onClick={handleExport}>
         ↓ Export
@@ -99,14 +99,14 @@ export function SessionContextMenu({
         ✎ Rename
       </button>
       <button type="button" className="session-context-menu-item" onClick={handleFork}>
-        ⑂ Fork
+        ⎇ Fork
       </button>
       <button
         type="button"
         className="session-context-menu-item session-context-menu-item--danger"
         onClick={handleDelete}
       >
-        ✕ Delete
+        🗑 Delete
       </button>
     </div>
   );
