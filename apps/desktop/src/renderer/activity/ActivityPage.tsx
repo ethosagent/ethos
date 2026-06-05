@@ -1,7 +1,15 @@
 import { createEthosClient, EventStream } from '@ethosagent/sdk';
-import type { SseEvent, StoredMessage } from '@ethosagent/web-contracts';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { SseEvent } from '@ethosagent/web-contracts';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CostSparkline } from '../lab/observability/CostSparkline';
+import { ErrorLogTable } from '../lab/observability/ErrorLogTable';
+import { MetricsRow } from '../lab/observability/MetricsRow';
+import { ToolCallChart } from '../lab/observability/ToolCallChart';
 import { useAppState } from '../state/AppContext';
+import { EventBadge } from '../ui/EventBadge';
+import { FilterChip } from '../ui/FilterChip';
+
+// ─── Types ───
 
 interface ActivityEvent {
   id: string;
@@ -13,66 +21,44 @@ interface ActivityEvent {
   raw: unknown;
 }
 
-interface ConversationGroup {
-  id: string;
-  sessionId: string;
-  sessionTitle: string | null;
-  startedAt: number;
-  completedAt: number | null;
-  turnCount: number | null;
-  events: ActivityEvent[];
-  isLive: boolean;
-}
-
 type TypeFilter = 'all' | 'tools' | 'turns' | 'errors' | 'approvals' | 'cron';
+type TabId = 'stream' | 'metrics';
 
-const MAX_EVENTS = 50;
-
-const TYPE_FILTERS: Array<{ value: TypeFilter; label: string }> = [
+const TYPE_FILTERS: Array<{ value: TypeFilter; label: string; color?: string }> = [
   { value: 'all', label: 'All' },
-  { value: 'tools', label: 'Tools' },
-  { value: 'turns', label: 'Turns' },
-  { value: 'errors', label: 'Errors' },
-  { value: 'approvals', label: 'Approvals' },
-  { value: 'cron', label: 'Cron' },
+  { value: 'tools', label: 'Tools', color: 'var(--blue, var(--accent))' },
+  { value: 'turns', label: 'Turns', color: 'var(--slate, var(--text-secondary))' },
+  { value: 'errors', label: 'Errors', color: 'var(--red, var(--error))' },
+  { value: 'approvals', label: 'Approvals', color: 'var(--amber, var(--warning))' },
+  { value: 'cron', label: 'Cron', color: 'var(--purple, #e879f9)' },
 ];
 
-const EVENT_TYPE_COLORS: Record<ActivityEvent['type'], string> = {
-  tool_start: 'rgba(74,158,255,0.15)',
-  tool_end: 'rgba(74,158,255,0.15)',
-  done: 'rgba(40,200,100,0.15)',
-  error: 'rgba(255,80,80,0.15)',
-  'tool.approval_required': 'rgba(255,160,40,0.15)',
-  'cron.fired': 'rgba(160,80,255,0.15)',
-};
+const MAX_EVENTS = 500;
 
-const EVENT_TYPE_TEXT_COLORS: Record<ActivityEvent['type'], string> = {
-  tool_start: 'var(--accent)',
-  tool_end: 'var(--accent)',
-  done: 'var(--success)',
-  error: 'var(--error)',
-  'tool.approval_required': 'var(--warning)',
-  'cron.fired': '#a050ff',
-};
+// ─── Helpers ───
 
-const EVENT_TYPE_DOT_COLORS: Record<ActivityEvent['type'], string> = {
-  tool_start: 'var(--accent)',
-  tool_end: 'var(--accent)',
-  done: 'var(--success)',
-  error: 'var(--error)',
-  'tool.approval_required': 'var(--warning)',
-  'cron.fired': '#a050ff',
-};
-
-function groupMatchesFilter(group: ConversationGroup, filter: TypeFilter): boolean {
+function eventMatchesFilter(evt: ActivityEvent, filter: TypeFilter): boolean {
   if (filter === 'all') return true;
-  if (filter === 'tools')
-    return group.events.some((e) => e.type === 'tool_start' || e.type === 'tool_end');
-  if (filter === 'turns') return group.events.some((e) => e.type === 'done');
-  if (filter === 'errors') return group.events.some((e) => e.type === 'error');
-  if (filter === 'approvals') return group.events.some((e) => e.type === 'tool.approval_required');
-  if (filter === 'cron') return group.events.some((e) => e.type === 'cron.fired');
+  if (filter === 'tools') return evt.type === 'tool_start' || evt.type === 'tool_end';
+  if (filter === 'turns') return evt.type === 'done';
+  if (filter === 'errors') return evt.type === 'error';
+  if (filter === 'approvals') return evt.type === 'tool.approval_required';
+  if (filter === 'cron') return evt.type === 'cron.fired';
   return false;
+}
+
+function formatArgs(event: { toolName: string; args?: unknown }): string {
+  const args = event.args;
+  if (!args || typeof args !== 'object') return '';
+  const entries = Object.entries(args as Record<string, unknown>);
+  if (entries.length === 0) return '';
+  const parts = entries.map(([k, v]) => {
+    const val = typeof v === 'string' ? v : JSON.stringify(v);
+    const truncated = val && val.length > 30 ? `${val.slice(0, 30)}…` : val;
+    return `${k}: ${truncated}`;
+  });
+  const joined = parts.join(', ');
+  return joined.length > 80 ? `${joined.slice(0, 80)}…` : joined;
 }
 
 function convertSseEvent(
@@ -88,14 +74,14 @@ function convertSseEvent(
         ...base,
         id: `${sessionId}-${event.toolCallId}-start`,
         type: 'tool_start',
-        summary: `Tool started: ${event.toolName}`,
+        summary: `${event.toolName}(${formatArgs(event)})`,
       };
     case 'tool_end':
       return {
         ...base,
         id: `${sessionId}-${event.toolCallId}-end`,
         type: 'tool_end',
-        summary: `Tool ${event.ok ? 'completed' : 'failed'}: ${event.toolName} (${event.durationMs}ms)`,
+        summary: `${event.toolName} → ${event.ok ? 'ok' : 'error'}`,
       };
     case 'done':
       return {
@@ -109,14 +95,14 @@ function convertSseEvent(
         ...base,
         id: `${sessionId}-error-${Date.now()}`,
         type: 'error',
-        summary: `Error: ${event.error}`,
+        summary: String(event.error),
       };
     case 'tool.approval_required':
       return {
         ...base,
         id: `${sessionId}-approval-${event.request.approvalId}`,
         type: 'tool.approval_required',
-        summary: `Approval needed: ${event.request.toolName}`,
+        summary: `[waiting] ${event.request.toolName}`,
       };
     case 'cron.fired':
       return {
@@ -130,17 +116,17 @@ function convertSseEvent(
   }
 }
 
-function formatRelative(ts: number): string {
-  const diff = Date.now() - ts;
-  if (diff < 60_000) return 'just now';
-  const min = Math.floor(diff / 60_000);
-  if (min < 60) return `${min}m ago`;
-  const h = Math.floor(min / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `${d}d ago`;
-  return new Date(ts).toLocaleDateString();
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
+
+// ─── Event detail ───
+
+type EventRow =
+  | { key: string; kind: 'text'; value: string }
+  | { key: string; kind: 'args'; args: unknown }
+  | { key: string; kind: 'pre'; text: string };
 
 function TruncatedPre({ text, maxLen = 400 }: { text: string; maxLen?: number }) {
   const truncated = text.length > maxLen;
@@ -205,11 +191,6 @@ function ArgsBlock({ args }: { args: unknown }) {
   );
 }
 
-type EventRow =
-  | { key: string; kind: 'text'; value: string }
-  | { key: string; kind: 'args'; args: unknown }
-  | { key: string; kind: 'pre'; text: string };
-
 function EventDetail({ event }: { event: ActivityEvent }) {
   const raw = event.raw as Record<string, unknown>;
   const rows: EventRow[] = [];
@@ -221,7 +202,7 @@ function EventDetail({ event }: { event: ActivityEvent }) {
       break;
     case 'tool_end':
       rows.push({ key: 'tool', kind: 'text', value: String(raw.toolName ?? '') });
-      rows.push({ key: 'status', kind: 'text', value: String(raw.ok ? '✓ ok' : '✗ failed') });
+      rows.push({ key: 'status', kind: 'text', value: String(raw.ok ? 'ok' : 'failed') });
       rows.push({ key: 'duration', kind: 'text', value: `${String(raw.durationMs ?? 0)}ms` });
       if (raw.result) rows.push({ key: 'result', kind: 'pre', text: String(raw.result) });
       break;
@@ -255,6 +236,7 @@ function EventDetail({ event }: { event: ActivityEvent }) {
         flexDirection: 'column',
         gap: 4,
         borderBottom: '1px solid var(--border-subtle)',
+        background: 'var(--bg-elevated)',
       }}
     >
       {rows.map((row) => (
@@ -285,15 +267,38 @@ function EventDetail({ event }: { event: ActivityEvent }) {
   );
 }
 
+// ─── Session & metrics types ───
+
 interface SessionListItem {
   id: string;
   title: string | null;
 }
 
-interface SessionData {
-  messages: StoredMessage[];
-  session: { title: string | null };
+interface Metrics {
+  toolCalls: number;
+  tokensUsed: number;
+  estCost: number;
+  errorRate: number;
 }
+
+interface ToolCallData {
+  name: string;
+  count: number;
+}
+
+interface CostDataPoint {
+  date: string;
+  cost: number;
+}
+
+interface ErrorEntry {
+  timestamp: string;
+  personality: string;
+  tool: string;
+  error: string;
+}
+
+// ─── Main page ───
 
 export function ActivityPage() {
   const { state } = useAppState();
@@ -304,28 +309,29 @@ export function ActivityPage() {
     [port],
   );
 
-  const [groups, setGroups] = useState<ConversationGroup[]>([]);
+  const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [sessionFilter, setSessionFilter] = useState<string | null>(null);
-  const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
-  const [sessionData, setSessionData] = useState<SessionData | null>(null);
+  const [activeTab, setActiveTab] = useState<TabId>('stream');
+
+  // Auto-scroll state
+  const streamRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [newEventCount, setNewEventCount] = useState(0);
+
+  // Metrics state (stub data until RPC exists)
+  const [metrics] = useState<Metrics>({ toolCalls: 0, tokensUsed: 0, estCost: 0, errorRate: 0 });
+  const [toolCalls] = useState<ToolCallData[]>([]);
+  const [costHistory] = useState<CostDataPoint[]>([]);
+  const [errors] = useState<ErrorEntry[]>([]);
 
   const activeSessionId = sessionFilter ?? sessions[0]?.id ?? null;
 
-  const _completedGroupCount = useMemo(
-    () => groups.filter((g) => !g.isLive && g.sessionId === activeSessionId).length,
-    [groups, activeSessionId],
-  );
-
-  const userMessages = useMemo(
-    () => (sessionData?.messages ?? []).filter((m) => m.role === 'user'),
-    [sessionData],
-  );
-
-  // Load session list on mount
+  // Load session list
   useEffect(() => {
     let cancelled = false;
     setSessionsLoading(true);
@@ -350,71 +356,17 @@ export function ActivityPage() {
     };
   }, [client]);
 
-  // Re-fetch session detail when completedGroupCount changes
-  useEffect(() => {
-    if (!activeSessionId) return;
-    let cancelled = false;
-    client.rpc.sessions
-      .get({ id: activeSessionId })
-      .then((res) => {
-        if (!cancelled) setSessionData(res as SessionData);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [activeSessionId, client]);
-
-  const appendEvent = useCallback((evt: ActivityEvent) => {
-    setGroups((prev) => {
-      // cron.fired: standalone group, not part of a turn
-      if (evt.type === 'cron.fired') {
-        const g: ConversationGroup = {
-          id: evt.id,
-          sessionId: evt.sessionId,
-          sessionTitle: evt.sessionTitle,
-          startedAt: evt.timestamp,
-          completedAt: evt.timestamp,
-          turnCount: null,
-          events: [evt],
-          isLive: false,
-        };
-        return [g, ...prev].slice(0, MAX_EVENTS);
+  const appendEvent = useCallback(
+    (evt: ActivityEvent) => {
+      setEvents((prev) => [...prev, evt].slice(-MAX_EVENTS));
+      if (!autoScroll) {
+        setNewEventCount((c) => c + 1);
       }
+    },
+    [autoScroll],
+  );
 
-      // Find existing live group for this session
-      const liveIdx = prev.findIndex((g) => g.sessionId === evt.sessionId && g.isLive);
-      if (liveIdx >= 0) {
-        const done = evt.type === 'done';
-        return prev.map((g, i) => {
-          if (i !== liveIdx) return g;
-          return {
-            ...g,
-            events: [...g.events, evt],
-            isLive: !done,
-            completedAt: done ? evt.timestamp : null,
-            turnCount: done ? ((evt.raw as { turnCount?: number }).turnCount ?? null) : g.turnCount,
-          };
-        });
-      }
-
-      // Start a new group
-      const newGroup: ConversationGroup = {
-        id: `${evt.sessionId}-${evt.timestamp}`,
-        sessionId: evt.sessionId,
-        sessionTitle: evt.sessionTitle,
-        startedAt: evt.timestamp,
-        completedAt: evt.type === 'done' ? evt.timestamp : null,
-        turnCount:
-          evt.type === 'done' ? ((evt.raw as { turnCount?: number }).turnCount ?? null) : null,
-        events: [evt],
-        isLive: evt.type !== 'done',
-      };
-      return [newGroup, ...prev].slice(0, MAX_EVENTS);
-    });
-  }, []);
-
-  // Subscribe to SSE for the active session
+  // Subscribe to SSE
   useEffect(() => {
     if (!activeSessionId) return;
     const title = sessions.find((s) => s.id === activeSessionId)?.title ?? null;
@@ -430,11 +382,48 @@ export function ActivityPage() {
     return () => sub.close();
   }, [activeSessionId, port, sessions, appendEvent]);
 
-  const filtered = groups.filter((group) => {
-    if (!groupMatchesFilter(group, typeFilter)) return false;
-    if (sessionFilter && group.sessionId !== sessionFilter) return false;
-    return true;
-  });
+  // Auto-scroll via IntersectionObserver
+  useEffect(() => {
+    const bottom = bottomRef.current;
+    if (!bottom) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setAutoScroll(true);
+          setNewEventCount(0);
+        } else {
+          setAutoScroll(false);
+        }
+      },
+      { root: streamRef.current, threshold: 0.1 },
+    );
+
+    observer.observe(bottom);
+    return () => observer.disconnect();
+  }, []);
+
+  // Scroll to bottom when autoScroll is true and events change
+  const eventCount = events.length;
+  useEffect(() => {
+    if (autoScroll && eventCount > 0) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [eventCount, autoScroll]);
+
+  const filtered = useMemo(() => {
+    return events.filter((evt) => {
+      if (!eventMatchesFilter(evt, typeFilter)) return false;
+      if (sessionFilter && evt.sessionId !== sessionFilter) return false;
+      return true;
+    });
+  }, [events, typeFilter, sessionFilter]);
+
+  const scrollToBottom = () => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    setAutoScroll(true);
+    setNewEventCount(0);
+  };
 
   if (sessionsLoading) {
     return (
@@ -454,6 +443,18 @@ export function ActivityPage() {
     );
   }
 
+  const tabStyle = (tab: TabId): React.CSSProperties => ({
+    padding: '4px 12px',
+    fontSize: 12,
+    fontFamily: 'var(--font-display)',
+    cursor: 'pointer',
+    background: 'transparent',
+    border: 'none',
+    borderBottom: activeTab === tab ? '2px solid var(--text-primary)' : '2px solid transparent',
+    color: activeTab === tab ? 'var(--text-primary)' : 'var(--text-tertiary)',
+    transition: 'color 80ms ease',
+  });
+
   return (
     <div
       style={{
@@ -462,9 +463,10 @@ export function ActivityPage() {
         height: '100%',
         overflow: 'hidden',
         fontFamily: 'var(--font-display)',
+        position: 'relative',
       }}
     >
-      {/* Toolbar */}
+      {/* Header */}
       <div
         style={{
           display: 'flex',
@@ -475,25 +477,26 @@ export function ActivityPage() {
           flexShrink: 0,
         }}
       >
-        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
-          Activity
+        <span style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-primary)' }}>
+          Observability
         </span>
         <select
           value={sessionFilter ?? ''}
           onChange={(e) => setSessionFilter(e.target.value || null)}
           style={{
-            background: 'var(--bg-overlay)',
-            color: 'var(--text-primary)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 'var(--radius-sm)',
+            background: 'var(--bg-elevated)',
+            color: 'var(--text-secondary)',
+            border: '1px solid var(--border-strong)',
+            borderRadius: 6,
             fontSize: 12,
+            fontFamily: 'var(--font-mono)',
             padding: '3px 8px',
             cursor: 'pointer',
             outline: 'none',
-            minWidth: 180,
+            minWidth: 160,
           }}
         >
-          <option value="">Most recent session</option>
+          <option value="">All sessions</option>
           {sessions.map((s) => (
             <option key={s.id} value={s.id}>
               {s.title ?? s.id.slice(0, 12)}
@@ -502,249 +505,164 @@ export function ActivityPage() {
         </select>
       </div>
 
-      {/* Filter chips */}
+      {/* Tabs */}
       <div
         style={{
           display: 'flex',
-          gap: 6,
-          padding: '8px 16px',
+          gap: 4,
+          padding: '0 16px',
           borderBottom: '1px solid var(--border-subtle)',
           flexShrink: 0,
         }}
       >
-        {TYPE_FILTERS.map((f) => {
-          const active = typeFilter === f.value;
-          return (
-            <button
-              key={f.value}
-              type="button"
-              onClick={() => setTypeFilter(f.value)}
-              style={{
-                padding: '3px 10px',
-                fontSize: 12,
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-subtle)',
-                background: active ? 'var(--bg-overlay)' : 'transparent',
-                color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                cursor: 'pointer',
-              }}
-            >
-              {f.label}
-            </button>
-          );
-        })}
+        <button type="button" style={tabStyle('stream')} onClick={() => setActiveTab('stream')}>
+          Events
+        </button>
+        <button type="button" style={tabStyle('metrics')} onClick={() => setActiveTab('metrics')}>
+          Metrics
+        </button>
       </div>
 
-      {/* Timeline */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
-        {filtered.length === 0 ? (
+      {activeTab === 'stream' ? (
+        <>
+          {/* Filter chips */}
           <div
             style={{
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '48px 0',
-              color: 'var(--text-tertiary)',
-              fontSize: 13,
+              gap: 6,
+              padding: '8px 16px',
+              borderBottom: '1px solid var(--border-subtle)',
+              flexShrink: 0,
             }}
           >
-            No activity yet. Events will appear as sessions stream.
+            {TYPE_FILTERS.map((f) => (
+              <FilterChip
+                key={f.value}
+                label={f.label}
+                active={typeFilter === f.value}
+                color={f.color}
+                onClick={() => setTypeFilter(f.value)}
+              />
+            ))}
           </div>
-        ) : (
-          filtered.map((group) => {
-            const toolCount = group.events.filter((e) => e.type === 'tool_start').length;
-            const hasError = group.events.some((e) => e.type === 'error');
-            const session = group.sessionTitle ?? group.sessionId.slice(0, 8);
-            const toolPart =
-              toolCount > 0 ? ` · ${toolCount} tool call${toolCount !== 1 ? 's' : ''}` : '';
-            const userMsg = group.turnCount != null ? userMessages[group.turnCount - 1] : null;
-            const promptText = userMsg?.content
-              ? userMsg.content.trim().replace(/\s+/g, ' ')
-              : null;
-            const MAX_PROMPT = 60;
-            const truncatedPrompt = promptText
-              ? promptText.length > MAX_PROMPT
-                ? `${promptText.slice(0, MAX_PROMPT)}…`
-                : promptText
-              : null;
-            const groupLabel = truncatedPrompt
-              ? `Turn ${group.turnCount}: ${truncatedPrompt}${toolPart}`
-              : `${session}${group.turnCount != null ? ` · Turn ${group.turnCount}` : ''}${toolPart}`;
-            const expandedGroup = expandedGroupId === group.id;
 
-            const dotBg = group.isLive
-              ? 'var(--accent)'
-              : hasError
-                ? 'var(--error)'
-                : 'var(--success)';
-
-            return (
-              <div key={group.id} style={{ marginBottom: 6 }}>
-                <button
-                  type="button"
-                  onClick={() => setExpandedGroupId(expandedGroup ? null : group.id)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    width: '100%',
-                    padding: '8px 12px',
-                    background: 'transparent',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: expandedGroup
-                      ? 'var(--radius-sm) var(--radius-sm) 0 0'
-                      : 'var(--radius-sm)',
-                    cursor: 'pointer',
-                    color: 'var(--text-primary)',
-                    textAlign: 'left',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                    {/* Dot indicator */}
-                    <span
-                      style={{
-                        display: 'inline-block',
-                        width: 8,
-                        height: 8,
-                        borderRadius: '50%',
-                        flexShrink: 0,
-                        background: dotBg,
-                      }}
-                    />
-                    <span
-                      style={{
-                        fontSize: 11,
-                        color: 'var(--text-tertiary)',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {formatRelative(group.startedAt)}
-                    </span>
-                    {/* Status badge */}
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 600,
-                        padding: '1px 6px',
-                        borderRadius: 'var(--radius-sm)',
-                        background: group.isLive
-                          ? 'rgba(74,158,255,0.15)'
-                          : hasError
-                            ? 'rgba(255,80,80,0.15)'
-                            : 'rgba(40,200,100,0.15)',
-                        color: group.isLive
-                          ? 'var(--accent)'
-                          : hasError
-                            ? 'var(--error)'
-                            : 'var(--success)',
-                        border: `1px solid ${group.isLive ? 'var(--accent)' : hasError ? 'var(--error)' : 'var(--success)'}`,
-                        flexShrink: 0,
-                      }}
-                    >
-                      {group.isLive ? 'live' : hasError ? 'error' : 'done'}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 12,
-                        color: 'var(--text-primary)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {groupLabel}
-                    </span>
-                  </div>
-                  <span
-                    style={{
-                      fontSize: 10,
-                      color: 'var(--text-tertiary)',
-                      flexShrink: 0,
-                      marginLeft: 8,
-                    }}
-                  >
-                    {expandedGroup ? '▲' : '▼'}
-                  </span>
-                </button>
-
-                {expandedGroup && (
-                  <div
-                    style={{
-                      border: '1px solid var(--border-subtle)',
-                      borderTop: 'none',
-                      borderRadius: '0 0 var(--radius-sm) var(--radius-sm)',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    {group.events.map((evt) => {
-                      const expandedEvt = expandedEventId === evt.id;
-                      const evtDotBg = EVENT_TYPE_DOT_COLORS[evt.type];
-                      const evtTagBg = EVENT_TYPE_COLORS[evt.type];
-                      const evtTagColor = EVENT_TYPE_TEXT_COLORS[evt.type];
-                      return (
-                        <div key={evt.id}>
-                          <button
-                            type="button"
-                            onClick={() => setExpandedEventId(expandedEvt ? null : evt.id)}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 8,
-                              width: '100%',
-                              padding: '6px 12px',
-                              background: expandedEvt ? 'var(--bg-overlay)' : 'transparent',
-                              border: 'none',
-                              borderBottom: '1px solid var(--border-subtle)',
-                              cursor: 'pointer',
-                              textAlign: 'left',
-                            }}
-                          >
-                            <span
-                              style={{
-                                display: 'inline-block',
-                                width: 6,
-                                height: 6,
-                                borderRadius: '50%',
-                                flexShrink: 0,
-                                background: evtDotBg,
-                              }}
-                            />
-                            <span
-                              style={{
-                                fontSize: 10,
-                                fontWeight: 600,
-                                padding: '1px 5px',
-                                borderRadius: 'var(--radius-sm)',
-                                background: evtTagBg,
-                                color: evtTagColor,
-                                flexShrink: 0,
-                              }}
-                            >
-                              {evt.type}
-                            </span>
-                            <span
-                              style={{
-                                fontSize: 11,
-                                color: 'var(--text-secondary)',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {evt.summary}
-                            </span>
-                          </button>
-                          {expandedEvt && <EventDetail event={evt} />}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+          {/* Event stream */}
+          <div ref={streamRef} style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
+            {filtered.length === 0 ? (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '48px 0',
+                  color: 'var(--text-tertiary)',
+                  fontSize: 13,
+                }}
+              >
+                No activity yet. Events will appear as sessions stream.
               </div>
-            );
-          })
-        )}
-      </div>
+            ) : (
+              filtered.map((evt) => {
+                const expanded = expandedEventId === evt.id;
+                return (
+                  <div key={evt.id}>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedEventId(expanded ? null : evt.id)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'baseline',
+                        gap: 8,
+                        width: '100%',
+                        padding: '0 4px',
+                        lineHeight: '2',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 12,
+                        background: expanded ? 'var(--bg-elevated)' : 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        color: 'inherit',
+                      }}
+                    >
+                      <span
+                        style={{
+                          minWidth: 70,
+                          flexShrink: 0,
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: 11,
+                          color: 'var(--text-tertiary)',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {formatTime(evt.timestamp)}
+                      </span>
+                      <EventBadge eventType={evt.type} />
+                      <span
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          color: 'var(--text-secondary)',
+                        }}
+                      >
+                        {evt.summary}
+                      </span>
+                    </button>
+                    {expanded && <EventDetail event={evt} />}
+                  </div>
+                );
+              })
+            )}
+            <div ref={bottomRef} />
+          </div>
+
+          {/* New events indicator */}
+          {newEventCount > 0 && (
+            <button
+              type="button"
+              onClick={scrollToBottom}
+              style={{
+                position: 'absolute',
+                bottom: 16,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                padding: '4px 14px',
+                borderRadius: 9999,
+                border: '1px solid var(--border-strong)',
+                background: 'var(--bg-elevated)',
+                color: 'var(--blue, var(--accent))',
+                fontSize: 12,
+                fontFamily: 'var(--font-mono)',
+                cursor: 'pointer',
+                zIndex: 10,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+              }}
+            >
+              ↓ {newEventCount} new event{newEventCount !== 1 ? 's' : ''}
+            </button>
+          )}
+        </>
+      ) : (
+        /* Metrics tab */
+        <div
+          style={{
+            padding: 16,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 24,
+            overflowY: 'auto',
+            flex: 1,
+          }}
+        >
+          <MetricsRow metrics={metrics} />
+          <ToolCallChart data={toolCalls} />
+          <CostSparkline data={costHistory} />
+          <ErrorLogTable errors={errors} />
+        </div>
+      )}
     </div>
   );
 }
