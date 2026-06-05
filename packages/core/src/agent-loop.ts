@@ -344,7 +344,7 @@ export interface AgentLoopConfig {
      * Default streaming watchdog in milliseconds. If no chunk arrives from the
      * LLM within this window, the agent aborts the stream and emits an error.
      * Reset on every chunk. Personalities can override via
-     * `personality.streamingTimeoutMs`. Defaults to 120000 (2 minutes).
+     * `personality.streamingTimeoutMs`. Defaults to 600000 (10 minutes).
      */
     streamingTimeoutMs?: number;
   };
@@ -473,7 +473,7 @@ export class AgentLoop {
     this.resultBudgetChars = config.options?.resultBudgetChars ?? 80_000;
     this.maxToolCallsPerTurn = config.options?.maxToolCallsPerTurn ?? 20;
     this.maxIdenticalToolCalls = config.options?.maxIdenticalToolCalls ?? 5;
-    this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? 120_000;
+    this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? 600_000;
     this.modelRouting = config.modelRouting ?? {};
     this.memoryProviders = config.memoryProviders ?? new Map();
     if (config.storage) this.storage = config.storage;
