@@ -3,6 +3,7 @@ import { useState } from 'react';
 interface MessageBubbleProps {
   content: string;
   timestamp: string;
+  isSteer?: boolean;
 }
 
 function formatTime(iso: string): string {
@@ -14,7 +15,7 @@ function formatTime(iso: string): string {
   }
 }
 
-export function MessageBubble({ content, timestamp }: MessageBubbleProps) {
+export function MessageBubble({ content, timestamp, isSteer }: MessageBubbleProps) {
   const [hovered, setHovered] = useState(false);
 
   return (
@@ -29,6 +30,18 @@ export function MessageBubble({ content, timestamp }: MessageBubbleProps) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
+      {isSteer && (
+        <div
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            color: 'var(--text-tertiary)',
+            marginBottom: 2,
+          }}
+        >
+          ↗ Steering
+        </div>
+      )}
       {hovered && (
         <div
           style={{

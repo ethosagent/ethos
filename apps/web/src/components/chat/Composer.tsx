@@ -21,9 +21,18 @@ export interface ComposerProps {
   /** Optional placeholder. Default mirrors the magic-moment prompt for
    *  empty sessions; pages override for already-active sessions. */
   placeholder?: string;
+  isStreaming?: boolean;
+  onAbort?: () => void;
 }
 
-export function Composer({ personalityId, disabled, onSend, placeholder }: ComposerProps) {
+export function Composer({
+  personalityId,
+  disabled,
+  onSend,
+  placeholder,
+  isStreaming,
+  onAbort,
+}: ComposerProps) {
   const [text, setText] = useState('');
   const accent = personalityAccent(personalityId);
 
@@ -54,23 +63,36 @@ export function Composer({ personalityId, disabled, onSend, placeholder }: Compo
             style={{ caretColor: accent, fontSize: 14, lineHeight: 1.5 }}
             disabled={disabled}
           />
-          <button
-            type="button"
-            className="composer-send-btn"
-            onClick={handleSend}
-            disabled={disabled || text.trim() === ''}
-            aria-label="Send message"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path
-                d="M3 8h10M9 4l4 4-4 4"
-                stroke="white"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
+          {isStreaming && onAbort ? (
+            <button
+              type="button"
+              className="composer-send-btn composer-stop-btn"
+              onClick={onAbort}
+              aria-label="Stop"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                <rect x="2" y="2" width="10" height="10" rx="1.5" fill="white" />
+              </svg>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="composer-send-btn"
+              onClick={handleSend}
+              disabled={disabled || text.trim() === ''}
+              aria-label="Send message"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path
+                  d="M3 8h10M9 4l4 4-4 4"
+                  stroke="white"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
     </div>

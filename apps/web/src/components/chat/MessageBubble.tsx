@@ -10,6 +10,7 @@ import { ToolChip } from './ToolChip';
 export function UserBubble({ message }: { message: UserMessage }) {
   return (
     <div className="message-row message-row-user">
+      {message.isSteer && <div className="message-steer-label">↗ Steering</div>}
       <div className="message-user">{message.content}</div>
     </div>
   );

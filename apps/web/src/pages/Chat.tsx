@@ -51,17 +51,24 @@ export function Chat() {
   // currentSessionId matches sessionParam.
   const sessionParamQuery = useSessionGet(sessionParam ?? null);
 
-  const { state, currentSessionId, sendMessage, steerMessage, switchSession, resetSession } =
-    useChat({
-      ...(sessionParam ? { initialSessionId: sessionParam } : {}),
-      personalityId,
-      sessionKey: sessionParamQuery.data?.session.key,
-      onSessionCreated: (id) => {
-        setSearchParams({ session: id }, { replace: true });
-        setLastSessionId(id);
-        void queryClient.invalidateQueries({ queryKey: ['sessions', 'list'] });
-      },
-    });
+  const {
+    state,
+    currentSessionId,
+    sendMessage,
+    steerMessage,
+    abortTurn,
+    switchSession,
+    resetSession,
+  } = useChat({
+    ...(sessionParam ? { initialSessionId: sessionParam } : {}),
+    personalityId,
+    sessionKey: sessionParamQuery.data?.session.key,
+    onSessionCreated: (id) => {
+      setSearchParams({ session: id }, { replace: true });
+      setLastSessionId(id);
+      void queryClient.invalidateQueries({ queryKey: ['sessions', 'list'] });
+    },
+  });
 
   const sessionQuery = useSessionGet(currentSessionId);
   // undefined = no session; null = session without title; string = titled session
@@ -259,6 +266,8 @@ export function Chat() {
             disabled={false}
             onSend={handleSend}
             placeholder={state.isStreaming ? 'Steer the agent…' : 'Send a message…'}
+            isStreaming={state.isStreaming}
+            onAbort={() => void abortTurn()}
           />
         </div>
       </div>

@@ -294,6 +294,17 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
             text,
           });
           if (res.ok) {
+            const steerMsg: StoredMessage = {
+              id: `steer-${Date.now()}`,
+              sessionId: activeSessionId ?? '',
+              role: 'user_steer',
+              content: text,
+              toolCallId: null,
+              toolName: null,
+              toolCalls: null,
+              timestamp: new Date().toISOString(),
+            };
+            setMessages((prev) => [...prev, steerMsg]);
             return;
           }
         } catch {

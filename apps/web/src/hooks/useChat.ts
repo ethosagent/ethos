@@ -50,6 +50,8 @@ export interface UseChatResult {
   /** Steer the running turn. Returns true if accepted, false if the turn
    *  already ended or the RPC failed. */
   steerMessage: (text: string) => Promise<boolean>;
+  /** Abort the running turn. Fire-and-forget — best effort. */
+  abortTurn: () => Promise<void>;
   /**
    * Switch the in-flight session to a new id (e.g. after a fork). Wipes
    * local state synchronously so old messages don't linger while the
@@ -138,6 +140,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
         // an error here because connection blips during a long chat
         // shouldn't pollute the UI; only RPC failures and explicit
         // server `error` events do.
+        return undefined;
       },
     });
     return () => sub.close();
@@ -199,6 +202,17 @@ export function useChat(opts: UseChatOptions): UseChatResult {
       if (!currentSessionId) return false;
       try {
         const res = await rpc.chat.steer({ sessionId: currentSessionId, text });
+        if (res.ok) {
+          dispatch({
+            kind: 'action',
+            action: {
+              type: 'steer-user-message',
+              id: `steer-${Date.now()}`,
+              text,
+              timestamp: Date.now(),
+            },
+          });
+        }
         return res.ok;
       } catch {
         return false;
@@ -206,6 +220,15 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     },
     [currentSessionId],
   );
+
+  const abortTurn = useCallback(async (): Promise<void> => {
+    if (!currentSessionId) return;
+    try {
+      await rpc.chat.abort({ sessionId: currentSessionId });
+    } catch {
+      // best-effort
+    }
+  }, [currentSessionId]);
 
   const switchSession = useCallback((sessionId: string) => {
     dispatch({ kind: 'action', action: { type: 'reset' } });
@@ -218,5 +241,13 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     historyLoadedFor.current = null;
   }, []);
 
-  return { state, currentSessionId, sendMessage, steerMessage, switchSession, resetSession };
+  return {
+    state,
+    currentSessionId,
+    sendMessage,
+    steerMessage,
+    abortTurn,
+    switchSession,
+    resetSession,
+  };
 }

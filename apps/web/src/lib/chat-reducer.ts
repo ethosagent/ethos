@@ -22,6 +22,7 @@ export interface UserMessage {
   content: string;
   /** Wall-clock when the user pressed Send. */
   timestamp: number;
+  isSteer?: boolean;
 }
 
 export interface TextBlock {
@@ -107,6 +108,7 @@ export const initialChatState: ChatState = {
  */
 export type ChatAction =
   | { type: 'submit-user-message'; id: string; text: string; timestamp: number }
+  | { type: 'steer-user-message'; id: string; text: string; timestamp: number }
   | { type: 'history-loaded'; messages: StoredMessage[] }
   | { type: 'send-failed'; userMessageId: string; error: string }
   | { type: 'clear-error' }
@@ -358,6 +360,20 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
       };
     }
 
+    case 'steer-user-message': {
+      const message: UserMessage = {
+        id: action.id,
+        role: 'user',
+        content: action.text,
+        timestamp: action.timestamp,
+        isSteer: true,
+      };
+      return {
+        ...state,
+        messages: [...state.messages, message],
+      };
+    }
+
     case 'history-loaded': {
       return { ...state, messages: parseHistory(action.messages) };
     }
@@ -478,6 +494,18 @@ function parseHistory(stored: StoredMessage[]): ChatMessage[] {
         role: 'user',
         content: m.content,
         timestamp: new Date(m.timestamp).getTime(),
+      });
+      continue;
+    }
+
+    if (m.role === 'user_steer') {
+      flush();
+      ui.push({
+        id: m.id,
+        role: 'user',
+        content: m.content,
+        timestamp: new Date(m.timestamp).getTime(),
+        isSteer: true,
       });
       continue;
     }

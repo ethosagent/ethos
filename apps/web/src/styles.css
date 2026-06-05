@@ -1764,6 +1764,15 @@ body,
   white-space: pre-wrap;
 }
 
+.message-steer-label {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.35));
+  text-align: right;
+  margin-bottom: 3px;
+  width: 100%;
+}
+
 .message-assistant {
   color: var(--ethos-text);
   font-size: 14px;
@@ -1922,6 +1931,14 @@ textarea {
 .composer-send-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+.composer-stop-btn {
+  background: #ef4444;
+}
+
+.composer-stop-btn:hover {
+  background: #dc2626;
 }
 
 .chat-error {

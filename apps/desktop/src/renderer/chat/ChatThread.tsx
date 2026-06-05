@@ -70,7 +70,14 @@ export function ChatThread({
     >
       {messages.map((msg) => {
         if (msg.role === 'user' || msg.role === 'user_steer') {
-          return <MessageBubble key={msg.id} content={msg.content} timestamp={msg.timestamp} />;
+          return (
+            <MessageBubble
+              key={msg.id}
+              content={msg.content}
+              timestamp={msg.timestamp}
+              isSteer={msg.role === 'user_steer'}
+            />
+          );
         }
         if (msg.role === 'assistant') {
           return <AssistantMessage key={msg.id} content={msg.content} />;
