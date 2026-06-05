@@ -152,16 +152,22 @@ export function CronPage() {
             flexShrink: 0,
           }}
         >
-          <h3
-            style={{
-              margin: 0,
-              fontSize: 20,
-              fontWeight: 600,
-              color: 'var(--text-primary)',
-            }}
-          >
-            Cron Jobs
-          </h3>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            <h3
+              style={{
+                margin: 0,
+                fontSize: 18,
+                fontWeight: 600,
+                color: 'var(--text-primary)',
+              }}
+            >
+              Cron
+            </h3>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              {jobs.length} {jobs.length === 1 ? 'job' : 'jobs'} &middot;{' '}
+              {jobs.filter((j) => j.status === 'active').length} active
+            </span>
+          </div>
           <button
             type="button"
             onClick={() => {
@@ -170,16 +176,17 @@ export function CronPage() {
             }}
             style={{
               height: 28,
-              padding: '0 12px',
-              background: 'none',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 4,
+              padding: '0 14px',
+              background: 'var(--info, #4a9eff)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 8,
               cursor: 'pointer',
-              fontSize: 13,
-              color: 'var(--text-secondary)',
+              fontSize: 12,
+              fontWeight: 500,
             }}
           >
-            New job
+            + New job
           </button>
         </div>
 
@@ -189,6 +196,9 @@ export function CronPage() {
             flex: 1,
             overflow: 'auto',
             padding: '0 16px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
           }}
         >
           {jobs.length === 0 && (

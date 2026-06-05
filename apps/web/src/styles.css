@@ -1493,36 +1493,220 @@ body {
 /* Cron tab — list + create + run history. Same dense-table pattern as
    sessions; row expand reveals the head of history. */
 
+/* Cron tab — 08-cron redesign. Vertical card list with hover-reveal actions. */
+
 .cron-tab {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 0;
 }
 
-.cron-toolbar {
+.cron-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  padding: 0 0 12px;
 }
 
-.cron-status-paused {
-  color: var(--ethos-text-dim);
-  font-weight: 400;
-  font-size: 12px;
-  margin-left: 6px;
+.cron-header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
 }
 
-.cron-muted {
-  color: var(--ethos-text-dim);
+.cron-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.cron-subtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cron-new-btn {
+  height: 28px;
+  padding: 0 14px;
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity var(--motion-fast) var(--ease);
+}
+
+.cron-new-btn:hover {
+  opacity: 0.85;
+}
+
+.cron-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cron-empty {
+  padding: 40px 0;
+  font-size: 13px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+/* Card */
+
+.cron-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 14px 16px;
+  transition: border-color var(--motion-fast) var(--ease);
+}
+
+.cron-card:hover {
+  border-color: var(--border-strong);
+}
+
+.cron-card--paused {
+  opacity: 0.75;
+  transition:
+    opacity 150ms var(--ease),
+    border-color var(--motion-fast) var(--ease);
+}
+
+.cron-card--paused:hover {
+  opacity: 1;
+}
+
+/* Card top row */
+
+.cron-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cron-card-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.cron-run-now-btn {
+  background: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 2px 8px;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--ease),
+    color var(--motion-fast) var(--ease);
+}
+
+.cron-run-now-btn:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.cron-run-now-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* Card meta row */
+
+.cron-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.cron-card-cron {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.cron-card-personality {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--blue);
+}
+
+.cron-card-next {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* Card description */
+
+.cron-card-desc {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* Card hover-reveal actions */
+
+.cron-card-actions {
+  display: none;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.cron-card:hover .cron-card-actions {
+  display: flex;
+}
+
+.cron-action-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-secondary);
+  padding: 0;
+  line-height: 1;
+  transition: color var(--motion-fast) var(--ease);
+}
+
+.cron-action-btn:hover {
+  color: var(--text-primary);
+}
+
+.cron-action-btn--delete {
+  color: var(--text-secondary);
+}
+
+.cron-action-btn--delete:hover {
+  color: var(--red);
+}
+
+/* Muted text */
+
+.cron-card-muted {
+  color: var(--text-tertiary);
   font-size: 12px;
 }
+
+/* Run history (expandable section inside card) */
 
 .cron-history {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 4px 0;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .cron-history-row {
@@ -1532,8 +1716,9 @@ body {
 }
 
 .cron-history-when {
-  color: var(--ethos-text-dim);
+  font-family: var(--font-mono);
   font-size: 11px;
+  color: var(--text-tertiary);
 }
 
 .cron-history-output {
@@ -1544,7 +1729,7 @@ body {
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
-  color: var(--ethos-text);
+  color: var(--text-primary);
   max-height: 300px;
   overflow: auto;
   white-space: pre-wrap;
@@ -2960,25 +3145,328 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
-/* Settings tab — header + advanced toggle. Form lives in Antd Cards
-   inside the body; no further chrome needed. */
+/* Settings page — single scrollable form (09-settings redesign). */
 
-.settings-toolbar {
+.settings-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.settings-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: 24px;
 }
 
-.settings-advanced-toggle {
+.settings-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.settings-advanced-btn {
   display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  transition: color var(--motion-fast) var(--ease);
+}
+
+.settings-advanced-btn:hover {
+  color: var(--text-primary);
+}
+
+.settings-advanced-chevron {
+  display: inline-block;
+  font-size: 10px;
+  transition: transform var(--motion-fast) var(--ease);
+}
+
+.settings-section {
+  margin-bottom: 24px;
+}
+
+.settings-section-label {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  display: block;
+  margin-bottom: 10px;
+}
+
+/* Provider chain rows */
+.settings-provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-provider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  flex-wrap: wrap;
+  cursor: default;
+}
+
+.settings-provider-row[draggable="true"] {
+  cursor: grab;
+}
+
+.settings-provider-row[draggable="true"]:active {
+  cursor: grabbing;
+  opacity: 0.85;
+}
+
+.settings-drag-handle {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  cursor: grab;
+  user-select: none;
+}
+
+.settings-provider-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.settings-provider-model {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.settings-provider-key {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.settings-provider-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.settings-action-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  transition: color var(--motion-fast) var(--ease);
+}
+
+.settings-action-btn:hover {
+  color: var(--text-primary);
+}
+
+.settings-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.settings-action-remove {
+  color: var(--red);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.settings-action-remove:hover {
+  color: var(--red);
+  opacity: 0.8;
+}
+
+.settings-test-result {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+/* Provider edit panel (inline below the row) */
+.settings-provider-edit {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.settings-provider-edit-row {
+  display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.settings-advanced-label {
+.settings-field-label {
   font-size: 12px;
-  color: var(--ethos-text-dim);
+  color: var(--text-secondary);
+  width: 80px;
+  flex-shrink: 0;
+}
+
+.settings-field-input {
+  flex: 1;
+  height: 32px;
+}
+
+/* Add provider dashed button */
+.settings-add-provider {
+  width: 100%;
+  padding: 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+  margin-top: 6px;
+  transition:
+    border-color var(--motion-fast) var(--ease),
+    color var(--motion-fast) var(--ease);
+}
+
+.settings-add-provider:hover {
+  border-color: var(--blue);
+  color: var(--text-primary);
+}
+
+/* Inline setting rows (label + control) */
+.settings-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.settings-row-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  width: 180px;
+  flex-shrink: 0;
+}
+
+.settings-select {
+  width: 200px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+}
+
+.settings-select:focus {
+  border-color: var(--blue);
+}
+
+/* Memory mode radio group */
+.settings-radio-group {
+  display: inline-flex;
+  gap: 0;
+}
+
+.settings-radio-btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--ease),
+    color var(--motion-fast) var(--ease);
+}
+
+.settings-radio-btn + .settings-radio-btn {
+  margin-left: -1px;
+}
+
+.settings-radio-btn--active {
+  border-color: var(--blue);
+  color: var(--blue);
+  position: relative;
+  z-index: 1;
+}
+
+/* Model routing table (advanced section) */
+.settings-routing-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 12px;
+}
+
+.settings-routing-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  margin-bottom: 4px;
+}
+
+.settings-routing-col {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+
+.settings-routing-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.settings-routing-input {
+  height: 32px;
+}
+
+/* Save button row */
+.settings-save-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.settings-save-btn {
+  font-size: 12px;
+  font-weight: 500;
 }
 
 /* Skills tab + Mesh tab toolbars share the same flex shape as Cron's. */
@@ -3813,189 +4301,124 @@ textarea {
 
 /* ── Activity timeline (Move 3) ── */
 
-.activity-page {
+/* ── Observability / Activity page ── */
+
+.obs-page {
   max-width: 900px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
 }
 
-.activity-toolbar {
+.obs-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
 }
 
-.activity-filter-bar {
+.obs-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+  font-family: var(--font-display);
+}
+
+.obs-chip-bar {
   display: flex;
   flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 0;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.obs-filter-chip {
+  padding: 3px 10px;
+  border-radius: 9999px;
+  border: 1px solid var(--border-strong);
+  font-size: 11px;
+  font-family: var(--font-display);
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-secondary);
+  transition: all 80ms ease;
+}
+
+.obs-filter-chip:hover {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.obs-stream {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 0;
+}
+
+.obs-event-line {
+  display: flex;
+  align-items: baseline;
   gap: 8px;
-  margin-bottom: 16px;
-}
-
-.activity-filter-chip {
-  font-size: 12px;
-  padding: 4px 12px;
-  border: 1px solid var(--ethos-border);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--ethos-text-dim);
-  cursor: pointer;
-  transition: all 0.12s ease;
-  font-family: inherit;
-}
-
-.activity-filter-chip:hover {
-  border-color: var(--ethos-text-dim);
-  color: var(--ethos-text);
-}
-
-.activity-filter-chip.active {
-  background: #4a9eff;
-  border-color: #4a9eff;
-  color: #fff;
-}
-
-.activity-timeline {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-/* Conversation group */
-.activity-group {
-  border: 1px solid var(--ethos-border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.activity-group-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  cursor: pointer;
-  transition: background 0.12s ease;
-  background: transparent;
-  color: inherit;
-  text-align: left;
   width: 100%;
-  gap: 8px;
+  padding: 0 4px;
+  line-height: 2;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  transition: background 80ms ease;
 }
 
-.activity-group-header:hover {
-  background: var(--ethos-bg-elevated);
+.obs-event-line:hover {
+  background: var(--ethos-hover);
 }
 
-.activity-group-header--expanded {
-  background: var(--ethos-bg-elevated);
-  border-bottom: 1px solid var(--ethos-border);
+.obs-event-line--expanded {
+  background: var(--bg-elevated);
 }
 
-.activity-group-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.obs-event-ts {
+  min-width: 70px;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.obs-event-content {
   flex: 1;
   min-width: 0;
-}
-
-.activity-group-summary {
-  font-size: 13px;
-  color: var(--ethos-text);
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-secondary);
 }
 
-.activity-group-time {
-  font-size: 11px;
-  color: var(--ethos-text-dim);
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
-
-.activity-group-chevron {
-  font-size: 10px;
-  color: var(--ethos-text-dim);
-  flex-shrink: 0;
-}
-
-/* Sub-events inside an expanded group */
-.activity-group-events {
-  background: var(--ethos-bg);
-  padding: 4px 0;
-}
-
-.activity-subevent {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 16px;
-  cursor: pointer;
-  transition: background 0.1s ease;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  width: 100%;
-}
-
-.activity-subevent:hover,
-.activity-subevent--expanded {
-  background: var(--ethos-bg-elevated);
-}
-
-.activity-subevent-summary {
+.obs-new-events {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 14px;
+  border-radius: 9999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--blue);
   font-size: 12px;
-  color: var(--ethos-text);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Dot indicators (shared with sub-events) */
-.activity-event-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.activity-event-dot--tool_start,
-.activity-event-dot--tool_end {
-  background: #4a9eff;
-}
-
-.activity-event-dot--done {
-  background: #4ade80;
-}
-
-.activity-event-dot--error {
-  background: #f87171;
-}
-
-.activity-event-dot--approval {
-  background: #f59e0b;
-}
-
-.activity-event-dot--cron {
-  background: #e879f9;
-}
-
-.activity-event-dot--pulse {
-  animation: activity-dot-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes activity-dot-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
+  font-family: var(--font-mono);
+  cursor: pointer;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 /* Structured event detail */
@@ -4079,7 +4502,7 @@ textarea {
   .provider-chain-row-fields {
     grid-template-columns: 1fr;
   }
-  .activity-toolbar {
+  .obs-header {
     flex-direction: column;
     align-items: stretch;
   }

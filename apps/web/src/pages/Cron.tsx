@@ -1,25 +1,13 @@
 import type { CronJob } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  App as AntApp,
-  Button,
-  Dropdown,
-  Form,
-  Input,
-  type MenuProps,
-  Modal,
-  Popconfirm,
-  Select,
-  Spin,
-  Table,
-  Typography,
-} from 'antd';
+import { App as AntApp, Form, Input, Modal, Select, Spin, Typography } from 'antd';
 import { useState } from 'react';
+import { MonoBadge } from '../components/ui/MonoBadge';
 import { rpc } from '../rpc';
 
-// Cron tab — proactive pillar of v0.5. Lists scheduled jobs, lets the
-// user create / pause / resume / delete / run-now, and shows the head
-// of recent run history inline when a row is expanded.
+// Cron tab — proactive pillar of v0.5. Lists scheduled jobs as vertical
+// cards, lets the user create / pause / resume / delete / run-now, and
+// shows the head of recent run history inline when expanded.
 //
 // Server-side: serve.ts owns the actual scheduler tick loop. This UI
 // just calls into rpc.cron.* and lets the backend do the work.
@@ -34,16 +22,10 @@ const PRESET_SCHEDULES: Array<{ value: string; label: string }> = [
 
 export function Cron() {
   const [createOpen, setCreateOpen] = useState(false);
-  const [filterPersonality, setFilterPersonality] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['cron', 'list'],
     queryFn: () => rpc.cron.list(),
-  });
-
-  const personalitiesQuery = useQuery({
-    queryKey: ['personalities', 'list'],
-    queryFn: () => rpc.personalities.list({}),
   });
 
   if (isLoading) {
@@ -62,106 +44,33 @@ export function Cron() {
     );
   }
 
-  const allJobs = data?.jobs ?? [];
-  const jobs = filterPersonality
-    ? allJobs.filter((j) => j.personalityId === filterPersonality)
-    : allJobs;
+  const jobs = data?.jobs ?? [];
+  const activeCount = jobs.filter((j) => j.status === 'active').length;
 
   return (
     <div className="cron-tab">
-      <header className="cron-toolbar">
-        <span className="sessions-count">
-          {jobs.length} {jobs.length === 1 ? 'job' : 'jobs'}
-          {filterPersonality ? ` · ${filterPersonality}` : ''}
-        </span>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <Select
-            allowClear
-            placeholder="All personalities"
-            size="small"
-            style={{ width: 180 }}
-            value={filterPersonality}
-            onChange={(v) => setFilterPersonality(v ?? null)}
-            loading={personalitiesQuery.isLoading}
-            options={(personalitiesQuery.data?.items ?? []).map((p) => ({
-              value: p.id,
-              label: p.name,
-            }))}
-          />
-          <Button type="primary" onClick={() => setCreateOpen(true)}>
-            New job
-          </Button>
+      <header className="cron-header">
+        <div className="cron-header-left">
+          <span className="cron-title">Cron</span>
+          <span className="cron-subtitle">
+            {jobs.length} {jobs.length === 1 ? 'job' : 'jobs'} &middot; {activeCount} active
+          </span>
         </div>
+        <button type="button" className="cron-new-btn" onClick={() => setCreateOpen(true)}>
+          + New job
+        </button>
       </header>
 
-      <Table<CronJob>
-        rowKey="id"
-        dataSource={jobs}
-        pagination={false}
-        size="small"
-        expandable={{
-          expandedRowRender: (job) => <RunHistory jobId={job.id} />,
-        }}
-        locale={{
-          emptyText: 'No cron jobs yet. Create one to schedule a recurring agent task.',
-        }}
-        columns={[
-          {
-            title: 'Name',
-            dataIndex: 'name',
-            render: (v: string, row) => (
-              <span style={{ fontWeight: row.status === 'paused' ? 400 : 500 }}>
-                {v}
-                {row.status === 'paused' ? (
-                  <span className="cron-status-paused"> · paused</span>
-                ) : null}
-              </span>
-            ),
-          },
-          {
-            title: 'Schedule',
-            dataIndex: 'schedule',
-            width: 160,
-            render: (v: string) => <span className="sessions-mono">{v}</span>,
-          },
-          {
-            title: 'Personality',
-            dataIndex: 'personalityId',
-            width: 130,
-            render: (v: string) => v,
-          },
-          {
-            title: 'Next run',
-            dataIndex: 'nextRunAt',
-            width: 180,
-            render: (v: string | null, row) =>
-              row.status === 'paused' ? (
-                <span className="cron-muted">—</span>
-              ) : v ? (
-                <span className="sessions-mono">{formatRelativeFuture(v)}</span>
-              ) : (
-                <span className="cron-muted">never</span>
-              ),
-          },
-          {
-            title: 'Last run',
-            dataIndex: 'lastRunAt',
-            width: 160,
-            render: (v: string | null) =>
-              v ? (
-                <span className="sessions-mono">{formatRelativePast(v)}</span>
-              ) : (
-                <span className="cron-muted">never</span>
-              ),
-          },
-          {
-            title: '',
-            width: 56,
-            align: 'right' as const,
-            render: (_v, row) => <RowActions job={row} />,
-          },
-        ]}
-      />
+      <div className="cron-card-list">
+        {jobs.length === 0 && (
+          <div className="cron-empty">
+            No cron jobs yet. Create one to schedule a recurring agent task.
+          </div>
+        )}
+        {jobs.map((job) => (
+          <CronJobCard key={job.id} job={job} />
+        ))}
+      </div>
 
       {createOpen ? <CreateJobModal open onClose={() => setCreateOpen(false)} /> : null}
     </div>
@@ -169,12 +78,14 @@ export function Cron() {
 }
 
 // ---------------------------------------------------------------------------
-// Row actions (run-now / pause / resume / delete)
+// Job card
 // ---------------------------------------------------------------------------
 
-function RowActions({ job }: { job: CronJob }) {
+function CronJobCard({ job }: { job: CronJob }) {
+  const [expanded, setExpanded] = useState(false);
   const queryClient = useQueryClient();
   const { notification } = AntApp.useApp();
+  const isPaused = job.status === 'paused';
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['cron', 'list'] });
@@ -211,59 +122,78 @@ function RowActions({ job }: { job: CronJob }) {
     onError: (err) => surfaceError(notification, 'Delete failed', err),
   });
 
-  const items: MenuProps['items'] = [
-    { key: 'run', label: 'Run now' },
-    {
-      key: 'toggle',
-      label: job.status === 'paused' ? 'Resume' : 'Pause',
-    },
-    {
-      key: 'delete',
-      label: (
-        <Popconfirm
-          title="Delete this job?"
-          description="The schedule and run history are removed."
-          okText="Delete"
-          okButtonProps={{ danger: true, loading: remove.isPending }}
-          cancelText="Cancel"
-          onConfirm={(e) => {
-            e?.stopPropagation();
+  return (
+    <div className={`cron-card${isPaused ? ' cron-card--paused' : ''}`}>
+      {/* Top row: name + badge + "Run now" */}
+      <div className="cron-card-top">
+        <span className="cron-card-name">{job.name}</span>
+        <MonoBadge label={isPaused ? 'Paused' : 'Active'} variant={isPaused ? 'amber' : 'green'} />
+        <span style={{ flex: 1 }} />
+        <button
+          type="button"
+          className="cron-run-now-btn"
+          disabled={runNow.isPending}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!runNow.isPending) runNow.mutate();
+          }}
+        >
+          {runNow.isPending ? 'Running...' : 'Run now'}
+        </button>
+      </div>
+
+      {/* Meta row: cron expression + personality + next run */}
+      <div className="cron-card-meta">
+        <span className="cron-card-cron">{job.schedule}</span>
+        <span className="cron-card-personality">{job.personalityId}</span>
+        <span className="cron-card-next">
+          {isPaused ? 'Paused' : `Next: ${job.nextRunAt ? formatNextRun(job.nextRunAt) : 'never'}`}
+        </span>
+      </div>
+
+      {/* Description row (prompt preview) */}
+      {job.prompt ? <div className="cron-card-desc">{job.prompt}</div> : null}
+
+      {/* Hover-reveal action row */}
+      <div className="cron-card-actions">
+        <button
+          type="button"
+          className="cron-action-btn"
+          title={isPaused ? 'Resume' : 'Pause'}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isPaused) resume.mutate();
+            else pause.mutate();
+          }}
+        >
+          {isPaused ? '▶' : '⏸'}
+        </button>
+        <button
+          type="button"
+          className="cron-action-btn"
+          title="Edit"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((prev) => !prev);
+          }}
+        >
+          &#x270E;
+        </button>
+        <button
+          type="button"
+          className="cron-action-btn cron-action-btn--delete"
+          title="Delete"
+          onClick={(e) => {
+            e.stopPropagation();
             remove.mutate();
           }}
         >
-          <span style={{ color: '#f87171' }}>Delete</span>
-        </Popconfirm>
-      ),
-    },
-  ];
-
-  return (
-    <div
-      role="toolbar"
-      aria-label="Job actions"
-      className="sessions-row-actions"
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => e.stopPropagation()}
-    >
-      <Dropdown
-        menu={{
-          items,
-          onClick: ({ key, domEvent }) => {
-            domEvent.stopPropagation();
-            if (key === 'run') runNow.mutate();
-            else if (key === 'toggle') {
-              if (job.status === 'paused') resume.mutate();
-              else pause.mutate();
-            }
-          },
-        }}
-        trigger={['click']}
-        placement="bottomRight"
-      >
-        <button type="button" className="sessions-row-trigger" aria-label="Job actions">
-          <DotsIcon />
+          &#x1F5D1;
         </button>
-      </Dropdown>
+      </div>
+
+      {/* Expandable last run output */}
+      {expanded ? <RunHistory jobId={job.id} /> : null}
     </div>
   );
 }
@@ -345,8 +275,6 @@ function CreateJobModal({ open, onClose }: { open: boolean; onClose: () => void 
             }))}
             mode="tags"
             maxTagCount={1}
-            // mode=tags lets users type a custom expression in addition to picking a preset.
-            // Limit to one tag so the form value stays a single string.
             onChange={(values: string[]) => {
               const last = values[values.length - 1];
               form.setFieldsValue({ schedule: last ?? '' });
@@ -386,7 +314,7 @@ function CreateJobModal({ open, onClose }: { open: boolean; onClose: () => void 
 }
 
 // ---------------------------------------------------------------------------
-// Run history (expanded row)
+// Run history (expandable section within card)
 // ---------------------------------------------------------------------------
 
 function RunHistory({ jobId }: { jobId: string }) {
@@ -413,18 +341,18 @@ function RunHistory({ jobId }: { jobId: string }) {
 
   const runs = data?.runs ?? [];
   if (runs.length === 0) {
-    return <span className="cron-muted">No runs yet.</span>;
+    return <span className="cron-card-muted">No runs yet.</span>;
   }
 
   return (
     <div className="cron-history">
       {runs.map((run, idx) => (
         <div key={run.outputPath} className="cron-history-row">
-          <span className="sessions-mono cron-history-when">{formatRelativePast(run.ranAt)}</span>
+          <span className="cron-history-when">{formatRelativePast(run.ranAt)}</span>
           {idx === 0 && run.output ? (
             <pre className="cron-history-output">{run.output.slice(0, 2000)}</pre>
           ) : (
-            <span className="cron-muted">{idx === 0 ? '(no output)' : '(expand head only)'}</span>
+            <span className="cron-card-muted">{idx === 0 ? '(no output)' : ''}</span>
           )}
         </div>
       ))}
@@ -436,14 +364,33 @@ function RunHistory({ jobId }: { jobId: string }) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function DotsIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true">
-      <circle cx="3" cy="7" r="1.3" />
-      <circle cx="7" cy="7" r="1.3" />
-      <circle cx="11" cy="7" r="1.3" />
-    </svg>
-  );
+function formatNextRun(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const timeStr = date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: false,
+  });
+
+  if (date.toDateString() === now.toDateString()) {
+    return `Today ${timeStr}`;
+  }
+  if (date.toDateString() === tomorrow.toDateString()) {
+    return `Tomorrow ${timeStr}`;
+  }
+
+  return date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
 }
 
 function formatRelativePast(iso: string): string {
@@ -456,20 +403,6 @@ function formatRelativePast(iso: string): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   if (d < 7) return `${d}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
-
-function formatRelativeFuture(iso: string): string {
-  const then = new Date(iso).getTime();
-  const diff = then - Date.now();
-  if (diff < 0) return 'overdue';
-  const min = Math.floor(diff / 60_000);
-  if (min < 1) return 'in <1m';
-  if (min < 60) return `in ${min}m`;
-  const h = Math.floor(min / 60);
-  if (h < 24) return `in ${h}h`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `in ${d}d`;
   return new Date(iso).toLocaleDateString();
 }
 

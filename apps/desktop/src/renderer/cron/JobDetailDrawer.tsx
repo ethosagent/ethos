@@ -129,7 +129,7 @@ export function JobDetailDrawer({ jobId, port, onClose, onJobChanged }: JobDetai
           alignItems: 'center',
           height: 40,
           padding: '0 16px',
-          borderBottom: '1px solid var(--border-subtle)',
+          borderBottom: '1px solid var(--border-strong, #3a3a3a)',
           flexShrink: 0,
         }}
       >
@@ -161,7 +161,7 @@ export function JobDetailDrawer({ jobId, port, onClose, onJobChanged }: JobDetai
       <div
         style={{
           display: 'flex',
-          borderBottom: '1px solid var(--border-subtle)',
+          borderBottom: '1px solid var(--border-strong, #3a3a3a)',
           padding: '0 16px',
           flexShrink: 0,
         }}
@@ -213,7 +213,7 @@ export function JobDetailDrawer({ jobId, port, onClose, onJobChanged }: JobDetai
           justifyContent: 'space-between',
           height: 40,
           padding: '0 16px',
-          borderTop: '1px solid var(--border-subtle)',
+          borderTop: '1px solid var(--border-strong, #3a3a3a)',
           flexShrink: 0,
         }}
       >
@@ -256,7 +256,7 @@ const drawerStyle: React.CSSProperties = {
   height: '100%',
   display: 'flex',
   flexDirection: 'column',
-  borderLeft: '1px solid var(--border-subtle)',
-  backgroundColor: 'var(--bg-base)',
+  borderLeft: '1px solid var(--border-strong, #3a3a3a)',
+  backgroundColor: 'var(--bg-elevated)',
   flexShrink: 0,
 };
