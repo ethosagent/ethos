@@ -1315,15 +1315,16 @@ export class AgentLoop {
 
       // Step 9: Pre-flight hooks → execute non-rejected tools → collect all results
 
-      // Phase 30.2 — tools call ctx.emit() during execution; AsyncGenerator can't
-      // yield from a sync callback, so we buffer per-batch then drain after
-      // executeParallel resolves. Order is preserved (insertion = call order).
-      const progressBuffer: Array<{
+      // Phase 30.2 — tools call ctx.emit() during execution. We drain progress
+      // events in real-time via an async queue that runs concurrently with
+      // executeParallel. The resolver is signalled on each push and on completion.
+      const progressQueue: Array<{
         toolName: string;
         message: string;
         percent?: number;
         audience: 'internal' | 'user' | 'dashboard';
       }> = [];
+      let progressQueueResolve: (() => void) | null = null;
 
       const scopedStorage = this.buildScopedStorage(personality);
 
@@ -1358,12 +1359,14 @@ export class AgentLoop {
           percent?: number;
           audience?: 'internal' | 'user' | 'dashboard';
         }) => {
-          progressBuffer.push({
+          progressQueue.push({
             toolName: event.toolName,
             message: event.message,
             ...(event.percent !== undefined && { percent: event.percent }),
             audience: event.audience ?? 'internal',
           });
+          progressQueueResolve?.();
+          progressQueueResolve = null;
         },
         resultBudgetChars: this.resultBudgetChars,
         readMtimes: sessionMtimes,
@@ -1551,16 +1554,45 @@ export class AgentLoop {
         .map((p) => ({ toolCallId: p.toolCallId, name: p.name, args: p.args }));
 
       const startedAt = Date.now();
-      const execResults =
+      let toolsDone = false;
+      const toolsPromise =
         execInputs.length > 0
-          ? await this.tools.executeParallel(
+          ? this.tools.executeParallel(
               execInputs,
               toolCtxBase,
               allowedTools,
               filterOpts,
               opts.attachments,
             )
-          : [];
+          : Promise.resolve([]);
+      // Signal the drain loop when tools complete (success or error).
+      toolsPromise.then(
+        () => {
+          toolsDone = true;
+          progressQueueResolve?.();
+          progressQueueResolve = null;
+        },
+        () => {
+          toolsDone = true;
+          progressQueueResolve?.();
+          progressQueueResolve = null;
+        },
+      );
+      // Drain progress events in real-time while tools execute.
+      while (!toolsDone || progressQueue.length > 0) {
+        while (progressQueue.length > 0) {
+          const ev = progressQueue.shift();
+          if (ev) {
+            yield { type: 'tool_progress', ...ev } as AgentEvent;
+          }
+        }
+        if (!toolsDone) {
+          await new Promise<void>((r) => {
+            progressQueueResolve = r;
+          });
+        }
+      }
+      const execResults = await toolsPromise;
       const execResultMap = new Map(execResults.map((r) => [r.toolCallId, r]));
 
       // v2: returnDirect — skip LLM synthesis if a returnDirect tool succeeded
@@ -1634,14 +1666,6 @@ export class AgentLoop {
           }
         }
       }
-
-      // Drain any progress events tools emitted during execution. Order is
-      // call-order (across the parallel batch) — close enough for users; the
-      // exact interleaving doesn't matter when ctx.emit is best-effort.
-      for (const ev of progressBuffer) {
-        yield { type: 'tool_progress', ...ev };
-      }
-      progressBuffer.length = 0;
 
       // Persist results + emit tool_end + build tool_result content blocks (original order)
       const toolResultContent: MessageContent[] = [];
