@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useConfig } from '../features/config/api/queries';
+import { StatusDot } from './ui/StatusDot';
 
 interface StatusBarProps {
   drawerOpen: boolean;
@@ -15,13 +16,14 @@ export function StatusBar({ drawerOpen, onToggleDrawer }: StatusBarProps) {
       ? 'offline'
       : 'connected';
 
-  const statusLabel = isLoading ? 'connecting…' : error ? 'offline' : 'Backend connected';
+  const statusLabel = isLoading ? 'connecting...' : error ? 'offline' : 'connected';
 
-  const providerModel = data ? `${data.provider} · ${data.model}` : '—';
+  const personalityName = data?.personality ?? '';
+  const modelName = data?.model ?? '';
 
   return (
     <footer className="statusbar">
-      <span className={`sb-dot sb-dot--${statusState}`} aria-hidden="true" />
+      <StatusDot status={statusState} size={6} />
       <span>{statusLabel}</span>
 
       <span className="sb-sep" />
@@ -65,7 +67,15 @@ export function StatusBar({ drawerOpen, onToggleDrawer }: StatusBarProps) {
           <line x1="10" y1="2" x2="10" y2="14" />
         </svg>
       </button>
-      <span>{providerModel}</span>
+      {personalityName || modelName ? (
+        <span className="sb-personality-model">
+          {personalityName}
+          {personalityName && modelName ? ' · ' : ''}
+          {modelName}
+        </span>
+      ) : (
+        <span className="sb-personality-model">—</span>
+      )}
     </footer>
   );
 }
