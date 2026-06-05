@@ -89,7 +89,7 @@ export function tokensToAntd(tokens: Tokens): ThemeConfig {
  *   • layout — `--layout-sidebar-expanded` etc. Same as before.
  */
 export function tokensToCssVariables(tokens: Tokens): string {
-  const { layout, surface, radius } = tokens;
+  const { layout, surface, radius, semantic } = tokens;
   const light = isLightSurface(tokens);
   return `:root {
   --ethos-bg: ${surface.bgBase};
@@ -104,6 +104,12 @@ export function tokensToCssVariables(tokens: Tokens): string {
   --ethos-pressed: ${light ? 'rgba(0,0,0,0.09)' : 'rgba(255,255,255,0.12)'};
   --ethos-surface-tint: ${light ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.04)'};
   --ethos-shadow-overlay: ${light ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.5)'};
+  --ethos-code-bg: ${light ? 'rgba(0,0,0,0.06)' : 'rgba(0,0,0,0.25)'};
+  --ethos-disabled-text: ${light ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)'};
+  --ethos-success: ${semantic.success};
+  --ethos-warning: ${semantic.warning};
+  --ethos-error: ${semantic.error};
+  --ethos-info: ${semantic.info};
   --layout-sidebar-expanded: ${layout.sidebarExpandedPx}px;
   --layout-sidebar-collapsed: ${layout.sidebarCollapsedPx}px;
   --layout-right-drawer: ${layout.rightDrawerPx}px;

@@ -40,7 +40,7 @@ function Root() {
   // Config may not exist yet (first-time onboarding). Fall back to default
   // skin so the shell still renders.
   const configQuery = useConfigRetryFalse();
-  const skinName = configQuery.data?.skin ?? 'default';
+  const skinName = configQuery.data?.skin ?? 'paper';
 
   const resolvedTokens = useMemo(() => {
     if (!BUILTIN_SKINS[skinName]) return DEFAULT_TOKENS;

@@ -89,19 +89,22 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           <div className="sidebar-nav">
             <NavRow
               path="/personalities"
+              icon="🎭"
               label="Personalities"
               active={pathname === '/personalities' || pathname.startsWith('/personalities/')}
             />
-            <NavRow path="/skills" label="Skills" active={pathname === '/skills'} />
+            <NavRow path="/skills" icon="⚡" label="Skills" active={pathname === '/skills'} />
             <NavRow
               path="/plugins"
+              icon="🧩"
               label="Plugins"
               active={pathname === '/plugins' || pathname.startsWith('/plugins/')}
             />
-            <NavRow path="/mcp" label="MCP Servers" active={pathname === '/mcp'} />
-            <NavRow path="/memory" label="Memory" active={pathname === '/memory'} />
+            <NavRow path="/mcp" icon="🔌" label="MCP Servers" active={pathname === '/mcp'} />
+            <NavRow path="/memory" icon="🧠" label="Memory" active={pathname === '/memory'} />
             <NavRow
               path="/communications"
+              icon="📡"
               label="Platforms"
               active={pathname === '/communications'}
             />
@@ -145,13 +148,20 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               <div className="sidebar-nav">
                 <NavRow
                   path="/batch"
+                  icon="📦"
                   label="Batch / Eval"
                   active={pathname === '/batch' || pathname === '/eval'}
                 />
-                <NavRow path="/activity" label="Observability" active={pathname === '/activity'} />
-                <NavRow path="/mesh" label="Mesh" active={pathname === '/mesh'} />
+                <NavRow
+                  path="/activity"
+                  icon="📊"
+                  label="Observability"
+                  active={pathname === '/activity'}
+                />
+                <NavRow path="/mesh" icon="🕸️" label="Mesh" active={pathname === '/mesh'} />
                 <NavRow
                   path="/teams"
+                  icon="👥"
                   label="Teams"
                   active={pathname === '/teams' || pathname.startsWith('/teams/')}
                 />
@@ -160,7 +170,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           )}
 
           <div className="sidebar-footer">
-            <NavRow path="/settings" label="Settings" active={pathname === '/settings'} />
+            <NavRow path="/settings" icon="⚙️" label="Settings" active={pathname === '/settings'} />
             <button
               type="button"
               className="sidebar-advanced-toggle-btn"
@@ -178,34 +188,30 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
       {collapsed && (
         <div className="sidebar-nav">
-          <Link
-            to="/chat"
-            className={`sidebar-nav-item${pathname === '/chat' ? ' active' : ''}`}
-            title="Chat"
-          >
-            <ChatIcon />
-          </Link>
-          <Link
-            to="/personalities"
-            className={`sidebar-nav-item${pathname === '/personalities' || pathname.startsWith('/personalities/') ? ' active' : ''}`}
-            title="Personalities"
-          >
-            <PersonalityIcon />
-          </Link>
-          <Link
-            to="/sessions"
-            className={`sidebar-nav-item${pathname === '/sessions' ? ' active' : ''}`}
-            title="Sessions"
-          >
-            <SessionsIcon />
-          </Link>
-          <Link
-            to="/settings"
-            className={`sidebar-nav-item${pathname === '/settings' ? ' active' : ''}`}
-            title="Settings"
-          >
-            <SettingsIcon />
-          </Link>
+          <NavRow path="/chat" icon="💬" label="Chat" active={pathname === '/chat'} />
+          <NavRow
+            path="/personalities"
+            icon="🎭"
+            label="Personalities"
+            active={pathname === '/personalities' || pathname.startsWith('/personalities/')}
+          />
+          <NavRow path="/skills" icon="⚡" label="Skills" active={pathname === '/skills'} />
+          <NavRow
+            path="/plugins"
+            icon="🧩"
+            label="Plugins"
+            active={pathname === '/plugins' || pathname.startsWith('/plugins/')}
+          />
+          <NavRow path="/mcp" icon="🔌" label="MCP Servers" active={pathname === '/mcp'} />
+          <NavRow path="/memory" icon="🧠" label="Memory" active={pathname === '/memory'} />
+          <NavRow
+            path="/communications"
+            icon="📡"
+            label="Platforms"
+            active={pathname === '/communications'}
+          />
+          <NavRow path="/sessions" icon="📋" label="Sessions" active={pathname === '/sessions'} />
+          <NavRow path="/settings" icon="⚙️" label="Settings" active={pathname === '/settings'} />
         </div>
       )}
     </nav>
@@ -214,17 +220,20 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
 function NavRow({
   path,
+  icon,
   label,
   hint,
   active,
 }: {
   path: string;
+  icon?: string;
   label: string;
   hint?: string;
   active: boolean;
 }) {
   return (
-    <Link to={path} className={`sidebar-nav-item${active ? ' active' : ''}`}>
+    <Link to={path} className={`sidebar-nav-item${active ? ' active' : ''}`} title={label}>
+      {icon ? <span className="nav-icon">{icon}</span> : null}
       <span className="sidebar-nav-label">{label}</span>
       {hint ? <span className="sidebar-nav-hint">{hint}</span> : null}
     </Link>
@@ -273,76 +282,3 @@ function EthosMark() {
   );
 }
 
-function ChatIcon() {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="1" y="1" width="14" height="11" rx="2.5" />
-      <path d="M4 15 L5.5 12 H10.5 L12 15" />
-    </svg>
-  );
-}
-
-function PersonalityIcon() {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="8" cy="5" r="2.5" />
-      <path d="M2.5 14 C2.5 11 5 9.5 8 9.5 C11 9.5 13.5 11 13.5 14" />
-    </svg>
-  );
-}
-
-function SessionsIcon() {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="3.5" cy="4.5" r="1" />
-      <line x1="6.5" y1="4.5" x2="14" y2="4.5" />
-      <circle cx="3.5" cy="8" r="1" />
-      <line x1="6.5" y1="8" x2="14" y2="8" />
-      <circle cx="3.5" cy="11.5" r="1" />
-      <line x1="6.5" y1="11.5" x2="14" y2="11.5" />
-    </svg>
-  );
-}
-
-function SettingsIcon() {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="8" cy="8" r="2.5" />
-      <circle cx="8" cy="8" r="5.5" />
-      <path d="M8 1.5 L8 3 M14.5 8 L13 8 M8 14.5 L8 13 M1.5 8 L3 8" />
-      <path d="M12.2 3.8 L11.1 4.9 M12.2 12.2 L11.1 11.1 M3.8 12.2 L4.9 11.1 M3.8 3.8 L4.9 4.9" />
-    </svg>
-  );
-}
