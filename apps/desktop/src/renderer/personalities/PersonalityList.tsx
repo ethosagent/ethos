@@ -26,16 +26,24 @@ export function PersonalityList({
 }: PersonalityListProps) {
   const [search, setSearch] = useState('');
 
+  const SYSTEM_IDS = new Set(['personality-architect', 'team-architect']);
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return personalities;
-    const q = search.toLowerCase();
+    const q = search.trim().toLowerCase();
     return personalities.filter(
       (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.id.toLowerCase().includes(q) ||
-        (p.description ?? '').toLowerCase().includes(q),
+        !SYSTEM_IDS.has(p.id) &&
+        (!q ||
+          p.name.toLowerCase().includes(q) ||
+          p.id.toLowerCase().includes(q) ||
+          (p.description ?? '').toLowerCase().includes(q)),
     );
   }, [personalities, search]);
+
+  const systemPersonalities = useMemo(
+    () => personalities.filter((p) => SYSTEM_IDS.has(p.id)),
+    [personalities],
+  );
 
   return (
     <div
@@ -126,7 +134,7 @@ export function PersonalityList({
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
-        {filtered.length === 0 ? (
+        {filtered.length === 0 && systemPersonalities.length === 0 ? (
           <div
             style={{
               padding: '24px 16px',
@@ -140,15 +148,43 @@ export function PersonalityList({
               : 'No matches.'}
           </div>
         ) : (
-          filtered.map((p) => (
-            <PersonalityListRow
-              key={p.id}
-              personality={p}
-              active={p.id === activeId}
-              accentColor={personalityAccent(p.id)}
-              onClick={() => onSelect(p.id)}
-            />
-          ))
+          <>
+            {filtered.map((p) => (
+              <PersonalityListRow
+                key={p.id}
+                personality={p}
+                active={p.id === activeId}
+                accentColor={personalityAccent(p.id)}
+                onClick={() => onSelect(p.id)}
+              />
+            ))}
+            {systemPersonalities.length > 0 && (
+              <>
+                <div
+                  style={{
+                    padding: '12px 14px 4px',
+                    fontSize: 10,
+                    fontFamily: 'var(--font-mono)',
+                    fontWeight: 500,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                    color: 'var(--text-tertiary)',
+                  }}
+                >
+                  System
+                </div>
+                {systemPersonalities.map((p) => (
+                  <PersonalityListRow
+                    key={p.id}
+                    personality={p}
+                    active={p.id === activeId}
+                    accentColor={personalityAccent(p.id)}
+                    onClick={() => onSelect(p.id)}
+                  />
+                ))}
+              </>
+            )}
+          </>
         )}
       </div>
     </div>
