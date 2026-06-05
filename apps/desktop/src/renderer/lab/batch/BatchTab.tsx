@@ -29,6 +29,39 @@ interface BatchResult {
   passed: boolean;
 }
 
+const fieldLabelStyle: React.CSSProperties = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  fontWeight: 500,
+  textTransform: 'uppercase',
+  letterSpacing: '0.05em',
+  color: 'var(--text-tertiary)',
+  marginBottom: 6,
+};
+
+const selectStyle: React.CSSProperties = {
+  width: '100%',
+  fontSize: 13,
+  color: 'var(--text-primary)',
+  background: 'var(--bg-elevated)',
+  border: '1px solid var(--border-strong)',
+  borderRadius: 'var(--radius-sm)',
+  padding: '7px 10px',
+  outline: 'none',
+};
+
+const numberInputStyle: React.CSSProperties = {
+  width: 80,
+  fontFamily: 'var(--font-mono)',
+  fontSize: 13,
+  color: 'var(--text-primary)',
+  background: 'var(--bg-elevated)',
+  border: '1px solid var(--border-strong)',
+  borderRadius: 'var(--radius-sm)',
+  padding: '7px 10px',
+  outline: 'none',
+};
+
 export function BatchTab() {
   const { state } = useAppState();
   const { port } = state;
@@ -39,9 +72,12 @@ export function BatchTab() {
   );
 
   const [fileContent, setFileContent] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [fileSize, setFileSize] = useState<number | null>(null);
   const [personalities, setPersonalities] = useState<PersonalityOption[]>([]);
   const [personalityId, setPersonalityId] = useState('');
   const [concurrency, setConcurrency] = useState(4);
+  const [maxRetries, setMaxRetries] = useState(2);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<RunStatus | null>(null);
   const [runResults, setRunResults] = useState<BatchResult[] | null>(null);
@@ -167,6 +203,18 @@ export function BatchTab() {
     }
   }, [client, activeRunId]);
 
+  const handleFile = useCallback((content: string, name: string, size: number) => {
+    setFileContent(content);
+    setFileName(name);
+    setFileSize(size);
+  }, []);
+
+  const handleClearFile = useCallback(() => {
+    setFileContent(null);
+    setFileName(null);
+    setFileSize(null);
+  }, []);
+
   const progress = runStatus && runStatus.total > 0 ? runStatus.completed / runStatus.total : 0;
   const isRunning = runStatus?.status === 'running' || runStatus?.status === 'pending';
   const isDone = runStatus && !isRunning;
@@ -183,116 +231,153 @@ export function BatchTab() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <FileDropZone onFile={setFileContent} />
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, height: 32 }}>
-        <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Personality</span>
-        <select
-          value={personalityId}
-          onChange={(e) => setPersonalityId(e.target.value)}
-          style={{
-            width: 200,
-            fontSize: 13,
-            color: 'var(--text-primary)',
-            background: 'var(--bg-elevated)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 4,
-            padding: '4px 8px',
-            outline: 'none',
-          }}
-        >
-          {personalities.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-
-        <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Concurrency</span>
-        <input
-          type="number"
-          min={1}
-          max={16}
-          value={concurrency}
-          onChange={(e) => setConcurrency(Math.max(1, Math.min(16, Number(e.target.value) || 1)))}
-          style={{
-            width: 60,
-            fontFamily: 'var(--font-mono)',
-            fontSize: 12,
-            textAlign: 'center',
-            color: 'var(--text-primary)',
-            background: 'var(--bg-elevated)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 4,
-            padding: '4px 8px',
-            outline: 'none',
-          }}
-        />
-      </div>
-
-      <button
-        type="button"
-        onClick={handleStart}
-        disabled={!fileContent || isRunning}
+    <div style={{ display: 'flex', height: '100%' }}>
+      {/* Left config panel */}
+      <div
         style={{
-          height: 36,
-          width: '100%',
-          marginTop: 12,
-          borderRadius: 'var(--radius-sm)',
-          border: 'none',
-          background: !fileContent || isRunning ? 'var(--bg-overlay)' : 'var(--accent)',
-          color: !fileContent || isRunning ? 'var(--text-tertiary)' : '#fff',
-          fontSize: 13,
-          fontWeight: 600,
-          cursor: !fileContent || isRunning ? 'default' : 'pointer',
-          transition: 'background var(--motion-fast) var(--ease)',
+          width: 280,
+          flexShrink: 0,
+          borderRight: '1px solid var(--border-subtle)',
+          padding: '20px 16px',
+          background: 'var(--bg-base)',
+          overflowY: 'auto',
         }}
       >
-        Start batch
-      </button>
+        <FileDropZone
+          label="Dataset"
+          fileName={fileName}
+          fileSize={fileSize}
+          onFile={handleFile}
+          onClear={handleClearFile}
+        />
 
-      {activeRunId && isRunning && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <span style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>
-            Run {activeRunId.slice(0, 8)}
-          </span>
-          <ProgressBar value={progress} />
-          <span
+        <div style={{ marginTop: 16 }}>
+          <div style={fieldLabelStyle}>Personality</div>
+          <select
+            value={personalityId}
+            onChange={(e) => setPersonalityId(e.target.value)}
+            style={selectStyle}
+          >
+            {personalities.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <div style={fieldLabelStyle}>Concurrency</div>
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={concurrency}
+            onChange={(e) => setConcurrency(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+            style={numberInputStyle}
+          />
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <div style={fieldLabelStyle}>Max retries</div>
+          <input
+            type="number"
+            min={0}
+            max={5}
+            value={maxRetries}
+            onChange={(e) => setMaxRetries(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
+            style={numberInputStyle}
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={handleStart}
+          disabled={!fileContent || isRunning}
+          style={{
+            width: '100%',
+            marginTop: 24,
+            padding: 10,
+            borderRadius: 'var(--radius-sm)',
+            border: 'none',
+            background: !fileContent || isRunning ? 'var(--bg-overlay)' : 'var(--blue)',
+            color: !fileContent || isRunning ? 'var(--text-tertiary)' : '#fff',
+            fontSize: 13,
+            fontWeight: 500,
+            cursor: !fileContent || isRunning ? 'default' : 'pointer',
+            transition: 'background var(--motion-fast) var(--ease)',
+          }}
+        >
+          Run batch
+        </button>
+      </div>
+
+      {/* Right results panel */}
+      <div
+        style={{
+          flex: 1,
+          padding: '20px 24px',
+          background: 'var(--bg-base)',
+          overflowY: 'auto',
+        }}
+      >
+        {activeRunId && isRunning ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              Running&hellip; {runStatus?.completed ?? 0}/{runStatus?.total ?? 0} completed
+            </span>
+            <ProgressBar value={progress} color="var(--blue)" />
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 12,
+                color: 'var(--text-tertiary)',
+              }}
+            >
+              ETA {formatEta()}
+            </span>
+          </div>
+        ) : isDone && runResults ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <BatchResultsTable results={runResults} />
+            <button
+              type="button"
+              onClick={handleDownload}
+              style={{
+                height: 32,
+                padding: '0 16px',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--border-subtle)',
+                background: 'transparent',
+                color: 'var(--text-primary)',
+                fontSize: 13,
+                cursor: 'pointer',
+                alignSelf: 'flex-start',
+              }}
+            >
+              Download results
+            </button>
+          </div>
+        ) : (
+          <div
             style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: 12,
-              color: 'var(--text-tertiary)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: '100%',
+              gap: 4,
             }}
           >
-            {runStatus?.completed ?? 0} / {runStatus?.total ?? 0} complete &middot; ETA{' '}
-            {formatEta()}
-          </span>
-        </div>
-      )}
-
-      {isDone && runResults && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <BatchResultsTable results={runResults} />
-          <button
-            type="button"
-            onClick={handleDownload}
-            style={{
-              height: 32,
-              padding: '0 16px',
-              borderRadius: 'var(--radius-sm)',
-              border: '1px solid var(--border-subtle)',
-              background: 'transparent',
-              color: 'var(--text-primary)',
-              fontSize: 13,
-              cursor: 'pointer',
-              alignSelf: 'flex-start',
-            }}
-          >
-            Download results
-          </button>
-        </div>
-      )}
+            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+              Results will appear here
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+              Run a batch to see results.
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
