@@ -64,9 +64,7 @@ export function Skills() {
             label: (
               <span>
                 Evolver{' '}
-                {pendingCount > 0 ? (
-                  <Badge count={pendingCount} style={{ marginLeft: 6 }} />
-                ) : null}
+                {pendingCount > 0 ? <Badge count={pendingCount} style={{ marginLeft: 6 }} /> : null}
               </span>
             ),
             children: <EvolverPanel />,

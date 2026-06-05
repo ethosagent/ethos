@@ -74,26 +74,24 @@ export function PluginsPage() {
   const [installError, setInstallError] = useState<string | null>(null);
   const installInputRef = useRef<HTMLInputElement>(null);
 
-  const [fetchKey, setFetchKey] = useState(0);
 
   // Fetch plugin list
-  useEffect(() => {
-    let stale = false;
+  const fetchPlugins = useCallback(() => {
     setLoading(true);
     client.rpc.plugins
       .list({})
       .then((res: { plugins: PluginInfo[] }) => {
-        if (!stale) setPlugins(res.plugins);
+        setPlugins(res.plugins);
       })
       .catch(() => {})
       .finally(() => {
-        if (!stale) setLoading(false);
+        setLoading(false);
       });
-    return () => {
-      stale = true;
-    };
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fetchKey triggers re-fetch after install
-  }, [client, fetchKey]);
+  }, [client]);
+
+  useEffect(() => {
+    fetchPlugins();
+  }, [fetchPlugins]);
 
   const handleInstall = useCallback(async () => {
     const spec = packageSpec.trim();
@@ -104,7 +102,7 @@ export function PluginsPage() {
       await client.rpc.plugins.install({ packageSpec: spec });
       setPackageSpec('');
       setInstallOpen(false);
-      setFetchKey((k) => k + 1);
+      fetchPlugins();
     } catch (err) {
       setInstallError(err instanceof Error ? err.message : String(err));
     } finally {

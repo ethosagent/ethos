@@ -281,4 +281,3 @@ function EthosMark() {
     </svg>
   );
 }
-

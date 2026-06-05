@@ -136,7 +136,9 @@ export function Personalities() {
       width: 140,
       render: (m: string | { trivial?: string; default?: string; deep?: string } | null) =>
         m ? (
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ethos-text-dim)' }}>
+          <span
+            style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ethos-text-dim)' }}
+          >
             {typeof m === 'string' ? m : (m.default ?? m.trivial ?? m.deep ?? '—')}
           </span>
         ) : (
@@ -150,7 +152,9 @@ export function Personalities() {
       width: 60,
       align: 'right' as const,
       render: (t: string[] | null) => (
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ethos-text-dim)' }}>
+        <span
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ethos-text-dim)' }}
+        >
           {t?.length ?? 0}
         </span>
       ),
@@ -263,16 +267,11 @@ function PersonalityRowActions({
   });
 
   const items: MenuProps['items'] = [
-    ...(personality.builtin
-      ? []
-      : [{ key: 'edit', label: '✎ Edit' }]),
+    ...(personality.builtin ? [] : [{ key: 'edit', label: '✎ Edit' }]),
     { key: 'duplicate', label: '⧉ Duplicate' },
     ...(personality.builtin
       ? []
-      : [
-          { type: 'divider' as const },
-          { key: 'delete', label: '🗑 Delete', danger: true },
-        ]),
+      : [{ type: 'divider' as const }, { key: 'delete', label: '🗑 Delete', danger: true }]),
   ];
 
   return (

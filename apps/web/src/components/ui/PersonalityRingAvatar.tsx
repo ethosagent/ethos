@@ -6,10 +6,7 @@ interface PersonalityRingAvatarProps {
   size?: number;
 }
 
-export function PersonalityRingAvatar({
-  personalityId,
-  size = 32,
-}: PersonalityRingAvatarProps) {
+export function PersonalityRingAvatar({ personalityId, size = 32 }: PersonalityRingAvatarProps) {
   const color = personalityAccent(personalityId);
   const borderWidth = 3;
   const svgSize = Math.round(size * 0.44);
@@ -29,20 +26,8 @@ export function PersonalityRingAvatar({
         background: 'var(--bg-base)',
       }}
     >
-      <svg
-        width={svgSize}
-        height={svgSize}
-        viewBox="0 0 16 16"
-        aria-hidden="true"
-      >
-        <circle
-          cx="8"
-          cy="8"
-          r={outerR}
-          fill="none"
-          stroke={color}
-          strokeWidth="2.5"
-        />
+      <svg width={svgSize} height={svgSize} viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r={outerR} fill="none" stroke={color} strokeWidth="2.5" />
         <circle cx="8" cy="8" r={innerR} fill={color} />
       </svg>
     </div>

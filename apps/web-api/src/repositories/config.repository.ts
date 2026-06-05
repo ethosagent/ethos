@@ -254,7 +254,8 @@ export class ConfigRepository {
     if (config.approvalMode) lines.push(`approvalMode: ${yamlScalar(config.approvalMode)}`);
     if (config.verbosity) lines.push(`verbosity: ${yamlScalar(config.verbosity)}`);
     if (config.debugMode !== undefined) lines.push(`debugMode: ${config.debugMode}`);
-    if (config.contextLayering !== undefined) lines.push(`contextLayering: ${config.contextLayering}`);
+    if (config.contextLayering !== undefined)
+      lines.push(`contextLayering: ${config.contextLayering}`);
     for (const [id, model] of Object.entries(config.modelRouting)) {
       lines.push(`modelRouting.${yamlScalar(id)}: ${yamlScalar(model)}`);
     }
