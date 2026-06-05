@@ -496,16 +496,29 @@ export function Settings() {
           </Form.Item>
         </Card>
 
-        <Card title="Approval mode" size="small" style={{ marginBottom: 16 }}>
-          <Form.Item
-            label="Tool approval"
-            name="approvalMode"
-            extra="Controls whether the agent asks before running tools."
-          >
+        <Card title="Approval Mode" size="small" style={{ marginBottom: 16 }}>
+          <Form.Item name="approvalMode">
             <Radio.Group>
-              <Radio.Button value="manual">Always ask</Radio.Button>
-              <Radio.Button value="smart">Auto-approve safe</Radio.Button>
-              <Radio.Button value="off">Never ask</Radio.Button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <Radio value="manual">
+                  <span style={{ fontWeight: 500 }}>Manual</span>
+                  <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--ethos-text-dim)' }}>
+                    Ask before every sensitive tool call.
+                  </span>
+                </Radio>
+                <Radio value="smart">
+                  <span style={{ fontWeight: 500 }}>Smart</span>
+                  <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--ethos-text-dim)' }}>
+                    Ask only for high-risk operations. Routine tools run automatically.
+                  </span>
+                </Radio>
+                <Radio value="off">
+                  <span style={{ fontWeight: 500 }}>Off</span>
+                  <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--ethos-text-dim)' }}>
+                    Run all tools without asking. Use only on trusted machines.
+                  </span>
+                </Radio>
+              </div>
             </Radio.Group>
           </Form.Item>
         </Card>
