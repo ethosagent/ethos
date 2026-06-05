@@ -1,7 +1,7 @@
 import { personalityAccent } from '@ethosagent/design-tokens';
 import { Input } from 'antd';
 import { useState } from 'react';
-import { PersonalityMark } from '../ui/PersonalityMark';
+import { PersonalityRingAvatar } from '../ui/PersonalityRingAvatar';
 import { PersonalitySwitcher } from './PersonalitySwitcher';
 
 // The chat tab's identity affordance — DESIGN.md memorable thing made
@@ -58,7 +58,7 @@ export function PersonalityBar({
       <div className="personality-bar-stripe" style={{ background: accent }} />
       <div className="personality-bar-content">
         <div className="personality-bar-left">
-          <PersonalityMark personalityId={personalityId} size={32} />
+          <PersonalityRingAvatar personalityId={personalityId} size={28} />
           <div className="personality-bar-identity">
             <span className="personality-bar-name">{displayName}</span>
             {model ? <span className="personality-bar-model">{model}</span> : null}

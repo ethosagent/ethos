@@ -8,6 +8,7 @@ import type {
   Skill,
 } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { PersonalityRingAvatar } from '../components/ui/PersonalityRingAvatar';
 import {
   Alert,
   App as AntApp,
@@ -81,6 +82,14 @@ export function Personalities() {
   const systemPersonalities = personalities.filter((p) => p.system);
 
   const columns = [
+    {
+      title: '',
+      key: 'avatar',
+      width: 48,
+      render: (_: unknown, p: Personality) => (
+        <PersonalityRingAvatar personalityId={p.id} size={32} />
+      ),
+    },
     {
       title: 'Name',
       dataIndex: 'name',

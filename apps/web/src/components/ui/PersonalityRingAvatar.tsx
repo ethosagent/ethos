@@ -11,7 +11,7 @@ export function PersonalityRingAvatar({
   size = 32,
 }: PersonalityRingAvatarProps) {
   const color = personalityAccent(personalityId);
-  const borderWidth = size >= 56 ? 3 : 2;
+  const borderWidth = 3;
   const svgSize = Math.round(size * 0.44);
   const outerR = 5;
   const innerR = 2;
