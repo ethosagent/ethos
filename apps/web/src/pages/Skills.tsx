@@ -50,6 +50,14 @@ export function Skills() {
 
   return (
     <div className="skills-tab">
+      <header className="page-header-row">
+        <h1 className="page-h1">Skills</h1>
+        <span className="page-subtitle">
+          {(skillsQuery.data?.skills ?? []).length}{' '}
+          {(skillsQuery.data?.skills ?? []).length === 1 ? 'skill' : 'skills'}
+        </span>
+        <div style={{ flex: 1 }} />
+      </header>
       <Tabs
         activeKey={activeTab}
         onChange={(k) => setActiveTab(k as 'library' | 'evolver')}
@@ -129,16 +137,11 @@ function LibraryPanel({ skillsQuery }: LibraryPanelProps) {
 
   return (
     <>
-      <header className="page-header-row">
-        <h1 className="page-h1">Skills</h1>
-        <span className="page-subtitle">
-          {filteredSkills.length} {filteredSkills.length === 1 ? 'skill' : 'skills'}
-        </span>
-        <div style={{ flex: 1 }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 0 8px' }}>
         <button type="button" className="page-action-btn" onClick={() => setCreateOpen(true)}>
           + New Skill
         </button>
-      </header>
+      </div>
 
       <div className="skills-search">
         <Input.Search
