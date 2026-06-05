@@ -131,13 +131,15 @@ function LibraryPanel({ skillsQuery }: LibraryPanelProps) {
 
   return (
     <>
-      <header className="skills-toolbar">
-        <span className="skills-count">
+      <header className="page-header-row">
+        <h1 className="page-h1">Skills</h1>
+        <span className="page-subtitle">
           {filteredSkills.length} {filteredSkills.length === 1 ? 'skill' : 'skills'}
         </span>
-        <Button type="primary" onClick={() => setCreateOpen(true)}>
-          New skill
-        </Button>
+        <div style={{ flex: 1 }} />
+        <button className="page-action-btn" onClick={() => setCreateOpen(true)}>
+          + New Skill
+        </button>
       </header>
 
       <div className="skills-search">

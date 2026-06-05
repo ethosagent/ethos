@@ -233,15 +233,17 @@ export function SkillsLibraryTab({ port }: SkillsLibraryTabProps) {
           style={{
             height: 28,
             padding: '0 12px',
-            background: 'none',
-            border: '1px solid var(--border-subtle)',
+            border: '1px solid rgba(74, 158, 255, 0.3)',
+            background: 'rgba(74, 158, 255, 0.1)',
+            color: 'var(--accent)',
             borderRadius: 'var(--radius-sm)',
             cursor: 'pointer',
-            fontSize: 13,
-            color: 'var(--text-secondary)',
+            fontSize: 12,
+            fontFamily: 'var(--font-display)',
+            whiteSpace: 'nowrap',
           }}
         >
-          New skill
+          + New Skill
         </button>
       </div>
 

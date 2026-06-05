@@ -89,15 +89,17 @@ export function PersonalityList({
             style={{
               height: 28,
               padding: '0 10px',
-              backgroundColor: 'transparent',
-              border: '1px solid var(--border-subtle)',
+              border: '1px solid rgba(74, 158, 255, 0.3)',
+              background: 'rgba(74, 158, 255, 0.1)',
+              color: 'var(--accent)',
               borderRadius: 4,
               fontSize: 12,
-              color: 'var(--text-secondary)',
               cursor: 'pointer',
+              fontFamily: 'var(--font-display)',
+              whiteSpace: 'nowrap',
             }}
           >
-            New
+            + New Personality
           </button>
         </div>
       </div>

@@ -86,6 +86,7 @@ export function Plugins() {
   });
 
   const isLoading = pluginsLoading || persLoading;
+  const [installOpen, setInstallOpen] = useState(false);
   const [settingsPluginId, setSettingsPluginId] = useState<string | null>(null);
 
   const settingsPlugin = settingsPluginId
@@ -139,7 +140,15 @@ export function Plugins() {
 
   return (
     <div className="plugins-tab">
-      <InstallPluginSection />
+      <header className="page-header-row">
+        <h1 className="page-h1">Plugins</h1>
+        <span className="page-subtitle">{plugins.length} {plugins.length === 1 ? 'plugin' : 'plugins'}</span>
+        <div style={{ flex: 1 }} />
+        <button className="page-action-btn" onClick={() => setInstallOpen((o) => !o)}>
+          + New Plugin
+        </button>
+      </header>
+      {installOpen && <InstallPluginSection />}
       <PluginsMatrix
         plugins={plugins}
         personalities={personalities}

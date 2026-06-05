@@ -163,6 +163,7 @@ export function PluginsPage() {
           height: 40,
           display: 'flex',
           alignItems: 'center',
+          justifyContent: 'space-between',
           flexShrink: 0,
           paddingTop: 8,
         }}
@@ -177,6 +178,26 @@ export function PluginsPage() {
         >
           Plugins
         </h3>
+        <button
+          type="button"
+          onClick={() => {
+            /* Install flow is managed via CLI; this is a placeholder for future in-app install. */
+          }}
+          style={{
+            height: 28,
+            padding: '0 12px',
+            borderRadius: 4,
+            border: '1px solid rgba(74, 158, 255, 0.3)',
+            background: 'rgba(74, 158, 255, 0.1)',
+            color: 'var(--accent)',
+            fontSize: 12,
+            cursor: 'pointer',
+            fontFamily: 'var(--font-display)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          + New Plugin
+        </button>
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', paddingTop: 12 }}>

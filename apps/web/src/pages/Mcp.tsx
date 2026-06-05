@@ -30,21 +30,14 @@ export function Mcp() {
 
   return (
     <div className="plugins-tab">
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: 16,
-        }}
-      >
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          MCP Servers
-        </Typography.Title>
-        <Button type="primary" onClick={() => setAddMcpOpen(true)}>
-          Add MCP
-        </Button>
-      </div>
+      <header className="page-header-row">
+        <h1 className="page-h1">MCP Servers</h1>
+        <span className="page-subtitle">{mcpServers.length} {mcpServers.length === 1 ? 'server' : 'servers'}</span>
+        <div style={{ flex: 1 }} />
+        <button className="page-action-btn" onClick={() => setAddMcpOpen(true)}>
+          + New MCP Server
+        </button>
+      </header>
       <McpTable servers={mcpServers} loading={isLoading} />
       <AddMcpModal open={addMcpOpen} onClose={() => setAddMcpOpen(false)} />
     </div>

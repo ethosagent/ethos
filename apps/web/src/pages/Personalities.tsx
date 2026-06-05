@@ -139,14 +139,16 @@ export function Personalities() {
 
   return (
     <div className="personalities-tab">
-      <header className="personalities-toolbar">
-        <span className="personalities-count">
+      <header className="page-header-row">
+        <h1 className="page-h1">Personalities</h1>
+        <span className="page-subtitle">
           {userPersonalities.length}{' '}
           {userPersonalities.length === 1 ? 'personality' : 'personalities'}
         </span>
-        <Button type="primary" onClick={() => setCreateOpen(true)}>
-          New personality
-        </Button>
+        <div style={{ flex: 1 }} />
+        <button className="page-action-btn" onClick={() => setCreateOpen(true)}>
+          + New Personality
+        </button>
       </header>
 
       <Table<Personality>

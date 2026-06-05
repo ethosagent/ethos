@@ -94,14 +94,16 @@ export function McpPage() {
             height: 28,
             padding: '0 12px',
             borderRadius: 4,
-            border: '1px solid var(--border-subtle)',
-            background: 'transparent',
-            color: 'var(--text-primary)',
-            fontSize: 13,
+            border: '1px solid rgba(74, 158, 255, 0.3)',
+            background: 'rgba(74, 158, 255, 0.1)',
+            color: 'var(--accent)',
+            fontSize: 12,
             cursor: 'pointer',
+            fontFamily: 'var(--font-display)',
+            whiteSpace: 'nowrap',
           }}
         >
-          Add server
+          + New MCP Server
         </button>
       </div>
 
