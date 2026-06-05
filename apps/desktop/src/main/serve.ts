@@ -54,6 +54,24 @@ export async function startServer(port: number): Promise<void> {
   const session = createSessionStore({ dataDir });
 
   const personalities = await createPersonalityRegistry({ userPersonalitiesDir: dataDir });
+
+  // Load built-in personalities from the bundled data directory.
+  // import.meta.dirname inside loadBuiltins() points to the bundled output dir
+  // after electron-vite, so we resolve the data dir ourselves.
+  const builtinPersonalitiesDir = (() => {
+    const candidates = [
+      join(__dirname, '..', '..', 'extensions', 'personalities', 'data'),
+      join(__dirname, '..', '..', '..', '..', 'extensions', 'personalities', 'data'),
+    ];
+    for (const c of candidates) {
+      if (existsSync(c)) return c;
+    }
+    return undefined;
+  })();
+  if (builtinPersonalitiesDir) {
+    await personalities.loadFromDirectory(builtinPersonalitiesDir);
+  }
+
   await personalities.loadFromDirectory(join(dataDir, 'personalities'));
 
   const identityMap = new IdentityMap({ storage: new FsStorage(), dataDir });
