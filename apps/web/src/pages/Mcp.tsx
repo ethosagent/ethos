@@ -34,7 +34,7 @@ export function Mcp() {
         <h1 className="page-h1">MCP Servers</h1>
         <span className="page-subtitle">{mcpServers.length} {mcpServers.length === 1 ? 'server' : 'servers'}</span>
         <div style={{ flex: 1 }} />
-        <button className="page-action-btn" onClick={() => setAddMcpOpen(true)}>
+        <button type="button" className="page-action-btn" onClick={() => setAddMcpOpen(true)}>
           + New MCP Server
         </button>
       </header>

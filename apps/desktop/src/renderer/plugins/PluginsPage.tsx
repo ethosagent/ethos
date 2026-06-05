@@ -92,6 +92,7 @@ export function PluginsPage() {
     return () => {
       stale = true;
     };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fetchKey triggers re-fetch after install
   }, [client, fetchKey]);
 
   const handleInstall = useCallback(async () => {

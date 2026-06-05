@@ -157,14 +157,13 @@ function CronCard({ job }: { job: CronJob }) {
 
   return (
     <div>
-      <div
+      <button
+        type="button"
         className={cardClass}
         onClick={() => setExpanded((p) => !p)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') setExpanded((p) => !p);
         }}
-        role="button"
-        tabIndex={0}
       >
         {/* Row 1: name + badge + run-now */}
         <div className="cron-card-top">
@@ -211,6 +210,7 @@ function CronCard({ job }: { job: CronJob }) {
         {/* Row 3: prompt description + hover actions */}
         <div className="cron-card-desc">
           <span className="cron-card-desc-text">{job.prompt}</span>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: event propagation barrier */}
           <div
             className="cron-card-actions"
             onClick={(e) => e.stopPropagation()}
@@ -244,7 +244,7 @@ function CronCard({ job }: { job: CronJob }) {
             </Popconfirm>
           </div>
         </div>
-      </div>
+      </button>
 
       {expanded ? <RunHistory jobId={job.id} /> : null}
     </div>

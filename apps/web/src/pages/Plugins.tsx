@@ -144,7 +144,7 @@ export function Plugins() {
         <h1 className="page-h1">Plugins</h1>
         <span className="page-subtitle">{plugins.length} {plugins.length === 1 ? 'plugin' : 'plugins'}</span>
         <div style={{ flex: 1 }} />
-        <button className="page-action-btn" onClick={() => setInstallOpen((o) => !o)}>
+        <button type="button" className="page-action-btn" onClick={() => setInstallOpen((o) => !o)}>
           + New Plugin
         </button>
       </header>

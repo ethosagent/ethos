@@ -2838,7 +2838,6 @@ textarea {
   color: var(--ethos-text-dim);
 }
 
-
 /* Skills tab + Mesh tab toolbars share the same flex shape as Cron's. */
 .skills-toolbar,
 .mesh-toolbar {

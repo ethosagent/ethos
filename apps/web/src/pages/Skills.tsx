@@ -137,7 +137,7 @@ function LibraryPanel({ skillsQuery }: LibraryPanelProps) {
           {filteredSkills.length} {filteredSkills.length === 1 ? 'skill' : 'skills'}
         </span>
         <div style={{ flex: 1 }} />
-        <button className="page-action-btn" onClick={() => setCreateOpen(true)}>
+        <button type="button" className="page-action-btn" onClick={() => setCreateOpen(true)}>
           + New Skill
         </button>
       </header>

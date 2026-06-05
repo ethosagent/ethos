@@ -8,7 +8,6 @@ import type {
   Skill,
 } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { PersonalityRingAvatar } from '../components/ui/PersonalityRingAvatar';
 import {
   Alert,
   App as AntApp,
@@ -28,11 +27,11 @@ import {
   Table,
   Tabs,
   Tag,
-  Tooltip,
   Typography,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { PersonalityRingAvatar } from '../components/ui/PersonalityRingAvatar';
 import { rpc } from '../rpc';
 
 // Personalities tab — v1.
@@ -179,7 +178,7 @@ export function Personalities() {
           {userPersonalities.length === 1 ? 'personality' : 'personalities'}
         </span>
         <div style={{ flex: 1 }} />
-        <button className="page-action-btn" onClick={() => setCreateOpen(true)}>
+        <button type="button" className="page-action-btn" onClick={() => setCreateOpen(true)}>
           + New Personality
         </button>
       </header>

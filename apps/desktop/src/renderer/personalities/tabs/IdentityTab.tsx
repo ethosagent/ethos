@@ -1,6 +1,6 @@
 import { type KeyboardEvent, useCallback, useMemo, useState } from 'react';
-import { CharacterSheetDrawer } from '../components/CharacterSheetDrawer';
 import { PersonalityRingAvatar } from '../../ui/PersonalityRingAvatar';
+import { CharacterSheetDrawer } from '../components/CharacterSheetDrawer';
 import { TagPillInput } from '../components/TagPillInput';
 
 interface EditorState {
