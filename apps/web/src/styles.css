@@ -2653,39 +2653,6 @@ textarea {
   color: var(--ethos-text-dim);
 }
 
-/* Unified tab bar — outer navigation for Skills / Plugins / MCP Servers. */
-.unified-tab-bar {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--ethos-border);
-  margin-bottom: 16px;
-}
-
-.unified-tab {
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  padding: 10px 16px;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--ethos-text-dim);
-  cursor: pointer;
-  transition: color 80ms cubic-bezier(0.16, 1, 0.3, 1);
-  margin-bottom: -1px;
-}
-
-.unified-tab:hover {
-  color: var(--ethos-text);
-}
-
-.unified-tab--active {
-  color: var(--ethos-text);
-  border-bottom-color: var(--ethos-info);
-}
-
-.unified-tab-content {
-  /* no extra spacing — each panel owns its own padding */
-}
 
 /* Skills tab + Mesh tab toolbars share the same flex shape as Cron's. */
 .skills-toolbar,

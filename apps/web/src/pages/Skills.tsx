@@ -17,25 +17,11 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { Mcp } from './Mcp';
-import { Plugins } from './Plugins';
+import { useEffect, useMemo, useState } from 'react';
 import { rpc } from '../rpc';
 
-// Unified Skills / Plugins / MCP page — one route with an outer tab bar
-// for the three extension surfaces, plus inner Library / Evolver tabs
-// under Skills.
-
-type OuterTab = 'skills' | 'plugins' | 'mcp';
 type SkillOrigin = 'built-in' | 'user' | 'evolver' | 'personality';
 type OriginFilter = 'all' | SkillOrigin;
-
-const OUTER_TABS: { key: OuterTab; label: string }[] = [
-  { key: 'skills', label: 'Skills' },
-  { key: 'plugins', label: 'Plugins' },
-  { key: 'mcp', label: 'MCP Servers' },
-];
 
 const ORIGIN_CONFIG: Record<SkillOrigin, { color: string; label: string }> = {
   'built-in': { color: 'blue', label: 'Built-in' },
@@ -53,50 +39,6 @@ function getSkillOrigin(skill: Skill): SkillOrigin {
 }
 
 export function Skills() {
-  const { search } = useLocation();
-  const navigate = useNavigate();
-  const params = new URLSearchParams(search);
-  const rawTab = params.get('tab');
-  const outerTab: OuterTab = rawTab === 'plugins' || rawTab === 'mcp' ? rawTab : 'skills';
-
-  const setOuterTab = useCallback(
-    (tab: OuterTab) => {
-      if (tab === 'skills') {
-        navigate('/skills');
-      } else {
-        navigate(`/skills?tab=${tab}`);
-      }
-    },
-    [navigate],
-  );
-
-  return (
-    <div className="skills-tab">
-      {/* Outer tab bar: Skills | Plugins | MCP Servers */}
-      <div className="unified-tab-bar">
-        {OUTER_TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            className={`unified-tab${outerTab === t.key ? ' unified-tab--active' : ''}`}
-            onClick={() => setOuterTab(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab content */}
-      <div className="unified-tab-content">
-        {outerTab === 'skills' && <SkillsTabContent />}
-        {outerTab === 'plugins' && <Plugins />}
-        {outerTab === 'mcp' && <Mcp />}
-      </div>
-    </div>
-  );
-}
-
-function SkillsTabContent() {
   const [activeTab, setActiveTab] = useState<'library' | 'evolver'>('library');
 
   const skillsQuery = useQuery({
@@ -107,27 +49,31 @@ function SkillsTabContent() {
   const pendingCount = skillsQuery.data?.pendingCount ?? 0;
 
   return (
-    <Tabs
-      activeKey={activeTab}
-      onChange={(k) => setActiveTab(k as 'library' | 'evolver')}
-      items={[
-        {
-          key: 'library',
-          label: 'Library',
-          children: <LibraryPanel skillsQuery={skillsQuery} />,
-        },
-        {
-          key: 'evolver',
-          label: (
-            <span>
-              Evolver{' '}
-              {pendingCount > 0 ? <Badge count={pendingCount} style={{ marginLeft: 6 }} /> : null}
-            </span>
-          ),
-          children: <EvolverPanel />,
-        },
-      ]}
-    />
+    <div className="skills-tab">
+      <Tabs
+        activeKey={activeTab}
+        onChange={(k) => setActiveTab(k as 'library' | 'evolver')}
+        items={[
+          {
+            key: 'library',
+            label: 'Library',
+            children: <LibraryPanel skillsQuery={skillsQuery} />,
+          },
+          {
+            key: 'evolver',
+            label: (
+              <span>
+                Evolver{' '}
+                {pendingCount > 0 ? (
+                  <Badge count={pendingCount} style={{ marginLeft: 6 }} />
+                ) : null}
+              </span>
+            ),
+            children: <EvolverPanel />,
+          },
+        ]}
+      />
+    </div>
   );
 }
 
