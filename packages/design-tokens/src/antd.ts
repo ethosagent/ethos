@@ -104,6 +104,17 @@ export function tokensToCssVariables(tokens: Tokens): string {
   --ethos-pressed: ${light ? 'rgba(0,0,0,0.09)' : 'rgba(255,255,255,0.12)'};
   --ethos-surface-tint: ${light ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.04)'};
   --ethos-shadow-overlay: ${light ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.5)'};
+  --font-display: ${tokens.typography.fontDisplay};
+  --font-mono: ${tokens.typography.fontMono};
+  --blue: ${tokens.semantic.info};
+  --green: ${tokens.semantic.success};
+  --amber: ${tokens.semantic.warning};
+  --red: ${tokens.semantic.error};
+  --purple: ${tokens.accents.coach ?? '#E879F9'};
+  --slate: ${tokens.accents.operator ?? '#94A3B8'};
+  --sidebar-width: ${layout.sidebarExpandedPx}px;
+  --statusbar-height: 28px;
+  --personality-bar-height: 44px;
   --layout-sidebar-expanded: ${layout.sidebarExpandedPx}px;
   --layout-sidebar-collapsed: ${layout.sidebarCollapsedPx}px;
   --layout-right-drawer: ${layout.rightDrawerPx}px;

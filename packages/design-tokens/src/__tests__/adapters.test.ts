@@ -15,9 +15,9 @@ describe('tokensToInlineCss', () => {
     );
   });
 
-  it('body style references Geist + DESIGN.md body size (14px)', () => {
+  it('body style references Inter + DESIGN.md body size (14px)', () => {
     const styles = tokensToInlineCss(DEFAULT_TOKENS);
-    expect(styles.body).toMatch(/Geist/);
+    expect(styles.body).toMatch(/Inter/);
     expect(styles.body).toMatch(/font-size:14px/);
   });
 

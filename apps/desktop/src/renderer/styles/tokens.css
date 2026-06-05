@@ -16,6 +16,13 @@
 
   --accent: #94a3b8;
 
+  --blue: #4a9eff;
+  --green: #4ade80;
+  --amber: #f59e0b;
+  --purple: #e879f9;
+  --slate: #94a3b8;
+  --red: #f87171;
+
   --ethos-hover: rgba(255, 255, 255, 0.07);
   --ethos-pressed: rgba(255, 255, 255, 0.12);
   --ethos-surface-tint: rgba(255, 255, 255, 0.04);
@@ -31,8 +38,12 @@
   --radius-lg: 14px;
   --radius-full: 9999px;
 
-  --font-display: "Geist", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sidebar-width: 240px;
+  --statusbar-height: 28px;
+  --personality-bar-height: 44px;
+
+  --font-display: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 [data-theme="light"] {

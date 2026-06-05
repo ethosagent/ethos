@@ -4,35 +4,230 @@
    chrome. */
 
 :root {
-  /*
-   * Surface colors and layout dimensions are owned by
-   * @ethosagent/design-tokens and re-emitted at runtime by main.tsx so the
-   * active skin drives both. The values below match the DESIGN.md default
-   * skin and act as the pre-hydration fallback — the runtime <style>
-   * block overrides them on mount and on every subsequent skin change.
-   */
-  --ethos-bg: #0f0f0f;
-  --ethos-bg-elevated: #1a1a1a;
-  --ethos-border: #2a2a2a;
-  --ethos-text: #e8e8e6;
-  --ethos-text-dim: #9a9a98;
+  --bg-base: #0f0f0f;
+  --bg-elevated: #1a1a1a;
+  --bg-overlay: #2a2a2a;
+  --border-subtle: #2a2a2a;
+  --border-strong: #3a3a3a;
+  --text-primary: #e8e8e6;
+  --text-secondary: #9a9a98;
+  --text-tertiary: #6b6b6a;
+  --blue: #4a9eff;
+  --green: #4ade80;
+  --amber: #f59e0b;
+  --purple: #e879f9;
+  --slate: #94a3b8;
+  --red: #f87171;
+  --ethos-hover: rgba(255, 255, 255, 0.07);
+  --ethos-pressed: rgba(255, 255, 255, 0.12);
+  --ethos-surface-tint: rgba(255, 255, 255, 0.04);
+  --ethos-shadow-overlay: rgba(0, 0, 0, 0.5);
+  --motion-fast: 80ms;
+  --motion-default: 180ms;
+  --motion-slow: 240ms;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-full: 9999px;
+  --font-display: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --sidebar-width: var(--layout-sidebar-expanded);
   --sidebar-collapsed-width: var(--layout-sidebar-collapsed);
   --drawer-width: var(--layout-right-drawer);
+  --statusbar-height: 28px;
+  --personality-bar-height: 44px;
+  /* Legacy aliases — runtime overrides via tokensToCssVariables */
+  --ethos-bg: var(--bg-base);
+  --ethos-bg-elevated: var(--bg-elevated);
+  --ethos-bg-overlay: var(--bg-overlay);
+  --ethos-border: var(--border-subtle);
+  --ethos-border-strong: var(--border-strong);
+  --ethos-text: var(--text-primary);
+  --ethos-text-dim: var(--text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-default: 0ms;
+    --motion-slow: 0ms;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 html,
-body,
-#root {
-  height: 100%;
+body {
   margin: 0;
-  background: var(--ethos-bg);
-  color: var(--ethos-text);
-  font-family: "Geist", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-* {
-  box-sizing: border-box;
+#root {
+  height: 100%;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-base);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+}
+.badge-green {
+  background: rgba(74, 222, 128, 0.15);
+  color: var(--green);
+}
+.badge-blue {
+  background: rgba(74, 158, 255, 0.15);
+  color: var(--blue);
+}
+.badge-amber {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--amber);
+}
+.badge-red {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--red);
+}
+.badge-purple {
+  background: rgba(232, 121, 249, 0.15);
+  color: var(--purple);
+}
+.badge-dim {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-tertiary);
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dot-green {
+  background: var(--green);
+}
+.dot-amber {
+  background: var(--amber);
+}
+.dot-red {
+  background: var(--red);
+}
+.dot-dim {
+  background: var(--text-tertiary);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--motion-fast) var(--ease);
+  border: none;
+  outline: none;
+}
+.btn-blue {
+  background: var(--blue);
+  color: #fff;
+}
+.btn-blue:hover {
+  filter: brightness(1.1);
+}
+.btn-blue:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-strong);
+}
+.btn-ghost:hover {
+  border-color: var(--blue);
+  color: var(--text-primary);
+}
+.btn-dim {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+.btn-dim:hover {
+  background: var(--bg-overlay);
+}
+
+.input {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color var(--motion-fast) var(--ease);
+}
+.input:focus {
+  border-color: var(--blue);
+}
+.input::placeholder {
+  color: var(--text-tertiary);
+}
+.input-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+.divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 0;
 }
 
 .app-shell {
@@ -73,7 +268,7 @@ body,
   padding: 0 12px;
   border-top: 1px solid var(--ethos-border);
   background: var(--ethos-bg-elevated);
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--ethos-text-dim);
 }
@@ -245,7 +440,7 @@ body,
   border-radius: 4px;
   background: var(--ethos-bg);
   color: var(--ethos-text);
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   outline: none;
 }
@@ -296,14 +491,14 @@ body,
 
 .sidebar-session-time {
   color: var(--ethos-text-dim);
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 
 .sidebar-session-count {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   opacity: 0.7;
@@ -861,7 +1056,7 @@ body,
 }
 
 .onboarding-model-id {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--ethos-text);
@@ -876,7 +1071,7 @@ body,
 }
 
 .onboarding-model-ctx {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   color: var(--ethos-text-dim);
@@ -1005,7 +1200,7 @@ body,
 }
 
 .onboarding-preview-pane-soul {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.6;
   color: var(--ethos-text-dim);
@@ -1101,7 +1296,7 @@ body,
 }
 
 .onboarding-summary-mono {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -1121,7 +1316,7 @@ body,
 }
 
 .onboarding-summary-cmd-name {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--ethos-text);
@@ -1258,7 +1453,7 @@ body,
   padding-right: 72px;
   background: rgba(0, 0, 0, 0.25);
   border-radius: 0 0 4px 4px;
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
   color: var(--ethos-text);
@@ -1346,7 +1541,7 @@ body,
   padding: 10px 12px;
   background: rgba(0, 0, 0, 0.25);
   border-radius: 4px;
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
   color: var(--ethos-text);
@@ -1374,14 +1569,14 @@ body,
 }
 
 .sessions-count {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--ethos-text-dim);
 }
 
 .sessions-mono {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -1555,7 +1750,7 @@ body,
 }
 
 .personality-bar-model {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--ethos-text-dim);
   font-variant-numeric: tabular-nums;
@@ -1691,7 +1886,7 @@ body,
 }
 
 .empty-state-model {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   color: var(--ethos-text-dim);
   margin-top: 4px;
@@ -1721,7 +1916,7 @@ body,
   background: var(--ethos-bg-elevated);
   cursor: pointer;
   text-align: center;
-  font-family: "Geist", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-display);
   transition:
     background 0.12s ease,
     border-color 0.12s ease;
@@ -2029,7 +2224,7 @@ textarea {
 }
 
 .approval-modal-title code {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   background: var(--ethos-hover);
   padding: 1px 6px;
@@ -2048,7 +2243,7 @@ textarea {
   padding: 10px 12px;
   background: rgba(0, 0, 0, 0.25);
   border-radius: 4px;
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
   color: var(--ethos-text);
@@ -2156,7 +2351,7 @@ textarea {
   border: 1px solid var(--ethos-border);
   background: var(--ethos-bg-elevated);
   color: var(--ethos-text);
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
@@ -2248,7 +2443,7 @@ textarea {
   border-left: 2px solid var(--ethos-border);
   background: rgba(255, 255, 255, 0.02);
   border-radius: 0 4px 4px 0;
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   display: flex;
   flex-direction: column;
@@ -2262,7 +2457,7 @@ textarea {
 }
 
 .tool-chip-section-label {
-  font-family: "Geist", system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -2409,7 +2604,7 @@ textarea {
 }
 
 .tool-stream-name {
-  font-family: "Geist Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: 11.5px;
   flex-grow: 1;
   overflow: hidden;
@@ -2603,7 +2798,7 @@ textarea {
 .palette-row-hint {
   color: var(--ethos-text-dim);
   font-size: 11px;
-  font-family: "Geist Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2893,7 +3088,7 @@ textarea {
 }
 
 .cc-column-count {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--ethos-text-dim);
   font-variant-numeric: tabular-nums;
@@ -2956,7 +3151,7 @@ textarea {
 }
 
 .cc-task-id {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   color: var(--ethos-text-dim);
   letter-spacing: 0.02em;
@@ -2964,7 +3159,7 @@ textarea {
 }
 
 .cc-task-priority {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
   padding: 1px 6px;
@@ -2976,7 +3171,7 @@ textarea {
 }
 
 .cc-task-goal-badge {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -2988,7 +3183,7 @@ textarea {
 }
 
 .cc-task-progress {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   color: var(--ethos-text-dim);
   font-variant-numeric: tabular-nums;
@@ -2996,7 +3191,7 @@ textarea {
 
 /* Retry badge — amber soft-warning, shown only when retry_count > 0. */
 .cc-task-retry {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
   padding: 1px 6px;
@@ -3031,7 +3226,7 @@ textarea {
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.01em;
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 
 .cc-task-assignee-mark {
@@ -3047,7 +3242,7 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
   text-transform: lowercase;
@@ -3152,7 +3347,7 @@ textarea {
 }
 
 .cc-activity-actor {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.02em;
@@ -3173,7 +3368,7 @@ textarea {
 }
 
 .cc-activity-time {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   color: var(--ethos-text-dim);
   font-variant-numeric: tabular-nums;
@@ -3219,7 +3414,7 @@ textarea {
 }
 
 .cc-roster-name {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.02em;
@@ -3333,7 +3528,7 @@ textarea {
   gap: 8px;
   font-size: 11px;
   color: var(--ethos-text-dim);
-  font-family: "Geist Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
@@ -3374,7 +3569,7 @@ textarea {
   border: 1px solid var(--ethos-border);
   border-radius: 4px;
   font-size: 12px;
-  font-family: "Geist Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   color: var(--ethos-text);
   white-space: nowrap;
 }
@@ -3558,7 +3753,7 @@ textarea {
 .activity-group-time {
   font-size: 11px;
   color: var(--ethos-text-dim);
-  font-family: "Geist Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
@@ -3662,7 +3857,7 @@ textarea {
 
 .aed-key {
   color: var(--ethos-text-dim);
-  font-family: "Geist Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   flex-shrink: 0;
   width: 72px;
   text-align: right;
@@ -3670,7 +3865,7 @@ textarea {
 
 .aed-val {
   color: var(--ethos-text);
-  font-family: "Geist Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   flex: 1;
   min-width: 0;
   word-break: break-all;
@@ -3686,7 +3881,7 @@ textarea {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-all;
-  font-family: "Geist Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.45;
   color: var(--ethos-text);
