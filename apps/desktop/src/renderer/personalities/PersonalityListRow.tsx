@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MarkPreview } from './components/MarkPreview';
+import { PersonalityRingAvatar } from '../ui/PersonalityRingAvatar';
 
 interface PersonalityListItem {
   id: string;
@@ -13,6 +13,8 @@ interface PersonalityListRowProps {
   active: boolean;
   accentColor: string;
   onClick: () => void;
+  onDuplicate?: () => void;
+  onDelete?: () => void;
 }
 
 export function PersonalityListRow({
@@ -20,6 +22,8 @@ export function PersonalityListRow({
   active,
   accentColor,
   onClick,
+  onDuplicate,
+  onDelete,
 }: PersonalityListRowProps) {
   const [hovered, setHovered] = useState(false);
 
@@ -40,10 +44,11 @@ export function PersonalityListRow({
       style={{
         display: 'flex',
         alignItems: 'center',
-        height: 44,
-        padding: '0 12px',
+        minHeight: 48,
+        padding: '4px 12px',
         cursor: 'pointer',
         borderLeft: active ? `2px solid ${accentColor}` : '2px solid transparent',
+        borderBottom: '1px solid var(--border-subtle)',
         backgroundColor: active
           ? 'var(--bg-overlay)'
           : hovered
@@ -53,7 +58,7 @@ export function PersonalityListRow({
         gap: 10,
       }}
     >
-      <MarkPreview personalityId={personality.id} size={28} />
+      <PersonalityRingAvatar personalityId={personality.id} name={personality.name} size={32} />
       <div
         style={{
           flex: 1,
@@ -103,15 +108,53 @@ export function PersonalityListRow({
           </span>
         )}
       </div>
-      <span
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: '50%',
-          backgroundColor: accentColor,
-          flexShrink: 0,
-        }}
-      />
+      {hovered && (
+        // biome-ignore lint/a11y/noStaticElementInteractions: stop propagation wrapper for action buttons
+        <div
+          style={{
+            display: 'flex',
+            gap: 4,
+            flexShrink: 0,
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          {onDuplicate && (
+            <button
+              type="button"
+              onClick={onDuplicate}
+              style={{
+                background: 'none',
+                border: '1px solid var(--border-strong)',
+                borderRadius: 4,
+                padding: '2px 8px',
+                fontSize: 11,
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+              }}
+            >
+              Dup
+            </button>
+          )}
+          {onDelete && !personality.builtin && (
+            <button
+              type="button"
+              onClick={onDelete}
+              style={{
+                background: 'none',
+                border: '1px solid var(--border-strong)',
+                borderRadius: 4,
+                padding: '2px 8px',
+                fontSize: 11,
+                color: 'var(--red, #f87171)',
+                cursor: 'pointer',
+              }}
+            >
+              Del
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

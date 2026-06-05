@@ -319,13 +319,14 @@ export function PersonalityEditor({
         maxWidth: 800,
         padding: 32,
         overflow: 'hidden',
+        background: 'var(--bg-elevated)',
       }}
     >
       <div
         style={{
           display: 'flex',
           height: 48,
-          borderBottom: '1px solid var(--border-subtle)',
+          borderBottom: '1px solid var(--border-strong)',
           gap: 0,
           flexShrink: 0,
         }}
@@ -459,7 +460,7 @@ export function PersonalityEditor({
           alignItems: 'center',
           justifyContent: 'space-between',
           height: 40,
-          borderTop: '1px solid var(--border-subtle)',
+          borderTop: '1px solid var(--border-strong)',
           backgroundColor: 'var(--bg-elevated)',
           padding: '0 16px',
           flexShrink: 0,

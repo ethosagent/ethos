@@ -1,6 +1,6 @@
 import { type KeyboardEvent, useCallback, useMemo, useState } from 'react';
+import { PersonalityRingAvatar } from '../../ui/PersonalityRingAvatar';
 import { CharacterSheetDrawer } from '../components/CharacterSheetDrawer';
-import { MarkPreview } from '../components/MarkPreview';
 import { TagPillInput } from '../components/TagPillInput';
 
 interface EditorState {
@@ -215,7 +215,7 @@ export function IdentityTab({ personality, isNew, onChange, port }: IdentityTabP
           flexShrink: 0,
         }}
       >
-        <MarkPreview personalityId={previewId} size={64} />
+        <PersonalityRingAvatar personalityId={previewId} name={personality.name} size={64} />
         <button
           type="button"
           onClick={() => setDrawerOpen(true)}
