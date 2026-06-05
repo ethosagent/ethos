@@ -1,11 +1,13 @@
 import type { MemoryFile, MemoryStoreId } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { App as AntApp, Button, Input, Select, Spin, Tabs, Tooltip, Typography } from 'antd';
-import { useEffect, useState } from 'react';
+import { App as AntApp, Select, Spin, Typography } from 'antd';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { rpc } from '../rpc';
 
+type FileKey = 'memory' | 'user';
+
 export function Memory() {
-  const [activeStore, setActiveStore] = useState<MemoryStoreId>('memory');
+  const [selectedFile, setSelectedFile] = useState<FileKey>('memory');
   const [personalityId, setPersonalityId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
 
@@ -22,11 +24,11 @@ export function Memory() {
   });
 
   const listQuery = useQuery({
-    queryKey: ['memory', 'list', effectivePersonalityId, activeStore === 'user' ? userId : null],
+    queryKey: ['memory', 'list', effectivePersonalityId, selectedFile === 'user' ? userId : null],
     queryFn: () =>
       rpc.memory.list({
         personalityId: effectivePersonalityId as string,
-        ...(activeStore === 'user' && userId ? { userId } : {}),
+        ...(selectedFile === 'user' && userId ? { userId } : {}),
       }),
     enabled: !!effectivePersonalityId,
   });
@@ -59,86 +61,104 @@ export function Memory() {
   const users = usersQuery.data?.users ?? [];
 
   return (
-    <div className="memory-tab">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          Personality
-        </Typography.Text>
-        <Select
-          size="small"
-          style={{ width: 200 }}
-          value={effectivePersonalityId ?? undefined}
-          onChange={(v) => setPersonalityId(v)}
-          loading={personalitiesQuery.isLoading}
-          options={personalities.map((p) => ({
-            value: p.id,
-            label: p.name,
-          }))}
-        />
-        {activeStore === 'user' ? (
-          <>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              User
-            </Typography.Text>
+    <div className="brain-page">
+      {/* Header row */}
+      <div className="brain-header">
+        <h3 className="brain-title">Brain</h3>
+        <div className="brain-header-selectors">
+          <Select
+            size="small"
+            style={{ width: 180 }}
+            className="brain-select"
+            value={effectivePersonalityId ?? undefined}
+            onChange={(v) => setPersonalityId(v)}
+            loading={personalitiesQuery.isLoading}
+            options={personalities.map((p) => ({
+              value: p.id,
+              label: p.name,
+            }))}
+          />
+          {selectedFile === 'user' ? (
             <Select
               size="small"
-              style={{ width: 200 }}
+              style={{ width: 140 }}
+              className="brain-select"
               value={userId ?? '__shared__'}
               onChange={(v) => setUserId(v === '__shared__' ? null : v)}
               loading={usersQuery.isLoading}
               options={[
-                { value: '__shared__', label: 'Shared (personality default)' },
+                { value: '__shared__', label: 'Shared (default)' },
                 ...users.map((u) => ({
                   value: u.userId,
                   label: u.displayLabel,
                 })),
               ]}
             />
-          </>
-        ) : null}
+          ) : null}
+        </div>
       </div>
 
       {memoryMode === 'vector' ? (
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+        <Typography.Paragraph type="secondary" style={{ margin: '0 0 12px', fontSize: 12 }}>
           Vector mode is active — the agent uses semantic chunks, not these files. Switch to{' '}
           <code>markdown</code> mode in Settings if you want edits here to flow back to the agent.
         </Typography.Paragraph>
       ) : null}
 
-      <Tabs
-        activeKey={activeStore}
-        onChange={(k) => setActiveStore(k as MemoryStoreId)}
-        items={[
-          {
-            key: 'memory',
-            label: 'MEMORY.md',
-            children: effectivePersonalityId ? (
-              <MemoryEditor
-                store="memory"
-                file={fileByStore.get('memory') ?? null}
-                personalityId={effectivePersonalityId}
-              />
-            ) : null,
-          },
-          {
-            key: 'user',
-            label: 'USER.md',
-            children: effectivePersonalityId ? (
-              <MemoryEditor
-                store="user"
-                file={fileByStore.get('user') ?? null}
-                personalityId={effectivePersonalityId}
-                userId={userId ?? undefined}
-              />
-            ) : null,
-          },
-        ]}
-      />
+      {/* Two-panel layout */}
+      <div className="brain-panels">
+        {/* Left panel — file list */}
+        <div className="brain-file-list">
+          <div className="brain-file-list-label">Files</div>
+          <FileItem
+            label="MEMORY.md"
+            active={selectedFile === 'memory'}
+            onClick={() => setSelectedFile('memory')}
+          />
+          <FileItem
+            label="USER.md"
+            active={selectedFile === 'user'}
+            onClick={() => setSelectedFile('user')}
+          />
+        </div>
+
+        {/* Right panel — editor */}
+        <div className="brain-editor-panel">
+          {effectivePersonalityId ? (
+            <BrainEditor
+              store={selectedFile}
+              file={fileByStore.get(selectedFile) ?? null}
+              personalityId={effectivePersonalityId}
+              userId={selectedFile === 'user' ? (userId ?? undefined) : undefined}
+            />
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
 
-function MemoryEditor({
+function FileItem({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`brain-file-item${active ? ' brain-file-item--active' : ''}`}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+}
+
+function BrainEditor({
   store,
   file,
   personalityId,
@@ -152,16 +172,21 @@ function MemoryEditor({
   const qc = useQueryClient();
   const { notification, modal } = AntApp.useApp();
   const [draft, setDraft] = useState(file?.content ?? '');
+  const [savedContent, setSavedContent] = useState(file?.content ?? '');
   const [search, setSearch] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    setDraft(file?.content ?? '');
+    const content = file?.content ?? '';
+    setDraft(content);
+    setSavedContent(content);
   }, [file]);
 
   const writeMut = useMutation({
     mutationFn: (content: string) =>
       rpc.memory.write({ store, content, personalityId, ...(userId ? { userId } : {}) }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      setSavedContent(variables);
       qc.invalidateQueries({ queryKey: ['memory', 'list'] });
       notification.success({ message: 'Saved', placement: 'topRight' });
     },
@@ -169,97 +194,133 @@ function MemoryEditor({
       notification.error({ message: 'Save failed', description: (err as Error).message }),
   });
 
-  const dirty = draft !== (file?.content ?? '');
+  const dirty = draft !== savedContent;
   const matchCount = search ? countMatches(draft, search) : 0;
+  const totalMatches = search ? countTotalMatches(draft, search) : 0;
 
-  const onCopy = async () => {
+  const onCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(draft);
       notification.info({ message: 'Copied to clipboard', placement: 'topRight' });
     } catch (err) {
       notification.error({ message: 'Copy failed', description: (err as Error).message });
     }
-  };
+  }, [draft, notification]);
 
-  const onRevert = () => {
+  const onRevert = useCallback(() => {
     if (!dirty) return;
+    setDraft(savedContent);
+  }, [dirty, savedContent]);
+
+  const onSave = useCallback(() => {
+    writeMut.mutate(draft);
+  }, [draft, writeMut]);
+
+  const onClear = useCallback(() => {
     modal.confirm({
-      title: 'Discard local edits?',
-      content: 'Your unsaved changes will be lost.',
-      okText: 'Discard',
+      title: 'Clear memory',
+      content: 'This will clear all memory. Are you sure?',
+      okText: 'Clear',
       okButtonProps: { danger: true },
-      onOk: () => setDraft(file?.content ?? ''),
+      onOk: () => {
+        setDraft('');
+        writeMut.mutate('');
+      },
     });
-  };
+  }, [modal, writeMut]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        onSave();
+      }
+    },
+    [onSave],
+  );
+
+  const filename = store === 'memory' ? 'MEMORY.md' : 'USER.md';
 
   return (
-    <div className="memory-editor">
-      <header className="memory-toolbar">
-        <span className="memory-meta">
-          {file?.path ? (
-            <Tooltip title={file.path}>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {file.path.replace(/^.+\/(?=[^/]+$)/, '')}
-              </Typography.Text>
-            </Tooltip>
-          ) : null}
-          {file?.modifiedAt ? (
-            <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
-              · edited {formatRelative(file.modifiedAt)}
-            </Typography.Text>
-          ) : (
-            <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
-              · not yet written
-            </Typography.Text>
-          )}
+    <div className="brain-editor">
+      {/* Editor toolbar */}
+      <div className="brain-editor-toolbar">
+        <span className="brain-editor-filename">
+          {filename}
+          {dirty ? <span className="brain-dirty-dot"> *</span> : null}
         </span>
-        <Input
-          placeholder="Search…"
-          allowClear
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ width: 220 }}
-          suffix={
-            search ? (
-              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                {matchCount} match{matchCount === 1 ? '' : 'es'}
-              </Typography.Text>
-            ) : null
-          }
-        />
-      </header>
 
-      <Input.TextArea
+        <div className="brain-editor-toolbar-right">
+          <div className="brain-search-wrap">
+            <input
+              type="text"
+              className="brain-search-input"
+              placeholder="Search..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {search ? (
+              <span className="brain-search-counter">
+                {matchCount} of {totalMatches}
+              </span>
+            ) : null}
+          </div>
+
+          <button type="button" className="brain-action-btn" onClick={onCopy}>
+            Copy
+          </button>
+          <button type="button" className="brain-action-btn" onClick={onRevert} disabled={!dirty}>
+            Revert
+          </button>
+          <button
+            type="button"
+            className="brain-action-btn brain-action-btn--primary"
+            onClick={onSave}
+            disabled={!dirty || writeMut.isPending}
+          >
+            {writeMut.isPending ? 'Saving...' : 'Save'}
+          </button>
+          <button
+            type="button"
+            className="brain-action-btn brain-action-btn--danger"
+            onClick={onClear}
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+
+      {/* Content textarea */}
+      <textarea
+        ref={textareaRef}
+        className="brain-textarea"
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
-        autoSize={{ minRows: 18, maxRows: 36 }}
-        style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12.5, marginTop: 12 }}
+        onKeyDown={handleKeyDown}
+        spellCheck={false}
         placeholder={
           store === 'memory'
-            ? '# Project context\n\nNotes the agent reads each turn. Edits land in ~/.ethos/MEMORY.md.'
-            : '# About me\n\nWho you are, what you build, how you work. Edits land in ~/.ethos/USER.md.'
+            ? '# Project context\n\nNotes the agent reads each turn.'
+            : '# About me\n\nWho you are, what you build, how you work.'
         }
       />
-
-      <footer className="memory-actions">
-        <Button onClick={onCopy}>Copy</Button>
-        <Button onClick={onRevert} disabled={!dirty}>
-          Revert
-        </Button>
-        <Button
-          type="primary"
-          onClick={() => writeMut.mutate(draft)}
-          loading={writeMut.isPending}
-          disabled={!dirty}
-        >
-          Save
-        </Button>
-      </footer>
     </div>
   );
 }
 
 function countMatches(text: string, q: string): number {
+  if (!q) return 0;
+  const lower = text.toLowerCase();
+  const needle = q.toLowerCase();
+  const lines = lower.split('\n');
+  let count = 0;
+  for (const line of lines) {
+    if (line.includes(needle)) count++;
+  }
+  return count;
+}
+
+function countTotalMatches(text: string, q: string): number {
   if (!q) return 0;
   const lower = text.toLowerCase();
   const needle = q.toLowerCase();
@@ -270,15 +331,4 @@ function countMatches(text: string, q: string): number {
     idx = lower.indexOf(needle, idx + needle.length);
   }
   return count;
-}
-
-function formatRelative(iso: string): string {
-  const ts = new Date(iso).getTime();
-  if (!Number.isFinite(ts)) return iso;
-  const diff = Date.now() - ts;
-  if (diff < 60_000) return 'just now';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  if (diff < 30 * 86_400_000) return `${Math.floor(diff / 86_400_000)}d ago`;
-  return new Date(iso).toLocaleDateString();
 }

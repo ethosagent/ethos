@@ -2,9 +2,8 @@ import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppState } from '../state/AppContext';
 import { MemoryPanel } from './MemoryPanel';
-import { SessionMemoryContext } from './SessionMemoryContext';
 
-type DirtyPanels = Record<string, boolean>;
+type FileKey = 'memory' | 'user';
 
 interface PersonalityOption {
   id: string;
@@ -16,8 +15,6 @@ interface UserOption {
   platform: string;
   displayLabel: string;
 }
-
-const EXPLAINER_KEY = 'hasShownMemoryExplainer';
 
 function formatUserLabel(u: UserOption): string {
   if (u.platform === 'desktop') return 'Desktop';
@@ -36,16 +33,14 @@ export function MemoryPage() {
     [port],
   );
 
+  const [selectedFile, setSelectedFile] = useState<FileKey>('memory');
   const [personalities, setPersonalities] = useState<PersonalityOption[]>([]);
   const [activePersonalityId, setActivePersonalityId] = useState<string | null>(null);
 
   const [users, setUsers] = useState<UserOption[]>([]);
   const [activeUserId, setActiveUserId] = useState<string | null>(null);
 
-  const [showExplainer, setShowExplainer] = useState(
-    () => localStorage.getItem(EXPLAINER_KEY) !== 'true',
-  );
-  const [dirtyPanels, setDirtyPanels] = useState<DirtyPanels>({});
+  const [dirtyPanels, setDirtyPanels] = useState<Record<string, boolean>>({});
   const dirtyPanelsRef = useRef(dirtyPanels);
   dirtyPanelsRef.current = dirtyPanels;
 
@@ -95,7 +90,6 @@ export function MemoryPage() {
             return a.displayLabel.localeCompare(b.displayLabel);
           });
         setUsers(items);
-        // Default to desktop user if available, otherwise first
         if (!activeUserId) {
           const desktop = items.find((u) => u.platform === 'desktop');
           setActiveUserId(desktop?.userId ?? items[0]?.userId ?? null);
@@ -110,23 +104,18 @@ export function MemoryPage() {
     };
   }, [client, activeUserId]);
 
-  const handleDismissExplainer = useCallback(() => {
-    setShowExplainer(false);
-    localStorage.setItem(EXPLAINER_KEY, 'true');
-  }, []);
-
   const confirmIfDirty = useCallback((panelKey: string): boolean => {
     if (!dirtyPanelsRef.current[panelKey]) return true;
-    const label = panelKey === 'memory' ? 'PROJECT MEMORY' : 'USER PROFILE';
+    const label = panelKey === 'memory' ? 'MEMORY.md' : 'USER.md';
     return window.confirm(`You have unsaved changes in ${label}. Discard changes?`);
   }, []);
 
   const handlePersonalityChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
-      if (!confirmIfDirty('memory')) return;
+      if (!confirmIfDirty(selectedFile)) return;
       setActivePersonalityId(e.target.value);
     },
-    [confirmIfDirty],
+    [confirmIfDirty, selectedFile],
   );
 
   const handleUserChange = useCallback(
@@ -135,6 +124,15 @@ export function MemoryPage() {
       setActiveUserId(e.target.value);
     },
     [confirmIfDirty],
+  );
+
+  const handleFileSelect = useCallback(
+    (file: FileKey) => {
+      if (file === selectedFile) return;
+      if (!confirmIfDirty(selectedFile)) return;
+      setSelectedFile(file);
+    },
+    [selectedFile, confirmIfDirty],
   );
 
   // Guard against navigation away with unsaved changes
@@ -148,8 +146,6 @@ export function MemoryPage() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
-  // Use the first available personality for user-panel reads (personalityId is required
-  // by the RPC but ignored for routing when userId is set — service uses user scope).
   const fallbackPersonalityId = activePersonalityId ?? personalities[0]?.id ?? 'operator';
 
   const selectStyle: React.CSSProperties = {
@@ -157,14 +153,13 @@ export function MemoryPage() {
     fontSize: 13,
     color: 'var(--text-primary)',
     background: 'var(--bg-elevated)',
-    border: '1px solid var(--border-subtle)',
-    borderRadius: 4,
+    border: '1px solid var(--border-strong)',
+    borderRadius: 6,
     padding: '4px 8px',
     outline: 'none',
   };
 
-  // desktopUserId is available in state but user selection is managed locally;
-  // we reference it only to satisfy the linter (it's set in AppShell on boot).
+  // desktopUserId is available in state but user selection is managed locally
   void desktopUserId;
 
   return (
@@ -180,12 +175,11 @@ export function MemoryPage() {
       {/* Page header */}
       <div
         style={{
-          height: 40,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           flexShrink: 0,
-          marginBottom: 16,
+          marginBottom: 12,
         }}
       >
         <h3
@@ -197,143 +191,146 @@ export function MemoryPage() {
             fontFamily: 'var(--font-display)',
           }}
         >
-          Memory
+          Brain
         </h3>
-      </div>
-
-      {/* Explainer */}
-      {showExplainer && (
-        <div
-          style={{
-            background: 'var(--bg-elevated)',
-            borderRadius: 8,
-            padding: '12px 16px',
-            border: '1px solid var(--border-subtle)',
-            marginBottom: 16,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 16,
-            flexShrink: 0,
-          }}
-        >
-          <span
-            style={{
-              fontSize: 13,
-              color: 'var(--text-secondary)',
-              fontFamily: 'var(--font-display)',
-            }}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <select
+            value={activePersonalityId ?? ''}
+            onChange={handlePersonalityChange}
+            style={{ ...selectStyle, width: 180 }}
           >
-            Your agent reads these files at the start of every conversation. Edit them to correct or
-            add information.
-          </span>
-          <button
-            type="button"
-            onClick={handleDismissExplainer}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--info)',
-              fontSize: 12,
-              cursor: 'pointer',
-              padding: 0,
-              fontFamily: 'var(--font-display)',
-              flexShrink: 0,
-            }}
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      {/* Panels row */}
-      <div style={{ display: 'flex', gap: 24, flex: 1, minHeight: 0 }}>
-        {/* Left: Project Memory — scoped by personality */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: 8,
-              flexShrink: 0,
-            }}
-          >
-            <span
-              style={{
-                fontSize: 12,
-                color: 'var(--text-secondary)',
-                fontFamily: 'var(--font-display)',
-              }}
-            >
-              Personality
-            </span>
+            {personalities.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          {selectedFile === 'user' ? (
             <select
-              value={activePersonalityId ?? ''}
-              onChange={handlePersonalityChange}
-              style={selectStyle}
+              value={activeUserId ?? ''}
+              onChange={handleUserChange}
+              style={{ ...selectStyle, width: 140 }}
             >
-              {personalities.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          {activePersonalityId && (
-            <MemoryPanel
-              label="PROJECT MEMORY"
-              store="memory"
-              personalityId={activePersonalityId}
-              emptyText="No project memory yet."
-              onDirtyChange={handleDirtyChange}
-            />
-          )}
-        </div>
-
-        {/* Right: User Profile — scoped by user */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: 8,
-              flexShrink: 0,
-            }}
-          >
-            <span
-              style={{
-                fontSize: 12,
-                color: 'var(--text-secondary)',
-                fontFamily: 'var(--font-display)',
-              }}
-            >
-              User
-            </span>
-            <select value={activeUserId ?? ''} onChange={handleUserChange} style={selectStyle}>
               {users.map((u) => (
                 <option key={u.userId} value={u.userId}>
                   {formatUserLabel(u)}
                 </option>
               ))}
             </select>
-          </div>
-          {activeUserId && (
-            <MemoryPanel
-              label="USER PROFILE"
-              store="user"
-              personalityId={fallbackPersonalityId}
-              userId={activeUserId}
-              emptyText="No user profile yet. Add information about this user to help the agent personalize responses."
-              onDirtyChange={handleDirtyChange}
-            />
-          )}
+          ) : null}
         </div>
       </div>
 
-      {/* Session context */}
-      <SessionMemoryContext />
+      {/* Two-panel layout */}
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {/* Left panel — file list */}
+        <div
+          style={{
+            width: 220,
+            flexShrink: 0,
+            borderRight: '1px solid var(--border-subtle)',
+            background: 'var(--bg-base)',
+          }}
+        >
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 10,
+              fontWeight: 500,
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              color: 'var(--text-tertiary)',
+              padding: '12px 12px 6px',
+            }}
+          >
+            Files
+          </div>
+          <FileListItem
+            label="MEMORY.md"
+            active={selectedFile === 'memory'}
+            onClick={() => handleFileSelect('memory')}
+          />
+          <FileListItem
+            label="USER.md"
+            active={selectedFile === 'user'}
+            onClick={() => handleFileSelect('user')}
+          />
+        </div>
+
+        {/* Right panel — editor */}
+        <div
+          style={{
+            flex: 1,
+            padding: '20px 24px',
+            display: 'flex',
+            flexDirection: 'column',
+            background: 'var(--bg-base)',
+            minWidth: 0,
+          }}
+        >
+          {selectedFile === 'memory' && activePersonalityId ? (
+            <MemoryPanel
+              label="MEMORY.md"
+              store="memory"
+              personalityId={activePersonalityId}
+              emptyText="No project memory yet."
+              onDirtyChange={handleDirtyChange}
+            />
+          ) : null}
+          {selectedFile === 'user' && activeUserId ? (
+            <MemoryPanel
+              label="USER.md"
+              store="user"
+              personalityId={fallbackPersonalityId}
+              userId={activeUserId}
+              emptyText="No user profile yet."
+              onDirtyChange={handleDirtyChange}
+            />
+          ) : null}
+        </div>
+      </div>
     </div>
+  );
+}
+
+function FileListItem({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        width: '100%',
+        height: 32,
+        padding: '0 12px',
+        border: 'none',
+        borderLeft: active ? '2px solid var(--blue)' : '2px solid transparent',
+        background: active
+          ? 'rgba(74,158,255,0.10)'
+          : hovered
+            ? 'var(--ethos-hover)'
+            : 'transparent',
+        color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+        fontFamily: 'var(--font-display)',
+        fontSize: 13,
+        cursor: 'pointer',
+        textAlign: 'left',
+      }}
+    >
+      {label}
+    </button>
   );
 }
