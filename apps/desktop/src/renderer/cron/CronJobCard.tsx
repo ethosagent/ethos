@@ -119,6 +119,25 @@ export function CronJobCard({
         </span>
         <span style={{ margin: '0 6px', color: 'var(--text-tertiary)', fontSize: 11 }}>·</span>
         <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{job.personalityId}</span>
+        {job.deliver ? (
+          <>
+            <span style={{ margin: '0 6px', color: 'var(--text-tertiary)', fontSize: 11 }}>·</span>
+            <span
+              style={{
+                fontSize: 10,
+                fontFamily: 'var(--font-mono)',
+                textTransform: 'capitalize',
+                color: 'var(--text-tertiary)',
+                background: 'var(--ethos-surface-tint)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-sm, 4px)',
+                padding: '1px 6px',
+              }}
+            >
+              {job.deliver}
+            </span>
+          </>
+        ) : null}
         <span style={{ margin: '0 6px', color: 'var(--text-tertiary)', fontSize: 11 }}>·</span>
         <span
           style={{

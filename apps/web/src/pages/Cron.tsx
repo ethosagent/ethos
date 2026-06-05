@@ -131,6 +131,24 @@ export function Cron() {
             render: (v: string) => v,
           },
           {
+            title: 'Trigger',
+            dataIndex: 'deliver',
+            width: 110,
+            render: (v: string | null) =>
+              v ? (
+                <span
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 11,
+                    color: 'var(--text-secondary)',
+                    textTransform: 'capitalize',
+                  }}
+                >
+                  {v}
+                </span>
+              ) : null,
+          },
+          {
             title: 'Next run',
             dataIndex: 'nextRunAt',
             width: 180,
