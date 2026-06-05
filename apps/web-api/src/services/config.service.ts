@@ -21,6 +21,10 @@ export interface ConfigGetResult {
     apiKeyPreview: string;
     baseUrl: string | null;
   }>;
+  approvalMode: 'manual' | 'smart' | 'off';
+  verbosity: 'concise' | 'balanced' | 'verbose';
+  debugMode: boolean;
+  contextLayering: boolean;
 }
 
 export interface ConfigUpdateInput {
@@ -38,6 +42,10 @@ export interface ConfigUpdateInput {
     apiKey?: string;
     baseUrl?: string;
   }>;
+  approvalMode?: 'manual' | 'smart' | 'off';
+  verbosity?: 'concise' | 'balanced' | 'verbose';
+  debugMode?: boolean;
+  contextLayering?: boolean;
 }
 
 export interface ConfigServiceOptions {
@@ -71,6 +79,10 @@ export class ConfigService {
         apiKeyPreview: redactKey(p.apiKey),
         baseUrl: p.baseUrl ?? null,
       })),
+      approvalMode: raw.approvalMode ?? 'manual',
+      verbosity: raw.verbosity ?? 'balanced',
+      debugMode: raw.debugMode ?? false,
+      contextLayering: raw.contextLayering ?? false,
     };
   }
 

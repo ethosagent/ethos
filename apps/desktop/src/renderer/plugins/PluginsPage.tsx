@@ -1,6 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import type { PluginCredentialSchema } from '@ethosagent/types';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppState } from '../state/AppContext';
 import { SectionLabel } from '../ui/SectionLabel';
 import { PluginHomeDrawer } from './PluginHomeDrawer';
@@ -68,6 +68,13 @@ export function PluginsPage() {
   const [loading, setLoading] = useState(true);
   const [homeDrawerPlugin, setHomeDrawerPlugin] = useState<PluginInfo | null>(null);
   const [settingsDrawerPlugin, setSettingsDrawerPlugin] = useState<PluginInfo | null>(null);
+  const [installOpen, setInstallOpen] = useState(false);
+  const [packageSpec, setPackageSpec] = useState('');
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const installInputRef = useRef<HTMLInputElement>(null);
+
+  const [fetchKey, setFetchKey] = useState(0);
 
   // Fetch plugin list
   useEffect(() => {
@@ -85,7 +92,24 @@ export function PluginsPage() {
     return () => {
       stale = true;
     };
-  }, [client]);
+  }, [client, fetchKey]);
+
+  const handleInstall = useCallback(async () => {
+    const spec = packageSpec.trim();
+    if (!spec) return;
+    setInstalling(true);
+    setInstallError(null);
+    try {
+      await client.rpc.plugins.install({ packageSpec: spec });
+      setPackageSpec('');
+      setInstallOpen(false);
+      setFetchKey((k) => k + 1);
+    } catch (err) {
+      setInstallError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setInstalling(false);
+    }
+  }, [client, packageSpec]);
 
   // Fetch page specs for all plugins
   useEffect(() => {
@@ -181,7 +205,10 @@ export function PluginsPage() {
         <button
           type="button"
           onClick={() => {
-            /* Install flow is managed via CLI; this is a placeholder for future in-app install. */
+            setInstallOpen((o) => !o);
+            if (!installOpen) {
+              setTimeout(() => installInputRef.current?.focus(), 60);
+            }
           }}
           style={{
             height: 28,
@@ -199,6 +226,67 @@ export function PluginsPage() {
           + New Plugin
         </button>
       </div>
+
+      {installOpen && (
+        <div style={{ padding: '8px 24px 0' }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              ref={installInputRef}
+              type="text"
+              placeholder="Package spec, e.g. @scope/my-plugin@1.0.0"
+              value={packageSpec}
+              onChange={(e) => setPackageSpec(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && packageSpec.trim()) handleInstall();
+              }}
+              disabled={installing}
+              style={{
+                flex: 1,
+                height: 32,
+                padding: '0 10px',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 12,
+                color: 'var(--text-primary)',
+                backgroundColor: 'var(--bg-overlay)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-sm)',
+                outline: 'none',
+                boxSizing: 'border-box',
+              }}
+            />
+            <button
+              type="button"
+              onClick={handleInstall}
+              disabled={installing || !packageSpec.trim()}
+              style={{
+                height: 32,
+                padding: '0 16px',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--accent)',
+                background: 'var(--accent)',
+                color: '#fff',
+                fontSize: 12,
+                cursor: installing || !packageSpec.trim() ? 'not-allowed' : 'pointer',
+                opacity: installing || !packageSpec.trim() ? 0.5 : 1,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {installing ? 'Installing...' : 'Install'}
+            </button>
+          </div>
+          {installError && (
+            <div
+              style={{
+                fontSize: 12,
+                color: 'var(--error)',
+                marginTop: 6,
+              }}
+            >
+              {installError}
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={{ flex: 1, overflow: 'auto', paddingTop: 12 }}>
         {loading ? (

@@ -486,6 +486,10 @@ const ConfigGetOutput = z.object({
   /** Currently selected skin (one of the BUILTIN_SKINS names). */
   skin: z.string(),
   providers: z.array(ProviderEntrySchema),
+  approvalMode: z.enum(['manual', 'smart', 'off']),
+  verbosity: z.enum(['concise', 'balanced', 'verbose']),
+  debugMode: z.boolean(),
+  contextLayering: z.boolean(),
 });
 
 const ConfigUpdateInput = z.object({
@@ -507,6 +511,10 @@ const ConfigUpdateInput = z.object({
       }),
     )
     .optional(),
+  approvalMode: z.enum(['manual', 'smart', 'off']).optional(),
+  verbosity: z.enum(['concise', 'balanced', 'verbose']).optional(),
+  debugMode: z.boolean().optional(),
+  contextLayering: z.boolean().optional(),
 });
 const ConfigUpdateOutput = z.object({ ok: z.literal(true) });
 

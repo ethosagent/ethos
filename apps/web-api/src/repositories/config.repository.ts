@@ -38,6 +38,10 @@ export interface RawConfig {
   baseUrl?: string;
   /** Active skin name (default | mono | paper, or future custom skins). */
   skin?: string;
+  approvalMode?: 'manual' | 'smart' | 'off';
+  verbosity?: 'concise' | 'balanced' | 'verbose';
+  debugMode?: boolean;
+  contextLayering?: boolean;
   modelRouting: Record<string, string>;
   /** Ordered provider chain for ChainedProvider failover. */
   providers: RawProviderEntry[];
@@ -72,6 +76,10 @@ export class ConfigRepository {
       'memory',
       'baseUrl',
       'skin',
+      'approvalMode',
+      'verbosity',
+      'debugMode',
+      'contextLayering',
     ]);
     const config: RawConfig = { modelRouting: {}, providers: [], passthrough: {} };
     const providerMap = new Map<number, RawProviderEntry>();
@@ -143,6 +151,22 @@ export class ConfigRepository {
             break;
           case 'skin':
             config.skin = value;
+            break;
+          case 'approvalMode':
+            if (value === 'manual' || value === 'smart' || value === 'off') {
+              config.approvalMode = value;
+            }
+            break;
+          case 'verbosity':
+            if (value === 'concise' || value === 'balanced' || value === 'verbose') {
+              config.verbosity = value;
+            }
+            break;
+          case 'debugMode':
+            config.debugMode = value === 'true';
+            break;
+          case 'contextLayering':
+            config.contextLayering = value === 'true';
             break;
         }
       } else {
@@ -227,6 +251,10 @@ export class ConfigRepository {
     if (config.memory) lines.push(`memory: ${yamlScalar(config.memory)}`);
     if (config.baseUrl) lines.push(`baseUrl: ${yamlScalar(config.baseUrl)}`);
     if (config.skin) lines.push(`skin: ${yamlScalar(config.skin)}`);
+    if (config.approvalMode) lines.push(`approvalMode: ${yamlScalar(config.approvalMode)}`);
+    if (config.verbosity) lines.push(`verbosity: ${yamlScalar(config.verbosity)}`);
+    if (config.debugMode !== undefined) lines.push(`debugMode: ${config.debugMode}`);
+    if (config.contextLayering !== undefined) lines.push(`contextLayering: ${config.contextLayering}`);
     for (const [id, model] of Object.entries(config.modelRouting)) {
       lines.push(`modelRouting.${yamlScalar(id)}: ${yamlScalar(model)}`);
     }

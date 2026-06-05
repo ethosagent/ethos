@@ -2,15 +2,13 @@ import { createEthosClient } from '@ethosagent/sdk';
 import { useEffect, useMemo, useState } from 'react';
 import { useAppState } from '../state/AppContext';
 import { EvolverQueueTab } from './tabs/EvolverQueueTab';
-import { PluginsTab } from './tabs/PluginsTab';
 import { SkillsLibraryTab } from './tabs/SkillsLibraryTab';
 
-type TabId = 'library' | 'evolver' | 'plugins';
+type TabId = 'library' | 'evolver';
 
 const tabs: { id: TabId; label: string }[] = [
   { id: 'library', label: 'Skills Library' },
   { id: 'evolver', label: 'Evolver Queue' },
-  { id: 'plugins', label: 'Plugins' },
 ];
 
 export function SkillsPage() {
@@ -107,7 +105,6 @@ export function SkillsPage() {
         {activeTab === 'evolver' && (
           <EvolverQueueTab port={port} onPendingCountChange={setPendingCount} />
         )}
-        {activeTab === 'plugins' && <PluginsTab port={port} />}
       </div>
     </div>
   );

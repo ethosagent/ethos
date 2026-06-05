@@ -167,6 +167,10 @@ interface FormShape {
   personality: string;
   memory: 'markdown' | 'vector';
   skin: string;
+  approvalMode: 'manual' | 'smart' | 'off';
+  verbosity: 'concise' | 'balanced' | 'verbose';
+  debugMode: boolean;
+  contextLayering: boolean;
 }
 
 export function Settings() {
@@ -195,6 +199,10 @@ export function Settings() {
         personality: configQuery.data.personality,
         memory: configQuery.data.memory,
         skin: configQuery.data.skin,
+        approvalMode: configQuery.data.approvalMode,
+        verbosity: configQuery.data.verbosity,
+        debugMode: configQuery.data.debugMode,
+        contextLayering: configQuery.data.contextLayering,
       });
       // Only hydrate provider rows on first load or when data changes identity
       if (!hydratedRef.current) {
@@ -291,6 +299,10 @@ export function Settings() {
       personality: values.personality,
       memory: values.memory,
       skin: values.skin,
+      approvalMode: values.approvalMode,
+      verbosity: values.verbosity,
+      debugMode: values.debugMode,
+      contextLayering: values.contextLayering,
       modelRouting: Object.fromEntries(
         Object.entries(configQuery.data?.modelRouting ?? {}).filter(
           ([k]) => k !== '__fallbackChain',
@@ -481,6 +493,56 @@ export function Settings() {
               <Radio.Button value="markdown">Markdown</Radio.Button>
               <Radio.Button value="vector">Vector</Radio.Button>
             </Radio.Group>
+          </Form.Item>
+        </Card>
+
+        <Card title="Approval mode" size="small" style={{ marginBottom: 16 }}>
+          <Form.Item
+            label="Tool approval"
+            name="approvalMode"
+            extra="Controls whether the agent asks before running tools."
+          >
+            <Radio.Group>
+              <Radio.Button value="manual">Always ask</Radio.Button>
+              <Radio.Button value="smart">Auto-approve safe</Radio.Button>
+              <Radio.Button value="off">Never ask</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+        </Card>
+
+        <Card title="Chat display" size="small" style={{ marginBottom: 16 }}>
+          <Form.Item
+            label="Verbosity"
+            name="verbosity"
+            extra="How detailed the agent's responses should be."
+          >
+            <Select
+              options={[
+                { value: 'concise', label: 'Concise' },
+                { value: 'balanced', label: 'Balanced' },
+                { value: 'verbose', label: 'Verbose' },
+              ]}
+            />
+          </Form.Item>
+        </Card>
+
+        <Card title="Context" size="small" style={{ marginBottom: 16 }}>
+          <Form.Item
+            name="contextLayering"
+            valuePropName="checked"
+            extra="Include previous session summaries for deeper context across conversations."
+          >
+            <Checkbox>Enable context layering</Checkbox>
+          </Form.Item>
+        </Card>
+
+        <Card title="Developer" size="small" style={{ marginBottom: 16 }}>
+          <Form.Item
+            name="debugMode"
+            valuePropName="checked"
+            extra="Show expanded tool arguments and internal events in chat."
+          >
+            <Checkbox>Enable debug mode</Checkbox>
           </Form.Item>
         </Card>
 
