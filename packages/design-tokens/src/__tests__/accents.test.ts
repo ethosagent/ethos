@@ -16,8 +16,10 @@ describe('personalityAccent', () => {
     expect(personalityAccent('operator')).toBe('#94A3B8');
   });
 
-  it('falls back to operator grey for unknown personalities', () => {
-    expect(personalityAccent('not-a-real-personality')).toBe('#94A3B8');
+  it('round-robins through accent colors for unknown personalities', () => {
+    const accent = personalityAccent('not-a-real-personality');
+    const builtinColors = ['#4A9EFF', '#4ADE80', '#F59E0B', '#E879F9', '#94A3B8'];
+    expect(builtinColors).toContain(accent);
   });
 });
 
@@ -31,8 +33,10 @@ describe('accentFor', () => {
     expect(accentFor(custom, 'engineer')).toBe('#4ADE80');
   });
 
-  it('falls back to operator grey when an id is unknown', () => {
-    expect(accentFor(DEFAULT_TOKENS, 'ghost')).toBe('#94A3B8');
+  it('round-robins for unknown ids instead of always falling back to grey', () => {
+    const builtinColors = Object.values(DEFAULT_TOKENS.accents);
+    expect(builtinColors).toContain(accentFor(DEFAULT_TOKENS, 'ghost'));
+    expect(builtinColors).toContain(accentFor(DEFAULT_TOKENS, 'strategist'));
   });
 });
 

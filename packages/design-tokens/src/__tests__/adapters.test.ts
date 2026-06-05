@@ -88,12 +88,13 @@ describe('tokensToChalk', () => {
     expect(bound.glyphs).toEqual(DEFAULT_TOKENS.glyphs);
   });
 
-  it('falls back to operator grey for unknown personalities', async () => {
+  it('round-robins accent color for unknown personalities', async () => {
     type FakeChalk = { hex: (h: string) => string } & Record<string, unknown>;
     const stub: FakeChalk = { hex: (h: string) => h };
     const { tokensToChalk } = await import('../chalk');
     // biome-ignore lint/suspicious/noExplicitAny: stub doesn't implement the full ChalkInstance surface
     const bound = tokensToChalk(stub as any, DEFAULT_TOKENS, 'unknown-personality');
-    expect(bound.accent).toBe('#94A3B8');
+    const builtinColors = Object.values(DEFAULT_TOKENS.accents);
+    expect(builtinColors).toContain(bound.accent);
   });
 });

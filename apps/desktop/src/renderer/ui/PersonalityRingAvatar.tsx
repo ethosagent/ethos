@@ -2,37 +2,49 @@ import { personalityAccent } from '@ethosagent/design-tokens';
 
 interface PersonalityRingAvatarProps {
   personalityId: string;
-  name: string;
+  name?: string;
   size?: number;
 }
 
 export function PersonalityRingAvatar({
   personalityId,
-  name,
   size = 32,
 }: PersonalityRingAvatarProps) {
   const color = personalityAccent(personalityId);
-  const initials = name.slice(0, 2).toUpperCase();
-  const fontSize = size < 32 ? 10 : size > 40 ? 18 : 12;
+  const borderWidth = size >= 56 ? 3 : 2;
+  const svgSize = Math.round(size * 0.44);
+  const outerR = 5;
+  const innerR = 2;
   return (
     <div
       style={{
         width: size,
         height: size,
         borderRadius: '50%',
-        border: `2px solid ${color}`,
+        border: `${borderWidth}px solid ${color}`,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
-        fontFamily: 'var(--font-mono)',
-        fontSize,
-        fontWeight: 500,
-        color,
-        background: 'transparent',
+        background: 'var(--bg-base)',
       }}
     >
-      {initials}
+      <svg
+        width={svgSize}
+        height={svgSize}
+        viewBox="0 0 16 16"
+        aria-hidden="true"
+      >
+        <circle
+          cx="8"
+          cy="8"
+          r={outerR}
+          fill="none"
+          stroke={color}
+          strokeWidth="2.5"
+        />
+        <circle cx="8" cy="8" r={innerR} fill={color} />
+      </svg>
     </div>
   );
 }

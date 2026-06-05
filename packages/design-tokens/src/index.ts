@@ -162,7 +162,14 @@ export const DEFAULT_TOKENS: Tokens = {
  * customization lands as its own decision.
  */
 export function accentFor(tokens: Tokens, personalityId: string): string {
-  return tokens.accents[personalityId] ?? tokens.accents.operator ?? '#94A3B8';
+  if (tokens.accents[personalityId]) return tokens.accents[personalityId];
+  const values = Object.values(tokens.accents);
+  if (values.length === 0) return '#94A3B8';
+  let hash = 0;
+  for (let i = 0; i < personalityId.length; i++) {
+    hash = (hash * 31 + personalityId.charCodeAt(i)) | 0;
+  }
+  return values[Math.abs(hash) % values.length] ?? '#94A3B8';
 }
 
 /**
