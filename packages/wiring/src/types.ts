@@ -13,4 +13,5 @@ export interface WiringContext {
   dataDir: string;
   workingDir: string;
   log: Logger;
+  isDebugSession?: boolean;
 }

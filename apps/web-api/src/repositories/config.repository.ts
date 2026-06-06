@@ -42,6 +42,8 @@ export interface RawConfig {
   verbosity?: 'concise' | 'balanced' | 'verbose';
   debugMode?: boolean;
   contextLayering?: boolean;
+  debugPanelEnabled?: boolean;
+  debugPanelModel?: string | null;
   modelRouting: Record<string, string>;
   /** Ordered provider chain for ChainedProvider failover. */
   providers: RawProviderEntry[];
@@ -80,6 +82,8 @@ export class ConfigRepository {
       'verbosity',
       'debugMode',
       'contextLayering',
+      'display.debug_panel',
+      'display.debug_panel_model',
     ]);
     const config: RawConfig = { modelRouting: {}, providers: [], passthrough: {} };
     const providerMap = new Map<number, RawProviderEntry>();
@@ -167,6 +171,12 @@ export class ConfigRepository {
             break;
           case 'contextLayering':
             config.contextLayering = value === 'true';
+            break;
+          case 'display.debug_panel':
+            config.debugPanelEnabled = value === 'true';
+            break;
+          case 'display.debug_panel_model':
+            config.debugPanelModel = value || null;
             break;
         }
       } else {
@@ -256,6 +266,9 @@ export class ConfigRepository {
     if (config.debugMode !== undefined) lines.push(`debugMode: ${config.debugMode}`);
     if (config.contextLayering !== undefined)
       lines.push(`contextLayering: ${config.contextLayering}`);
+    if (config.debugPanelEnabled !== undefined)
+      lines.push(`display.debug_panel: ${config.debugPanelEnabled}`);
+    if (config.debugPanelModel) lines.push(`display.debug_panel_model: ${config.debugPanelModel}`);
     for (const [id, model] of Object.entries(config.modelRouting)) {
       lines.push(`modelRouting.${yamlScalar(id)}: ${yamlScalar(model)}`);
     }

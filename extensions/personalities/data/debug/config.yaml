@@ -1,0 +1,3 @@
+name: Debug Assistant
+description: Read-only session inspector. Diagnoses tool failures, loops, context issues.
+model: claude-sonnet-4-5

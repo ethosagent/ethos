@@ -15,6 +15,7 @@ import { ChatRepository } from './features/chat/repository';
 import { type ChatDefaults, ChatService } from './features/chat/service';
 import { CompletionsRepository } from './features/completions/repository';
 import { CompletionsService } from './features/completions/service';
+import { DebugService } from './features/debug/service';
 import { SessionsRepository } from './features/sessions/repository';
 import { SessionsService } from './features/sessions/service';
 import type { ApiKeyAdminStore } from './middleware/bearer-auth';
@@ -252,6 +253,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   });
   const kanbanService = new KanbanService();
   const apiKeysService = new ApiKeysService(opts.apiKeys ?? null);
+  const debugService = new DebugService({ sessionStore: opts.sessionStore });
   // Project-level plugins (`<cwd>/.ethos/plugins/`) are out of scope
   // for v1; user-level only is the standard install path. Threading
   // `workingDir` from boot would be the next step when we add it.
@@ -403,6 +405,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       lab: labService,
       kanban: kanbanService,
       completions: completionsService,
+      debug: debugService,
       apiKeys: apiKeysService,
       toolRegistry: opts.toolRegistry,
       systemBus,

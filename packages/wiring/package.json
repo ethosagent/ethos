@@ -54,6 +54,7 @@
     "@ethosagent/tools-browser": "workspace:*",
     "@ethosagent/tools-code": "workspace:*",
     "@ethosagent/tools-cron": "workspace:*",
+    "@ethosagent/tools-debug": "workspace:*",
     "@ethosagent/tools-delegation": "workspace:*",
     "@ethosagent/tools-messaging": "workspace:*",
     "@ethosagent/tools-skills": "workspace:*",

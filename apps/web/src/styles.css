@@ -4163,3 +4163,136 @@ textarea {
   height: 600px;
   border: none;
 }
+
+/* Debug panel */
+
+.debug-panel {
+  border-top: 1px solid var(--ethos-border);
+}
+
+.debug-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.debug-panel-title {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ethos-text-dim);
+}
+
+.debug-panel-clear {
+  background: none;
+  border: none;
+  color: var(--ethos-text-tertiary);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.debug-panel-chevron {
+  font-size: 10px;
+  color: var(--ethos-text-tertiary);
+}
+
+.debug-panel-body {
+  padding: 0 12px 8px;
+}
+
+.debug-panel-messages {
+  max-height: 40vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.debug-panel-empty {
+  font-size: 12px;
+  color: var(--ethos-text-tertiary);
+  font-style: italic;
+  padding: 12px 0;
+  text-align: center;
+}
+
+.debug-msg {
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 6px 10px;
+  border-radius: 4px;
+  max-width: 90%;
+  word-break: break-word;
+}
+
+.debug-msg--user {
+  align-self: flex-end;
+  background: var(--ethos-bg-overlay);
+  color: var(--ethos-text-dim);
+}
+
+.debug-msg--assistant {
+  align-self: flex-start;
+  background: var(--ethos-bg-elevated);
+  color: var(--ethos-text);
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.debug-panel-input-row {
+  display: flex;
+  gap: 4px;
+}
+
+.debug-panel-input {
+  flex: 1;
+  height: 28px;
+  border: 1px solid var(--ethos-border);
+  border-radius: 4px;
+  background: var(--ethos-bg);
+  color: var(--ethos-text);
+  font-size: 12px;
+  padding: 0 8px;
+  outline: none;
+  font-family: "Geist", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.debug-panel-input:focus {
+  border-color: var(--ethos-info);
+}
+
+.debug-panel-input:disabled {
+  opacity: 0.5;
+}
+
+.debug-panel-send {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--ethos-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ethos-text-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.debug-panel-send:hover:not(:disabled) {
+  background: var(--ethos-bg-overlay);
+}
+
+.debug-panel-send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

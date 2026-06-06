@@ -26,6 +26,7 @@ import { FsStorage } from '@ethosagent/storage-fs';
 import { compose as composeBrowser } from '@ethosagent/tools-browser/compose';
 import { compose as composeCode } from '@ethosagent/tools-code/compose';
 import { compose as composeCron } from '@ethosagent/tools-cron/compose';
+import { buildDebugTools } from '@ethosagent/tools-debug';
 import { createFileTools } from '@ethosagent/tools-file';
 import { createImageTools } from '@ethosagent/tools-image';
 import { compose as composeInteractive } from '@ethosagent/tools-interactive/compose';
@@ -549,6 +550,17 @@ export async function composeAllTools(
   // -------------------------------------------------------------------------
 
   injectors.push(createPersonalityFilesInjector(activePerson.id, homedir()));
+
+  // -------------------------------------------------------------------------
+  // Debug tools (debug sessions only)
+  // -------------------------------------------------------------------------
+
+  if (wiringCtx.isDebugSession) {
+    const debugTools = buildDebugTools({
+      sessionStore: infra.sessionCompose.sessionStore,
+    });
+    for (const tool of debugTools) tools.register(tool);
+  }
 
   return {
     gatewaySendRef,

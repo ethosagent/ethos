@@ -75,6 +75,7 @@ export interface ServiceContainer {
   lab: import('../services/lab.service').LabService;
   kanban: import('../services/kanban.service').KanbanService;
   completions: import('../features/completions/service').CompletionsService;
+  debug: import('../features/debug/service').DebugService;
   apiKeys: import('../services/api-keys.service').ApiKeysService;
   toolRegistry?: import('@ethosagent/types').ToolRegistry;
   systemBus?: import('../services/system-event-bus').SystemEventBus;

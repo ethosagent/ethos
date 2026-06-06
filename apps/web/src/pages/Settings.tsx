@@ -171,6 +171,8 @@ interface FormShape {
   verbosity: 'concise' | 'balanced' | 'verbose';
   debugMode: boolean;
   contextLayering: boolean;
+  debugPanelEnabled: boolean;
+  debugPanelModel: string;
 }
 
 export function Settings() {
@@ -203,6 +205,8 @@ export function Settings() {
         verbosity: configQuery.data.verbosity,
         debugMode: configQuery.data.debugMode,
         contextLayering: configQuery.data.contextLayering,
+        debugPanelEnabled: configQuery.data.debugPanelEnabled,
+        debugPanelModel: configQuery.data.debugPanelModel ?? '',
       });
       // Only hydrate provider rows on first load or when data changes identity
       if (!hydratedRef.current) {
@@ -303,6 +307,8 @@ export function Settings() {
       verbosity: values.verbosity,
       debugMode: values.debugMode,
       contextLayering: values.contextLayering,
+      debugPanelEnabled: values.debugPanelEnabled,
+      debugPanelModel: values.debugPanelModel || null,
       modelRouting: Object.fromEntries(
         Object.entries(configQuery.data?.modelRouting ?? {}).filter(
           ([k]) => k !== '__fallbackChain',
@@ -556,6 +562,21 @@ export function Settings() {
             extra="Show expanded tool arguments and internal events in chat."
           >
             <Checkbox>Enable debug mode</Checkbox>
+          </Form.Item>
+
+          <Form.Item
+            name="debugPanelEnabled"
+            valuePropName="checked"
+            extra="Adds a debug assistant to the right sidebar that can inspect session events, observability spans, and error logs."
+          >
+            <Checkbox>Show debug panel</Checkbox>
+          </Form.Item>
+
+          <Form.Item
+            name="debugPanelModel"
+            extra="Model for the debug assistant. Leave empty to use the default (claude-sonnet-4-5)."
+          >
+            <Input placeholder="claude-sonnet-4-5" />
           </Form.Item>
         </Card>
 

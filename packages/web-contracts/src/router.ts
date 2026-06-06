@@ -503,6 +503,8 @@ const ConfigGetOutput = z.object({
   verbosity: z.enum(['concise', 'balanced', 'verbose']),
   debugMode: z.boolean(),
   contextLayering: z.boolean(),
+  debugPanelEnabled: z.boolean(),
+  debugPanelModel: z.string().nullable(),
 });
 
 const ConfigUpdateInput = z.object({
@@ -528,6 +530,8 @@ const ConfigUpdateInput = z.object({
   verbosity: z.enum(['concise', 'balanced', 'verbose']).optional(),
   debugMode: z.boolean().optional(),
   contextLayering: z.boolean().optional(),
+  debugPanelEnabled: z.boolean().optional(),
+  debugPanelModel: z.string().nullable().optional(),
 });
 const ConfigUpdateOutput = z.object({ ok: z.literal(true) });
 
@@ -535,6 +539,24 @@ const ConfigUpdateOutput = z.object({ ok: z.literal(true) });
 const config = {
   get: oc.output(ConfigGetOutput),
   update: oc.input(ConfigUpdateInput).output(ConfigUpdateOutput),
+};
+
+// ---------------------------------------------------------------------------
+// Debug — sidecar assistant that inspects session events, spans, and logs
+// ---------------------------------------------------------------------------
+
+const DebugChatInput = z.object({
+  mainSessionId: z.string(),
+  message: z.string().min(1),
+  clientId: z.string().optional(),
+});
+const DebugChatOutput = z.object({
+  sessionId: z.string(),
+  turnId: z.string(),
+});
+
+const debug = {
+  chat: oc.input(DebugChatInput).output(DebugChatOutput),
 };
 
 // ---------------------------------------------------------------------------
@@ -1186,6 +1208,7 @@ export const contract = {
   clarify,
   onboarding,
   config,
+  debug,
   cron,
   skills,
   evolver,

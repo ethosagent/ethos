@@ -1,0 +1,6 @@
+- session_search
+- get_session_events
+- get_observability
+- get_error_log
+- run_doctor
+- memory_read

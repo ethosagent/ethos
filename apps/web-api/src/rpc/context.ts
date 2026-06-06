@@ -3,6 +3,7 @@ import type { ToolRegistry } from '@ethosagent/types';
 import { contract } from '@ethosagent/web-contracts';
 import { implement } from '@orpc/server';
 import type { ChatService } from '../features/chat/service';
+import type { DebugService } from '../features/debug/service';
 import type { SessionsService } from '../features/sessions/service';
 import type { ApiKeysService } from '../services/api-keys.service';
 import type { ApprovalsService } from '../services/approvals.service';
@@ -31,6 +32,7 @@ import type { SkillsService } from '../services/skills.service';
 export interface RpcContext {
   sessions: SessionsService;
   chat: ChatService;
+  debug: DebugService;
   personalities: PersonalitiesService;
   config: ConfigService;
   onboarding: OnboardingService;

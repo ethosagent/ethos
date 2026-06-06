@@ -5,6 +5,7 @@ import {
   type UsageState,
   useDrawerStream,
 } from '../hooks/useDrawerStream';
+import { DebugPanel } from './DebugPanel';
 
 // Right-side observability drawer. Three panes, top-to-bottom:
 //
@@ -22,9 +23,10 @@ import {
 export interface RightDrawerProps {
   open: boolean;
   onClose: () => void;
+  debugPanelEnabled?: boolean;
 }
 
-export function RightDrawer({ open, onClose }: RightDrawerProps) {
+export function RightDrawer({ open, onClose, debugPanelEnabled }: RightDrawerProps) {
   const { sessionId, toolStream, notifications, usage } = useDrawerStream();
 
   if (!open) return null;
@@ -76,6 +78,8 @@ export function RightDrawer({ open, onClose }: RightDrawerProps) {
           <UsageBlock usage={usage} />
         )}
       </Section>
+
+      {debugPanelEnabled && <DebugPanel sessionId={sessionId} />}
     </aside>
   );
 }

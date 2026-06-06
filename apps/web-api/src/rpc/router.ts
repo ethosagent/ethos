@@ -1,6 +1,7 @@
 import { chatAbort } from '../features/chat/rpc/abort';
 import { chatSend } from '../features/chat/rpc/send';
 import { chatSteer } from '../features/chat/rpc/steer';
+import { debugChat } from '../features/debug/rpc/chat';
 import { sessionsDelete } from '../features/sessions/rpc/delete';
 import { sessionsExport } from '../features/sessions/rpc/export';
 import { sessionsFork } from '../features/sessions/rpc/fork';
@@ -65,6 +66,9 @@ export const apiRouter = {
     send: chatSend,
     abort: chatAbort,
     steer: chatSteer,
+  },
+  debug: {
+    chat: debugChat,
   },
   personalities: personalitiesRouter,
   config: configRouter,

@@ -395,6 +395,8 @@ export interface EthosConfig {
    */
   backgroundMaxConcurrent?: number;
   displayBellOnComplete?: boolean;
+  displayDebugPanel?: boolean;
+  displayDebugPanelModel?: string;
   /**
    * context_compression F1 — auxiliary model wiring. `auxiliary.compression`
    * configures the cheap summarizer that `semantic_summary` uses to condense
@@ -537,6 +539,9 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   if (config.displayResumeRecapTurns !== undefined)
     lines.push(`display.resume_recap_turns: ${config.displayResumeRecapTurns}`);
   if (config.displayBellOnComplete) lines.push('display.bell_on_complete: true');
+  if (config.displayDebugPanel) lines.push('display.debug_panel: true');
+  if (config.displayDebugPanelModel)
+    lines.push(`display.debug_panel_model: ${config.displayDebugPanelModel}`);
   if (config.skin) lines.push(`skin: ${config.skin}`);
   if (config.retention) {
     for (const [key, val] of retentionToLines(config.retention)) {
@@ -1108,6 +1113,8 @@ function parseConfigYaml(src: string): EthosConfig {
       ? Number(backgroundKv.max_concurrent)
       : undefined,
     displayBellOnComplete: displayKv.bell_on_complete === 'true' ? true : undefined,
+    displayDebugPanel: displayKv.debug_panel === 'true' ? true : undefined,
+    displayDebugPanelModel: displayKv.debug_panel_model || undefined,
     quick_commands,
     channelFilter,
     auxiliary:

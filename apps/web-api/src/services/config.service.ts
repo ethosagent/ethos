@@ -25,6 +25,8 @@ export interface ConfigGetResult {
   verbosity: 'concise' | 'balanced' | 'verbose';
   debugMode: boolean;
   contextLayering: boolean;
+  debugPanelEnabled: boolean;
+  debugPanelModel: string | null;
 }
 
 export interface ConfigUpdateInput {
@@ -46,6 +48,8 @@ export interface ConfigUpdateInput {
   verbosity?: 'concise' | 'balanced' | 'verbose';
   debugMode?: boolean;
   contextLayering?: boolean;
+  debugPanelEnabled?: boolean;
+  debugPanelModel?: string | null;
 }
 
 export interface ConfigServiceOptions {
@@ -83,6 +87,8 @@ export class ConfigService {
       verbosity: raw.verbosity ?? 'balanced',
       debugMode: raw.debugMode ?? false,
       contextLayering: raw.contextLayering ?? false,
+      debugPanelEnabled: raw.debugPanelEnabled ?? false,
+      debugPanelModel: raw.debugPanelModel ?? null,
     };
   }
 
