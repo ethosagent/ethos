@@ -100,7 +100,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mapfile -t FILES < <(find artifacts -type f | sort)
+          # Deduplicate by basename — both mac and windows builds emit files with the
+          # same name (e.g. builder-debug.yml). GitHub rejects duplicate asset names.
+          mapfile -t ALL_FILES < <(find artifacts -type f | sort)
+          declare -A _seen
+          FILES=()
+          for f in "${ALL_FILES[@]}"; do
+            base=$(basename "$f")
+            if [[ -z "${_seen[$base]+x}" ]]; then
+              _seen[$base]=1
+              FILES+=("$f")
+            fi
+          done
+
           # If a release already exists (tag may have been created by a prior CLI or web
           # release without desktop artifacts), delete it and recreate. The tag is kept.
           if gh release view "v${{ inputs.version }}" &>/dev/null; then
