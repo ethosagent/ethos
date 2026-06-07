@@ -133,7 +133,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     return () => {
       cancelled = true;
     };
-  }, [currentSessionId]);
+  }, [currentSessionId, opts.onSessionNotFound]);
 
   // 2. Subscribe to SSE for the current session. The wrapper handles
   //    reconnect via Last-Event-ID; we just dispatch every event into
