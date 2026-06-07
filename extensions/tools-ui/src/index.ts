@@ -298,6 +298,12 @@ export const renderFileTool: Tool<SendFileArgs> = {
 };
 
 export { dashboardSaveTool } from './dashboard-save';
+export type { DashboardToolStore } from './dashboard-tools';
+export {
+  buildDashboardTools,
+  createDashboardAddPanelTool,
+  createDashboardCreateTool,
+} from './dashboard-tools';
 
 export function buildUiTools(): Tool[] {
   return [renderImageTool as Tool, renderHtmlTool as Tool, renderFileTool as Tool];

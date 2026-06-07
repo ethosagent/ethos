@@ -7,6 +7,7 @@ import type { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { SkillsLibrary } from '@ethosagent/skills';
 import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
 import { McpJsonStore, type McpManager } from '@ethosagent/tools-mcp';
+import { buildDashboardTools } from '@ethosagent/tools-ui';
 import type { MemoryProvider, SecretsResolver, SessionStore, Storage } from '@ethosagent/types';
 import type { SseEvent } from '@ethosagent/web-contracts';
 import type { IdentityMap } from '@ethosagent/wiring';
@@ -43,6 +44,7 @@ import { PlatformsService } from './services/platforms.service';
 import { PluginsService } from './services/plugins.service';
 import { SkillsService } from './services/skills.service';
 import { SystemEventBus } from './services/system-event-bus';
+import type { DashboardStore } from './stores/dashboard-store';
 
 // Public entry for `@ethosagent/web-api`. Boot code (`apps/ethos/src/commands/
 // serve.ts`) builds the dependencies it has lying around — a `SessionStore`,
@@ -131,6 +133,8 @@ export interface CreateWebApiOptions {
   titleFn?: (systemPrompt: string, userMessage: string) => Promise<string>;
   /** Tool registry for the tools.catalog RPC. */
   toolRegistry?: import('@ethosagent/types').ToolRegistry;
+  /** DashboardStore for agent-driven dashboard_create / dashboard_add_panel tools. */
+  dashboardStore?: DashboardStore;
   /** Path to the bundled system skills catalog directory. When set,
    *  SkillsLibrary surfaces read-only system skills alongside user
    *  skills. Omit when system skills are not available (e.g. tests). */
@@ -291,6 +295,13 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const dashboardsService = new DashboardsService({
     dbPath: join(opts.dataDir, 'dashboards.db'),
   });
+
+  // Register agent-driven dashboard tools when both store and registry are available.
+  if (opts.dashboardStore && opts.toolRegistry) {
+    for (const tool of buildDashboardTools(opts.dashboardStore)) {
+      opts.toolRegistry.register(tool);
+    }
+  }
 
   // One buffer per process — keyed internally by sessionId. Bridges are
   // owned by ChatService. The reap callback lets the bridge map drain

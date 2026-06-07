@@ -32,6 +32,7 @@
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/team-supervisor": "workspace:*",
     "@ethosagent/tools-mcp": "workspace:*",
+    "@ethosagent/tools-ui": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@ethosagent/web-contracts": "workspace:*",
     "@hono/node-server": "^2.0.0",
