@@ -4324,3 +4324,18 @@ textarea {
 .block-with-save:hover .dashboard-save-btn {
   opacity: 1 !important;
 }
+
+/* Dashboard grid layout — react-grid-layout overrides */
+.react-grid-item.react-grid-placeholder {
+  background: rgba(24, 144, 255, 0.15);
+  border: 1px dashed #1890ff;
+  border-radius: 8px;
+}
+
+.drag-handle {
+  cursor: grab;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}

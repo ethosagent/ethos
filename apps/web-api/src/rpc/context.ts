@@ -1,4 +1,4 @@
-import type { ClarifyBridge } from '@ethosagent/core';
+import type { AgentLoop, ClarifyBridge } from '@ethosagent/core';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
 import type { ToolRegistry, WidgetTemplate } from '@ethosagent/types';
 import { contract } from '@ethosagent/web-contracts';
@@ -55,6 +55,7 @@ export interface RpcContext {
   toolRegistry?: ToolRegistry;
   dashboards?: DashboardsService;
   pluginLoader?: PluginLoader;
+  agentLoop?: AgentLoop;
 }
 
 export interface DashboardsService {

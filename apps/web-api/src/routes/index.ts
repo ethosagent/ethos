@@ -80,6 +80,7 @@ export interface ServiceContainer {
   toolRegistry?: import('@ethosagent/types').ToolRegistry;
   dashboards?: import('../rpc/context').DashboardsService;
   pluginLoader?: import('@ethosagent/plugin-loader').PluginLoader;
+  agentLoop?: import('@ethosagent/core').AgentLoop;
   systemBus?: import('../services/system-event-bus').SystemEventBus;
 }
 

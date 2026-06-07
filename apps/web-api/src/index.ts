@@ -434,6 +434,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       toolRegistry: opts.toolRegistry,
       dashboards: dashboardsService,
       pluginLoader: opts.pluginLoader,
+      agentLoop,
       systemBus,
     },
     ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),
@@ -444,6 +445,69 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     ...(opts.webBaseUrl ? { webBaseUrl: opts.webBaseUrl } : {}),
     storage,
   });
+
+  // Dashboard panel cron poller — checks every 60s for panels with due cron schedules
+  if (opts.agentLoop) {
+    const POLL_INTERVAL_MS = 60_000;
+    const dashboardCronInterval = setInterval(async () => {
+      try {
+        const allDashboards = dashboardsService.list('default-user');
+        for (const dash of allDashboards) {
+          const panels = dashboardsService.listLivePanels(dash.id);
+          for (const panel of panels) {
+            if (!panel.cronSchedule) continue;
+            const isDue = isCronDue(panel.cronSchedule, panel.lastRunAt);
+            if (!isDue) continue;
+            // Refresh SQL panels
+            if (
+              panel.queryType === 'sql' &&
+              panel.sqlQuery &&
+              panel.pluginId &&
+              panel.dataSourceId
+            ) {
+              try {
+                const dbPath = opts.pluginLoader?.getDataSourcePath(
+                  panel.pluginId,
+                  panel.dataSourceId,
+                );
+                if (dbPath) {
+                  const cronDb = new Database(dbPath, { readonly: true });
+                  try {
+                    const rows = cronDb.prepare(panel.sqlQuery).all();
+                    dashboardsService.updatePanelContent(panel.id, JSON.stringify(rows));
+                    dashboardsService.clearPanelError(panel.id);
+                  } finally {
+                    cronDb.close();
+                  }
+                }
+              } catch (err) {
+                dashboardsService.setPanelError(panel.id, String(err));
+              }
+            }
+            // Refresh prompt panels via agentLoop
+            if (panel.queryType === 'prompt' && panel.prompt && opts.agentLoop) {
+              try {
+                const sessionKey = `dashboard-cron:${panel.dashboardId}:${panel.id}:${Date.now()}`;
+                let output = '';
+                for await (const event of opts.agentLoop.run(panel.prompt, { sessionKey })) {
+                  if (event.type === 'text_delta') output += event.text;
+                }
+                dashboardsService.updatePanelContent(panel.id, output);
+                dashboardsService.clearPanelError(panel.id);
+              } catch (err) {
+                dashboardsService.setPanelError(panel.id, String(err));
+              }
+            }
+          }
+        }
+      } catch {
+        // Silent failure — cron polling is best-effort
+      }
+    }, POLL_INTERVAL_MS);
+
+    // Unref so it doesn't keep the process alive
+    dashboardCronInterval.unref();
+  }
 
   return { app, chatService, systemBus };
 }
@@ -494,6 +558,38 @@ function createPassiveMcpManager(): McpManager {
     invalidatePersonalityClients: () => {},
     reconnectPersonality: async () => {},
   } as unknown as McpManager;
+}
+
+/**
+ * Lightweight cron-due check for dashboard panel schedules. Supports the
+ * subset of 5-field cron expressions used by dashboards: minute, hour,
+ * day-of-month (ignored), month (ignored), day-of-week. Returns true when
+ * the panel has never run or the scheduled time has passed since the last run.
+ */
+function isCronDue(cronExpr: string, lastRunAt: number | null): boolean {
+  const now = Date.now();
+  if (!lastRunAt) return true; // Never run — due immediately
+  const parts = cronExpr.trim().split(/\s+/);
+  if (parts.length !== 5) return false;
+  const d = new Date(now);
+  const [minStr, hourStr, , , dowStr] = parts;
+  const minute = minStr === '*' ? d.getMinutes() : Number(minStr);
+  const hour = hourStr === '*' ? d.getHours() : Number(hourStr);
+  // Check if we're past the scheduled time today
+  const scheduledToday = new Date(d);
+  scheduledToday.setHours(hour, minute, 0, 0);
+  // Must be past scheduled time AND not already run since then
+  if (now < scheduledToday.getTime()) return false;
+  if (lastRunAt > scheduledToday.getTime()) return false;
+  // Day-of-week check (cron uses 0=Sun..6=Sat)
+  if (dowStr !== '*') {
+    const dowRange = dowStr.includes('-') ? dowStr.split('-').map(Number) : [Number(dowStr)];
+    if (dowRange.length === 2) {
+      const [start, end] = dowRange;
+      if (d.getDay() < (start ?? 0) || d.getDay() > (end ?? 6)) return false;
+    } else if (d.getDay() !== dowRange[0]) return false;
+  }
+  return true;
 }
 
 export { type ChatDefaults, ChatService } from './features/chat/service';

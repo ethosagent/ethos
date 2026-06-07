@@ -25,6 +25,12 @@ export function DashboardPanelShell({ panel, onDelete, onRefresh, refreshing }: 
       size="small"
       title={
         <Space>
+          <span
+            className="drag-handle"
+            style={{ cursor: 'grab', marginRight: 8, userSelect: 'none' }}
+          >
+            &#x2807;
+          </span>
           <Typography.Text strong>{panel.title || 'Panel'}</Typography.Text>
           {panel.queryType !== 'static' && <Tag color="blue">{panel.queryType}</Tag>}
           {panel.lastError && <Tag color="red">Error</Tag>}

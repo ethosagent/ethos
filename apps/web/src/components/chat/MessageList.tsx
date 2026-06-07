@@ -1,5 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AssistantTurn, ChatMessage } from '../../lib/chat-reducer';
+import { SaveToDashboardContextMenu } from '../dashboard/SaveToDashboardContextMenu';
+import { SaveToDashboardModal } from '../dashboard/SaveToDashboardModal';
 import { AssistantBubble, UserBubble } from './MessageBubble';
 
 // Scrollable history. Auto-scrolls to the bottom as content arrives —
@@ -12,11 +14,20 @@ export interface MessageListProps {
   currentTurn: AssistantTurn | null;
   personalityId?: string;
   model?: string;
+  sessionId?: string;
 }
 
-export function MessageList({ messages, currentTurn, personalityId, model }: MessageListProps) {
+export function MessageList({
+  messages,
+  currentTurn,
+  personalityId,
+  model,
+  sessionId,
+}: MessageListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const pinnedToBottomRef = useRef(true);
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [saveModalUserMessage, setSaveModalUserMessage] = useState<string | undefined>();
 
   const onScroll = () => {
     const el = listRef.current;
@@ -48,17 +59,39 @@ export function MessageList({ messages, currentTurn, personalityId, model }: Mes
   const lastMessage = messages[messages.length - 1];
   const isThinking = lastMessage?.role === 'user' && !currentTurn;
 
+  const openSaveModal = (msgIndex: number) => {
+    // Walk backwards to find the preceding user message for this assistant turn.
+    let userMsg: string | undefined;
+    for (let i = msgIndex - 1; i >= 0; i--) {
+      const prev = messages[i];
+      if (prev?.role === 'user') {
+        userMsg = prev.content;
+        break;
+      }
+    }
+    setSaveModalUserMessage(userMsg);
+    setSaveModalOpen(true);
+  };
+
   return (
     <div ref={listRef} className="message-list" onScroll={onScroll}>
-      {messages.map((m) =>
+      {messages.map((m, idx) =>
         m.role === 'user' ? (
           <UserBubble key={m.id} message={m} />
         ) : (
-          <AssistantBubble key={m.id} turn={m} />
+          <SaveToDashboardContextMenu key={m.id} onSaveToDashboard={() => openSaveModal(idx)}>
+            <AssistantBubble turn={m} />
+          </SaveToDashboardContextMenu>
         ),
       )}
       {currentTurn ? <AssistantBubble turn={currentTurn} streaming /> : null}
       {isThinking ? <ThinkingBubble /> : null}
+      <SaveToDashboardModal
+        open={saveModalOpen}
+        onClose={() => setSaveModalOpen(false)}
+        userMessage={saveModalUserMessage}
+        sessionId={sessionId}
+      />
     </div>
   );
 }

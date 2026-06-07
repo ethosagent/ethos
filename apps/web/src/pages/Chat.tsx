@@ -268,6 +268,7 @@ export function Chat() {
           currentTurn={state.currentTurn}
           personalityId={personalityId}
           model={model}
+          sessionId={currentSessionId}
         />
         <TurnStatusBar
           isStreaming={state.isStreaming}

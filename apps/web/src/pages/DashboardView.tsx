@@ -1,8 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Empty, message, Skeleton, Space, Typography } from 'antd';
+import { Responsive, WidthProvider } from 'react-grid-layout';
+import 'react-grid-layout/css/styles.css';
+import 'react-resizable/css/styles.css';
 import { useParams } from 'react-router-dom';
 import { DashboardPanelShell } from '../components/dashboard/DashboardPanelShell';
 import { rpc } from '../rpc';
+
+const ResponsiveGrid = WidthProvider(Responsive);
 
 export function DashboardView() {
   const { id } = useParams<{ id: string }>();
@@ -39,6 +44,37 @@ export function DashboardView() {
   const { dashboard, panels } = data;
   const livePanels = panels.filter((p) => p.queryType !== 'static');
 
+  const layout = panels.map((p) => ({
+    i: p.id,
+    x: p.col,
+    y: p.row,
+    w: p.w,
+    h: p.h,
+    minW: 2,
+    minH: 2,
+  }));
+
+  const handleLayoutChange = (
+    newLayout: Array<{ i: string; x: number; y: number; w: number; h: number }>,
+  ) => {
+    for (const item of newLayout) {
+      const panel = panels.find((p) => p.id === item.i);
+      if (
+        panel &&
+        (panel.col !== item.x || panel.row !== item.y || panel.w !== item.w || panel.h !== item.h)
+      ) {
+        rpc.dashboards.updatePanelLayout({
+          panelId: item.i,
+          col: item.x,
+          row: item.y,
+          w: item.w,
+          h: item.h,
+        });
+      }
+    }
+    queryClient.invalidateQueries({ queryKey: ['dashboard', id] });
+  };
+
   return (
     <div style={{ padding: 24 }}>
       {contextHolder}
@@ -65,22 +101,17 @@ export function DashboardView() {
       {panels.length === 0 ? (
         <Empty description="No panels yet — save blocks from chat to get started" />
       ) : (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(12, 1fr)',
-            gap: 16,
-            alignItems: 'start',
-          }}
+        <ResponsiveGrid
+          layouts={{ lg: layout }}
+          breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
+          cols={{ lg: 12, md: 10, sm: 6, xs: 4 }}
+          rowHeight={60}
+          onLayoutChange={(newLayout) => handleLayoutChange(newLayout)}
+          draggableHandle=".drag-handle"
+          compactType="vertical"
         >
           {panels.map((panel) => (
-            <div
-              key={panel.id}
-              style={{
-                gridColumn: `span ${panel.w}`,
-                minHeight: panel.h * 60,
-              }}
-            >
+            <div key={panel.id}>
               <DashboardPanelShell
                 panel={panel}
                 onDelete={() => deletePanelMut.mutate(panel.id)}
@@ -91,7 +122,7 @@ export function DashboardView() {
               />
             </div>
           ))}
-        </div>
+        </ResponsiveGrid>
       )}
     </div>
   );
