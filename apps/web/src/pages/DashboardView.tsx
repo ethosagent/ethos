@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Empty, message, Skeleton, Space, Typography } from 'antd';
-import { Responsive, WidthProvider, type Layout } from 'react-grid-layout/legacy';
+import { type Layout, Responsive, WidthProvider } from 'react-grid-layout/legacy';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import { useParams } from 'react-router-dom';
