@@ -7,12 +7,12 @@ import {
 } from '@ethosagent/core';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
-import type { CredentialStorage } from '../index';
+import type { CredentialStorage, PluginRegistries } from '../index';
 import { PluginApiImpl } from '../index';
 import { createTestRuntime, mockLLM, mockTool } from '../testing';
 import { defineTool, err, ok } from '../tool-helpers';
 
-function makeRegistries() {
+function makeRegistries(): PluginRegistries {
   const injectors: import('@ethosagent/types').ContextInjector[] = [];
   return {
     tools: new DefaultToolRegistry(),

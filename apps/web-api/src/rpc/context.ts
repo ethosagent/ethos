@@ -51,7 +51,7 @@ export interface RpcContext {
   kanban: KanbanService;
   apiKeys: ApiKeysService;
   toolRegistry?: ToolRegistry;
-  dashboards: DashboardsService;
+  dashboards?: DashboardsService;
 }
 
 export interface DashboardsService {

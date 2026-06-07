@@ -8,13 +8,13 @@ import {
   DefaultPersonalityRegistry,
   DefaultToolRegistry,
 } from '@ethosagent/core';
-import type { CredentialStorage } from '@ethosagent/plugin-sdk';
+import type { CredentialStorage, PluginRegistries } from '@ethosagent/plugin-sdk';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { ContextInjector, Logger } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PluginLoader } from '../index';
 
-function makeRegistries() {
+function makeRegistries(): PluginRegistries {
   const injectors: ContextInjector[] = [];
   return {
     tools: new DefaultToolRegistry(),
