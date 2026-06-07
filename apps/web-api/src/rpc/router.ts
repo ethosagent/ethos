@@ -15,6 +15,7 @@ import { batchRouter } from './batch';
 import { clarifyRouter } from './clarify';
 import { configRouter } from './config';
 import { cronRouter } from './cron';
+import { dashboardsRouter } from './dashboards';
 import { evalRouter } from './eval';
 import { evolverRouter } from './evolver';
 import { kanbanRouter } from './kanban';
@@ -88,6 +89,7 @@ export const apiRouter = {
   kanban: kanbanRouter,
   apiKeys: apiKeysRouter,
   meta: metaRouter,
+  dashboards: dashboardsRouter,
 };
 
 export type ApiRouter = typeof apiRouter;

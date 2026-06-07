@@ -1,5 +1,5 @@
 import type { ClarifyBridge } from '@ethosagent/core';
-import type { ToolRegistry } from '@ethosagent/types';
+import type { ToolRegistry, WidgetTemplate } from '@ethosagent/types';
 import { contract } from '@ethosagent/web-contracts';
 import { implement } from '@orpc/server';
 import type { ChatService } from '../features/chat/service';
@@ -51,6 +51,11 @@ export interface RpcContext {
   kanban: KanbanService;
   apiKeys: ApiKeysService;
   toolRegistry?: ToolRegistry;
+  dashboards: DashboardsService;
+}
+
+export interface DashboardsService {
+  listWidgetTemplates(): Promise<WidgetTemplate[]>;
 }
 
 export const os = implement(contract).$context<RpcContext>();

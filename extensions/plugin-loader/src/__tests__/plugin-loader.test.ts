@@ -399,6 +399,54 @@ export async function deactivate() {}
     });
   });
 
+  // --- Data source registration -----------------------------------------------
+
+  describe('data source registration', () => {
+    it('getDataSourcePath returns path registered by plugin', async () => {
+      const registries = makeRegistries();
+      registries.dataSources = new Map();
+      const loader = new PluginLoader(registries);
+
+      await writePlugin(
+        testDir,
+        'ds-plugin',
+        `
+export async function activate(api) {
+  api.registerDataSource('my-db', '/path/to/db.sqlite');
+}
+        `.trim(),
+      );
+
+      await loader.loadFromDirectory(testDir);
+      expect(loader.getDataSourcePath('ds-plugin', 'my-db')).toBe('/path/to/db.sqlite');
+    });
+
+    it('getDataSourcePath returns null for unknown source', async () => {
+      const registries = makeRegistries();
+      registries.dataSources = new Map();
+      const loader = new PluginLoader(registries);
+
+      await writePlugin(testDir, 'ds-plugin2', 'export async function activate(api) {}');
+      await loader.loadFromDirectory(testDir);
+      expect(loader.getDataSourcePath('ds-plugin2', 'missing')).toBeNull();
+    });
+
+    it('getPluginPath returns plugin directory', async () => {
+      const registries = makeRegistries();
+      const loader = new PluginLoader(registries);
+
+      await writePlugin(testDir, 'path-plugin', 'export async function activate(api) {}');
+      await loader.loadFromDirectory(testDir);
+      expect(loader.getPluginPath('path-plugin')).toBe(join(testDir, 'path-plugin'));
+    });
+
+    it('getPluginPath returns null for unknown plugin', async () => {
+      const registries = makeRegistries();
+      const loader = new PluginLoader(registries);
+      expect(loader.getPluginPath('nonexistent')).toBeNull();
+    });
+  });
+
   // --- Phase 30.6 — plugin contract version gate ---------------------------
 
   describe('Phase 30.6: contract major gate', () => {

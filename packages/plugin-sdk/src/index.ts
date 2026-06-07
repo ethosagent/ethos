@@ -226,6 +226,9 @@ export interface EthosPluginApi {
   /** Register a custom renderer (v2.3 — plugin UI). */
   registerRenderer(spec: PluginRendererSpec): void;
 
+  /** Register a SQLite data source by id and file path. */
+  registerDataSource(id: string, path: string): void;
+
   /** Diagnostics emitter for structured logging and metrics (v2.2). */
   readonly diagnostics: DiagnosticsEmitter;
 }
@@ -286,6 +289,8 @@ export interface PluginRegistries {
   pluginPages?: Map<string, PluginPageSpec>;
   /** v2.3 — Plugin-registered renderers. Keyed by renderer type. */
   renderers?: Map<string, PluginRendererSpec>;
+  /** pluginId → sourceId → resolvedPath. Populated by registerDataSource calls. */
+  dataSources?: Map<string, Map<string, string>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +313,7 @@ export class PluginApiImpl implements EthosPluginApi {
   private readonly monitorRunner = new PluginMonitorRunner();
   private readonly healthChecks: PluginHealthCheck[] = [];
   private registeredRendererTypes: string[] = [];
+  private readonly registeredDataSources = new Map<string, string>();
   private oauthConfig?: OAuthConfig;
 
   constructor(
@@ -620,6 +626,17 @@ export class PluginApiImpl implements EthosPluginApi {
     }
   }
 
+  registerDataSource(id: string, path: string): void {
+    this.registeredDataSources.set(id, path);
+    if (!this.registries.dataSources) {
+      this.registries.dataSources = new Map();
+    }
+    if (!this.registries.dataSources.has(this.pluginId)) {
+      this.registries.dataSources.set(this.pluginId, new Map());
+    }
+    this.registries.dataSources.get(this.pluginId)?.set(id, path);
+  }
+
   getHealthChecks(): PluginHealthCheck[] {
     return this.healthChecks;
   }
@@ -697,6 +714,10 @@ export class PluginApiImpl implements EthosPluginApi {
       this.registries.renderers?.delete(type);
     }
     this.registeredRendererTypes.length = 0;
+
+    // Data sources
+    this.registries.dataSources?.delete(this.pluginId);
+    this.registeredDataSources.clear();
   }
 }
 

@@ -1198,6 +1198,32 @@ const meta = {
 };
 
 // ---------------------------------------------------------------------------
+// Dashboards — widget templates from plugins
+// ---------------------------------------------------------------------------
+
+const WidgetTemplateSchema = z.object({
+  id: z.string(),
+  pluginId: z.string(),
+  title: z.string(),
+  description: z.string().optional(),
+  queryType: z.enum(['sql', 'prompt']),
+  dataSource: z.string().optional(),
+  sql: z.string().optional(),
+  prompt: z.string().optional(),
+  outputType: z.enum(['table', 'html', 'image', 'text']).optional(),
+  defaultCron: z.string().optional(),
+});
+
+const DashboardsListWidgetTemplatesOutput = z.object({
+  templates: z.array(WidgetTemplateSchema),
+});
+
+/** @experimental */
+const dashboards = {
+  listWidgetTemplates: oc.output(DashboardsListWidgetTemplatesOutput),
+};
+
+// ---------------------------------------------------------------------------
 // Root contract — every namespace mounted under one symbol
 // ---------------------------------------------------------------------------
 
@@ -1223,6 +1249,7 @@ export const contract = {
   kanban,
   apiKeys,
   meta,
+  dashboards,
 };
 
 export type Contract = typeof contract;

@@ -285,6 +285,32 @@ describe('createTestRuntime', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Data source registration
+// ---------------------------------------------------------------------------
+
+describe('PluginApiImpl.registerDataSource', () => {
+  it('registers a data source path', () => {
+    const registries = makeRegistries();
+    registries.dataSources = new Map();
+    const api = new PluginApiImpl('test-plugin', registries);
+    api.registerDataSource('my-db', '/data/test.db');
+
+    const pluginSources = registries.dataSources.get('test-plugin');
+    expect(pluginSources?.get('my-db')).toBe('/data/test.db');
+  });
+
+  it('cleanup removes data sources', () => {
+    const registries = makeRegistries();
+    registries.dataSources = new Map();
+    const api = new PluginApiImpl('test-plugin', registries);
+    api.registerDataSource('my-db', '/data/test.db');
+
+    api.cleanup();
+    expect(registries.dataSources.get('test-plugin')).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Provider registration (Phase 3 — plugin providers)
 // ---------------------------------------------------------------------------
 

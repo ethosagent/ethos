@@ -48,6 +48,10 @@ export interface InstalledPluginManifest {
   hasHomePanel?: boolean;
   /** Credential declarations from the plugin's `ethos.credentials` manifest field. */
   credentials: CredentialDeclaration[];
+  /** IDs of registered data sources. */
+  dataSources: string[];
+  /** Whether widgets.yaml exists in the plugin directory. */
+  hasWidgets: boolean;
   /** Activation status — set after activate() runs. */
   status?: 'loaded' | 'failed';
   /** Error message when status is 'failed'. */
@@ -93,6 +97,7 @@ export class PluginLoader {
   private readonly onRouteRegistered?: (entry: PluginRouteEntry) => void;
   private readonly loadedManifests = new Map<string, InstalledPluginManifest>();
   private readonly pluginPaths = new Map<string, string>();
+  private readonly pluginHasWidgets = new Map<string, boolean>();
 
   constructor(registries: PluginRegistries, opts: PluginLoaderOptions = {}) {
     this.registries = registries;
@@ -159,10 +164,11 @@ export class PluginLoader {
     const pkgSrc = await this.storage.read(join(dir, 'package.json'));
     const pkgJson = pkgSrc ? (JSON.parse(pkgSrc) as Record<string, unknown>) : {};
 
+    this.pluginPaths.set(id, dir);
+
     // Store manifest for credential declaration lookups
     if (pkgSrc) {
       this.manifests.set(id, pkgJson as unknown as EthosPluginPackageJson);
-      this.pluginPaths.set(id, dir);
     }
 
     // Skills-dir: any package declaring ethos.skills_dir contributes skills
@@ -199,6 +205,9 @@ export class PluginLoader {
       });
       return;
     }
+
+    // Check for widgets.yaml before activation (while we have the dir)
+    this.pluginHasWidgets.set(id, await this.storage.exists(join(dir, 'widgets.yaml')));
 
     // Dynamic import the plugin module — stays raw `import()`. Per
     // plan/storage_abstraction.md, dynamic import is a process operation,
@@ -340,6 +349,10 @@ export class PluginLoader {
         const pluginId = declaredId ?? name.replace(/^@[^/]+\//, '');
         this.manifests.set(pluginId, raw as EthosPluginPackageJson);
         this.pluginPaths.set(pluginId, join(nmDir, name));
+        this.pluginHasWidgets.set(
+          pluginId,
+          await this.storage.exists(join(nmDir, name, 'widgets.yaml')),
+        );
         await this.activatePlugin(pluginId, mod);
       } catch {
         // skip
@@ -462,6 +475,14 @@ export class PluginLoader {
   /** Return all loaded/failed plugin manifests with status info. */
   listManifests(): InstalledPluginManifest[] {
     return [...this.loadedManifests.values()];
+  }
+
+  getDataSourcePath(pluginId: string, sourceId: string): string | null {
+    return this.registries.dataSources?.get(pluginId)?.get(sourceId) ?? null;
+  }
+
+  getPluginPath(pluginId: string): string | null {
+    return this.pluginPaths.get(pluginId) ?? null;
   }
 
   // ---------------------------------------------------------------------------
@@ -667,6 +688,9 @@ export class PluginLoader {
     const pkgJson = this.manifests.get(id);
     const path = this.pluginPaths.get(id) ?? '';
     const source: 'user' | 'project' | 'npm' = path.includes('node_modules') ? 'npm' : 'user';
+    const dsMap = this.registries.dataSources?.get(id);
+    const dataSources = dsMap ? [...dsMap.keys()] : [];
+    const hasWidgets = this.pluginHasWidgets.get(id) ?? false;
     const entry: InstalledPluginManifest = {
       id,
       name: pkgJson?.name ?? id,
@@ -677,6 +701,8 @@ export class PluginLoader {
       pluginContractMajor: pkgJson?.ethos?.pluginContractMajor ?? null,
       dialect,
       credentials: pkgJson?.ethos?.credentials ?? [],
+      dataSources,
+      hasWidgets,
       status,
       error,
     };
@@ -1000,6 +1026,8 @@ function toInstalledPluginManifest(
     dialect,
     hasHomePanel: manifest.ethos?.hasHomePanel ?? false,
     credentials: manifest.ethos?.credentials ?? [],
+    dataSources: [],
+    hasWidgets: false,
   };
 }
 
