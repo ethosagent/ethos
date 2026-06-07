@@ -39,33 +39,47 @@ jobs:
           echo "NEW_VERSION=${NEW_VERSION}" >> $GITHUB_ENV
           echo "Releasing v${NEW_VERSION}"
 
+      - name: Check if tag already exists — skip if so
+        run: |
+          if git ls-remote --tags origin "refs/tags/v${NEW_VERSION}" | grep -q .; then
+            echo "Tag v${NEW_VERSION} already exists on remote — skipping release."
+            echo "SKIP_RELEASE=true" >> "$GITHUB_ENV"
+          fi
+
       - name: Typecheck + lint + tests
+        if: env.SKIP_RELEASE != 'true'
         # G7 from the gate model — full check gate before any irreversible step.
         run: pnpm check
 
       - name: Pre-release gates (G1, G2, G3, G4, G5, G8)
+        if: env.SKIP_RELEASE != 'true'
         env:
           CI: true
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: node scripts/verify-version.js
 
       - name: Build publishable packages
+        if: env.SKIP_RELEASE != 'true'
         run: make build-publishable
 
       - name: Configure npm auth
+        if: env.SKIP_RELEASE != 'true'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
 
       - name: Publish (idempotent lockstep — packages already on npm are skipped)
+        if: env.SKIP_RELEASE != 'true'
         run: make release-npm
 
       - name: Tag and push
+        if: env.SKIP_RELEASE != 'true'
         run: |
           git tag "v${NEW_VERSION}"
           git push origin "v${NEW_VERSION}"
 
       - name: Create GitHub Release with auto-generated notes
+        if: env.SKIP_RELEASE != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
