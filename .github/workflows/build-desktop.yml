@@ -101,11 +101,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mapfile -t FILES < <(find artifacts -type f | sort)
-          if [ "${TAG_EXISTS}" = "true" ]; then
-            gh release upload "v${{ inputs.version }}" "${FILES[@]}" --clobber
-          else
-            gh release create "v${{ inputs.version }}" \
-              --title "v${{ inputs.version }}" \
-              --generate-notes \
-              "${FILES[@]}"
+          # If a release already exists (tag may have been created by a prior CLI or web
+          # release without desktop artifacts), delete it and recreate. The tag is kept.
+          if gh release view "v${{ inputs.version }}" &>/dev/null; then
+            gh release delete "v${{ inputs.version }}" --yes
           fi
+          gh release create "v${{ inputs.version }}" \
+            --title "v${{ inputs.version }}" \
+            --generate-notes \
+            "${FILES[@]}"
