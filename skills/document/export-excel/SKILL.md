@@ -7,6 +7,8 @@ tags: [document, excel, xlsx, export, data]
 required_tools: [terminal, write_file]
 
 ethos:
+  external_cli_alternatives:
+    - node
   category: document
   default_personalities: []
   prerequisites:

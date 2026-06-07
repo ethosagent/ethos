@@ -1,4 +1,5 @@
 import type { Tool, ToolResult } from '@ethosagent/types';
+import { checkSsrf } from './ssrf';
 
 // ---------------------------------------------------------------------------
 // HTML → plain text (no external dep)
@@ -144,6 +145,9 @@ export const webExtractTool: Tool = {
     const { url } = args as { url: string };
 
     if (!url) return { ok: false, error: 'url is required', code: 'input_invalid' };
+
+    const ssrf = await checkSsrf(url);
+    if (ssrf.blocked) return { ok: false, error: ssrf.reason, code: 'execution_failed' };
 
     const secrets = ctx.secretsResolver;
     const net = ctx.scopedFetch;

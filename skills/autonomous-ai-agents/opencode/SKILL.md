@@ -7,6 +7,8 @@ tags: [delegation, opencode, coding-agent]
 required_tools: [terminal, process_start, process_logs, process_stop]
 
 ethos:
+  external_cli_alternatives:
+    - opencode
   category: delegation-and-orchestration
   default_personalities: [engineer, coordinator]
   prerequisites:

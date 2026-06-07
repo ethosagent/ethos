@@ -80,6 +80,7 @@ export const builtInCommands: SlashCommand[] = [
     description: 'List approved senders and pairing codes',
     usage: '/communications',
   },
+  { name: 'undo', description: 'Undo last N turns (default 1)', usage: '/undo [N]' },
   { name: 'exit', description: 'Quit ethos', usage: '/exit' },
   { name: 'quit', description: 'Alias for /exit', usage: '/quit' },
 ];

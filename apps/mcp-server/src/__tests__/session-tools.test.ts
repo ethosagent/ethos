@@ -99,6 +99,7 @@ function createMockStore(options?: {
     listCompressions: async () => [],
     recordTurnStart: async () => ({ turnNumber: 1, lastCompactionTurn: 0 }),
     recordCompactionTurn: async () => {},
+    undoTurns: async () => 0,
     pruneOldSessions: async () => 0,
     vacuum: async () => {},
   };

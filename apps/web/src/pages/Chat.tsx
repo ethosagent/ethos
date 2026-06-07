@@ -1,7 +1,7 @@
 import { TurnStatusBar } from '@ethosagent/ui-components';
 import { useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, ConfigProvider } from 'antd';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ApprovalModal } from '../components/chat/ApprovalModal';
 import { ClarifyCard } from '../components/chat/ClarifyCard';
@@ -12,6 +12,7 @@ import { useSessionRenameFromChat } from '../features/sessions/api/mutations';
 import { useSessionGet } from '../features/sessions/api/queries';
 import { useActivePersonality } from '../hooks/useActivePersonality';
 import { useChat } from '../hooks/useChat';
+import { type AttachmentPreview, fileToPreview } from '../lib/attachments';
 import { clearLastSessionId, getLastSessionId, setLastSessionId } from '../lib/lastSession';
 import { personalityTheme } from '../lib/theme';
 import { rpc } from '../rpc';
@@ -149,6 +150,21 @@ export function Chat() {
     state.lastStreamEventAt !== null &&
     Date.now() - state.lastStreamEventAt > 30_000;
 
+  const [pendingAttachments, setPendingAttachments] = useState<AttachmentPreview[]>([]);
+
+  const handleAttach = useCallback(async (files: File[]) => {
+    const previews = await Promise.all(files.map(fileToPreview));
+    setPendingAttachments((prev) => [...prev, ...previews]);
+  }, []);
+
+  const handleRemoveAttachment = useCallback((localId: string) => {
+    setPendingAttachments((prev) => {
+      const a = prev.find((x) => x.localId === localId);
+      if (a?.previewUrl) URL.revokeObjectURL(a.previewUrl);
+      return prev.filter((x) => x.localId !== localId);
+    });
+  }, []);
+
   const [elapsedMs, setElapsedMs] = useState(0);
   useEffect(() => {
     if (!state.turnStartedAt) {
@@ -165,9 +181,13 @@ export function Chat() {
     if (state.isStreaming) {
       const ok = await steerMessage(text);
       if (ok) return;
-      // Turn ended — fall through to normal send
     }
-    await sendMessage(text);
+    const atts = pendingAttachments.filter((a) => a.state === 'ready');
+    await sendMessage(text, atts.length > 0 ? atts : undefined);
+    for (const a of pendingAttachments) {
+      if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
+    }
+    setPendingAttachments([]);
   };
 
   // Render the head of the queue. Multiple back-to-back approvals are
@@ -268,6 +288,9 @@ export function Chat() {
             placeholder={state.isStreaming ? 'Steer the agent…' : 'Send a message…'}
             isStreaming={state.isStreaming}
             onAbort={() => void abortTurn()}
+            attachments={pendingAttachments}
+            onAttach={handleAttach}
+            onRemoveAttachment={handleRemoveAttachment}
           />
         </div>
       </div>

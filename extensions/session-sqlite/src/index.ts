@@ -159,6 +159,11 @@ export class SQLiteSessionStore implements SessionStore {
     if (!sessCols.some((c) => c.name === 'pinned')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
     }
+
+    const msgCols = this.db.pragma('table_info(messages)') as Array<{ name: string }>;
+    if (!msgCols.some((c) => c.name === 'deleted_at')) {
+      this.db.exec('ALTER TABLE messages ADD COLUMN deleted_at TEXT');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -338,14 +343,14 @@ export class SQLiteSessionStore implements SessionStore {
         ? this.db
             .prepare(
               `SELECT * FROM (
-                 SELECT *, rowid AS _row FROM messages WHERE session_id = ?
+                 SELECT *, rowid AS _row FROM messages WHERE session_id = ? AND deleted_at IS NULL
                  ORDER BY timestamp DESC, rowid DESC LIMIT ? OFFSET ?
                ) ORDER BY timestamp ASC, _row ASC`,
             )
             .all(sessionId, limit, offset)
         : this.db
             .prepare(
-              `SELECT *, rowid AS _row FROM messages WHERE session_id = ?
+              `SELECT *, rowid AS _row FROM messages WHERE session_id = ? AND deleted_at IS NULL
                ORDER BY timestamp ASC, rowid ASC LIMIT -1 OFFSET ?`,
             )
             .all(sessionId, offset);
@@ -388,7 +393,7 @@ export class SQLiteSessionStore implements SessionStore {
     const limit = options?.limit ?? 20;
     const safeQuery = escapeFtsQuery(query);
 
-    const conditions: string[] = ['messages_fts MATCH ?'];
+    const conditions: string[] = ['messages_fts MATCH ?', 'm.deleted_at IS NULL'];
     const values: unknown[] = [safeQuery];
 
     if (options?.sessionId) {
@@ -490,6 +495,42 @@ export class SQLiteSessionStore implements SessionStore {
     this.db
       .prepare('UPDATE sessions SET last_compaction_turn = ? WHERE id = ?')
       .run(turnNumber, sessionId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Undo — soft-delete recent user+assistant turn pairs
+  // ---------------------------------------------------------------------------
+
+  async undoTurns(sessionId: string, n: number): Promise<number> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, role FROM messages
+         WHERE session_id = ? AND deleted_at IS NULL
+         ORDER BY timestamp DESC, rowid DESC LIMIT ?`,
+      )
+      .all(sessionId, n * 2 + 1) as Array<{ id: string; role: string }>;
+
+    const toDelete: string[] = [];
+    let pairs = 0;
+    let i = 0;
+    while (i < rows.length && pairs < n) {
+      const r = rows[i];
+      const next = rows[i + 1];
+      if (r?.role === 'assistant' && next?.role === 'user') {
+        toDelete.push(r.id, next.id);
+        pairs++;
+        i += 2;
+      } else {
+        i++;
+      }
+    }
+    if (toDelete.length === 0) return 0;
+    const now = new Date().toISOString();
+    const placeholders = toDelete.map(() => '?').join(',');
+    this.db
+      .prepare(`UPDATE messages SET deleted_at = ? WHERE id IN (${placeholders})`)
+      .run(now, ...toDelete);
+    return pairs;
   }
 
   // ---------------------------------------------------------------------------

@@ -178,6 +178,10 @@ export class InMemorySessionStore implements SessionStore {
     return count;
   }
 
+  async undoTurns(_sessionId: string, _n: number): Promise<number> {
+    return 0;
+  }
+
   async vacuum(): Promise<void> {
     // No-op for in-memory store
   }

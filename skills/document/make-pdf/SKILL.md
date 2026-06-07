@@ -7,6 +7,8 @@ tags: [document, pdf, export, markdown]
 required_tools: [terminal, write_file]
 
 ethos:
+  external_cli_alternatives:
+    - md-to-pdf
   category: document
   default_personalities: []
   prerequisites:

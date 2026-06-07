@@ -18,6 +18,7 @@ interface ChatThreadProps {
   onClarifyRespond: (requestId: string, answer: string) => void;
   onRetry: () => void;
   error?: string | null;
+  onAttach?: (files: File[]) => void;
 }
 
 export function ChatThread({
@@ -34,6 +35,7 @@ export function ChatThread({
   onClarifyRespond,
   onRetry,
   error,
+  onAttach,
 }: ChatThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -44,6 +46,19 @@ export function ChatThread({
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     autoScrollRef.current = distFromBottom < 60;
   }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length > 0) onAttach?.(files);
+    },
+    [onAttach],
+  );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: deps are intentional scroll-to-bottom triggers
   useEffect(() => {
@@ -56,9 +71,12 @@ export function ChatThread({
   const toolCallArray = Array.from(toolCalls.values());
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: drop zone for file attachments
     <div
       ref={scrollRef}
       onScroll={handleScroll}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
       style={{
         flex: 1,
         overflowY: 'auto',

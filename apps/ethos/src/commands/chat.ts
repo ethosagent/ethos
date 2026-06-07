@@ -918,6 +918,7 @@ async function handleSlashCommand(
           `  /verbose status       show current level\n` +
           `  /busy <mode|status>   busy-input mode (interrupt/queue/steer)\n` +
           `  /attach <path>        attach a file to the next message\n` +
+          `  /undo [N]             undo last N turns (default 1)\n` +
           `  /dry-run on|off      toggle dry-run mode (plan tools without executing)\n` +
           `  /steer <text>         inject [USER STEER] mid-turn\n` +
           `  /allow <code>         approve a pending channel sender by pairing code\n` +
@@ -1171,6 +1172,28 @@ async function handleSlashCommand(
         out(`${c.dim}[dry-run mode OFF — tools execute normally]${c.reset}\n`);
       } else {
         out(`${c.dim}Dry-run: ${state.dryRun ? 'ON' : 'OFF'}. Usage: /dry-run on|off${c.reset}\n`);
+      }
+      break;
+    }
+
+    case 'undo': {
+      const count = Math.max(1, Number.parseInt(arg || '1', 10) || 1);
+      const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+      const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+      try {
+        const session = await store.getSessionByKey(state.sessionKey);
+        if (!session) {
+          out(`${c.dim}[no session found — send a message first]${c.reset}\n`);
+          break;
+        }
+        const removed = await store.undoTurns(session.id, count);
+        if (!removed) {
+          out(`${c.dim}[nothing to undo]${c.reset}\n`);
+        } else {
+          out(`${c.dim}[undid ${removed} turn${removed > 1 ? 's' : ''}]${c.reset}\n`);
+        }
+      } finally {
+        store.close();
       }
       break;
     }

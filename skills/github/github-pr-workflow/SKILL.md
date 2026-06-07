@@ -7,6 +7,8 @@ tags: [coding, github, workflow]
 required_tools: [terminal, read_file, write_file]
 
 ethos:
+  external_cli_alternatives:
+    - gh
   category: github-workflow
   default_personalities: [engineer, coordinator]
   prerequisites:
