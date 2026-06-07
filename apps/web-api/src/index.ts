@@ -11,7 +11,6 @@ import { buildDashboardTools } from '@ethosagent/tools-ui';
 import type { MemoryProvider, SecretsResolver, SessionStore, Storage } from '@ethosagent/types';
 import type { SseEvent } from '@ethosagent/web-contracts';
 import type { IdentityMap } from '@ethosagent/wiring';
-import Database from 'better-sqlite3';
 import type { Hono } from 'hono';
 import { ChatRepository } from './features/chat/repository';
 import { type ChatDefaults, ChatService } from './features/chat/service';
@@ -32,6 +31,7 @@ import { createWebApprovalHook, type DangerPredicate } from './services/approval
 import { ApprovalsService } from './services/approvals.service';
 import { ConfigService } from './services/config.service';
 import { CronService } from './services/cron.service';
+import { refreshSinglePanel } from './services/dashboard-refresh';
 import { DashboardsService } from './services/dashboards.service';
 import { EvolverService } from './services/evolver.service';
 import { KanbanService } from './services/kanban.service';
@@ -297,12 +297,10 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     dbPath: join(opts.dataDir, 'dashboards.db'),
   });
 
-  // Construct a DashboardStore sharing the same dashboards.db so agent-driven
-  // dashboard_create / dashboard_add_panel tools operate on the same data.
-  const dashboardDb = new Database(join(opts.dataDir, 'dashboards.db'));
-  dashboardDb.pragma('journal_mode = WAL');
-  dashboardDb.pragma('foreign_keys = ON');
-  const dashboardStore = new DashboardStore(dashboardDb);
+  // Share the DashboardsService's DB handle with DashboardStore so
+  // agent-driven dashboard_create / dashboard_add_panel tools operate on
+  // the same connection — no duplicate WAL handle.
+  const dashboardStore = new DashboardStore(dashboardsService.getDb());
 
   // Register agent-driven dashboard tools when a tool registry is available.
   if (opts.toolRegistry) {
@@ -458,46 +456,11 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
             if (!panel.cronSchedule) continue;
             const isDue = isCronDue(panel.cronSchedule, panel.lastRunAt);
             if (!isDue) continue;
-            // Refresh SQL panels
-            if (
-              panel.queryType === 'sql' &&
-              panel.sqlQuery &&
-              panel.pluginId &&
-              panel.dataSourceId
-            ) {
-              try {
-                const dbPath = opts.pluginLoader?.getDataSourcePath(
-                  panel.pluginId,
-                  panel.dataSourceId,
-                );
-                if (dbPath) {
-                  const cronDb = new Database(dbPath, { readonly: true });
-                  try {
-                    const rows = cronDb.prepare(panel.sqlQuery).all();
-                    dashboardsService.updatePanelContent(panel.id, JSON.stringify(rows));
-                    dashboardsService.clearPanelError(panel.id);
-                  } finally {
-                    cronDb.close();
-                  }
-                }
-              } catch (err) {
-                dashboardsService.setPanelError(panel.id, String(err));
-              }
-            }
-            // Refresh prompt panels via agentLoop
-            if (panel.queryType === 'prompt' && panel.prompt && opts.agentLoop) {
-              try {
-                const sessionKey = `dashboard-cron:${panel.dashboardId}:${panel.id}:${Date.now()}`;
-                let output = '';
-                for await (const event of opts.agentLoop.run(panel.prompt, { sessionKey })) {
-                  if (event.type === 'text_delta') output += event.text;
-                }
-                dashboardsService.updatePanelContent(panel.id, output);
-                dashboardsService.clearPanelError(panel.id);
-              } catch (err) {
-                dashboardsService.setPanelError(panel.id, String(err));
-              }
-            }
+            await refreshSinglePanel(panel, {
+              dashboards: dashboardsService,
+              pluginLoader: opts.pluginLoader,
+              agentLoop: opts.agentLoop,
+            });
           }
         }
       } catch {
@@ -563,14 +526,18 @@ function createPassiveMcpManager(): McpManager {
 /**
  * Lightweight cron-due check for dashboard panel schedules. Supports the
  * subset of 5-field cron expressions used by dashboards: minute, hour,
- * day-of-month (ignored), month (ignored), day-of-week. Returns true when
- * the panel has never run or the scheduled time has passed since the last run.
+ * and day-of-week. Day-of-month and month fields must be `*` — expressions
+ * that specify them are rejected (returns false) rather than silently
+ * ignoring them. Returns true when the panel has never run or the scheduled
+ * time has passed since the last run.
  */
 function isCronDue(cronExpr: string, lastRunAt: number | null): boolean {
   const now = Date.now();
   if (!lastRunAt) return true; // Never run — due immediately
   const parts = cronExpr.trim().split(/\s+/);
   if (parts.length !== 5) return false;
+  const [, , domStr, monthStr] = parts;
+  if (domStr !== '*' || monthStr !== '*') return false;
   const d = new Date(now);
   const [minStr, hourStr, , , dowStr] = parts;
   const minute = minStr === '*' ? d.getMinutes() : Number(minStr);

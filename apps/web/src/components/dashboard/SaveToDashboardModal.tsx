@@ -14,6 +14,7 @@ interface Props {
 export function SaveToDashboardModal({ open, onClose, userMessage, sessionId }: Props) {
   const [tab, setTab] = useState<'user' | 'summary'>('user');
   const [prompt, setPrompt] = useState(userMessage ?? '');
+  const [editedSummary, setEditedSummary] = useState<string | null>(null);
   const [dashboardId, setDashboardId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [cronSchedule, setCronSchedule] = useState('');
@@ -42,7 +43,7 @@ export function SaveToDashboardModal({ open, onClose, userMessage, sessionId }: 
           queryType: 'prompt',
           blockType: 'html',
           content: '',
-          prompt: tab === 'summary' ? (summary ?? prompt) : prompt,
+          prompt: tab === 'summary' ? (editedSummary ?? summary ?? prompt) : prompt,
           cronSchedule: cronSchedule || undefined,
         },
       }),
@@ -108,9 +109,9 @@ export function SaveToDashboardModal({ open, onClose, userMessage, sessionId }: 
               ) : summaryAvailable ? (
                 <Input.TextArea
                   rows={6}
-                  value={summary ?? ''}
+                  value={editedSummary ?? summary ?? ''}
+                  onChange={(e) => setEditedSummary(e.target.value)}
                   placeholder="Conversation summary will appear here..."
-                  readOnly
                 />
               ) : (
                 <div style={{ padding: 20, textAlign: 'center', color: '#888' }}>

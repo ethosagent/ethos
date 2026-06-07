@@ -122,8 +122,6 @@ export function SaveToDashboardButton({ blockType, content, metadata }: Props) {
             cursor: 'pointer',
             padding: '2px 6px',
             fontSize: 14,
-            opacity: 0,
-            transition: 'opacity 0.15s',
             zIndex: 10,
           }}
         >

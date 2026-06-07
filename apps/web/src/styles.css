@@ -4321,8 +4321,13 @@ textarea {
   position: relative;
 }
 
+.dashboard-save-btn {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
 .block-with-save:hover .dashboard-save-btn {
-  opacity: 1 !important;
+  opacity: 1;
 }
 
 /* Dashboard grid layout — react-grid-layout overrides */

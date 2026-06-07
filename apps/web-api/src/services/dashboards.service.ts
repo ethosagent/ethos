@@ -178,6 +178,12 @@ export class DashboardsService {
     this.createTables();
   }
 
+  /** Expose the underlying DB handle so callers (e.g. DashboardStore) can
+   *  share a single connection instead of opening a duplicate. */
+  getDb(): Database.Database {
+    return this.db;
+  }
+
   private createTables(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS dashboards (
