@@ -30,6 +30,7 @@ import { createWebApprovalHook, type DangerPredicate } from './services/approval
 import { ApprovalsService } from './services/approvals.service';
 import { ConfigService } from './services/config.service';
 import { CronService } from './services/cron.service';
+import { DashboardsService } from './services/dashboards.service';
 import { EvolverService } from './services/evolver.service';
 import { KanbanService } from './services/kanban.service';
 import { LabService } from './services/lab.service';
@@ -287,6 +288,10 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     defaults: opts.chatDefaults,
   });
 
+  const dashboardsService = new DashboardsService({
+    dbPath: join(opts.dataDir, 'dashboards.db'),
+  });
+
   // One buffer per process — keyed internally by sessionId. Bridges are
   // owned by ChatService. The reap callback lets the bridge map drain
   // alongside the SSE buffer so a long-running server doesn't accumulate
@@ -408,6 +413,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       debug: debugService,
       apiKeys: apiKeysService,
       toolRegistry: opts.toolRegistry,
+      dashboards: dashboardsService,
       systemBus,
     },
     ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),

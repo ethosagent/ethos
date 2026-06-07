@@ -108,6 +108,12 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               label="Platforms"
               active={pathname === '/communications'}
             />
+            <NavRow
+              path="/dashboards"
+              icon="📊"
+              label="Dashboards"
+              active={pathname === '/dashboards' || pathname.startsWith('/dashboards/')}
+            />
           </div>
 
           <div className="sidebar-divider" />

@@ -1198,7 +1198,7 @@ const meta = {
 };
 
 // ---------------------------------------------------------------------------
-// Dashboards — widget templates from plugins
+// Dashboards — widget templates from plugins + dashboard/panel CRUD
 // ---------------------------------------------------------------------------
 
 const WidgetTemplateSchema = z.object({
@@ -1218,8 +1218,118 @@ const DashboardsListWidgetTemplatesOutput = z.object({
   templates: z.array(WidgetTemplateSchema),
 });
 
+// Dashboard schemas
+const DashboardSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  personalityId: z.string(),
+  title: z.string(),
+  description: z.string().nullable(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+});
+
+const DashboardPanelSchema = z.object({
+  id: z.string(),
+  dashboardId: z.string(),
+  queryType: z.enum(['static', 'prompt', 'sql']),
+  blockType: z.enum(['html', 'image', 'pdf', 'text', 'table']),
+  content: z.string(),
+  metadata: z.record(z.string(), z.unknown()).nullable(),
+  title: z.string().nullable(),
+  prompt: z.string().nullable(),
+  sqlQuery: z.string().nullable(),
+  pluginId: z.string().nullable(),
+  dataSourceId: z.string().nullable(),
+  renderHint: z.string().nullable(),
+  cronSchedule: z.string().nullable(),
+  lastRunAt: z.number().nullable(),
+  lastError: z.string().nullable(),
+  sourceConversationId: z.string().nullable(),
+  sourceMessageSeq: z.number().nullable(),
+  col: z.number(),
+  row: z.number(),
+  w: z.number(),
+  h: z.number(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+});
+
+// Input schemas
+const DashboardsCreateInput = z.object({
+  title: z.string().min(1),
+  personalityId: z.string().min(1),
+  description: z.string().optional(),
+});
+
+const DashboardsGetInput = z.object({ id: z.string().min(1) });
+const DashboardsUpdateInput = z.object({
+  id: z.string().min(1),
+  title: z.string().optional(),
+  description: z.string().optional(),
+});
+const DashboardsDeleteInput = z.object({ id: z.string().min(1) });
+
+const DashboardsAddPanelInput = z.object({
+  dashboardId: z.string().nullable(),
+  newDashboardTitle: z.string().optional(),
+  personalityId: z.string().optional(),
+  panel: z.object({
+    queryType: z.enum(['static', 'prompt', 'sql']),
+    blockType: z.enum(['html', 'image', 'pdf', 'text', 'table']),
+    content: z.string(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+    title: z.string().optional(),
+    prompt: z.string().optional(),
+    sqlQuery: z.string().optional(),
+    pluginId: z.string().optional(),
+    dataSourceId: z.string().optional(),
+    renderHint: z.string().optional(),
+    cronSchedule: z.string().optional(),
+    sourceConversationId: z.string().optional(),
+    sourceMessageSeq: z.number().optional(),
+  }),
+});
+
+const DashboardsUpdatePanelInput = z.object({
+  panelId: z.string().min(1),
+  title: z.string().optional(),
+  cronSchedule: z.string().nullable().optional(),
+});
+
+const DashboardsUpdatePanelLayoutInput = z.object({
+  panelId: z.string().min(1),
+  col: z.number(),
+  row: z.number(),
+  w: z.number(),
+  h: z.number(),
+});
+
+const DashboardsDeletePanelInput = z.object({ panelId: z.string().min(1) });
+
+const DashboardsRefreshPanelInput = z.object({ panelId: z.string().min(1) });
+const DashboardsRefreshAllInput = z.object({ dashboardId: z.string().min(1) });
+
 /** @experimental */
 const dashboards = {
+  create: oc.input(DashboardsCreateInput).output(z.object({ dashboard: DashboardSchema })),
+  list: oc.output(z.object({ dashboards: z.array(DashboardSchema) })),
+  get: oc.input(DashboardsGetInput).output(
+    z.object({
+      dashboard: DashboardSchema,
+      panels: z.array(DashboardPanelSchema),
+    }),
+  ),
+  update: oc.input(DashboardsUpdateInput).output(z.object({ ok: z.literal(true) })),
+  delete: oc.input(DashboardsDeleteInput).output(z.object({ ok: z.literal(true) })),
+  addPanel: oc.input(DashboardsAddPanelInput).output(z.object({ panel: DashboardPanelSchema })),
+  updatePanel: oc.input(DashboardsUpdatePanelInput).output(z.object({ ok: z.literal(true) })),
+  updatePanelLayout: oc
+    .input(DashboardsUpdatePanelLayoutInput)
+    .output(z.object({ ok: z.literal(true) })),
+  deletePanel: oc.input(DashboardsDeletePanelInput).output(z.object({ ok: z.literal(true) })),
+  refreshPanel: oc.input(DashboardsRefreshPanelInput).output(z.object({ ok: z.literal(true) })),
+  refreshAll: oc.input(DashboardsRefreshAllInput).output(z.object({ ok: z.literal(true) })),
   listWidgetTemplates: oc.output(DashboardsListWidgetTemplatesOutput),
 };
 

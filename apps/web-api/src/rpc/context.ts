@@ -9,6 +9,7 @@ import type { ApiKeysService } from '../services/api-keys.service';
 import type { ApprovalsService } from '../services/approvals.service';
 import type { ConfigService } from '../services/config.service';
 import type { CronService } from '../services/cron.service';
+import type { AddPanelInput, Dashboard, DashboardPanel } from '../services/dashboards.service';
 import type { EvolverService } from '../services/evolver.service';
 import type { KanbanService } from '../services/kanban.service';
 import type { LabService } from '../services/lab.service';
@@ -56,6 +57,23 @@ export interface RpcContext {
 
 export interface DashboardsService {
   listWidgetTemplates(): Promise<WidgetTemplate[]>;
+  create(userId: string, title: string, personalityId: string, description?: string): Dashboard;
+  list(userId: string): Dashboard[];
+  get(id: string): { dashboard: Dashboard; panels: DashboardPanel[] } | null;
+  update(id: string, patch: { title?: string; description?: string }): void;
+  delete(id: string): void;
+  addPanel(dashboardId: string, panel: AddPanelInput): DashboardPanel;
+  updatePanel(panelId: string, patch: { title?: string; cronSchedule?: string | null }): void;
+  updatePanelLayout(
+    panelId: string,
+    layout: { col: number; row: number; w: number; h: number },
+  ): void;
+  deletePanel(panelId: string): void;
+  getPanel(panelId: string): DashboardPanel | null;
+  listLivePanels(dashboardId: string): DashboardPanel[];
+  updatePanelContent(panelId: string, content: string, blockType?: string): void;
+  setPanelError(panelId: string, error: string): void;
+  clearPanelError(panelId: string): void;
 }
 
 export const os = implement(contract).$context<RpcContext>();

@@ -13,6 +13,8 @@ import { Batch } from './pages/Batch';
 import { Chat } from './pages/Chat';
 import { Communications } from './pages/Communications';
 import { Cron } from './pages/Cron';
+import { Dashboards } from './pages/Dashboards';
+import { DashboardView } from './pages/DashboardView';
 import { Eval } from './pages/Eval';
 import { Mcp } from './pages/Mcp';
 import { Memory } from './pages/Memory';
@@ -134,6 +136,8 @@ export function App() {
           <Route path="/personality/create" element={<PersonalityCreate />} />
           <Route path="/batch" element={<Batch />} />
           <Route path="/eval" element={<Eval />} />
+          <Route path="/dashboards" element={<Dashboards />} />
+          <Route path="/dashboards/:id" element={<DashboardView />} />
           <Route path="/onboarding" element={<Onboarding />} />
           <Route path="/setup/provider" element={<Onboarding startAtStep="provider" />} />
           <Route path="/setup/providers" element={<Onboarding startAtStep="multi-provider" />} />

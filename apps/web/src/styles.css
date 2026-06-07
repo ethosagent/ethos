@@ -4315,3 +4315,12 @@ textarea {
   opacity: 0.4;
   cursor: default;
 }
+
+/* Dashboard save-to-dashboard hover button */
+.block-with-save {
+  position: relative;
+}
+
+.block-with-save:hover .dashboard-save-btn {
+  opacity: 1 !important;
+}

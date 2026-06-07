@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { HtmlBlock as HtmlBlockData } from '../../lib/chat-reducer';
+import { SaveToDashboardButton } from '../dashboard/SaveToDashboardButton';
 
 interface Props {
   block: HtmlBlockData;
@@ -40,7 +41,12 @@ export function HtmlBlock({ block }: Props) {
   const srcDoc = injectResizeScript(block.html);
 
   return (
-    <div className="html-block">
+    <div className="html-block block-with-save">
+      <SaveToDashboardButton
+        blockType="html"
+        content={block.html}
+        metadata={{ title: block.title }}
+      />
       {block.title ? <div className="html-block-title">{block.title}</div> : null}
       <iframe
         ref={iframeRef}
