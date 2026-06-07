@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Empty, message, Skeleton, Space, Typography } from 'antd';
-import { Responsive, WidthProvider } from 'react-grid-layout';
+import { Responsive, WidthProvider, type Layout } from 'react-grid-layout/legacy';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import { useParams } from 'react-router-dom';
@@ -54,9 +54,7 @@ export function DashboardView() {
     minH: 2,
   }));
 
-  const handleLayoutChange = (
-    newLayout: Array<{ i: string; x: number; y: number; w: number; h: number }>,
-  ) => {
+  const handleLayoutChange = (newLayout: Layout) => {
     for (const item of newLayout) {
       const panel = panels.find((p) => p.id === item.i);
       if (
@@ -106,7 +104,7 @@ export function DashboardView() {
           breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
           cols={{ lg: 12, md: 10, sm: 6, xs: 4 }}
           rowHeight={60}
-          onLayoutChange={(newLayout) => handleLayoutChange(newLayout)}
+          onLayoutChange={(newLayout: Layout) => handleLayoutChange(newLayout)}
           draggableHandle=".drag-handle"
           compactType="vertical"
         >
