@@ -1893,6 +1893,14 @@ body,
   flex-shrink: 0;
 }
 
+.empty-state-brand {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  margin-top: 4px;
+}
+
 .empty-state-name {
   font-size: 16px;
   font-weight: 500;

@@ -142,15 +142,50 @@ export function ChatThread({
         <div
           style={{
             display: 'flex',
+            flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
             height: '100%',
-            color: 'var(--text-tertiary)',
-            fontFamily: 'var(--font-display)',
-            fontSize: 14,
+            gap: 10,
           }}
         >
-          Start a conversation
+          <div
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: '50%',
+              background: 'rgba(74,158,255,0.08)',
+              border: '1px solid rgba(74,158,255,0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <svg aria-hidden="true" width="32" height="32" viewBox="0 0 16 16">
+              <circle cx="8" cy="8" r="7" fill="#4A9EFF" />
+              <circle cx="8" cy="8" r="3" fill="var(--bg-base, #0F0F0F)" />
+            </svg>
+          </div>
+          <div
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 15,
+              fontWeight: 600,
+              color: 'var(--text-primary)',
+              letterSpacing: '-0.02em',
+            }}
+          >
+            Ethos
+          </div>
+          <div
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 13,
+              color: 'var(--text-secondary)',
+            }}
+          >
+            Ready to help.
+          </div>
         </div>
       )}
     </div>

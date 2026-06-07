@@ -273,11 +273,8 @@ function formatRelativeTime(iso: string): string {
 function EthosMark() {
   return (
     <svg aria-hidden="true" width="22" height="22" viewBox="0 0 16 16" style={{ flexShrink: 0 }}>
-      <path
-        fill="#4A9EFF"
-        fillRule="evenodd"
-        d="M8 1 A7 7 0 1 1 8 15 A7 7 0 1 1 8 1 Z M8 5.5 A2.5 2.5 0 1 0 8 10.5 A2.5 2.5 0 1 0 8 5.5 Z"
-      />
+      <circle cx="8" cy="8" r="7" fill="#4A9EFF" />
+      <circle cx="8" cy="8" r="3" fill="var(--bg-base, #0F0F0F)" />
     </svg>
   );
 }

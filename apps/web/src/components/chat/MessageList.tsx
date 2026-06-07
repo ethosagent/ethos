@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import type { AssistantTurn, ChatMessage } from '../../lib/chat-reducer';
-import { PersonalityRingAvatar } from '../ui/PersonalityRingAvatar';
 import { AssistantBubble, UserBubble } from './MessageBubble';
 
 // Scrollable history. Auto-scrolls to the bottom as content arrives —
@@ -90,7 +89,24 @@ const DEFAULT_PILLS = [
 function EmptyState({ personalityId, model }: { personalityId?: string; model?: string }) {
   return (
     <div className="message-list-empty">
-      <PersonalityRingAvatar personalityId={personalityId ?? 'researcher'} size={56} />
+      <div
+        style={{
+          width: 56,
+          height: 56,
+          borderRadius: '50%',
+          background: 'rgba(74,158,255,0.08)',
+          border: '1px solid rgba(74,158,255,0.15)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <svg aria-hidden="true" width="32" height="32" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="7" fill="#4A9EFF" />
+          <circle cx="8" cy="8" r="3" fill="var(--bg-base, #0F0F0F)" />
+        </svg>
+      </div>
+      <div className="empty-state-brand">Ethos</div>
       {personalityId ? <div className="empty-state-name">{personalityId}</div> : null}
       {model ? <div className="empty-state-model">{model}</div> : null}
       <div className="empty-state-tagline">Ready to help.</div>
