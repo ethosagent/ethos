@@ -70,9 +70,7 @@ export function Dashboards() {
             >
               <Card.Meta
                 title={d.title}
-                description={
-                  d.description || `Created ${new Date(d.createdAt).toLocaleDateString()}`
-                }
+                description={`${d.personalityId || 'No personality'} · ${new Date(d.createdAt).toLocaleDateString()}`}
               />
             </Card>
           ))}

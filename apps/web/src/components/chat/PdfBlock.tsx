@@ -1,4 +1,5 @@
 import type { PdfBlock as PdfBlockData } from '../../lib/chat-reducer';
+import { SaveToDashboardButton } from '../dashboard/SaveToDashboardButton';
 
 interface Props {
   block: PdfBlockData;
@@ -6,7 +7,12 @@ interface Props {
 
 export function PdfBlock({ block }: Props) {
   return (
-    <div className="pdf-block">
+    <div className="pdf-block block-with-save" style={{ position: 'relative' }}>
+      <SaveToDashboardButton
+        blockType="pdf"
+        content={block.src}
+        metadata={{ title: block.title }}
+      />
       {block.title ? <div className="pdf-block-title">{block.title}</div> : null}
       <embed
         src={block.src}
