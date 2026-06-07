@@ -163,7 +163,10 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
 
   const handleComplete = async () => {
     const { answers } = state;
-    if (!answers.provider || !answers.model || !answers.apiKey || !answers.personalityId) {
+    const providerId = answers.provider as CatalogProviderId | undefined;
+    const catalog = providerId ? getCatalogEntry(providerId) : null;
+    const requiresApiKey = catalog?.authType === 'api-key';
+    if (!answers.provider || !answers.model || (requiresApiKey && !answers.apiKey) || !answers.personalityId) {
       notification.error({
         message: 'Incomplete setup',
         description: 'Please complete all required steps before launching.',
@@ -172,10 +175,8 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
       return;
     }
     try {
-      const providerId = answers.provider as CatalogProviderId;
-      const catalog = getCatalogEntry(providerId);
       await rpc.onboarding.complete({
-        provider: catalog.wiresAs as ProviderId,
+        provider: catalog!.wiresAs as ProviderId,
         model: answers.model,
         apiKey: answers.apiKey,
         ...(answers.baseUrl ? { baseUrl: answers.baseUrl } : {}),

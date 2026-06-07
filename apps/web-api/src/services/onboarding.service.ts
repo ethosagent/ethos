@@ -41,7 +41,7 @@ export interface ValidateProviderResult {
 export interface CompleteInput {
   provider: ProviderId;
   model: string;
-  apiKey: string;
+  apiKey?: string;
   baseUrl?: string;
   personalityId: string;
 }
@@ -130,7 +130,7 @@ export class OnboardingService {
     await this.opts.config.update({
       provider: input.provider,
       model: input.model,
-      apiKey: input.apiKey,
+      ...(input.apiKey ? { apiKey: input.apiKey } : {}),
       personality: input.personalityId,
       ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
     });

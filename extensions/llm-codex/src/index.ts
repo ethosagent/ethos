@@ -69,6 +69,7 @@ export class CodexProvider implements LLMProvider {
     const body: ResponsesApiBody = {
       model: effectiveModel,
       input: toResponsesInput(messages),
+      stream: true,
       store: false,
       reasoning: { effort: 'medium', summary: 'auto' },
       include: ['reasoning.encrypted_content'],

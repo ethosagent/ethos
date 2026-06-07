@@ -35,6 +35,12 @@ export interface UseChatOptions {
    */
   onSessionCreated?: (sessionId: string) => void;
   /**
+   * Called when history load fails with a "not found" error — the session id
+   * in the URL or localStorage no longer exists on the server. Callers should
+   * clear their stored id and reset routing so the user gets a fresh chat.
+   */
+  onSessionNotFound?: (sessionId: string) => void;
+  /**
    * The current session's string key. When a `cron.fired` SSE event arrives
    * with a matching sessionKey, history is reloaded so the cron turn appears
    * in chat.
@@ -110,6 +116,14 @@ export function useChat(opts: UseChatOptions): UseChatResult {
       .catch((err: unknown) => {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : String(err);
+        if (message.toLowerCase().includes('not found')) {
+          // Stale session ID — reset silently so the user gets a fresh chat
+          opts.onSessionNotFound?.(currentSessionId ?? '');
+          historyLoadedFor.current = null;
+          dispatch({ kind: 'action', action: { type: 'reset' } });
+          setCurrentSessionId(null);
+          return;
+        }
         dispatch({
           kind: 'action',
           action: { type: 'send-failed', userMessageId: '', error: message },

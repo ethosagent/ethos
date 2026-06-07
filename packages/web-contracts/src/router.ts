@@ -464,7 +464,7 @@ const OnboardingValidateProviderOutput = z.object({
 const OnboardingCompleteInput = z.object({
   provider: ProviderIdSchema,
   model: z.string().min(1),
-  apiKey: z.string().min(1),
+  apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
   personalityId: z.string().min(1),
 });

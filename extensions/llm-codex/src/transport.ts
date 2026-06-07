@@ -78,6 +78,7 @@ async function* parseSSE(stream: ReadableStream<Uint8Array>): AsyncIterable<SSEE
 export interface ResponsesApiBody {
   model: string;
   input: unknown[];
+  stream: true;
   store: boolean;
   reasoning: { effort: string; summary: string };
   include: string[];

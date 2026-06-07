@@ -69,6 +69,10 @@ export function Chat() {
       setLastSessionId(id);
       void queryClient.invalidateQueries({ queryKey: ['sessions', 'list'] });
     },
+    onSessionNotFound: () => {
+      clearLastSessionId();
+      setSearchParams({}, { replace: true });
+    },
   });
 
   const sessionQuery = useSessionGet(currentSessionId);
