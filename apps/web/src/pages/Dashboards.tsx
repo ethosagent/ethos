@@ -123,7 +123,7 @@ export function Dashboards() {
             placeholder="Select personality"
             value={selectedPersonality || undefined}
             onChange={setSelectedPersonality}
-            options={(persData?.personalities ?? []).map((p) => ({
+            options={(persData?.items ?? []).map((p: { id: string; name: string }) => ({
               label: p.name,
               value: p.id,
             }))}
