@@ -1,4 +1,5 @@
 import { Button, Card, Space, Tag, Typography } from 'antd';
+import { TableBlock } from '../chat/TableBlock';
 
 interface PanelData {
   id: string;
@@ -80,53 +81,8 @@ function PanelContent({
       );
     case 'image':
       return <img src={content} alt={String(metadata?.alt ?? '')} style={{ maxWidth: '100%' }} />;
-    case 'table': {
-      try {
-        const rows = JSON.parse(content) as Record<string, unknown>[];
-        if (rows.length === 0) return <div style={{ color: '#888' }}>No data</div>;
-        const firstRow = rows[0];
-        if (!firstRow) return <div style={{ color: '#888' }}>No data</div>;
-        const cols = Object.keys(firstRow);
-        return (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr>
-                  {cols.map((c) => (
-                    <th
-                      key={c}
-                      style={{
-                        textAlign: 'left',
-                        padding: '4px 8px',
-                        borderBottom: '1px solid #333',
-                      }}
-                    >
-                      {c}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.slice(0, 100).map((row) => {
-                  const rowKey = cols.map((c) => String(row[c] ?? '')).join('|');
-                  return (
-                    <tr key={rowKey}>
-                      {cols.map((c) => (
-                        <td key={c} style={{ padding: '4px 8px', borderBottom: '1px solid #222' }}>
-                          {String(row[c] ?? '')}
-                        </td>
-                      ))}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        );
-      } catch {
-        return <pre style={{ fontSize: 12 }}>{content}</pre>;
-      }
-    }
+    case 'table':
+      return <TableBlock data={content} />;
     case 'text':
       return <pre style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{content}</pre>;
     case 'pdf':

@@ -3,7 +3,7 @@ import { os } from './context';
 export const dashboardsRouter = {
   create: os.dashboards.create.handler(async ({ context, input }) => {
     const dashboard = context.dashboards?.create(
-      'default-user',
+      'default-user' /* TODO: replace with auth-context userId once user scoping lands */,
       input.title,
       input.personalityId,
       input.description,
@@ -13,7 +13,10 @@ export const dashboardsRouter = {
   }),
 
   list: os.dashboards.list.handler(async ({ context }) => {
-    const dashboards = context.dashboards?.list('default-user') ?? [];
+    const dashboards =
+      context.dashboards?.list(
+        'default-user' /* TODO: replace with auth-context userId once user scoping lands */,
+      ) ?? [];
     return { dashboards };
   }),
 
@@ -40,7 +43,7 @@ export const dashboardsRouter = {
     let dashboardId = input.dashboardId;
     if (!dashboardId && input.newDashboardTitle) {
       const dashboard = context.dashboards?.create(
-        'default-user',
+        'default-user' /* TODO: replace with auth-context userId once user scoping lands */,
         input.newDashboardTitle,
         input.personalityId ?? 'default',
       );
@@ -82,12 +85,28 @@ export const dashboardsRouter = {
     // SQL refresh: execute query against plugin db
     if (panel.queryType === 'sql' && panel.sqlQuery && panel.pluginId && panel.dataSourceId) {
       try {
-        // For now, store an empty result — real execution would go through
-        // the plugin loader's data-source interface.
-        context.dashboards?.updatePanelContent(input.panelId, '[]');
-        context.dashboards?.clearPanelError(input.panelId);
+        const { default: Database } = await import('better-sqlite3');
+        const pluginLoader = context.pluginLoader;
+        if (!pluginLoader) throw new Error('Plugin loader not configured');
+        const dbPath = pluginLoader.getDataSourcePath(panel.pluginId, panel.dataSourceId);
+        if (!dbPath)
+          throw new Error(
+            `Data source '${panel.dataSourceId}' not registered by plugin '${panel.pluginId}'`,
+          );
+        const db = new Database(dbPath, { readonly: true });
+        try {
+          const stmt = db.prepare(panel.sqlQuery);
+          const rows = stmt.all();
+          context.dashboards?.updatePanelContent(panel.id, JSON.stringify(rows));
+          context.dashboards?.clearPanelError(panel.id);
+        } finally {
+          db.close();
+        }
       } catch (err) {
-        context.dashboards?.setPanelError(input.panelId, String(err));
+        context.dashboards?.setPanelError(
+          panel.id,
+          err instanceof Error ? err.message : String(err),
+        );
       }
     }
     // Prompt refresh would go through AgentLoop — stub for now
@@ -97,16 +116,54 @@ export const dashboardsRouter = {
   refreshAll: os.dashboards.refreshAll.handler(async ({ context, input }) => {
     const panels = context.dashboards?.listLivePanels(input.dashboardId) ?? [];
     for (const panel of panels) {
-      try {
-        if (panel.queryType === 'sql' && panel.sqlQuery) {
-          context.dashboards?.updatePanelContent(panel.id, '[]');
-          context.dashboards?.clearPanelError(panel.id);
+      if (panel.queryType === 'sql' && panel.sqlQuery && panel.pluginId && panel.dataSourceId) {
+        try {
+          const { default: Database } = await import('better-sqlite3');
+          const pluginLoader = context.pluginLoader;
+          if (!pluginLoader) throw new Error('Plugin loader not configured');
+          const dbPath = pluginLoader.getDataSourcePath(panel.pluginId, panel.dataSourceId);
+          if (!dbPath)
+            throw new Error(
+              `Data source '${panel.dataSourceId}' not registered by plugin '${panel.pluginId}'`,
+            );
+          const db = new Database(dbPath, { readonly: true });
+          try {
+            const stmt = db.prepare(panel.sqlQuery);
+            const rows = stmt.all();
+            context.dashboards?.updatePanelContent(panel.id, JSON.stringify(rows));
+            context.dashboards?.clearPanelError(panel.id);
+          } finally {
+            db.close();
+          }
+        } catch (err) {
+          context.dashboards?.setPanelError(
+            panel.id,
+            err instanceof Error ? err.message : String(err),
+          );
         }
-      } catch (err) {
-        context.dashboards?.setPanelError(panel.id, String(err));
       }
     }
     return { ok: true as const };
+  }),
+
+  summarizePrompt: os.dashboards.summarizePrompt.handler(async ({ context, input }) => {
+    const result = await context.sessions.get(input.sessionId);
+    if (!result || result.messages.length === 0) {
+      return { summary: '' };
+    }
+    // Build a condensed text-based summary from the conversation
+    const parts: string[] = [];
+    for (const msg of result.messages) {
+      const role = msg.role === 'user' ? 'User' : 'Assistant';
+      const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+      if (text.length > 500) {
+        parts.push(`${role}: ${text.slice(0, 500)}...`);
+      } else {
+        parts.push(`${role}: ${text}`);
+      }
+    }
+    const summary = `Based on the following conversation, produce the same kind of output:\n\n${parts.join('\n\n')}`;
+    return { summary };
   }),
 
   listWidgetTemplates: os.dashboards.listWidgetTemplates.handler(async ({ context }) => {

@@ -79,6 +79,7 @@ export interface ServiceContainer {
   apiKeys: import('../services/api-keys.service').ApiKeysService;
   toolRegistry?: import('@ethosagent/types').ToolRegistry;
   dashboards?: import('../rpc/context').DashboardsService;
+  pluginLoader?: import('@ethosagent/plugin-loader').PluginLoader;
   systemBus?: import('../services/system-event-bus').SystemEventBus;
 }
 

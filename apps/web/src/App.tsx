@@ -12,6 +12,7 @@ import { Activity } from './pages/Activity';
 import { Batch } from './pages/Batch';
 import { Chat } from './pages/Chat';
 import { Communications } from './pages/Communications';
+import { CreateDashboardFlow } from './pages/CreateDashboardFlow';
 import { Cron } from './pages/Cron';
 import { Dashboards } from './pages/Dashboards';
 import { DashboardView } from './pages/DashboardView';
@@ -137,6 +138,7 @@ export function App() {
           <Route path="/batch" element={<Batch />} />
           <Route path="/eval" element={<Eval />} />
           <Route path="/dashboards" element={<Dashboards />} />
+          <Route path="/dashboards/create" element={<CreateDashboardFlow />} />
           <Route path="/dashboards/:id" element={<DashboardView />} />
           <Route path="/onboarding" element={<Onboarding />} />
           <Route path="/setup/provider" element={<Onboarding startAtStep="provider" />} />

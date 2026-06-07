@@ -1330,6 +1330,9 @@ const dashboards = {
   deletePanel: oc.input(DashboardsDeletePanelInput).output(z.object({ ok: z.literal(true) })),
   refreshPanel: oc.input(DashboardsRefreshPanelInput).output(z.object({ ok: z.literal(true) })),
   refreshAll: oc.input(DashboardsRefreshAllInput).output(z.object({ ok: z.literal(true) })),
+  summarizePrompt: oc
+    .input(z.object({ sessionId: z.string().min(1) }))
+    .output(z.object({ summary: z.string() })),
   listWidgetTemplates: oc.output(DashboardsListWidgetTemplatesOutput),
 };
 

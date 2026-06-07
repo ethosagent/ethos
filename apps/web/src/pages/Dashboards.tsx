@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Card, Empty, Input, Modal, Select, Skeleton, Typography } from 'antd';
-import { useState } from 'react';
+import { Button, Card, Empty, Skeleton, Typography } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { rpc } from '../rpc';
 
@@ -11,28 +10,6 @@ export function Dashboards() {
   });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [createOpen, setCreateOpen] = useState(false);
-  const [title, setTitle] = useState('');
-
-  const { data: persData } = useQuery({
-    queryKey: ['personalities'],
-    queryFn: () => rpc.personalities.list({}),
-  });
-  const [selectedPersonality, setSelectedPersonality] = useState<string>('');
-
-  const createMut = useMutation({
-    mutationFn: () =>
-      rpc.dashboards.create({
-        title,
-        personalityId: selectedPersonality,
-      }),
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['dashboards'] });
-      setCreateOpen(false);
-      setTitle('');
-      navigate(`/dashboards/${result.dashboard.id}`);
-    },
-  });
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => rpc.dashboards.delete({ id }),
@@ -56,7 +33,7 @@ export function Dashboards() {
         <Typography.Title level={3} style={{ margin: 0 }}>
           Dashboards
         </Typography.Title>
-        <Button type="primary" onClick={() => setCreateOpen(true)}>
+        <Button type="primary" onClick={() => navigate('/dashboards/create')}>
           Create Dashboard
         </Button>
       </div>
@@ -101,35 +78,6 @@ export function Dashboards() {
           ))}
         </div>
       )}
-
-      <Modal
-        title="Create Dashboard"
-        open={createOpen}
-        onCancel={() => setCreateOpen(false)}
-        onOk={() => createMut.mutate()}
-        okText="Create"
-        okButtonProps={{
-          disabled: !title || !selectedPersonality,
-          loading: createMut.isPending,
-        }}
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <Input
-            placeholder="Dashboard title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-          <Select
-            placeholder="Select personality"
-            value={selectedPersonality || undefined}
-            onChange={setSelectedPersonality}
-            options={(persData?.items ?? []).map((p: { id: string; name: string }) => ({
-              label: p.name,
-              value: p.id,
-            }))}
-          />
-        </div>
-      </Modal>
     </div>
   );
 }
