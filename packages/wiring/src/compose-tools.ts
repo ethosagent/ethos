@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { LastWriteWinsPolicy, LazyOnDemandPolicy } from '@ethosagent/core';
 import { autonomyTier, KanbanStore } from '@ethosagent/kanban-store';
@@ -203,6 +204,30 @@ export function createTeamMemoryIndexInjector(
       return {
         content: `Team memory topics available (call team_memory_read to load):\n${lines}`,
         position: 'append',
+      };
+    },
+  };
+}
+
+/**
+ * ContextInjector that tells the agent about its personality asset folder.
+ * Files placed at ~/.ethos/personalities/<id>/files/ are readable by render_*
+ * tools via the files:// URI scheme (e.g. files://chart.png).
+ */
+export function createPersonalityFilesInjector(
+  personalityId: string,
+  homedirPath: string,
+): ContextInjector {
+  const filesDir = `${homedirPath}/.ethos/personalities/${personalityId}/files`;
+  return {
+    id: `personality-files:${personalityId}`,
+    priority: 30,
+    shouldInject(ctx: PromptContext): boolean {
+      return ctx.personalityId === personalityId;
+    },
+    async inject(_ctx: PromptContext): Promise<InjectionResult | null> {
+      return {
+        content: `## Asset folder\nFiles at \`${filesDir}/\` are your persistent asset store. Reference them in render tools using the \`files://\` URI scheme — e.g. \`render_file({ src: "files://chart.png" })\`. Files you render from external paths (e.g. /tmp/) are automatically copied here.`,
       };
     },
   };
@@ -518,6 +543,12 @@ export async function composeAllTools(
 
     injectors.push(createTeamMemoryIndexInjector(teamMemory, config.teamName));
   }
+
+  // -------------------------------------------------------------------------
+  // Personality files injector
+  // -------------------------------------------------------------------------
+
+  injectors.push(createPersonalityFilesInjector(activePerson.id, homedir()));
 
   return {
     gatewaySendRef,

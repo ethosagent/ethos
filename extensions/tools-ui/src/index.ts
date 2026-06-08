@@ -1,6 +1,6 @@
-import { readFile } from 'node:fs/promises';
-import { extname } from 'node:path';
-import type { Tool, ToolResult } from '@ethosagent/types';
+import { homedir } from 'node:os';
+import { basename, extname } from 'node:path';
+import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 const IMAGE_MIME: Record<string, string> = {
@@ -48,25 +48,25 @@ const EXT_TO_MIME: Record<string, string> = {
 export const renderImageTool: Tool<SendImageArgs> = {
   name: 'render_image',
   description:
-    'Display an image in the chat UI. Accepts a URL (https://...), a base64 data URI (data:image/...;base64,...), an absolute file path (/tmp/image.png), or a file:// URI (file:///tmp/image.png). The image renders inline in the conversation.',
+    "Display an image in the chat UI. Accepts a URL (https://...), a base64 data URI (data:image/...;base64,...), an absolute file path (/tmp/image.png), a file:// URI (file:///tmp/image.png), or a files:// URI (files://chart.png) that resolves to the personality's asset folder. The image renders inline in the conversation.",
   toolset: 'ui',
   alwaysInclude: true,
   maxResultChars: 500,
-  capabilities: {},
+  capabilities: { fs_reach: { read: 'from-personality' } },
   schema: {
     type: 'object',
     properties: {
       src: {
         type: 'string',
         description:
-          'Image source: URL (https://...), base64 data URI (data:image/...;base64,...), absolute file path (/tmp/image.png), or file:// URI (file:///tmp/image.png). PNG, JPEG, SVG, WebP, GIF supported.',
+          'Image source: URL (https://...), base64 data URI (data:image/...;base64,...), absolute file path (/tmp/image.png), file:// URI (file:///tmp/image.png), or files:// URI ("files://chart.png" resolves to the personality\'s asset folder). PNG, JPEG, SVG, WebP, GIF supported.',
       },
       alt: { type: 'string', description: 'Alt text for accessibility' },
       title: { type: 'string', description: 'Optional caption shown below the image' },
     },
     required: ['src'],
   },
-  async execute(args): Promise<ToolResult> {
+  async execute(args, ctx: ToolContext): Promise<ToolResult> {
     let { src } = args;
     const { alt, title } = args;
     if (!src || typeof src !== 'string') {
@@ -74,23 +74,44 @@ export const renderImageTool: Tool<SendImageArgs> = {
     }
     const isUrl = src.startsWith('http://') || src.startsWith('https://');
     const isDataUri = src.startsWith('data:image/');
+    const isFilesUri = src.startsWith('files://');
     const isFilePath = src.startsWith('/');
     const isFileUri = src.startsWith('file://');
-    if (!isUrl && !isDataUri && !isFilePath && !isFileUri) {
+    if (!isUrl && !isDataUri && !isFilesUri && !isFilePath && !isFileUri) {
       return {
         ok: false,
         code: 'input_invalid',
         error:
-          'src must be a URL (https://...), base64 data URI (data:image/...;base64,...), absolute file path (/path/to/image), or file:// URI',
+          'src must be a URL (https://...), base64 data URI (data:image/...;base64,...), absolute file path (/path/to/image), file:// URI, or files:// URI',
         field: 'src',
       };
     }
-    if (isFilePath || isFileUri) {
-      const filePath = isFileUri ? src.replace(/^file:\/\//, '') : src;
+    if (isFilesUri || isFilePath || isFileUri) {
+      let resolvedPath: string;
+      if (isFilesUri) {
+        if (!ctx.personalityId) {
+          return {
+            ok: false,
+            code: 'not_available',
+            error: 'files:// requires a personality context',
+          };
+        }
+        resolvedPath = `${homedir()}/.ethos/personalities/${ctx.personalityId}/files/${src.slice('files://'.length)}`;
+      } else {
+        resolvedPath = isFileUri ? src.replace(/^file:\/\//, '') : src;
+      }
       try {
-        const buf = await readFile(filePath);
-        const mime = EXT_TO_MIME[extname(filePath).toLowerCase()] ?? 'image/png';
-        src = `data:${mime};base64,${buf.toString('base64')}`;
+        if (!ctx.scopedFs) {
+          return {
+            ok: false,
+            code: 'not_available',
+            error:
+              'Filesystem access not available in this context. The personality must declare fs_reach to use file paths.',
+          };
+        }
+        const bytes = await ctx.scopedFs.readBytes(resolvedPath);
+        const mime = EXT_TO_MIME[extname(resolvedPath).toLowerCase()] ?? 'image/png';
+        src = `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return { ok: false, code: 'execution_failed', error: `Could not read file: ${message}` };
@@ -156,41 +177,76 @@ interface SendFileArgs {
 export const renderFileTool: Tool<SendFileArgs> = {
   name: 'render_file',
   description:
-    'Render a local file inline in the chat UI. Accepts absolute paths (/tmp/file.pdf) or file:// URIs. Images render as inline images; PDFs render in an embedded viewer; text/code/JSON/CSV/Markdown render as a formatted code block.',
+    'Render a local file inline in the chat UI. Accepts absolute paths (/tmp/file.pdf), file:// URIs, or files:// URIs ("files://report.pdf" resolves to the personality\'s asset folder). Images render as inline images; PDFs render in an embedded viewer; text/code/JSON/CSV/Markdown render as a formatted code block.',
   toolset: 'ui',
   alwaysInclude: true,
   maxResultChars: 500,
-  capabilities: {},
+  capabilities: { fs_reach: { read: 'from-personality' } },
   schema: {
     type: 'object',
     properties: {
-      src: { type: 'string', description: 'Absolute file path or file:// URI' },
+      src: {
+        type: 'string',
+        description:
+          'Absolute file path, file:// URI, or files:// URI ("files://report.pdf" resolves to the personality\'s asset folder)',
+      },
       title: { type: 'string', description: 'Optional label shown above the rendered content' },
     },
     required: ['src'],
   },
-  async execute(args): Promise<ToolResult> {
+  async execute(args, ctx: ToolContext): Promise<ToolResult> {
     let { src } = args;
     const { title } = args;
     if (!src || typeof src !== 'string') {
       return { ok: false, code: 'input_invalid', error: 'src is required', field: 'src' };
     }
 
-    // normalise file:// → absolute path
-    if (src.startsWith('file://')) src = src.replace(/^file:\/\//, '');
-    if (!src.startsWith('/')) {
+    const isFilesUri = src.startsWith('files://');
+    const isFileUri = src.startsWith('file://');
+    const isFilePath = !isFilesUri && !isFileUri && src.startsWith('/');
+
+    // resolve files:// → personality asset folder
+    if (isFilesUri) {
+      if (!ctx.personalityId) {
+        return {
+          ok: false,
+          code: 'not_available',
+          error: 'files:// requires a personality context',
+        };
+      }
+      src = `${homedir()}/.ethos/personalities/${ctx.personalityId}/files/${src.slice('files://'.length)}`;
+    } else if (isFileUri) {
+      // normalise file:// → absolute path
+      src = src.replace(/^file:\/\//, '');
+    } else if (!isFilePath) {
       return {
         ok: false,
         code: 'input_invalid',
-        error: 'src must be an absolute path or file:// URI',
+        error: 'src must be an absolute path, file:// URI, or files:// URI',
         field: 'src',
       };
     }
 
-    const ext = extname(src).toLowerCase();
+    const resolvedPath = src;
+    const ext = extname(resolvedPath).toLowerCase();
+
+    if (!ctx.scopedFs) {
+      return {
+        ok: false,
+        code: 'not_available',
+        error:
+          'Filesystem access not available in this context. The personality must declare fs_reach to use file paths.',
+      };
+    }
 
     try {
-      const buf = await readFile(src);
+      const bytes = await ctx.scopedFs.readBytes(resolvedPath);
+
+      // auto-copy external files into the personality's files/ folder
+      if (ctx.personalityId && (isFilePath || isFileUri)) {
+        const dest = `${homedir()}/.ethos/personalities/${ctx.personalityId}/files/${basename(resolvedPath)}`;
+        ctx.scopedFs?.write(dest, bytes).catch(() => {}); // best-effort copy
+      }
 
       // --- image ---
       if (IMAGE_EXTS.has(ext)) {
@@ -200,7 +256,7 @@ export const renderFileTool: Tool<SendFileArgs> = {
           value: title ? `Image: ${title}` : 'Image rendered.',
           structured: {
             _uiType: 'image' as const,
-            content: `data:${mime};base64,${buf.toString('base64')}`,
+            content: `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`,
             metadata: { title },
           },
         };
@@ -213,14 +269,14 @@ export const renderFileTool: Tool<SendFileArgs> = {
           value: title ? `PDF: ${title}` : 'PDF rendered.',
           structured: {
             _uiType: 'pdf' as const,
-            content: `data:application/pdf;base64,${buf.toString('base64')}`,
+            content: `data:application/pdf;base64,${Buffer.from(bytes).toString('base64')}`,
             metadata: { title },
           },
         };
       }
 
       // --- text / code / data ---
-      const text = buf.toString('utf8');
+      const text = Buffer.from(bytes).toString('utf8');
       const html = buildTextHtml(ext, text, title);
       return {
         ok: true,
