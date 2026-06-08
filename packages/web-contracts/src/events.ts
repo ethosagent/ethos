@@ -53,6 +53,8 @@ export const ToolEndEventSchema = z.object({
   /** Tool output body — success value or error message. The web chip
    *  surfaces it on click-to-expand without a follow-up history fetch. */
   result: z.string().optional(),
+  /** Structured payload for rich-content rendering (e.g. _uiType: 'image' | 'html'). */
+  structured: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const UsageEventSchema = z.object({

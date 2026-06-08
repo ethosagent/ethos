@@ -119,6 +119,7 @@
       "@ethosagent/web-api": ["./apps/web-api/src"],
       "@ethosagent/mcp-server": ["./apps/mcp-server/src"],
       "@ethosagent/tools-image": ["./extensions/tools-image/src"],
+      "@ethosagent/tools-ui": ["./extensions/tools-ui/src"],
       "@ethosagent/tools-process": ["./extensions/tools-process/src"],
       "@ethosagent/tools-vision": ["./extensions/tools-vision/src"],
       "@ethosagent/tools-messaging": ["./extensions/tools-messaging/src"],

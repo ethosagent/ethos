@@ -1283,6 +1283,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/tools-ui:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/tools-vision:
     dependencies:
       '@ethosagent/safety-network':
@@ -1599,6 +1605,9 @@ importers:
       '@ethosagent/tools-tts':
         specifier: workspace:*
         version: link:../../extensions/tools-tts
+      '@ethosagent/tools-ui':
+        specifier: workspace:*
+        version: link:../../extensions/tools-ui
       '@ethosagent/tools-vision':
         specifier: workspace:*
         version: link:../../extensions/tools-vision

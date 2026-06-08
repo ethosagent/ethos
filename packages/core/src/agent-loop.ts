@@ -143,6 +143,9 @@ export type AgentEvent =
        * follow-up history fetch.
        */
       result?: string;
+      /** Structured payload from the tool's ToolResult, passed through for
+       *  rich-content rendering (e.g. _uiType: 'image' | 'html'). */
+      structured?: Record<string, unknown>;
     }
   | { type: 'usage'; inputTokens: number; outputTokens: number; estimatedCostUsd: number }
   | { type: 'error'; error: string; code: string }
@@ -1628,6 +1631,9 @@ export class AgentLoop {
             ok: r.result.ok,
             durationMs: Date.now() - startedAt,
             result: r.result.ok ? r.result.value : r.result.error,
+            ...(r.result.ok && r.result.structured !== undefined
+              ? { structured: r.result.structured }
+              : {}),
           };
         }
         fullText = directResult.result.value;
@@ -1712,6 +1718,9 @@ export class AgentLoop {
             ok: result.ok,
             durationMs,
             result: result.ok ? result.value : result.error,
+            ...(result.ok && result.structured !== undefined
+              ? { structured: result.structured }
+              : {}),
           };
           // Aggregate tool-incurred costs (e.g. image generation, vision LLM calls)
           // into the session budget so /usage and budgetCapUsd see them.

@@ -37,6 +37,7 @@ interface BridgeEventMap {
     ok: boolean,
     durationMs: number,
     result: string | undefined,
+    structured: Record<string, unknown> | undefined,
   ];
   usage: [inputTokens: number, outputTokens: number, estimatedCostUsd: number];
   error: [error: string, code: string];
@@ -255,6 +256,7 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
               event.ok,
               event.durationMs,
               event.result,
+              event.structured,
             );
             break;
           case 'usage':

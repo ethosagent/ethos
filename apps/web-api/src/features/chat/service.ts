@@ -267,7 +267,7 @@ export class ChatService {
         audience: 'user',
       }),
     );
-    bridge.on('tool_end', (toolCallId, toolName, ok, durationMs, result) =>
+    bridge.on('tool_end', (toolCallId, toolName, ok, durationMs, result, structured) =>
       this.append(sessionId, {
         type: 'tool_end',
         toolCallId,
@@ -275,6 +275,7 @@ export class ChatService {
         ok,
         durationMs,
         ...(result !== undefined ? { result } : {}),
+        ...(structured !== undefined ? { structured } : {}),
       }),
     );
     bridge.on('usage', (inputTokens, outputTokens, estimatedCostUsd) =>

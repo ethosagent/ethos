@@ -1,5 +1,8 @@
 import { ContentRenderer } from '@ethosagent/ui-components';
 import type { AssistantBlock, AssistantTurn, UserMessage } from '../../lib/chat-reducer';
+import { HtmlBlock } from './HtmlBlock';
+import { ImageBlock } from './ImageBlock';
+import { PdfBlock } from './PdfBlock';
 import { ToolChip } from './ToolChip';
 
 // One rendered message. DESIGN.md voice rules in effect:
@@ -56,9 +59,22 @@ function BlockRenderer({
       </>
     );
   }
+  if (block.kind === 'image') {
+    return <ImageBlock block={block} />;
+  }
+  if (block.kind === 'html') {
+    return <HtmlBlock block={block} />;
+  }
+  if (block.kind === 'pdf') {
+    return <PdfBlock block={block} />;
+  }
   return <ToolChip tool={block} />;
 }
 
 function blockKey(block: AssistantBlock, idx: number): string {
-  return block.kind === 'tool' ? `tool-${block.toolCallId}` : `text-${idx}`;
+  if (block.kind === 'text') return `text-${idx}`;
+  if (block.kind === 'image') return `image-${block.toolCallId}`;
+  if (block.kind === 'html') return `html-${block.toolCallId}`;
+  if (block.kind === 'pdf') return `pdf-${block.toolCallId}`;
+  return `tool-${block.toolCallId}`;
 }

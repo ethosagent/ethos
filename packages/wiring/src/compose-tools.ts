@@ -47,6 +47,7 @@ import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-
 import { createThinkDeeperTool } from '@ethosagent/tools-tier';
 import { compose as composeTodo } from '@ethosagent/tools-todo/compose';
 import { createTtsTools } from '@ethosagent/tools-tts';
+import { buildUiTools } from '@ethosagent/tools-ui';
 import { createWebTools } from '@ethosagent/tools-web';
 import type {
   ContextInjector,
@@ -259,6 +260,7 @@ export async function composeAllTools(
   for (const tool of createFileTools()) tools.register(tool);
   for (const tool of createTerminalTools()) tools.register(tool);
   for (const tool of createWebTools()) tools.register(tool);
+  for (const tool of buildUiTools()) tools.register(tool);
 
   // One InMemoryTodoStore per process — lifetime tied to the AgentLoop.
   const { tools: todoTools } = composeTodo(wiringCtx);

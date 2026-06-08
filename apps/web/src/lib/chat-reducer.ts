@@ -52,7 +52,30 @@ export interface ToolBlock {
   reason?: string;
 }
 
-export type AssistantBlock = TextBlock | ToolBlock;
+export interface ImageBlock {
+  kind: 'image';
+  toolCallId: string;
+  src: string;
+  alt?: string;
+  title?: string;
+}
+
+export interface HtmlBlock {
+  kind: 'html';
+  toolCallId: string;
+  html: string;
+  title?: string;
+  height?: number;
+}
+
+export interface PdfBlock {
+  kind: 'pdf';
+  toolCallId: string;
+  src: string;
+  title?: string;
+}
+
+export type AssistantBlock = TextBlock | ToolBlock | ImageBlock | HtmlBlock | PdfBlock;
 
 export interface AssistantTurn {
   id: string;
@@ -192,9 +215,53 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
         durationMs: event.durationMs,
         ...(event.result !== undefined ? { result: event.result } : {}),
       }));
-      return updated
-        ? { ...updated, lastStreamEventAt: now, currentOp: '\u{1F4AD} Thinking…' }
-        : state;
+      if (!updated) return state;
+
+      const base = { ...updated, lastStreamEventAt: now, currentOp: '\u{1F4AD} Thinking…' };
+      const uiType = event.structured?._uiType;
+
+      if (uiType === 'image') {
+        const content = event.structured?.content as string | undefined;
+        const meta = event.structured?.metadata as Record<string, unknown> | undefined;
+        if (!content) return base;
+        const sibling: ImageBlock = {
+          kind: 'image',
+          toolCallId: event.toolCallId,
+          src: content,
+          alt: meta?.alt as string | undefined,
+          title: meta?.title as string | undefined,
+        };
+        return appendSiblingBlock(base, sibling);
+      }
+
+      if (uiType === 'html') {
+        const content = event.structured?.content as string | undefined;
+        const meta = event.structured?.metadata as Record<string, unknown> | undefined;
+        if (!content) return base;
+        const sibling: HtmlBlock = {
+          kind: 'html',
+          toolCallId: event.toolCallId,
+          html: content,
+          title: meta?.title as string | undefined,
+          height: meta?.height as number | undefined,
+        };
+        return appendSiblingBlock(base, sibling);
+      }
+
+      if (uiType === 'pdf') {
+        const content = event.structured?.content as string | undefined;
+        const meta = event.structured?.metadata as Record<string, unknown> | undefined;
+        if (!content) return base;
+        const sibling: PdfBlock = {
+          kind: 'pdf',
+          toolCallId: event.toolCallId,
+          src: content,
+          title: meta?.title as string | undefined,
+        };
+        return appendSiblingBlock(base, sibling);
+      }
+
+      return base;
     }
 
     case 'done': {
@@ -471,6 +538,33 @@ function updateToolBlock(
   return null;
 }
 
+/**
+ * Append a sibling block to the last turn (currentTurn first, else last
+ * assistant message). Mirrors the location updateToolBlock wrote to.
+ */
+function appendSiblingBlock(
+  state: ChatState,
+  sibling: ImageBlock | HtmlBlock | PdfBlock,
+): ChatState {
+  if (state.currentTurn) {
+    return {
+      ...state,
+      currentTurn: {
+        ...state.currentTurn,
+        blocks: [...state.currentTurn.blocks, sibling],
+      },
+    };
+  }
+  const lastIdx = state.messages.length - 1;
+  const last = state.messages[lastIdx];
+  if (last?.role === 'assistant') {
+    const newMessages = [...state.messages];
+    newMessages[lastIdx] = { ...last, blocks: [...last.blocks, sibling] };
+    return { ...state, messages: newMessages };
+  }
+  return state;
+}
+
 /** Two turns match when they have the same text content + tool ids in
  *  order. Used by the `done` replay defense. */
 function turnsMatch(a: AssistantTurn, b: AssistantTurn): boolean {
@@ -482,6 +576,9 @@ function turnsMatch(a: AssistantTurn, b: AssistantTurn): boolean {
     if (x.kind !== y.kind) return false;
     if (x.kind === 'text' && y.kind === 'text' && x.content !== y.content) return false;
     if (x.kind === 'tool' && y.kind === 'tool' && x.toolCallId !== y.toolCallId) return false;
+    if (x.kind === 'image' && y.kind === 'image' && x.toolCallId !== y.toolCallId) return false;
+    if (x.kind === 'html' && y.kind === 'html' && x.toolCallId !== y.toolCallId) return false;
+    if (x.kind === 'pdf' && y.kind === 'pdf' && x.toolCallId !== y.toolCallId) return false;
   }
   return true;
 }
