@@ -1,7 +1,7 @@
 import type { Tool, ToolResult } from '@ethosagent/types';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const MAX_TIMEOUT_MS = 300_000; // 5 minutes
+const MAX_TIMEOUT_MS = 600_000; // 10 minutes
 
 // ---------------------------------------------------------------------------
 // terminal
