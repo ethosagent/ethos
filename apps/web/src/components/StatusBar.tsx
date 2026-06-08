@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useConfig } from '../features/config/api/queries';
 
 interface StatusBarProps {
@@ -8,6 +8,8 @@ interface StatusBarProps {
 
 export function StatusBar({ drawerOpen, onToggleDrawer }: StatusBarProps) {
   const { data, error, isLoading } = useConfig();
+  const { pathname } = useLocation();
+  const isChat = pathname === '/chat';
 
   const statusState: 'connected' | 'connecting' | 'offline' = isLoading
     ? 'connecting'
@@ -34,37 +36,39 @@ export function StatusBar({ drawerOpen, onToggleDrawer }: StatusBarProps) {
       </Link>
 
       <span className="sb-spacer" />
-      <button
-        type="button"
-        className="sb-link"
-        onClick={onToggleDrawer}
-        aria-label={drawerOpen ? 'Close drawer' : 'Open drawer'}
-        style={{
-          width: 28,
-          height: 28,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: 'none',
-          border: 'none',
-          cursor: 'pointer',
-          padding: 0,
-        }}
-      >
-        <svg
-          aria-hidden="true"
-          width={16}
-          height={16}
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.5}
-          strokeLinecap="round"
+      {isChat && (
+        <button
+          type="button"
+          className="sb-link"
+          onClick={onToggleDrawer}
+          aria-label={drawerOpen ? 'Close drawer' : 'Open drawer'}
+          style={{
+            width: 28,
+            height: 28,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: 0,
+          }}
         >
-          <rect x="1" y="2" width="14" height="12" rx="2" />
-          <line x1="10" y1="2" x2="10" y2="14" />
-        </svg>
-      </button>
+          <svg
+            aria-hidden="true"
+            width={16}
+            height={16}
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+          >
+            <rect x="1" y="2" width="14" height="12" rx="2" />
+            <line x1="10" y1="2" x2="10" y2="14" />
+          </svg>
+        </button>
+      )}
       <span>{providerModel}</span>
     </footer>
   );

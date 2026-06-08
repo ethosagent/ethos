@@ -24,7 +24,7 @@ describe('toResponsesInput', () => {
       { role: 'assistant', content: 'Let me help.' },
       {
         type: 'function_call',
-        id: 'call_1',
+        call_id: 'call_1',
         name: 'read_file',
         arguments: '{"path":"/foo"}',
       },

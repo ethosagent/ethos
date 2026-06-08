@@ -26,14 +26,14 @@ export function useDebugChat(mainSessionId: string | null) {
       setLoading(true);
 
       try {
-        await rpc.debug.chat({
+        const result = await rpc.debug.chat({
           mainSessionId,
           message: text.trim(),
         });
         const assistantMsg: DebugMessage = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
-          content: 'Debug turn started. Full streaming responses coming in v2.',
+          content: result.response,
           timestamp: Date.now(),
         };
         setMessages((prev) => [...prev, assistantMsg]);

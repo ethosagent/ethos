@@ -236,18 +236,38 @@ export class OnboardingService {
     return (body.data ?? []).map((m) => m.id ?? '').filter(Boolean);
   }
 
+  private isAzureUrl(url: string): boolean {
+    return url.includes('azure.com');
+  }
+
   private async openAiCompatibleModels(
     baseUrl: string,
     apiKey: string,
     signal: AbortSignal,
   ): Promise<string[]> {
-    const url = `${baseUrl.replace(/\/$/, '')}/models`;
+    const base = baseUrl.replace(/\/$/, '');
+    if (this.isAzureUrl(base)) {
+      return this.azureModels(base, apiKey, signal);
+    }
+    const url = `${base}/models`;
     validateUrl(url);
     const res = await this.fetchFn(url, {
       headers: { authorization: `Bearer ${apiKey}` },
       signal,
     });
     if (!res.ok) throw new Error(`${baseUrl} returned ${res.status}`);
+    const body = (await res.json()) as { data?: Array<{ id?: string }> };
+    return (body.data ?? []).map((m) => m.id ?? '').filter(Boolean);
+  }
+
+  private async azureModels(base: string, apiKey: string, signal: AbortSignal): Promise<string[]> {
+    const url = `${base}/openai/models?api-version=2024-02-01`;
+    validateUrl(url);
+    const res = await this.fetchFn(url, {
+      headers: { 'api-key': apiKey },
+      signal,
+    });
+    if (!res.ok) throw new Error(`Azure returned ${res.status}`);
     const body = (await res.json()) as { data?: Array<{ id?: string }> };
     return (body.data ?? []).map((m) => m.id ?? '').filter(Boolean);
   }
@@ -335,13 +355,21 @@ export class OnboardingService {
     model: string,
     signal: AbortSignal,
   ): Promise<void> {
-    const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+    const base = baseUrl.replace(/\/$/, '');
+    let url: string;
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+
+    if (this.isAzureUrl(base)) {
+      url = `${base}/openai/deployments/${model}/chat/completions?api-version=2024-08-01-preview`;
+      headers['api-key'] = apiKey;
+    } else {
+      url = `${base}/chat/completions`;
+      headers.authorization = `Bearer ${apiKey}`;
+    }
+
     const res = await this.fetchFn(url, {
       method: 'POST',
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        'content-type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
         model,
         max_tokens: 1,

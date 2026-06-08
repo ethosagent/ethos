@@ -19,13 +19,14 @@ function contentBlockToItems(block: MessageContent, role: 'user' | 'assistant'):
       return [
         {
           type: 'function_call',
-          id: block.id,
+          call_id: block.id,
           name: block.name,
           arguments: typeof block.input === 'string' ? block.input : JSON.stringify(block.input),
         },
       ];
 
     case 'tool_result':
+      if (!block.tool_use_id) return [];
       return [
         {
           type: 'function_call_output',
@@ -65,7 +66,7 @@ function contentBlockToItems(block: MessageContent, role: 'user' | 'assistant'):
  * The Responses API uses a flat list of items:
  * - `{ role: 'user', content: '...' }`
  * - `{ role: 'assistant', content: '...' }`
- * - `{ type: 'function_call', id, name, arguments }`
+ * - `{ type: 'function_call', call_id, name, arguments }`
  * - `{ type: 'function_call_output', call_id, output }`
  */
 export function toResponsesInput(messages: Message[]): unknown[] {

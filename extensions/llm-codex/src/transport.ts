@@ -148,11 +148,14 @@ export async function* streamResponsesApi(
       }
 
       case 'response.output_item.added': {
-        const item = payload.item as { type?: string; id?: string; name?: string } | undefined;
-        if (item?.type === 'function_call' && item.id && item.name) {
-          currentToolId = item.id;
+        const item = payload.item as
+          | { type?: string; id?: string; call_id?: string; name?: string }
+          | undefined;
+        const toolId = item?.call_id ?? item?.id;
+        if (item?.type === 'function_call' && toolId && item.name) {
+          currentToolId = toolId;
           hasToolCalls = true;
-          yield { type: 'tool_use_start', toolCallId: item.id, toolName: item.name };
+          yield { type: 'tool_use_start', toolCallId: toolId, toolName: item.name };
         }
         break;
       }
@@ -170,13 +173,15 @@ export async function* streamResponsesApi(
           | {
               type?: string;
               id?: string;
+              call_id?: string;
               arguments?: string;
             }
           | undefined;
-        if (item?.type === 'function_call' && item.id) {
+        const toolId = item?.call_id ?? item?.id;
+        if (item?.type === 'function_call' && toolId) {
           yield {
             type: 'tool_use_end',
-            toolCallId: item.id,
+            toolCallId: toolId,
             inputJson: item.arguments ?? '',
           };
           // Reset for the next tool call in the same response.

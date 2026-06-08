@@ -253,7 +253,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   });
   const kanbanService = new KanbanService();
   const apiKeysService = new ApiKeysService(opts.apiKeys ?? null);
-  const debugService = new DebugService({ sessionStore: opts.sessionStore });
+  const debugService = new DebugService({ sessionStore: opts.sessionStore, agentLoop });
   // Project-level plugins (`<cwd>/.ethos/plugins/`) are out of scope
   // for v1; user-level only is the standard install path. Threading
   // `workingDir` from boot would be the next step when we add it.

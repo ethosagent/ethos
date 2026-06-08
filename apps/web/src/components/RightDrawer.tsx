@@ -45,39 +45,41 @@ export function RightDrawer({ open, onClose, debugPanelEnabled }: RightDrawerPro
         </button>
       </div>
 
-      <Section title="Tool stream">
-        {!sessionId ? (
-          <EmptyHint>No active session. Start a chat to see tool calls live.</EmptyHint>
-        ) : toolStream.length === 0 ? (
-          <EmptyHint>Quiet for now. Tool activity appears here as the agent works.</EmptyHint>
-        ) : (
-          <ul className="right-drawer-list">
-            {toolStream.map((e) => (
-              <ToolStreamRow key={e.toolCallId} entry={e} />
-            ))}
-          </ul>
-        )}
-      </Section>
+      <div className="right-drawer-scroll">
+        <Section title="Tool stream">
+          {!sessionId ? (
+            <EmptyHint>No active session. Start a chat to see tool calls live.</EmptyHint>
+          ) : toolStream.length === 0 ? (
+            <EmptyHint>Quiet for now. Tool activity appears here as the agent works.</EmptyHint>
+          ) : (
+            <ul className="right-drawer-list">
+              {toolStream.map((e) => (
+                <ToolStreamRow key={e.toolCallId} entry={e} />
+              ))}
+            </ul>
+          )}
+        </Section>
 
-      <Section title="Notifications">
-        {notifications.length === 0 ? (
-          <EmptyHint>No notifications. Cron firings and pending skills surface here.</EmptyHint>
-        ) : (
-          <ul className="right-drawer-list">
-            {notifications.map((n) => (
-              <NotificationRow key={n.id} notification={n} />
-            ))}
-          </ul>
-        )}
-      </Section>
+        <Section title="Notifications">
+          {notifications.length === 0 ? (
+            <EmptyHint>No notifications. Cron firings and pending skills surface here.</EmptyHint>
+          ) : (
+            <ul className="right-drawer-list">
+              {notifications.map((n) => (
+                <NotificationRow key={n.id} notification={n} />
+              ))}
+            </ul>
+          )}
+        </Section>
 
-      <Section title="Usage">
-        {!usage ? (
-          <EmptyHint>No usage yet for this session.</EmptyHint>
-        ) : (
-          <UsageBlock usage={usage} />
-        )}
-      </Section>
+        <Section title="Usage">
+          {!usage ? (
+            <EmptyHint>No usage yet for this session.</EmptyHint>
+          ) : (
+            <UsageBlock usage={usage} />
+          )}
+        </Section>
+      </div>
 
       {debugPanelEnabled && <DebugPanel sessionId={sessionId} />}
     </aside>

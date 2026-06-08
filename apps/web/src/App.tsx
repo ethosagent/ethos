@@ -5,7 +5,7 @@ import { MobileTabBar } from './components/MobileTabBar';
 import { RightDrawer } from './components/RightDrawer';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
-import { useOnboardingState } from './features/config/api/queries';
+import { useConfig, useOnboardingState } from './features/config/api/queries';
 import { usePushEventToasts } from './hooks/usePushEventToasts';
 import { useSessionTitleSync } from './hooks/useSessionTitleSync';
 import { Activity } from './pages/Activity';
@@ -54,6 +54,9 @@ export function App() {
   useOnboardingRedirect();
   usePushEventToasts();
   useSessionTitleSync();
+  const { data: config } = useConfig();
+  const { pathname } = useLocation();
+  const isChat = pathname === '/chat';
 
   // Auto-collapse sidebar / hide drawer when crossing the compact
   // breakpoint. We don't *force* state on every resize tick — just
@@ -147,7 +150,13 @@ export function App() {
         </Routes>
       </main>
       <StatusBar drawerOpen={drawerOpen} onToggleDrawer={() => setDrawerOpen((v) => !v)} />
-      <RightDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      {isChat && (
+        <RightDrawer
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          debugPanelEnabled={config?.debugPanelEnabled ?? false}
+        />
+      )}
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}

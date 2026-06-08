@@ -838,6 +838,7 @@ function WizardConfigTab({
           options={[
             { label: 'Anthropic', value: 'anthropic' },
             { label: 'OpenAI', value: 'openai' },
+            { label: 'Codex', value: 'codex' },
             { label: 'OpenRouter', value: 'openrouter' },
             { label: 'OpenAI Compatible', value: 'openai-compat' },
             { label: 'Ollama', value: 'ollama' },
@@ -1312,6 +1313,7 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
           options={[
             { label: 'Anthropic', value: 'anthropic' },
             { label: 'OpenAI', value: 'openai' },
+            { label: 'Codex', value: 'codex' },
             { label: 'OpenRouter', value: 'openrouter' },
             { label: 'OpenAI Compatible', value: 'openai-compat' },
             { label: 'Ollama', value: 'ollama' },

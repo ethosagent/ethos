@@ -2069,9 +2069,10 @@ export class AgentLoop {
           messages.push({ role: 'assistant', content: msg.content });
         }
       } else if (msg.role === 'tool_result') {
+        if (!msg.toolCallId) continue;
         const resultBlock: MessageContent = {
           type: 'tool_result',
-          tool_use_id: msg.toolCallId ?? '',
+          tool_use_id: msg.toolCallId,
           content: msg.content,
           is_error: false,
         };
@@ -2320,6 +2321,25 @@ export class AgentLoop {
       read: readPrefixes,
       write: writePrefixes,
       alwaysDeny: defaultAlwaysDeny(),
+    });
+  }
+
+  /**
+   * Direct LLM call — bypasses session, personality, tools, and memory.
+   * Intended for lightweight internal uses such as the debug assistant.
+   */
+  completeDirect(
+    messages: import('@ethosagent/types').Message[],
+    opts: {
+      system?: string;
+      maxTokens?: number;
+      abortSignal?: AbortSignal;
+    } = {},
+  ): AsyncIterable<import('@ethosagent/types').CompletionChunk> {
+    return this.llm.complete(messages, [], {
+      system: opts.system,
+      maxTokens: opts.maxTokens,
+      abortSignal: opts.abortSignal,
     });
   }
 }

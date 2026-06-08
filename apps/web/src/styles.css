@@ -2531,6 +2531,12 @@ textarea {
   overflow: hidden;
 }
 
+.right-drawer-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
 .right-drawer-header {
   display: flex;
   align-items: center;
@@ -4168,6 +4174,15 @@ textarea {
 
 .debug-panel {
   border-top: 1px solid var(--ethos-border);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.debug-panel--collapsed {
+  flex: 0 0 auto;
 }
 
 .debug-panel-header {
@@ -4205,10 +4220,14 @@ textarea {
 
 .debug-panel-body {
   padding: 0 12px 8px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .debug-panel-messages {
-  max-height: 40vh;
+  flex: 1;
   overflow-y: auto;
   display: flex;
   flex-direction: column;

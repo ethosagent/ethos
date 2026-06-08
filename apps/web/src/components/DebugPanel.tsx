@@ -30,7 +30,7 @@ export function DebugPanel({ sessionId }: DebugPanelProps) {
   };
 
   return (
-    <section className="debug-panel">
+    <section className={`debug-panel${collapsed ? ' debug-panel--collapsed' : ''}`}>
       <button type="button" className="debug-panel-header" onClick={() => setCollapsed((c) => !c)}>
         <span className="debug-panel-title">Debug</span>
         <span style={{ display: 'flex', gap: 4 }}>

@@ -553,6 +553,7 @@ const DebugChatInput = z.object({
 const DebugChatOutput = z.object({
   sessionId: z.string(),
   turnId: z.string(),
+  response: z.string(),
 });
 
 const debug = {

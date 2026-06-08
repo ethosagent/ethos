@@ -225,6 +225,7 @@ export class OpenAICompatProvider implements LLMProvider {
 
   private readonly client: OpenAI;
   private readonly gemini: boolean;
+  private readonly azure: boolean;
   private readonly toolCallFormat: 'openai' | 'text-xml';
 
   constructor(config: OpenAICompatProviderConfig) {
@@ -232,10 +233,22 @@ export class OpenAICompatProvider implements LLMProvider {
     this.model = config.model;
     this.maxContextTokens = config.maxContextTokens ?? 128_000;
     this.gemini = isGeminiEndpoint(config.baseUrl);
+    this.azure = config.baseUrl.includes('azure.com');
     this.toolCallFormat = config.toolCallFormat ?? 'openai';
+
+    const baseURL = this.azure
+      ? `${config.baseUrl.replace(/\/$/, '')}/openai/deployments/${config.model}`
+      : config.baseUrl;
+
     this.client = new OpenAI({
       apiKey: config.apiKey,
-      baseURL: config.baseUrl,
+      baseURL,
+      ...(this.azure
+        ? {
+            defaultQuery: { 'api-version': '2024-08-01-preview' },
+            defaultHeaders: { 'api-key': config.apiKey },
+          }
+        : {}),
     });
   }
 

@@ -583,6 +583,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         const validProviders = [
           'anthropic',
           'openai',
+          'codex',
           'openrouter',
           'openai-compat',
           'ollama',
