@@ -1218,6 +1218,21 @@ const DashboardsListWidgetTemplatesOutput = z.object({
   templates: z.array(WidgetTemplateSchema),
 });
 
+const ParamDefSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  type: z.enum(['select', 'options', 'date-range']),
+  options: z.array(z.string()).optional(),
+  default: z.string(),
+});
+
+const EmitRuleSchema = z.object({
+  on: z.enum(['rowClick']),
+  param: z.string(),
+  column: z.string(),
+  default: z.string(),
+});
+
 // Dashboard schemas
 const DashboardSchema = z.object({
   id: z.string(),
@@ -1226,6 +1241,8 @@ const DashboardSchema = z.object({
   title: z.string(),
   description: z.string().nullable(),
   cronSchedule: z.string().nullable(),
+  paramsSchema: z.array(ParamDefSchema),
+  paramsCurrent: z.record(z.string(), z.string()),
   createdAt: z.number(),
   updatedAt: z.number(),
 });
@@ -1233,7 +1250,7 @@ const DashboardSchema = z.object({
 const DashboardPanelSchema = z.object({
   id: z.string(),
   dashboardId: z.string(),
-  queryType: z.enum(['static', 'prompt', 'sql']),
+  queryType: z.enum(['static', 'prompt', 'sql', 'header']),
   blockType: z.enum(['html', 'image', 'pdf', 'text', 'table']),
   content: z.string(),
   metadata: z.record(z.string(), z.unknown()).nullable(),
@@ -1245,6 +1262,9 @@ const DashboardPanelSchema = z.object({
   renderHint: z.string().nullable(),
   cronSchedule: z.string().nullable(),
   htmlTemplate: z.string().nullable(),
+  emitConfig: z.array(EmitRuleSchema).nullable(),
+  dependsOn: z.array(z.string()).nullable(),
+  paramDefaults: z.record(z.string(), z.string()),
   lastRunAt: z.number().nullable(),
   lastError: z.string().nullable(),
   sourceConversationId: z.string().nullable(),
@@ -1270,6 +1290,7 @@ const DashboardsUpdateInput = z.object({
   title: z.string().optional(),
   description: z.string().optional(),
   cronSchedule: z.string().nullable().optional(),
+  paramsSchema: z.array(ParamDefSchema).optional(),
 });
 const DashboardsDeleteInput = z.object({ id: z.string().min(1) });
 
@@ -1277,8 +1298,9 @@ const DashboardsAddPanelInput = z.object({
   dashboardId: z.string().nullable(),
   newDashboardTitle: z.string().optional(),
   personalityId: z.string().optional(),
+  paramsSchema: z.array(ParamDefSchema).optional(),
   panel: z.object({
-    queryType: z.enum(['static', 'prompt', 'sql']),
+    queryType: z.enum(['static', 'prompt', 'sql', 'header']),
     blockType: z.enum(['html', 'image', 'pdf', 'text', 'table']),
     content: z.string(),
     metadata: z.record(z.string(), z.unknown()).optional(),
@@ -1299,12 +1321,15 @@ const DashboardsUpdatePanelInput = z.object({
   panelId: z.string().min(1),
   title: z.string().optional(),
   cronSchedule: z.string().nullable().optional(),
-  queryType: z.enum(['static', 'prompt', 'sql']).optional(),
+  queryType: z.enum(['static', 'prompt', 'sql', 'header']).optional(),
   prompt: z.string().nullable().optional(),
   sqlQuery: z.string().nullable().optional(),
   pluginId: z.string().nullable().optional(),
   dataSourceId: z.string().nullable().optional(),
   htmlTemplate: z.string().nullable().optional(),
+  emitConfig: z.array(EmitRuleSchema).nullable().optional(),
+  dependsOn: z.array(z.string()).nullable().optional(),
+  paramDefaults: z.record(z.string(), z.string()).optional(),
 });
 
 const DashboardsUpdatePanelLayoutInput = z.object({
@@ -1319,6 +1344,20 @@ const DashboardsDeletePanelInput = z.object({ panelId: z.string().min(1) });
 
 const DashboardsRefreshPanelInput = z.object({ panelId: z.string().min(1) });
 const DashboardsRefreshAllInput = z.object({ dashboardId: z.string().min(1) });
+
+const DashboardsUpdateParamsInput = z.object({
+  id: z.string().min(1),
+  paramsCurrent: z.record(z.string(), z.string()),
+});
+
+const DashboardsExportInput = z.object({
+  id: z.string().min(1),
+});
+
+const DashboardsImportInput = z.object({
+  exportJson: z.string(),
+  titleOverride: z.string().optional(),
+});
 
 /** @experimental */
 const dashboards = {
@@ -1344,6 +1383,17 @@ const dashboards = {
     .input(z.object({ sessionId: z.string().min(1) }))
     .output(z.object({ summary: z.string() })),
   listWidgetTemplates: oc.output(DashboardsListWidgetTemplatesOutput),
+  updateParams: oc.input(DashboardsUpdateParamsInput).output(z.object({ ok: z.literal(true) })),
+  exportDashboard: oc
+    .input(DashboardsExportInput)
+    .output(z.object({ json: z.string(), panelCount: z.number(), title: z.string() })),
+  importDashboard: oc.input(DashboardsImportInput).output(
+    z.object({
+      dashboardId: z.string(),
+      title: z.string(),
+      warnings: z.array(z.string()),
+    }),
+  ),
 };
 
 // ---------------------------------------------------------------------------

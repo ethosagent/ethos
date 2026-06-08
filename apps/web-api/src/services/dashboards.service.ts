@@ -6,6 +6,23 @@ import Database from 'better-sqlite3';
 // Types
 // ---------------------------------------------------------------------------
 
+export type ParamType = 'select' | 'options' | 'date-range';
+
+export interface ParamDef {
+  key: string;
+  label: string;
+  type: ParamType;
+  options?: string[];
+  default: string;
+}
+
+export interface EmitRule {
+  on: 'rowClick';
+  param: string;
+  column: string;
+  default: string;
+}
+
 export interface Dashboard {
   id: string;
   userId: string;
@@ -13,6 +30,8 @@ export interface Dashboard {
   title: string;
   description: string | null;
   cronSchedule: string | null;
+  paramsSchema: ParamDef[];
+  paramsCurrent: Record<string, string>;
   createdAt: number;
   updatedAt: number;
 }
@@ -20,7 +39,7 @@ export interface Dashboard {
 export interface DashboardPanel {
   id: string;
   dashboardId: string;
-  queryType: 'static' | 'prompt' | 'sql';
+  queryType: 'static' | 'prompt' | 'sql' | 'header';
   blockType: 'html' | 'image' | 'pdf' | 'text' | 'table';
   content: string;
   metadata: Record<string, unknown> | null;
@@ -32,6 +51,9 @@ export interface DashboardPanel {
   renderHint: string | null;
   cronSchedule: string | null;
   htmlTemplate: string | null;
+  emitConfig: EmitRule[] | null;
+  dependsOn: string[] | null;
+  paramDefaults: Record<string, string>;
   lastRunAt: number | null;
   lastError: string | null;
   sourceConversationId: string | null;
@@ -45,7 +67,7 @@ export interface DashboardPanel {
 }
 
 export interface AddPanelInput {
-  queryType: 'static' | 'prompt' | 'sql';
+  queryType: 'static' | 'prompt' | 'sql' | 'header';
   blockType: 'html' | 'image' | 'pdf' | 'text' | 'table';
   content: string;
   metadata?: Record<string, unknown>;
@@ -90,6 +112,8 @@ interface DashboardRow {
   title: string;
   description: string | null;
   cron_schedule: string | null;
+  params_schema: string | null;
+  params_current: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -109,6 +133,9 @@ interface PanelRow {
   render_hint: string | null;
   cron_schedule: string | null;
   html_template: string | null;
+  emit_config: string | null;
+  depends_on: string | null;
+  param_defaults: string | null;
   last_run_at: number | null;
   last_error: string | null;
   source_conversation_id: string | null;
@@ -122,6 +149,22 @@ interface PanelRow {
 }
 
 function toDashboard(row: DashboardRow): Dashboard {
+  let paramsSchema: ParamDef[] = [];
+  if (row.params_schema) {
+    try {
+      paramsSchema = JSON.parse(row.params_schema) as ParamDef[];
+    } catch {
+      paramsSchema = [];
+    }
+  }
+  let paramsCurrent: Record<string, string> = {};
+  if (row.params_current) {
+    try {
+      paramsCurrent = JSON.parse(row.params_current) as Record<string, string>;
+    } catch {
+      paramsCurrent = {};
+    }
+  }
   return {
     id: row.id,
     userId: row.user_id,
@@ -129,6 +172,8 @@ function toDashboard(row: DashboardRow): Dashboard {
     title: row.title,
     description: row.description,
     cronSchedule: row.cron_schedule,
+    paramsSchema,
+    paramsCurrent,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -141,6 +186,30 @@ function toPanel(row: PanelRow): DashboardPanel {
       metadata = JSON.parse(row.metadata) as Record<string, unknown>;
     } catch {
       metadata = null;
+    }
+  }
+  let emitConfig: EmitRule[] | null = null;
+  if (row.emit_config) {
+    try {
+      emitConfig = JSON.parse(row.emit_config) as EmitRule[];
+    } catch {
+      emitConfig = null;
+    }
+  }
+  let dependsOn: string[] | null = null;
+  if (row.depends_on) {
+    try {
+      dependsOn = JSON.parse(row.depends_on) as string[];
+    } catch {
+      dependsOn = null;
+    }
+  }
+  let paramDefaults: Record<string, string> = {};
+  if (row.param_defaults) {
+    try {
+      paramDefaults = JSON.parse(row.param_defaults) as Record<string, string>;
+    } catch {
+      paramDefaults = {};
     }
   }
   return {
@@ -158,6 +227,9 @@ function toPanel(row: PanelRow): DashboardPanel {
     renderHint: row.render_hint,
     cronSchedule: row.cron_schedule,
     htmlTemplate: row.html_template,
+    emitConfig,
+    dependsOn,
+    paramDefaults,
     lastRunAt: row.last_run_at,
     lastError: row.last_error,
     sourceConversationId: row.source_conversation_id,
@@ -207,7 +279,7 @@ export class DashboardsService {
       CREATE TABLE IF NOT EXISTS dashboard_panels (
         id                     TEXT PRIMARY KEY,
         dashboard_id           TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-        query_type             TEXT NOT NULL CHECK(query_type IN ('static','prompt','sql')),
+        query_type             TEXT NOT NULL CHECK(query_type IN ('static','prompt','sql','header')),
         block_type             TEXT NOT NULL CHECK(block_type IN ('html','image','pdf','text','table')),
         content                TEXT NOT NULL,
         metadata               TEXT,
@@ -244,6 +316,21 @@ export class DashboardsService {
     if (!dashCols.some((c) => c.name === 'cron_schedule')) {
       this.db.exec('ALTER TABLE dashboards ADD COLUMN cron_schedule TEXT');
     }
+    if (!dashCols.some((c) => c.name === 'params_schema')) {
+      this.db.exec('ALTER TABLE dashboards ADD COLUMN params_schema TEXT');
+    }
+    if (!dashCols.some((c) => c.name === 'params_current')) {
+      this.db.exec('ALTER TABLE dashboards ADD COLUMN params_current TEXT');
+    }
+    if (!panelCols.some((c) => c.name === 'emit_config')) {
+      this.db.exec('ALTER TABLE dashboard_panels ADD COLUMN emit_config TEXT');
+    }
+    if (!panelCols.some((c) => c.name === 'depends_on')) {
+      this.db.exec('ALTER TABLE dashboard_panels ADD COLUMN depends_on TEXT');
+    }
+    if (!panelCols.some((c) => c.name === 'param_defaults')) {
+      this.db.exec('ALTER TABLE dashboard_panels ADD COLUMN param_defaults TEXT');
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -266,6 +353,8 @@ export class DashboardsService {
       title,
       description: description ?? null,
       cronSchedule: null,
+      paramsSchema: [],
+      paramsCurrent: {},
       createdAt: now,
       updatedAt: now,
     };
@@ -291,7 +380,12 @@ export class DashboardsService {
 
   update(
     id: string,
-    patch: { title?: string; description?: string; cronSchedule?: string | null },
+    patch: {
+      title?: string;
+      description?: string;
+      cronSchedule?: string | null;
+      paramsSchema?: ParamDef[];
+    },
   ): void {
     const now = Date.now();
     const sets: string[] = ['updated_at = ?'];
@@ -307,6 +401,10 @@ export class DashboardsService {
     if (patch.cronSchedule !== undefined) {
       sets.push('cron_schedule = ?');
       params.push(patch.cronSchedule);
+    }
+    if (patch.paramsSchema !== undefined) {
+      sets.push('params_schema = ?');
+      params.push(JSON.stringify(patch.paramsSchema));
     }
     params.push(id);
     this.db.prepare(`UPDATE dashboards SET ${sets.join(', ')} WHERE id = ?`).run(...params);
@@ -390,6 +488,9 @@ export class DashboardsService {
       renderHint: panel.renderHint ?? null,
       cronSchedule: panel.cronSchedule ?? null,
       htmlTemplate: panel.htmlTemplate ?? null,
+      emitConfig: null,
+      dependsOn: null,
+      paramDefaults: {},
       lastRunAt: null,
       lastError: null,
       sourceConversationId: panel.sourceConversationId ?? null,
@@ -408,12 +509,15 @@ export class DashboardsService {
     patch: {
       title?: string;
       cronSchedule?: string | null;
-      queryType?: 'static' | 'prompt' | 'sql';
+      queryType?: 'static' | 'prompt' | 'sql' | 'header';
       prompt?: string | null;
       sqlQuery?: string | null;
       pluginId?: string | null;
       dataSourceId?: string | null;
       htmlTemplate?: string | null;
+      emitConfig?: EmitRule[] | null;
+      dependsOn?: string[] | null;
+      paramDefaults?: Record<string, string>;
     },
   ): void {
     if (patch.queryType === 'sql' && patch.sqlQuery) {
@@ -460,6 +564,18 @@ export class DashboardsService {
     if (patch.htmlTemplate !== undefined) {
       sets.push('html_template = ?');
       params.push(patch.htmlTemplate);
+    }
+    if (patch.emitConfig !== undefined) {
+      sets.push('emit_config = ?');
+      params.push(patch.emitConfig ? JSON.stringify(patch.emitConfig) : null);
+    }
+    if (patch.dependsOn !== undefined) {
+      sets.push('depends_on = ?');
+      params.push(patch.dependsOn ? JSON.stringify(patch.dependsOn) : null);
+    }
+    if (patch.paramDefaults !== undefined) {
+      sets.push('param_defaults = ?');
+      params.push(JSON.stringify(patch.paramDefaults));
     }
     params.push(panelId);
     this.db.prepare(`UPDATE dashboard_panels SET ${sets.join(', ')} WHERE id = ?`).run(...params);
@@ -524,10 +640,215 @@ export class DashboardsService {
   listLivePanels(dashboardId: string): DashboardPanel[] {
     const rows = this.db
       .prepare(
-        "SELECT * FROM dashboard_panels WHERE dashboard_id = ? AND query_type != 'static' ORDER BY row, col",
+        "SELECT * FROM dashboard_panels WHERE dashboard_id = ? AND query_type NOT IN ('static', 'header') ORDER BY row, col",
       )
       .all(dashboardId) as PanelRow[];
     return rows.map(toPanel);
+  }
+
+  // -------------------------------------------------------------------------
+  // Params
+  // -------------------------------------------------------------------------
+
+  updateDashboardParams(id: string, paramsCurrent: Record<string, string>): void {
+    const now = Date.now();
+    this.db
+      .prepare('UPDATE dashboards SET params_current = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(paramsCurrent), now, id);
+  }
+
+  updatePanelParamDefaults(panelId: string, values: Record<string, string>): void {
+    const row = this.db
+      .prepare('SELECT param_defaults FROM dashboard_panels WHERE id = ?')
+      .get(panelId) as { param_defaults: string | null } | undefined;
+    const existing = row?.param_defaults
+      ? (JSON.parse(row.param_defaults) as Record<string, string>)
+      : {};
+    const merged = { ...existing, ...values };
+    const now = Date.now();
+    this.db
+      .prepare('UPDATE dashboard_panels SET param_defaults = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(merged), now, panelId);
+  }
+
+  // -------------------------------------------------------------------------
+  // Export / Import
+  // -------------------------------------------------------------------------
+
+  exportDashboard(id: string): object | null {
+    const result = this.get(id);
+    if (!result) return null;
+    const { dashboard, panels } = result;
+
+    // Build dependencies from panels
+    const depMap = new Map<string, { pluginId: string; dataSourceId: string; titles: string[] }>();
+    for (const p of panels) {
+      if (p.pluginId && p.dataSourceId) {
+        const key = `${p.pluginId}:${p.dataSourceId}`;
+        const entry = depMap.get(key);
+        if (entry) {
+          entry.titles.push(p.title ?? '(untitled)');
+        } else {
+          depMap.set(key, {
+            pluginId: p.pluginId,
+            dataSourceId: p.dataSourceId,
+            titles: [p.title ?? '(untitled)'],
+          });
+        }
+      }
+    }
+
+    const dependencies = [...depMap.values()].map((d) => ({
+      type: 'plugin' as const,
+      pluginId: d.pluginId,
+      dataSourceId: d.dataSourceId,
+      requiredBy: d.titles,
+    }));
+
+    // Build panel ID to index map for dependsOn remapping
+    const idToIndex = new Map(panels.map((p, i) => [p.id, i]));
+
+    const exportPanels = panels.map((p) => ({
+      title: p.title,
+      queryType: p.queryType,
+      blockType: p.blockType,
+      content: p.content,
+      prompt: p.prompt,
+      sqlQuery: p.sqlQuery,
+      pluginId: p.pluginId,
+      dataSourceId: p.dataSourceId,
+      cronSchedule: p.cronSchedule,
+      htmlTemplate: p.htmlTemplate,
+      emitConfig: p.emitConfig,
+      dependsOnIndices: (p.dependsOn ?? [])
+        .map((depId) => idToIndex.get(depId) ?? -1)
+        .filter((i) => i >= 0),
+      paramDefaults: p.paramDefaults,
+      col: p.col,
+      row: p.row,
+      w: p.w,
+      h: p.h,
+    }));
+
+    return {
+      version: 1,
+      title: dashboard.title,
+      dependencies,
+      paramsSchema: dashboard.paramsSchema,
+      paramsCurrent: dashboard.paramsCurrent,
+      cronSchedule: dashboard.cronSchedule,
+      panels: exportPanels,
+    };
+  }
+
+  importDashboard(
+    data: {
+      version: number;
+      title: string;
+      paramsSchema?: ParamDef[];
+      paramsCurrent?: Record<string, string>;
+      cronSchedule?: string | null;
+      panels: Array<{
+        title: string | null;
+        queryType: string;
+        blockType: string;
+        content: string;
+        prompt: string | null;
+        sqlQuery: string | null;
+        pluginId: string | null;
+        dataSourceId: string | null;
+        cronSchedule: string | null;
+        htmlTemplate: string | null;
+        emitConfig: EmitRule[] | null;
+        dependsOnIndices: number[];
+        paramDefaults?: Record<string, string>;
+        col: number;
+        row: number;
+        w: number;
+        h: number;
+      }>;
+    },
+    userId: string,
+    personalityId: string,
+  ): { dashboardId: string; warnings: string[] } {
+    const now = Date.now();
+    const dashId = randomUUID();
+    this.db
+      .prepare(
+        `INSERT INTO dashboards (id, user_id, personality_id, title, description, params_schema, params_current, cron_schedule, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        dashId,
+        userId,
+        personalityId,
+        data.title,
+        null,
+        data.paramsSchema ? JSON.stringify(data.paramsSchema) : null,
+        data.paramsCurrent ? JSON.stringify(data.paramsCurrent) : null,
+        data.cronSchedule ?? null,
+        now,
+        now,
+      );
+
+    // Create panels, collecting new IDs
+    const newPanelIds: string[] = [];
+    for (const p of data.panels) {
+      const panelId = randomUUID();
+      newPanelIds.push(panelId);
+      this.db
+        .prepare(
+          `INSERT INTO dashboard_panels
+           (id, dashboard_id, query_type, block_type, content, prompt, sql_query,
+            plugin_id, data_source_id, cron_schedule, html_template, title,
+            emit_config, param_defaults,
+            col, row, w, h, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          panelId,
+          dashId,
+          p.queryType,
+          p.blockType,
+          p.content,
+          p.prompt,
+          p.sqlQuery,
+          p.pluginId,
+          p.dataSourceId,
+          p.cronSchedule,
+          p.htmlTemplate,
+          p.title,
+          p.emitConfig ? JSON.stringify(p.emitConfig) : null,
+          p.paramDefaults ? JSON.stringify(p.paramDefaults) : null,
+          p.col,
+          p.row,
+          p.w,
+          p.h,
+          now,
+          now,
+        );
+    }
+
+    // Remap dependsOnIndices to new panel UUIDs
+    for (let i = 0; i < data.panels.length; i++) {
+      const panel = data.panels[i];
+      if (panel && panel.dependsOnIndices.length > 0) {
+        const depIds = panel.dependsOnIndices
+          .map((idx) => newPanelIds[idx])
+          .filter((id): id is string => id !== undefined);
+        if (depIds.length > 0) {
+          const pid = newPanelIds[i];
+          if (pid) {
+            this.db
+              .prepare('UPDATE dashboard_panels SET depends_on = ? WHERE id = ?')
+              .run(JSON.stringify(depIds), pid);
+          }
+        }
+      }
+    }
+
+    const warnings: string[] = [];
+    return { dashboardId: dashId, warnings };
   }
 
   // -------------------------------------------------------------------------

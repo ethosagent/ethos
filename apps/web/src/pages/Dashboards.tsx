@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Card, Empty, Skeleton, Typography } from 'antd';
+import { Button, Card, Empty, message, Skeleton, Space, Typography } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { rpc } from '../rpc';
 
@@ -14,6 +14,23 @@ export function Dashboards() {
   const deleteMut = useMutation({
     mutationFn: (id: string) => rpc.dashboards.delete({ id }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['dashboards'] }),
+  });
+
+  const importMut = useMutation({
+    mutationFn: async (file: File) => {
+      const text = await file.text();
+      return rpc.dashboards.importDashboard({ exportJson: text });
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['dashboards'] });
+      if (result.warnings.length > 0) {
+        message.warning(result.warnings.join('\n'));
+      }
+      navigate(`/dashboards/${result.dashboardId}`);
+    },
+    onError: () => {
+      message.error('Import failed');
+    },
   });
 
   if (isLoading) return <Skeleton active />;
@@ -33,9 +50,25 @@ export function Dashboards() {
         <Typography.Title level={3} style={{ margin: 0 }}>
           Dashboards
         </Typography.Title>
-        <Button type="primary" onClick={() => navigate('/dashboards/create')}>
-          Create Dashboard
-        </Button>
+        <Space>
+          <input
+            type="file"
+            accept=".json"
+            style={{ display: 'none' }}
+            id="import-dashboard"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) importMut.mutate(file);
+              e.target.value = '';
+            }}
+          />
+          <Button onClick={() => document.getElementById('import-dashboard')?.click()}>
+            Import
+          </Button>
+          <Button type="primary" onClick={() => navigate('/dashboards/create')}>
+            Create Dashboard
+          </Button>
+        </Space>
       </div>
 
       {dashboards.length === 0 ? (

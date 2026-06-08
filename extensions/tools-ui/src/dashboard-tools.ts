@@ -52,8 +52,61 @@ export interface DashboardToolStore {
       pluginId?: string | null;
       dataSourceId?: string | null;
       htmlTemplate?: string | null;
+      emitConfig?: Array<{ on: string; param: string; column: string; default: string }> | null;
+      dependsOn?: string[] | null;
+      paramDefaults?: Record<string, string>;
     },
   ): void;
+  getDashboard(dashboardId: string): {
+    dashboard: {
+      paramsSchema: Array<{
+        key: string;
+        label: string;
+        type: string;
+        options?: string[];
+        default: string;
+      }>;
+      paramsCurrent: Record<string, string>;
+      cronSchedule: string | null;
+    };
+    panels: Array<{
+      id: string;
+      title: string | null;
+      pluginId: string | null;
+      dataSourceId: string | null;
+      emitConfig: Array<{ on: string; param: string; column: string; default: string }> | null;
+      dependsOn: string[] | null;
+      paramDefaults: Record<string, string>;
+      queryType: string;
+      blockType: string;
+      content: string;
+      prompt: string | null;
+      sqlQuery: string | null;
+      htmlTemplate: string | null;
+      cronSchedule: string | null;
+      col: number;
+      row: number;
+      w: number;
+      h: number;
+    }>;
+  } | null;
+  updateDashboardParams(dashboardId: string, paramsCurrent: Record<string, string>): void;
+  updateParamsSchema(
+    dashboardId: string,
+    paramsSchema: Array<{
+      key: string;
+      label: string;
+      type: string;
+      options?: string[];
+      default: string;
+    }>,
+  ): void;
+  exportDashboard(dashboardId: string): object | null;
+  importDashboard(
+    data: Record<string, unknown>,
+    userId: string,
+    personalityId: string,
+  ): { dashboardId: string; warnings: string[] };
 }
 
 interface DashboardCreateArgs {
@@ -318,12 +371,15 @@ export function createDashboardUpdatePanelLayoutTool(
 interface DashboardUpdatePanelArgs {
   panel_id: string;
   title?: string;
-  query_type?: 'static' | 'prompt' | 'sql';
+  query_type?: 'static' | 'prompt' | 'sql' | 'header';
   prompt?: string;
   sql_query?: string;
   plugin_id?: string;
   data_source_id?: string;
   html_template?: string;
+  param_defaults?: Record<string, string>;
+  emit_config?: Array<{ on: string; param: string; column: string; default: string }>;
+  depends_on?: string[];
 }
 
 export function createDashboardUpdatePanelTool(
@@ -354,6 +410,30 @@ export function createDashboardUpdatePanelTool(
           type: 'string',
           description: 'HTML template with {{column_name}} placeholders, for sql-type panels only',
         },
+        param_defaults: {
+          type: 'object',
+          description: 'Per-param fallback values for this panel.',
+          additionalProperties: { type: 'string' },
+        },
+        emit_config: {
+          type: 'array',
+          description: 'Rules for what this panel emits on user interaction.',
+          items: {
+            type: 'object',
+            properties: {
+              on: { type: 'string', enum: ['rowClick'] },
+              param: { type: 'string' },
+              column: { type: 'string' },
+              default: { type: 'string' },
+            },
+            required: ['on', 'param', 'column', 'default'],
+          },
+        },
+        depends_on: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Panel IDs that must finish refreshing before this panel refreshes.',
+        },
       },
       required: ['panel_id'],
     },
@@ -379,11 +459,174 @@ export function createDashboardUpdatePanelTool(
         pluginId: args.plugin_id,
         dataSourceId: args.data_source_id,
         htmlTemplate: args.html_template,
+        emitConfig: args.emit_config ?? undefined,
+        dependsOn: args.depends_on ?? undefined,
+        paramDefaults: args.param_defaults ?? undefined,
       });
       return {
         ok: true,
         value: `Panel ${args.panel_id} updated${args.query_type ? ` → ${args.query_type}` : ''}.`,
       };
+    },
+  };
+}
+
+interface DashboardSetParamsArgs {
+  dashboard_id: string;
+  params_schema?: Array<{
+    key: string;
+    label: string;
+    type: string;
+    options?: string[];
+    default: string;
+  }>;
+  params_current?: Record<string, string>;
+}
+
+export function createDashboardSetParamsTool(
+  store: DashboardToolStore,
+): Tool<DashboardSetParamsArgs> {
+  return {
+    name: 'dashboard_set_params',
+    description:
+      'Define or update the parameter schema for a dashboard and optionally set current values.',
+    toolset: 'dashboard',
+    maxResultChars: 2000,
+    capabilities: {},
+    schema: {
+      type: 'object',
+      properties: {
+        dashboard_id: { type: 'string', description: 'Dashboard ID' },
+        params_schema: {
+          type: 'array',
+          description: 'Full replacement for the param schema.',
+          items: {
+            type: 'object',
+            properties: {
+              key: { type: 'string' },
+              label: { type: 'string' },
+              type: { type: 'string', enum: ['select', 'options', 'date-range'] },
+              options: { type: 'array', items: { type: 'string' } },
+              default: { type: 'string' },
+            },
+            required: ['key', 'label', 'type', 'default'],
+          },
+        },
+        params_current: {
+          type: 'object',
+          description: 'Partial update to current param values.',
+          additionalProperties: { type: 'string' },
+        },
+      },
+      required: ['dashboard_id'],
+    },
+    async execute(args): Promise<ToolResult> {
+      if (!args.dashboard_id) {
+        return { ok: false, error: 'dashboard_id is required', code: 'input_invalid' };
+      }
+      if (!store.exists(args.dashboard_id)) {
+        return { ok: false, error: 'Dashboard not found', code: 'not_available' };
+      }
+      if (args.params_schema) {
+        store.updateParamsSchema(args.dashboard_id, args.params_schema);
+      }
+      if (args.params_current) {
+        store.updateDashboardParams(args.dashboard_id, args.params_current);
+      }
+      return { ok: true, value: 'Dashboard params updated.' };
+    },
+  };
+}
+
+interface DashboardExportArgs {
+  dashboard_id: string;
+}
+
+export function createDashboardExportTool(store: DashboardToolStore): Tool<DashboardExportArgs> {
+  return {
+    name: 'dashboard_export',
+    description: 'Export a dashboard as a portable JSON string.',
+    toolset: 'dashboard',
+    maxResultChars: 80_000,
+    capabilities: {},
+    schema: {
+      type: 'object',
+      properties: {
+        dashboard_id: { type: 'string', description: 'Dashboard ID' },
+      },
+      required: ['dashboard_id'],
+    },
+    async execute(args): Promise<ToolResult> {
+      if (!args.dashboard_id) {
+        return { ok: false, error: 'dashboard_id is required', code: 'input_invalid' };
+      }
+      const data = store.exportDashboard(args.dashboard_id);
+      if (!data) {
+        return { ok: false, error: 'Dashboard not found', code: 'not_available' };
+      }
+      const json = JSON.stringify(data);
+      const record = data as Record<string, unknown>;
+      const panels = (Array.isArray(record.panels) ? record.panels : []) as unknown[];
+      return {
+        ok: true,
+        value: JSON.stringify({
+          json,
+          panel_count: panels.length,
+          title: record.title ?? '',
+          dependencies: Array.isArray(record.dependencies) ? record.dependencies : [],
+        }),
+      };
+    },
+  };
+}
+
+interface DashboardImportArgs {
+  export_json: string;
+  title_override?: string;
+}
+
+export function createDashboardImportTool(store: DashboardToolStore): Tool<DashboardImportArgs> {
+  return {
+    name: 'dashboard_import',
+    description: 'Create a new dashboard from a previously exported dashboard JSON.',
+    toolset: 'dashboard',
+    maxResultChars: 2000,
+    capabilities: {},
+    schema: {
+      type: 'object',
+      properties: {
+        export_json: {
+          type: 'string',
+          description: 'The JSON string produced by dashboard_export.',
+        },
+        title_override: {
+          type: 'string',
+          description: 'Optional new title for the imported dashboard.',
+        },
+      },
+      required: ['export_json'],
+    },
+    async execute(args, ctx): Promise<ToolResult> {
+      if (!args.export_json) {
+        return { ok: false, error: 'export_json is required', code: 'input_invalid' };
+      }
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(args.export_json) as Record<string, unknown>;
+      } catch {
+        return { ok: false, error: 'Invalid JSON', code: 'input_invalid' };
+      }
+      if (args.title_override) {
+        data.title = args.title_override;
+      }
+      const userId = (ctx as { userId?: string }).userId ?? 'default-user';
+      const personalityId = typeof data.personalityId === 'string' ? data.personalityId : 'default';
+      const result = store.importDashboard(data, userId, personalityId);
+      let value = `Dashboard imported: '${String(data.title ?? '')}' (id: ${result.dashboardId})\nURL: /dashboards/${result.dashboardId}`;
+      if (result.warnings.length > 0) {
+        value += `\n\nWarnings:\n${result.warnings.join('\n')}`;
+      }
+      return { ok: true, value };
     },
   };
 }
@@ -395,5 +638,8 @@ export function buildDashboardTools(store: DashboardToolStore): Tool[] {
     createDashboardListPanelsTool(store) as Tool,
     createDashboardUpdatePanelLayoutTool(store) as Tool,
     createDashboardUpdatePanelTool(store) as Tool,
+    createDashboardSetParamsTool(store) as Tool,
+    createDashboardExportTool(store) as Tool,
+    createDashboardImportTool(store) as Tool,
   ];
 }

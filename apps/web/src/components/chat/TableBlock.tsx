@@ -1,11 +1,13 @@
 import { Table } from 'antd';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 interface Props {
   data: string;
+  onRowClick?: (row: Record<string, unknown>) => void;
 }
 
-export function TableBlock({ data }: Props) {
+export function TableBlock({ data, onRowClick }: Props) {
+  const [selectedRowKey, setSelectedRowKey] = useState<number | null>(null);
   const { columns, rows } = useMemo(() => {
     try {
       const parsed = JSON.parse(data) as Record<string, unknown>[];
@@ -33,12 +35,31 @@ export function TableBlock({ data }: Props) {
   if (columns.length === 0) return <div style={{ color: '#888' }}>No data</div>;
 
   return (
-    <Table
-      columns={columns}
-      dataSource={rows}
-      size="small"
-      pagination={{ pageSize: 20, hideOnSinglePage: true }}
-      scroll={{ x: 'max-content' }}
-    />
+    <>
+      {onRowClick && (
+        <style>{'.ethos-table-row-selected td { background: #e6f4ff !important; }'}</style>
+      )}
+      <Table
+        columns={columns}
+        dataSource={rows}
+        size="small"
+        pagination={{ pageSize: 20, hideOnSinglePage: true }}
+        scroll={{ x: 'max-content' }}
+        onRow={(record) => ({
+          onClick: () => {
+            if (onRowClick) {
+              setSelectedRowKey(record.key as number);
+              onRowClick(record as Record<string, unknown>);
+            }
+          },
+          style: onRowClick ? { cursor: 'pointer' } : undefined,
+        })}
+        rowClassName={(record) =>
+          onRowClick && (record as Record<string, unknown>).key === selectedRowKey
+            ? 'ethos-table-row-selected'
+            : ''
+        }
+      />
+    </>
   );
 }

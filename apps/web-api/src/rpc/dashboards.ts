@@ -32,6 +32,7 @@ export const dashboardsRouter = {
       title: input.title,
       description: input.description,
       cronSchedule: input.cronSchedule,
+      paramsSchema: input.paramsSchema,
     });
     return { ok: true as const };
   }),
@@ -68,6 +69,8 @@ export const dashboardsRouter = {
       pluginId: input.pluginId,
       dataSourceId: input.dataSourceId,
       htmlTemplate: input.htmlTemplate,
+      emitConfig: input.emitConfig,
+      dependsOn: input.dependsOn,
     });
     return { ok: true as const };
   }),
@@ -135,5 +138,37 @@ export const dashboardsRouter = {
   listWidgetTemplates: os.dashboards.listWidgetTemplates.handler(async ({ context }) => {
     const templates = (await context.dashboards?.listWidgetTemplates()) ?? [];
     return { templates };
+  }),
+
+  updateParams: os.dashboards.updateParams.handler(async ({ context, input }) => {
+    context.dashboards?.updateDashboardParams(input.id, input.paramsCurrent);
+    return { ok: true as const };
+  }),
+
+  exportDashboard: os.dashboards.exportDashboard.handler(async ({ context, input }) => {
+    const result = context.dashboards?.exportDashboard(input.id);
+    if (!result) throw new Error('Dashboard not found');
+    const json = JSON.stringify(result);
+    const panels = (result as { panels?: unknown[] }).panels ?? [];
+    return {
+      json,
+      panelCount: panels.length,
+      title: (result as { title: string }).title,
+    };
+  }),
+
+  importDashboard: os.dashboards.importDashboard.handler(async ({ context, input }) => {
+    const data = JSON.parse(input.exportJson);
+    if (!context.dashboards) throw new Error('Dashboards service not configured');
+    const result = context.dashboards.importDashboard(
+      data,
+      'default-user',
+      data.personalityId ?? 'default',
+    );
+    return {
+      dashboardId: result.dashboardId,
+      title: input.titleOverride ?? data.title ?? 'Imported Dashboard',
+      warnings: result.warnings,
+    };
   }),
 };

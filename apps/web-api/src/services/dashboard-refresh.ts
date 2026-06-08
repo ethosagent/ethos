@@ -1,8 +1,9 @@
 import type { AgentLoop } from '@ethosagent/core';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
 import type { DashboardPanel } from './dashboards.service';
+import { extractParamRefs, interpolateParams } from './interpolate-params';
 
-interface RefreshablePanelData {
+export interface RefreshablePanelData {
   id: string;
   dashboardId: string;
   queryType: string;
@@ -12,6 +13,8 @@ interface RefreshablePanelData {
   pluginId: string | null;
   dataSourceId: string | null;
   htmlTemplate: string | null;
+  paramDefaults: Record<string, string>;
+  dependsOn: string[] | null;
 }
 
 /** Minimal surface of DashboardsService needed for panel refresh. */
@@ -20,6 +23,7 @@ export interface RefreshDashboardsHandle {
   updatePanelContent(panelId: string, content: string, blockType?: string): void;
   setPanelError(panelId: string, error: string): void;
   clearPanelError(panelId: string): void;
+  updatePanelParamDefaults(panelId: string, values: Record<string, string>): void;
 }
 
 interface RefreshDeps {
@@ -31,9 +35,25 @@ interface RefreshDeps {
 export async function refreshSinglePanel(
   panel: RefreshablePanelData,
   deps: RefreshDeps,
+  params?: {
+    ephemeral?: Record<string, string>;
+    persistent?: Record<string, string>;
+  },
 ): Promise<void> {
+  if (panel.queryType === 'header') return;
+
+  const ephemeral = params?.ephemeral ?? {};
+  const persistent = params?.persistent ?? {};
+  const panelDefaults = panel.paramDefaults ?? {};
+  const sqlQuery = panel.sqlQuery
+    ? interpolateParams(panel.sqlQuery, ephemeral, persistent, panelDefaults)
+    : null;
+  const prompt = panel.prompt
+    ? interpolateParams(panel.prompt, ephemeral, persistent, panelDefaults)
+    : null;
+
   // SQL refresh
-  if (panel.queryType === 'sql' && panel.sqlQuery && panel.pluginId && panel.dataSourceId) {
+  if (panel.queryType === 'sql' && sqlQuery && panel.pluginId && panel.dataSourceId) {
     try {
       const { default: Database } = await import('better-sqlite3');
       const pluginLoader = deps.pluginLoader;
@@ -45,7 +65,7 @@ export async function refreshSinglePanel(
         );
       const db = new Database(dbPath, { readonly: true });
       try {
-        const stmt = db.prepare(panel.sqlQuery);
+        const stmt = db.prepare(sqlQuery);
         const rows = stmt.all();
         if (panel.htmlTemplate && rows.length > 0) {
           const html = panel.htmlTemplate.replace(/\{\{(\w+)\}\}/g, (_, key) => {
@@ -58,6 +78,7 @@ export async function refreshSinglePanel(
           deps.dashboards.updatePanelContent(panel.id, JSON.stringify(rows));
         }
         deps.dashboards.clearPanelError(panel.id);
+        writeBackParams(panel, ephemeral, persistent, panelDefaults, deps);
       } finally {
         db.close();
       }
@@ -67,7 +88,7 @@ export async function refreshSinglePanel(
   }
 
   // Prompt refresh via AgentLoop
-  if (panel.queryType === 'prompt' && panel.prompt) {
+  if (panel.queryType === 'prompt' && prompt) {
     const loop = deps.agentLoop;
     if (!loop) {
       deps.dashboards.setPanelError(panel.id, 'Agent loop not configured');
@@ -81,7 +102,7 @@ export async function refreshSinglePanel(
       // Inject dashboard widget context into the prompt
       const widgetContext =
         '## Dashboard widget context\nYou are rendering output for a dashboard widget, not a conversational response.\n- No conversational preamble or postamble\n- Prefer render_html for charts and tables — output must be self-contained and visually compact\n- For tabular data, always use a styled HTML table, not markdown\n- Keep output compact and scannable for a fixed-size panel';
-      const fullPrompt = `${widgetContext}\n\n${panel.prompt}`;
+      const fullPrompt = `${widgetContext}\n\n${prompt}`;
 
       // Run through AgentLoop
       const sessionKey = `dashboard:${panel.dashboardId}:${panel.id}:${Date.now()}`;
@@ -105,8 +126,54 @@ export async function refreshSinglePanel(
 
       deps.dashboards.updatePanelContent(panel.id, content);
       deps.dashboards.clearPanelError(panel.id);
+      writeBackParams(panel, ephemeral, persistent, panelDefaults, deps);
     } catch (err) {
       deps.dashboards.setPanelError(panel.id, err instanceof Error ? err.message : String(err));
     }
   }
+}
+
+function writeBackParams(
+  panel: RefreshablePanelData,
+  ephemeral: Record<string, string>,
+  persistent: Record<string, string>,
+  panelDefaults: Record<string, string>,
+  deps: RefreshDeps,
+): void {
+  const template = (panel.sqlQuery ?? '') + (panel.prompt ?? '');
+  const refs = extractParamRefs(template);
+  if (refs.length > 0) {
+    const usedValues: Record<string, string> = {};
+    for (const key of refs) {
+      const val = ephemeral[key] ?? persistent[key] ?? panelDefaults[key];
+      if (val !== undefined) usedValues[key] = val;
+    }
+    if (Object.keys(usedValues).length > 0) {
+      deps.dashboards.updatePanelParamDefaults(panel.id, usedValues);
+    }
+  }
+}
+
+export function buildRefreshLayers(panels: RefreshablePanelData[]): RefreshablePanelData[][] {
+  const inDegree = new Map(panels.map((p) => [p.id, (p.dependsOn ?? []).length]));
+  const ready = panels.filter((p) => inDegree.get(p.id) === 0);
+  const layers: RefreshablePanelData[][] = [];
+
+  while (ready.length > 0) {
+    layers.push([...ready]);
+    const next: RefreshablePanelData[] = [];
+    for (const p of ready) {
+      for (const candidate of panels) {
+        if (candidate.dependsOn?.includes(p.id)) {
+          const deg = (inDegree.get(candidate.id) ?? 1) - 1;
+          inDegree.set(candidate.id, deg);
+          if (deg === 0) next.push(candidate);
+        }
+      }
+    }
+    ready.length = 0;
+    ready.push(...next);
+  }
+
+  return layers;
 }
