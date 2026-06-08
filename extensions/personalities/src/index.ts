@@ -549,6 +549,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     }
     const dir = this.userPathFor(input.id);
     await this.storage.mkdir(dir);
+    await this.storage.mkdir(join(dir, 'files'));
     await this.storage.write(join(dir, 'config.yaml'), renderConfigYaml(input));
     await this.storage.write(join(dir, 'toolset.yaml'), renderToolsetYaml(input.toolset));
     await this.storage.write(join(dir, 'SOUL.md'), input.soulMd);
@@ -779,6 +780,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     if (!this.userDir) throw new Error('userDir undefined after userPathFor() call');
     await this.storage.mkdir(this.userDir);
     await copyTree(this.storage, sourceDir, destDir);
+    await this.storage.mkdir(join(destDir, 'files'));
     await this.bumpDuplicateName(destDir, newId, src.name);
     await this.refreshUserDir();
     const created = this.describe(newId);

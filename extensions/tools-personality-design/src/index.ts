@@ -273,13 +273,14 @@ function scaffoldPersonalityTool(storage: Storage, toolRegistry: ToolRegistry): 
 
       // Write files atomically
       await storage.mkdir(base);
+      await storage.mkdir(join(base, 'files'));
       await storage.writeAtomic(join(base, 'SOUL.md'), args.soul_md);
       await storage.writeAtomic(join(base, 'config.yaml'), configYaml);
       await storage.writeAtomic(join(base, 'toolset.yaml'), toolsetYaml);
 
       return {
         ok: true,
-        value: `Personality "${args.id}" scaffolded successfully.\n\nFiles written:\n- ${base}/SOUL.md\n- ${base}/config.yaml\n- ${base}/toolset.yaml\n\nTest it: ethos chat --personality ${args.id}`,
+        value: `Personality "${args.id}" scaffolded successfully.\n\nFiles written:\n- ${base}/SOUL.md\n- ${base}/config.yaml\n- ${base}/toolset.yaml\n\nAsset folder:\n- ${base}/files/  ← drop images, PDFs, documents here; reference via files://filename\n\nTest it: ethos chat --personality ${args.id}`,
       };
     },
   };
