@@ -80,7 +80,7 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
     this.loop = loop;
     this.queueCap = options.queueCap ?? 10;
     this.flushIntervalMs = options.flushIntervalMs ?? 16;
-    this.turnTimeoutMs = options.turnTimeoutMs ?? 5 * 60 * 1000;
+    this.turnTimeoutMs = options.turnTimeoutMs ?? 10 * 60 * 1000;
   }
 
   get isRunning(): boolean {
