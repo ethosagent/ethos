@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: use-web-dashboard
 time: "10 min"
-updated: 2026-05-22
+updated: 2026-06-09
 ---
 
 ## Task
@@ -46,7 +46,7 @@ Then open `http://localhost:3000` in your local browser.
 
 ### 2. Navigate the main tabs
 
-The sidebar shows five tabs:
+The sidebar shows seven tabs:
 
 | Tab | Purpose |
 |---|---|
@@ -55,6 +55,8 @@ The sidebar shows five tabs:
 | **Memory** | Browse and search personality memory (`MEMORY.md`) and user memory (`USER.md`). |
 | **Cron** | View, manage, and test scheduled jobs. |
 | **MCP** | Add MCP servers, handle OAuth, manage tokens. |
+| **Dashboards** | View plugin data sources as customizable widget panels. |
+| **Admin** | Manage channels, API keys, and MCP server connections. |
 
 ### 3. Create a personality via the wizard
 
@@ -163,6 +165,40 @@ For production deployments behind a reverse proxy (nginx, Caddy), point the prox
 
 The dashboard does not implement its own authentication. Access control relies on the network boundary (SSH tunnel, VPN, or reverse proxy with auth). Do not expose port 3000 to the public internet without an authentication layer in front.
 
+### 10. Use dashboards
+
+Dashboards display data from plugin data sources as customizable panels.
+
+Navigate to the **Dashboards** tab.
+
+Click **Add widget** to see available widget templates. Plugins that ship a `widgets.yaml` contribute pre-built panels — each shows a title, description, and plugin badge. Click a template to create a panel pre-filled with the template's SQL query.
+
+The dashboard runs read-only SQL against plugin-registered SQLite databases. Mutating queries (`INSERT`, `UPDATE`, `DELETE`, `DROP`) are rejected with a `READONLY_QUERY_ONLY` error.
+
+### 11. Navigate the admin panel
+
+Navigate to `/admin` for operational management. The admin panel has three tabs:
+
+- **Channels** — view configured channel adapter status and webhook URLs.
+- **API Keys** — check LLM provider health and rotate API keys.
+- **MCP Servers** — add or remove MCP server connections.
+
+For the full walkthrough, see [Use the admin panel](use-admin-panel.md).
+
+### 12. Review skill proposals
+
+When the skill evolver proposes a new skill, a badge appears in the status bar.
+
+Click the badge to open the proposals panel. Each proposal shows the skill name, when it was proposed, and a preview of the content. Approve to activate the skill; reject to delete it.
+
+For the full workflow, see [Manage skill evolution](manage-skill-evolution.md).
+
+### 13. Handle background notifications
+
+When a background process completes, a notification appears inline in the chat. Failed processes include the last 1000 characters of stderr.
+
+If you're offline when a process completes, the notification is buffered and delivered when you next open a session.
+
 ## Verify
 
 Open `http://localhost:3000` in your browser. The dashboard loads with the sidebar tabs visible. Click **Personalities** — your existing personalities appear as cards. If you created a personality via the wizard, `ethos personality list` in a separate terminal shows the same roster.
@@ -195,3 +231,5 @@ ethos personality create engineer
 - [Deploy in production](deploy-in-production.md) — full production setup with gateway, web dashboard, and PM2.
 - [CLI reference](../reference/cli.md) — the CLI equivalents of every dashboard action.
 - [Personality config](../reference/personality-yaml.md) — the file format behind the wizard's Config step.
+- [Use the admin panel](use-admin-panel.md) — manage channels, keys, and MCP servers.
+- [Manage skill evolution](manage-skill-evolution.md) — review and approve auto-proposed skills.
