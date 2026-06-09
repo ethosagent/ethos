@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 export type SettingsTab =
   | 'general'
+  | 'connection'
   | 'provider'
   | 'appearance'
   | 'memory'
@@ -15,6 +16,7 @@ interface SettingsNavProps {
 
 const TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: 'general', label: 'General' },
+  { id: 'connection', label: 'Connection' },
   { id: 'provider', label: 'Provider' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'memory', label: 'Memory' },

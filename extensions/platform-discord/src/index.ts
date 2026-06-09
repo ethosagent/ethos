@@ -632,6 +632,11 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     }
     this.chunkMap.set(primary, ids);
   }
+
+  async registerCommands(_cmds: { name: string; description: string }[]): Promise<void> {
+    // Discord application commands require REST registration via the Applications
+    // API. Plugin commands are dispatched by the gateway as normal text for now.
+  }
 }
 
 export const capabilities: AdapterCapabilities = {

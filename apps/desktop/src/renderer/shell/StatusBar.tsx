@@ -8,6 +8,8 @@ interface StatusBarProps {
   onToggleDrawer: () => void;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
+  connectionMode: 'local' | 'remote';
+  remoteUrl?: string;
 }
 
 export function StatusBar({
@@ -18,8 +20,19 @@ export function StatusBar({
   onToggleDrawer,
   sidebarCollapsed,
   onToggleSidebar,
+  connectionMode,
+  remoteUrl,
 }: StatusBarProps) {
   const [hoveredPill, setHoveredPill] = useState<string | null>(null);
+
+  let connectionLabel = 'Local';
+  if (connectionMode === 'remote') {
+    try {
+      connectionLabel = `Remote: ${new URL(remoteUrl ?? '').hostname}`;
+    } catch {
+      connectionLabel = `Remote: ${remoteUrl ?? 'unknown'}`;
+    }
+  }
 
   return (
     <div
@@ -54,6 +67,25 @@ export function StatusBar({
           {backendConnected ? 'Backend connected' : 'offline'}
         </span>
       </div>
+
+      <div
+        style={{
+          width: 1,
+          height: 12,
+          background: 'var(--border-subtle)',
+          flexShrink: 0,
+        }}
+      />
+
+      <span
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          color: connectionMode === 'remote' ? 'var(--info)' : 'var(--text-tertiary)',
+        }}
+      >
+        {connectionLabel}
+      </span>
 
       <div
         style={{

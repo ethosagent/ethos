@@ -4,6 +4,7 @@ import type { SettingsTab } from './SettingsNav';
 import { SettingsNav } from './SettingsNav';
 import { AdvancedTab } from './tabs/AdvancedTab';
 import { AppearanceTab } from './tabs/AppearanceTab';
+import { ConnectionTab } from './tabs/ConnectionTab';
 import { GeneralTab } from './tabs/GeneralTab';
 import { MemoryTab } from './tabs/MemoryTab';
 import { ProviderTab } from './tabs/ProviderTab';
@@ -48,6 +49,8 @@ export function SettingsPage() {
     switch (activeTab) {
       case 'general':
         return <GeneralTab config={config} onRefresh={loadConfig} />;
+      case 'connection':
+        return <ConnectionTab config={config} onRefresh={loadConfig} />;
       case 'provider':
         return <ProviderTab config={config} onRefresh={loadConfig} />;
       case 'appearance':

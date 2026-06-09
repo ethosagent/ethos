@@ -1,6 +1,8 @@
 // FW-14 — readline autocomplete support for the slash command registry.
 // Disabled automatically when process.stdin.isTTY is false (pipe mode).
 
+import { readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { SlashCommand, SlashCommandRegistry } from './slash-commands';
 
 /** Maximum dropdown rows to display at once. */
@@ -36,6 +38,23 @@ export function makeCompleter(
   if (!process.stdin.isTTY) return null;
 
   return (line: string): [string[], string] => {
+    // @ file completion
+    if (line.includes('@')) {
+      const atStart = line.lastIndexOf('@');
+      const atToken = line.slice(atStart + 1);
+      const dir = atToken.includes('/') ? atToken.slice(0, atToken.lastIndexOf('/') + 1) : '';
+      const prefix = atToken.includes('/') ? atToken.slice(atToken.lastIndexOf('/') + 1) : atToken;
+      try {
+        const entries = readdirSync(resolve(process.cwd(), dir || '.')).filter((e) =>
+          e.startsWith(prefix),
+        );
+        const completions = entries.map((e) => `${line.slice(0, atStart + 1)}${dir}${e}`);
+        return [completions, line];
+      } catch {
+        return [[], line];
+      }
+    }
+
     if (!line.startsWith('/')) return [[], line];
     const prefix = line.slice(1);
     const matches = registry.filter(prefix);

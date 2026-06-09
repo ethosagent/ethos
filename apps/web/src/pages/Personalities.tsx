@@ -336,6 +336,9 @@ interface WizardState {
   soulMd: string;
   skills: string[];
   plugins: string[];
+  skillEvolutionEnabled: boolean;
+  skillEvolutionMinToolCalls: number;
+  skillEvolutionCooldownMinutes: number;
 }
 
 const SOUL_TEMPLATE = `# About me\n\nI am a {role}. I {what I do}. I {how I work}.\n\n## How I respond\n\n- {tone / shape}\n- {tone / shape}\n- {tone / shape}\n`;
@@ -360,6 +363,9 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
     soulMd: SOUL_TEMPLATE,
     skills: [],
     plugins: [],
+    skillEvolutionEnabled: true,
+    skillEvolutionMinToolCalls: 3,
+    skillEvolutionCooldownMinutes: 30,
   });
 
   const createMut = useMutation({
@@ -387,6 +393,11 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
         ...(state.plugins.length > 0 ? { plugins: state.plugins } : {}),
         toolset: state.toolset,
         soulMd: state.soulMd,
+        skill_evolution: {
+          enabled: state.skillEvolutionEnabled,
+          min_tool_calls: state.skillEvolutionMinToolCalls,
+          cooldown_minutes: state.skillEvolutionCooldownMinutes,
+        },
       }),
     onSuccess: async () => {
       if (state.skills.length > 0) {
@@ -464,6 +475,11 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
             key: 'toolset',
             label: 'Toolset',
             children: <ToolsetStep state={state} setState={setState} />,
+          },
+          {
+            key: 'skill-learning',
+            label: 'Skill Learning',
+            children: <SkillLearningStep state={state} setState={setState} />,
           },
           {
             key: 'skills',
@@ -647,6 +663,63 @@ function ToolsetStep({
         ))}
       </div>
     </div>
+  );
+}
+
+function SkillLearningStep({
+  state,
+  setState,
+}: {
+  state: WizardState;
+  setState: React.Dispatch<React.SetStateAction<WizardState>>;
+}) {
+  return (
+    <Form layout="vertical">
+      <Typography.Paragraph type="secondary">
+        When enabled, the agent automatically proposes new skills based on repeated tool-call
+        patterns. Proposed skills land in a pending queue for review.
+      </Typography.Paragraph>
+      <Form.Item>
+        <Checkbox
+          checked={state.skillEvolutionEnabled}
+          onChange={(e) => setState((s) => ({ ...s, skillEvolutionEnabled: e.target.checked }))}
+        >
+          Enable automatic skill learning
+        </Checkbox>
+      </Form.Item>
+      <Form.Item
+        label="Minimum tool calls"
+        help="Number of tool calls in a turn before the evolver considers proposing a skill (1-20)."
+      >
+        <Input
+          type="number"
+          min={1}
+          max={20}
+          value={state.skillEvolutionMinToolCalls}
+          disabled={!state.skillEvolutionEnabled}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            if (v >= 1 && v <= 20) setState((s) => ({ ...s, skillEvolutionMinToolCalls: v }));
+          }}
+        />
+      </Form.Item>
+      <Form.Item
+        label="Cooldown (minutes)"
+        help="Minimum time between skill proposals to avoid noise."
+      >
+        <Input
+          type="number"
+          min={0}
+          step={5}
+          value={state.skillEvolutionCooldownMinutes}
+          disabled={!state.skillEvolutionEnabled}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            if (v >= 0) setState((s) => ({ ...s, skillEvolutionCooldownMinutes: v }));
+          }}
+        />
+      </Form.Item>
+    </Form>
   );
 }
 

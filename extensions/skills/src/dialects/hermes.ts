@@ -6,6 +6,7 @@ import {
   parseEthosExternalCliAlternatives,
   parseEthosFallbackForTools,
   parseEthosPermissions,
+  parseEthosRequires,
 } from './ethos-namespace';
 
 /** Detect Hermes format: top-level `agent`, `category`, or `version` key. */
@@ -57,5 +58,6 @@ export function parseHermes(
     dialect: 'hermes',
     mtimeMs,
     permissions: parseEthosPermissions(data),
+    requires: parseEthosRequires(data),
   };
 }

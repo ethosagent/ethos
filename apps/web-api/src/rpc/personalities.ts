@@ -26,6 +26,7 @@ export const personalitiesRouter = {
       ...(input.mcp_servers !== undefined ? { mcp_servers: input.mcp_servers } : {}),
       ...(input.plugins !== undefined ? { plugins: input.plugins } : {}),
       ...(input.fs_reach !== undefined ? { fs_reach: input.fs_reach } : {}),
+      ...(input.skill_evolution !== undefined ? { skill_evolution: input.skill_evolution } : {}),
     }),
   ),
 

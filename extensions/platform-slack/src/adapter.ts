@@ -999,6 +999,11 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       handler(envelope);
     };
   }
+
+  async registerCommands(_cmds: { name: string; description: string }[]): Promise<void> {
+    // Slack requires manual slash command registration in the app dashboard.
+    // Plugin slash commands are dispatched by the gateway as normal text.
+  }
 }
 
 function homeEthosDir(): string {

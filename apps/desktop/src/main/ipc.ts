@@ -32,7 +32,7 @@ function maskApiKey(value: string): string {
   return `${value.slice(0, 3)}...${value.slice(-4)}`;
 }
 
-const ALLOWED_KEYCHAIN_KEYS = new Set(['api-key']);
+const ALLOWED_KEYCHAIN_KEYS = new Set(['api-key', 'remote-token']);
 
 function getEthosDir(): string {
   const saved = store.get('dataDir');
@@ -796,10 +796,22 @@ export function registerIpcHandlers(): void {
   // -------------------------------------------------------------------------
 
   const pluginFetch = async (rpcMethod: string, body: Record<string, unknown> = {}) => {
-    const port = store.get('backendPort', 3001);
-    const res = await fetch(`http://localhost:${port}/rpc/${rpcMethod}`, {
+    const connMode = store.get('connectionMode') ?? 'local';
+    let baseUrl: string;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (connMode === 'remote') {
+      const remoteUrl = store.get('remoteUrl');
+      if (!remoteUrl) throw new Error('Remote URL not configured');
+      baseUrl = remoteUrl.replace(/\/$/, '');
+      const remoteToken = await getKeychainValue('remote-token');
+      if (remoteToken) headers.Authorization = `Bearer ${remoteToken}`;
+    } else {
+      const port = store.get('backendPort', 3001);
+      baseUrl = `http://localhost:${port}`;
+    }
+    const res = await fetch(`${baseUrl}/rpc/${rpcMethod}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
     });
     return res.json();
@@ -901,4 +913,52 @@ export function registerIpcHandlers(): void {
     const tokens = await loadTokens();
     return { authorized: !!tokens };
   });
+
+  // -------------------------------------------------------------------------
+  // Connection mode IPC handlers
+  // -------------------------------------------------------------------------
+
+  ipcMain.handle(IPC_CHANNELS['connection:get'], () => {
+    const mode = store.get('connectionMode') ?? 'local';
+    const url = store.get('remoteUrl');
+    return { mode, url };
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS['connection:set'],
+    async (_event, req: { mode: 'local' | 'remote'; url?: string; token?: string }) => {
+      store.set('connectionMode', req.mode);
+      if (req.url !== undefined) {
+        store.set('remoteUrl', req.url);
+      }
+      if (req.token) {
+        await setKeychainValue('remote-token', req.token);
+      }
+      return { ok: true };
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS['connection:test'],
+    async (_event, req: { url: string; token?: string }) => {
+      const url = req.url.replace(/\/$/, '');
+      const headers: Record<string, string> = {};
+      if (req.token) headers.Authorization = `Bearer ${req.token}`;
+      const start = Date.now();
+      try {
+        const res = await fetch(`${url}/healthz`, {
+          headers,
+          signal: AbortSignal.timeout(10000),
+        });
+        const latencyMs = Date.now() - start;
+        if (res.ok) {
+          return { ok: true, latencyMs };
+        }
+        return { ok: false, error: `Server returned ${res.status}`, latencyMs };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: message };
+      }
+    },
+  );
 }

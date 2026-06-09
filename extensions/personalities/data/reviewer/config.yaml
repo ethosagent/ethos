@@ -2,3 +2,6 @@ name: Reviewer
 description: Critical, evidence-based reviewer that raises concerns directly and always explains why something is wrong.
 model: claude-sonnet-4-6
 capabilities: review, code
+skill_evolution.enabled: true
+skill_evolution.min_tool_calls: 3
+skill_evolution.cooldown_minutes: 30

@@ -12,7 +12,12 @@ import type {
 } from '@ethosagent/types';
 import { filterSkill, warnMissingAllowList } from './ingest-filter';
 import { sanitize } from './prompt-injection-guard';
-import { applySubstitutions, parseSkillFrontmatter, shouldInject } from './skill-compat';
+import {
+  applySubstitutions,
+  checkRequirements,
+  parseSkillFrontmatter,
+  shouldInject,
+} from './skill-compat';
 import { UniversalScanner } from './universal-scanner';
 
 interface CacheEntry {
@@ -158,6 +163,14 @@ export class SkillsInjector implements ContextInjector {
             continue;
           }
         }
+      }
+
+      // Gap 11 — environment-gated skills: check `ethos.requires` gates.
+      const reqReason = checkRequirements(skill.requires, toolNames);
+      if (reqReason) {
+        skill.unavailableReason = reqReason;
+        this.onSkip?.(skill.qualifiedName, reqReason);
+        continue;
       }
 
       resolved.push({ id: skill.qualifiedName, source: 'global', skill });

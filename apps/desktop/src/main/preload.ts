@@ -114,6 +114,13 @@ const api = {
   gateway: {
     platformStatus: () => ipcRenderer.invoke(IPC_CHANNELS['gateway:platformStatus']),
   },
+  connection: {
+    get: () => ipcRenderer.invoke(IPC_CHANNELS['connection:get']),
+    set: (req: { mode: 'local' | 'remote'; url?: string; token?: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS['connection:set'], req),
+    test: (req: { url: string; token?: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS['connection:test'], req),
+  },
   codex: {
     startAuth: () => ipcRenderer.invoke(IPC_CHANNELS['codex:startAuth']),
     authStatus: () => ipcRenderer.invoke(IPC_CHANNELS['codex:authStatus']),

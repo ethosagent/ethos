@@ -114,6 +114,7 @@ export interface PlatformAdapter {
   editMessage?(chatId: string, messageId: string, text: string): Promise<DeliveryResult>;
   onMessage(handler: (message: InboundMessage) => void): void;
   health(): Promise<{ ok: boolean; latencyMs?: number }>;
+  registerCommands?(cmds: { name: string; description: string }[]): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

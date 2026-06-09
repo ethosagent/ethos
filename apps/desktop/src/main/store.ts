@@ -28,6 +28,8 @@ export interface AppStoreType {
   launchAtLogin: boolean;
   hasShownLoginItemHint: boolean;
   dataDir?: string;
+  connectionMode?: 'local' | 'remote';
+  remoteUrl?: string;
 }
 
 export const store = new Store<AppStoreType>({

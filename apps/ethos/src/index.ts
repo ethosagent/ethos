@@ -58,7 +58,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [setup | chat | sessions | serve | dashboard | status | run-all | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive | systemd-unit | usage] [--version | --help]';
+  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | dashboard | status | run-all | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | plugin | skills | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive | systemd-unit | usage] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -114,6 +114,17 @@ try {
   // must not block startup); idempotent, so re-running it is harmless.
   if (!isMetadataCommand) await reconcileRegistry(ethosDir());
 
+  // -z / --zero: one-shot non-interactive mode. Intercept before the main
+  // command switch so it works regardless of positional command parsing.
+  const isZeroMode = args.includes('-z') || args.includes('--zero');
+  if (isZeroMode) {
+    const zIdx = args.indexOf('-z') !== -1 ? args.indexOf('-z') : args.indexOf('--zero');
+    const prompt = args[zIdx + 1] ?? '';
+    const { runZero } = await import('./commands/zero');
+    await runZero(args, prompt);
+    process.exit(0);
+  }
+
   switch (effectiveCommand) {
     case '--version':
     case '-v': {
@@ -130,6 +141,12 @@ try {
     case '--help':
     case '-h': {
       console.log(USAGE);
+      console.log(
+        '\nOne-shot mode:\n' +
+          '  -z, --zero <prompt>   Run a single turn and exit (non-interactive)\n' +
+          '                        Compatible flags: --no-stream, --model, --personality, --provider\n' +
+          '                        Pipe input: echo "code" | ethos -z "explain this"\n',
+      );
       break;
     }
 

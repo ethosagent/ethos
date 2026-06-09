@@ -10,10 +10,12 @@ import { sessionsList } from '../features/sessions/rpc/list';
 import { sessionsPin } from '../features/sessions/rpc/pin';
 import { sessionsUnpin } from '../features/sessions/rpc/unpin';
 import { sessionsUpdate } from '../features/sessions/rpc/update';
+import { adminRouter } from './admin';
 import { apiKeysRouter } from './api-keys';
 import { batchRouter } from './batch';
 import { clarifyRouter } from './clarify';
 import { configRouter } from './config';
+import { contextRouter, filesRouter } from './context-resolve';
 import { cronRouter } from './cron';
 import { dashboardsRouter } from './dashboards';
 import { evalRouter } from './eval';
@@ -28,6 +30,7 @@ import { personalitiesRouter } from './personalities';
 import { platformsRouter } from './platforms';
 import { pluginsRouter } from './plugins';
 import { skillsRouter } from './skills';
+import { slashCommandsRouter } from './slash-commands';
 import { toolsRouter } from './tools';
 
 // Top-level oRPC router. Each namespace lives in its own file (one
@@ -78,6 +81,7 @@ export const apiRouter = {
   clarify: clarifyRouter,
   cron: cronRouter,
   skills: skillsRouter,
+  slashCommands: slashCommandsRouter,
   evolver: evolverRouter,
   mesh: meshRouter,
   memory: memoryRouter,
@@ -90,6 +94,9 @@ export const apiRouter = {
   apiKeys: apiKeysRouter,
   meta: metaRouter,
   dashboards: dashboardsRouter,
+  admin: adminRouter,
+  context: contextRouter,
+  files: filesRouter,
 };
 
 export type ApiRouter = typeof apiRouter;

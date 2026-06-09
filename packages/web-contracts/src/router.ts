@@ -211,6 +211,13 @@ const PersonalityCreateInput = z.object({
       write: z.array(z.string()).optional(),
     })
     .optional(),
+  skill_evolution: z
+    .object({
+      enabled: z.boolean().optional(),
+      min_tool_calls: z.number().int().min(1).max(20).optional(),
+      cooldown_minutes: z.number().int().min(0).optional(),
+    })
+    .optional(),
 });
 const PersonalityCreateOutput = z.object({ personality: PersonalitySchema });
 
@@ -1383,6 +1390,20 @@ const dashboards = {
     .input(z.object({ sessionId: z.string().min(1) }))
     .output(z.object({ summary: z.string() })),
   listWidgetTemplates: oc.output(DashboardsListWidgetTemplatesOutput),
+  runQuery: oc
+    .input(
+      z.object({
+        pluginId: z.string().min(1),
+        sourceId: z.string().min(1),
+        sql: z.string().min(1),
+      }),
+    )
+    .output(
+      z.object({
+        columns: z.array(z.string()),
+        rows: z.array(z.record(z.string(), z.unknown())),
+      }),
+    ),
   updateParams: oc.input(DashboardsUpdateParamsInput).output(z.object({ ok: z.literal(true) })),
   exportDashboard: oc
     .input(DashboardsExportInput)
@@ -1394,6 +1415,117 @@ const dashboards = {
       warnings: z.array(z.string()),
     }),
   ),
+};
+
+// ---------------------------------------------------------------------------
+// Admin — unified status view for channels, providers, and MCP servers
+// ---------------------------------------------------------------------------
+
+const admin = {
+  getStatus: oc.output(
+    z.object({
+      channels: z.array(
+        z.object({
+          id: z.string(),
+          platform: z.string(),
+          status: z.enum(['connected', 'disconnected', 'error']),
+          webhookUrl: z.string().optional(),
+        }),
+      ),
+      providers: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          hasKey: z.boolean(),
+          healthy: z.boolean().optional(),
+          latencyMs: z.number().optional(),
+        }),
+      ),
+      mcpServers: z.array(
+        z.object({
+          name: z.string(),
+          status: z.enum(['connected', 'disconnected', 'error']),
+          toolCount: z.number().optional(),
+        }),
+      ),
+    }),
+  ),
+  rotateKey: oc
+    .input(
+      z.object({
+        provider: z.string(),
+        key: z.string(),
+      }),
+    )
+    .output(z.object({ ok: z.literal(true) })),
+  checkProvider: oc
+    .input(
+      z.object({
+        provider: z.string(),
+      }),
+    )
+    .output(z.object({ ok: z.boolean(), latencyMs: z.number() })),
+  addMcpServer: oc
+    .input(
+      z.object({
+        name: z.string(),
+        url: z.string(),
+        authType: z.enum(['none', 'bearer', 'oauth']),
+      }),
+    )
+    .output(z.object({ ok: z.literal(true) })),
+  removeMcpServer: oc
+    .input(
+      z.object({
+        name: z.string(),
+      }),
+    )
+    .output(z.object({ ok: z.literal(true) })),
+};
+
+// ---------------------------------------------------------------------------
+// Context — resolve @file / @url inline references (Gap 4)
+// ---------------------------------------------------------------------------
+
+const context = {
+  resolve: oc.input(z.object({ refs: z.array(z.string()) })).output(
+    z.object({
+      resolved: z.array(
+        z.object({
+          ref: z.string(),
+          content: z.string(),
+          lang: z.string(),
+        }),
+      ),
+    }),
+  ),
+};
+
+// ---------------------------------------------------------------------------
+// Files — list workspace files for @-mention autocomplete (Gap 4)
+// ---------------------------------------------------------------------------
+
+const files = {
+  list: oc.input(z.object({ prefix: z.string().optional() })).output(
+    z.object({
+      paths: z.array(z.string()),
+    }),
+  ),
+};
+
+// ---------------------------------------------------------------------------
+// Slash commands (v3 — plugin-registered dynamic commands)
+// ---------------------------------------------------------------------------
+
+const SlashCommandSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  usage: z.string(),
+  pluginId: z.string().optional(),
+});
+
+const slashCommands = {
+  list: oc.output(z.object({ commands: z.array(SlashCommandSchema) })),
 };
 
 // ---------------------------------------------------------------------------
@@ -1411,6 +1543,7 @@ export const contract = {
   debug,
   cron,
   skills,
+  slashCommands,
   evolver,
   mesh,
   memory,
@@ -1423,6 +1556,9 @@ export const contract = {
   apiKeys,
   meta,
   dashboards,
+  admin,
+  context,
+  files,
 };
 
 export type Contract = typeof contract;

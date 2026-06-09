@@ -2,8 +2,9 @@
 // These accept an explicit `ethosDir` string so tests can inject a temp dir
 // without mocking the module-level `ethosDir()` function.
 
-import { readdir, readFile, rename, stat } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 
 const c = {
   reset: '\x1b[0m',
@@ -149,4 +150,122 @@ export async function runEvolveApply(args: string[], ethosDir: string): Promise<
     console.error(`${c.red}No such pending skill: ${safe}${c.reset}`);
     process.exit(1);
   }
+}
+
+// ---------------------------------------------------------------------------
+// ethos evolve prune [--older-than <days>] [--yes]
+// ---------------------------------------------------------------------------
+
+function parseOlderThan(args: string[], defaultDays: number): number {
+  const idx = args.indexOf('--older-than');
+  if (idx === -1 || idx + 1 >= args.length) return defaultDays;
+  const val = Number(args[idx + 1]);
+  return Number.isFinite(val) && val > 0 ? val : defaultDays;
+}
+
+function askConfirm(question: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim().toLowerCase() === 'y');
+    });
+  });
+}
+
+export async function runEvolvePrune(args: string[], ethosDir: string): Promise<void> {
+  const days = parseOlderThan(args, 7);
+  const yes = args.includes('--yes');
+  const pendingDir = join(ethosDir, 'skills', 'pending');
+
+  let entries: string[];
+  try {
+    entries = await readdir(pendingDir);
+  } catch {
+    console.log(`${c.dim}No pending directory.${c.reset}`);
+    return;
+  }
+
+  const mds = entries.filter((e) => e.endsWith('.md'));
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const stale: string[] = [];
+
+  for (const f of mds) {
+    try {
+      const info = await stat(join(pendingDir, f));
+      if (info.mtimeMs < cutoff) stale.push(f);
+    } catch {
+      // skip unreadable files
+    }
+  }
+
+  if (stale.length === 0) {
+    console.log(`${c.dim}No pending files older than ${days} days.${c.reset}`);
+    return;
+  }
+
+  if (!yes) {
+    for (const f of stale) console.log(`  ${f}`);
+    const confirmed = await askConfirm(`Delete ${stale.length} files? [y/N] `);
+    if (!confirmed) {
+      console.log(`${c.dim}Aborted.${c.reset}`);
+      return;
+    }
+  }
+
+  for (const f of stale) {
+    await rm(join(pendingDir, f));
+  }
+  console.log(`${c.green}pruned ${stale.length} files older than ${days} days${c.reset}`);
+}
+
+// ---------------------------------------------------------------------------
+// ethos evolve archive [--older-than <days>]
+// ---------------------------------------------------------------------------
+
+export async function runEvolveArchive(args: string[], ethosDir: string): Promise<void> {
+  const days = parseOlderThan(args, 30);
+  const skillsDir = join(ethosDir, 'skills');
+
+  let entries: string[];
+  try {
+    entries = await readdir(skillsDir);
+  } catch {
+    console.log(`${c.dim}No skills directory.${c.reset}`);
+    return;
+  }
+
+  const mds = entries.filter((e) => e.endsWith('.md'));
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const stale: string[] = [];
+
+  for (const f of mds) {
+    try {
+      const info = await stat(join(skillsDir, f));
+      if (info.mtimeMs < cutoff) stale.push(f);
+    } catch {
+      // skip unreadable files
+    }
+  }
+
+  if (stale.length === 0) {
+    console.log(`${c.dim}No active skills older than ${days} days.${c.reset}`);
+    return;
+  }
+
+  const prefix = new Date().toISOString().slice(0, 10);
+  const archiveDir = join(skillsDir, '.archive', prefix);
+  await mkdir(archiveDir, { recursive: true });
+
+  for (const f of stale) {
+    await rename(join(skillsDir, f), join(archiveDir, f));
+  }
+
+  const manifest = {
+    archivedAt: new Date().toISOString(),
+    files: stale,
+  };
+  await writeFile(join(archiveDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+
+  console.log(`${c.green}archived ${stale.length} skills to .archive/${prefix}/${c.reset}`);
 }

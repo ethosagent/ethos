@@ -1005,4 +1005,23 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
   onApprovalDecision(handler: (event: ApprovalDecisionEvent) => void): void {
     this.approvalDecisionHandler = handler;
   }
+
+  async registerCommands(cmds: { name: string; description: string }[]): Promise<void> {
+    const builtins = [
+      { command: 'start', description: 'Introduce the bot' },
+      { command: 'new', description: 'Start a fresh session' },
+      { command: 'help', description: 'Show available commands' },
+      { command: 'personality', description: 'Show the bound personality' },
+      { command: 'usage', description: 'Session tokens + cost' },
+      { command: 'stop', description: 'Abort the current reply' },
+    ];
+    const pluginEntries = cmds.map((c) => ({
+      command: c.name
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, '_')
+        .slice(0, 32),
+      description: c.description.slice(0, 256),
+    }));
+    await this.bot.api.setMyCommands([...builtins, ...pluginEntries]).catch(() => {});
+  }
 }

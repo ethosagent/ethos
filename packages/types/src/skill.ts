@@ -86,4 +86,21 @@ export interface Skill {
   mtimeMs: number;
   /** Declared permissions from SKILL.md frontmatter `ethos.permissions`. */
   permissions?: SkillPermissions;
+  /**
+   * Gap 11 — environment-gated skills. Hard requirements declared in
+   * frontmatter under `ethos.requires` (or OpenClaw `metadata.*.requires`).
+   * When any gate fails at load time the skill is excluded from injection
+   * (unless `includeUnavailable` is set) and `unavailableReason` is populated.
+   */
+  requires?: {
+    env?: string[];
+    tools?: string[];
+    os?: ('linux' | 'darwin' | 'win32')[];
+  };
+  /**
+   * Non-null when the skill failed a `requires` gate. Human-readable reason
+   * string (e.g. "missing env var OPENAI_API_KEY"). Set at load time by
+   * `checkRequirements` in the skills extension.
+   */
+  unavailableReason?: string;
 }

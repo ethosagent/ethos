@@ -33,6 +33,13 @@ export function Dashboards() {
     },
   });
 
+  const { data: templatesData } = useQuery({
+    queryKey: ['widgetTemplates'],
+    queryFn: () => rpc.dashboards.listWidgetTemplates(),
+  });
+
+  const templates = templatesData?.templates ?? [];
+
   if (isLoading) return <Skeleton active />;
 
   const dashboards = data?.dashboards ?? [];
@@ -107,6 +114,26 @@ export function Dashboards() {
               />
             </Card>
           ))}
+        </div>
+      )}
+      {templates.length > 0 && (
+        <div style={{ marginTop: 32 }}>
+          <Typography.Title level={5} style={{ marginBottom: 12 }}>
+            Available Plugin Widgets
+          </Typography.Title>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+              gap: 12,
+            }}
+          >
+            {templates.map((t) => (
+              <Card key={`${t.pluginId}-${t.id}`} size="small">
+                <Card.Meta title={t.title} description={`${t.queryType} · ${t.pluginId}`} />
+              </Card>
+            ))}
+          </div>
         </div>
       )}
     </div>

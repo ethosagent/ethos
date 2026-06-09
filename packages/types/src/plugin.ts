@@ -24,3 +24,12 @@ export interface WidgetTemplate {
   outputType?: 'table' | 'html' | 'image' | 'text';
   defaultCron?: string;
 }
+
+export interface SlashCommandContext {
+  sessionId: string;
+  personalityId?: string;
+  platform: string;
+  send(text: string): Promise<void>;
+  toolRegistry?: import('./tool').ToolRegistry;
+  storage?: import('./storage').Storage;
+}

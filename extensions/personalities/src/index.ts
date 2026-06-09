@@ -403,6 +403,11 @@ export interface CreatePersonalityInput {
   mcp_servers?: string[];
   plugins?: string[];
   fs_reach?: { read?: string[]; write?: string[] };
+  skill_evolution?: {
+    enabled?: boolean;
+    min_tool_calls?: number;
+    cooldown_minutes?: number;
+  };
 }
 
 export interface UpdatePersonalityPatch {
@@ -1349,6 +1354,14 @@ function renderConfigYaml(input: CreatePersonalityInput): string {
   }
   if (input.fs_reach?.write !== undefined && input.fs_reach.write.length > 0) {
     lines.push(`fs_reach.write: ${input.fs_reach.write.join(', ')}`);
+  }
+  if (input.skill_evolution) {
+    const se = input.skill_evolution;
+    if (se.enabled !== undefined) lines.push(`skill_evolution.enabled: ${se.enabled}`);
+    if (se.min_tool_calls !== undefined)
+      lines.push(`skill_evolution.min_tool_calls: ${se.min_tool_calls}`);
+    if (se.cooldown_minutes !== undefined)
+      lines.push(`skill_evolution.cooldown_minutes: ${se.cooldown_minutes}`);
   }
   return `${lines.join('\n')}\n`;
 }

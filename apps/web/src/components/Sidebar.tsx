@@ -171,6 +171,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                   label="Teams"
                   active={pathname === '/teams' || pathname.startsWith('/teams/')}
                 />
+                <NavRow path="/admin" icon="🛡️" label="Admin" active={pathname === '/admin'} />
               </div>
             </>
           )}
@@ -217,6 +218,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             active={pathname === '/communications'}
           />
           <NavRow path="/sessions" icon="📋" label="Sessions" active={pathname === '/sessions'} />
+          <NavRow path="/admin" icon="🛡️" label="Admin" active={pathname === '/admin'} />
           <NavRow path="/settings" icon="⚙️" label="Settings" active={pathname === '/settings'} />
         </div>
       )}

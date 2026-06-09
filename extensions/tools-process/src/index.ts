@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
-import { BoundaryError, type Tool, type ToolResult } from '@ethosagent/types';
+import { BoundaryError, type HookRegistry, type Tool, type ToolResult } from '@ethosagent/types';
 import {
   DEFAULT_LOG_LINES,
   listProcesses,
@@ -43,6 +43,43 @@ function runningCountFor(entries: ProcessEntry[], personalityId: string): number
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Read logs and fire the process_complete void hook. Best-effort — never throws. */
+async function fireProcessComplete(
+  hookRegistry: HookRegistry,
+  dataDir: string,
+  entry: { id: string; startedAt: string; exitCode?: number; started_by?: string },
+  sessionId: string,
+  sessionKey: string,
+): Promise<void> {
+  try {
+    const logsResult = await readProcessLogs(dataDir, entry.id, {
+      lines: 100,
+      stream: 'both',
+    });
+    const logLines = logsResult.ok ? logsResult.lines : [];
+    const stdoutLines: string[] = [];
+    const stderrLines: string[] = [];
+    for (const line of logLines) {
+      if (line.startsWith('[stdout] ')) stdoutLines.push(line.slice(9));
+      else if (line.startsWith('[stderr] ')) stderrLines.push(line.slice(9));
+    }
+    const stdout = stdoutLines.join('\n').slice(-4000);
+    const stderr = stderrLines.join('\n').slice(-4000);
+    const durationMs = Date.now() - new Date(entry.startedAt).getTime();
+    await hookRegistry.fireVoid('process_complete', {
+      processId: entry.id,
+      sessionId,
+      sessionKey,
+      exitCode: entry.exitCode ?? -1,
+      stdout,
+      stderr,
+      durationMs,
+    });
+  } catch {
+    // Best-effort — hook failure must not break the tool.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -313,7 +350,7 @@ function makeProcessStop(dataDir: string): Tool {
 // process_wait
 // ---------------------------------------------------------------------------
 
-function makeProcessWait(dataDir: string): Tool {
+function makeProcessWait(dataDir: string, hookRegistry?: HookRegistry): Tool {
   return {
     name: 'process_wait',
     description: 'Wait for a process to exit, up to timeout_s seconds.',
@@ -351,6 +388,9 @@ function makeProcessWait(dataDir: string): Tool {
       }
 
       if (entry.status !== 'running') {
+        if (hookRegistry) {
+          void fireProcessComplete(hookRegistry, dataDir, entry, ctx.sessionId, ctx.sessionKey);
+        }
         return {
           ok: true,
           value: JSON.stringify({ exited: true, exit_code: entry.exitCode }),
@@ -369,6 +409,9 @@ function makeProcessWait(dataDir: string): Tool {
         const current = loadRegistry(dataDir)[id];
         if (!current) break;
         if (current.status !== 'running') {
+          if (hookRegistry) {
+            void fireProcessComplete(hookRegistry, dataDir, current, ctx.sessionId, ctx.sessionKey);
+          }
           return {
             ok: true,
             value: JSON.stringify({ exited: true, exit_code: current.exitCode }),
@@ -376,6 +419,9 @@ function makeProcessWait(dataDir: string): Tool {
         }
         if (!isAlive(current.pid)) {
           await updateEntry(dataDir, id, { status: 'orphan' });
+          if (hookRegistry) {
+            void fireProcessComplete(hookRegistry, dataDir, current, ctx.sessionId, ctx.sessionKey);
+          }
           return { ok: true, value: JSON.stringify({ exited: true }) };
         }
       }
@@ -501,7 +547,10 @@ function makeProcessWatch(dataDir: string): Tool {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createProcessTools(dataDir: string, opts?: { capMax?: number }): Tool[] {
+export function createProcessTools(
+  dataDir: string,
+  opts?: { capMax?: number; hookRegistry?: HookRegistry },
+): Tool[] {
   // Guard the public option: a non-positive / non-integer capMax would either
   // disable the cap (NaN, Infinity) or wedge the tool (0, negative). Fall back
   // to the default rather than honoring a nonsensical value.
@@ -515,7 +564,7 @@ export function createProcessTools(dataDir: string, opts?: { capMax?: number }):
     makeProcessList(dataDir),
     makeProcessLogs(dataDir),
     makeProcessStop(dataDir),
-    makeProcessWait(dataDir),
+    makeProcessWait(dataDir, opts?.hookRegistry),
     makeProcessWatch(dataDir),
   ];
 }

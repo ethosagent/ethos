@@ -136,6 +136,39 @@ export function applySubstitutions(content: string, skillDir: string, sessionId:
     .replaceAll(ETHOS_SESSION_ID_TOKEN, sessionId);
 }
 
+/**
+ * Gap 11 — unified environment gate for the `Skill.requires` field.
+ *
+ * Returns a human-readable reason string when ANY gate fails, or `null`
+ * when all requirements are satisfied.
+ *
+ * This is intentionally separate from `shouldInject` (which checks the
+ * OpenClaw `metadata.*.requires` block). Both gates run at load time;
+ * `shouldInject` handles the legacy OpenClaw format, while
+ * `checkRequirements` handles the new `ethos.requires` frontmatter.
+ */
+export function checkRequirements(
+  requires: { env?: string[]; tools?: string[]; os?: ('linux' | 'darwin' | 'win32')[] } | undefined,
+  availableTools: Set<string>,
+): string | null {
+  if (!requires) return null;
+
+  for (const envVar of requires.env ?? []) {
+    if (!process.env[envVar]) return `missing env var ${envVar}`;
+  }
+  for (const tool of requires.tools ?? []) {
+    if (!availableTools.has(tool)) return `tool ${tool} not available`;
+  }
+  if (
+    requires.os &&
+    requires.os.length > 0 &&
+    !requires.os.includes(process.platform as 'linux' | 'darwin' | 'win32')
+  ) {
+    return `requires OS: ${requires.os.join(' | ')}`;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------

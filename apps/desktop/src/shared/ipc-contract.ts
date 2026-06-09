@@ -207,6 +207,18 @@ export interface IpcContract {
     request: undefined;
     response: { authorized: boolean };
   };
+  'connection:get': {
+    request: undefined;
+    response: { mode: 'local' | 'remote'; url?: string };
+  };
+  'connection:set': {
+    request: { mode: 'local' | 'remote'; url?: string; token?: string };
+    response: { ok: boolean };
+  };
+  'connection:test': {
+    request: { url: string; token?: string };
+    response: { ok: boolean; latencyMs?: number; error?: string };
+  };
 }
 
 /** Main-to-renderer push events (via webContents.send, NOT ipcMain.handle) */
@@ -272,4 +284,7 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'plugin:executeTool': 'plugin:executeTool',
   'codex:startAuth': 'codex:startAuth',
   'codex:authStatus': 'codex:authStatus',
+  'connection:get': 'connection:get',
+  'connection:set': 'connection:set',
+  'connection:test': 'connection:test',
 };

@@ -154,6 +154,12 @@ export const EvolveSkillAppliedEventSchema = z.object({
   appliedAt: z.string(), // ISO-8601
 });
 
+export const NotificationEventSchema = z.object({
+  type: z.literal('notification'),
+  message: z.string(),
+  source: z.string().optional(),
+});
+
 export const DryRunToolPlanSchema = z.object({
   toolCallId: z.string(),
   toolName: z.string(),
@@ -202,6 +208,7 @@ export const SseEventSchema = z.discriminatedUnion('type', [
   MeshChangedEventSchema,
   EvolveSkillPendingEventSchema,
   EvolveSkillAppliedEventSchema,
+  NotificationEventSchema,
   DryRunSummaryEventSchema,
   RunStartEventSchema,
   ProtocolUpgradeRequiredEventSchema,
