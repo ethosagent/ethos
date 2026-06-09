@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-discord
 time: "15 min"
-updated: 2026-05-17
+updated: 2026-06-09
 ---
 
 ## Task
@@ -33,6 +33,7 @@ The Discord adapter lags Slack and Telegram on several gateway-contract features
 - Outbound chunking to Discord's 2,000-char cap with edit-in-place streaming.
 - Clarify questions surface as buttons + modals, with the handler split across two modules — `extensions/platform-discord/src/clarify-blocks.ts` (component builders) and `extensions/platform-discord/src/clarify-interactions.ts` (button + modal callback handlers).
 - Outbound dedup via the shared `MessageDedupCache` (30s TTL).
+- Plugin commands registered via `registerSlashCommand()` are registered as Discord application commands at startup. They appear in the Discord command picker alongside built-in commands.
 
 **Tracked on the parity plan, not yet shipped**
 
@@ -42,7 +43,6 @@ The Discord adapter lags Slack and Telegram on several gateway-contract features
 | Thread routing | Slack uses `thread_ts`; Telegram uses forum topics. Each gets a distinct `threadId`. | Discord threads are flattened into the parent channel; replies land in the parent, not the thread. |
 | Inbound files / images | Slack and Telegram cache attachments and surface them as `InboundAttachment[]`. | Not implemented — vision and code-review personalities can't receive Discord attachments. |
 | Receipt reaction | Slack sets 👀 on inbound and clears it on first response; Telegram does the same with 👀. | Not implemented — users have no visual ack until the first streamed chunk lands. |
-| Slash commands | Slack registers a full command set (`/ethos ask`, `/help`, `/new`, etc.). | None registered — typing `/ethos` in a Discord server shows nothing. |
 | Channel modes | Slack supports `mention_only` / `thread_follow` / `all` per channel with persisted overrides. | Single static `mentionOnly` flag at adapter-construction time. |
 | Persistent store | Slack persists thread participation and per-channel mode overrides under `~/.ethos/slack/<botKey>/`. | No persistence — gateway restart loses every thread-follow decision. |
 | Approval surface | Slack renders the `before_ticket_complete` hook as an approval card. | Not implemented — Discord users can't participate in `kanban_complete` approvals. |
@@ -155,7 +155,7 @@ Invite the bot with these permissions (combined as the integer in the OAuth URL 
 | `Read Message History` | Lets the bot inspect the message it is replying to. |
 | `Embed Links` | Discord auto-embeds links the agent emits. |
 | `Add Reactions` | Currently unused but reserved by `canReact = true` on the adapter. |
-| `Use Application Commands` | Reserved for the upcoming slash-command surface. |
+| `Use Application Commands` | Required for plugin slash commands registered as Discord application commands. |
 
 Skip `Administrator`. The gateway has no need for moderation or member-management permissions; granting them widens the blast radius for nothing.
 

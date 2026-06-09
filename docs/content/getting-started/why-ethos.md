@@ -4,7 +4,7 @@ description: "Comparison of Ethos to LangChain, CrewAI, AutoGen, OpenClaw, and H
 kind: explanation
 audience: shared
 slug: why-ethos
-updated: 2026-05-22
+updated: 2026-06-09
 ---
 
 Ethos makes different trade-offs than other agent frameworks. This page is the honest comparison.
@@ -19,15 +19,19 @@ Ethos makes different trade-offs than other agent frameworks. This page is the h
 | Per-personality MCP / plugin allowlists (default-deny) | ✅ | ❌ | ❌ | ❌ | ~ | ❌ |
 | Swap LLM provider without code changes | ✅ | ~ | ~ | ~ | ✅ | ✅ |
 | TypeScript-first interface contracts | ✅ | ❌ | ❌ | ❌ | ~ | ❌ |
-| Multi-platform shared sessions (CLI + Telegram + Discord + Slack) | ✅ | ❌ | ❌ | ❌ | ✅ | ~ |
 | Memory scope per personality | ✅ | ❌ | ❌ | ❌ | ❌ | ~ |
 | Tool access per personality | ✅ | ~ | ~ | ❌ | ~ | ❌ |
 | Zero-dependency interface package | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Session persistence across restarts | ✅ | ~ | ~ | ~ | ✅ | ✅ |
+| Skill evolution (agent learns from eval data) | ✅ | ❌ | ❌ | ❌ | ❌ | ~ |
+| Plugin data sources + dashboards | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Multi-surface (CLI + web + desktop + VS Code + 5 channels) | ✅ | ❌ | ❌ | ❌ | ~ | ~ |
+| Zero mode (scriptable one-shot) | ✅ | ~ | ❌ | ~ | ✅ | ✅ |
+| Plugin slash commands across surfaces | ✅ | ❌ | ❌ | ❌ | ~ | ❌ |
 
 ✅ full support · ~ partial · ❌ not supported
 
-## The five key differences
+## The six key differences
 
 ### Personality is a structural component
 
@@ -68,7 +72,7 @@ Python frameworks pass dicts and strings. TypeScript catches mistakes at compile
 | LLM | `LLMProvider` | Anthropic, OpenAI-compat | Any HTTP-based LLM |
 | Sessions | `SessionStore` | SQLite (WAL+FTS5) | Redis, Postgres, in-memory |
 | Memory | `MemoryProvider` | Markdown files | Any storage |
-| Channel | `PlatformAdapter` | CLI | Telegram, Discord, Slack |
+| Channel | `PlatformAdapter` | CLI | Telegram, Discord, Slack, WhatsApp, Email |
 | Personalities | `PersonalityRegistry` | File system | Remote registry |
 
 LangChain has swap-ability in theory; in practice, changing the underlying LLM requires touching provider-specific abstractions throughout. In Ethos, `LLMProvider` is one interface with one method.
@@ -87,11 +91,22 @@ A multi-dialect parser handles each ecosystem's `SKILL.md` format. The discovere
 
 This is the claim you do not get elsewhere. Other frameworks: universal compatibility OR structural personalities. Ethos: both.
 
-### Multi-platform, shared sessions
+### Multi-surface, shared sessions
 
-The same agent — same personality, same memory, same session history — runs across CLI, Telegram, Discord, and Slack. A user can start a conversation on Telegram and continue it on the CLI. The session key determines continuity, not the platform.
+The same agent — same personality, same memory, same session history — runs across nine surfaces: CLI, web dashboard, desktop app, VS Code extension, and five channel adapters (Telegram, Discord, Slack, WhatsApp, Email). A user can start a conversation on Telegram, continue it on the CLI, and check the dashboard from a browser. The session key determines continuity, not the surface.
 
-Other frameworks are designed for single-platform deployment. Adding a second platform typically duplicates configuration and state management.
+Other frameworks target one or two deployment modes. Adding a new surface in Ethos means implementing `PlatformAdapter` — one interface, four methods — and the agent's full capability is available there.
+
+### The agent improves its own skills
+
+Ethos has a skill evolution loop. The `skill-evolver` watches eval output, identifies underperforming skills and recurring patterns where no skill exists, and proposes concrete improvements:
+
+- **Rewrites** for skills that score below a configurable threshold — the evolver reads the skill source and failing transcripts, then generates a rewritten version.
+- **New skills** for recurring unassisted patterns — when the agent repeatedly handles a task type without a matching skill, the evolver proposes one.
+
+Proposals land in a pending directory for human review. The web dashboard and desktop app surface these as an approval queue — accept, reject, or edit before the skill goes live. `autoApprove: true` in config removes the gate for CI-driven evolution.
+
+No other framework in this comparison does this. Hermes has skill self-creation, but it is immediate and ungated — the agent writes and activates skills in the same turn. Ethos separates observation (eval runs) from proposal (evolver) from activation (human approval), which means the feedback loop is auditable.
 
 ## When Ethos isn't the right choice
 
@@ -105,7 +120,7 @@ Other frameworks are designed for single-platform deployment. Adding a second pl
 
 **Use Hermes if:** you want a Python autonomous agent emphasising persistent learning loops, and skill self-creation is a higher priority than personality isolation.
 
-**Use Ethos if:** you are building an interactive agent that a real user talks to, you care about TypeScript correctness, you want to run on multiple platforms, or personality and memory isolation matter to your use case.
+**Use Ethos if:** you are building an interactive agent that a real user talks to across multiple surfaces, you care about TypeScript correctness, you want personality and memory isolation, you need the agent to learn from its own performance, or you want plugin-driven dashboards without a separate BI tool.
 
 ## Design decisions
 

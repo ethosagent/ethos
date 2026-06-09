@@ -4,7 +4,7 @@ description: "Memory is two plain-markdown files — MEMORY.md per-personality, 
 kind: explanation
 audience: user
 slug: memory-model
-updated: 2026-05-22
+updated: 2026-06-09
 ---
 
 ## Context
@@ -118,6 +118,8 @@ The point of the interface is that "markdown files" is the default opinion, not 
 `MEMORY.md` and `USER.md` are just files. Any tool that reads markdown reads them — your editor, `cat`, `bat`, a static site generator, a backup script. The web UI's Memory page provides two independent dropdowns: one for personality (to browse that personality's `MEMORY.md`) and one for user (to browse a user's `USER.md`). Both call through the same provider, which returns the file's content, path, and mtime.
 
 This means the agent's view of memory and your view of memory are the same view. If something looks wrong to you, it looked wrong to the agent. There is no "internal representation" that diverges from what the file says. The same is true of writes: a manual edit you make in your editor lands in the same file the agent reads next turn.
+
+Memory works the same way across every surface — CLI, web dashboard, desktop app, and channel adapters (Telegram, Slack, Discord, Email). A Telegram user's conversation contributes to the same personality `MEMORY.md` that a CLI session reads. The channel adapters do not maintain separate memory stores; they write through the same `MemoryProvider`, which resolves to the same file on disk. The web dashboard's Memory page is not a separate view — it reads the actual file, and edits made there land in the same path the agent reads next turn.
 
 ### The cost of writes is bounded
 

@@ -4,7 +4,7 @@ description: "CLI sessions key on cwd basename — each project gets its own his
 kind: explanation
 audience: user
 slug: sessions-and-history
-updated: 2026-05-12
+updated: 2026-06-09
 ---
 
 ## Context
@@ -36,6 +36,18 @@ When the user runs `/new` mid-chat, the next message uses a key of `cli:<cwd-bas
 The reason to keep the old session row (instead of deleting it) is that history is durable. A user who started over does not want to lose the previous conversation in case it mattered after all. `ethos session list` surfaces both rows; the timestamped one is the new thread.
 
 `/personality <id>` does *not* fork the session. The conversation thread stays continuous; only the role changes. That separation is intentional — switching hats does not start a new task.
+
+### Resuming a previous session
+
+Three flags on `ethos chat` control session resumption:
+
+| Flag | Behaviour |
+|---|---|
+| `--continue` / `-c` | Resumes the most recent CLI session. Scoped to `cli` sessions — it never crosses into gateway, Telegram, or Discord sessions. |
+| `--resume <id>` / `-r <id>` | Resumes a specific session by ID or title. Tries exact ID match first, then case-insensitive title match. If multiple titles match, lists candidates for disambiguation. |
+| `--no-resume-hint` | Suppresses the exit hint that tells you how to resume. |
+
+These are flags on `ethos chat`, not separate subcommands. The default behaviour — no flag — is to resume the session keyed by `cli:<cwd-basename>`, which is the implicit resumption that makes per-cwd keying useful in the first place.
 
 ### The storage layer — SQLite, WAL, FTS5
 
@@ -78,6 +90,10 @@ Sessions accumulate `usage` deltas as turns happen. Input tokens, output tokens,
 The CLI keys on `cli:<cwd-basename>`. Channel adapters key on their own platform-appropriate identifiers — `telegram:<chat-id>`, `discord:<channel-id>`. A multi-channel deployment shares the session store; conversations on different platforms keep their own threads.
 
 A separate gateway layer can route messages from one user across surfaces so the same conversation continues from Telegram into the CLI. That routing is a [gateway](../../getting-started/glossary.md#gateway) concern, not a session-store concern. The store just provides the persistence; the gateway decides which session a given inbound message belongs to.
+
+The web dashboard (`ethos serve`) has a Sessions page that lists all sessions across all surfaces — CLI, Telegram, Discord, Slack, Email. The desktop app (an Electron wrapper around the same web interface) provides the same view. Sessions are a shared store; the surface determines the key format (`cli:`, `telegram:`, `discord:`, `slack:`), and any surface that connects to the same `sessions.db` sees all of them.
+
+This makes `sessions.db` the single observable record of every conversation the agent has had, regardless of where it happened. A CLI user who also messages the agent on Telegram can see both threads in the dashboard without switching tools.
 
 ### The streaming and persistence boundary
 

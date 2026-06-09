@@ -4,7 +4,7 @@ description: "Every field in a personality's config.yaml and toolset.yaml — mo
 kind: reference
 audience: user
 slug: personality-yaml
-updated: 2026-05-22
+updated: 2026-06-09
 ---
 
 A [personality](../../getting-started/glossary.md#personality) is a directory at `~/.ethos/personalities/<id>/` with three files:
@@ -215,19 +215,25 @@ context_layering.cap_total_chars: 12000
 
 ## skill_evolution.* {#skill-evolution}
 
-Auto-triggered skill evolution. When enabled, the skill-evolver queues an analysis after every turn that crosses `min_tool_calls` and is outside the cooldown window.
+Auto-triggered skill evolution. When `enabled: true`, the skill-evolver auto-trigger queues an analysis after every turn that crosses the `min_tool_calls` threshold and is outside the cooldown window. The built-in `engineer` personality ships with it enabled (`min_tool_calls: 5`, `cooldown_minutes: 60`).
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `skill_evolution.enabled` | boolean | `false` | Master switch. Off by default — opt-in per personality. |
 | `skill_evolution.min_tool_calls` | integer | runtime default | Minimum tool calls in a turn before evolution runs. |
 | `skill_evolution.cooldown_minutes` | integer | runtime default | Cooldown between evolution runs. |
+| `skill_evolution.model` | string | top-level `model` | Override which LLM the evolver uses for analysis. Falls back to the personality's model when unset. |
 
 ```yaml
 skill_evolution.enabled: true
-skill_evolution.min_tool_calls: 4
+skill_evolution.min_tool_calls: 5
 skill_evolution.cooldown_minutes: 60
+skill_evolution.model: claude-sonnet-4-6
 ```
+
+Notes:
+
+- The global cron schedule for running the evolver lives in [`config.yaml`](./config-yaml.md#evolver-cron-enabled) (`evolver.cron_enabled`, `evolver.schedule`), not here. These personality-level keys control whether a personality participates and the per-turn trigger thresholds.
 
 ## safety {#safety}
 

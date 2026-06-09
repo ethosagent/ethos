@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-telegram
 time: "15 min"
-updated: 2026-05-20
+updated: 2026-06-09
 ---
 
 ## Task
@@ -106,6 +106,12 @@ In **multi-bot** mode (`telegram.bots` list), the session key includes the `botK
 The session key forks when `/new` or `/personality <id>` runs in the chat — both append `:${Date.now()}` so the agent loses prior context cleanly. The previous session's outbound dedup keys are cleared at the same boundary.
 
 Group chats share one session across every member. To give each user their own thread, deploy two bots and `/start` them privately.
+
+### 3a. Plugin commands
+
+Plugin commands registered via `registerSlashCommand()` appear in Telegram's command menu. The gateway calls `registerCommands()` at startup, which pushes the command list to the Telegram Bot API via `setMyCommands`. Command names are sanitized to Telegram's constraints: lowercase, underscores only, max 32 characters.
+
+Commands are dispatched via the gateway's text-matching pipeline — the same path as built-in `/` commands. See [Register plugin slash commands](../building/how-to/register-plugin-commands.md) for the full walkthrough.
 
 ### 4. Restrict who can talk to the bot
 

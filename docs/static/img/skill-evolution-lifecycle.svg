@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 300" width="800" height="300">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" fill="#2C3E50">
+      <polygon points="0 0, 8 3, 0 6" />
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="800" height="300" fill="#ECF0F1" />
+
+  <!--
+    7 nodes on an ellipse, center=(400,150), rx=300, ry=110.
+    Clockwise from top-left, angles measured from 12 o'clock clockwise:
+      1. Conversation    315 deg (top-left)      => cx=188, cy=72
+      2. Tool Calls       45 deg (top-right)      => cx=612, cy=72
+      3. Threshold Met    90 deg (right)           => cx=700, cy=150
+      4. Fork            130 deg (bottom-right)    => cx=593, cy=234
+      5. Proposal        180 deg (bottom)          => cx=400, cy=260
+      6. Review          230 deg (bottom-left)     => cx=207, cy=234
+      7. Active Skill    270 deg (left)            => cx=100, cy=150
+
+    Box size: 130x36 (nodes 1,2,4,6,7) or 140x36 (nodes 3,5) for longer text.
+  -->
+
+  <!-- Node 1: Conversation (blue) — cx=188, cy=72 -->
+  <rect x="123" y="54" width="130" height="36" rx="8" fill="#4A90D9" />
+  <text x="188" y="77" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600">Conversation</text>
+
+  <!-- Node 2: Tool Calls (blue) — cx=612, cy=72 -->
+  <rect x="547" y="54" width="130" height="36" rx="8" fill="#4A90D9" />
+  <text x="612" y="77" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600">Tool Calls</text>
+
+  <!-- Node 3: Threshold Met (dark) — cx=700, cy=150 -->
+  <rect x="630" y="132" width="140" height="36" rx="8" fill="#2C3E50" />
+  <text x="700" y="155" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600">Threshold Met</text>
+
+  <!-- Node 4: Fork (dark) — cx=593, cy=234 -->
+  <rect x="543" y="216" width="100" height="36" rx="8" fill="#2C3E50" />
+  <text x="593" y="239" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600">Fork</text>
+
+  <!-- Node 5: Proposal (dark) — cx=400, cy=260 -->
+  <rect x="330" y="242" width="140" height="36" rx="8" fill="#2C3E50" />
+  <text x="400" y="265" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600">Proposal</text>
+
+  <!-- Node 6: Review (green) — cx=207, cy=234 -->
+  <rect x="147" y="216" width="120" height="36" rx="8" fill="#27AE60" />
+  <text x="207" y="239" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600">Review</text>
+
+  <!-- Node 7: Active Skill (green) — cx=100, cy=150 -->
+  <rect x="30" y="132" width="140" height="36" rx="8" fill="#27AE60" />
+  <text x="100" y="155" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600">Active Skill</text>
+
+  <!-- Arrows forming a clockwise loop -->
+
+  <!-- 1 -> 2: Conversation right edge to Tool Calls left edge (horizontal, along top) -->
+  <path d="M 253 72 C 350 50, 450 50, 547 72" stroke="#2C3E50" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+
+  <!-- 2 -> 3: Tool Calls bottom edge to Threshold Met top edge -->
+  <path d="M 660 90 C 690 105, 710 115, 715 132" stroke="#2C3E50" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+
+  <!-- 3 -> 4: Threshold Met bottom edge to Fork right edge -->
+  <path d="M 690 168 C 675 190, 660 205, 643 222" stroke="#2C3E50" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+
+  <!-- 4 -> 5: Fork left edge to Proposal right edge -->
+  <path d="M 543 240 C 510 255, 490 262, 470 260" stroke="#2C3E50" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+
+  <!-- 5 -> 6: Proposal left edge to Review right edge -->
+  <path d="M 330 255 C 300 250, 290 245, 267 240" stroke="#2C3E50" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+
+  <!-- 6 -> 7: Review top edge to Active Skill bottom edge -->
+  <path d="M 160 216 C 140 195, 120 185, 110 168" stroke="#2C3E50" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+
+  <!-- 7 -> 1: Active Skill top edge to Conversation left edge (going up-right) -->
+  <path d="M 110 132 C 120 105, 135 90, 123 78" stroke="#2C3E50" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+</svg>

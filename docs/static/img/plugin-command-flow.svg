@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 300" width="800" height="300">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2C3E50" />
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="800" height="300" rx="0" fill="#ECF0F1" />
+
+  <!-- Plugin node -->
+  <rect x="40" y="120" width="130" height="50" rx="8" fill="#4A90D9" />
+  <text x="105" y="151" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="600">Plugin</text>
+
+  <!-- Arrow: Plugin -> registerSlashCommand -->
+  <line x1="170" y1="145" x2="255" y2="145" stroke="#2C3E50" stroke-width="2" marker-end="url(#arrowhead)" />
+
+  <!-- registerSlashCommand node -->
+  <rect x="265" y="112" width="220" height="56" rx="8" fill="#2C3E50" />
+  <text x="375" y="146" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600">registerSlashCommand</text>
+
+  <!-- Endpoint boxes (stacked vertically, right side) -->
+  <!-- CLI -->
+  <rect x="640" y="16" width="110" height="40" rx="8" fill="#27AE60" />
+  <text x="695" y="42" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="600">CLI</text>
+
+  <!-- Web -->
+  <rect x="640" y="72" width="110" height="40" rx="8" fill="#27AE60" />
+  <text x="695" y="98" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="600">Web</text>
+
+  <!-- Telegram -->
+  <rect x="640" y="128" width="110" height="40" rx="8" fill="#27AE60" />
+  <text x="695" y="154" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="600">Telegram</text>
+
+  <!-- Discord -->
+  <rect x="640" y="184" width="110" height="40" rx="8" fill="#27AE60" />
+  <text x="695" y="210" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="600">Discord</text>
+
+  <!-- Slack -->
+  <rect x="640" y="240" width="110" height="40" rx="8" fill="#27AE60" />
+  <text x="695" y="266" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="600">Slack</text>
+
+  <!-- Fan-out arrows: registerSlashCommand -> each endpoint -->
+  <!-- To CLI -->
+  <line x1="485" y1="135" x2="630" y2="36" stroke="#2C3E50" stroke-width="2" marker-end="url(#arrowhead)" />
+
+  <!-- To Web -->
+  <line x1="485" y1="138" x2="630" y2="92" stroke="#2C3E50" stroke-width="2" marker-end="url(#arrowhead)" />
+
+  <!-- To Telegram -->
+  <line x1="485" y1="142" x2="630" y2="148" stroke="#2C3E50" stroke-width="2" marker-end="url(#arrowhead)" />
+
+  <!-- To Discord -->
+  <line x1="485" y1="146" x2="630" y2="204" stroke="#2C3E50" stroke-width="2" marker-end="url(#arrowhead)" />
+
+  <!-- To Slack -->
+  <line x1="485" y1="150" x2="630" y2="260" stroke="#2C3E50" stroke-width="2" marker-end="url(#arrowhead)" />
+</svg>

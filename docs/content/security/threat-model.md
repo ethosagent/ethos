@@ -4,7 +4,7 @@ description: What Ethos defends against, what's out of scope, and the single-ope
 kind: explanation
 audience: shared
 slug: threat-model
-updated: 2026-05-12
+updated: 2026-06-09
 ---
 
 A security model is only as useful as the threat model it's grounded in. This page is explicit about both halves: what Ethos defends against, and what Ethos does *not* claim to defend.
@@ -37,6 +37,8 @@ A threat being *in scope* means three things at once: (1) the threat is realisti
 | Filesystem escape from project scope | `tools-file`, `tools-terminal` | Agent reads `~/.ssh/id_rsa` because skill instructions told it to |
 | Network exfiltration to private / cloud-metadata destinations (SSRF) | `web_fetch`, `web_post`, MCP HTTP tools | Hijacked agent on a cloud VM fetches `http://169.254.169.254/latest/meta-data/iam/...` and exfils IAM credentials |
 | Credential leakage via tool errors / logs / transcripts | All tools, audit log, [session](../getting-started/glossary.md#session) transcript files | Tool returns `auth failed: token sk-ant-… invalid`; the key lands in the LLM context, audit log, and any user-shared diagnostic bundle |
+| Plugin data source injection | Plugin data sources, dashboard queries | Plugin registers a data source; dashboard user crafts a query with `DROP TABLE` or exfiltrates data via SQL injection |
+| Admin panel unauthorized access | Admin panel (Mission Control) | Attacker discovers the admin panel URL and issues API calls without a valid token, reading sessions or modifying config |
 
 Each threat in this column has at least one corresponding control documented in [Security controls](./controls.md). Most have two or three — the model is defense in depth, not defense by single-layer.
 
@@ -94,6 +96,8 @@ The same assumption rules out "agent acts on behalf of arbitrary internet users"
 | Filesystem escape | `ScopedStorage`, `BoundaryError`, per-personality `fs_reach` |
 | Network exfiltration / SSRF | Network policy, scheme allowlist, cloud-metadata blocklist, redirect revalidation |
 | Credential leakage | Pattern-based redaction at the observability store layer; per-personality redaction modes |
+| Plugin data source injection | Read-only SQL enforcement, plugin data source registration validation |
+| Admin panel unauthorized access | Admin panel token authentication, CORS restriction |
 
 Each control is documented in [Security controls](./controls.md) with the file path where it lives in the codebase. The cross-reference is intentional: customers evaluating Ethos can read the source, not just the marketing.
 

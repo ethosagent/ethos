@@ -4,7 +4,7 @@ description: "A personality is a directory of three files that atomically swaps 
 kind: explanation
 audience: user
 slug: what-is-a-personality
-updated: 2026-05-22
+updated: 2026-06-09
 ---
 
 ## Context
@@ -159,6 +159,7 @@ The personality boundary is not a recommendation. Several mechanisms enforce it 
 - `fs_reach` is enforced by a `ScopedStorage` decorator around the file tools. Paths outside the allowlist throw `BoundaryError`. A researcher's `read_file` cannot peek at the engineer's `MEMORY.md`.
 - `mcp_servers` is default-deny. A globally configured MCP server is invisible to a personality unless that personality lists it.
 - `plugins` is default-deny. An installed plugin is dormant until at least one personality opts in.
+- [Skills](what-is-a-skill.md) are filtered by capability and by environment requirements. A skill declaring `requires.env: [SLACK_BOT_TOKEN]` or `requires.bins: [curl]` in its frontmatter is silently skipped for any personality running in an environment where those are unavailable.
 - Memory is always per-personality. Each personality reads and writes `~/.ethos/personalities/<id>/MEMORY.md` automatically — the engineer's running context never leaks into the reviewer's.
 
 The combined effect: switching to the reviewer is not "the same agent with a smaller prompt". It is a different agent that cannot do the things it should not do.
@@ -207,6 +208,14 @@ The boundary the personality controls is "what the agent does and says". The bou
 A framework that makes personality cheap to define makes personality easy to multiply. That sounds good and is partly a trap. A personality you defined for a one-off use case is one more thing to maintain, one more entry in `/personality list`, one more directory under `~/.ethos/`. The cost is small, but it is not zero.
 
 The rule of thumb that has held up: a personality earns its place when it answers the key questions distinctly. If it would use the same tools as `engineer` and the same model as `engineer`, with only the prompt differing, it is probably a [skill](../../getting-started/glossary.md#skill) that loads under `engineer` — not a personality of its own. The dimensions test is the gate.
+
+### Personalities can learn from usage
+
+A personality can opt into automatic skill evolution. When `skill_evolution.enabled: true` is set in the personality's `config.yaml`, the skill evolver analyzes tool-call patterns after qualifying turns — those exceeding `skill_evolution.min_tool_calls` and outside `skill_evolution.cooldown_minutes` — and proposes new skills or rewrites existing ones. Proposed skills land in `~/.ethos/skills/.pending/<personalityId>/` for review.
+
+The `engineer` built-in ships with skill evolution enabled by default. This is how a personality adapts to the user's working patterns without the user writing skill files by hand.
+
+Skill evolution does not change the personality's three files. The proposed skills are [skills](what-is-a-skill.md) — standing instructions under the personality, not modifications to the personality itself. The personality stays frozen; its guidance library grows. See the [personality config reference](../reference/personality-yaml.md) for the full set of `skill_evolution.*` fields.
 
 ### Glossary first, definition next
 

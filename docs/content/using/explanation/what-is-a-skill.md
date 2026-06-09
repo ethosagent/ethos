@@ -4,7 +4,7 @@ description: "A skill is a reusable instruction packet discovered across ecosyst
 kind: explanation
 audience: user
 slug: what-is-a-skill
-updated: 2026-05-12
+updated: 2026-06-09
 ---
 
 ## Context
@@ -132,6 +132,50 @@ Every discovered skill passes through a safety scanner before it joins the pool.
 
 The scanner's job is to refuse the catastrophic combination — a community-sourced skill telling the agent to exfiltrate secrets via a shell command — without making the trusted user experience tedious. A rejected skill is dropped from the pool entirely; the personality filter never sees it.
 
+### Skills can evolve from usage
+
+Ethos can propose new skills automatically by analyzing session history. The skill evolver reads past conversations, identifies repeated tool-call patterns, and generates candidate `SKILL.md` files. Three workflows feed it:
+
+**From an eval run.** `ethos eval run <tasks.jsonl> --expected <expected.jsonl> --evolve` chains into evolution after scoring. The evolver examines where the agent underperformed and proposes skills to close the gap. Proposed skills land in `~/.ethos/skills/pending/`.
+
+**From session history.** `ethos evolve run` exports recent sessions (last 7 days by default) and runs the evolver against them. Same output path.
+
+**Auto-triggered per personality.** When `skill_evolution.enabled: true` is set in a [personality's](what-is-a-personality.md) `config.yaml`, evolution runs automatically after qualifying turns — those exceeding `skill_evolution.min_tool_calls` and outside `skill_evolution.cooldown_minutes`. Proposed skills land in `~/.ethos/skills/.pending/<personalityId>/` (note the dot-prefix, separate from the eval path).
+
+Review pending proposals with `ethos evolve --list-pending`. Approve with `ethos evolve --approve <filename>` or `--approve-all`. Reject with `--reject <filename>`. Newer subcommand-style alternatives also work: `ethos evolve status` (show run history and pending queue) and `ethos evolve apply <filename> | --all`.
+
+The evolver does not modify existing skills in place. It proposes new files; you review and approve. The approval step is the gate — no skill enters the active pool without explicit user action.
+
+### Environment gating
+
+Skills can declare runtime requirements in their frontmatter via the `requires` field (from the OpenClaw compatibility layer). If the requirement is not met, the skill is silently skipped — it never reaches the per-personality filter.
+
+Available requirement types:
+
+| Field | Semantics |
+|---|---|
+| `requires.env` | Environment variables that must be set |
+| `requires.bins` | Binaries that must be on `PATH` |
+| `requires.anyBins` | At least one of the listed binaries must be present |
+| `os` | Operating system constraint (`linux`, `macos`, `windows`) |
+
+Example frontmatter:
+
+```yaml
+metadata:
+  openclaw:
+    requires:
+      env: [SLACK_BOT_TOKEN]
+      bins: [curl]
+    os: [linux, macos]
+```
+
+The check runs at discovery time, before safety scanning and before the per-personality capability filter. A skill that requires `SLACK_BOT_TOKEN` on a machine where that variable is unset disappears from the pool entirely — no personality ever sees it.
+
+### The web dashboard's evolver panel
+
+The web dashboard (launched via `ethos serve`) includes a Skills tab with two panels: the skill library and the evolver. The evolver panel shows pending proposals, run history, and lets you approve or reject skills from the browser. This is the visual equivalent of `ethos evolve --list-pending` and `--approve` — same data, graphical interface.
+
 ### Per-personality skills directories
 
 A personality directory can contain its own `skills/` subdirectory. Skills under `~/.ethos/personalities/<id>/skills/` are loaded unfiltered for that personality — the per-personality filter does not apply because the user has already declared the binding by placing the file there.
@@ -159,3 +203,4 @@ Alternatives considered:
 - [Install and use skills](../how-to/use-skills.md) — picking up an existing library
 - [Tool interface reference](../../building/reference/tool-interface.md) — what `required_tools` resolves against
 - [agentskills.io](https://agentskills.io) — the open format Ethos's parser follows
+- [Personality config reference](../reference/personality-yaml.md) — `skill_evolution.*` fields that control auto-evolution

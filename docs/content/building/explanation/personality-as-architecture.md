@@ -4,7 +4,7 @@ description: "A personality is a structural component — a directory that binds
 kind: explanation
 audience: developer
 slug: personality-as-architecture
-updated: 2026-05-22
+updated: 2026-06-09
 ---
 
 ## Context
@@ -206,6 +206,14 @@ A common confusion: "is a [skill](../../getting-started/glossary.md#skill) part 
 `extensions/skills/` walks several discovery roots (`~/.claude/skills/`, `~/.openclaw/skills/`, `~/.opencode/skills/`, `~/.hermes/skills/`, `~/.ethos/skills/`) and produces a global skill pool. For each personality, an ingest filter checks whether each skill's `required_tools` are a subset of the personality's effective tool reach. The researcher sees skills whose required tools are read/search/browse; the engineer sees skills that touch write/run/test; the reviewer sees only read-only skills.
 
 This means a skill the user installed for `engineer` does not implicitly load under `reviewer`. The skill is the same file on disk, but the per-personality filter makes it invisible to roles that lack the tools to execute it. The personality is the gate; the skill is the reusable capability that passes through it.
+
+### Skill evolution and the personality lifecycle
+
+A personality is not static — it learns and adapts over time through skill evolution. The `skill_evolution` field on `PersonalityConfig` controls whether a personality tracks which skills it uses, how often, and with what success rate. Over time, the personality builds a usage profile that informs skill ranking and recommendation. A researcher that frequently uses citation-heavy skills surfaces those skills first; an engineer that never uses a formatting skill stops seeing it in suggestions.
+
+Skill evolution is personality-scoped by design. Each personality accumulates its own usage history, so switching from `engineer` to `reviewer` does not carry over skill preferences. The mechanism is the same mtime-fingerprinted reload — skill evolution state persists in the personality directory alongside `SOUL.md`, `config.yaml`, and `toolset.yaml`.
+
+This is the lifecycle dimension of personality-as-architecture: the personality is not just a static configuration, but a living unit that adapts to how it is used. The adaptation is bounded by the schema — `skill_evolution` is a leaf on `PersonalityConfig`, not a separate subsystem — and gated by the same per-personality filter that gates tool access and memory scope.
 
 ### How this differs from neighbouring frameworks
 

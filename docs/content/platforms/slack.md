@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: platform-slack
 time: "15 min"
-updated: 2026-05-16
+updated: 2026-06-09
 ---
 
 ## Task
@@ -96,6 +96,12 @@ Expected boot lines include `⚡️ Bolt app started`. Socket Mode means no reve
 When the inbound message has a `thread_ts` or the `replyToId` is set, the adapter passes `thread_ts` to `chat.postMessage` so the reply lands in the same thread. New top-level mentions start a new thread when the agent's reply spans multiple chunks.
 
 The adapter skips messages with any `subtype` (bot messages, edits, joins) — Bolt surfaces those as `message` events too.
+
+### 4a. Plugin commands
+
+Plugin commands registered via `registerSlashCommand()` are dispatched through the gateway's text-matching pipeline — the same path as built-in `/` commands.
+
+Unlike Telegram and Discord, Slack requires manual slash command registration in the Slack app dashboard (`api.slack.com`). The gateway logs the list of commands that need registration at startup so operators can sync them. See [Register plugin slash commands](../building/how-to/register-plugin-commands.md) for the full walkthrough.
 
 ### 5. Restrict who can talk to the bot
 

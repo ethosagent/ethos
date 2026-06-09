@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: production-hardening-checklist
 time: "30 min"
-updated: 2026-05-18
+updated: 2026-06-09
 ---
 
 ## Task
@@ -250,6 +250,57 @@ For a step-by-step rotation procedure, see [Bot token rotation playbook](./bot-t
 
 **Verify:** Perform a dry-run rotation of one non-critical token. Confirm the gateway reconnects with the new token and the old token is revoked.
 
+### 11. Enable admin panel token authentication
+
+Generate an admin token via `ethos token create`. Configure the web API to require the token on every request. Confirm unauthenticated requests receive `401 Unauthorized`.
+
+**Verify:**
+
+```bash
+# Request without token — should return 401
+curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/sessions
+# 401
+
+# Request with token — should return 200
+curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ETHOS_TOKEN" \
+  http://localhost:3000/api/sessions
+# 200
+```
+
+See [Security controls -- admin panel token authentication](./controls.md#admin-panel-token-auth).
+
+### 12. Restrict CORS for remote desktop connections
+
+If Mission Control connects to a remote Ethos instance, set `cors.allowedOrigins` in `~/.ethos/config.yaml` to the exact origin of the desktop app. Do not use `*`.
+
+```yaml
+# ~/.ethos/config.yaml
+cors:
+  allowedOrigins:
+    - "https://mission-control.example.com"
+```
+
+**Verify:** Open the browser console on the desktop app and confirm no CORS errors. Attempt a request from a different origin and confirm it is rejected.
+
+See [Security controls -- desktop remote connection security](./controls.md#desktop-remote-connection) and [Deploy Mission Control with a remote Ethos](../building/how-to/deploy-mission-control-remote.md).
+
+### 13. Review plugin data source permissions
+
+Confirm every plugin data source is registered as read-only. The dashboard query executor enforces read-only transactions, but review that no plugin bypasses the `registerDataSource` path with direct database access.
+
+**Verify:**
+
+```bash
+# Attempt a write query via the dashboard — should be rejected
+curl -s -X POST -H "Authorization: Bearer $ETHOS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "DROP TABLE test"}' \
+  http://localhost:3000/api/data-sources/my-plugin/query
+# Should return an error indicating write operations are not allowed
+```
+
+See [Security controls -- read-only SQL enforcement](./controls.md#read-only-sql) and [Register a plugin data source](../building/how-to/register-plugin-data-source.md).
+
 ## Verify
 
 Run the config strict loader to confirm no warnings remain:
@@ -277,6 +328,9 @@ If every step above passes, the deployment is hardened.
 | `observability.db` is empty | Database path misconfigured or the process lacks write permission | Check `observability.db` path in config; confirm the process user can write to it |
 | Container crashes on startup with read-only FS | `~/.ethos/` not mounted as a writable volume | Mount a persistent volume at the `~/.ethos/` path |
 | `ethos config validate --strict` reports missing personality | Bot binding references a personality ID that does not exist | Create the personality directory or fix the `botKey` mapping |
+| Admin panel returns `401` for all requests | Token not generated or not passed in the `Authorization` header | Run `ethos token create` and pass the token as `Bearer <token>` |
+| CORS error in Mission Control desktop app | `cors.allowedOrigins` does not include the desktop app origin | Add the exact origin to `cors.allowedOrigins` in `config.yaml` |
+| Dashboard query returns data from a write statement | Plugin bypasses `registerDataSource` with direct DB access | Audit plugin code; route all queries through `registerDataSource` |
 
 ## See also
 
