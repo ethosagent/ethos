@@ -90,13 +90,21 @@ export const adminRouter = {
     }
   }),
 
-  addMcpServer: os.admin.addMcpServer.handler(async () => {
-    // Placeholder — full MCP server management uses the mcp namespace
+  addMcpServer: os.admin.addMcpServer.handler(async ({ input, context }) => {
+    const result = await context.mcp.addServer({
+      name: input.name,
+      transport: 'streamable-http',
+      url: input.url,
+      authType: input.authType === 'bearer' ? 'bearer' : 'none',
+    });
+    if ('ok' in result && result.ok === false) {
+      throw new Error(result.detail ?? 'Failed to add MCP server');
+    }
     return { ok: true as const };
   }),
 
-  removeMcpServer: os.admin.removeMcpServer.handler(async () => {
-    // Placeholder — full MCP server management uses the mcp namespace
+  removeMcpServer: os.admin.removeMcpServer.handler(async ({ input, context }) => {
+    await context.mcp.delete({ name: input.name });
     return { ok: true as const };
   }),
 };

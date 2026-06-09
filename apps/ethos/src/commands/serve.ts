@@ -144,6 +144,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     );
     const displayHost = webHost === '0.0.0.0' ? 'localhost' : webHost;
     console.log(`ethos web UI (onboarding mode) listening on http://${displayHost}:${port}`);
+    console.log(`  admin: http://${displayHost}:${port}/admin`);
     if (webDist) {
       console.log(`  open: http://${displayHost}:${port}/auth/exchange?t=${token}`);
     } else {
@@ -422,6 +423,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   console.log('');
   const displayHost = webHost === '0.0.0.0' ? 'localhost' : webHost;
   console.log(`ethos web UI listening on http://${displayHost}:${port}`);
+  console.log(`  admin: http://${displayHost}:${port}/admin`);
   if (webDist) {
     console.log(`  open: http://${displayHost}:${port}/auth/exchange?t=${token}`);
     console.log('  (token rotates on first use; cookie remains the steady-state credential)');

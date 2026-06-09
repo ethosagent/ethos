@@ -72,11 +72,32 @@ export function Composer({
     setAtQuery(null);
   }, []);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const trimmed = text.trim();
     if ((!trimmed && !hasReadyAttachments) || disabled || isUploading) return;
     setText('');
-    void onSend(trimmed);
+
+    let resolved = trimmed;
+    const refPattern = /@([\w./~-]+)/g;
+    const matches = [...trimmed.matchAll(refPattern)];
+    if (matches.length > 0) {
+      const refs = matches.map((m) => m[1]);
+      try {
+        const result = await rpc.context.resolve({ refs });
+        for (const entry of result.resolved) {
+          if (entry.content) {
+            resolved = resolved.replace(
+              `@${entry.ref}`,
+              `\`\`\`${entry.lang}\n// ${entry.ref}\n${entry.content}\n\`\`\``,
+            );
+          }
+        }
+      } catch {
+        // Resolution failed — send with raw @ref tokens
+      }
+    }
+
+    void onSend(resolved);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {

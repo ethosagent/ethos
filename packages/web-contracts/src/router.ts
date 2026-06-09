@@ -512,6 +512,7 @@ const ConfigGetOutput = z.object({
   contextLayering: z.boolean(),
   debugPanelEnabled: z.boolean(),
   debugPanelModel: z.string().nullable(),
+  adminEnabled: z.boolean(),
 });
 
 const ConfigUpdateInput = z.object({
@@ -669,7 +670,7 @@ const SkillOkOutput = z.object({ ok: z.literal(true) });
 
 /** @experimental */
 const skills = {
-  list: oc.output(SkillListOutput),
+  list: oc.input(z.object({ includeUnavailable: z.boolean().optional() })).output(SkillListOutput),
   get: oc.input(SkillGetInput).output(SkillGetOutput),
   create: oc.input(SkillCreateInput).output(SkillCreateOutput),
   update: oc.input(SkillUpdateInput).output(SkillUpdateOutput),

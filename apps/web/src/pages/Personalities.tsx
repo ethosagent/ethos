@@ -757,7 +757,7 @@ function WizardSkillsStep({
 }) {
   const skillsQuery = useQuery({
     queryKey: ['skills', 'list'],
-    queryFn: () => rpc.skills.list(),
+    queryFn: () => rpc.skills.list({}),
   });
 
   if (skillsQuery.isLoading) {
@@ -1812,7 +1812,7 @@ function ImportGlobalSkillsModal({
 
   const globalQuery = useQuery({
     queryKey: ['skills', 'list'],
-    queryFn: () => rpc.skills.list(),
+    queryFn: () => rpc.skills.list({}),
   });
 
   const importMut = useMutation({

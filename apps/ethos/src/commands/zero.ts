@@ -42,7 +42,17 @@ export async function runZero(argv: string[], prompt: string): Promise<void> {
   const { loop, personalityId } = await resolveActiveLoop(withOverrides);
 
   const noStream = argv.includes('--no-stream');
-  const sessionKey = `zero:${Date.now()}`;
+  // Parse --session from argv
+  let sessionKey = `zero:${Date.now()}`;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--session' && i + 1 < argv.length) {
+      const val = argv[i + 1];
+      if (val && !val.startsWith('-')) {
+        sessionKey = val;
+        break;
+      }
+    }
+  }
 
   try {
     for await (const event of loop.run(fullPrompt, {

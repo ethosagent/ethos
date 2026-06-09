@@ -34,7 +34,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   };
 
   const { data: sessionsData } = useRecentSessions(SIDEBAR_SESSION_LIMIT);
-  const { error: configError, isLoading: configLoading } = useConfig();
+  const { data: config, error: configError, isLoading: configLoading } = useConfig();
 
   const sessions = sessionsData?.items ?? [];
   const pinned = useMemo(() => sessions.filter((s) => s.pinned), [sessions]);
@@ -171,7 +171,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                   label="Teams"
                   active={pathname === '/teams' || pathname.startsWith('/teams/')}
                 />
-                <NavRow path="/admin" icon="🛡️" label="Admin" active={pathname === '/admin'} />
+                {config?.adminEnabled && (
+                  <NavRow path="/admin" icon="🛡️" label="Admin" active={pathname === '/admin'} />
+                )}
               </div>
             </>
           )}
@@ -218,7 +220,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             active={pathname === '/communications'}
           />
           <NavRow path="/sessions" icon="📋" label="Sessions" active={pathname === '/sessions'} />
-          <NavRow path="/admin" icon="🛡️" label="Admin" active={pathname === '/admin'} />
+          {config?.adminEnabled && (
+            <NavRow path="/admin" icon="🛡️" label="Admin" active={pathname === '/admin'} />
+          )}
           <NavRow path="/settings" icon="⚙️" label="Settings" active={pathname === '/settings'} />
         </div>
       )}

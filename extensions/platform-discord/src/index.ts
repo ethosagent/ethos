@@ -117,6 +117,7 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   private commandContext?: CommandContext;
 
   private readonly pendingInteractions = new Map<string, Interaction>();
+  private extraCommands: { name: string; description: string }[] = [];
   private readonly chunkMap = new Map<string, string[]>();
   private readonly chunkMapMaxEntries = 1024;
   /** Receipt reactions pending clearing, keyed by inbound messageId → channelId. Bounded FIFO. */
@@ -576,7 +577,14 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
         target === 'global'
           ? Routes.applicationCommands(appId)
           : Routes.applicationGuildCommands(appId, target);
-      await rest.put(route, { body: COMMAND_DEFINITIONS });
+      const base = COMMAND_DEFINITIONS[0];
+      const extra = this.extraCommands.map((cmd) => ({
+        name: cmd.name,
+        description: cmd.description,
+        type: 1 as const,
+      }));
+      const body = [{ ...base, options: [...base.options, ...extra] }];
+      await rest.put(route, { body });
     } catch {
       // Non-fatal — commands won't appear but the bot still works.
     }
@@ -633,9 +641,9 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     this.chunkMap.set(primary, ids);
   }
 
-  async registerCommands(_cmds: { name: string; description: string }[]): Promise<void> {
-    // Discord application commands require REST registration via the Applications
-    // API. Plugin commands are dispatched by the gateway as normal text for now.
+  async registerCommands(cmds: { name: string; description: string }[]): Promise<void> {
+    this.extraCommands.push(...cmds);
+    await this.registerSlashCommands();
   }
 }
 

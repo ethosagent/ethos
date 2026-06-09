@@ -379,6 +379,8 @@ export class Gateway {
   private readonly activeTurns = new Map<string, { adapter: PlatformAdapter; chatId: string }>();
   /** Active steer sinks by laneKey — inbound messages during a turn push here. */
   private readonly activeSinks = new Map<string, SteerSink>();
+  /** Buffered notifications for sessions whose turn has ended. */
+  private readonly unreadNotifications = new Map<string, string[]>();
   /** Live status message per lane — edited in place during tool execution. */
   private readonly activeStatusMessages = new Map<
     string,
@@ -1142,10 +1144,28 @@ export class Gateway {
 
     this.activeTurns.set(laneKey, { adapter, chatId: message.chatId });
 
+    // Flush buffered notifications from previous disconnected period
+    if (this.notificationRouter) {
+      const buffered = this.unreadNotifications.get(sessionKey);
+      if (buffered && buffered.length > 0) {
+        this.unreadNotifications.delete(sessionKey);
+        for (const note of buffered) {
+          await adapter.send(message.chatId, { text: note, threadId }).catch(() => {});
+        }
+      }
+    }
+
+    let turnActive = true;
     if (this.notificationRouter) {
       this.notificationRouter.register(sessionKey, {
         send: async (text: string) => {
-          await adapter.send(message.chatId, { text, threadId }).catch(() => {});
+          if (turnActive) {
+            await adapter.send(message.chatId, { text, threadId }).catch(() => {});
+          } else {
+            const buf = this.unreadNotifications.get(sessionKey) ?? [];
+            buf.push(text);
+            this.unreadNotifications.set(sessionKey, buf);
+          }
         },
         injectUserMessage: async (_msg: string) => {},
       });
@@ -1285,7 +1305,8 @@ export class Gateway {
         this.activeStatusMessages.delete(laneKey);
       }
 
-      this.notificationRouter?.deregister(sessionKey);
+      turnActive = false;
+      // Don't deregister — keep the adapter alive to buffer offline notifications
       this.sessionRouting.delete(sessionKey);
       const sessionId = this.sessionIdByKey.get(sessionKey);
       if (sessionId !== undefined) {

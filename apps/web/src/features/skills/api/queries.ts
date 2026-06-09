@@ -5,7 +5,7 @@ import { evolverKeys, skillKeys } from './keys';
 export function useSkillsList() {
   return useQuery({
     queryKey: skillKeys.list(),
-    queryFn: () => rpc.skills.list(),
+    queryFn: () => rpc.skills.list({}),
   });
 }
 
