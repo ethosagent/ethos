@@ -1,0 +1,25 @@
+{
+  "events": [
+    {
+      "type": "run_start",
+      "provider": "scripted",
+      "model": "mock-model",
+      "source": "global"
+    },
+    {
+      "type": "error",
+      "error": "Aborted",
+      "code": "aborted"
+    }
+  ],
+  "messages": [
+    {
+      "sessionId": "normalized",
+      "role": "user",
+      "content": "should abort",
+      "id": "normalized",
+      "timestamp": "2000-01-01T00:00:00.000Z"
+    }
+  ],
+  "llmInputs": []
+}

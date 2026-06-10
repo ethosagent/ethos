@@ -19,6 +19,7 @@ import type { CapabilityBackends } from '@ethosagent/core';
 import { AgentLoop, DefaultToolRegistry } from '@ethosagent/core';
 import type { CompletionChunk, LLMProvider, Message } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
+import { createTestSafety } from '../../../../packages/core/src/__tests__/helpers/test-safety';
 import { createDelegateTaskTool } from '../index';
 
 // ---------------------------------------------------------------------------
@@ -94,7 +95,7 @@ describe('subagent task contract — task lives only in child first user message
     };
 
     const tools = new DefaultToolRegistry(testBackends);
-    const loop = new AgentLoop({ llm, tools });
+    const loop = new AgentLoop({ llm, tools, safety: createTestSafety() });
     tools.register(createDelegateTaskTool(loop));
 
     for await (const _event of loop.run('parent kickoff prompt')) {

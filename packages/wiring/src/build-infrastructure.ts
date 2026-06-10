@@ -171,6 +171,9 @@ export async function buildInfrastructure(
   // -------------------------------------------------------------------------
 
   const resolver = config.secretsResolver;
+  const { safeFetch } = await import('@ethosagent/safety-network');
+  const { defaultAlwaysDeny } = await import('@ethosagent/storage-fs');
+
   const capabilityBackends: CapabilityBackends = {
     kvStoreFactory: sessionCompose.kvStoreFactory,
     secretsBackend: async (ref: string) => {
@@ -192,6 +195,8 @@ export async function buildInfrastructure(
       write: activePerson.fs_reach?.write ?? [],
     },
     personalityNetworkPolicy: activePerson.safety?.network ?? {},
+    safeFetch,
+    alwaysDenyPaths: defaultAlwaysDeny(),
     attachmentCache: new FsAttachmentCache(new FsStorage(), join(dataDir, 'cache', 'attachments')),
   };
 

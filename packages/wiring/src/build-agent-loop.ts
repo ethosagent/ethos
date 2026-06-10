@@ -155,6 +155,68 @@ export async function buildAgentLoop(
   }
 
   // -------------------------------------------------------------------------
+  // Ch.6a — In-process watcher
+  // -------------------------------------------------------------------------
+
+  const { Watcher: WatcherClass, defaultRules: watcherDefaultRules } = await import(
+    '@ethosagent/safety-watcher'
+  );
+  const watcher = new WatcherClass({
+    rules: watcherDefaultRules(),
+    ...(opts.observability ? { observability: opts.observability } : {}),
+  });
+
+  // -------------------------------------------------------------------------
+  // Ch.3c Tier-2 — LLM injection classifier
+  // -------------------------------------------------------------------------
+
+  const { createLLMClassifier } = await import('@ethosagent/safety-injection');
+  const injectionClassifier = createLLMClassifier({ llm });
+
+  // -------------------------------------------------------------------------
+  // Phase 2 — Build the AgentSafety bundle for core's injected safety path.
+  // -------------------------------------------------------------------------
+
+  const {
+    INJECTION_DEFENSE_PRELUDE: prelude,
+    DOWNGRADE_REJECTION_MESSAGE: downgradeRejectionMessage,
+    sanitize: sanitizeFn,
+    wrapUntrusted: wrapUntrustedFn,
+    shortPatternCheck: shortPatternCheckFn,
+    c2PatternCheck: c2PatternCheckFn,
+    resolveDowngradedTools: resolveDowngradedToolsFn,
+  } = await import('@ethosagent/safety-injection');
+  const {
+    redactPii: redactPiiFn,
+    redactString: redactStringFn,
+    detectSecrets: detectSecretsFn,
+  } = await import('@ethosagent/safety-redact');
+  const { ScopedStorage: ScopedStorageCls, defaultAlwaysDeny: defaultAlwaysDenyFn } = await import(
+    '@ethosagent/storage-fs'
+  );
+
+  const safety: import('@ethosagent/types').AgentSafety = {
+    injection: {
+      prelude,
+      downgradeRejectionMessage,
+      sanitize: sanitizeFn,
+      wrapUntrusted: wrapUntrustedFn,
+      shortPatternCheck: shortPatternCheckFn,
+      c2PatternCheck: c2PatternCheckFn,
+      resolveDowngradedTools: resolveDowngradedToolsFn,
+      classifier: injectionClassifier,
+    },
+    redaction: {
+      redactPii: redactPiiFn,
+      redactString: redactStringFn,
+      detectSecrets: detectSecretsFn,
+    },
+    scopedStorageFactory: (base, scope) =>
+      new ScopedStorageCls(base, { ...scope, alwaysDeny: defaultAlwaysDenyFn() }),
+    watcher,
+  };
+
+  // -------------------------------------------------------------------------
   // E3 — improvement fork
   // -------------------------------------------------------------------------
 
@@ -173,6 +235,7 @@ export async function buildAgentLoop(
       model: config.model,
       memoryProvider: memory,
       sessionStore: session,
+      safety,
     },
     personalities,
     dataDir,
@@ -224,25 +287,6 @@ export async function buildAgentLoop(
       message: `${summary}${details}`,
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Ch.6a — In-process watcher
-  // -------------------------------------------------------------------------
-
-  const { Watcher: WatcherClass, defaultRules: watcherDefaultRules } = await import(
-    '@ethosagent/safety-watcher'
-  );
-  const watcher = new WatcherClass({
-    rules: watcherDefaultRules(),
-    ...(opts.observability ? { observability: opts.observability } : {}),
-  });
-
-  // -------------------------------------------------------------------------
-  // Ch.3c Tier-2 — LLM injection classifier
-  // -------------------------------------------------------------------------
-
-  const { createLLMClassifier } = await import('@ethosagent/safety-injection');
-  const injectionClassifier = createLLMClassifier({ llm });
 
   // -------------------------------------------------------------------------
   // P3 observability — request dump store
@@ -301,8 +345,7 @@ export async function buildAgentLoop(
     dataDir,
     modelRouting: config.modelRouting,
     memoryProviders: memoryProviderMap,
-    watcher,
-    injectionClassifier,
+    safety,
     contextEngines,
     clarifyBridge: infra.clarifyBridge,
     ...(config.teamName ? { teamId: config.teamName } : {}),

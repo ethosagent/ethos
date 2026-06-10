@@ -12,6 +12,7 @@ import { AgentLoop } from '../agent-loop';
 import { DefaultPersonalityRegistry } from '../defaults/noop-personality';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
 import { DefaultToolRegistry } from '../tool-registry';
+import { createTestSafety } from './helpers/test-safety';
 
 interface Step {
   text?: string;
@@ -112,7 +113,7 @@ describe('AgentLoop — Ch.3a provenance wrapping', () => {
       ],
       captured,
     );
-    const loop = new AgentLoop({ llm, tools });
+    const loop = new AgentLoop({ llm, tools, safety: createTestSafety() });
     await collect(loop.run('go'));
 
     const second = captured[1] ?? [];
@@ -138,7 +139,7 @@ describe('AgentLoop — Ch.3a provenance wrapping', () => {
       ],
       captured,
     );
-    const loop = new AgentLoop({ llm, tools });
+    const loop = new AgentLoop({ llm, tools, safety: createTestSafety() });
     await collect(loop.run('go'));
 
     const second = captured[1] ?? [];
@@ -165,7 +166,7 @@ describe('AgentLoop — Ch.3a provenance wrapping', () => {
       ],
       captured,
     );
-    const loop = new AgentLoop({ llm, tools });
+    const loop = new AgentLoop({ llm, tools, safety: createTestSafety() });
     await collect(loop.run('go'));
 
     const second = captured[1] ?? [];
@@ -200,7 +201,7 @@ describe('AgentLoop — Ch.3a provenance wrapping', () => {
         return 1;
       },
     };
-    const loop = new AgentLoop({ llm });
+    const loop = new AgentLoop({ llm, safety: createTestSafety() });
     await collect(loop.run('hi'));
     expect(captured[0]?.system ?? '').toMatch(/External-content safety/);
     expect(captured[0]?.system ?? '').toMatch(/<untrusted source="/);
@@ -218,7 +219,7 @@ describe('AgentLoop — Ch.3c short-pattern check', () => {
       },
       { text: 'ok', finishReason: 'end_turn' },
     ]);
-    const loop = new AgentLoop({ llm, tools });
+    const loop = new AgentLoop({ llm, tools, safety: createTestSafety() });
     const events = await collect(loop.run('go'));
     const progress = events.find(
       (e): e is Extract<AgentEvent, { type: 'tool_progress' }> => e.type === 'tool_progress',
@@ -238,7 +239,7 @@ describe('AgentLoop — Ch.3c short-pattern check', () => {
       },
       { text: 'ok', finishReason: 'end_turn' },
     ]);
-    const loop = new AgentLoop({ llm, tools });
+    const loop = new AgentLoop({ llm, tools, safety: createTestSafety() });
     const events = await collect(loop.run('go'));
     const progress = events.find(
       (e): e is Extract<AgentEvent, { type: 'tool_progress' }> => e.type === 'tool_progress',
@@ -256,7 +257,7 @@ describe('AgentLoop — Ch.3c short-pattern check', () => {
       },
       { text: 'ok', finishReason: 'end_turn' },
     ]);
-    const loop = new AgentLoop({ llm, tools });
+    const loop = new AgentLoop({ llm, tools, safety: createTestSafety() });
     const events = await collect(loop.run('go'));
     const flagged = events.find(
       (e): e is Extract<AgentEvent, { type: 'tool_progress' }> =>
@@ -281,10 +282,14 @@ describe('AgentLoop — Ch.3c short-pattern check', () => {
     const loop = new AgentLoop({
       llm,
       tools,
-      injectionClassifier: async () => {
-        classifierCalls++;
-        return { containsInstructions: false, confidence: 0.1, source: 'llm' };
-      },
+      safety: createTestSafety({
+        injection: {
+          classifier: async () => {
+            classifierCalls++;
+            return { containsInstructions: false, confidence: 0.1, source: 'llm' };
+          },
+        },
+      }),
     });
     await collect(loop.run('go'));
     expect(classifierCalls).toBe(1);
@@ -304,10 +309,14 @@ describe('AgentLoop — Ch.3c short-pattern check', () => {
     const loop = new AgentLoop({
       llm,
       tools,
-      injectionClassifier: async () => {
-        classifierCalls++;
-        return { containsInstructions: false, confidence: 0, source: 'llm' };
-      },
+      safety: createTestSafety({
+        injection: {
+          classifier: async () => {
+            classifierCalls++;
+            return { containsInstructions: false, confidence: 0, source: 'llm' };
+          },
+        },
+      }),
     });
     await collect(loop.run('go'));
     expect(classifierCalls).toBe(0);
@@ -339,10 +348,14 @@ describe('AgentLoop — Ch.3c short-pattern check', () => {
     const loop = new AgentLoop({
       llm,
       tools,
+      safety: createTestSafety({
+        injection: {
+          classifier: async () => {
+            throw new Error('haiku unreachable');
+          },
+        },
+      }),
       observability,
-      injectionClassifier: async () => {
-        throw new Error('haiku unreachable');
-      },
     });
     await collect(loop.run('go'));
     expect(events.some((e) => e.code === 'injection_classifier_failed')).toBe(true);
@@ -375,7 +388,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
       { text: 'ok', finishReason: 'end_turn' },
     ]);
 
-    const loop = new AgentLoop({ llm, tools });
+    const loop = new AgentLoop({ llm, tools, safety: createTestSafety() });
     const events = await collect(loop.run('go'));
     const terminalEnd = events.find(
       (e): e is Extract<AgentEvent, { type: 'tool_end' }> =>
@@ -405,7 +418,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
       { text: 'ok', finishReason: 'end_turn' },
     ]);
 
-    const loop = new AgentLoop({ llm, tools });
+    const loop = new AgentLoop({ llm, tools, safety: createTestSafety() });
     const events = await collect(loop.run('go'));
     const terminalEnd = events.find(
       (e): e is Extract<AgentEvent, { type: 'tool_end' }> =>
@@ -451,7 +464,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
     });
     personalities.setDefault('default');
 
-    const loop = new AgentLoop({ llm, tools, personalities });
+    const loop = new AgentLoop({ llm, tools, personalities, safety: createTestSafety() });
     const events = await collect(loop.run('go'));
     const terminalEnd = events.find(
       (e): e is Extract<AgentEvent, { type: 'tool_end' }> =>
@@ -509,7 +522,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
     personalities.setDefault('default');
 
     const watcher = new Watcher({ rules: [suspiciousSequenceRule()] });
-    const loop = new AgentLoop({ llm, tools, personalities, watcher });
+    const loop = new AgentLoop({ llm, tools, personalities, safety: createTestSafety({ watcher }) });
     const events = await collect(loop.run('go'));
     const err = events.find((e): e is Extract<AgentEvent, { type: 'error' }> => e.type === 'error');
     expect(err).toBeDefined();
@@ -565,7 +578,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
     personalities.setDefault('default');
 
     const watcher = new Watcher({ rules: [suspiciousSequenceRule()] });
-    const loop = new AgentLoop({ llm, tools, personalities, watcher });
+    const loop = new AgentLoop({ llm, tools, personalities, safety: createTestSafety({ watcher }) });
     await collect(loop.run('go'));
     expect(webPostCalls).toBe(0);
   });
@@ -603,7 +616,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
     });
     personalities.setDefault('default');
 
-    const loop = new AgentLoop({ llm, tools, personalities });
+    const loop = new AgentLoop({ llm, tools, personalities, safety: createTestSafety() });
     const events = await collect(loop.run('go'));
     const terminalEnd = events.find(
       (e): e is Extract<AgentEvent, { type: 'tool_end' }> =>

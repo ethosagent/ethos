@@ -2,6 +2,7 @@ import type { CompletionChunk, CompletionOptions, LLMProvider, Message } from '@
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
+import { createTestSafety } from './helpers/test-safety';
 
 function makeMockLLM(onComplete?: (opts: CompletionOptions) => void): LLMProvider {
   return {
@@ -45,7 +46,7 @@ describe('Model tier resolution', () => {
   it('uses default tier model when personality declares matching provider', async () => {
     const onComplete = vi.fn();
     const llm = makeMockLLM(onComplete);
-    const loop = new AgentLoop({ llm });
+    const loop = new AgentLoop({ llm, safety: createTestSafety() });
 
     // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
     loop['personalities'].define({
@@ -65,7 +66,7 @@ describe('Model tier resolution', () => {
   it('falls back to llm.model when personality provider does not match', async () => {
     const onComplete = vi.fn();
     const llm = makeMockLLM(onComplete);
-    const loop = new AgentLoop({ llm });
+    const loop = new AgentLoop({ llm, safety: createTestSafety() });
 
     // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
     loop['personalities'].define({
@@ -84,7 +85,7 @@ describe('Model tier resolution', () => {
   it('falls back to llm.model when personality has plain string model', async () => {
     const onComplete = vi.fn();
     const llm = makeMockLLM(onComplete);
-    const loop = new AgentLoop({ llm });
+    const loop = new AgentLoop({ llm, safety: createTestSafety() });
 
     // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
     loop['personalities'].define({
@@ -102,7 +103,7 @@ describe('Model tier resolution', () => {
   it('tierOverride in RunOptions makes the turn use deep tier', async () => {
     const onComplete = vi.fn();
     const llm = makeMockLLM(onComplete);
-    const loop = new AgentLoop({ llm });
+    const loop = new AgentLoop({ llm, safety: createTestSafety() });
 
     // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
     loop['personalities'].define({
@@ -121,7 +122,7 @@ describe('Model tier resolution', () => {
   it('tierOverride is per-run (second run without it uses default)', async () => {
     const onComplete = vi.fn();
     const llm = makeMockLLM(onComplete);
-    const loop = new AgentLoop({ llm });
+    const loop = new AgentLoop({ llm, safety: createTestSafety() });
 
     // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
     loop['personalities'].define({
@@ -145,6 +146,7 @@ describe('Model tier resolution', () => {
     const llm = makeMockLLM(onComplete);
     const loop = new AgentLoop({
       llm,
+      safety: createTestSafety(),
       modelRouting: { tiered: 'override-model' },
     });
 
@@ -164,7 +166,7 @@ describe('Model tier resolution', () => {
 
   it('emits run_start with correct model from tier config', async () => {
     const llm = makeMockLLM();
-    const loop = new AgentLoop({ llm });
+    const loop = new AgentLoop({ llm, safety: createTestSafety() });
 
     // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
     loop['personalities'].define({

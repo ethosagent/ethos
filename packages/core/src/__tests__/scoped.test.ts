@@ -1,4 +1,5 @@
 import type { NetworkPolicy } from '@ethosagent/safety-network';
+import { safeFetch } from '@ethosagent/safety-network';
 import { describe, expect, it, vi } from 'vitest';
 import { ScopedFetchImpl } from '../scoped/scoped-fetch';
 import { ScopedFsImpl } from '../scoped/scoped-fs';
@@ -19,47 +20,47 @@ describe('ScopedFetchImpl', () => {
 
   it('allows exact host match', async () => {
     const seam = makeSeam();
-    const sf = new ScopedFetchImpl(new Set(['api.example.com']), PERMISSIVE, seam);
+    const sf = new ScopedFetchImpl(new Set(['api.example.com']), PERMISSIVE, safeFetch, seam);
     await sf.fetch('https://api.example.com/v1/data');
     expect(seam.fetchImpl).toHaveBeenCalledOnce();
   });
 
   it('rejects undeclared host', async () => {
     const seam = makeSeam();
-    const sf = new ScopedFetchImpl(new Set(['api.example.com']), PERMISSIVE, seam);
+    const sf = new ScopedFetchImpl(new Set(['api.example.com']), PERMISSIVE, safeFetch, seam);
     await expect(sf.fetch('https://evil.com/steal')).rejects.toThrow('HOST_NOT_ALLOWED');
     expect(seam.fetchImpl).not.toHaveBeenCalled();
   });
 
   it('wildcard * allows any host', async () => {
     const seam = makeSeam();
-    const sf = new ScopedFetchImpl(new Set(['*']), PERMISSIVE, seam);
+    const sf = new ScopedFetchImpl(new Set(['*']), PERMISSIVE, safeFetch, seam);
     await sf.fetch('https://anything.anywhere.net/path');
     expect(seam.fetchImpl).toHaveBeenCalledOnce();
   });
 
   it('subdomain wildcard *.github.com matches api.github.com', async () => {
     const seam = makeSeam();
-    const sf = new ScopedFetchImpl(new Set(['*.github.com']), PERMISSIVE, seam);
+    const sf = new ScopedFetchImpl(new Set(['*.github.com']), PERMISSIVE, safeFetch, seam);
     await sf.fetch('https://api.github.com/repos');
     expect(seam.fetchImpl).toHaveBeenCalledOnce();
   });
 
   it('subdomain wildcard *.github.com does not match github.com itself', async () => {
     const seam = makeSeam();
-    const sf = new ScopedFetchImpl(new Set(['*.github.com']), PERMISSIVE, seam);
+    const sf = new ScopedFetchImpl(new Set(['*.github.com']), PERMISSIVE, safeFetch, seam);
     await expect(sf.fetch('https://github.com/repos')).rejects.toThrow('HOST_NOT_ALLOWED');
   });
 
   it('subdomain wildcard does not match unrelated host', async () => {
     const seam = makeSeam();
-    const sf = new ScopedFetchImpl(new Set(['*.github.com']), PERMISSIVE, seam);
+    const sf = new ScopedFetchImpl(new Set(['*.github.com']), PERMISSIVE, safeFetch, seam);
     await expect(sf.fetch('https://evil-github.com')).rejects.toThrow('HOST_NOT_ALLOWED');
   });
 
   it('passes RequestInit through to the underlying fetch', async () => {
     const seam = makeSeam();
-    const sf = new ScopedFetchImpl(new Set(['api.example.com']), PERMISSIVE, seam);
+    const sf = new ScopedFetchImpl(new Set(['api.example.com']), PERMISSIVE, safeFetch, seam);
     const init: RequestInit = { method: 'POST', body: '{}' };
     await sf.fetch('https://api.example.com/v1', init);
     // safeFetch forces redirect: 'manual'; the rest of init passes through.
@@ -74,7 +75,7 @@ describe('ScopedFetchImpl', () => {
   // bad schemes. The fetch must never be issued.
   it('floor blocks cloud-metadata IP literal even with allowedHosts=[*]', async () => {
     const seam = makeSeam();
-    const sf = new ScopedFetchImpl(new Set(['*']), PERMISSIVE, seam);
+    const sf = new ScopedFetchImpl(new Set(['*']), PERMISSIVE, safeFetch, seam);
     await expect(sf.fetch('http://169.254.169.254/latest/meta-data/')).rejects.toThrow(
       'HOST_NOT_ALLOWED',
     );
@@ -83,14 +84,14 @@ describe('ScopedFetchImpl', () => {
 
   it('floor blocks DNS-resolves-to-cloud-metadata even with allowedHosts=[*]', async () => {
     const seam = makeSeam('ok', ['169.254.169.254']);
-    const sf = new ScopedFetchImpl(new Set(['*']), PERMISSIVE, seam);
+    const sf = new ScopedFetchImpl(new Set(['*']), PERMISSIVE, safeFetch, seam);
     await expect(sf.fetch('http://attacker.example.com/')).rejects.toThrow('HOST_NOT_ALLOWED');
     expect(seam.fetchImpl).not.toHaveBeenCalled();
   });
 
   it('floor blocks file:// scheme even with allowedHosts=[*]', async () => {
     const seam = makeSeam();
-    const sf = new ScopedFetchImpl(new Set(['*']), PERMISSIVE, seam);
+    const sf = new ScopedFetchImpl(new Set(['*']), PERMISSIVE, safeFetch, seam);
     await expect(sf.fetch('file:///etc/passwd')).rejects.toThrow('HOST_NOT_ALLOWED');
     expect(seam.fetchImpl).not.toHaveBeenCalled();
   });
@@ -98,7 +99,7 @@ describe('ScopedFetchImpl', () => {
   it('floor blocks private-network resolution when allow_private_urls is false', async () => {
     const seam = makeSeam('ok', ['10.0.0.5']);
     const strict: NetworkPolicy = { allow: [], allow_private_urls: false };
-    const sf = new ScopedFetchImpl(new Set(['*']), strict, seam);
+    const sf = new ScopedFetchImpl(new Set(['*']), strict, safeFetch, seam);
     await expect(sf.fetch('http://internal.example.com/')).rejects.toThrow('HOST_NOT_ALLOWED');
     expect(seam.fetchImpl).not.toHaveBeenCalled();
   });

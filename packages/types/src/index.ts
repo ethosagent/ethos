@@ -1,6 +1,7 @@
 // @ethosagent/types — zero-dep interface contract layer
 // All packages import from here. No runtime code.
 
+export * from './agent-event';
 export * from './clarify';
 export * from './context-engine';
 export * from './diagnostics';
@@ -25,6 +26,7 @@ export * from './plugin-llm';
 export * from './plugin-panel';
 export * from './plugin-ui';
 export * from './retention';
+export * from './safety';
 export * from './sandbox';
 export { SecretNotFoundError, type SecretRef, type SecretsResolver } from './secrets';
 export * from './session';

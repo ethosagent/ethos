@@ -10,6 +10,7 @@ import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
 import { DefaultHookRegistry } from '../hook-registry';
 import { InMemoryRequestDumpStore } from '../request-dump-store';
+import { createTestSafety } from './helpers/test-safety';
 
 function makeMockLLM(
   responses: string[],
@@ -60,7 +61,7 @@ async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
 describe('Observability Extensions', () => {
   describe('TokenUsage.requestTokens', () => {
     it('carries requestTokens field on usage events when populated', async () => {
-      const loop = new AgentLoop({ llm: makeMockLLM(['hello']) });
+      const loop = new AgentLoop({ llm: makeMockLLM(['hello']), safety: createTestSafety() });
       const events = await collect(loop.run('hi'));
       const usageEvent = events.find((e) => e.type === 'usage') as Extract<
         AgentEvent,
@@ -86,7 +87,7 @@ describe('Observability Extensions', () => {
         payloads.push(payload);
       });
 
-      const loop = new AgentLoop({ llm: makeMockLLM(['response']), hooks });
+      const loop = new AgentLoop({ llm: makeMockLLM(['response']), hooks, safety: createTestSafety() });
       // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
       loop['personalities'].define({
         id: 'obs-test',
@@ -128,7 +129,7 @@ describe('Observability Extensions', () => {
         payloads.push(payload);
       });
 
-      const loop = new AgentLoop({ llm: makeMockLLM(['enriched response']), hooks });
+      const loop = new AgentLoop({ llm: makeMockLLM(['enriched response']), hooks, safety: createTestSafety() });
       // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
       loop['personalities'].define({
         id: 'obs-test',
@@ -266,6 +267,7 @@ describe('Observability Extensions', () => {
       const loop = new AgentLoop({
         llm: makeMockLLM(['dump test']),
         requestDumpStore: store,
+        safety: createTestSafety(),
       });
       // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
       loop['personalities'].define({

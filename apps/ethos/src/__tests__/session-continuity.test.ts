@@ -13,6 +13,7 @@
 import { AgentLoop, InMemorySessionStore } from '@ethosagent/core';
 import type { CompletionChunk, LLMProvider } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
+import { createTestSafety } from '../../../../packages/core/src/__tests__/helpers/test-safety';
 
 function makeMockLLM(): LLMProvider {
   return {
@@ -56,6 +57,7 @@ describe('session continuity across personality switches', () => {
     const loop = new AgentLoop({
       llm: makeMockLLM(),
       session,
+      safety: createTestSafety(),
     });
 
     const sessionKey = 'cli:session-continuity-test';
@@ -92,7 +94,7 @@ describe('session continuity across personality switches', () => {
 
   it('switching personality does NOT create a new session', async () => {
     const session = new InMemorySessionStore();
-    const loop = new AgentLoop({ llm: makeMockLLM(), session });
+    const loop = new AgentLoop({ llm: makeMockLLM(), session, safety: createTestSafety() });
     const sessionKey = 'cli:no-fork-test';
 
     await drain(loop.run('first', { sessionKey, personalityId: 'researcher' }));

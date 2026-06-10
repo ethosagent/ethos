@@ -7,7 +7,7 @@ import type {
   ToolContext,
 } from '@ethosagent/types';
 import { ScopedAttachmentsImpl } from './scoped/scoped-attachments';
-import { ScopedFetchImpl } from './scoped/scoped-fetch';
+import { type SafeFetchFn, ScopedFetchImpl } from './scoped/scoped-fetch';
 import { ScopedFsImpl } from './scoped/scoped-fs';
 import { ScopedProcessImpl } from './scoped/scoped-process';
 import { ScopedSecretsImpl } from './scoped/scoped-secrets';
@@ -24,6 +24,10 @@ export interface CapabilityBackends {
    * private-network, scheme, DNS-rebinding) flow through `safeFetch`.
    */
   personalityNetworkPolicy?: NetworkPolicy;
+  /** Injected safeFetch function for network policy enforcement. */
+  safeFetch?: SafeFetchFn;
+  /** Always-deny path list for filesystem scoping. */
+  alwaysDenyPaths?: string[];
   attachmentCache?: import('@ethosagent/types').AttachmentCache;
   inboundAttachments?: import('@ethosagent/types').Attachment[];
 }
@@ -74,7 +78,9 @@ export function resolveCapabilities(
     } else {
       resolvedHosts = new Set(declaredHosts);
     }
-    result.scopedFetch = new ScopedFetchImpl(resolvedHosts, policy);
+    if (backends.safeFetch) {
+      result.scopedFetch = new ScopedFetchImpl(resolvedHosts, policy, backends.safeFetch);
+    }
   }
 
   if (capabilities.secrets && backends.secretsBackend) {
@@ -108,7 +114,7 @@ export function resolveCapabilities(
       writeDecl === 'from-personality'
         ? (backends.personalityFsReach?.write ?? [])
         : (writeDecl ?? []);
-    result.scopedFs = new ScopedFsImpl(backends.storage, new Set(readPaths), new Set(writePaths));
+    result.scopedFs = new ScopedFsImpl(backends.storage, new Set(readPaths), new Set(writePaths), backends.alwaysDenyPaths ?? []);
   }
 
   if (capabilities.process) {
@@ -148,10 +154,10 @@ export function resolveCapabilities(
             ? (backends.personalityFsReach?.write ?? [])
             : (writeDecl ?? []);
         const mergedRead = new Set([...readPaths, ...attachmentDirs]);
-        result.scopedFs = new ScopedFsImpl(backends.storage, mergedRead, new Set(writePaths));
+        result.scopedFs = new ScopedFsImpl(backends.storage, mergedRead, new Set(writePaths), backends.alwaysDenyPaths ?? []);
       } else if (!result.scopedFs && backends.storage) {
         // No fs_reach declared but attachments present — create read-only ScopedFs
-        result.scopedFs = new ScopedFsImpl(backends.storage, attachmentDirs, new Set());
+        result.scopedFs = new ScopedFsImpl(backends.storage, attachmentDirs, new Set(), backends.alwaysDenyPaths ?? []);
       }
     }
   }

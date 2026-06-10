@@ -1,3 +1,4 @@
+import { safeFetch } from '@ethosagent/safety-network';
 import { describe, expect, it, vi } from 'vitest';
 import type { CapabilityBackends } from '../capability-resolver';
 import { resolveCapabilities } from '../capability-resolver';
@@ -29,15 +30,26 @@ describe('resolveCapabilities', () => {
       'tool-a',
       { network: { allowedHosts: ['api.example.com'] } },
       { sessionId: 'scope-1' },
-      emptyBackends,
+      { safeFetch },
     );
     expect(result.scopedFetch).toBeInstanceOf(ScopedFetchImpl);
     expect(Object.keys(result)).toEqual(['scopedFetch']);
   });
 
+  it('network capability without safeFetch backend does not create scopedFetch', () => {
+    const result = resolveCapabilities(
+      'tool-a',
+      { network: { allowedHosts: ['api.example.com'] } },
+      { sessionId: 'scope-1' },
+      emptyBackends,
+    );
+    expect(result.scopedFetch).toBeUndefined();
+  });
+
   it('network * sentinel resolves to personality policy allow list', () => {
     const backends: CapabilityBackends = {
       personalityNetworkPolicy: { allow: ['api.github.com', 'api.openai.com'] },
+      safeFetch,
     };
     const result = resolveCapabilities(
       'tool-a',
@@ -53,7 +65,7 @@ describe('resolveCapabilities', () => {
       'tool-a',
       { network: { allowedHosts: ['*'] } },
       { sessionId: 'scope-1' },
-      emptyBackends,
+      { safeFetch },
     );
     expect(result.scopedFetch).toBeInstanceOf(ScopedFetchImpl);
   });
@@ -233,6 +245,7 @@ describe('resolveCapabilities', () => {
       storage,
       personalityFsReach: { read: ['/data'], write: ['/out'] },
       personalityNetworkPolicy: { allow: ['api.example.com'] },
+      safeFetch,
     };
     const result = resolveCapabilities(
       'tool-all',
@@ -410,6 +423,7 @@ describe('resolveCapabilities', () => {
   it('partial capabilities only populates declared fields', () => {
     const backends: CapabilityBackends = {
       secretsBackend: vi.fn().mockResolvedValue('val'),
+      safeFetch,
     };
     const result = resolveCapabilities(
       'tool-partial',
