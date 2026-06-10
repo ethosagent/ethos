@@ -66,7 +66,19 @@ export interface DashboardsService {
   update(id: string, patch: { title?: string; description?: string }): void;
   delete(id: string): void;
   addPanel(dashboardId: string, panel: AddPanelInput): DashboardPanel;
-  updatePanel(panelId: string, patch: { title?: string; cronSchedule?: string | null }): void;
+  updatePanel(
+    panelId: string,
+    patch: {
+      title?: string;
+      cronSchedule?: string | null;
+      queryType?: 'static' | 'prompt' | 'sql';
+      prompt?: string | null;
+      sqlQuery?: string | null;
+      pluginId?: string | null;
+      dataSourceId?: string | null;
+      htmlTemplate?: string | null;
+    },
+  ): void;
   updatePanelLayout(
     panelId: string,
     layout: { col: number; row: number; w: number; h: number },

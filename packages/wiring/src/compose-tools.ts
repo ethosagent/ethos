@@ -19,6 +19,7 @@ import {
   platformId as telegramId,
   platformPrompt as telegramPrompt,
 } from '@ethosagent/platform-telegram/format';
+import { createSkillProposeTool } from '@ethosagent/skill-evolver';
 import type { UniversalScanner } from '@ethosagent/skills';
 import { compose as composeSkills } from '@ethosagent/skills/compose';
 import { createCryptoStorage } from '@ethosagent/storage-crypto';
@@ -60,6 +61,7 @@ import type {
   PromptContext,
   Skill,
   Storage,
+  Tool,
 } from '@ethosagent/types';
 import type { InfrastructureResult } from './build-infrastructure';
 import type { CreateAgentLoopOptions, WiringConfig, WiringProfile } from './index';
@@ -388,6 +390,16 @@ export async function composeAllTools(
 
   // Skill introspection tools — skills_list + skill_view.
   for (const tool of composeSkillsTools(wiringCtx, { skillPool }).tools) tools.register(tool);
+
+  // skill_propose — lets the agent propose new skills from chat when asked,
+  // gated by the 'skills' toolset so personalities opt in via toolset.yaml.
+  tools.register(
+    createSkillProposeTool({
+      storage: wiringCtx.storage,
+      pendingDir: join(wiringCtx.dataDir, 'skills', '.pending'),
+      toolset: 'skills',
+    }) as Tool,
+  );
 
   // -------------------------------------------------------------------------
   // MCP tools

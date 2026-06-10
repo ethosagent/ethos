@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Empty, message, Skeleton, Space, Typography } from 'antd';
+import { Button, Divider, Empty, message, Skeleton, Space, Typography } from 'antd';
 import { type Layout, Responsive, WidthProvider } from 'react-grid-layout/legacy';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
@@ -78,23 +78,27 @@ export function DashboardView() {
       {contextHolder}
       <div
         style={{
-          display: 'flex',
-          justifyContent: 'space-between',
+          display: 'grid',
+          gridTemplateColumns: '1fr auto 1fr',
           alignItems: 'center',
-          marginBottom: 24,
+          marginBottom: 8,
         }}
       >
+        <div />
         <Typography.Title level={3} style={{ margin: 0 }}>
           {dashboard.title}
         </Typography.Title>
-        <Space>
-          {livePanels.length > 0 && (
-            <Button onClick={() => refreshAllMut.mutate()} loading={refreshAllMut.isPending}>
-              Refresh All ({livePanels.length})
-            </Button>
-          )}
-        </Space>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Space>
+            {livePanels.length > 0 && (
+              <Button onClick={() => refreshAllMut.mutate()} loading={refreshAllMut.isPending}>
+                Refresh All ({livePanels.length})
+              </Button>
+            )}
+          </Space>
+        </div>
       </div>
+      <Divider style={{ margin: '0 0 16px 0' }} />
 
       {panels.length === 0 ? (
         <Empty description="No panels yet — save blocks from chat to get started" />
@@ -109,14 +113,12 @@ export function DashboardView() {
           compactType="vertical"
         >
           {panels.map((panel) => (
-            <div key={panel.id}>
+            <div key={panel.id} style={{ height: '100%' }}>
               <DashboardPanelShell
                 panel={panel}
                 onDelete={() => deletePanelMut.mutate(panel.id)}
-                onRefresh={
-                  panel.queryType !== 'static' ? () => refreshPanelMut.mutate(panel.id) : undefined
-                }
-                refreshing={refreshPanelMut.isPending}
+                onRefresh={() => refreshPanelMut.mutate(panel.id)}
+                refreshing={refreshPanelMut.isPending && refreshPanelMut.variables === panel.id}
               />
             </div>
           ))}

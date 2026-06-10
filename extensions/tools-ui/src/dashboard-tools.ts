@@ -26,6 +26,34 @@ export interface DashboardToolStore {
   getNextRow(dashboardId: string): number;
   verifyOwner(dashboardId: string, userId: string): boolean;
   exists(dashboardId: string): boolean;
+  listPanels(dashboardId: string): Array<{
+    id: string;
+    title: string | null;
+    blockType: string;
+    queryType: string;
+    col: number;
+    row: number;
+    w: number;
+    h: number;
+  }>;
+  getPanel(panelId: string): { id: string; col: number; row: number; w: number; h: number } | null;
+  updatePanelLayout(
+    panelId: string,
+    layout: { col: number; row: number; w: number; h: number },
+  ): void;
+  updatePanel(
+    panelId: string,
+    patch: {
+      title?: string;
+      cronSchedule?: string | null;
+      queryType?: string;
+      prompt?: string | null;
+      sqlQuery?: string | null;
+      pluginId?: string | null;
+      dataSourceId?: string | null;
+      htmlTemplate?: string | null;
+    },
+  ): void;
 }
 
 interface DashboardCreateArgs {
@@ -125,7 +153,10 @@ export function createDashboardAddPanelTool(
         cron_schedule: { type: 'string', description: 'Cron expression for auto-refresh' },
         col: { type: 'number', description: 'Grid column (0-11, default: 0)' },
         row: { type: 'number', description: 'Grid row (default: auto — below last panel)' },
-        w: { type: 'number', description: 'Grid width in columns (default: 6)' },
+        w: {
+          type: 'number',
+          description: 'Grid width in columns (1-12, default: 12 for full-width)',
+        },
         h: { type: 'number', description: 'Grid height in units (default: 4)' },
       },
       required: ['dashboard_id', 'block_type', 'content'],
@@ -196,6 +227,173 @@ export function createDashboardAddPanelTool(
   };
 }
 
+interface DashboardListPanelsArgs {
+  dashboard_id: string;
+}
+
+export function createDashboardListPanelsTool(
+  store: DashboardToolStore,
+): Tool<DashboardListPanelsArgs> {
+  return {
+    name: 'dashboard_list_panels',
+    description:
+      'List all panels on a dashboard with their IDs, titles, types, and grid positions (col, row, w, h on the 12-column grid). Use this before resizing panels.',
+    toolset: 'dashboard',
+    maxResultChars: 10_000,
+    capabilities: {},
+    schema: {
+      type: 'object',
+      properties: {
+        dashboard_id: { type: 'string', description: 'Dashboard ID' },
+      },
+      required: ['dashboard_id'],
+    },
+    async execute(args): Promise<ToolResult> {
+      if (!args.dashboard_id) {
+        return { ok: false, error: 'dashboard_id is required', code: 'input_invalid' };
+      }
+      const panels = store.listPanels(args.dashboard_id);
+      if (panels.length === 0) {
+        return { ok: true, value: 'No panels found on this dashboard.' };
+      }
+      const lines = panels.map(
+        (p) =>
+          `- ${p.title ?? '(untitled)'} | id: ${p.id} | type: ${p.queryType}/${p.blockType} | grid: col=${p.col} row=${p.row} w=${p.w} h=${p.h}`,
+      );
+      return { ok: true, value: lines.join('\n') };
+    },
+  };
+}
+
+interface DashboardUpdatePanelLayoutArgs {
+  panel_id: string;
+  w?: number;
+  h?: number;
+  col?: number;
+  row?: number;
+}
+
+export function createDashboardUpdatePanelLayoutTool(
+  store: DashboardToolStore,
+): Tool<DashboardUpdatePanelLayoutArgs> {
+  return {
+    name: 'dashboard_update_panel_layout',
+    description:
+      'Resize or reposition a dashboard panel. Use dashboard_list_panels first to get panel IDs. All layout fields are optional — omitted fields keep their current values.',
+    toolset: 'dashboard',
+    maxResultChars: 500,
+    capabilities: {},
+    schema: {
+      type: 'object',
+      properties: {
+        panel_id: { type: 'string', description: 'Panel ID from dashboard_list_panels' },
+        w: { type: 'number', description: 'New width (1-12 columns)' },
+        h: { type: 'number', description: 'New height (grid units)' },
+        col: { type: 'number', description: 'New column position (0-11)' },
+        row: { type: 'number', description: 'New row position' },
+      },
+      required: ['panel_id'],
+    },
+    async execute(args): Promise<ToolResult> {
+      if (!args.panel_id) {
+        return { ok: false, error: 'panel_id is required', code: 'input_invalid' };
+      }
+      const current = store.getPanel(args.panel_id);
+      if (!current) {
+        return { ok: false, error: 'Panel not found', code: 'not_available' };
+      }
+      const col = args.col ?? current.col;
+      const row = args.row ?? current.row;
+      const w = args.w ?? current.w;
+      const h = args.h ?? current.h;
+      store.updatePanelLayout(args.panel_id, { col, row, w, h });
+      return {
+        ok: true,
+        value: `Panel updated: col=${col} row=${row} w=${w} h=${h}`,
+      };
+    },
+  };
+}
+
+interface DashboardUpdatePanelArgs {
+  panel_id: string;
+  title?: string;
+  query_type?: 'static' | 'prompt' | 'sql';
+  prompt?: string;
+  sql_query?: string;
+  plugin_id?: string;
+  data_source_id?: string;
+  html_template?: string;
+}
+
+export function createDashboardUpdatePanelTool(
+  store: DashboardToolStore,
+): Tool<DashboardUpdatePanelArgs> {
+  return {
+    name: 'dashboard_update_panel',
+    description:
+      "Update a dashboard panel's query configuration. Use this to convert a static panel to a prompt or SQL widget, or to change an existing panel's prompt/query. Use dashboard_list_panels to get panel IDs first.",
+    toolset: 'dashboard',
+    maxResultChars: 500,
+    capabilities: {},
+    schema: {
+      type: 'object',
+      properties: {
+        panel_id: { type: 'string', description: 'Panel ID from dashboard_list_panels' },
+        title: { type: 'string', description: 'New panel title' },
+        query_type: {
+          type: 'string',
+          enum: ['static', 'prompt', 'sql'],
+          description: 'Change the panel type',
+        },
+        prompt: { type: 'string', description: 'Prompt for prompt-type panels' },
+        sql_query: { type: 'string', description: 'SELECT query for sql-type panels' },
+        plugin_id: { type: 'string', description: 'Plugin ID for sql-type panels' },
+        data_source_id: { type: 'string', description: 'Data source ID for sql-type panels' },
+        html_template: {
+          type: 'string',
+          description: 'HTML template with {{column_name}} placeholders, for sql-type panels only',
+        },
+      },
+      required: ['panel_id'],
+    },
+    async execute(args): Promise<ToolResult> {
+      if (!args.panel_id) {
+        return { ok: false, error: 'panel_id is required', code: 'input_invalid' };
+      }
+      const current = store.getPanel(args.panel_id);
+      if (!current) {
+        return { ok: false, error: 'Panel not found', code: 'not_available' };
+      }
+      if (args.query_type === 'sql' && args.sql_query) {
+        const trimmed = args.sql_query.trim();
+        if (!/^select\b/i.test(trimmed)) {
+          return { ok: false, error: 'Only SELECT queries are allowed', code: 'input_invalid' };
+        }
+      }
+      store.updatePanel(args.panel_id, {
+        title: args.title,
+        queryType: args.query_type,
+        prompt: args.prompt,
+        sqlQuery: args.sql_query,
+        pluginId: args.plugin_id,
+        dataSourceId: args.data_source_id,
+        htmlTemplate: args.html_template,
+      });
+      return {
+        ok: true,
+        value: `Panel ${args.panel_id} updated${args.query_type ? ` → ${args.query_type}` : ''}.`,
+      };
+    },
+  };
+}
+
 export function buildDashboardTools(store: DashboardToolStore): Tool[] {
-  return [createDashboardCreateTool(store) as Tool, createDashboardAddPanelTool(store) as Tool];
+  return [
+    createDashboardCreateTool(store) as Tool,
+    createDashboardAddPanelTool(store) as Tool,
+    createDashboardListPanelsTool(store) as Tool,
+    createDashboardUpdatePanelLayoutTool(store) as Tool,
+    createDashboardUpdatePanelTool(store) as Tool,
+  ];
 }

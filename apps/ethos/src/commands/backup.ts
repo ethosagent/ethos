@@ -313,7 +313,8 @@ export function buildTar(entries: Entry[]): Buffer {
     Buffer.from('ustar\0').copy(header, 257);
     Buffer.from('00').copy(header, 263);
 
-    // checksum
+    // POSIX: checksum field (148–155) is treated as 8 ASCII spaces during calculation
+    header.fill(0x20, 148, 156);
     let sum = 0;
     for (let i = 0; i < 512; i++) sum += header[i] ?? 0;
     Buffer.from(`${sum.toString(8).padStart(6, '0')}\0 `).copy(header, 148);

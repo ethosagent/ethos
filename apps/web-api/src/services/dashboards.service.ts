@@ -30,6 +30,7 @@ export interface DashboardPanel {
   dataSourceId: string | null;
   renderHint: string | null;
   cronSchedule: string | null;
+  htmlTemplate: string | null;
   lastRunAt: number | null;
   lastError: string | null;
   sourceConversationId: string | null;
@@ -54,6 +55,7 @@ export interface AddPanelInput {
   dataSourceId?: string;
   renderHint?: string;
   cronSchedule?: string;
+  htmlTemplate?: string;
   sourceConversationId?: string;
   sourceMessageSeq?: number;
 }
@@ -68,10 +70,10 @@ export interface DashboardsServiceOptions {
 
 const DEFAULT_SIZES: Record<string, { w: number; h: number }> = {
   table: { w: 6, h: 4 },
-  html: { w: 6, h: 4 },
-  image: { w: 4, h: 3 },
-  text: { w: 4, h: 2 },
-  pdf: { w: 6, h: 4 },
+  html: { w: 6, h: 5 },
+  image: { w: 4, h: 4 },
+  text: { w: 4, h: 3 },
+  pdf: { w: 6, h: 6 },
 };
 
 const GRID_COLS = 12;
@@ -104,6 +106,7 @@ interface PanelRow {
   data_source_id: string | null;
   render_hint: string | null;
   cron_schedule: string | null;
+  html_template: string | null;
   last_run_at: number | null;
   last_error: string | null;
   source_conversation_id: string | null;
@@ -151,6 +154,7 @@ function toPanel(row: PanelRow): DashboardPanel {
     dataSourceId: row.data_source_id,
     renderHint: row.render_hint,
     cronSchedule: row.cron_schedule,
+    htmlTemplate: row.html_template,
     lastRunAt: row.last_run_at,
     lastError: row.last_error,
     sourceConversationId: row.source_conversation_id,
@@ -209,6 +213,7 @@ export class DashboardsService {
         data_source_id         TEXT,
         render_hint            TEXT,
         cron_schedule          TEXT,
+        html_template          TEXT,
         last_run_at            INTEGER,
         last_error             TEXT,
         source_conversation_id TEXT,
@@ -225,6 +230,12 @@ export class DashboardsService {
       CREATE INDEX IF NOT EXISTS idx_dashboard_panels_dashboard
         ON dashboard_panels(dashboard_id, row, col);
     `);
+    const panelCols = this.db.prepare('PRAGMA table_info(dashboard_panels)').all() as {
+      name: string;
+    }[];
+    if (!panelCols.some((c) => c.name === 'html_template')) {
+      this.db.exec('ALTER TABLE dashboard_panels ADD COLUMN html_template TEXT');
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -319,9 +330,9 @@ export class DashboardsService {
       .prepare(
         `INSERT INTO dashboard_panels
          (id, dashboard_id, query_type, block_type, content, metadata, prompt, sql_query,
-          plugin_id, data_source_id, render_hint, cron_schedule, source_conversation_id,
+          plugin_id, data_source_id, render_hint, cron_schedule, html_template, source_conversation_id,
           source_message_seq, title, col, row, w, h, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -336,6 +347,7 @@ export class DashboardsService {
         panel.dataSourceId ?? null,
         panel.renderHint ?? null,
         panel.cronSchedule ?? null,
+        panel.htmlTemplate ?? null,
         panel.sourceConversationId ?? null,
         panel.sourceMessageSeq ?? null,
         panel.title ?? null,
@@ -361,6 +373,7 @@ export class DashboardsService {
       dataSourceId: panel.dataSourceId ?? null,
       renderHint: panel.renderHint ?? null,
       cronSchedule: panel.cronSchedule ?? null,
+      htmlTemplate: panel.htmlTemplate ?? null,
       lastRunAt: null,
       lastError: null,
       sourceConversationId: panel.sourceConversationId ?? null,
@@ -374,7 +387,29 @@ export class DashboardsService {
     };
   }
 
-  updatePanel(panelId: string, patch: { title?: string; cronSchedule?: string | null }): void {
+  updatePanel(
+    panelId: string,
+    patch: {
+      title?: string;
+      cronSchedule?: string | null;
+      queryType?: 'static' | 'prompt' | 'sql';
+      prompt?: string | null;
+      sqlQuery?: string | null;
+      pluginId?: string | null;
+      dataSourceId?: string | null;
+      htmlTemplate?: string | null;
+    },
+  ): void {
+    if (patch.queryType === 'sql' && patch.sqlQuery) {
+      const trimmed = patch.sqlQuery.trim();
+      if (!/^select\b/i.test(trimmed)) {
+        throw new Error('SQL query must start with SELECT');
+      }
+      const withoutTrailing = trimmed.endsWith(';') ? trimmed.slice(0, -1) : trimmed;
+      if (withoutTrailing.includes(';')) {
+        throw new Error('SQL query must not contain multiple statements');
+      }
+    }
     const now = Date.now();
     const sets: string[] = ['updated_at = ?'];
     const params: unknown[] = [now];
@@ -385,6 +420,30 @@ export class DashboardsService {
     if (patch.cronSchedule !== undefined) {
       sets.push('cron_schedule = ?');
       params.push(patch.cronSchedule);
+    }
+    if (patch.queryType !== undefined) {
+      sets.push('query_type = ?');
+      params.push(patch.queryType);
+    }
+    if (patch.prompt !== undefined) {
+      sets.push('prompt = ?');
+      params.push(patch.prompt);
+    }
+    if (patch.sqlQuery !== undefined) {
+      sets.push('sql_query = ?');
+      params.push(patch.sqlQuery);
+    }
+    if (patch.pluginId !== undefined) {
+      sets.push('plugin_id = ?');
+      params.push(patch.pluginId);
+    }
+    if (patch.dataSourceId !== undefined) {
+      sets.push('data_source_id = ?');
+      params.push(patch.dataSourceId);
+    }
+    if (patch.htmlTemplate !== undefined) {
+      sets.push('html_template = ?');
+      params.push(patch.htmlTemplate);
     }
     params.push(panelId);
     this.db.prepare(`UPDATE dashboard_panels SET ${sets.join(', ')} WHERE id = ?`).run(...params);

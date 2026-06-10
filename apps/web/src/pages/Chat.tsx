@@ -8,6 +8,7 @@ import { ClarifyCard } from '../components/chat/ClarifyCard';
 import { Composer } from '../components/chat/Composer';
 import { MessageList } from '../components/chat/MessageList';
 import { PersonalityBar } from '../components/chat/PersonalityBar';
+import { PersonalityPickerModal } from '../components/PersonalityPickerModal';
 import { useSessionRenameFromChat } from '../features/sessions/api/mutations';
 import { useSessionGet } from '../features/sessions/api/queries';
 import { useActivePersonality } from '../hooks/useActivePersonality';
@@ -114,6 +115,7 @@ export function Chat() {
       switchSession(sessionParam);
     } else if (!sessionParam && currentSessionId) {
       resetSession();
+      clearLastSessionId();
     }
   }, [sessionParam]);
 
@@ -155,6 +157,7 @@ export function Chat() {
     Date.now() - state.lastStreamEventAt > 30_000;
 
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentPreview[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const handleAttach = useCallback(async (files: File[]) => {
     const previews = await Promise.all(files.map(fileToPreview));
@@ -238,12 +241,7 @@ export function Chat() {
   };
 
   const handleNewSession = () => {
-    // Wipe everything tying us to the current conversation: URL,
-    // reducer state, localStorage. The next chat.send creates a fresh
-    // session on the server and we re-record its id everywhere.
-    setSearchParams({}, { replace: true });
-    clearLastSessionId();
-    resetSession();
+    setPickerOpen(true);
   };
 
   return (
@@ -257,6 +255,7 @@ export function Chat() {
           sessionTitle={sessionTitle}
           onRenameSession={handleRenameSession}
         />
+        <PersonalityPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} />
         {pendingApproval ? (
           <ApprovalModal key={pendingApproval.approvalId} request={pendingApproval} />
         ) : null}

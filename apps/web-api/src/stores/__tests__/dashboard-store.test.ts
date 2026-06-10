@@ -105,4 +105,52 @@ describe('DashboardStore', () => {
     };
     expect(row.personality_id).toBe('');
   });
+
+  it('listPanels returns panels ordered by row/col', () => {
+    const { id: dashId } = store.createDashboard({ userId: 'u1', title: 'Test' });
+    store.addPanel({
+      dashboardId: dashId,
+      blockType: 'html',
+      content: 'a',
+      col: 0,
+      row: 0,
+      w: 12,
+      h: 4,
+    });
+    store.addPanel({
+      dashboardId: dashId,
+      blockType: 'table',
+      content: 'b',
+      col: 0,
+      row: 4,
+      w: 6,
+      h: 3,
+    });
+    const panels = store.listPanels(dashId);
+    expect(panels).toHaveLength(2);
+    expect(panels[0].w).toBe(12);
+    expect(panels[0].blockType).toBe('html');
+    expect(panels[1].blockType).toBe('table');
+  });
+
+  it('getPanel returns null for nonexistent panel', () => {
+    expect(store.getPanel('nonexistent')).toBeNull();
+  });
+
+  it('updatePanelLayout changes w and h', () => {
+    const { id: dashId } = store.createDashboard({ userId: 'u1', title: 'Test' });
+    const { id: panelId } = store.addPanel({
+      dashboardId: dashId,
+      blockType: 'html',
+      content: 'a',
+      col: 0,
+      row: 0,
+      w: 6,
+      h: 4,
+    });
+    store.updatePanelLayout(panelId, { col: 0, row: 0, w: 12, h: 8 });
+    const updated = store.getPanel(panelId);
+    expect(updated?.w).toBe(12);
+    expect(updated?.h).toBe(8);
+  });
 });

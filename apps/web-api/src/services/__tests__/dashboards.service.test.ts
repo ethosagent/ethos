@@ -88,7 +88,7 @@ describe('DashboardsService', () => {
     expect(p.col).toBe(0);
     expect(p.row).toBe(0);
     expect(p.w).toBe(6);
-    expect(p.h).toBe(4);
+    expect(p.h).toBe(5);
   });
 
   it('places second panel next to the first', () => {
@@ -150,7 +150,7 @@ describe('DashboardsService', () => {
       content: 'data:image/png;base64,...',
     });
     expect(image.w).toBe(4);
-    expect(image.h).toBe(3);
+    expect(image.h).toBe(4);
 
     const text = svc.addPanel(d.id, {
       queryType: 'static',
@@ -158,7 +158,7 @@ describe('DashboardsService', () => {
       content: 'hello',
     });
     expect(text.w).toBe(4);
-    expect(text.h).toBe(2);
+    expect(text.h).toBe(3);
 
     const pdf = svc.addPanel(d.id, {
       queryType: 'static',
@@ -166,7 +166,7 @@ describe('DashboardsService', () => {
       content: 'data:application/pdf;base64,...',
     });
     expect(pdf.w).toBe(6);
-    expect(pdf.h).toBe(4);
+    expect(pdf.h).toBe(6);
   });
 
   // -----------------------------------------------------------------------

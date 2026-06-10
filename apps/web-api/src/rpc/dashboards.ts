@@ -61,6 +61,12 @@ export const dashboardsRouter = {
     context.dashboards?.updatePanel(input.panelId, {
       title: input.title,
       cronSchedule: input.cronSchedule,
+      queryType: input.queryType,
+      prompt: input.prompt,
+      sqlQuery: input.sqlQuery,
+      pluginId: input.pluginId,
+      dataSourceId: input.dataSourceId,
+      htmlTemplate: input.htmlTemplate,
     });
     return { ok: true as const };
   }),

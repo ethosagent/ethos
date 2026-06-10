@@ -1243,6 +1243,7 @@ const DashboardPanelSchema = z.object({
   dataSourceId: z.string().nullable(),
   renderHint: z.string().nullable(),
   cronSchedule: z.string().nullable(),
+  htmlTemplate: z.string().nullable(),
   lastRunAt: z.number().nullable(),
   lastError: z.string().nullable(),
   sourceConversationId: z.string().nullable(),
@@ -1284,6 +1285,7 @@ const DashboardsAddPanelInput = z.object({
     sqlQuery: z.string().optional(),
     pluginId: z.string().optional(),
     dataSourceId: z.string().optional(),
+    htmlTemplate: z.string().optional(),
     renderHint: z.string().optional(),
     cronSchedule: z.string().optional(),
     sourceConversationId: z.string().optional(),
@@ -1295,6 +1297,12 @@ const DashboardsUpdatePanelInput = z.object({
   panelId: z.string().min(1),
   title: z.string().optional(),
   cronSchedule: z.string().nullable().optional(),
+  queryType: z.enum(['static', 'prompt', 'sql']).optional(),
+  prompt: z.string().nullable().optional(),
+  sqlQuery: z.string().nullable().optional(),
+  pluginId: z.string().nullable().optional(),
+  dataSourceId: z.string().nullable().optional(),
+  htmlTemplate: z.string().nullable().optional(),
 });
 
 const DashboardsUpdatePanelLayoutInput = z.object({

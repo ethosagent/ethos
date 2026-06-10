@@ -3,7 +3,6 @@ import type {
   ModelTierConfigWire,
   Personality,
   PersonalitySkill,
-  PluginInfo,
   ProviderId,
   Skill,
 } from '@ethosagent/web-contracts';
@@ -363,11 +362,6 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
     plugins: [],
   });
 
-  const pluginsQuery = useQuery({
-    queryKey: ['plugins', 'list'],
-    queryFn: () => rpc.plugins.list(),
-  });
-
   const createMut = useMutation({
     mutationFn: () =>
       rpc.personalities.create({
@@ -427,8 +421,6 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
   const idCollision = existingIds.has(state.id);
   const canCreate = idValid && nameValid && !idCollision && state.soulMd.length > 0;
 
-  const availablePlugins = pluginsQuery.data?.plugins ?? [];
-
   return (
     <Modal
       open
@@ -483,8 +475,6 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
             label: 'Plugins',
             children: (
               <WizardPluginsTab
-                plugins={availablePlugins}
-                loading={pluginsQuery.isLoading}
                 selected={state.plugins}
                 onChange={(next) => setState((s) => ({ ...s, plugins: next }))}
               />
@@ -584,6 +574,19 @@ function ToolsetStep({
       <div style={{ display: 'grid', placeItems: 'center', height: 120 }}>
         <Spin />
       </div>
+    );
+  }
+
+  if (TOOL_GROUPS.length === 0) {
+    return (
+      <Empty
+        image={Empty.PRESENTED_IMAGE_SIMPLE}
+        description="Tools will appear after your first chat session."
+      >
+        <Button size="small" onClick={() => void catalogQuery.refetch()}>
+          Refresh
+        </Button>
+      </Empty>
     );
   }
 
@@ -891,17 +894,35 @@ function WizardConfigTab({
 }
 
 function WizardPluginsTab({
-  plugins,
-  loading,
   selected,
   onChange,
 }: {
-  plugins: PluginInfo[];
-  loading: boolean;
   selected: string[];
   onChange: (next: string[]) => void;
 }) {
-  if (loading) {
+  const qc = useQueryClient();
+  const { notification } = AntApp.useApp();
+  const [installOpen, setInstallOpen] = useState(false);
+  const [packageSpec, setPackageSpec] = useState('');
+
+  const pluginsQuery = useQuery({
+    queryKey: ['plugins', 'list'],
+    queryFn: () => rpc.plugins.list(),
+  });
+
+  const installMut = useMutation({
+    mutationFn: () => rpc.plugins.install({ packageSpec: packageSpec.trim() }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['plugins', 'list'] });
+      setPackageSpec('');
+      setInstallOpen(false);
+      notification.success({ message: 'Plugin installed', placement: 'topRight' });
+    },
+    onError: (err) =>
+      notification.error({ message: 'Install failed', description: (err as Error).message }),
+  });
+
+  if (pluginsQuery.isLoading) {
     return (
       <div style={{ display: 'grid', placeItems: 'center', height: 120 }}>
         <Spin />
@@ -909,20 +930,7 @@ function WizardPluginsTab({
     );
   }
 
-  if (plugins.length === 0) {
-    return (
-      <Empty
-        image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description={
-          <span>
-            No plugins installed.{' '}
-            <Typography.Text code>ethos plugin install &lt;path&gt;</Typography.Text>
-          </span>
-        }
-      />
-    );
-  }
-
+  const plugins = pluginsQuery.data?.plugins ?? [];
   const selectedSet = new Set(selected);
 
   function toggle(pluginId: string, on: boolean) {
@@ -934,50 +942,100 @@ function WizardPluginsTab({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {selectedSet.size === 0 ? (
-        <Alert
-          type="info"
-          showIcon
-          message="0 plugins attached"
-          description="Toggle a plugin below to enable it for this personality."
-          style={{ marginBottom: 4 }}
-        />
-      ) : null}
-      {plugins.map((p) => (
-        <div key={p.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-          <Switch
-            size="small"
-            checked={selectedSet.has(p.id)}
-            onChange={(on) => toggle(p.id, on)}
-            aria-label={`Attach ${p.name}`}
-            style={{ marginTop: 2, flexShrink: 0 }}
-          />
-          <div>
-            <div style={{ fontWeight: 500 }}>{p.name}</div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-              <Typography.Text
-                style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12 }}
-                type="secondary"
-              >
-                {p.id}
-              </Typography.Text>
-              <Tag bordered={false} style={{ fontSize: 11 }}>
-                {p.source}
-              </Tag>
-              {p.pluginContractMajor !== null ? (
-                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                  v{p.pluginContractMajor}
-                </Typography.Text>
-              ) : null}
-            </div>
-            {p.description ? (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {p.description}
-              </Typography.Text>
-            ) : null}
+      <div>
+        {installOpen ? (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+            <Input
+              autoFocus
+              placeholder="npm package name or path"
+              value={packageSpec}
+              onChange={(e) => setPackageSpec(e.target.value)}
+              onPressEnter={() => installMut.mutate()}
+              style={{ flex: 1 }}
+            />
+            <Button
+              type="primary"
+              size="small"
+              loading={installMut.isPending}
+              disabled={!packageSpec.trim()}
+              onClick={() => installMut.mutate()}
+            >
+              Install
+            </Button>
+            <Button
+              size="small"
+              onClick={() => {
+                setInstallOpen(false);
+                setPackageSpec('');
+              }}
+            >
+              Cancel
+            </Button>
           </div>
-        </div>
-      ))}
+        ) : (
+          <Button size="small" onClick={() => setInstallOpen(true)} style={{ marginBottom: 12 }}>
+            Install plugin
+          </Button>
+        )}
+      </div>
+      {plugins.length === 0 ? (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={
+            <span>
+              No plugins installed.{' '}
+              <Typography.Text code>ethos plugin install &lt;path&gt;</Typography.Text>
+            </span>
+          }
+        />
+      ) : (
+        <>
+          {selectedSet.size === 0 ? (
+            <Alert
+              type="info"
+              showIcon
+              message="0 plugins attached"
+              description="Toggle a plugin below to enable it for this personality."
+              style={{ marginBottom: 4 }}
+            />
+          ) : null}
+          {plugins.map((p) => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+              <Switch
+                size="small"
+                checked={selectedSet.has(p.id)}
+                onChange={(on) => toggle(p.id, on)}
+                aria-label={`Attach ${p.name}`}
+                style={{ marginTop: 2, flexShrink: 0 }}
+              />
+              <div>
+                <div style={{ fontWeight: 500 }}>{p.name}</div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Typography.Text
+                    style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12 }}
+                    type="secondary"
+                  >
+                    {p.id}
+                  </Typography.Text>
+                  <Tag bordered={false} style={{ fontSize: 11 }}>
+                    {p.source}
+                  </Tag>
+                  {p.pluginContractMajor !== null ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      v{p.pluginContractMajor}
+                    </Typography.Text>
+                  ) : null}
+                </div>
+                {p.description ? (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {p.description}
+                  </Typography.Text>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }

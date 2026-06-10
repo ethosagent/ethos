@@ -44,7 +44,10 @@ export function MessageList({
     if (!pinnedToBottomRef.current) return;
     const el = listRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    const id = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(id);
   }, [messages.length, currentTurn]);
 
   if (messages.length === 0 && !currentTurn) {

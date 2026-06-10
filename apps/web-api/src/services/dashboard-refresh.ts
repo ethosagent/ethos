@@ -11,6 +11,7 @@ interface RefreshablePanelData {
   sqlQuery: string | null;
   pluginId: string | null;
   dataSourceId: string | null;
+  htmlTemplate: string | null;
 }
 
 /** Minimal surface of DashboardsService needed for panel refresh. */
@@ -46,7 +47,16 @@ export async function refreshSinglePanel(
       try {
         const stmt = db.prepare(panel.sqlQuery);
         const rows = stmt.all();
-        deps.dashboards.updatePanelContent(panel.id, JSON.stringify(rows));
+        if (panel.htmlTemplate && rows.length > 0) {
+          const html = panel.htmlTemplate.replace(/\{\{(\w+)\}\}/g, (_, key) => {
+            if (key === 'rows_json') return JSON.stringify(rows);
+            const row = rows[0] as Record<string, unknown>;
+            return String(row?.[key] ?? '');
+          });
+          deps.dashboards.updatePanelContent(panel.id, html, 'html');
+        } else {
+          deps.dashboards.updatePanelContent(panel.id, JSON.stringify(rows));
+        }
         deps.dashboards.clearPanelError(panel.id);
       } finally {
         db.close();

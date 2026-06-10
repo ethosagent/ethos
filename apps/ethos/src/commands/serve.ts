@@ -21,7 +21,13 @@ import {
 import { type EthosConfig, ethosDir, readConfig } from '../config';
 import { emitReady } from '../logger';
 import { notifyReady, startWatchdog } from '../sd-notify';
-import { createAgentLoop, createTeamAgentLoop, getSecretsResolver, getStorage } from '../wiring';
+import {
+  createAgentLoop,
+  createLLM,
+  createTeamAgentLoop,
+  getSecretsResolver,
+  getStorage,
+} from '../wiring';
 import { parseFlagValue, parsePort } from './serve-helpers';
 import { listenWithFallback } from './serve-listen';
 
@@ -43,6 +49,21 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
 
   const dir = ethosDir();
 
+  // System skills catalog: packaged at <pkg>/skills/ in production,
+  // at <repo>/skills/ in dev. Env var overrides both.
+  // Hoisted above the onboarding-mode check so both branches can use it.
+  const skillsCatalogDir = (() => {
+    if (process.env.ETHOS_SKILLS_CATALOG_DIR) return process.env.ETHOS_SKILLS_CATALOG_DIR;
+    const candidates = [
+      join(import.meta.dirname, '..', '..', 'skills'),
+      join(import.meta.dirname, '..', '..', '..', '..', 'skills'),
+    ];
+    for (const c of candidates) {
+      if (existsSync(c)) return c;
+    }
+    return undefined;
+  })();
+
   // Onboarding mode: no config yet — start the web server with a stub loop
   // so the UI can run the onboarding wizard.
   if (config === null) {
@@ -53,14 +74,16 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     // Lazy loader: stays as a stub until onboarding writes config, then
     // boots the real agent loop on the first chat request and caches it.
     let realLoop: AgentLoop | null = null;
+    let onboardingToolRegistry: ToolRegistry | null = null;
     const stubLoop = {
       run: async function* (text: string, opts: Record<string, unknown> = {}) {
         if (!realLoop) {
           const secrets = await getSecretsResolver();
           const loaded = await readConfig(getStorage(), secrets);
           if (loaded) {
-            const { loop } = await createAgentLoop(loaded);
-            realLoop = loop;
+            const agentResult = await createAgentLoop(loaded);
+            realLoop = agentResult.loop;
+            if (agentResult.toolRegistry) onboardingToolRegistry = agentResult.toolRegistry;
           }
         }
         if (realLoop) {
@@ -75,6 +98,10 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       },
     } as unknown as AgentLoop;
 
+    const lazyToolRegistry = {
+      getAvailable: () => onboardingToolRegistry?.getAvailable() ?? [],
+    } as unknown as ToolRegistry;
+
     const webDist = locateWebDist(parseFlagValue(args, ['--web-dist']));
     const created = createWebApi({
       dataDir: dir,
@@ -84,6 +111,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       agentLoop: stubLoop,
       personalities,
       chatDefaults: { model: 'setup-required', provider: 'setup-required' },
+      toolRegistry: lazyToolRegistry,
+      ...(skillsCatalogDir ? { catalogDir: skillsCatalogDir } : {}),
       ...(webDist ? { webDist } : {}),
     });
     const webApp = created.app;
@@ -270,6 +299,23 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     pluginLoader = result.pluginLoader;
     setOnSkillProposed = result.setOnSkillProposed;
   }
+  let titleFn: ((systemPrompt: string, userMessage: string) => Promise<string>) | undefined;
+  try {
+    const titleLlm = await createLLM(config);
+    titleFn = async (systemPrompt: string, userMessage: string): Promise<string> => {
+      let text = '';
+      for await (const chunk of titleLlm.complete([{ role: 'user', content: userMessage }], [], {
+        system: systemPrompt,
+        maxTokens: 64,
+      })) {
+        if (chunk.type === 'text_delta') text += chunk.text;
+      }
+      return text.trim();
+    };
+  } catch {
+    // Best-effort — title generation is optional
+  }
+
   const session = createSessionStore({ dataDir: dir });
   const mesh = new AgentMesh(meshRegistryPath(activeMeshName));
 
@@ -317,20 +363,6 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const identityMap = new IdentityMap({ storage: new FsStorage(), dataDir: dir });
   await identityMap.resolve('desktop', 'desktop', 'Desktop');
 
-  // System skills catalog: packaged at <pkg>/skills/ in production,
-  // at <repo>/skills/ in dev. Env var overrides both.
-  const skillsCatalogDir = (() => {
-    if (process.env.ETHOS_SKILLS_CATALOG_DIR) return process.env.ETHOS_SKILLS_CATALOG_DIR;
-    const candidates = [
-      join(import.meta.dirname, '..', '..', 'skills'),
-      join(import.meta.dirname, '..', '..', '..', '..', 'skills'),
-    ];
-    for (const c of candidates) {
-      if (existsSync(c)) return c;
-    }
-    return undefined;
-  })();
-
   const created = createWebApi({
     dataDir: dir,
     sessionStore: session,
@@ -357,6 +389,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     ...(webDist ? { webDist } : {}),
     ...(config.webBaseUrl ? { webBaseUrl: config.webBaseUrl } : {}),
     ...(setOnSkillProposed ? { setOnSkillProposed } : {}),
+    ...(titleFn ? { titleFn } : {}),
   });
   chatService = created.chatService;
   const webApp = created.app;

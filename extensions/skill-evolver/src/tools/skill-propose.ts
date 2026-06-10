@@ -12,6 +12,7 @@ export function createSkillProposeTool(opts: {
   pendingDir: string;
   now?: () => number;
   onProposed?: (skillId: string) => void;
+  toolset?: string;
 }): Tool<SkillProposeArgs> {
   const now = opts.now ?? (() => Date.now());
 
@@ -19,7 +20,7 @@ export function createSkillProposeTool(opts: {
     name: 'skill_propose',
     description:
       'Propose a new skill or a rewrite of an existing skill. The proposal goes to a human review queue.',
-    toolset: 'skill_evolution',
+    toolset: opts.toolset ?? 'skill_evolution',
     capabilities: {},
     schema: {
       type: 'object',
