@@ -444,6 +444,12 @@ importers:
       '@ethosagent/eval-harness':
         specifier: workspace:*
         version: link:../../extensions/eval-harness
+      '@ethosagent/goal-runner':
+        specifier: workspace:*
+        version: link:../../extensions/goal-runner
+      '@ethosagent/goal-store':
+        specifier: workspace:*
+        version: link:../../extensions/goal-store
       '@ethosagent/kanban-store':
         specifier: workspace:*
         version: link:../../extensions/kanban-store
@@ -763,6 +769,25 @@ importers:
       better-sqlite3:
         specifier: ^12.9.0
         version: 12.10.0
+
+  extensions/goal-runner:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
+  extensions/goal-store:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      better-sqlite3:
+        specifier: ^12.9.0
+        version: 12.10.0
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
 
   extensions/kanban-store:
     dependencies:
@@ -1169,6 +1194,12 @@ importers:
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
+
+  extensions/tools-goals:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
 
   extensions/tools-image:
     dependencies:

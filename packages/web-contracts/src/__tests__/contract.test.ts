@@ -203,6 +203,7 @@ describe('contract router', () => {
       'eval',
       'evolver',
       'files',
+      'goals',
       'kanban',
       'mcp',
       'memory',

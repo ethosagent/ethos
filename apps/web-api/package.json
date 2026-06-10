@@ -20,6 +20,8 @@
     "@ethosagent/batch-runner": "workspace:*",
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/eval-harness": "workspace:*",
+    "@ethosagent/goal-runner": "workspace:*",
+    "@ethosagent/goal-store": "workspace:*",
     "@ethosagent/kanban-store": "workspace:*",
     "@ethosagent/llm-codex": "workspace:*",
     "@ethosagent/memory-markdown": "workspace:*",

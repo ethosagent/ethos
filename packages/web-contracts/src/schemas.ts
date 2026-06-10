@@ -948,3 +948,98 @@ export const ApiKeyMetadataSchema = z.object({
   revokedAt: z.string().nullable(), // ISO-8601
 });
 export type ApiKeyMetadata = z.infer<typeof ApiKeyMetadataSchema>;
+
+// ---------------------------------------------------------------------------
+// Goals — convergence-loop execution
+// ---------------------------------------------------------------------------
+
+export const GoalStatusSchema = z.enum([
+  'running',
+  'judging',
+  'retrying',
+  'needs_clarification',
+  'completed',
+  'exhausted',
+  'failed',
+  'cancelled',
+  'interrupted',
+]);
+export type GoalStatusWire = z.infer<typeof GoalStatusSchema>;
+
+export const CriterionResultSchema = z.object({
+  id: z.string(),
+  pass: z.boolean().optional(),
+  score: z.number().optional(),
+  evidence: z.string(),
+  gap: z.string().optional(),
+});
+
+export const VerdictSchema = z.object({
+  score: z.number(),
+  perCriterion: z.array(CriterionResultSchema),
+});
+
+export const GoalAttemptSchema = z.object({
+  id: z.string(),
+  goalId: z.string(),
+  n: z.number().int(),
+  sessionKey: z.string(),
+  outputMd: z.string().nullable(),
+  artifacts: z.unknown().nullable(),
+  verdict: VerdictSchema.nullable(),
+  strategyUsed: z.enum(['first', 'patch', 'pivot']),
+  costUsd: z.number().nullable(),
+  traceId: z.string().nullable(),
+  startedAt: z.number(),
+  completedAt: z.number().nullable(),
+});
+export type GoalAttemptWire = z.infer<typeof GoalAttemptSchema>;
+
+export const GoalEventTypeSchema = z.enum([
+  'run_start',
+  'turn_text',
+  'tool_start',
+  'tool_end',
+  'steer',
+  'usage',
+  'complete_attempt',
+  'complete_rejected',
+  'error',
+  'done',
+]);
+
+export const GoalEventSchema = z.object({
+  id: z.number().int(),
+  goalId: z.string(),
+  seq: z.number().int(),
+  eventType: GoalEventTypeSchema,
+  payload: z.record(z.string(), z.unknown()),
+  createdAt: z.number(),
+});
+export type GoalEventWire = z.infer<typeof GoalEventSchema>;
+
+export const GoalSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  personalityId: z.string(),
+  origin: z.string(),
+  sourceSession: z.string().nullable(),
+  title: z.string(),
+  goalText: z.string(),
+  acceptanceCriteria: z.unknown().nullable(),
+  status: GoalStatusSchema,
+  maxAttempts: z.number().int(),
+  maxCostUsd: z.number().nullable(),
+  deadline: z.string().nullable(),
+  outputMd: z.string().nullable(),
+  outputPartial: z.string().nullable(),
+  errorText: z.string().nullable(),
+  startedAt: z.number(),
+  completedAt: z.number().nullable(),
+  resumeCount: z.number().int(),
+  turnCount: z.number().int().nullable(),
+  toolCount: z.number().int().nullable(),
+  tokenCount: z.number().int().nullable(),
+  costUsd: z.number().nullable(),
+});
+export type GoalWire = z.infer<typeof GoalSchema>;

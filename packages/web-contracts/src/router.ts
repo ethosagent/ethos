@@ -14,6 +14,10 @@ import {
   EvalScorerSchema,
   EvolveConfigSchema,
   EvolverRunSchema,
+  GoalAttemptSchema,
+  GoalEventSchema,
+  GoalSchema,
+  GoalStatusSchema,
   IdentityMapEntrySchema,
   KanbanBoardSnapshotSchema,
   KanbanTaskSchema,
@@ -1537,6 +1541,49 @@ const slashCommands = {
 };
 
 // ---------------------------------------------------------------------------
+// Goals
+// ---------------------------------------------------------------------------
+
+const GoalGetInput = z.object({ id: z.string().min(1) });
+const GoalGetOutput = z.object({
+  goal: GoalSchema,
+  events: z.array(GoalEventSchema),
+  attempts: z.array(GoalAttemptSchema),
+});
+
+const GoalListInput = z.object({
+  status: GoalStatusSchema.optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+});
+const GoalListOutput = z.object({ goals: z.array(GoalSchema) });
+
+const GoalSteerInput = z.object({ id: z.string().min(1), message: z.string().min(1) });
+const GoalSteerOutput = z.object({ ok: z.boolean() });
+
+const GoalCancelInput = z.object({ id: z.string().min(1) });
+const GoalCancelOutput = z.object({ ok: z.boolean() });
+
+const GoalResumeInput = z.object({ id: z.string().min(1) });
+const GoalResumeOutput = z.object({ ok: z.boolean() });
+
+const GoalClassifyInput = z.object({ message: z.string().min(1) });
+const GoalClassifyOutput = z.object({
+  isGoal: z.boolean(),
+  confidence: z.number(),
+  restatedGoal: z.string().optional(),
+});
+
+/** @experimental */
+const goals = {
+  get: oc.input(GoalGetInput).output(GoalGetOutput),
+  list: oc.input(GoalListInput).output(GoalListOutput),
+  steer: oc.input(GoalSteerInput).output(GoalSteerOutput),
+  cancel: oc.input(GoalCancelInput).output(GoalCancelOutput),
+  resume: oc.input(GoalResumeInput).output(GoalResumeOutput),
+  classify: oc.input(GoalClassifyInput).output(GoalClassifyOutput),
+};
+
+// ---------------------------------------------------------------------------
 // Root contract — every namespace mounted under one symbol
 // ---------------------------------------------------------------------------
 
@@ -1567,6 +1614,7 @@ export const contract = {
   admin,
   context,
   files,
+  goals,
 };
 
 export type Contract = typeof contract;

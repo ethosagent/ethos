@@ -18,6 +18,8 @@ import { Cron } from './pages/Cron';
 import { Dashboards } from './pages/Dashboards';
 import { DashboardView } from './pages/DashboardView';
 import { Eval } from './pages/Eval';
+import { GoalDetail } from './pages/GoalDetail';
+import { Goals } from './pages/Goals';
 import { Mcp } from './pages/Mcp';
 import { Memory } from './pages/Memory';
 import { Mesh } from './pages/Mesh';
@@ -138,6 +140,8 @@ export function App() {
           <Route path="/personality/create" element={<PersonalityCreate />} />
           <Route path="/batch" element={<Batch />} />
           <Route path="/eval" element={<Eval />} />
+          <Route path="/goals" element={<Goals />} />
+          <Route path="/goals/:id" element={<GoalDetail />} />
           <Route path="/dashboards" element={<Dashboards />} />
           <Route path="/dashboards/create" element={<CreateDashboardFlow />} />
           <Route path="/dashboards/:id" element={<DashboardView />} />

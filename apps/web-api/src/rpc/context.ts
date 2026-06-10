@@ -11,6 +11,7 @@ import type { ConfigService } from '../services/config.service';
 import type { CronService } from '../services/cron.service';
 import type { DashboardsService } from '../services/dashboards.service';
 import type { EvolverService } from '../services/evolver.service';
+import type { GoalsService } from '../services/goals.service';
 import type { KanbanService } from '../services/kanban.service';
 import type { LabService } from '../services/lab.service';
 import type { McpService } from '../services/mcp.service';
@@ -43,6 +44,7 @@ export interface RpcContext {
   cron: CronService;
   skills: SkillsService;
   evolver: EvolverService;
+  goals: GoalsService;
   mesh: MeshService;
   memory: MemoryService;
   plugins: PluginsService;

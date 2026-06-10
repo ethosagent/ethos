@@ -20,6 +20,7 @@ import { cronRouter } from './cron';
 import { dashboardsRouter } from './dashboards';
 import { evalRouter } from './eval';
 import { evolverRouter } from './evolver';
+import { goalsRouter } from './goals';
 import { kanbanRouter } from './kanban';
 import { mcpRouter } from './mcp';
 import { memoryRouter } from './memory';
@@ -97,6 +98,7 @@ export const apiRouter = {
   admin: adminRouter,
   context: contextRouter,
   files: filesRouter,
+  goals: goalsRouter,
 };
 
 export type ApiRouter = typeof apiRouter;

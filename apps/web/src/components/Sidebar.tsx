@@ -114,6 +114,12 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               label="Dashboards"
               active={pathname === '/dashboards' || pathname.startsWith('/dashboards/')}
             />
+            <NavRow
+              path="/goals"
+              icon="🎯"
+              label="Goals"
+              active={pathname === '/goals' || pathname.startsWith('/goals/')}
+            />
           </div>
 
           <div className="sidebar-divider" />
@@ -220,6 +226,12 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             active={pathname === '/communications'}
           />
           <NavRow path="/sessions" icon="📋" label="Sessions" active={pathname === '/sessions'} />
+          <NavRow
+            path="/goals"
+            icon="🎯"
+            label="Goals"
+            active={pathname === '/goals' || pathname.startsWith('/goals/')}
+          />
           {config?.adminEnabled && (
             <NavRow path="/admin" icon="🛡️" label="Admin" active={pathname === '/admin'} />
           )}

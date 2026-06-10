@@ -16,6 +16,8 @@
       "@ethosagent/memory-markdown": ["./extensions/memory-markdown/src"],
       "@ethosagent/personalities": ["./extensions/personalities/src"],
       "@ethosagent/session-sqlite": ["./extensions/session-sqlite/src"],
+      "@ethosagent/goal-store": ["./extensions/goal-store/src"],
+      "@ethosagent/goal-runner": ["./extensions/goal-runner/src"],
       "@ethosagent/kanban-store": ["./extensions/kanban-store/src"],
       "@ethosagent/tools-kanban": ["./extensions/tools-kanban/src"],
       "@ethosagent/tools-kanban/reducers/kanban-list": [
@@ -53,6 +55,7 @@
       "@ethosagent/openclaw-compat": ["./extensions/openclaw-compat/src"],
       "@ethosagent/skills": ["./extensions/skills/src"],
       "@ethosagent/tools-file": ["./extensions/tools-file/src"],
+      "@ethosagent/tools-goals": ["./extensions/tools-goals/src"],
       "@ethosagent/tools-terminal": ["./extensions/tools-terminal/src"],
       "@ethosagent/tools-terminal/reducers/bash": ["./extensions/tools-terminal/src/reducers/bash"],
       "@ethosagent/tools-web": ["./extensions/tools-web/src"],

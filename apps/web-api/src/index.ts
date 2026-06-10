@@ -34,6 +34,7 @@ import { CronService } from './services/cron.service';
 import { refreshSinglePanel } from './services/dashboard-refresh';
 import { DashboardsService } from './services/dashboards.service';
 import { EvolverService } from './services/evolver.service';
+import { GoalsService } from './services/goals.service';
 import { KanbanService } from './services/kanban.service';
 import { LabService } from './services/lab.service';
 import { McpService } from './services/mcp.service';
@@ -269,6 +270,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   });
   const skillsService = new SkillsService({ library: skillsLibrary });
   const evolverService = new EvolverService({ evolver: evolverRepo, library: skillsLibrary });
+  const goalsService = new GoalsService({ dataDir: opts.dataDir });
   const meshService = new MeshService({ mesh });
   const memoryService = new MemoryService({
     memory: memoryProvider,
@@ -470,6 +472,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       cron: cronService,
       skills: skillsService,
       evolver: evolverService,
+      goals: goalsService,
       mesh: meshService,
       memory: memoryService,
       plugins: pluginsService,
