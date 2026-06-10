@@ -13,10 +13,10 @@ import type {
   ToolFilterOpts,
   ToolRegistry,
 } from '@ethosagent/types';
+import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
 import { handleChunk } from '../chunk-handler';
 import type { WatcherTap } from '../turn-context';
 import { resolveModelWithTier } from '../turn-context';
-import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,7 +35,13 @@ export interface CompletedToolCall {
 
 export type StreamStepResult =
   | { outcome: 'text-end'; chunkText: string; fullTextDelta: string; usageSink: UsageSink }
-  | { outcome: 'tool-calls'; completedToolCalls: CompletedToolCall[]; chunkText: string; fullTextDelta: string; usageSink: UsageSink }
+  | {
+      outcome: 'tool-calls';
+      completedToolCalls: CompletedToolCall[];
+      chunkText: string;
+      fullTextDelta: string;
+      usageSink: UsageSink;
+    }
   | { outcome: 'fatal' };
 
 // ---------------------------------------------------------------------------

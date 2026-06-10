@@ -80,8 +80,7 @@ export async function maybeCompact(
     // original messages remain in `messages`; this row only records the
     // LLM-facing replay change. Best-effort: a persistence failure must not
     // break the turn, so it never propagates to the fail-open catch below.
-    const changed =
-      result.messages.length !== messages.length || result.summaryText !== undefined;
+    const changed = result.messages.length !== messages.length || result.summaryText !== undefined;
     const summaryTokens = result.summaryText ? estimateTokens(result.summaryText) : 0;
     if (changed) {
       try {
@@ -117,9 +116,7 @@ export async function maybeCompact(
     // notice; only set when the engine actually changed the history.
     return {
       messages: result.messages,
-      ...(changed && result.cacheBreakpoints
-        ? { cacheBreakpoints: result.cacheBreakpoints }
-        : {}),
+      ...(changed && result.cacheBreakpoints ? { cacheBreakpoints: result.cacheBreakpoints } : {}),
       ...(changed
         ? {
             notice: {

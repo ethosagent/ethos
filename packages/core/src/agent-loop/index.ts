@@ -7,8 +7,8 @@ export { checkMcpEnabled, checkMcpRejectArgs } from './mcp-policy';
 export { describeSource, handleUntrustedResult } from './result-defense';
 export { buildScopedStorage, substitute } from './scoped-storage';
 export { assembleContext } from './stages/context-assembly';
-export { finalizeTurn } from './stages/turn-finalizer';
 export type { TurnFinalizerContext } from './stages/turn-finalizer';
+export { finalizeTurn } from './stages/turn-finalizer';
 export { setupTurn } from './stages/turn-setup';
 export type {
   AssembledContext,

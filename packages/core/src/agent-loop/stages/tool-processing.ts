@@ -17,15 +17,15 @@ import type {
   ToolRegistry,
   ToolResult,
 } from '@ethosagent/types';
+import type { ContextStore } from '../../context-store';
+import { redactArgs } from '../../dry-run';
+import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
+import { SimpleCompletionImpl } from '../../simple-completion';
 import { extractFilePath } from '../extract-file-path';
 import { checkMcpEnabled, checkMcpRejectArgs } from '../mcp-policy';
 import { handleUntrustedResult } from '../result-defense';
 import { buildScopedStorage } from '../scoped-storage';
 import type { WatcherTap } from '../turn-context';
-import type { ContextStore } from '../../context-store';
-import { redactArgs } from '../../dry-run';
-import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
-import { SimpleCompletionImpl } from '../../simple-completion';
 import type { CompletedToolCall, UsageSink } from './stream-step';
 
 // ---------------------------------------------------------------------------
@@ -524,9 +524,7 @@ export async function* processTools(
         ok: result.ok,
         durationMs,
         result: result.ok ? result.value : result.error,
-        ...(result.ok && result.structured !== undefined
-          ? { structured: result.structured }
-          : {}),
+        ...(result.ok && result.structured !== undefined ? { structured: result.structured } : {}),
       };
       // Aggregate tool-incurred costs (e.g. image generation, vision LLM calls)
       // into the session budget so /usage and budgetCapUsd see them.
