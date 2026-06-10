@@ -15,6 +15,7 @@ import { rateLimitMiddleware } from '../middleware/rate-limit';
 import type { WebTokenRepository } from '../repositories/web-token.repository';
 import { authRoutes } from './auth';
 import { codexAuthRoutes } from './codex-auth';
+import { goalSseRoutes } from './goal-sse';
 import { openAiRoutes } from './openai';
 import { openapiRoutes } from './openapi';
 import { mcpRpcPath, rpcRoutes } from './rpc';
@@ -220,6 +221,7 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     }),
   );
   app.route('/sse', sseRoutes({ chat: opts.services.chat }));
+  app.route('/sse', goalSseRoutes({ goals: opts.services.goals }));
   if (opts.services.systemBus) {
     app.route('/sse', systemSseRoutes({ systemBus: opts.services.systemBus }));
   }

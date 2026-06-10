@@ -6,9 +6,11 @@ import { useSearchParams } from 'react-router-dom';
 import { ApprovalModal } from '../components/chat/ApprovalModal';
 import { ClarifyCard } from '../components/chat/ClarifyCard';
 import { Composer } from '../components/chat/Composer';
+import { GoalIntakeModal } from '../components/chat/GoalIntakeModal';
 import { MessageList } from '../components/chat/MessageList';
 import { PersonalityBar } from '../components/chat/PersonalityBar';
 import { PersonalityPickerModal } from '../components/PersonalityPickerModal';
+import { useGoalDetection } from '../features/goals/useGoalDetection';
 import { useSessionRenameFromChat } from '../features/sessions/api/mutations';
 import { useSessionGet } from '../features/sessions/api/queries';
 import { useActivePersonality } from '../hooks/useActivePersonality';
@@ -159,6 +161,9 @@ export function Chat() {
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentPreview[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
 
+  const { intakeOpen, setIntakeOpen, detectedMessage, restatedGoal, detectGoal } =
+    useGoalDetection();
+
   const handleAttach = useCallback(async (files: File[]) => {
     const previews = await Promise.all(files.map(fileToPreview));
     setPendingAttachments((prev) => [...prev, ...previews]);
@@ -189,12 +194,43 @@ export function Chat() {
       const ok = await steerMessage(text);
       if (ok) return;
     }
+    // Try goal detection before sending as a normal message
+    const detected = await detectGoal(text);
+    if (detected) return;
+
     const atts = pendingAttachments.filter((a) => a.state === 'ready');
     await sendMessage(text, atts.length > 0 ? atts : undefined);
     for (const a of pendingAttachments) {
       if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
     }
     setPendingAttachments([]);
+  };
+
+  const handleGoalQuickStart = async (goalText: string) => {
+    setIntakeOpen(false);
+    await sendMessage(`[goal] ${goalText}`);
+  };
+
+  const handleGoalConfiguredRun = async (config: {
+    goalText: string;
+    checks: Array<{ description: string }>;
+    rubric: Array<{ description: string; weight: number }>;
+    boundaries: string;
+    costLimit: number;
+    trials: number;
+  }) => {
+    setIntakeOpen(false);
+    const configJson = JSON.stringify(config);
+    await sendMessage(`[goal:configured] ${configJson}`);
+  };
+
+  const handleGoalRunDirect = () => {
+    // Open intake modal with current composer text
+    const composerText = document.querySelector<HTMLTextAreaElement>('.composer-card textarea');
+    const text = composerText?.value?.trim() ?? '';
+    if (text) {
+      void detectGoal(text);
+    }
   };
 
   // Render the head of the queue. Multiple back-to-back approvals are
@@ -256,6 +292,14 @@ export function Chat() {
           onRenameSession={handleRenameSession}
         />
         <PersonalityPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} />
+        <GoalIntakeModal
+          open={intakeOpen}
+          onClose={() => setIntakeOpen(false)}
+          userMessage={detectedMessage}
+          restatedGoal={restatedGoal}
+          onQuickStart={(g) => void handleGoalQuickStart(g)}
+          onConfiguredRun={(c) => void handleGoalConfiguredRun(c)}
+        />
         {pendingApproval ? (
           <ApprovalModal key={pendingApproval.approvalId} request={pendingApproval} />
         ) : null}
@@ -295,6 +339,7 @@ export function Chat() {
             attachments={pendingAttachments}
             onAttach={handleAttach}
             onRemoveAttachment={handleRemoveAttachment}
+            onGoalRun={handleGoalRunDirect}
           />
         </div>
       </div>

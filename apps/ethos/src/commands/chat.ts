@@ -945,6 +945,9 @@ export function buildChatHelpText(
     `  /attach <path>        attach a file to the next message\n` +
     `  /undo [N]             undo last N turns (default 1)\n` +
     `  /dry-run on|off      toggle dry-run mode (plan tools without executing)\n` +
+    `  /goal <text>          create and start a new goal\n` +
+    `  /goal cancel|resume|steer <id>  manage a running goal\n` +
+    `  /goals                list recent goals\n` +
     `  /steer <text>         inject [USER STEER] mid-turn\n` +
     `  /allow <code>         approve a pending channel sender by pairing code\n` +
     `  /deny <platform> <id> revoke an approved channel sender\n` +
@@ -1217,6 +1220,109 @@ async function handleSlashCommand(
         out(`${c.dim}[dry-run mode OFF — tools execute normally]${c.reset}\n`);
       } else {
         out(`${c.dim}Dry-run: ${state.dryRun ? 'ON' : 'OFF'}. Usage: /dry-run on|off${c.reset}\n`);
+      }
+      break;
+    }
+
+    case 'goal': {
+      if (!arg) {
+        out(
+          `${c.dim}Usage: /goal <description> | /goal cancel|resume|steer <id> [message]${c.reset}\n`,
+        );
+        break;
+      }
+      const subParts = arg.split(/\s+/);
+      const sub = subParts[0]?.toLowerCase();
+
+      if (sub === 'cancel' || sub === 'resume' || sub === 'steer') {
+        const goalId = subParts[1];
+        if (!goalId) {
+          out(`${c.yellow}Usage: /goal ${sub} <goal-id>${c.reset}\n`);
+          break;
+        }
+        const { SQLiteGoalStore } = await import('@ethosagent/goal-store');
+        const { GoalRunner } = await import('@ethosagent/goal-runner');
+        const store = new SQLiteGoalStore(join(ethosDir(), 'goals.db'));
+        const runner = new GoalRunner({ store });
+        try {
+          if (sub === 'cancel') {
+            const ok = runner.cancel(goalId);
+            out(
+              ok
+                ? `${c.green}Goal cancelled.${c.reset}\n`
+                : `${c.yellow}Cannot cancel goal ${goalId}.${c.reset}\n`,
+            );
+          } else if (sub === 'resume') {
+            const ok = await runner.resume(goalId);
+            out(
+              ok
+                ? `${c.green}Goal resumed.${c.reset}\n`
+                : `${c.yellow}Cannot resume goal ${goalId}.${c.reset}\n`,
+            );
+          } else {
+            const msg = subParts.slice(2).join(' ');
+            if (!msg) {
+              out(`${c.yellow}Usage: /goal steer <id> <message>${c.reset}\n`);
+              break;
+            }
+            const ok = runner.steer(goalId, msg);
+            out(
+              ok
+                ? `${c.dim}Steer sent.${c.reset}\n`
+                : `${c.yellow}Cannot steer goal ${goalId}.${c.reset}\n`,
+            );
+          }
+        } finally {
+          store.close();
+        }
+        break;
+      }
+
+      // Default: create a new goal
+      const { SQLiteGoalStore } = await import('@ethosagent/goal-store');
+      const { GoalRunner } = await import('@ethosagent/goal-runner');
+      const store = new SQLiteGoalStore(join(ethosDir(), 'goals.db'));
+      const runner = new GoalRunner({ store });
+      try {
+        const goal = store.create({
+          userId: 'default-user',
+          personalityId: state.personalityId,
+          origin: 'cli',
+          title: arg.slice(0, 80),
+          goalText: arg,
+        });
+        out(`${c.green}Goal created: ${goal.id}${c.reset}\n`);
+        out(`${c.dim}  "${goal.goalText}"${c.reset}\n`);
+        out(`${c.dim}  Status: ${goal.status} · /goals to list${c.reset}\n`);
+        await runner.startGoal(goal.id);
+      } finally {
+        store.close();
+      }
+      break;
+    }
+
+    case 'goals': {
+      const { SQLiteGoalStore } = await import('@ethosagent/goal-store');
+      const store = new SQLiteGoalStore(join(ethosDir(), 'goals.db'));
+      try {
+        const goals = store.list({ limit: 10 });
+        if (goals.length === 0) {
+          out(`${c.dim}No goals yet. Use /goal <text> to create one.${c.reset}\n`);
+        } else {
+          out(`${c.dim}Recent goals:${c.reset}\n`);
+          for (const g of goals) {
+            const status =
+              g.status === 'completed'
+                ? `${c.green}${g.status}${c.reset}`
+                : g.status === 'failed'
+                  ? `${c.red}${g.status}${c.reset}`
+                  : `${c.dim}${g.status}${c.reset}`;
+            const title = g.title.length > 50 ? `${g.title.slice(0, 50)}...` : g.title;
+            out(`  ${c.dim}${g.id.slice(0, 8)}${c.reset}  ${status}  ${title}\n`);
+          }
+        }
+      } finally {
+        store.close();
       }
       break;
     }

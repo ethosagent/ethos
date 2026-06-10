@@ -185,3 +185,36 @@ export interface BeforeGoalCompletePayload {
   outputMd: string;
   acceptanceCriteria: AcceptanceSpec | null;
 }
+
+// ---------------------------------------------------------------------------
+// Goal notification payloads (void hooks)
+// ---------------------------------------------------------------------------
+
+export interface GoalCompletedPayload {
+  goalId: string;
+  title: string;
+  summary: string;
+  outputMd: string;
+  origin: GoalOrigin;
+  personalityId: string;
+  costUsd: number | null;
+  durationMs: number;
+}
+
+export interface GoalFailedPayload {
+  goalId: string;
+  title: string;
+  errorText: string | null;
+  outputPartial: string | null;
+  origin: GoalOrigin;
+  personalityId: string;
+}
+
+export interface GoalExhaustedPayload {
+  goalId: string;
+  title: string;
+  bestAttemptOutput: string | null;
+  verdict: Verdict | null;
+  origin: GoalOrigin;
+  personalityId: string;
+}

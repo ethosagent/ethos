@@ -42,6 +42,19 @@ export class GoalsService {
     return { ok: await this.runner.resume(id) };
   }
 
+  async getGoal(id: string): Promise<Goal | null> {
+    return this.store.get(id);
+  }
+
+  async getEvents(goalId: string): Promise<GoalEvent[]> {
+    return this.store.getEvents(goalId);
+  }
+
+  async getEventsSince(goalId: string, afterSeq: number): Promise<GoalEvent[]> {
+    const events = this.store.getEvents(goalId);
+    return events.filter((e) => e.seq > afterSeq);
+  }
+
   async classify(message: string) {
     return classifyGoal(message);
   }

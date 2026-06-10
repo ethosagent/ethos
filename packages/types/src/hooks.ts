@@ -1,3 +1,4 @@
+import type { GoalCompletedPayload, GoalExhaustedPayload, GoalFailedPayload } from './goal';
 import type { Message, ToolDefinitionLite } from './llm';
 import type { PersonalityConfig } from './personality';
 import type { InboundMessage, OutboundMessage } from './platform';
@@ -239,6 +240,9 @@ export interface VoidHooks {
   subagent_ended: SubagentEndedPayload;
   after_ticket_revision: AfterTicketRevisionPayload;
   process_complete: ProcessCompleteEvent;
+  goal_completed: GoalCompletedPayload;
+  goal_failed: GoalFailedPayload;
+  goal_exhausted: GoalExhaustedPayload;
 }
 
 export interface ModifyingHooks {

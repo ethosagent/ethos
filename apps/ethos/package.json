@@ -58,6 +58,8 @@
   },
   "dependencies": {
     "@ethosagent/core": "workspace:*",
+    "@ethosagent/goal-runner": "workspace:*",
+    "@ethosagent/goal-store": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@anthropic-ai/sdk": "^0.96.0",
     "@aws-sdk/client-secrets-manager": "^3.800.0",

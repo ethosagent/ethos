@@ -14,6 +14,7 @@ export interface ComposerProps {
   attachments?: AttachmentPreview[];
   onAttach?: (files: File[]) => void;
   onRemoveAttachment?: (localId: string) => void;
+  onGoalRun?: () => void;
 }
 
 export function Composer({
@@ -26,6 +27,7 @@ export function Composer({
   attachments,
   onAttach,
   onRemoveAttachment,
+  onGoalRun,
 }: ComposerProps) {
   const [text, setText] = useState('');
   const accent = personalityAccent(personalityId);
@@ -275,6 +277,31 @@ export function Composer({
           >
             +
           </button>
+          {onGoalRun && !isStreaming ? (
+            <button
+              type="button"
+              onClick={onGoalRun}
+              aria-label="Run as goal"
+              style={{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: 'var(--text-secondary)',
+                padding: 4,
+                display: 'flex',
+                alignItems: 'center',
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
+                <circle cx="8" cy="8" r="2" fill="currentColor" />
+                <line x1="8" y1="0.5" x2="8" y2="3" stroke="currentColor" strokeWidth="1.5" />
+                <line x1="8" y1="13" x2="8" y2="15.5" stroke="currentColor" strokeWidth="1.5" />
+                <line x1="0.5" y1="8" x2="3" y2="8" stroke="currentColor" strokeWidth="1.5" />
+                <line x1="13" y1="8" x2="15.5" y2="8" stroke="currentColor" strokeWidth="1.5" />
+              </svg>
+            </button>
+          ) : null}
           {isStreaming && onAbort ? (
             <button
               type="button"

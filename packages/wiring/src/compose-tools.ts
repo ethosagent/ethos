@@ -5,6 +5,8 @@ import {
   LastWriteWinsPolicy,
   LazyOnDemandPolicy,
 } from '@ethosagent/core';
+import { GoalRunner } from '@ethosagent/goal-runner';
+import { SQLiteGoalStore } from '@ethosagent/goal-store';
 import { autonomyTier, KanbanStore } from '@ethosagent/kanban-store';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import {
@@ -33,6 +35,7 @@ import { compose as composeCode } from '@ethosagent/tools-code/compose';
 import { compose as composeCron } from '@ethosagent/tools-cron/compose';
 import { buildDebugTools } from '@ethosagent/tools-debug';
 import { createFileTools } from '@ethosagent/tools-file';
+import { createGoalTools } from '@ethosagent/tools-goals';
 import { createImageTools } from '@ethosagent/tools-image';
 import { compose as composeInteractive } from '@ethosagent/tools-interactive/compose';
 import {
@@ -344,6 +347,15 @@ export async function composeAllTools(
       };
     }
     for (const tool of composeKanban(wiringCtx, kanbanOpts).tools) tools.register(tool);
+  }
+
+  // Goal tools — wired only when the active personality uses them.
+  if ((activePerson.toolset ?? []).some((name: string) => name.startsWith('goal_'))) {
+    const goalDbPath = join(dataDir, 'goals.db');
+    const goalStore = new SQLiteGoalStore(goalDbPath);
+    const goalRunner = new GoalRunner({ store: goalStore });
+    goalRunner.recoverOrphans();
+    for (const tool of createGoalTools(goalStore)) tools.register(tool);
   }
 
   for (const tool of composeProcess(wiringCtx, { hookRegistry: hooks }).tools) tools.register(tool);

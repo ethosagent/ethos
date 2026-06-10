@@ -1,6 +1,8 @@
 import { Button, Input, Spin, Typography } from 'antd';
 import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { ExecutionGraph } from '../components/goals/ExecutionGraph';
+import { GoalOutputModal } from '../components/goals/GoalOutputModal';
 import { useGoalCancel, useGoalResume, useGoalSteer } from '../features/goals/api/mutations';
 import { useGoalDetail } from '../features/goals/api/queries';
 
@@ -32,61 +34,6 @@ const STATUS_CONFIG: Record<string, { color: string; label: string; icon: string
 
 const ACTIVE_STATUSES = new Set(['running', 'judging', 'retrying', 'needs_clarification']);
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'interrupted', 'exhausted']);
-
-// --- Event node config ---------------------------------------------------
-
-const EVENT_NODE_CONFIG: Record<string, { borderColor: string; label: string; bg: string }> = {
-  run_start: {
-    borderColor: '#8B5CF6',
-    label: 'GOAL',
-    bg: 'rgba(139,92,246,0.08)',
-  },
-  turn_text: {
-    borderColor: 'var(--info)',
-    label: 'TURN',
-    bg: 'rgba(74,158,255,0.06)',
-  },
-  tool_start: {
-    borderColor: 'var(--text-tertiary)',
-    label: 'TOOL',
-    bg: 'rgba(107,107,106,0.06)',
-  },
-  tool_end: {
-    borderColor: 'var(--text-tertiary)',
-    label: 'TOOL',
-    bg: 'rgba(107,107,106,0.06)',
-  },
-  steer: {
-    borderColor: 'var(--warning)',
-    label: 'STEER',
-    bg: 'rgba(245,158,11,0.08)',
-  },
-  usage: {
-    borderColor: 'var(--text-tertiary)',
-    label: 'USAGE',
-    bg: 'rgba(107,107,106,0.04)',
-  },
-  complete_attempt: {
-    borderColor: 'var(--info)',
-    label: 'ATTEMPT',
-    bg: 'rgba(74,158,255,0.06)',
-  },
-  complete_rejected: {
-    borderColor: 'var(--error)',
-    label: 'REJECTED',
-    bg: 'rgba(248,113,113,0.08)',
-  },
-  error: {
-    borderColor: 'var(--error)',
-    label: 'ERROR',
-    bg: 'rgba(248,113,113,0.08)',
-  },
-  done: {
-    borderColor: 'var(--success)',
-    label: 'DONE',
-    bg: 'rgba(74,222,128,0.08)',
-  },
-};
 
 // --- Helpers --------------------------------------------------------------
 
@@ -126,6 +73,7 @@ export function GoalDetail() {
 
   const [steerText, setSteerText] = useState('');
   const [journeyOpen, setJourneyOpen] = useState(true);
+  const [outputModalOpen, setOutputModalOpen] = useState(false);
 
   const handleSteer = useCallback(() => {
     if (!steerText.trim()) return;
@@ -358,6 +306,22 @@ export function GoalDetail() {
                 · {formatDuration(goal.startedAt, goal.completedAt)} elapsed
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => setOutputModalOpen(true)}
+              style={{
+                marginLeft: 'auto',
+                background: 'none',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 4,
+                color: 'var(--text-secondary)',
+                fontSize: 12,
+                padding: '4px 10px',
+                cursor: 'pointer',
+              }}
+            >
+              Full Analysis
+            </button>
           </div>
 
           {/* Error banner for failed/cancelled goals */}
@@ -520,132 +484,17 @@ export function GoalDetail() {
               transition: 'transform 180ms cubic-bezier(0.16, 1, 0.3, 1)',
             }}
           >
-            ▸
+            &#x25B8;
           </span>
         </button>
 
         {journeyOpen && (
-          <div
-            style={{
-              position: 'relative',
-              padding: '16px 0',
-              marginBottom: 16,
-              borderRadius: 8,
-              border: '1px solid var(--border-subtle)',
-              background: 'var(--bg-elevated)',
-              overflowX: 'auto',
-              backgroundImage: 'radial-gradient(circle, var(--border-subtle) 1px, transparent 1px)',
-              backgroundSize: '20px 20px',
-            }}
-          >
-            {journeyEvents.length === 0 ? (
-              <div
-                style={{
-                  padding: '24px',
-                  textAlign: 'center',
-                  color: 'var(--text-tertiary)',
-                  fontSize: 13,
-                }}
-              >
-                No events yet
-              </div>
-            ) : (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '8px 16px',
-                  minWidth: 'min-content',
-                }}
-              >
-                {journeyEvents.map((ev, idx) => {
-                  const nodeCfg = EVENT_NODE_CONFIG[ev.eventType] ?? {
-                    borderColor: 'var(--text-tertiary)',
-                    label: ev.eventType,
-                    bg: 'rgba(107,107,106,0.04)',
-                  };
-                  const toolName = ev.payload?.toolName as string | undefined;
-                  const text = ev.payload?.text as string | undefined;
-                  const message = ev.payload?.message as string | undefined;
-                  const errorText = ev.payload?.error as string | undefined;
-
-                  let detail = '';
-                  if (ev.eventType === 'tool_start' || ev.eventType === 'tool_end') {
-                    detail = toolName ?? '';
-                  } else if (ev.eventType === 'turn_text' && text) {
-                    detail = text.length > 40 ? `${text.slice(0, 40)}...` : text;
-                  } else if (ev.eventType === 'steer' && message) {
-                    detail = message.length > 40 ? `${message.slice(0, 40)}...` : message;
-                  } else if (ev.eventType === 'error' && errorText) {
-                    detail = errorText.length > 40 ? `${errorText.slice(0, 40)}...` : errorText;
-                  }
-
-                  return (
-                    <div
-                      key={ev.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                      }}
-                    >
-                      <div
-                        style={{
-                          padding: '6px 10px',
-                          borderRadius: 6,
-                          border: `1px solid ${nodeCfg.borderColor}`,
-                          background: nodeCfg.bg,
-                          minWidth:
-                            ev.eventType === 'tool_start' || ev.eventType === 'tool_end' ? 60 : 80,
-                          maxWidth: 180,
-                        }}
-                        title={JSON.stringify(ev.payload, null, 2)}
-                      >
-                        <div
-                          style={{
-                            fontSize: 9,
-                            fontWeight: 600,
-                            color: nodeCfg.borderColor,
-                            textTransform: 'uppercase' as const,
-                            letterSpacing: '0.05em',
-                            marginBottom: detail ? 2 : 0,
-                          }}
-                        >
-                          {nodeCfg.label}
-                        </div>
-                        {detail && (
-                          <div
-                            style={{
-                              fontSize: 11,
-                              color: 'var(--text-secondary)',
-                              fontFamily: "'Geist Mono', monospace",
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {detail}
-                          </div>
-                        )}
-                      </div>
-                      {idx < journeyEvents.length - 1 && (
-                        <span
-                          style={{
-                            color: 'var(--border-strong)',
-                            fontSize: 12,
-                            flexShrink: 0,
-                          }}
-                        >
-                          →
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          <ExecutionGraph
+            events={journeyEvents}
+            goalText={goal.goalText}
+            personalityId={goal.personalityId}
+            isActive={isActive}
+          />
         )}
       </div>
 
@@ -702,6 +551,14 @@ export function GoalDetail() {
         <span>·</span>
         <span>{formatDuration(goal.startedAt, goal.completedAt)} elapsed</span>
       </div>
+
+      <GoalOutputModal
+        open={outputModalOpen}
+        onClose={() => setOutputModalOpen(false)}
+        title={goal.title || goal.goalText}
+        personalityId={goal.personalityId}
+        outputMd={goal.outputMd || goal.outputPartial || ''}
+      />
 
       {/* Pulse animation */}
       <style>{`

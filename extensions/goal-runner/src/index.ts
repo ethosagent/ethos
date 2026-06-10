@@ -1,4 +1,11 @@
-import type { GoalStore } from '@ethosagent/types';
+import type {
+  GoalCompletedPayload,
+  GoalExhaustedPayload,
+  GoalOrigin,
+  GoalStore,
+  HookRegistry,
+  Verdict,
+} from '@ethosagent/types';
 import { isConverged, judge } from './judge';
 import { buildRetryContext, classifyFailure } from './retry-context';
 
@@ -9,16 +16,19 @@ export { buildRetryContext, classifyFailure, type RetryStrategy } from './retry-
 export interface GoalRunnerConfig {
   store: GoalStore;
   maxTurnsSafetyValve?: number;
+  hooks?: HookRegistry;
 }
 
 export class GoalRunner {
   private store: GoalStore;
   private maxTurnsSafetyValve: number;
   private activeRuns = new Map<string, AbortController>();
+  private hooks: HookRegistry | undefined;
 
   constructor(config: GoalRunnerConfig) {
     this.store = config.store;
     this.maxTurnsSafetyValve = config.maxTurnsSafetyValve ?? 100;
+    this.hooks = config.hooks;
   }
 
   /**
@@ -104,6 +114,7 @@ export class GoalRunner {
         outputMd: output,
         completedAt: Date.now(),
       });
+      this.fireGoalCompleted(goal, output);
       return true;
     }
 
@@ -131,6 +142,7 @@ export class GoalRunner {
         score: verdict.score,
         attemptN,
       });
+      this.fireGoalCompleted(goal, output);
       return true;
     }
 
@@ -138,6 +150,7 @@ export class GoalRunner {
       this.store.updateStatus(goalId, 'exhausted', {
         outputPartial: output,
       });
+      this.fireGoalExhausted(goal, output, verdict);
       return false;
     }
 
@@ -147,6 +160,7 @@ export class GoalRunner {
         this.store.updateStatus(goalId, 'exhausted', {
           outputPartial: output,
         });
+        this.fireGoalExhausted(goal, output, verdict);
         return false;
       }
     }
@@ -199,4 +213,113 @@ export class GoalRunner {
       strategy,
     });
   }
+
+  // -------------------------------------------------------------------------
+  // Notification hooks (fire-and-forget)
+  // -------------------------------------------------------------------------
+
+  private fireGoalCompleted(
+    goal: {
+      id: string;
+      title: string;
+      origin: GoalOrigin;
+      personalityId: string;
+      costUsd: number | null;
+      startedAt: number;
+    },
+    output: string,
+  ): void {
+    if (!this.hooks) return;
+    const payload: GoalCompletedPayload = {
+      goalId: goal.id,
+      title: goal.title,
+      summary: '',
+      outputMd: output,
+      origin: goal.origin,
+      personalityId: goal.personalityId,
+      costUsd: goal.costUsd,
+      durationMs: Date.now() - goal.startedAt,
+    };
+    void this.hooks.fireVoid('goal_completed', payload);
+  }
+
+  private fireGoalExhausted(
+    goal: { id: string; title: string; origin: GoalOrigin; personalityId: string },
+    output: string,
+    verdict: Verdict | null,
+  ): void {
+    if (!this.hooks) return;
+    const payload: GoalExhaustedPayload = {
+      goalId: goal.id,
+      title: goal.title,
+      bestAttemptOutput: output,
+      verdict,
+      origin: goal.origin,
+      personalityId: goal.personalityId,
+    };
+    void this.hooks.fireVoid('goal_exhausted', payload);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gateway subscriber — wires goal hooks to channel notifications
+// ---------------------------------------------------------------------------
+
+export function registerGoalNotifications(
+  hooks: HookRegistry,
+  send: (platform: string, chatId: string, text: string) => Promise<void>,
+): () => void {
+  const cleanups: Array<() => void> = [];
+
+  cleanups.push(
+    hooks.registerVoid('goal_completed', async (payload) => {
+      const origin = parseChannelOrigin(payload.origin);
+      if (!origin) return;
+      await send(
+        origin.platform,
+        origin.chatId,
+        `Goal completed: ${payload.title}\n${payload.summary || '(no summary)'}`,
+      );
+    }),
+  );
+
+  cleanups.push(
+    hooks.registerVoid('goal_failed', async (payload) => {
+      const origin = parseChannelOrigin(payload.origin);
+      if (!origin) return;
+      await send(
+        origin.platform,
+        origin.chatId,
+        `Goal failed: ${payload.title}\n${payload.errorText ?? '(unknown error)'}`,
+      );
+    }),
+  );
+
+  cleanups.push(
+    hooks.registerVoid('goal_exhausted', async (payload) => {
+      const origin = parseChannelOrigin(payload.origin);
+      if (!origin) return;
+      const score = payload.verdict ? ` (score: ${payload.verdict.score.toFixed(2)})` : '';
+      await send(
+        origin.platform,
+        origin.chatId,
+        `Goal exhausted: ${payload.title}${score}\nBest attempt delivered but did not meet acceptance criteria.`,
+      );
+    }),
+  );
+
+  return () => {
+    for (const fn of cleanups) fn();
+  };
+}
+
+/** Parse a channel-style GoalOrigin ('platform:chatId') into parts, or null for non-channel origins. */
+function parseChannelOrigin(origin: GoalOrigin): { platform: string; chatId: string } | null {
+  if (origin === 'web' || origin === 'cli') return null;
+  const idx = origin.indexOf(':');
+  if (idx < 1) return null;
+  const platform = origin.slice(0, idx);
+  const chatId = origin.slice(idx + 1);
+  if (!chatId) return null;
+  return { platform, chatId };
 }

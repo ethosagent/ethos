@@ -170,6 +170,12 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/goal-runner':
+        specifier: workspace:*
+        version: link:../../extensions/goal-runner
+      '@ethosagent/goal-store':
+        specifier: workspace:*
+        version: link:../../extensions/goal-store
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1531,6 +1537,12 @@ importers:
       '@ethosagent/cron':
         specifier: workspace:*
         version: link:../../extensions/cron
+      '@ethosagent/goal-runner':
+        specifier: workspace:*
+        version: link:../../extensions/goal-runner
+      '@ethosagent/goal-store':
+        specifier: workspace:*
+        version: link:../../extensions/goal-store
       '@ethosagent/kanban-store':
         specifier: workspace:*
         version: link:../../extensions/kanban-store
@@ -1624,6 +1636,9 @@ importers:
       '@ethosagent/tools-file':
         specifier: workspace:*
         version: link:../../extensions/tools-file
+      '@ethosagent/tools-goals':
+        specifier: workspace:*
+        version: link:../../extensions/tools-goals
       '@ethosagent/tools-image':
         specifier: workspace:*
         version: link:../../extensions/tools-image
