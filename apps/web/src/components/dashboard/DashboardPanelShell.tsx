@@ -173,7 +173,7 @@ export function DashboardPanelShell({
               trigger="click"
               title="Panel details"
               placement="bottomRight"
-              overlayStyle={{ width: 360 }}
+              overlayStyle={{ width: 'var(--layout-right-drawer)' }}
               content={<PanelInfoContent panel={panel} />}
             >
               <Button size="small" type="text" title="Info">
@@ -537,7 +537,7 @@ function PanelInfoContent({ panel }: { panel: PanelData }) {
     fontSize: 11,
     background: '#f5f5f5',
     padding: '4px 6px',
-    borderRadius: 4,
+    borderRadius: 'var(--radius-sm)',
   };
 
   return (

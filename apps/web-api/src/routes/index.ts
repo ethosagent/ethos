@@ -78,7 +78,7 @@ export interface ServiceContainer {
   debug: import('../features/debug/service').DebugService;
   apiKeys: import('../services/api-keys.service').ApiKeysService;
   toolRegistry?: import('@ethosagent/types').ToolRegistry;
-  dashboards?: import('../rpc/context').DashboardsService;
+  dashboards?: import('../services/dashboards.service').DashboardsService;
   pluginLoader?: import('@ethosagent/plugin-loader').PluginLoader;
   agentLoop?: import('@ethosagent/core').AgentLoop;
   systemBus?: import('../services/system-event-bus').SystemEventBus;

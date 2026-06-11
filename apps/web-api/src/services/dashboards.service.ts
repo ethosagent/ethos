@@ -504,6 +504,27 @@ export class DashboardsService {
     };
   }
 
+  /**
+   * RPC addPanel marshalling — resolve the target dashboard (creating one
+   * when `newDashboardTitle` is given), then add the panel to it.
+   */
+  addPanelResolving(
+    input: {
+      dashboardId?: string | null;
+      newDashboardTitle?: string;
+      personalityId?: string;
+      panel: AddPanelInput;
+    },
+    userId: string,
+  ): DashboardPanel {
+    let dashboardId = input.dashboardId;
+    if (!dashboardId && input.newDashboardTitle) {
+      dashboardId = this.create(userId, input.newDashboardTitle, input.personalityId ?? 'default').id;
+    }
+    if (!dashboardId) throw new Error('dashboardId or newDashboardTitle required');
+    return this.addPanel(dashboardId, input.panel);
+  }
+
   updatePanel(
     panelId: string,
     patch: {
@@ -851,6 +872,32 @@ export class DashboardsService {
     return { dashboardId: dashId, warnings };
   }
 
+  /** RPC exportDashboard marshalling — serialize the export payload. */
+  exportDashboardJson(id: string): { json: string; panelCount: number; title: string } | null {
+    const result = this.exportDashboard(id);
+    if (!result) return null;
+    const panels = (result as { panels?: unknown[] }).panels ?? [];
+    return {
+      json: JSON.stringify(result),
+      panelCount: panels.length,
+      title: (result as { title: string }).title,
+    };
+  }
+
+  /** RPC importDashboard marshalling — parse the export JSON and import it. */
+  importDashboardJson(
+    exportJson: string,
+    userId: string,
+  ): { dashboardId: string; title: string; warnings: string[] } {
+    const data = JSON.parse(exportJson);
+    const result = this.importDashboard(data, userId, data.personalityId ?? 'default');
+    return {
+      dashboardId: result.dashboardId,
+      title: data.title ?? 'Imported Dashboard',
+      warnings: result.warnings,
+    };
+  }
+
   // -------------------------------------------------------------------------
   // Widget templates — delegates to plugin loader (stub for now)
   // -------------------------------------------------------------------------
@@ -908,4 +955,24 @@ export class DashboardsService {
     // No space found in existing rows — place on the next row
     return { col: 0, row: maxRowBottom };
   }
+}
+
+/**
+ * RPC summarizePrompt marshalling — condense a conversation into a prompt
+ * the dashboard panel can replay to produce the same kind of output.
+ */
+export function buildPromptSummary(
+  messages: ReadonlyArray<{ role: string; content: unknown }>,
+): string {
+  const parts: string[] = [];
+  for (const msg of messages) {
+    const role = msg.role === 'user' ? 'User' : 'Assistant';
+    const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+    if (text.length > 500) {
+      parts.push(`${role}: ${text.slice(0, 500)}...`);
+    } else {
+      parts.push(`${role}: ${text}`);
+    }
+  }
+  return `Based on the following conversation, produce the same kind of output:\n\n${parts.join('\n\n')}`;
 }

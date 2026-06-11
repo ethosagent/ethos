@@ -10,6 +10,10 @@ import { loadMcpConfig, type McpServerConfig } from '@ethosagent/tools-mcp';
 import type { PluginPageSpec, Storage, ToolRegistry } from '@ethosagent/types';
 import type { CredentialKeyInfo, McpServerInfo, PluginInfo } from '@ethosagent/web-contracts';
 
+// Re-exported so rpc/ can reference the type without importing the extension
+// directly (layering rule: rpc/ must not import @ethosagent/plugin-loader).
+export type { PluginLoader } from '@ethosagent/plugin-loader';
+
 function spawnNpm(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn('npm', args, { stdio: ['ignore', 'ignore', 'pipe'] });

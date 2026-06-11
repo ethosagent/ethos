@@ -35,6 +35,54 @@ interface RefreshDeps {
   agentLoop?: AgentLoop;
 }
 
+/**
+ * Deps for the RPC-facing orchestration helpers below. `dashboards` is
+ * optional so handlers can pass their context straight through; the helpers
+ * fail the same way the inline handler logic used to.
+ */
+export interface RefreshOrchestratorDeps {
+  dashboards?: RefreshDashboardsHandle & {
+    getPanel(panelId: string): DashboardPanel | null;
+    listLivePanels(dashboardId: string): DashboardPanel[];
+  };
+  pluginLoader?: PluginLoader;
+  agentLoop?: AgentLoop;
+}
+
+/** Refresh one panel by id, resolving its dashboard's persistent params. */
+export async function refreshPanelById(
+  panelId: string,
+  deps: RefreshOrchestratorDeps,
+): Promise<void> {
+  const dashboards = deps.dashboards;
+  const panel = dashboards?.getPanel(panelId);
+  if (!panel) throw new Error('Panel not found');
+  if (!dashboards) throw new Error('Dashboards service not configured');
+  const persistent = dashboards.get(panel.dashboardId)?.dashboard.paramsCurrent ?? {};
+  await refreshSinglePanel(
+    panel,
+    { dashboards, pluginLoader: deps.pluginLoader, agentLoop: deps.agentLoop },
+    { persistent },
+  );
+}
+
+/** Refresh every live panel of a dashboard with its persistent params. */
+export async function refreshAllPanels(
+  dashboardId: string,
+  deps: RefreshOrchestratorDeps,
+): Promise<void> {
+  const dashboards = deps.dashboards;
+  if (!dashboards) return;
+  const persistent = dashboards.get(dashboardId)?.dashboard.paramsCurrent ?? {};
+  for (const panel of dashboards.listLivePanels(dashboardId)) {
+    await refreshSinglePanel(
+      panel,
+      { dashboards, pluginLoader: deps.pluginLoader, agentLoop: deps.agentLoop },
+      { persistent },
+    );
+  }
+}
+
 export async function refreshSinglePanel(
   panel: RefreshablePanelData,
   deps: RefreshDeps,

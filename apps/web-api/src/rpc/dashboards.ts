@@ -1,4 +1,5 @@
-import { refreshSinglePanel } from '../services/dashboard-refresh';
+import { refreshAllPanels, refreshPanelById } from '../services/dashboard-refresh';
+import { buildPromptSummary } from '../services/dashboards.service';
 import { os } from './context';
 
 export const dashboardsRouter = {
@@ -28,12 +29,8 @@ export const dashboardsRouter = {
   }),
 
   update: os.dashboards.update.handler(async ({ context, input }) => {
-    context.dashboards?.update(input.id, {
-      title: input.title,
-      description: input.description,
-      cronSchedule: input.cronSchedule,
-      paramsSchema: input.paramsSchema,
-    });
+    const { id, ...patch } = input;
+    context.dashboards?.update(id, patch);
     return { ok: true as const };
   }),
 
@@ -43,19 +40,8 @@ export const dashboardsRouter = {
   }),
 
   addPanel: os.dashboards.addPanel.handler(async ({ context, input }) => {
-    let dashboardId = input.dashboardId;
-    if (!dashboardId && input.newDashboardTitle) {
-      const dashboard = context.dashboards?.create(
-        'default-user' /* TODO: replace with auth-context userId once user scoping lands */,
-        input.newDashboardTitle,
-        input.personalityId ?? 'default',
-      );
-      if (!dashboard) throw new Error('Dashboards service not configured');
-      dashboardId = dashboard.id;
-    }
-    if (!dashboardId) throw new Error('dashboardId or newDashboardTitle required');
-    const panel = context.dashboards?.addPanel(dashboardId, input.panel);
-    if (!panel) throw new Error('Dashboards service not configured');
+    if (!context.dashboards) throw new Error('Dashboards service not configured');
+    const panel = context.dashboards.addPanelResolving(input, 'default-user');
     return { panel };
   }),
 
@@ -76,12 +62,8 @@ export const dashboardsRouter = {
   }),
 
   updatePanelLayout: os.dashboards.updatePanelLayout.handler(async ({ context, input }) => {
-    context.dashboards?.updatePanelLayout(input.panelId, {
-      col: input.col,
-      row: input.row,
-      w: input.w,
-      h: input.h,
-    });
+    const { panelId, ...layout } = input;
+    context.dashboards?.updatePanelLayout(panelId, layout);
     return { ok: true as const };
   }),
 
@@ -91,60 +73,19 @@ export const dashboardsRouter = {
   }),
 
   refreshPanel: os.dashboards.refreshPanel.handler(async ({ context, input }) => {
-    const panel = context.dashboards?.getPanel(input.panelId);
-    if (!panel) throw new Error('Panel not found');
-    if (!context.dashboards) throw new Error('Dashboards service not configured');
-    const dashResult = context.dashboards.get(panel.dashboardId);
-    const persistent = dashResult?.dashboard?.paramsCurrent ?? {};
-    await refreshSinglePanel(
-      panel,
-      {
-        dashboards: context.dashboards,
-        pluginLoader: context.pluginLoader,
-        agentLoop: context.agentLoop,
-      },
-      { persistent },
-    );
+    await refreshPanelById(input.panelId, context);
     return { ok: true as const };
   }),
 
   refreshAll: os.dashboards.refreshAll.handler(async ({ context, input }) => {
-    const panels = context.dashboards?.listLivePanels(input.dashboardId) ?? [];
-    if (!context.dashboards) return { ok: true as const };
-    const dashResult = context.dashboards.get(input.dashboardId);
-    const persistent = dashResult?.dashboard?.paramsCurrent ?? {};
-    for (const panel of panels) {
-      await refreshSinglePanel(
-        panel,
-        {
-          dashboards: context.dashboards,
-          pluginLoader: context.pluginLoader,
-          agentLoop: context.agentLoop,
-        },
-        { persistent },
-      );
-    }
+    await refreshAllPanels(input.dashboardId, context);
     return { ok: true as const };
   }),
 
   summarizePrompt: os.dashboards.summarizePrompt.handler(async ({ context, input }) => {
     const result = await context.sessions.get(input.sessionId);
-    if (!result || result.messages.length === 0) {
-      return { summary: '' };
-    }
-    // Build a condensed text-based summary from the conversation
-    const parts: string[] = [];
-    for (const msg of result.messages) {
-      const role = msg.role === 'user' ? 'User' : 'Assistant';
-      const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-      if (text.length > 500) {
-        parts.push(`${role}: ${text.slice(0, 500)}...`);
-      } else {
-        parts.push(`${role}: ${text}`);
-      }
-    }
-    const summary = `Based on the following conversation, produce the same kind of output:\n\n${parts.join('\n\n')}`;
-    return { summary };
+    if (!result || result.messages.length === 0) return { summary: '' };
+    return { summary: buildPromptSummary(result.messages) };
   }),
 
   listWidgetTemplates: os.dashboards.listWidgetTemplates.handler(async ({ context }) => {
@@ -158,29 +99,14 @@ export const dashboardsRouter = {
   }),
 
   exportDashboard: os.dashboards.exportDashboard.handler(async ({ context, input }) => {
-    const result = context.dashboards?.exportDashboard(input.id);
+    const result = context.dashboards?.exportDashboardJson(input.id);
     if (!result) throw new Error('Dashboard not found');
-    const json = JSON.stringify(result);
-    const panels = (result as { panels?: unknown[] }).panels ?? [];
-    return {
-      json,
-      panelCount: panels.length,
-      title: (result as { title: string }).title,
-    };
+    return result;
   }),
 
   importDashboard: os.dashboards.importDashboard.handler(async ({ context, input }) => {
-    const data = JSON.parse(input.exportJson);
     if (!context.dashboards) throw new Error('Dashboards service not configured');
-    const result = context.dashboards.importDashboard(
-      data,
-      'default-user',
-      data.personalityId ?? 'default',
-    );
-    return {
-      dashboardId: result.dashboardId,
-      title: input.titleOverride ?? data.title ?? 'Imported Dashboard',
-      warnings: result.warnings,
-    };
+    const result = context.dashboards.importDashboardJson(input.exportJson, 'default-user');
+    return { ...result, title: input.titleOverride ?? result.title };
   }),
 };
