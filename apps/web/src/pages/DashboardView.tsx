@@ -85,7 +85,13 @@ function DashboardCronPopover({
   );
 }
 
-interface PanelPos { id: string; col: number; row: number; w: number; h: number }
+interface PanelPos {
+  id: string;
+  col: number;
+  row: number;
+  w: number;
+  h: number;
+}
 
 function computeAutoLayout(panels: PanelPos[]): PanelPos[] {
   // Sort by current position (row asc, col asc) to preserve rough order
