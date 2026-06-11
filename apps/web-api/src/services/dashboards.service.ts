@@ -519,7 +519,11 @@ export class DashboardsService {
   ): DashboardPanel {
     let dashboardId = input.dashboardId;
     if (!dashboardId && input.newDashboardTitle) {
-      dashboardId = this.create(userId, input.newDashboardTitle, input.personalityId ?? 'default').id;
+      dashboardId = this.create(
+        userId,
+        input.newDashboardTitle,
+        input.personalityId ?? 'default',
+      ).id;
     }
     if (!dashboardId) throw new Error('dashboardId or newDashboardTitle required');
     return this.addPanel(dashboardId, input.panel);
