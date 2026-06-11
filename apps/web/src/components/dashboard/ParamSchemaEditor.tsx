@@ -106,18 +106,15 @@ export function ParamSchemaEditor({ open, schema, onCancel, onSave }: Props) {
                 </Button>
               </Space>
               {(def.type === 'select' || def.type === 'options') && (
-                <Input
+                <Select
                   size="small"
-                  placeholder="Options (comma-separated)"
-                  value={(def.options ?? []).join(', ')}
-                  onChange={(e) =>
-                    updateDef(i, {
-                      options: e.target.value
-                        .split(',')
-                        .map((s) => s.trim())
-                        .filter(Boolean),
-                    })
-                  }
+                  mode="tags"
+                  style={{ width: '100%' }}
+                  placeholder="Type an option and press Enter"
+                  value={def.options ?? []}
+                  onChange={(vals: string[]) => updateDef(i, { options: vals })}
+                  tokenSeparators={[',']}
+                  open={false}
                 />
               )}
               <Input

@@ -14,17 +14,29 @@ export function interpolateParams(
   persistent: Record<string, string>,
   panelDefaults: Record<string, string>,
 ): string {
-  return template.replace(
-    /\{(\w+)\}/g,
-    (match, key: string) => ephemeral[key] ?? persistent[key] ?? panelDefaults[key] ?? match,
-  );
+  const resolve = (key: string, match: string) =>
+    ephemeral[key] ?? persistent[key] ?? panelDefaults[key] ?? match;
+  // Double-brace first to avoid partial matches on {{key}}
+  const pass1 = template.replace(/\{\{(\w+)\}\}/g, (m, k: string) => resolve(k, m));
+  return pass1.replace(/\{(\w+)\}/g, (m, k: string) => resolve(k, m));
 }
 
 export function extractParamRefs(template: string): string[] {
   const refs: string[] = [];
+  const seen = new Set<string>();
+  for (const m of template.matchAll(/\{\{(\w+)\}\}/g)) {
+    const key = m[1];
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      refs.push(key);
+    }
+  }
   for (const m of template.matchAll(/\{(\w+)\}/g)) {
     const key = m[1];
-    if (key && !refs.includes(key)) refs.push(key);
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      refs.push(key);
+    }
   }
   return refs;
 }

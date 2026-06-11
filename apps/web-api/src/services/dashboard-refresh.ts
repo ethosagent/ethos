@@ -19,7 +19,10 @@ export interface RefreshablePanelData {
 
 /** Minimal surface of DashboardsService needed for panel refresh. */
 export interface RefreshDashboardsHandle {
-  get(id: string): { dashboard: { personalityId: string }; panels: DashboardPanel[] } | null;
+  get(id: string): {
+    dashboard: { personalityId: string; paramsCurrent: Record<string, string> };
+    panels: DashboardPanel[];
+  } | null;
   updatePanelContent(panelId: string, content: string, blockType?: string): void;
   setPanelError(panelId: string, error: string): void;
   clearPanelError(panelId: string): void;

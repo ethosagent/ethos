@@ -94,23 +94,35 @@ export const dashboardsRouter = {
     const panel = context.dashboards?.getPanel(input.panelId);
     if (!panel) throw new Error('Panel not found');
     if (!context.dashboards) throw new Error('Dashboards service not configured');
-    await refreshSinglePanel(panel, {
-      dashboards: context.dashboards,
-      pluginLoader: context.pluginLoader,
-      agentLoop: context.agentLoop,
-    });
+    const dashResult = context.dashboards.get(panel.dashboardId);
+    const persistent = dashResult?.dashboard?.paramsCurrent ?? {};
+    await refreshSinglePanel(
+      panel,
+      {
+        dashboards: context.dashboards,
+        pluginLoader: context.pluginLoader,
+        agentLoop: context.agentLoop,
+      },
+      { persistent },
+    );
     return { ok: true as const };
   }),
 
   refreshAll: os.dashboards.refreshAll.handler(async ({ context, input }) => {
     const panels = context.dashboards?.listLivePanels(input.dashboardId) ?? [];
     if (!context.dashboards) return { ok: true as const };
+    const dashResult = context.dashboards.get(input.dashboardId);
+    const persistent = dashResult?.dashboard?.paramsCurrent ?? {};
     for (const panel of panels) {
-      await refreshSinglePanel(panel, {
-        dashboards: context.dashboards,
-        pluginLoader: context.pluginLoader,
-        agentLoop: context.agentLoop,
-      });
+      await refreshSinglePanel(
+        panel,
+        {
+          dashboards: context.dashboards,
+          pluginLoader: context.pluginLoader,
+          agentLoop: context.agentLoop,
+        },
+        { persistent },
+      );
     }
     return { ok: true as const };
   }),

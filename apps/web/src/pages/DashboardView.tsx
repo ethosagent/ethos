@@ -238,6 +238,9 @@ export function DashboardView() {
   const updateParamsMut = useMutation({
     mutationFn: (paramsCurrent: Record<string, string>) =>
       rpc.dashboards.updateParams({ id: id as string, paramsCurrent }),
+    onSuccess: () => {
+      refreshAllMut.mutate();
+    },
   });
 
   const autoArrangeMut = useMutation({
