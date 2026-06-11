@@ -51,6 +51,9 @@ export interface OnboardingServiceOptions {
   personalities: FilePersonalityRegistry;
   /** Inject for tests. Defaults to global `fetch`. */
   fetchFn?: typeof fetch;
+  /** Fired after `complete()` durably writes config.yaml. Fire-and-forget —
+   *  exceptions are swallowed so a callback failure can't fail the RPC. */
+  onSetupComplete?: () => void;
 }
 
 const MODELS_TIMEOUT_MS = 8_000;
@@ -134,6 +137,11 @@ export class OnboardingService {
       personality: input.personalityId,
       ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
     });
+    try {
+      this.opts.onSetupComplete?.();
+    } catch {
+      // Fire-and-forget — a callback failure must not fail onboarding.
+    }
   }
 
   // ---------------------------------------------------------------------------

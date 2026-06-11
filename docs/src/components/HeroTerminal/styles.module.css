@@ -1,0 +1,276 @@
+/* ── HeroTerminal — self-cycling 16s vignette, pure CSS ───────────────
+   DESIGN.md constraints: dark surface tokens only, single easing
+   cubic-bezier(0.16, 1, 0.3, 1), animate opacity/transform only,
+   radius 14px surface / 4px chips / 9999px dots.
+
+   Timeline (16s shared loop, driven by keyframe windows):
+     act 1 researcher  0%–31.25%   (0–5s)
+     act 2 engineer    31.25%–62.5% (5–10s)
+     act 3 reviewer    62.5%–100%  (10–16s, longest hold)
+
+   Lines share one keyframe (lineIn) offset by animation-delay. The
+   keyframe holds visible 2%–73% then hides 75%–100% (a 4s hidden
+   window) so every line is reset before its act fades back in. */
+
+.wrap {
+  width: 100%;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.terminal {
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 14px;
+  overflow: hidden;
+  text-align: left;
+}
+
+/* ── Chrome ─────────────────────────────────────────────────────────── */
+
+.titleBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.titleText {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 13px;
+  color: #9a9a98;
+}
+
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: #4ade80;
+}
+
+.footer {
+  padding: 12px 16px;
+  border-top: 1px solid #2a2a2a;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12px;
+  color: #6b6b6a;
+}
+
+/* ── Acts — stacked layers on one timeline ──────────────────────────── */
+
+.body {
+  position: relative;
+  min-height: 248px;
+  padding: 16px;
+}
+
+.act {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  opacity: 0;
+  animation-duration: 16s;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-iteration-count: infinite;
+}
+
+.actResearcher {
+  animation-name: actOne;
+}
+.actEngineer {
+  animation-name: actTwo;
+}
+.actReviewer {
+  animation-name: actThree;
+}
+
+@keyframes actOne {
+  0% {
+    opacity: 0;
+  }
+  2% {
+    opacity: 1;
+  }
+  29% {
+    opacity: 1;
+  }
+  31.25% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes actTwo {
+  0%,
+  31.25% {
+    opacity: 0;
+  }
+  33.25% {
+    opacity: 1;
+  }
+  60% {
+    opacity: 1;
+  }
+  62.5% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes actThree {
+  0%,
+  62.5% {
+    opacity: 0;
+  }
+  64.5% {
+    opacity: 1;
+  }
+  98% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ── Lines — shared keyframe, staggered by animation-delay ─────────── */
+
+.line {
+  opacity: 0;
+  transform: translateY(4px);
+  animation: lineIn 16s cubic-bezier(0.16, 1, 0.3, 1) infinite backwards;
+}
+
+@keyframes lineIn {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  2% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  73% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  75% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* ── Content ────────────────────────────────────────────────────────── */
+
+.prompt {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 13px;
+  color: #e8e8e6;
+}
+
+.promptYou {
+  color: #6b6b6a;
+}
+
+.agentHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agentName {
+  font-size: 14px;
+  font-weight: 500;
+  color: #e8e8e6;
+}
+
+.agentStripe {
+  flex: 1;
+  height: 3px;
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-block;
+  font-family: var(--ifm-font-family-monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: #9a9a98;
+  background: #2a2a2a;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+
+.chipRefused {
+  border-color: rgba(248, 113, 113, 0.4);
+}
+
+.ok {
+  color: #4ade80;
+}
+
+.err {
+  color: #f87171;
+}
+
+.response {
+  font-size: 14px;
+  line-height: 1.5;
+  color: #e8e8e6;
+}
+
+.caption {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #9a9a98;
+}
+
+/* ── Reduced motion — acts 1–2 hidden, act 3 shown statically ───────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .actResearcher,
+  .actEngineer {
+    display: none;
+  }
+  .act {
+    animation: none;
+  }
+  .actReviewer {
+    position: static;
+    opacity: 1;
+  }
+  .line {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}

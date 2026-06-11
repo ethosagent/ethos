@@ -27,8 +27,9 @@ export async function listenWithFallback(
     try {
       const result = await tryListen(app, port, hostname);
       if (i > 0) {
-        console.log(
-          `[web] port ${basePort} busy, fell forward to ${port} (${i} attempt${i === 1 ? '' : 's'})`,
+        console.warn(
+          `⚠ Port ${basePort} was taken — bound ${port} instead. If you use the Vite dev proxy ` +
+            `(make web-dev), it still points at ${basePort} and will talk to whatever owns that port.`,
         );
       }
       return result;

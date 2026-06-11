@@ -6,7 +6,8 @@ import rawMarkdownPlugin from './plugins/raw-markdown';
 
 const config: Config = {
   title: 'Ethos',
-  tagline: 'TypeScript agent framework where personality is architecture.',
+  tagline:
+    'A team of AI specialists — researcher, engineer, reviewer, coach, operator — that remember you across Slack, Telegram, and your terminal.',
   favicon: 'img/favicon.svg',
 
   future: {

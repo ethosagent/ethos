@@ -23,6 +23,7 @@ describe('OnboardingService', () => {
     extras: {
       fetchFn?: typeof fetch;
       personalities?: import('@ethosagent/types').PersonalityConfig[];
+      onSetupComplete?: () => void;
     } = {},
   ) {
     const config = new ConfigRepository({ dataDir: DATA, storage });
@@ -34,6 +35,7 @@ describe('OnboardingService', () => {
       config,
       personalities,
       ...(extras.fetchFn ? { fetchFn: extras.fetchFn } : {}),
+      ...(extras.onSetupComplete ? { onSetupComplete: extras.onSetupComplete } : {}),
     });
   }
 
@@ -185,6 +187,58 @@ describe('OnboardingService', () => {
           personalityId: 'does-not-exist',
         }),
       ).rejects.toMatchObject({ code: 'PERSONALITY_NOT_FOUND' });
+    });
+
+    it('fires onSetupComplete after the config is written', async () => {
+      // Start the read at callback time to prove the write landed first.
+      let configAtCallback: Promise<string | null> | null = null;
+      const service = makeService({
+        onSetupComplete: () => {
+          configAtCallback = storage.read(join(DATA, 'config.yaml'));
+        },
+      });
+      await service.complete({
+        provider: 'anthropic',
+        model: 'claude-opus-4-7',
+        apiKey: 'sk-test',
+        personalityId: 'researcher',
+      });
+      expect(configAtCallback).not.toBeNull();
+      await expect(configAtCallback).resolves.toContain('provider: anthropic');
+    });
+
+    it('does not fire onSetupComplete when complete() rejects', async () => {
+      let fired = false;
+      const service = makeService({
+        onSetupComplete: () => {
+          fired = true;
+        },
+      });
+      await expect(
+        service.complete({
+          provider: 'anthropic',
+          model: 'm',
+          apiKey: 'k',
+          personalityId: 'does-not-exist',
+        }),
+      ).rejects.toMatchObject({ code: 'PERSONALITY_NOT_FOUND' });
+      expect(fired).toBe(false);
+    });
+
+    it('swallows onSetupComplete exceptions — complete() still resolves', async () => {
+      const service = makeService({
+        onSetupComplete: () => {
+          throw new Error('boot exploded');
+        },
+      });
+      await expect(
+        service.complete({
+          provider: 'anthropic',
+          model: 'claude-opus-4-7',
+          apiKey: 'sk-test',
+          personalityId: 'researcher',
+        }),
+      ).resolves.toBeUndefined();
     });
   });
 });

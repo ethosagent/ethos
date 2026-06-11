@@ -62,6 +62,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     for (const c of candidates) {
       if (existsSync(c)) return c;
     }
+    console.warn(
+      `[serve] skills catalog not found (tried: ${candidates.join(', ')}) — set ETHOS_SKILLS_CATALOG_DIR to override.`,
+    );
     return undefined;
   })();
 
@@ -73,24 +76,47 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     await personalities.loadFromDirectory(join(dir, 'personalities'));
     const identityMap = new IdentityMap({ storage: new FsStorage(), dataDir: dir });
     // Lazy loader: stays as a stub until onboarding writes config, then
-    // boots the real agent loop on the first chat request and caches it.
+    // boots the real agent loop — eagerly when the wizard completes (via
+    // `onSetupComplete` below), or on the first chat request — and caches it.
     let realLoop: AgentLoop | null = null;
     // Buffers createWebApi's tool registrations (dashboard tools) until
     // onboarding boots the real loop, then flushes them into its registry.
     const lazyToolRegistry = new DeferredToolRegistry();
-    const stubLoop = {
-      run: async function* (text: string, opts: Record<string, unknown> = {}) {
-        if (!realLoop) {
-          const secrets = await getSecretsResolver();
-          const loaded = await readConfig(getStorage(), secrets);
-          if (loaded) {
+    // Single-flight boot: concurrent callers await the same in-flight
+    // attempt. Returns null while config is still missing; if the boot
+    // itself throws, logs and resets so a later call can retry.
+    let bootInFlight: Promise<AgentLoop | null> | null = null;
+    const bootRealLoop = (): Promise<AgentLoop | null> => {
+      if (realLoop) return Promise.resolve(realLoop);
+      if (!bootInFlight) {
+        bootInFlight = (async (): Promise<AgentLoop | null> => {
+          try {
+            const secrets = await getSecretsResolver();
+            const loaded = await readConfig(getStorage(), secrets);
+            if (!loaded) return null;
             const agentResult = await createAgentLoop(loaded);
             realLoop = agentResult.loop;
             if (agentResult.toolRegistry) lazyToolRegistry.setInner(agentResult.toolRegistry);
+            return agentResult.loop;
+          } catch (err) {
+            console.error(
+              `[serve] agent loop boot failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            return null;
+          } finally {
+            // No loop produced (config still missing or boot threw) —
+            // clear the in-flight slot so the next call retries.
+            if (!realLoop) bootInFlight = null;
           }
-        }
-        if (realLoop) {
-          yield* realLoop.run(text, opts as never);
+        })();
+      }
+      return bootInFlight;
+    };
+    const stubLoop = {
+      run: async function* (text: string, opts: Record<string, unknown> = {}) {
+        const loop = await bootRealLoop();
+        if (loop) {
+          yield* loop.run(text, opts as never);
         } else {
           yield {
             type: 'error' as const,
@@ -111,6 +137,11 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       personalities,
       chatDefaults: { model: 'setup-required', provider: 'setup-required' },
       toolRegistry: lazyToolRegistry,
+      // Eagerly boot the real loop once the wizard writes config.yaml so
+      // the tool catalog and plugin tools are live before the first chat.
+      onSetupComplete: () => {
+        void bootRealLoop();
+      },
       ...(skillsCatalogDir ? { catalogDir: skillsCatalogDir } : {}),
       ...(webDist ? { webDist } : {}),
     });

@@ -167,6 +167,13 @@ export interface CreateWebApiOptions {
    * the improvement fork auto-promotes a skill to the live library.
    */
   setOnSkillApplied?: (fn: (skillId: string, personalityId: string) => void) => void;
+  /**
+   * Fired after the onboarding wizard durably writes config.yaml. Boot code
+   * (onboarding-mode `ethos serve`) uses this to eagerly boot the real agent
+   * loop so the tool catalog and plugins are live before the first chat.
+   * Fire-and-forget — errors never fail the onboarding RPC.
+   */
+  onSetupComplete?: () => void;
 }
 
 export interface CreateWebApiResult {
@@ -242,6 +249,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const onboardingService = new OnboardingService({
     config: configRepo,
     personalities: opts.personalities,
+    ...(opts.onSetupComplete ? { onSetupComplete: opts.onSetupComplete } : {}),
   });
   const approvalsService = new ApprovalsService({ allowlist: allowlistRepo });
   // Cron service degrades gracefully when no scheduler is provided —

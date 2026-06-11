@@ -1,9 +1,50 @@
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
-import type { CSSProperties, ReactNode } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
 
+import HeroTerminal from '../components/HeroTerminal';
 import PersonalityShowcase from '../components/PersonalityShowcase';
 import styles from './index.module.css';
+
+// Scroll-reveal wrapper — fires once at threshold 0.15. SSR- and no-JS-safe:
+// content starts visible; only after the observer attaches (and only when the
+// section is below the fold and motion is allowed) does it enter the hidden
+// state, so JS failure never leaves invisible content.
+function Reveal({ children }: { children: ReactNode }): ReactNode {
+  const ref = useRef<HTMLDivElement>(null);
+  const [phase, setPhase] = useState<'initial' | 'hidden' | 'revealed'>('initial');
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    // Already (partially) on screen — leave it visible, no flash.
+    if (el.getBoundingClientRect().top < window.innerHeight) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setPhase('revealed');
+            observer.disconnect();
+          }
+        }
+      },
+      { threshold: 0.15 },
+    );
+    setPhase('hidden');
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const className =
+    phase === 'hidden' ? styles.revealHidden : phase === 'revealed' ? styles.revealIn : undefined;
+  return (
+    <div ref={ref} className={className}>
+      {children}
+    </div>
+  );
+}
 
 const HERO_TITLE_WORDS = ['Stop', 'asking', 'one', 'agent', 'to', 'do', 'everything.'];
 
@@ -29,43 +70,42 @@ const doors = [
 function Hero() {
   return (
     <section className={styles.hero}>
-      <div className={styles.heroInner}>
-        <div className={styles.heroStripe} aria-hidden="true" />
-        <p className={styles.heroEyebrow}>ethos</p>
-        <h1 className={styles.heroTitle}>
-          {HERO_TITLE_WORDS.map((word, i) => (
-            <span
-              key={word}
-              className={styles.heroWord}
-              style={{ ['--i' as never]: i } as CSSProperties}
-            >
-              {word}
-            </span>
-          ))}
-        </h1>
-        <p className={styles.heroSubtitle}>
-          General-purpose AI is fine for small talk, mediocre at real work. Ethos gives you a team
-          of specialists — researcher, engineer, reviewer, coach, operator — each good at its one
-          job. Same conversation across Slack, Telegram, and your terminal.
-        </p>
-        <div className={styles.heroActions}>
-          <Link className={styles.btnPrimary} to="/docs/using/quickstart">
-            Use Ethos
-          </Link>
-          <Link className={styles.btnGhost} to="/docs/building/quickstart">
-            Build on Ethos
-          </Link>
+      <div className={styles.heroLayout}>
+        <div className={styles.heroInner}>
+          <div className={styles.heroStripe} aria-hidden="true" />
+          <p className={styles.heroEyebrow}>ethos</p>
+          <h1 className={styles.heroTitle}>
+            {HERO_TITLE_WORDS.map((word, i) => (
+              <span
+                key={word}
+                className={styles.heroWord}
+                style={{ ['--i' as never]: i } as CSSProperties}
+              >
+                {word}
+              </span>
+            ))}
+          </h1>
+          <p className={styles.heroSubtitle}>
+            General-purpose AI is fine for small talk, mediocre at real work. Ethos gives you a team
+            of specialists — researcher, engineer, reviewer, coach, operator — each with its own
+            tools, memory, and model. Same conversation across Slack, Telegram, and your terminal.
+            Boundaries the prompt can't talk its way out of.
+          </p>
+          <div className={styles.heroActions}>
+            <Link className={styles.btnPrimary} to="/docs/using/quickstart">
+              Use Ethos
+            </Link>
+            <Link className={styles.btnGhost} to="/docs/building/quickstart">
+              Build on Ethos
+            </Link>
+          </div>
+          <p className={styles.heroMeta}>
+            mit · node 24 · typescript strict · zero deps in the types layer
+          </p>
         </div>
-        <p className={styles.heroMeta}>
-          mit · node 24 · typescript strict · zero deps in the types layer
-        </p>
-      </div>
-      <div className={styles.heroImageWrap}>
-        <img
-          src="/img/ethos-gemini.png"
-          alt="Ethos — personality as architecture"
-          className={styles.heroImage}
-        />
+        <div className={styles.heroTerminal}>
+          <HeroTerminal />
+        </div>
       </div>
     </section>
   );
@@ -202,14 +242,24 @@ export default function Home(): ReactNode {
   return (
     <Layout
       title="Stop asking one agent to do everything"
-      description="A team of AI specialists — researcher, engineer, reviewer, coach, operator — instead of one general-purpose AI. Across Slack, Telegram, and your terminal."
+      description="A team of AI specialists — researcher, engineer, reviewer, coach, operator — that remember you across Slack, Telegram, and your terminal."
     >
       <Hero />
-      <TwoDoors />
-      <PersonalityShowcase />
-      <OrientationLinks />
-      <ArchDiagram />
-      <Compat />
+      <Reveal>
+        <TwoDoors />
+      </Reveal>
+      <Reveal>
+        <PersonalityShowcase />
+      </Reveal>
+      <Reveal>
+        <OrientationLinks />
+      </Reveal>
+      <Reveal>
+        <ArchDiagram />
+      </Reveal>
+      <Reveal>
+        <Compat />
+      </Reveal>
     </Layout>
   );
 }
