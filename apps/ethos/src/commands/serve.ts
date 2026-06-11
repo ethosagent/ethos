@@ -20,6 +20,7 @@ import {
 } from '@ethosagent/wiring';
 import { type EthosConfig, ethosDir, readConfig } from '../config';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
+import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { emitReady } from '../logger';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import {
@@ -53,20 +54,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // System skills catalog: packaged at <pkg>/skills/ in production,
   // at <repo>/skills/ in dev. Env var overrides both.
   // Hoisted above the onboarding-mode check so both branches can use it.
-  const skillsCatalogDir = (() => {
-    if (process.env.ETHOS_SKILLS_CATALOG_DIR) return process.env.ETHOS_SKILLS_CATALOG_DIR;
-    const candidates = [
-      join(import.meta.dirname, '..', '..', 'skills'),
-      join(import.meta.dirname, '..', '..', '..', '..', 'skills'),
-    ];
-    for (const c of candidates) {
-      if (existsSync(c)) return c;
-    }
-    console.warn(
-      `[serve] skills catalog not found (tried: ${candidates.join(', ')}) — set ETHOS_SKILLS_CATALOG_DIR to override.`,
-    );
-    return undefined;
-  })();
+  const skillsCatalogDir = resolveSkillsCatalogDir(import.meta.dirname);
 
   // Onboarding mode: no config yet — start the web server with a stub loop
   // so the UI can run the onboarding wizard.

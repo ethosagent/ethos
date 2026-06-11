@@ -1,0 +1,276 @@
+/* ── ArchDiagramAnimated — one shared 14s pure-CSS timeline ───────────
+   DESIGN.md constraints: single easing cubic-bezier(0.16, 1, 0.3, 1),
+   animate color/background-color only (never text width), tokens via
+   --ethos-* vars (dark: primary #E8E8E6 / secondary #9A9A98 / tertiary
+   #6B6B6A), accents #4A9EFF (info) and #4ADE80 (success), no gradients.
+
+   Timeline (14s loop, all spans share the duration; groups differ only
+   in keyframe windows + per-span animation-delay so they stay in sync):
+     act 1  input pulse     0–1s      (0%–7.14%)
+     act 2  step cascade    1–8s      (7.14%–57.14%, 0.7s stagger,
+                                       step 8 re-pulses ~1.9–2.5s in)
+     act 3  emission        8–12s     (connector 57.14%–64.29%, events
+                                       from 62.86%, 0.35s stagger)
+     act 4  surfaces        12–13.75s (85.71%–89.29% base, 0.25s stagger)
+     rest                   13.75–14s
+
+   Idle / reduced-motion: every span sits at its static class color, so
+   the diagram reads exactly like the previous static <pre>. */
+
+/* Container — mirrors the former .archDiagram in pages/index.module.css */
+.diagram {
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border-subtle);
+  border-radius: 8px;
+  padding: 32px;
+  margin-bottom: 16px;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ethos-text-secondary);
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* ── Static roles ───────────────────────────────────────────────────── */
+
+/* Box border glyphs (┌ ─ │ └ ▼) — structural, never animated */
+.border {
+  color: var(--ethos-text-tertiary);
+}
+
+/* "AgentLoop.run(input, options)" title line */
+.title {
+  color: var(--ethos-text-primary);
+}
+
+/* ── Act 1 · input pulse (0–1s) ─────────────────────────────────────── */
+
+.inputText {
+  color: var(--ethos-text-secondary);
+  animation: archInputText 14s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+.connectorIn {
+  color: var(--ethos-text-tertiary);
+  animation: archInputGlyph 14s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+/* dim → bright at 0.5s → settle by 1s; re-dims at the very end of the
+   cycle so the next pulse starts from tertiary */
+@keyframes archInputText {
+  0% {
+    color: var(--ethos-text-tertiary);
+  }
+  3.57% {
+    color: var(--ethos-text-primary);
+  }
+  7.14%,
+  96.43% {
+    color: var(--ethos-text-secondary);
+  }
+  100% {
+    color: var(--ethos-text-tertiary);
+  }
+}
+
+@keyframes archInputGlyph {
+  0% {
+    color: var(--ethos-text-tertiary);
+  }
+  3.57% {
+    color: var(--ethos-text-primary);
+  }
+  7.14%,
+  100% {
+    color: var(--ethos-text-tertiary);
+  }
+}
+
+/* ── Act 2 · step cascade (1–8s) ────────────────────────────────────── */
+
+/* Base window starts at 1s (7.14%); per-step animation-delay = i × 0.7s
+   shifts the whole keyframe, giving the cascade. Pulse: lift to primary
+   + a faint info tint over ~0.26s, fade back by 1.8s — so adjacent
+   steps overlap slightly. */
+.step,
+.stepLoop {
+  color: var(--ethos-text-secondary);
+  animation: archStep 14s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+.stepLoop {
+  animation-name: archStepLoop;
+}
+
+@keyframes archStep {
+  0%,
+  7.14% {
+    color: var(--ethos-text-secondary);
+    background-color: transparent;
+  }
+  9% {
+    color: var(--ethos-text-primary);
+    background-color: rgba(74, 158, 255, 0.08);
+  }
+  12.86%,
+  100% {
+    color: var(--ethos-text-secondary);
+    background-color: transparent;
+  }
+}
+
+/* Step 8 (the agentic loop line) — same pulse, then a second quick
+   re-pulse ~1.9–2.5s after its window opens. It loops; wink. */
+@keyframes archStepLoop {
+  0%,
+  7.14% {
+    color: var(--ethos-text-secondary);
+    background-color: transparent;
+  }
+  9% {
+    color: var(--ethos-text-primary);
+    background-color: rgba(74, 158, 255, 0.08);
+  }
+  12.86%,
+  13.57% {
+    color: var(--ethos-text-secondary);
+    background-color: transparent;
+  }
+  15% {
+    color: var(--ethos-text-primary);
+    background-color: rgba(74, 158, 255, 0.08);
+  }
+  17.86%,
+  100% {
+    color: var(--ethos-text-secondary);
+    background-color: transparent;
+  }
+}
+
+/* ── Act 3 · emission (8–12s) ───────────────────────────────────────── */
+
+/* Lower connector glyphs brighten 8–9s */
+.connectorOut {
+  color: var(--ethos-text-tertiary);
+  animation: archEmitGlyph 14s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+/* "AsyncGenerator<AgentEvent>" brightens with the connector */
+.emitTitle {
+  color: var(--ethos-text-secondary);
+  animation: archEmitText 14s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes archEmitGlyph {
+  0%,
+  57.14% {
+    color: var(--ethos-text-tertiary);
+  }
+  60.71% {
+    color: var(--ethos-text-primary);
+  }
+  64.29%,
+  100% {
+    color: var(--ethos-text-tertiary);
+  }
+}
+
+@keyframes archEmitText {
+  0%,
+  57.14% {
+    color: var(--ethos-text-secondary);
+  }
+  60.71% {
+    color: var(--ethos-text-primary);
+  }
+  64.29%,
+  100% {
+    color: var(--ethos-text-secondary);
+  }
+}
+
+/* Event names — base window opens at 8.8s (62.86%), flash #4A9EFF over
+   0.2s, settle back by 9.6s; per-event animation-delay = i × 0.35s. */
+.event {
+  color: var(--ethos-text-secondary);
+  animation: archEvent 14s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes archEvent {
+  0%,
+  62.86% {
+    color: var(--ethos-text-secondary);
+  }
+  64.29% {
+    color: #4a9eff;
+  }
+  68.57%,
+  100% {
+    color: var(--ethos-text-secondary);
+  }
+}
+
+/* `done` settles to success green instead — window baked at its actual
+   slot (10.9s, no delay): flash #4A9EFF at 11.1s, settle #4ADE80 by
+   11.4s, hold green through the surfaces act, release at cycle end. */
+.eventDone {
+  color: var(--ethos-text-secondary);
+  animation: archEventDone 14s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes archEventDone {
+  0%,
+  77.86% {
+    color: var(--ethos-text-secondary);
+  }
+  79.29% {
+    color: #4a9eff;
+  }
+  81.43%,
+  96.43% {
+    color: #4ade80;
+  }
+  100% {
+    color: var(--ethos-text-secondary);
+  }
+}
+
+/* ── Act 4 · surfaces (12–13.75s) ───────────────────────────────────── */
+
+/* Base window 12–12.5s; per-surface animation-delay = i × 0.25s. The
+   last pulse ends ~13.75s, leaving a short rest before the loop. */
+.surface {
+  color: var(--ethos-text-secondary);
+  animation: archSurface 14s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes archSurface {
+  0%,
+  85.71% {
+    color: var(--ethos-text-secondary);
+  }
+  87.14% {
+    color: var(--ethos-text-primary);
+  }
+  89.29%,
+  100% {
+    color: var(--ethos-text-secondary);
+  }
+}
+
+/* ── Reduced motion — static diagram, fully visible ─────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .inputText,
+  .connectorIn,
+  .step,
+  .stepLoop,
+  .connectorOut,
+  .emitTitle,
+  .event,
+  .eventDone,
+  .surface {
+    animation: none;
+  }
+}

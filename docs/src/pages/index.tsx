@@ -2,6 +2,7 @@ import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
 
+import ArchDiagramAnimated from '../components/ArchDiagramAnimated';
 import HeroTerminal from '../components/HeroTerminal';
 import PersonalityShowcase from '../components/PersonalityShowcase';
 import styles from './index.module.css';
@@ -158,31 +159,7 @@ function ArchDiagram() {
           construction. Personality decides which tools enter the loop and which model handles the
           turn.
         </p>
-        <pre className={styles.archDiagram}>
-          {`  user input
-       │
-       ▼
-  ┌──────────────────────────────────────────────────────┐
-  │  AgentLoop.run(input, options)                       │
-  │  ─────────────────────────────────────────────────   │
-  │  1. resolve or create session                        │
-  │  2. fire session_start hooks                         │
-  │  3. persist user message                             │
-  │  4. load history (trimmed)                           │
-  │  5. prefetch memory (per personality scope)          │
-  │  6. build system prompt from injectors               │
-  │  7. before-prompt-build modifying hooks              │
-  │  8. agentic loop (LLM stream → tool calls → LLM ...) │
-  │  9. pre-flight hooks → execute tools → collect       │
-  └──────────────────────────────────────────────────────┘
-       │
-       ▼
-  AsyncGenerator<AgentEvent>
-       │ text_delta, thinking_delta, tool_start, tool_end,
-       │ tool_progress, usage, done, error
-       ▼
-  surfaces: cli · tui · vscode · email · telegram · slack`}
-        </pre>
+        <ArchDiagramAnimated />
         <Link to="/docs/getting-started/architecture-90-seconds" className={styles.archLink}>
           Architecture in 90 seconds →
         </Link>
