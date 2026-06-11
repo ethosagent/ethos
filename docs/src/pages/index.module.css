@@ -28,28 +28,11 @@
   margin: 0 auto;
 }
 
+/* Left-aligned in the two-column layout; recentered when stacked (<996px). */
 .heroInner {
-  max-width: 760px;
-  margin: 0 auto;
-  text-align: center;
-}
-
-.heroLayout .heroInner {
   max-width: 560px;
   margin: 0;
   text-align: left;
-}
-
-.heroLayout .heroStripe {
-  margin: 0 0 32px;
-}
-
-.heroLayout .heroSubtitle {
-  margin: 0 0 32px;
-}
-
-.heroLayout .heroActions {
-  justify-content: flex-start;
 }
 
 .heroTerminal {
@@ -104,7 +87,7 @@
   height: 4px;
   width: 80px;
   background: var(--ifm-color-primary);
-  margin: 0 auto 32px;
+  margin: 0 0 32px;
 }
 
 .heroEyebrow {
@@ -131,7 +114,7 @@
   line-height: 1.5;
   color: var(--ethos-text-secondary);
   max-width: 600px;
-  margin: 0 auto 32px;
+  margin: 0 0 32px;
 }
 
 .heroSubtitle code {
@@ -180,7 +163,7 @@
   display: flex;
   gap: 12px;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   flex-wrap: wrap;
   margin-bottom: 24px;
 }
@@ -534,26 +517,24 @@
     grid-template-columns: minmax(0, 1fr);
     gap: 0;
   }
-  .heroLayout .heroInner {
+  .heroInner {
     max-width: 760px;
     margin: 0 auto;
+    padding: 0 24px;
     text-align: center;
   }
-  .heroLayout .heroStripe {
+  .heroStripe {
     margin: 0 auto 32px;
   }
-  .heroLayout .heroSubtitle {
+  .heroSubtitle {
     margin: 0 auto 32px;
   }
-  .heroLayout .heroActions {
+  .heroActions {
     justify-content: center;
   }
   .heroTerminal {
     margin: 48px auto 0;
     justify-self: center;
-  }
-  .heroInner {
-    padding: 0 24px;
   }
   .compatRows {
     grid-template-columns: 1fr;
