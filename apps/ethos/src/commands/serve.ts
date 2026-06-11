@@ -19,6 +19,7 @@ import {
   IdentityMap,
 } from '@ethosagent/wiring';
 import { type EthosConfig, ethosDir, readConfig } from '../config';
+import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
 import { emitReady } from '../logger';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import {
@@ -74,7 +75,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     // Lazy loader: stays as a stub until onboarding writes config, then
     // boots the real agent loop on the first chat request and caches it.
     let realLoop: AgentLoop | null = null;
-    let onboardingToolRegistry: ToolRegistry | null = null;
+    // Buffers createWebApi's tool registrations (dashboard tools) until
+    // onboarding boots the real loop, then flushes them into its registry.
+    const lazyToolRegistry = new DeferredToolRegistry();
     const stubLoop = {
       run: async function* (text: string, opts: Record<string, unknown> = {}) {
         if (!realLoop) {
@@ -83,7 +86,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
           if (loaded) {
             const agentResult = await createAgentLoop(loaded);
             realLoop = agentResult.loop;
-            if (agentResult.toolRegistry) onboardingToolRegistry = agentResult.toolRegistry;
+            if (agentResult.toolRegistry) lazyToolRegistry.setInner(agentResult.toolRegistry);
           }
         }
         if (realLoop) {
@@ -97,10 +100,6 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         }
       },
     } as unknown as AgentLoop;
-
-    const lazyToolRegistry = {
-      getAvailable: () => onboardingToolRegistry?.getAvailable() ?? [],
-    } as unknown as ToolRegistry;
 
     const webDist = locateWebDist(parseFlagValue(args, ['--web-dist']));
     const created = createWebApi({
