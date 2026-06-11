@@ -1,454 +1,735 @@
-/* ── ArchDiagramAnimated — one shared 16s pure-CSS timeline ───────────
-   DESIGN.md constraints: single easing cubic-bezier(0.16, 1, 0.3, 1),
+/* ── ArchDiagramAnimated — circular-node flow diagram, one 16s loop ───
+   Vertical pipeline: input ring → connector → AgentLoop panel (nine
+   numbered circles on a spine) → connector → generator ring + event
+   chips → connector → surface rings.
+
+   DESIGN.md bindings: single easing cubic-bezier(0.16, 1, 0.3, 1);
    animate only opacity / transform / color / background-color /
-   border-color (never text width), tokens via --ethos-* vars. Lit
-   states use literal colors that read in BOTH color modes: #4A9EFF and
-   #4ADE80 work on white and black; the step tint rgba(74,158,255,0.16)
-   reads on both.
+   border-color; Geist Mono everywhere; radius 14px panel / 4px chips /
+   9999px circles. Surfaces and idle text use --ethos-* vars so light
+   mode stays readable; lit states are literal #4A9EFF / #4ADE80 (read
+   on both white and black).
 
-   Timeline (16s loop, 1s = 6.25%; groups share the duration and differ
-   only in keyframe windows + per-span animation-delay):
-     act 1  input pulse + top connector dot   0–1.4s    (0%–8.75%)
-     act 2  step cascade                      1.4–9.3s  (0.8s stagger,
-                                              ~1.5s lit per step, step 8
-                                              double-pulses)
-     act 3  bottom connector dot              9.3–10.3s (58.13%–64.38%)
-            emission burst (events hold lit)  10.4–12.4s (65%–77.5%;
-                                              `done` settles green and
-                                              holds to 96.88%)
-     act 3½ surfaces connector dot            13.2–14s  (82.5%–87.5%)
-     act 4  surfaces sweep                    14–15.9s  (87.5%–91.25%
-                                              base, 0.25s stagger)
-     rest                                     15.9–16s
+   Timeline (16s loop, 1s = 6.25%; staggered groups share one keyframe
+   and differ only in the inherited --d animation-delay):
+     act 1  input node + top pulse dot        0–1.6s    (0%–10%)
+     act 2  step cascade                      1.0–8.9s  (0.8s stagger,
+                                              ~1.5s lit per step; step 8
+                                              dips + re-pulses and runs
+                                              its orbit 6.8–9.4s)
+     act 3  bottom pulse dot                  9.0–9.8s  (56.25%–61.25%)
+            generator node lit                9.7–13.3s (60.625%–83.125%)
+            emission burst (chips, 0.15s
+            stagger, ~1.6s hold)              9.9–11.9s (61.875%–74.375%;
+                                              `done` settles green at
+                                              12.4s and holds to 15.8s)
+     act 4  surfaces pulse dot                12.9–13.7s (80.625%–85.625%)
+            surfaces sweep (0.2s stagger)     13.7–15.5s (85.625%–90.625%
+                                              base window)
+     rest                                     15.5–16s
 
-   Traveling pulses: empty absolutely-positioned spans (glyph via CSS
-   `content`) anchored to position:relative inline wrappers, so they
-   never disturb the pre's text layout.
+   Idle / reduced-motion: rings at --ethos-border-strong, labels muted,
+   everything visible, pulse dots and orbit at opacity 0, no motion.
 
-   Idle / reduced-motion: every span sits at its static class color and
-   the pulse dots stay at opacity 0, so the diagram reads exactly like
-   the previous static <pre>. */
+   Geometry: one vertical rail at x≈40px — outer node circles, the
+   connectors, and the panel's step spine all center on it. */
 
-/* Container — mirrors the former .archDiagram in pages/index.module.css */
-.diagram {
-  background: var(--ethos-bg-elevated);
-  border: 1px solid var(--ethos-border-subtle);
-  border-radius: 8px;
-  padding: 32px;
+.wrap {
+  max-width: 520px;
   margin-bottom: 16px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.diagram {
   font-family: var(--ifm-font-family-monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Outer nodes (input / generator) ────────────────────────────────── */
+
+.node {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  /* 34px + 6px half-circle = ring center on the 40px rail */
+  padding-left: 34px;
+}
+
+.nodeRing {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  border: 1.5px solid var(--ethos-border-strong);
+  background-color: transparent;
+}
+
+.nodeLabel {
   font-size: 13px;
-  line-height: 1.7;
   color: var(--ethos-text-secondary);
-  white-space: pre;
-  overflow-x: auto;
 }
 
-/* ── Static roles ───────────────────────────────────────────────────── */
+/* ── Connectors + traveling pulse dots ──────────────────────────────── */
 
-/* Box border glyphs (┌ ─ │ └ ▼) — structural, never animated */
-.border {
-  color: var(--ethos-text-tertiary);
-}
-
-/* "AgentLoop.run(input, options)" title line */
-.title {
-  color: var(--ethos-text-primary);
-}
-
-/* ── Traveling connector pulses ─────────────────────────────────────── */
-
-/* Inline anchor for the absolutely-positioned dot overlays. Adds no
-   box, no width — purely a positioning context. */
-.connWrap {
+.connector {
   position: relative;
+  width: 1px;
+  height: 28px;
+  margin: 6px 0 6px 39.5px;
+  background: var(--ethos-border-subtle);
 }
 
-/* The dot itself: empty span, glyph from `content`, opacity 0 at rest.
-   left: 7ch lines it up with the │ column of every connector run. */
-.pulseDot {
+.pulse {
   position: absolute;
   top: 0;
-  left: 7ch;
-  color: #4a9eff;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 9999px;
+  background: #4a9eff;
   opacity: 0;
   pointer-events: none;
 }
 
-.pulseDot::after {
-  content: "●";
+/* ── AgentLoop panel ────────────────────────────────────────────────── */
+
+.panel {
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border-subtle);
+  border-radius: 14px;
 }
 
-/* Top connector (user input → box), travels 0.3–1.3s */
-.pulseDotIn {
-  animation: archDotIn 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+.panelHeader {
+  padding: 14px 18px;
+  font-size: 13px;
+  color: var(--ethos-text-primary);
+  border-bottom: 1px solid var(--ethos-border-subtle);
 }
 
-@keyframes archDotIn {
-  0%,
-  1.875% {
-    opacity: 0;
-    transform: translateY(-0.4em);
-  }
-  3.125% {
-    opacity: 1;
-    transform: translateY(0.3em);
-  }
-  6.875% {
-    opacity: 1;
-    transform: translateY(2.6em);
-  }
-  8.125%,
-  100% {
-    opacity: 0;
-    transform: translateY(3.4em);
-  }
+.panelBody {
+  position: relative;
+  padding: 16px 18px;
 }
 
-/* Bottom connector (box → AsyncGenerator), travels 9.3–10.3s — right
-   before the emission burst */
-.pulseDotOut {
-  animation: archDotOut 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+/* Spine behind the step circles — body padding 18 + row padding 10 +
+   11px half-circle centers it on the circles; top/bottom 31px stop it
+   at the first/last circle centers. Step rows are position:relative so
+   their elevated-bg circles paint over the line. */
+.spine {
+  position: absolute;
+  top: 31px;
+  bottom: 31px;
+  left: 38.5px;
+  width: 1px;
+  background: var(--ethos-border-subtle);
 }
 
-@keyframes archDotOut {
-  0%,
-  58.125% {
-    opacity: 0;
-    transform: translateY(-0.4em);
-  }
-  59.375% {
-    opacity: 1;
-    transform: translateY(0.3em);
-  }
-  63.125% {
-    opacity: 1;
-    transform: translateY(2.6em);
-  }
-  64.375%,
-  100% {
-    opacity: 0;
-    transform: translateY(3.4em);
-  }
+/* ── Step rows ──────────────────────────────────────────────────────── */
+
+.stepRow,
+.stepRowLoop {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background-color: transparent;
+  animation: archRow 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  animation-delay: var(--d, 0s);
 }
 
-/* Events → surfaces run (│ │ ▼ at column 7), travels 13.2–14s — right
-   before the surfaces sweep */
-.pulseDotSurf {
-  animation: archDotSurf 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+.stepRowLoop {
+  animation-name: archRowLoop;
 }
 
-@keyframes archDotSurf {
-  0%,
-  82.5% {
-    opacity: 0;
-    transform: translateY(-0.4em);
-  }
-  83.75% {
-    opacity: 1;
-    transform: translateY(0.3em);
-  }
-  86.875% {
-    opacity: 1;
-    transform: translateY(2.8em);
-  }
-  87.5%,
-  100% {
-    opacity: 0;
-    transform: translateY(3.4em);
-  }
+.stepCircleWrap {
+  position: relative;
+  flex: none;
+  width: 22px;
+  height: 22px;
 }
 
-/* ── Act 1 · input pulse (0–1.4s) ───────────────────────────────────── */
-
-.inputText {
+/* Transparent-on-panel fill (elevated bg) so the spine hides behind the
+   circle; lit state fills #4A9EFF and the number flips dark. */
+.stepCircle,
+.stepCircleLoop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  border: 1.5px solid var(--ethos-border-strong);
+  background-color: var(--ethos-bg-elevated);
+  font-size: 11px;
   color: var(--ethos-text-secondary);
-  animation: archInputText 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  animation: archCircle 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  animation-delay: var(--d, 0s);
 }
 
-.connectorIn {
-  color: var(--ethos-text-tertiary);
-  animation: archInputGlyph 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+.stepCircleLoop {
+  animation-name: archCircleLoop;
 }
 
-/* dim → bright at 0.4s → settle by 1.4s; re-dims at the very end of the
-   cycle so the next pulse starts from tertiary */
-@keyframes archInputText {
-  0% {
-    color: var(--ethos-text-tertiary);
-  }
-  2.5% {
-    color: var(--ethos-text-primary);
-  }
-  8.75%,
-  96.875% {
-    color: var(--ethos-text-secondary);
-  }
-  100% {
-    color: var(--ethos-text-tertiary);
-  }
-}
-
-@keyframes archInputGlyph {
-  0% {
-    color: var(--ethos-text-tertiary);
-  }
-  3.125% {
-    color: var(--ethos-text-primary);
-  }
-  8.75%,
-  100% {
-    color: var(--ethos-text-tertiary);
-  }
-}
-
-/* ── Act 2 · step cascade (1.4–9.3s) ────────────────────────────────── */
-
-/* Base window opens at 1.4s (8.75%); per-step animation-delay = i × 0.8s
-   shifts the whole keyframe, giving the cascade. Active step: text to
-   full primary, background rgba(74,158,255,0.16), and a 2px left accent
-   border that lights. The border is always present (transparent at
-   rest) with margin-left: -2px compensating its width, so glyph
-   alignment never shifts — border-left + margin net to zero advance. */
-.step,
-.stepLoop {
+/* line-height matches the circle so single-line labels center on it and
+   wrapped labels (narrow viewports) keep their first line aligned */
+.stepLabel,
+.stepLabelLoop {
+  font-size: 13px;
+  line-height: 22px;
   color: var(--ethos-text-secondary);
-  border-left: 2px solid transparent;
-  margin-left: -2px;
-  animation: archStep 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  animation: archLabel 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  animation-delay: var(--d, 0s);
 }
 
-.stepLoop {
-  animation-name: archStepLoop;
+.stepLabelLoop {
+  animation-name: archLabelLoop;
 }
 
-@keyframes archStep {
+/* Step cascade base window (per-step --d = i × 0.8s shifts it):
+   idle to 1.0s, lit 1.2–2.5s, settled by 2.9s. */
+@keyframes archRow {
   0%,
-  8.75% {
-    color: var(--ethos-text-secondary);
+  6.25% {
     background-color: transparent;
-    border-color: transparent;
   }
-  10.3% {
-    color: var(--ethos-text-primary);
-    background-color: rgba(74, 158, 255, 0.16);
+  7.5% {
+    background-color: rgba(74, 158, 255, 0.12);
+  }
+  15.625% {
+    background-color: rgba(74, 158, 255, 0.12);
+  }
+  18.125%,
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes archCircle {
+  0%,
+  6.25% {
+    background-color: var(--ethos-bg-elevated);
+    border-color: var(--ethos-border-strong);
+    color: var(--ethos-text-secondary);
+  }
+  7.5% {
+    background-color: #4a9eff;
     border-color: #4a9eff;
+    color: #0f0f0f;
   }
-  14.4% {
-    color: var(--ethos-text-primary);
-    background-color: rgba(74, 158, 255, 0.16);
+  15.625% {
+    background-color: #4a9eff;
     border-color: #4a9eff;
+    color: #0f0f0f;
   }
-  18.1%,
+  18.125%,
+  100% {
+    background-color: var(--ethos-bg-elevated);
+    border-color: var(--ethos-border-strong);
+    color: var(--ethos-text-secondary);
+  }
+}
+
+@keyframes archLabel {
+  0%,
+  6.25% {
+    color: var(--ethos-text-secondary);
+  }
+  7.5% {
+    color: var(--ethos-text-primary);
+  }
+  15.625% {
+    color: var(--ethos-text-primary);
+  }
+  18.125%,
   100% {
     color: var(--ethos-text-secondary);
-    background-color: transparent;
-    border-color: transparent;
   }
 }
 
-/* Step 8 (the agentic loop line) — lights, dips, and re-lights ~0.5s
-   later. It loops; wink. */
-@keyframes archStepLoop {
+/* Step 8 variant — lights, dips, re-lights once (it loops; wink).
+   With --d = 5.6s: lit 6.8–7.6s, dip 7.8s, re-lit 8.0–8.6s, settled 9.0s. */
+@keyframes archRowLoop {
   0%,
-  8.75% {
-    color: var(--ethos-text-secondary);
+  6.25% {
     background-color: transparent;
-    border-color: transparent;
   }
-  10.3% {
-    color: var(--ethos-text-primary);
-    background-color: rgba(74, 158, 255, 0.16);
+  7.5% {
+    background-color: rgba(74, 158, 255, 0.12);
+  }
+  12.5% {
+    background-color: rgba(74, 158, 255, 0.12);
+  }
+  13.75% {
+    background-color: transparent;
+  }
+  15% {
+    background-color: rgba(74, 158, 255, 0.12);
+  }
+  18.75% {
+    background-color: rgba(74, 158, 255, 0.12);
+  }
+  21.25%,
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes archCircleLoop {
+  0%,
+  6.25% {
+    background-color: var(--ethos-bg-elevated);
+    border-color: var(--ethos-border-strong);
+    color: var(--ethos-text-secondary);
+  }
+  7.5% {
+    background-color: #4a9eff;
     border-color: #4a9eff;
+    color: #0f0f0f;
+  }
+  12.5% {
+    background-color: #4a9eff;
+    border-color: #4a9eff;
+    color: #0f0f0f;
+  }
+  13.75% {
+    background-color: var(--ethos-bg-elevated);
+    border-color: var(--ethos-border-strong);
+    color: var(--ethos-text-secondary);
+  }
+  15% {
+    background-color: #4a9eff;
+    border-color: #4a9eff;
+    color: #0f0f0f;
+  }
+  18.75% {
+    background-color: #4a9eff;
+    border-color: #4a9eff;
+    color: #0f0f0f;
+  }
+  21.25%,
+  100% {
+    background-color: var(--ethos-bg-elevated);
+    border-color: var(--ethos-border-strong);
+    color: var(--ethos-text-secondary);
+  }
+}
+
+@keyframes archLabelLoop {
+  0%,
+  6.25% {
+    color: var(--ethos-text-secondary);
+  }
+  7.5% {
+    color: var(--ethos-text-primary);
   }
   12.5% {
     color: var(--ethos-text-primary);
-    background-color: rgba(74, 158, 255, 0.16);
-    border-color: #4a9eff;
   }
-  13.4% {
+  13.75% {
     color: var(--ethos-text-secondary);
-    background-color: transparent;
-    border-color: transparent;
   }
-  14.7% {
+  15% {
     color: var(--ethos-text-primary);
-    background-color: rgba(74, 158, 255, 0.16);
-    border-color: #4a9eff;
   }
-  16.9% {
+  18.75% {
     color: var(--ethos-text-primary);
-    background-color: rgba(74, 158, 255, 0.16);
-    border-color: #4a9eff;
   }
-  19.4%,
+  21.25%,
   100% {
     color: var(--ethos-text-secondary);
-    background-color: transparent;
-    border-color: transparent;
   }
 }
 
-/* ── Act 3 · emission burst (9.3–12.4s) ─────────────────────────────── */
+/* ── Step 8 orbit — the agentic loop made visible ───────────────────── */
 
-/* Lower connector glyphs brighten while the dot travels them */
-.connectorOut {
-  color: var(--ethos-text-tertiary);
-  animation: archEmitGlyph 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+/* Rotating wrapper centered on step 8's circle; the dot sits on its top
+   edge via ::after. Transform-only. Runs 6.8–9.4s (step 8's lit window
+   plus a beat), three decelerating turns. */
+.orbit {
+  position: absolute;
+  inset: -4px;
+  border-radius: 9999px;
+  opacity: 0;
+  pointer-events: none;
+  animation: archOrbit 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
 }
 
-/* "AsyncGenerator<AgentEvent>" lifts to primary and holds through the
-   burst */
-.emitTitle {
-  color: var(--ethos-text-secondary);
-  animation: archEmitText 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+.orbit::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 9999px;
+  background: #4a9eff;
 }
 
-@keyframes archEmitGlyph {
+@keyframes archOrbit {
   0%,
-  58.125% {
-    color: var(--ethos-text-tertiary);
+  42.5% {
+    opacity: 0;
+    transform: rotate(0deg);
+  }
+  43.75% {
+    opacity: 1;
+  }
+  57.5% {
+    opacity: 1;
+  }
+  58.75%,
+  100% {
+    opacity: 0;
+    transform: rotate(1080deg);
+  }
+}
+
+/* ── Act 1 · input node (0–1.6s) ────────────────────────────────────── */
+
+/* One keyframe drives ring + label: border-color is inert on the label
+   (no border), color is inert on the empty ring. */
+.inputRing,
+.inputLabel {
+  animation: archInputLit 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes archInputLit {
+  0% {
+    border-color: var(--ethos-border-strong);
+    color: var(--ethos-text-secondary);
+  }
+  2.5% {
+    border-color: #4a9eff;
+    color: var(--ethos-text-primary);
+  }
+  6.25% {
+    border-color: #4a9eff;
+    color: var(--ethos-text-primary);
+  }
+  10%,
+  100% {
+    border-color: var(--ethos-border-strong);
+    color: var(--ethos-text-secondary);
+  }
+}
+
+/* Top pulse dot departs downward 0.4–1.2s */
+.pulseIn {
+  animation: archPulseIn 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes archPulseIn {
+  0%,
+  2.5% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  4.375% {
+    opacity: 1;
+    transform: translateY(2px);
+  }
+  7.5% {
+    opacity: 1;
+    transform: translateY(24px);
+  }
+  8.75%,
+  100% {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+}
+
+/* ── Act 3 · generator node + emission burst ────────────────────────── */
+
+/* Bottom pulse dot fires after step 9 settles, 9.0–9.8s */
+.pulseOut {
+  animation: archPulseOut 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes archPulseOut {
+  0%,
+  56.25% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  57.5% {
+    opacity: 1;
+    transform: translateY(2px);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(24px);
+  }
+  61.25%,
+  100% {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+}
+
+/* Generator ring + label lit 9.7–13.3s — holds through the burst */
+.genRing,
+.genLabel {
+  animation: archGenLit 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes archGenLit {
+  0%,
+  58.75% {
+    border-color: var(--ethos-border-strong);
+    color: var(--ethos-text-secondary);
   }
   60.625% {
+    border-color: #4a9eff;
     color: var(--ethos-text-primary);
   }
-  65.625%,
+  80.625% {
+    border-color: #4a9eff;
+    color: var(--ethos-text-primary);
+  }
+  83.125%,
   100% {
-    color: var(--ethos-text-tertiary);
-  }
-}
-
-@keyframes archEmitText {
-  0%,
-  63.125% {
-    color: var(--ethos-text-secondary);
-  }
-  65% {
-    color: var(--ethos-text-primary);
-  }
-  76.25% {
-    color: var(--ethos-text-primary);
-  }
-  79.375%,
-  100% {
+    border-color: var(--ethos-border-strong);
     color: var(--ethos-text-secondary);
   }
 }
 
-/* Event names — base window opens at 10.4s (65%): light #4A9EFF with
-   scale(1.05) (transform-origin left), HOLD lit ~1.6s, settle by 12.4s.
-   Per-event animation-delay = i × 0.15s. inline-block so transform
-   applies; content has no leading/trailing whitespace so layout is
-   unchanged. */
-.event {
+/* Event chips — left-padded to align under the generator label */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-left: 58px;
+  margin-top: 12px;
+}
+
+.chip,
+.chipDone {
   display: inline-block;
   transform-origin: left center;
+  font-size: 12px;
   color: var(--ethos-text-secondary);
-  animation: archEvent 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  background: var(--ethos-bg-overlay);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 8px;
+  animation: archChip 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  animation-delay: var(--d, 0s);
 }
 
-@keyframes archEvent {
+/* Emission burst base window (per-chip --d = i × 0.15s): lit 9.9s, hold
+   ~1.6s, settled by 11.9s. `error` is an event name, not a failure — it
+   lights blue and settles muted like the rest. */
+@keyframes archChip {
   0%,
-  65% {
+  60.625% {
     color: var(--ethos-text-secondary);
+    border-color: transparent;
     transform: scale(1);
   }
-  66.25% {
+  61.875% {
     color: #4a9eff;
+    border-color: #4a9eff;
     transform: scale(1.05);
-  }
-  75% {
-    color: #4a9eff;
-    transform: scale(1.05);
-  }
-  77.5%,
-  100% {
-    color: var(--ethos-text-secondary);
-    transform: scale(1);
-  }
-}
-
-/* `done` settles to success green instead — window baked at its actual
-   slot (10.4s + 0.9s delay = 11.3s, no animation-delay): light #4A9EFF
-   + scale, then settle #4ADE80 and HOLD green until the loop resets. */
-.eventDone {
-  display: inline-block;
-  transform-origin: left center;
-  color: var(--ethos-text-secondary);
-  animation: archEventDone 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
-}
-
-@keyframes archEventDone {
-  0%,
-  70.625% {
-    color: var(--ethos-text-secondary);
-    transform: scale(1);
   }
   71.875% {
     color: #4a9eff;
+    border-color: #4a9eff;
     transform: scale(1.05);
   }
-  75.625% {
-    color: #4a9eff;
-    transform: scale(1.05);
-  }
-  78.125% {
-    color: #4ade80;
-    transform: scale(1);
-  }
-  96.875% {
-    color: #4ade80;
-    transform: scale(1);
-  }
+  74.375%,
   100% {
     color: var(--ethos-text-secondary);
+    border-color: transparent;
     transform: scale(1);
   }
 }
 
-/* ── Act 4 · surfaces sweep (14–15.9s) ──────────────────────────────── */
-
-/* Base window 14–14.6s; per-surface animation-delay = i × 0.25s. Each
-   surface brightens to primary with a translateY(-1px) blip. The last
-   pulse settles ~15.9s, just before the loop. */
-.surface {
-  display: inline-block;
-  color: var(--ethos-text-secondary);
-  animation: archSurface 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+/* `done` — window baked at its slot (9.9s + 0.9s stagger = 10.8s, no
+   delay): lights blue, settles #4ADE80 at 12.4s and holds green until
+   15.8s, just before the loop resets. */
+.chipDone {
+  animation-name: archChipDone;
 }
 
-@keyframes archSurface {
+@keyframes archChipDone {
   0%,
-  87.5% {
+  66.25% {
     color: var(--ethos-text-secondary);
-    transform: translateY(0);
+    border-color: transparent;
+    transform: scale(1);
   }
-  88.75% {
-    color: var(--ethos-text-primary);
-    transform: translateY(-1px);
+  67.5% {
+    color: #4a9eff;
+    border-color: #4a9eff;
+    transform: scale(1.05);
   }
-  91.25%,
+  73.75% {
+    color: #4a9eff;
+    border-color: #4a9eff;
+    transform: scale(1.05);
+  }
+  77.5% {
+    color: #4ade80;
+    border-color: transparent;
+    transform: scale(1);
+  }
+  98.75% {
+    color: #4ade80;
+    border-color: transparent;
+    transform: scale(1);
+  }
   100% {
     color: var(--ethos-text-secondary);
-    transform: translateY(0);
+    border-color: transparent;
+    transform: scale(1);
   }
 }
 
-/* ── Reduced motion — static diagram, fully visible, dots hidden ────── */
+/* ── Act 4 · surfaces (12.9–15.5s) ──────────────────────────────────── */
+
+/* Pulse dot toward the surfaces, 12.9–13.7s */
+.pulseSurf {
+  animation: archPulseSurf 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes archPulseSurf {
+  0%,
+  80.625% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  81.875% {
+    opacity: 1;
+    transform: translateY(2px);
+  }
+  85% {
+    opacity: 1;
+    transform: translateY(24px);
+  }
+  85.625%,
+  100% {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+}
+
+.surfaces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  /* 35px + 5px half-circle = first ring centers on the 40px rail */
+  padding-left: 35px;
+}
+
+.surfaceItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.surfaceRing {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  border: 1.5px solid var(--ethos-border-strong);
+  background-color: transparent;
+  animation: archSurfaceRing 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  animation-delay: var(--d, 0s);
+}
+
+.surfaceLabel {
+  font-size: 12px;
+  color: var(--ethos-text-secondary);
+  animation: archSurfaceLabel 16s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  animation-delay: var(--d, 0s);
+}
+
+/* Surfaces sweep base window (per-item --d = i × 0.2s): each ring fills
+   briefly 13.9–14.1s, settled by 14.5s; last item settles ~15.5s. */
+@keyframes archSurfaceRing {
+  0%,
+  85.625% {
+    border-color: var(--ethos-border-strong);
+    background-color: transparent;
+  }
+  86.875% {
+    border-color: #4a9eff;
+    background-color: #4a9eff;
+  }
+  88.125% {
+    border-color: #4a9eff;
+    background-color: #4a9eff;
+  }
+  90.625%,
+  100% {
+    border-color: var(--ethos-border-strong);
+    background-color: transparent;
+  }
+}
+
+@keyframes archSurfaceLabel {
+  0%,
+  85.625% {
+    color: var(--ethos-text-secondary);
+  }
+  86.875% {
+    color: var(--ethos-text-primary);
+  }
+  88.125% {
+    color: var(--ethos-text-primary);
+  }
+  90.625%,
+  100% {
+    color: var(--ethos-text-secondary);
+  }
+}
+
+/* ── Responsive — labels and chips wrap, nothing overflows ──────────── */
+
+@media (max-width: 700px) {
+  .chips {
+    padding-left: 34px;
+  }
+}
+
+/* ── Reduced motion — static, fully visible, dots and orbit hidden ──── */
 
 @media (prefers-reduced-motion: reduce) {
-  .inputText,
-  .connectorIn,
-  .step,
-  .stepLoop,
-  .connectorOut,
-  .emitTitle,
-  .event,
-  .eventDone,
-  .surface,
-  .pulseDotIn,
-  .pulseDotOut,
-  .pulseDotSurf {
+  .inputRing,
+  .inputLabel,
+  .genRing,
+  .genLabel,
+  .stepRow,
+  .stepRowLoop,
+  .stepCircle,
+  .stepCircleLoop,
+  .stepLabel,
+  .stepLabelLoop,
+  .orbit,
+  .chip,
+  .chipDone,
+  .surfaceRing,
+  .surfaceLabel,
+  .pulseIn,
+  .pulseOut,
+  .pulseSurf {
     animation: none;
   }
 }

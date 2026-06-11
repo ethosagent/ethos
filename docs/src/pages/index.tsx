@@ -164,17 +164,23 @@ function ArchDiagram() {
   return (
     <section className={styles.arch}>
       <div className="container">
-        <div className={styles.sectionLabel}>how it works</div>
-        <h2 className={styles.sectionTitle}>AgentLoop is one async generator.</h2>
-        <p className={styles.sectionSubtitle}>
-          Every component is an interface in <code>@ethosagent/types</code>, injected at
-          construction. Personality decides which tools enter the loop and which model handles the
-          turn.
-        </p>
-        <ArchDiagramAnimated />
-        <Link to="/docs/getting-started/architecture-90-seconds" className={styles.archLink}>
-          Architecture in 90 seconds →
-        </Link>
+        <div className={styles.archLayout}>
+          <div className={styles.archCopy}>
+            <div className={styles.sectionLabel}>how it works</div>
+            <h2 className={styles.sectionTitle}>AgentLoop is one async generator.</h2>
+            <p className={styles.sectionSubtitle}>
+              Every component is an interface in <code>@ethosagent/types</code>, injected at
+              construction. Personality decides which tools enter the loop and which model handles
+              the turn.
+            </p>
+            <Link to="/docs/getting-started/architecture-90-seconds" className={styles.archLink}>
+              Architecture in 90 seconds →
+            </Link>
+          </div>
+          <div className={styles.archDiagram}>
+            <ArchDiagramAnimated />
+          </div>
+        </div>
       </div>
     </section>
   );

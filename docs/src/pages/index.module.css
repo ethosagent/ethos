@@ -365,7 +365,25 @@
   line-height: 1.5;
 }
 
+/* Two-column at desktop: copy left, flow diagram right — mirrors .heroLayout.
+   Stacks (text above, diagram below) under 996px. */
+.archLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 560px);
+  gap: 48px;
+  align-items: center;
+}
+
+.archCopy {
+  max-width: 400px;
+}
+
 /* The diagram itself lives in components/ArchDiagramAnimated */
+.archDiagram {
+  width: 100%;
+  max-width: 560px;
+  justify-self: end;
+}
 
 .archLink {
   font-family: var(--ifm-font-family-monospace);
@@ -519,6 +537,17 @@
   .heroTerminal {
     margin: 48px auto 0;
     justify-self: center;
+  }
+  .archLayout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+  }
+  .archCopy {
+    max-width: none;
+  }
+  .archDiagram {
+    max-width: none;
+    justify-self: stretch;
   }
   .compatRows {
     grid-template-columns: 1fr;

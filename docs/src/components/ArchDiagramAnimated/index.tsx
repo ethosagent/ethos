@@ -2,144 +2,136 @@ import type { CSSProperties, ReactNode } from 'react';
 
 import styles from './styles.module.css';
 
-// Animated version of the AgentLoop architecture diagram on the landing
-// page. Pure CSS keyframes on one shared 16s timeline (no JS timers) —
-// same convention as HeroTerminal. The rendered text is glyph-for-glyph
-// identical to the previous static <pre>: spans only scope animation
-// windows, and the traveling connector pulses are empty absolutely
-// positioned overlay spans whose ● glyph comes from CSS `content`, so
-// they add nothing to the text layout or the extracted text.
-// Timeline windows are documented in styles.module.css.
+// Flow-diagram version of the AgentLoop architecture on the landing page.
+// Vertical pipeline of circular nodes: input ring → connector → AgentLoop
+// panel (nine numbered circle steps on a spine) → connector → generator
+// ring + event chips → connector → surface rings. Pure CSS keyframes on
+// one shared 16s timeline (no JS timers) — same convention as
+// HeroTerminal. Per-element stagger rides a `--d` custom property
+// (inherited, so a row's circle and label share one delay). Timeline
+// windows are documented in styles.module.css.
 //
-// aria-hidden: the surrounding section prose already explains the loop;
-// the diagram is a visual restatement.
-
-const BOX_INNER_WIDTH = 54;
+// aria-hidden on the diagram; the visually-hidden paragraph carries the
+// text alternative.
 
 const STEPS = [
-  '1. resolve or create session',
-  '2. fire session_start hooks',
-  '3. persist user message',
-  '4. load history (trimmed)',
-  '5. prefetch memory (per personality scope)',
-  '6. build system prompt from injectors',
-  '7. before-prompt-build modifying hooks',
-  '8. agentic loop (LLM stream → tool calls → LLM ...)',
-  '9. pre-flight hooks → execute tools → collect',
+  'resolve or create session',
+  'fire session_start hooks',
+  'persist user message',
+  'load history (trimmed)',
+  'prefetch memory (per personality scope)',
+  'build system prompt from injectors',
+  'before-prompt-build modifying hooks',
+  'agentic loop (LLM stream → tool calls → LLM …)',
+  'pre-flight hooks → execute tools → collect',
 ];
 
-// Index of "8. agentic loop ..." — the step that re-pulses (it loops).
+// Index of the "agentic loop" step — it gets the orbiting dot and a
+// re-pulse (it loops).
 const LOOP_STEP_INDEX = 7;
 
-function delay(seconds: number): CSSProperties {
-  return { animationDelay: `${seconds}s` } as CSSProperties;
+const EVENTS = [
+  'text_delta',
+  'thinking_delta',
+  'tool_start',
+  'tool_end',
+  'tool_progress',
+  'usage',
+  'done',
+  'error',
+];
+
+const SURFACES = ['cli', 'tui', 'vscode', 'email', 'telegram', 'slack'];
+
+function stagger(seconds: number): CSSProperties {
+  return { ['--d' as never]: `${seconds}s` } as CSSProperties;
 }
 
 function StepRow({ text, index }: { text: string; index: number }): ReactNode {
+  const isLoop = index === LOOP_STEP_INDEX;
   return (
-    <>
-      <span className={styles.border}>{'  │'}</span>
-      <span
-        className={index === LOOP_STEP_INDEX ? styles.stepLoop : styles.step}
-        style={delay(index * 0.8)}
-      >
-        {`  ${text}`.padEnd(BOX_INNER_WIDTH)}
+    <div className={isLoop ? styles.stepRowLoop : styles.stepRow} style={stagger(index * 0.8)}>
+      <span className={styles.stepCircleWrap}>
+        <span className={isLoop ? styles.stepCircleLoop : styles.stepCircle}>{index + 1}</span>
+        {isLoop && <span className={styles.orbit} />}
       </span>
-      <span className={styles.border}>{'│'}</span>
-      {'\n'}
-    </>
-  );
-}
-
-function Event({ name, at }: { name: string; at: number }): ReactNode {
-  // `done` has its own keyframe with the window baked in (it settles to
-  // success green and holds until the loop resets), so it carries no delay.
-  if (name === 'done') {
-    return <span className={styles.eventDone}>{name}</span>;
-  }
-  return (
-    <span className={styles.event} style={delay(at)}>
-      {name}
-    </span>
-  );
-}
-
-function Surface({ name, at }: { name: string; at: number }): ReactNode {
-  return (
-    <span className={styles.surface} style={delay(at)}>
-      {name}
-    </span>
+      <span className={isLoop ? styles.stepLabelLoop : styles.stepLabel}>{text}</span>
+    </div>
   );
 }
 
 export default function ArchDiagramAnimated(): ReactNode {
   return (
-    <pre className={styles.diagram} aria-hidden="true">
-      <span className={styles.inputText}>{'  user input'}</span>
-      {'\n'}
-      <span className={styles.connWrap}>
-        <span className={styles.connectorIn}>{'       │\n       ▼'}</span>
-        <span className={`${styles.pulseDot} ${styles.pulseDotIn}`} />
-      </span>
-      {'\n'}
-      <span className={styles.border}>{`  ┌${'─'.repeat(BOX_INNER_WIDTH)}┐`}</span>
-      {'\n'}
-      <span className={styles.border}>{'  │'}</span>
-      <span className={styles.title}>
-        {'  AgentLoop.run(input, options)'.padEnd(BOX_INNER_WIDTH)}
-      </span>
-      <span className={styles.border}>{'│'}</span>
-      {'\n'}
-      <span className={styles.border}>{`  │  ${'─'.repeat(49)}   │`}</span>
-      {'\n'}
-      {STEPS.map((text, i) => (
-        <StepRow key={text} text={text} index={i} />
-      ))}
-      <span className={styles.border}>{`  └${'─'.repeat(BOX_INNER_WIDTH)}┘`}</span>
-      {'\n'}
-      <span className={styles.connWrap}>
-        <span className={styles.connectorOut}>{'       │\n       ▼'}</span>
-        <span className={`${styles.pulseDot} ${styles.pulseDotOut}`} />
-      </span>
-      {'\n'}
-      <span className={styles.emitTitle}>{'  AsyncGenerator<AgentEvent>'}</span>
-      {'\n'}
-      <span className={styles.connWrap}>
-        {'       '}
-        <span className={`${styles.pulseDot} ${styles.pulseDotSurf}`} />
-      </span>
-      <span className={styles.border}>{'│ '}</span>
-      <Event name="text_delta" at={0} />
-      {', '}
-      <Event name="thinking_delta" at={0.15} />
-      {', '}
-      <Event name="tool_start" at={0.3} />
-      {', '}
-      <Event name="tool_end" at={0.45} />
-      {',\n       '}
-      <span className={styles.border}>{'│ '}</span>
-      <Event name="tool_progress" at={0.6} />
-      {', '}
-      <Event name="usage" at={0.75} />
-      {', '}
-      <Event name="done" at={0.9} />
-      {', '}
-      <Event name="error" at={1.05} />
-      {'\n'}
-      <span className={styles.border}>{'       ▼'}</span>
-      {'\n'}
-      {'  surfaces: '}
-      <Surface name="cli" at={0} />
-      {' · '}
-      <Surface name="tui" at={0.25} />
-      {' · '}
-      <Surface name="vscode" at={0.5} />
-      {' · '}
-      <Surface name="email" at={0.75} />
-      {' · '}
-      <Surface name="telegram" at={1} />
-      {' · '}
-      <Surface name="slack" at={1.25} />
-    </pre>
+    <div className={styles.wrap}>
+      <p className={styles.srOnly}>
+        user input flows into AgentLoop.run's nine steps — session, hooks, memory, prompt, agentic
+        loop — and streams out as an AsyncGenerator of AgentEvents to cli, tui, vscode, email,
+        telegram, and slack surfaces.
+      </p>
+      <div className={styles.diagram} aria-hidden="true">
+        {/* Input node */}
+        <div className={styles.node}>
+          <span className={`${styles.nodeRing} ${styles.inputRing}`} />
+          <span className={`${styles.nodeLabel} ${styles.inputLabel}`}>user input</span>
+        </div>
+
+        {/* Connector: input → panel */}
+        <div className={styles.connector}>
+          <span className={`${styles.pulse} ${styles.pulseIn}`} />
+        </div>
+
+        {/* AgentLoop panel — nine steps on a spine */}
+        <div className={styles.panel}>
+          <div className={styles.panelHeader}>AgentLoop.run(input, options)</div>
+          <div className={styles.panelBody}>
+            <span className={styles.spine} />
+            {STEPS.map((text, i) => (
+              <StepRow key={text} text={text} index={i} />
+            ))}
+          </div>
+        </div>
+
+        {/* Connector: panel → generator */}
+        <div className={styles.connector}>
+          <span className={`${styles.pulse} ${styles.pulseOut}`} />
+        </div>
+
+        {/* Generator node + event chips */}
+        <div className={styles.node}>
+          <span className={`${styles.nodeRing} ${styles.genRing}`} />
+          <span className={`${styles.nodeLabel} ${styles.genLabel}`}>
+            {'AsyncGenerator<AgentEvent>'}
+          </span>
+        </div>
+        <div className={styles.chips}>
+          {EVENTS.map((name, i) =>
+            name === 'done' ? (
+              <span key={name} className={styles.chipDone}>
+                {name}
+              </span>
+            ) : (
+              <span key={name} className={styles.chip} style={stagger(i * 0.15)}>
+                {name}
+              </span>
+            ),
+          )}
+        </div>
+
+        {/* Connector: generator → surfaces */}
+        <div className={styles.connector}>
+          <span className={`${styles.pulse} ${styles.pulseSurf}`} />
+        </div>
+
+        {/* Surfaces row */}
+        <div className={styles.surfaces}>
+          {SURFACES.map((name, i) => (
+            <span key={name} className={styles.surfaceItem} style={stagger(i * 0.2)}>
+              <span className={styles.surfaceRing} />
+              <span className={styles.surfaceLabel}>{name}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }

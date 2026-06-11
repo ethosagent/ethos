@@ -100,7 +100,7 @@ export function Personalities() {
             {name} {p.id === defaultId ? <Tag color="blue">default</Tag> : null}{' '}
             {p.builtin ? <Tag>built-in</Tag> : null}
           </div>
-          <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>{p.id}</div>
+          <div style={{ color: 'var(--ethos-text-dim)', fontSize: 11 }}>{p.id}</div>
         </div>
       ),
     },
@@ -603,7 +603,7 @@ function ToolsetStep({
               style={{
                 fontSize: 11,
                 fontWeight: 600,
-                color: 'rgba(255,255,255,0.55)',
+                color: 'var(--ethos-text-dim)',
                 textTransform: 'uppercase',
                 letterSpacing: '0.08em',
                 marginBottom: 6,
@@ -1529,7 +1529,7 @@ function PersonalitySkillsPanel({ personalityId }: { personalityId: string }) {
             render: (name: string, s) => (
               <div>
                 <div style={{ fontWeight: 500 }}>{name}</div>
-                <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>{s.id}.md</div>
+                <div style={{ color: 'var(--ethos-text-dim)', fontSize: 11 }}>{s.id}.md</div>
               </div>
             ),
           },
