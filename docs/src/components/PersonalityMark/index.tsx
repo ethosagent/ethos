@@ -1,7 +1,10 @@
-import { type ReactNode, useMemo } from 'react';
+import { type ReactNode, useId, useMemo } from 'react';
 
 // Generative SVG mark — deterministic from personality id.
 // 5x5 grid, mirror-symmetric, FNV-1a hash. Same algorithm as DESIGN.md spec.
+// Circular frame echoing the ring logo (logo.svg annulus): background
+// circle at accent 0x22 alpha, cells clipped to the circle, and an accent
+// ring stroke around the circumference.
 export function fnv1a(s: string): number {
   let h = 2166136261 >>> 0;
   for (let i = 0; i < s.length; i++) {
@@ -22,6 +25,8 @@ export default function PersonalityMark({
 }): ReactNode {
   const cells = 5;
   const cellSize = size / cells;
+  const clipId = `mark-clip-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  const ringWidth = Math.max(size * 0.04, 1);
   const rects = useMemo(() => {
     const seed = fnv1a(id);
     const out: Array<{ x: number; y: number; opacity: number }> = [];
@@ -45,18 +50,34 @@ export default function PersonalityMark({
 
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
-      <rect width={size} height={size} rx={size * 0.16} fill={`${accent}22`} />
-      {rects.map((r) => (
-        <rect
-          key={`${r.x}-${r.y}`}
-          x={r.x}
-          y={r.y}
-          width={cellSize}
-          height={cellSize}
-          fill={accent}
-          opacity={r.opacity}
-        />
-      ))}
+      <defs>
+        <clipPath id={clipId}>
+          <circle cx={size / 2} cy={size / 2} r={size / 2} />
+        </clipPath>
+      </defs>
+      <circle cx={size / 2} cy={size / 2} r={size / 2} fill={`${accent}22`} />
+      <g clipPath={`url(#${clipId})`}>
+        {rects.map((r) => (
+          <rect
+            key={`${r.x}-${r.y}`}
+            x={r.x}
+            y={r.y}
+            width={cellSize}
+            height={cellSize}
+            fill={accent}
+            opacity={r.opacity}
+          />
+        ))}
+      </g>
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={size / 2 - ringWidth / 2}
+        fill="none"
+        stroke={accent}
+        strokeOpacity={0.55}
+        strokeWidth={ringWidth}
+      />
     </svg>
   );
 }

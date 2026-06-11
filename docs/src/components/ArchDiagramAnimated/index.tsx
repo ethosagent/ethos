@@ -3,9 +3,12 @@ import type { CSSProperties, ReactNode } from 'react';
 import styles from './styles.module.css';
 
 // Animated version of the AgentLoop architecture diagram on the landing
-// page. Pure CSS keyframes on one shared 14s timeline (no JS timers) —
+// page. Pure CSS keyframes on one shared 16s timeline (no JS timers) —
 // same convention as HeroTerminal. The rendered text is glyph-for-glyph
-// identical to the previous static <pre>; spans only scope color windows.
+// identical to the previous static <pre>: spans only scope animation
+// windows, and the traveling connector pulses are empty absolutely
+// positioned overlay spans whose ● glyph comes from CSS `content`, so
+// they add nothing to the text layout or the extracted text.
 // Timeline windows are documented in styles.module.css.
 //
 // aria-hidden: the surrounding section prose already explains the loop;
@@ -38,7 +41,7 @@ function StepRow({ text, index }: { text: string; index: number }): ReactNode {
       <span className={styles.border}>{'  │'}</span>
       <span
         className={index === LOOP_STEP_INDEX ? styles.stepLoop : styles.step}
-        style={delay(index * 0.7)}
+        style={delay(index * 0.8)}
       >
         {`  ${text}`.padEnd(BOX_INNER_WIDTH)}
       </span>
@@ -50,7 +53,7 @@ function StepRow({ text, index }: { text: string; index: number }): ReactNode {
 
 function Event({ name, at }: { name: string; at: number }): ReactNode {
   // `done` has its own keyframe with the window baked in (it settles to
-  // success green and holds), so it carries no delay.
+  // success green and holds until the loop resets), so it carries no delay.
   if (name === 'done') {
     return <span className={styles.eventDone}>{name}</span>;
   }
@@ -74,7 +77,10 @@ export default function ArchDiagramAnimated(): ReactNode {
     <pre className={styles.diagram} aria-hidden="true">
       <span className={styles.inputText}>{'  user input'}</span>
       {'\n'}
-      <span className={styles.connectorIn}>{'       │\n       ▼'}</span>
+      <span className={styles.connWrap}>
+        <span className={styles.connectorIn}>{'       │\n       ▼'}</span>
+        <span className={`${styles.pulseDot} ${styles.pulseDotIn}`} />
+      </span>
       {'\n'}
       <span className={styles.border}>{`  ┌${'─'.repeat(BOX_INNER_WIDTH)}┐`}</span>
       {'\n'}
@@ -91,28 +97,34 @@ export default function ArchDiagramAnimated(): ReactNode {
       ))}
       <span className={styles.border}>{`  └${'─'.repeat(BOX_INNER_WIDTH)}┘`}</span>
       {'\n'}
-      <span className={styles.connectorOut}>{'       │\n       ▼'}</span>
+      <span className={styles.connWrap}>
+        <span className={styles.connectorOut}>{'       │\n       ▼'}</span>
+        <span className={`${styles.pulseDot} ${styles.pulseDotOut}`} />
+      </span>
       {'\n'}
       <span className={styles.emitTitle}>{'  AsyncGenerator<AgentEvent>'}</span>
       {'\n'}
-      {'       '}
+      <span className={styles.connWrap}>
+        {'       '}
+        <span className={`${styles.pulseDot} ${styles.pulseDotSurf}`} />
+      </span>
       <span className={styles.border}>{'│ '}</span>
       <Event name="text_delta" at={0} />
       {', '}
-      <Event name="thinking_delta" at={0.35} />
+      <Event name="thinking_delta" at={0.15} />
       {', '}
-      <Event name="tool_start" at={0.7} />
+      <Event name="tool_start" at={0.3} />
       {', '}
-      <Event name="tool_end" at={1.05} />
+      <Event name="tool_end" at={0.45} />
       {',\n       '}
       <span className={styles.border}>{'│ '}</span>
-      <Event name="tool_progress" at={1.4} />
+      <Event name="tool_progress" at={0.6} />
       {', '}
-      <Event name="usage" at={1.75} />
+      <Event name="usage" at={0.75} />
       {', '}
-      <Event name="done" at={2.1} />
+      <Event name="done" at={0.9} />
       {', '}
-      <Event name="error" at={2.45} />
+      <Event name="error" at={1.05} />
       {'\n'}
       <span className={styles.border}>{'       ▼'}</span>
       {'\n'}

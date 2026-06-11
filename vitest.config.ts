@@ -38,5 +38,9 @@ export default defineConfig({
       'examples/plugins/*/src/**/*.test.ts',
       'skills/src/**/*.test.ts',
     ],
+    // CI runners stall workers under transform contention (observed: a ~10ms test
+    // exceeding the 5s default); local stays retry: 0 so real regressions surface immediately.
+    testTimeout: 15_000,
+    retry: process.env.CI ? 1 : 0,
   },
 });

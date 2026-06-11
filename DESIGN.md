@@ -230,7 +230,7 @@ Deterministic geometric marks per personality. Same algorithm runs at render tim
 1. Hash personality `id` (FNV-1a 32-bit)
 2. 5×5 grid, mirror-symmetric (cells `[0..2]` mirrored to `[3..4]`)
 3. Each cell filled based on a bit from the hash; opacity 0.55–0.93 from next 2 bits
-4. Background: rounded square at `${size * 0.16}` radius, accent color at `0x22` alpha
+4. Background: circular frame — a `<circle>` at accent color `0x22` alpha, plus a 1.5px accent ring stroke at ~0.55 opacity around the circumference (strokeWidth scales: `size * 0.04`, minimum 1). Cells are clipped to the circle via `<clipPath>`. Echoes the circular ring logo (`logo.svg` annulus).
 5. Filled cells: solid accent at the computed opacity
 
 Reference implementation in `apps/web/src/components/ui/PersonalityMark.tsx`. Same algorithm available as `packages/web-contracts/src/marks.ts` so server-side rendering and TUI ASCII fallback can use it.
@@ -312,3 +312,4 @@ The web UI specifically must avoid these patterns. Code review checks for them.
 | 2026-05-29 | Hover/pressed as CSS variables | Hardcoded `rgba(255,255,255,...)` tints are invisible in light mode. Variables flip correctly per skin. |
 | 2026-05-29 | Connection status dot | Text-only "connecting…" has no visual salience. Three-state colored dot (green/amber/red) is scannable. |
 | 2026-05-29 | Empty chat state with suggestion pills | "Start the conversation." placeholder is undesigned. Personality mark + pills sets context and invites the first message. |
+| 2026-06-11 | Personality marks → circular frame (accent ring + circle-clipped cells) | New circular ring logo; marks follow the logo's geometry. User-directed. Docs `PersonalityMark` updated; `apps/web/src/components/ui/PersonalityMark.tsx` and `packages/web-contracts/src/marks.ts` are follow-ups to keep cross-surface parity. |

@@ -10,7 +10,10 @@ import styles from './index.module.css';
 // Scroll-reveal wrapper — fires once at threshold 0.15. SSR- and no-JS-safe:
 // content starts visible; only after the observer attaches (and only when the
 // section is below the fold and motion is allowed) does it enter the hidden
-// state, so JS failure never leaves invisible content.
+// state, so JS failure never leaves invisible content. A one-shot fallback
+// timer force-reveals if the observer never fires (some render contexts —
+// e.g. full-page screenshot renderers — never deliver intersection entries),
+// so no section can stay stranded at opacity 0.
 function Reveal({ children }: { children: ReactNode }): ReactNode {
   const ref = useRef<HTMLDivElement>(null);
   const [phase, setPhase] = useState<'initial' | 'hidden' | 'revealed'>('initial');
@@ -19,7 +22,7 @@ function Reveal({ children }: { children: ReactNode }): ReactNode {
     const el = ref.current;
     if (!el || typeof IntersectionObserver === 'undefined') return;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    // Already (partially) on screen — leave it visible, no flash.
+    // Already within (or above) the viewport — leave it visible, no flash.
     if (el.getBoundingClientRect().top < window.innerHeight) return;
 
     const observer = new IntersectionObserver(
@@ -28,6 +31,7 @@ function Reveal({ children }: { children: ReactNode }): ReactNode {
           if (entry.isIntersecting) {
             setPhase('revealed');
             observer.disconnect();
+            window.clearTimeout(fallback);
           }
         }
       },
@@ -35,7 +39,15 @@ function Reveal({ children }: { children: ReactNode }): ReactNode {
     );
     setPhase('hidden');
     observer.observe(el);
-    return () => observer.disconnect();
+    // Safety net: if the observer hasn't fired within 2.5s, force-reveal.
+    const fallback = window.setTimeout(() => {
+      setPhase('revealed');
+      observer.disconnect();
+    }, 2500);
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(fallback);
+    };
   }, []);
 
   const className =
