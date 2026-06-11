@@ -1,4 +1,4 @@
-import { Button, Card, Modal, Popover, Space, Tag, Typography } from 'antd';
+import { Button, Card, Form, Input, Modal, Popover, Select, Space, Tag, Typography } from 'antd';
 import type { CSSProperties } from 'react';
 import { useState } from 'react';
 import { TableBlock } from '../chat/TableBlock';
@@ -25,21 +25,64 @@ interface Props {
   onDelete: () => void;
   onRefresh?: () => void;
   refreshing?: boolean;
+  onUpdatePanel?: (vars: { title?: string; cronSchedule?: string | null }) => void;
 }
 
-export function DashboardPanelShell({ panel, onDelete, onRefresh, refreshing }: Props) {
+const CRON_PRESETS = [
+  { label: 'Every 1 min', value: '* * * * *' },
+  { label: 'Every 5 min', value: '*/5 * * * *' },
+  { label: 'Every 15 min', value: '*/15 * * * *' },
+  { label: 'Every 30 min', value: '*/30 * * * *' },
+  { label: 'Every hour', value: '0 * * * *' },
+  { label: 'Every 4 hours', value: '0 */4 * * *' },
+  { label: 'Every 6 hours', value: '0 */6 * * *' },
+  { label: 'Daily at 9am', value: '0 9 * * *' },
+  { label: 'Weekdays at 9am', value: '0 9 * * 1-5' },
+];
+
+function describeCron(expr: string): string {
+  const p = expr.trim().split(/\s+/);
+  if (p.length !== 5) return expr;
+  const [min, hour, , , dow] = p;
+  if (min === '*' && hour === '*') return 'every min';
+  const mMatch = min.match(/^\*\/(\d+)$/);
+  if (mMatch && hour === '*') return `every ${mMatch[1]}m`;
+  const hMatch = hour.match(/^\*\/(\d+)$/);
+  if (hMatch && min === '0') return `every ${hMatch[1]}h`;
+  if (min === '0' && /^\d+$/.test(hour)) {
+    const suffix = dow === '1-5' ? ' weekdays' : '';
+    return `daily ${hour}:00${suffix}`;
+  }
+  return expr;
+}
+
+export function DashboardPanelShell({
+  panel,
+  onDelete,
+  onRefresh,
+  refreshing,
+  onUpdatePanel,
+}: Props) {
   const [fullscreen, setFullscreen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   return (
     <>
       <Card
         size="small"
-        style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+        style={{
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
         styles={{
           body: {
             flex: 1,
             overflow: 'hidden',
             minHeight: 0,
             padding: panel.blockType === 'html' ? 0 : 12,
+            position: 'relative',
           },
         }}
         title={
@@ -49,21 +92,21 @@ export function DashboardPanelShell({ panel, onDelete, onRefresh, refreshing }: 
               alignItems: 'center',
               justifyContent: 'space-between',
               width: '100%',
+              userSelect: 'none',
             }}
           >
             <Space>
-              <span
-                className="drag-handle"
-                style={{ cursor: 'grab', marginRight: 8, userSelect: 'none' }}
-              >
-                &#x2807;
-              </span>
               <Typography.Text strong style={{ fontSize: 12 }}>
                 {panel.title || 'Panel'}
               </Typography.Text>
               {panel.queryType !== 'static' && (
                 <Tag color="blue" style={{ fontSize: 10 }}>
                   {panel.queryType}
+                </Tag>
+              )}
+              {panel.cronSchedule && (
+                <Tag color="cyan" style={{ fontSize: 10 }} title={panel.cronSchedule}>
+                  ⏱ {describeCron(panel.cronSchedule)}
                 </Tag>
               )}
               {panel.lastError && (
@@ -95,6 +138,11 @@ export function DashboardPanelShell({ panel, onDelete, onRefresh, refreshing }: 
                 ℹ
               </Button>
             </Popover>
+            {onUpdatePanel && (
+              <Button size="small" type="text" title="Edit" onClick={() => setEditing(true)}>
+                ✏
+              </Button>
+            )}
             {onRefresh && (
               <Button size="small" type="text" onClick={onRefresh} loading={refreshing}>
                 ↻
@@ -103,7 +151,7 @@ export function DashboardPanelShell({ panel, onDelete, onRefresh, refreshing }: 
             <Button size="small" type="text" onClick={() => setFullscreen(true)} title="Fullscreen">
               ⛶
             </Button>
-            <Button size="small" type="text" danger onClick={onDelete}>
+            <Button size="small" type="text" danger onClick={() => setConfirmDelete(true)}>
               ×
             </Button>
           </Space>
@@ -119,6 +167,7 @@ export function DashboardPanelShell({ panel, onDelete, onRefresh, refreshing }: 
           fill
         />
       </Card>
+
       <Modal
         open={fullscreen}
         onCancel={() => setFullscreen(false)}
@@ -135,7 +184,121 @@ export function DashboardPanelShell({ panel, onDelete, onRefresh, refreshing }: 
           fullscreen
         />
       </Modal>
+
+      {onUpdatePanel && (
+        <EditPanelModal
+          open={editing}
+          panel={panel}
+          onCancel={() => setEditing(false)}
+          onSave={(vals) => {
+            onUpdatePanel(vals);
+            setEditing(false);
+          }}
+        />
+      )}
+
+      <Modal
+        open={confirmDelete}
+        onCancel={() => setConfirmDelete(false)}
+        onOk={() => {
+          setConfirmDelete(false);
+          onDelete();
+        }}
+        okText="Delete"
+        okButtonProps={{ danger: true }}
+        cancelText="Cancel"
+        title="Delete panel?"
+        width={380}
+      >
+        <p style={{ margin: 0 }}>
+          Remove <strong>{panel.title || 'this panel'}</strong> from the dashboard? This cannot be
+          undone.
+        </p>
+      </Modal>
     </>
+  );
+}
+
+function EditPanelModal({
+  open,
+  panel,
+  onCancel,
+  onSave,
+}: {
+  open: boolean;
+  panel: PanelData;
+  onCancel: () => void;
+  onSave: (vals: { title?: string; cronSchedule?: string | null }) => void;
+}) {
+  const [form] = Form.useForm();
+  const [cronPreview, setCronPreview] = useState(
+    panel.cronSchedule ? describeCron(panel.cronSchedule) : '',
+  );
+
+  const handleCronChange = (val: string) => {
+    setCronPreview(val ? describeCron(val) : '');
+    form.setFieldValue('cronSchedule', val);
+  };
+
+  return (
+    <Modal
+      open={open}
+      title="Edit panel"
+      onCancel={onCancel}
+      onOk={() => {
+        const vals = form.getFieldsValue() as { title: string; cronSchedule: string };
+        onSave({
+          title: vals.title || undefined,
+          cronSchedule: vals.cronSchedule || null,
+        });
+      }}
+      okText="Save"
+      destroyOnClose
+    >
+      <Form
+        form={form}
+        layout="vertical"
+        initialValues={{
+          title: panel.title ?? '',
+          cronSchedule: panel.cronSchedule ?? '',
+        }}
+        style={{ marginTop: 16 }}
+      >
+        <Form.Item label="Title" name="title">
+          <Input placeholder="Panel title" />
+        </Form.Item>
+
+        <Form.Item
+          label="Auto-refresh (cron)"
+          name="cronSchedule"
+          extra={
+            cronPreview ? (
+              <span style={{ color: '#52c41a' }}>↻ {cronPreview}</span>
+            ) : (
+              <span style={{ color: '#888' }}>Leave empty to disable auto-refresh</span>
+            )
+          }
+        >
+          <Input
+            placeholder="*/15 * * * *"
+            onChange={(e) => handleCronChange(e.target.value)}
+            addonAfter={
+              <Select
+                size="small"
+                placeholder="Presets"
+                style={{ width: 140 }}
+                variant="borderless"
+                onChange={(val: string) => handleCronChange(val)}
+                options={[
+                  ...CRON_PRESETS.map((p) => ({ label: p.label, value: p.value })),
+                  { label: 'Clear', value: '' },
+                ]}
+              />
+            }
+          />
+        </Form.Item>
+      </Form>
+    </Modal>
   );
 }
 
@@ -284,7 +447,12 @@ function PanelInfoContent({ panel }: { panel: PanelData }) {
       {panel.cronSchedule && (
         <div style={rowStyle}>
           <span style={labelStyle}>Cron</span>
-          <span style={valueStyle}>{panel.cronSchedule}</span>
+          <span style={valueStyle}>
+            <code style={{ fontSize: 11 }}>{panel.cronSchedule}</code>
+            <span style={{ marginLeft: 6, color: '#52c41a', fontSize: 11 }}>
+              ({describeCron(panel.cronSchedule)})
+            </span>
+          </span>
         </div>
       )}
       {panel.htmlTemplate && (

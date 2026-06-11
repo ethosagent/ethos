@@ -12,6 +12,7 @@ export interface Dashboard {
   personalityId: string;
   title: string;
   description: string | null;
+  cronSchedule: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -88,6 +89,7 @@ interface DashboardRow {
   personality_id: string;
   title: string;
   description: string | null;
+  cron_schedule: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -126,6 +128,7 @@ function toDashboard(row: DashboardRow): Dashboard {
     personalityId: row.personality_id,
     title: row.title,
     description: row.description,
+    cronSchedule: row.cron_schedule,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -196,6 +199,7 @@ export class DashboardsService {
         personality_id TEXT NOT NULL,
         title          TEXT NOT NULL,
         description    TEXT,
+        cron_schedule  TEXT,
         created_at     INTEGER NOT NULL,
         updated_at     INTEGER NOT NULL
       ) STRICT;
@@ -236,6 +240,10 @@ export class DashboardsService {
     if (!panelCols.some((c) => c.name === 'html_template')) {
       this.db.exec('ALTER TABLE dashboard_panels ADD COLUMN html_template TEXT');
     }
+    const dashCols = this.db.prepare('PRAGMA table_info(dashboards)').all() as { name: string }[];
+    if (!dashCols.some((c) => c.name === 'cron_schedule')) {
+      this.db.exec('ALTER TABLE dashboards ADD COLUMN cron_schedule TEXT');
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -257,6 +265,7 @@ export class DashboardsService {
       personalityId,
       title,
       description: description ?? null,
+      cronSchedule: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -280,7 +289,10 @@ export class DashboardsService {
     return { dashboard: toDashboard(row), panels: panelRows.map(toPanel) };
   }
 
-  update(id: string, patch: { title?: string; description?: string }): void {
+  update(
+    id: string,
+    patch: { title?: string; description?: string; cronSchedule?: string | null },
+  ): void {
     const now = Date.now();
     const sets: string[] = ['updated_at = ?'];
     const params: unknown[] = [now];
@@ -291,6 +303,10 @@ export class DashboardsService {
     if (patch.description !== undefined) {
       sets.push('description = ?');
       params.push(patch.description);
+    }
+    if (patch.cronSchedule !== undefined) {
+      sets.push('cron_schedule = ?');
+      params.push(patch.cronSchedule);
     }
     params.push(id);
     this.db.prepare(`UPDATE dashboards SET ${sets.join(', ')} WHERE id = ?`).run(...params);

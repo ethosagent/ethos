@@ -1225,6 +1225,7 @@ const DashboardSchema = z.object({
   personalityId: z.string(),
   title: z.string(),
   description: z.string().nullable(),
+  cronSchedule: z.string().nullable(),
   createdAt: z.number(),
   updatedAt: z.number(),
 });
@@ -1268,6 +1269,7 @@ const DashboardsUpdateInput = z.object({
   id: z.string().min(1),
   title: z.string().optional(),
   description: z.string().optional(),
+  cronSchedule: z.string().nullable().optional(),
 });
 const DashboardsDeleteInput = z.object({ id: z.string().min(1) });
 

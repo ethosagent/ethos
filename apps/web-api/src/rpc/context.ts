@@ -63,7 +63,10 @@ export interface DashboardsService {
   create(userId: string, title: string, personalityId: string, description?: string): Dashboard;
   list(userId: string): Dashboard[];
   get(id: string): { dashboard: Dashboard; panels: DashboardPanel[] } | null;
-  update(id: string, patch: { title?: string; description?: string }): void;
+  update(
+    id: string,
+    patch: { title?: string; description?: string; cronSchedule?: string | null },
+  ): void;
   delete(id: string): void;
   addPanel(dashboardId: string, panel: AddPanelInput): DashboardPanel;
   updatePanel(

@@ -447,20 +447,35 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // Dashboard panel cron poller — checks every 60s for panels with due cron schedules
   if (opts.agentLoop) {
     const POLL_INTERVAL_MS = 60_000;
+    const dashboardCronLastRun = new Map<string, number>();
     const dashboardCronInterval = setInterval(async () => {
       try {
         const allDashboards = dashboardsService.list('default-user');
         for (const dash of allDashboards) {
           const panels = dashboardsService.listLivePanels(dash.id);
+          const refreshDeps = {
+            dashboards: dashboardsService,
+            pluginLoader: opts.pluginLoader,
+            agentLoop: opts.agentLoop,
+          };
+
+          // Dashboard-level cron: refresh ALL panels when due
+          if (
+            dash.cronSchedule &&
+            isCronDue(dash.cronSchedule, dashboardCronLastRun.get(dash.id) ?? null)
+          ) {
+            dashboardCronLastRun.set(dash.id, Date.now());
+            for (const panel of panels) {
+              await refreshSinglePanel(panel, refreshDeps);
+            }
+            continue; // skip per-panel cron this tick
+          }
+
+          // Per-panel cron
           for (const panel of panels) {
             if (!panel.cronSchedule) continue;
-            const isDue = isCronDue(panel.cronSchedule, panel.lastRunAt);
-            if (!isDue) continue;
-            await refreshSinglePanel(panel, {
-              dashboards: dashboardsService,
-              pluginLoader: opts.pluginLoader,
-              agentLoop: opts.agentLoop,
-            });
+            if (!isCronDue(panel.cronSchedule, panel.lastRunAt)) continue;
+            await refreshSinglePanel(panel, refreshDeps);
           }
         }
       } catch {

@@ -31,6 +31,7 @@ export const dashboardsRouter = {
     context.dashboards?.update(input.id, {
       title: input.title,
       description: input.description,
+      cronSchedule: input.cronSchedule,
     });
     return { ok: true as const };
   }),
