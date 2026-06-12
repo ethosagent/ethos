@@ -200,7 +200,13 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Platforms',
       collapsed: true,
-      items: ['platforms/cli', 'platforms/desktop', 'platforms/telegram', 'platforms/discord', 'platforms/slack'],
+      items: [
+        'platforms/cli',
+        'platforms/desktop',
+        'platforms/telegram',
+        'platforms/discord',
+        'platforms/slack',
+      ],
     },
     {
       type: 'category',
