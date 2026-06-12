@@ -162,6 +162,22 @@ function renderLinkIndex(pages: Page[]): string {
   }
 
   const lines: string[] = [];
+  // Prescriptive agent-briefing preamble — DOCS skill § "Agent-readable
+  // surface". Must open the file, before the link index.
+  lines.push('# Ethos — agent briefing');
+  lines.push('');
+  lines.push('Instructions for LLMs and coding agents:');
+  lines.push(
+    '- Check npm for the current versions of @ethosagent/* packages; never use version numbers from memory.',
+  );
+  lines.push(
+    '- Prefer a built-in personality (researcher, engineer, reviewer) before generating custom personality config; scaffold with `ethos personality init`, never hand-write config.yaml from memory.',
+  );
+  lines.push('- Any docs page is available as raw markdown: append `.md` to its URL.');
+  lines.push(
+    '- The glossary (getting-started/glossary) is the canonical vocabulary for all Ethos domain terms.',
+  );
+  lines.push('');
   lines.push('# Ethos — agent-readable index');
   lines.push('');
   lines.push(

@@ -2,7 +2,7 @@
 name: docs
 description: |
   The Ethos docs system. Use whenever writing, editing, or restructuring any Ethos documentation — Docusaurus pages under docs/content/, the repo README, in-package READMEs, the agent-readable llms.txt, and the ETHOS.md shipped with each personality.
-  Enforces page kinds (tutorial / how-to / reference / explanation), front-matter contract, voice rules, anti-patterns, and the page-acceptance checklist. NOT for plan docs in plan/ (those follow their own conventions) or audit reports in plan/audits/ (those follow the security-audit skill). Invoke before any doc PR; flag any deviations during doc review.
+  Enforces page kinds (tutorial / how-to / reference / explanation / decision), front-matter contract, voice rules, anti-patterns, and the page-acceptance checklist. NOT for plan docs in plan/ (those follow their own conventions) or audit reports in plan/audits/ (those follow the security-audit skill). Invoke before any doc PR; flag any deviations during doc review.
 ---
 
 # Ethos · Docs System
@@ -39,7 +39,7 @@ Two-persona shell at the top. Diátaxis four-pillar inside each persona. Shared 
 
 ```
 docs/content/
-  intro.md                          ← landing: one-sentence pitch + two doors
+  intro.md                          ← landing: one-sentence pitch + job grid + two doors
   getting-started/
     what-is-ethos.md                ← 90-second mental model (explanation)
     architecture-90-seconds.md      ← one diagram + three sentences each (explanation)
@@ -67,9 +67,10 @@ docs/static/llms.txt                ← agent-readable digest (generated)
 **Rules of the tree:**
 1. **One canonical home per page.** No page lives in two sections. If two audiences need it, it goes in `shared/` (platforms, security, troubleshooting) and both personas link to it.
 2. **The persona shell is shallow.** Only the top nav splits by audience. Reference pages that genuinely serve both audiences live in `shared/`; they do *not* get duplicated into both persona trees.
-3. **Diátaxis is enforced inside each persona.** Every page is exactly one of `tutorial`, `how-to`, `reference`, or `explanation`. Mixed pages are a bug.
-4. **Verb-driven section names within each persona.** Use `tutorials/`, `how-to/`, `reference/`, `explanation/` literally — don't rename them. Consistency is more valuable than cleverness.
+3. **Diátaxis is enforced inside each persona.** Every page is exactly one of `tutorial`, `how-to`, `reference`, `explanation`, or `decision`. Mixed pages are a bug.
+4. **Verb-driven section names within each persona.** Use `tutorials/`, `how-to/`, `reference/`, `explanation/` literally — don't rename them. Consistency is more valuable than cleverness. Decision pages sit at the top of a job cluster (or as a category index page), named for the job.
 5. **No stub pages.** A page is either complete or doesn't exist. Stubs rot fastest and damage trust most.
+6. **Jobs before personas on the landing.** The landing leads with an outcome grid — links phrased as jobs the reader would say out loud ("Ship a Telegram research assistant," "Automate code review," "Run a team on a kanban board") — *above* the persona doors. A newcomer knows their job before they know our vocabulary; the job grid converts job → path without requiring it. Section index pages follow the same rule: one value sentence, then an outcome-phrased directory; mechanics deferred one click.
 
 ## Page types
 
@@ -77,10 +78,13 @@ Every page declares `kind` in front-matter. The page must follow its kind's temp
 
 | `kind` | Reader state | Purpose | Length | Required sections | Prohibited |
 |---|---|---|---|---|---|
-| `tutorial` | At study — learning Ethos for the first time | Acquire basic competence on one path | 300–700 lines | Goal · Prereqs · Estimated time · Numbered steps · What you learned · Next step | Branching choices, alternative paths, "see also for advanced," design rationale |
+| `tutorial` | At study — learning Ethos for the first time | Acquire basic competence on one path | 300–700 lines | Goal · Prereqs · Estimated time · Numbered steps · **Try it** (observable success + one deliberate failure) · What you learned · Next step | Branching choices, alternative paths, "see also for advanced," design rationale |
 | `how-to` | At work — has a real task to ship | Accomplish a specific outcome | 100–300 lines | Task statement (1 line) · Result statement (1 line) · Prereqs · Numbered steps · Verify · Troubleshoot | Concept teaching, "what is X" preambles, narrative arc |
 | `reference` | At work — looking up a fact | Authoritative lookup, scannable | 100–500 lines | Synopsis · Parameters/fields table · Examples · Source path link · See also | Step-by-step narrative, opinions, marketing copy, design rationale |
 | `explanation` | At study — building mental model | Answer one "why" question | 150–400 lines | Question (as H1) · Context · Discussion · Trade-offs · See also | Numbered steps, "how to" procedures, exhaustive parameter lists |
+| `decision` | At a crossroads — knows the job, not the path | Route one job to the right approach tier | 100–250 lines | Job statement (one outcome sentence) · Effort ladder (each option labeled, exactly one "(Recommended)") · Trade-off table · "Choose otherwise when…" · Links into each path's tutorial/how-to | Teaching mechanics, neutral option lists with no recommendation, numbered implementation steps |
+
+**Decision pages (the Stripe pattern).** The same job often has multiple legitimate approaches at different effort tiers — for Ethos, typically *built-in personality (no code)* → *custom personality YAML (low code)* → *plugin/interfaces (full API)*. A decision page presents the ladder with effort labels in the link text itself ("(No code)", "(Recommended)"), a trade-off table (rows = capabilities like memory scoping, custom tools, channel support; columns = the tiers, marking what's built-in vs build-it-yourself), and one opinionated recommendation in prose. Decision pages sit at the top of a job cluster and may serve as category index pages. Diátaxis organizes knowledge; decision pages organize *the choice* — both are needed.
 
 **Tutorial vs. how-to test.** If the reader is *studying Ethos*, it's a tutorial. If the reader is *shipping something with Ethos*, it's a how-to. Pick one. A page that fails this test gets split.
 
@@ -136,8 +140,11 @@ Inherits DESIGN.md voice rules where they don't conflict with the rules below.
 - **Specific identifiers.** In technical sections, reference real file paths, real function names, real config keys. Avoid "the foo system" when "[tool-registry.ts](../../../packages/core/src/tool-registry.ts)" is what you mean. (Landing/value paragraphs may stay abstract — but the body must get specific.)
 - **No throat-clearing.** Drop "In this guide, we will…", "Note that…", "It's important to remember that…" Start with the value (landing/tutorial openers) or the goal (how-to/reference).
 - **One thought per paragraph.** Paragraphs over six lines get split. The reader is scanning.
+- **One instruction per sentence.** "Run `ethos chat`. Then send a message." Not "Run `ethos chat` and then, once it has started and you've confirmed the provider is configured, send a message." Compound instructions hide steps.
+- **Condition before instruction.** "If the session was interrupted, re-run `ethos chat --resume`." Not "Re-run `ethos chat --resume` if the session was interrupted." Readers skip inapplicable sentences at the comma instead of after acting.
 - **Active over passive.** "AgentLoop emits events." Not "Events are emitted by AgentLoop."
 - **Sentence-case headings.** "Add a new LLM provider," not "Add A New LLM Provider."
+- **Name the recommended path.** When a page presents more than one way to do the same job, it names exactly one "(Recommended)" and says why in one sentence. Neutral option lists make the reader do our thinking.
 
 ## Voice mode by page kind
 
@@ -150,6 +157,7 @@ The right voice depends on what the reader needs from the page. Choose by `kind`
 | `how-to` | **Task + outcome.** "Add a new LLM provider and verify it streams." | Precise, no narrative. Imperative. |
 | `reference` | **Synopsis.** One sentence of *what the thing is*. No advocacy. | **Precision throughout. Marketing voice fails here.** Lookup pages need scannable accuracy, not pitch. |
 | `explanation` | **Question + value.** Restate why this matters to the reader before answering the why. | Argumentative, precise. |
+| `decision` | **Job + promise.** "Run an agent on Telegram — three ways, pick by how much you want to own." | Opinionated, comparative. One "(Recommended)" named, trade-offs honest. |
 | Repo `README.md`, per-package READMEs | **Marketing.** Standalone-readable; assume the reader may never click through to docs. | Marketing tone preserved, with concrete specifics. See [Cross-surface rendering](#cross-surface-rendering). |
 | Personality `ETHOS.md` | **First-person identity statement.** A reader should be able to predict the personality's behaviour from the opening line. | Imperative, specific. |
 | Front-matter `description` field | **Always informative, never advocacy.** This field surfaces in Google snippets and AI answer cards — marketing voice reads as spam there regardless of how the page body opens. |
@@ -158,7 +166,7 @@ The shift between lead and body is a *real* transition. A tutorial's first parag
 
 ## Cross-page rules
 
-1. **Glossary-first-use linking.** The first occurrence of any domain term (`personality`, `skill`, `tool`, `hook`, `mesh`, `session`, `memory scope`, `audience boundary`) on a page links to [glossary.md](../../../docs/content/getting-started/glossary.md).
+1. **Glossary-first-use: gloss inline, then link.** The first occurrence of any domain term (`personality`, `skill`, `tool`, `hook`, `mesh`, `session`, `memory scope`, `audience boundary`) on a page gets BOTH a parenthetical plain-English gloss and the glossary link: "every [personality](glossary.md#personality) (a directory of files that decides the agent's tools, memory, and model) declares…". The reader never leaves the sentence to understand it; the link exists for depth, not for comprehension. Glosses are one clause, not a second definition — the glossary stays canonical.
 2. **Source-of-truth linking.** Every reference page links to the source file it describes — `Tool` reference → [packages/types/src/index.ts](../../../packages/types/src/index.ts). Code drift is detected when these links break.
 3. **"See also" footer is mandatory** on every reference and explanation page. At least one link, no more than five. Curated, not auto-generated.
 4. **"Recommended reading order" footer** on architecture and concept-cluster pages — Hermes-style — names the next 2–3 pages to read in order.
@@ -166,6 +174,9 @@ The shift between lead and body is a *real* transition. A tutorial's first parag
 6. **Code samples are runnable.** Snippets compile against the current version of `@ethosagent/types`. Pseudocode is banned in reference; allowed in explanation only when labeled `// illustration`.
 7. **One H1 per page.** Subsections are H2 and H3 only. Never skip levels (no H4 directly under H2).
 8. **Tables for ≥3 parallel items.** Lists of properties, parameters, options, or trade-offs go in tables. Prose lists are allowed for ≤2 items.
+9. **Every command shows its expected output.** In tutorials and how-tos, a command block is followed by an output block (or the relevant excerpt) showing what success looks like. "It printed something — was that right?" is a question the page must answer, not the reader.
+10. **Placeholder grammar.** Values the reader must substitute use `<angle-bracket-kebab>` form (`<your-bot-token>`, `<personality-id>`) — one convention everywhere. Prefer zero-edit blocks over placeholders where possible: have the reader run a generator first (`ethos config print`, `ethos personality init`) so subsequent copy-paste blocks need no edits. A block the reader must hand-edit is where tutorials die.
+11. **Tutorials fail on purpose, once.** Every tutorial's "Try it" block includes one deliberate failure the reader triggers and recognizes (a tool call outside the toolset, a `--dry-run`, a missing API key) — so the first real error they meet in production is one they've already seen with a calm explanation next to it.
 
 ## Reference schemas
 
@@ -207,6 +218,11 @@ Used by · table of (consumer file, role)
 See also · related interfaces
 ```
 
+**Reference depth rules (apply to all reference schemas):**
+1. **Constraints live in the description, in prose.** "Max 50; values above are clamped." "Only honored when `approvalMode: smart`." "Mutually exclusive with `model`." A type column without constraints is half a reference.
+2. **Every enum value gets a one-line meaning, with the default marked.** Not `mode: 'keyword' | 'semantic' | 'hybrid'` alone — a list: `keyword` — FTS5 match (default); `semantic` — embedding similarity; `hybrid` — both, merged by score.
+3. **Reference ↔ guide cross-links run both directions.** A parameter description links to the explanation/how-to that uses it ("see [approval gates](../how-to/set-up-approval-gates.md)"); the guide links back to the parameter's anchor. The reference answers "what"; one click answers "when and why".
+
 ### Error / troubleshooting entry
 
 ```
@@ -242,6 +258,9 @@ These patterns are slop. Code review checks for them, and so does CI grep where 
 | Missing `description` front-matter | Search engines invent a snippet from page body; AI answer cards do the same. Both lose. | Required field. CI fails the build if absent or over 155 chars. |
 | Marketing-voice `description` ("Learn how to harness…") | The description is what surfaces in search results and AI answers — advocacy reads as spam | State what the page *is*, not why to read it |
 | Auto-generated anchors on reference + glossary pages | Heading-text edits silently break external citations; agents that cited `#tools` lose the link when "Tools" is renamed | Explicit `{#stable-id}` suffix on every H2/H3 in reference + glossary |
+| Neutral option lists ("you can use A, B, or C") | The reader came for a decision and got a menu; we made them do our thinking | Name one "(Recommended)" with a one-sentence why; honest trade-off table for the rest |
+| Command block with no expected output | Reader can't tell success from failure; "it printed something" is not verification | Follow every command with what success looks like (output block or excerpt) |
+| Tutorial that only ever succeeds | The reader's first error arrives in production, alone | "Try it" block includes one deliberate, explained failure |
 
 ## Page-acceptance checklist
 
@@ -253,8 +272,10 @@ A docs PR is not merge-ready until every changed page passes this list. Reviewer
 - [ ] Answers at least one of the four customer-first questions and the answer is visible above the fold.
 - [ ] **Opens with user-readable value.** Paragraph 1 is understandable to a reader who hasn't installed Ethos yet. Mechanics come no earlier than paragraph 2 (landing, tutorial, explanation) or after the synopsis (reference / how-to).
 - [ ] **Voice mode matches the page's `kind`** per the [Voice mode by page kind](#voice-mode-by-page-kind) table. No marketing voice on reference pages; no mechanics-first opening on landing or tutorial pages; `description` front-matter is always informative, never advocacy.
-- [ ] First occurrence of every domain term links to [glossary.md](../../../docs/content/getting-started/glossary.md).
-- [ ] Reference pages link to source-of-truth code path.
+- [ ] First occurrence of every domain term carries an inline plain-English gloss AND links to [glossary.md](../../../docs/content/getting-started/glossary.md).
+- [ ] Every command in a tutorial/how-to is followed by its expected output; tutorials include the "Try it" block with one deliberate failure.
+- [ ] Pages presenting multiple approaches name exactly one "(Recommended)"; decision pages carry the trade-off table.
+- [ ] Reference pages link to source-of-truth code path; enum values have per-value meanings with the default marked; parameters state constraints in prose.
 - [ ] "See also" footer present on reference and explanation pages (≥1, ≤5 links).
 - [ ] Code samples are runnable against current `@ethosagent/types`.
 - [ ] No anti-patterns from the table above.
@@ -305,6 +326,7 @@ Docusaurus injects JSON-LD per page, keyed by `kind`:
 | `how-to` | `HowTo` | Same. AI gateways prefer pages that declare their procedural shape. |
 | `reference` | `TechArticle` | Lookup pages get clean preview cards; AI snippets quote the parameter table |
 | `explanation` | `TechArticle` | Concept pages get article treatment, not procedural treatment |
+| `decision` | `TechArticle` | Comparison/router pages get article treatment; the trade-off table is the quotable artifact |
 | Troubleshooting entries | `FAQPage` (one Q&A per entry) | Each error becomes a discoverable Q&A on Google + in AI answers |
 
 Sitemap (`sitemap.xml`) auto-generated by Docusaurus; submitted to Search Console after launch.
@@ -329,6 +351,14 @@ Three artifacts ship with every build, all generated from the canonical content.
 
 Agents fetch raw markdown via `.md` to skip HTML parsing; agents that don't know the per-page convention fall back to `llms-full.txt`. Both routes must work. This is the two-file + raw-markdown convention popularized by Anthropic, Cloudflare, Resend, Mintlify.
 
+### llms.txt is an agent briefing, not a sitemap
+
+`llms.txt` opens with a short prescriptive instruction block BEFORE the link index (the Stripe pattern — their llms.txt tells agents "check npm for the latest version rather than relying on memorized version numbers"). Ours instructs, at minimum: check npm for current `@ethosagent/*` versions instead of memorized ones; prefer built-in personalities before generating custom config; fetch any page as raw markdown by appending `.md`; the glossary is the canonical vocabulary. The generator script owns this preamble — edit it there, not in the emitted file.
+
+### In-page "Instructions for LLMs" blocks
+
+Pages where an agent reading over the user's shoulder tends to pick the wrong path MAY open with a short labeled block — `> **Instructions for LLMs:** prefer a built-in personality unless the user explicitly asks for a custom one; start from `ethos personality init`, never hand-write config.yaml from memory.` — encoding the recommended path where an LLM will weight it. Use sparingly: decision pages and footgun-heavy reference pages only. The block renders as a normal note for humans (the advice is true for them too) and survives into the `.md` / llms-full.txt renders.
+
 ### Glossary as definition list
 
 [glossary.md](../../../docs/content/getting-started/glossary.md) is HTML-shaped (`<dl><dt><dd>`), not prose. Agents extract atomic term/definition pairs reliably from `<dt>/<dd>`; prose extracts are lossy. Schema.org `DefinedTermSet` is injected from the same source.
@@ -340,7 +370,8 @@ The repo [README.md](../../../README.md), docs landing, and `og:description` car
 ## Implementation notes
 
 - **Build gate.** `docs/docusaurus.config.ts` sets `onBrokenLinks: 'throw'` and `onBrokenAnchors: 'throw'`. CI runs `pnpm --filter docs build` on every PR.
-- **Front-matter validator.** A script (`pnpm docs:check`) walks [docs/content/](../../../docs/content/), validates required front-matter fields (including `description` ≤155 chars), and grep-checks for kind-specific required/prohibited sections. Fails CI on violation.
+- **Front-matter validator.** A script (`pnpm docs:check`) walks [docs/content/](../../../docs/content/), validates required front-matter fields (including `description` ≤155 chars), and grep-checks for kind-specific required/prohibited sections. Fails CI on violation. Accepts all five kinds including `decision` (required: an effort ladder with exactly one "(Recommended)" and a trade-off table).
+- **Feedback widget.** Every docs page carries a "Was this page helpful?" footer control; results land in a low-ceremony store the maintainer can scan. Signal, not analytics theater.
 - **Anti-pattern scan.** Same `pnpm docs:check` greps for the worst patterns ("Welcome to Ethos", emoji in headings, "click here", stub-length pages, marketing-voice descriptions, missing stable anchors on reference + glossary pages). Easy wins, mechanical.
 - **Sitemap, structured data, social cards.** Docusaurus' built-in sitemap plugin emits `sitemap.xml`. A small plugin injects Schema.org JSON-LD per page based on `kind`. A social-card plugin renders OG/Twitter card images from `title` + `description`.
 - **Crawler files.** `docs/static/robots.txt` allows all crawlers including AI gateways. `docs/static/ai.txt` declares permissive AI usage with attribution preferred.

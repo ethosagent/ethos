@@ -34,7 +34,7 @@ const SIDEBARS_FILE = join(DOCS_ROOT, 'sidebars.ts');
 // Types
 // ---------------------------------------------------------------------------
 
-const KIND_VALUES = ['tutorial', 'how-to', 'reference', 'explanation'] as const;
+const KIND_VALUES = ['tutorial', 'how-to', 'reference', 'explanation', 'decision'] as const;
 type Kind = (typeof KIND_VALUES)[number];
 
 const AUDIENCE_VALUES = ['user', 'developer', 'shared'] as const;
@@ -107,6 +107,7 @@ const REQUIRED_SECTIONS: Record<Kind, ReadonlyArray<string>> = {
   'how-to': ['## Task', '## Result', '## Verify'],
   reference: [], // reference uses a special check below: ## Synopsis OR ## Source.
   explanation: [], // explanation uses a special check: title ends with `?`.
+  decision: [], // decision uses a special check: exactly one "(Recommended)" + a trade-off table.
 };
 
 // `tutorial` and `how-to` get a length ceiling per DOCS.md §Page types.
@@ -115,6 +116,7 @@ const LENGTH_CEILINGS: Record<Kind, number> = {
   'how-to': 300,
   reference: 500,
   explanation: 400,
+  decision: 250,
 };
 const LENGTH_MIN_WARN = 50;
 
@@ -124,6 +126,7 @@ const SCHEMA_TYPE_BY_KIND: Record<Kind, string> = {
   'how-to': 'HowTo',
   reference: 'TechArticle',
   explanation: 'TechArticle',
+  decision: 'TechArticle',
 };
 
 // ---------------------------------------------------------------------------
@@ -349,6 +352,22 @@ function checkRequiredSections(page: Page): void {
         page.relPath,
         'kind: reference requires either `## Synopsis` or `## Source` — neither found.',
       );
+    }
+  }
+
+  // decision: exactly one "(Recommended)" label + at least one trade-off table.
+  if (kind === 'decision') {
+    const recommendedCount = page.body.split('(Recommended)').length - 1;
+    if (recommendedCount !== 1) {
+      fail(
+        page.relPath,
+        `kind: decision requires exactly one "(Recommended)" label in the effort ladder — found ${recommendedCount}.`,
+      );
+    }
+    // A markdown table is identified by its header-separator row (`| --- | --- |`).
+    const hasTable = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/m.test(page.body);
+    if (!hasTable) {
+      fail(page.relPath, 'kind: decision requires a trade-off table — no markdown table found.');
     }
   }
 

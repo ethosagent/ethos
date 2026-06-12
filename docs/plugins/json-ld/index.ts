@@ -8,7 +8,7 @@
  * Mapping per DOCS.md § "Structured data (Schema.org JSON-LD)":
  *
  *   tutorial / how-to  → HowTo
- *   reference / explanation → TechArticle
+ *   reference / explanation / decision → TechArticle
  *   troubleshooting.md → FAQPage (one Q&A per entry)
  *   glossary.md → DefinedTermSet
  *
@@ -178,6 +178,7 @@ function buildJsonLd(
       return renderHowTo(title, description, url, fm.updated);
     case 'reference':
     case 'explanation':
+    case 'decision':
       return renderTechArticle(title, description, url, fm.updated);
     default:
       // Pages without an explicit kind (intro, changelog) still get a
