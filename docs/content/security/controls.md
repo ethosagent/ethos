@@ -4,7 +4,7 @@ description: Catalogue of shipped, partial, and planned security controls — ch
 kind: reference
 audience: shared
 slug: security-controls
-updated: 2026-05-22
+updated: 2026-06-09
 ---
 
 Most controls on this page are shipped — code in `packages/` and `extensions/`, tests next to it, audit trail in `observability.db`. A small number are **partial** or **planned** with a designed interface but the enforcement not yet wired; those are tagged inline so customers can plan around them.
@@ -317,6 +317,33 @@ The store uses STRICT mode SQLite, WAL, and FTS5. Retention is configurable per 
 
 `CronScheduler.readRunOutput()` enforces containment — only paths within the scheduler's `outputDir` are readable. Paths containing `..` or pointing outside the output directory throw. This prevents a caller from using the cron output reader as a general-purpose file read primitive to escape the scheduler's intended sandbox.
 
+## Admin panel token authentication {#admin-panel-token-auth}
+
+*Status: Shipped.*
+
+The admin panel (Mission Control) requires a bearer token for every API request. Generate tokens via `ethos token create`; they are stored in the OS keychain (macOS Keychain, GNOME Keyring, Windows Credential Vault) via `keytar`. Requests without a valid token receive `401 Unauthorized`.
+
+- Source: `apps/web-api/src/middleware/auth.ts`
+- Cross-ref: [Authenticate your dashboard users](../building/how-to/authenticate-dashboard-users.md)
+
+## Read-only SQL enforcement {#read-only-sql}
+
+*Status: Shipped.*
+
+Plugin data sources expose SQLite databases to the dashboard for read-only queries. The query executor enforces read-only mode: every query runs inside a read-only transaction, and statements containing write keywords (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`) are rejected before execution.
+
+- Source: `apps/web-api/src/services/data-source.ts`
+- Cross-ref: [Register a plugin data source](../building/how-to/register-plugin-data-source.md)
+
+## Desktop remote connection security {#desktop-remote-connection}
+
+*Status: Shipped.*
+
+When Mission Control connects to a remote Ethos instance, the connection token is stored in the OS keychain rather than in plaintext config. The desktop app retrieves the token at connection time via `keytar` and transmits it over TLS. CORS is restricted to the configured origin.
+
+- Source: `apps/desktop/src/remote-auth.ts`
+- Cross-ref: [Deploy Mission Control with a remote Ethos](../building/how-to/deploy-mission-control-remote.md)
+
 ## Removed empty safety stubs {#removed-empty-safety-stubs}
 
 `extensions/safety-injection/` and `extensions/safety-scanner/` were empty stub directories that shipped no code. They have been removed. The real injection defense and install scanner implementations live at `packages/safety/injection/` and `packages/safety/scanner/` respectively — the source paths listed throughout this page.
@@ -339,6 +366,9 @@ This table reflects the policy split for each control — which knobs are operat
 | Credential redaction | yes (modes) | yes (pattern set) |
 | Skill / plugin scanner | no | yes |
 | Audit substrate | yes (retention) | yes (write path) |
+| Admin panel token auth | no | yes |
+| Read-only SQL enforcement | no | yes |
+| Desktop remote connection security | no | yes |
 
 The pattern is consistent: the *engine* is global and non-bypassable; the *policy* is per-personality so different roles can take different risk postures. A `researcher` personality can be more permissive on network reach than an `engineer` personality without weakening the SSRF or cloud-metadata controls — those apply to both.
 

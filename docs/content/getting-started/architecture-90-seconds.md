@@ -4,7 +4,7 @@ description: "How Ethos works: AgentLoop streams typed events, components are in
 kind: explanation
 audience: shared
 slug: architecture-90-seconds
-updated: 2026-05-12
+updated: 2026-06-09
 ---
 
 Ethos has one core abstraction and a handful of interfaces around it. This page is the 90-second tour. Every term linked below has an entry in the [glossary](glossary.md).
@@ -50,6 +50,49 @@ Three things worth noticing in this diagram:
 1. **Streams, not batched responses.** Every step that emits output yields to the generator. The CLI prints text as it arrives; channel adapters update messages mid-flight.
 2. **Hooks fire at every boundary.** `session_start`, `before_prompt_build`, `before_tool_call`, `after_tool_call`, `agent_done` — each is a registration point for cross-cutting concerns (auth, audit, rate limiting).
 3. **Tools execute in parallel within a budget.** When the model returns multiple `tool_use` blocks in one turn, `ToolRegistry.executeParallel` runs them concurrently and splits an 80k-character result budget across them.
+
+## The surface architecture
+
+`AgentLoop` is a library. It does not know what is consuming its events. Nine surfaces ship today — all of them thin wrappers that feed user input into the loop and render whichever `AgentEvent` subset matters for their medium.
+
+```
+              ┌─────────────────────────────────────────────────────┐
+              │                   AgentLoop                         │
+              │  AsyncGenerator<AgentEvent>                         │
+              └──────────────────────┬──────────────────────────────┘
+                                     │
+              ┌──────────────────────┴──────────────────────────────┐
+              │              web-api (Hono + oRPC)                  │
+              │         HTTP + SSE for browser clients              │
+              └──────┬────────────┬────────────────────────────────┘
+                     │            │
+       ┌─────────────┴──┐  ┌─────┴──────────┐
+       │   Web (React)   │  │ Desktop (Electron)│
+       │   ethos serve   │  │ native tray,       │
+       │   --web         │  │ global shortcuts   │
+       └────────────────┘  └─────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────┐
+  │                    Direct consumers                              │
+  ├──────────┬────────────┬────────────────┬─────────────────────────┤
+  │ CLI      │ TUI (Ink)  │ VS Code ext.   │ MCP server │ ACP server│
+  │ readline │ React-Ink  │ sidebar panel  │ serves     │ Agent     │
+  │ REPL     │ terminal   │ in editor      │ Ethos as   │ Comm.     │
+  │          │ dashboard  │                │ MCP tools  │ Protocol  │
+  └──────────┴────────────┴────────────────┴────────────┴───────────┘
+
+  ┌──────────────────────────────────────────────────────────────────┐
+  │               Channel adapters (via gateway)                     │
+  ├────────────┬───────────┬──────────┬────────────┬────────────────┤
+  │ Telegram   │ Discord   │ Slack    │ WhatsApp   │ Email          │
+  └────────────┴───────────┴──────────┴────────────┴────────────────┘
+```
+
+The web and desktop apps connect through the same `web-api` layer — a Hono HTTP server with oRPC-typed endpoints that streams `AgentEvent` over SSE. This is the only API surface; there is no separate REST API. Both apps talk to the same `AgentLoop` instance the CLI uses.
+
+Direct consumers embed the loop in-process. The CLI, TUI, and VS Code extension each construct an `AgentLoop` and consume its generator directly. The MCP server and ACP server wrap the loop behind their respective protocols, letting external agents call Ethos tools or delegate tasks to Ethos personalities.
+
+Channel adapters are the thinnest layer. Each adapter translates platform-specific webhook payloads into `InboundMessage` and renders `AgentEvent` back into platform-specific API calls. The gateway handles dedup, routing, and per-bot loop isolation.
 
 ## AgentEvent — the streaming contract
 
@@ -108,7 +151,9 @@ Every interface below is in `@ethosagent/types` (zero dependencies; safe to depe
 | `PersonalityRegistry` | `FilePersonalityRegistry` | Remote registry |
 | `ToolRegistry` | `DefaultToolRegistry` | Custom filtering / routing |
 | `HookRegistry` | `DefaultHookRegistry` | Custom hook execution |
-| `PlatformAdapter` | CLI readline | Telegram, Discord, Slack |
+| `PlatformAdapter` | CLI readline | Telegram, Discord, Slack, WhatsApp, Email |
+| `PluginLoader` | `DefaultPluginLoader` | Plugins register SQLite data sources, widget templates (`widgets.yaml`), and slash commands |
+| `SkillEvolver` | `@ethosagent/skill-evolver` | Analyzes eval output and proposes skill improvements |
 
 ## What a personality changes
 
@@ -128,9 +173,12 @@ Newcomers usually go from here in this order:
 1. [Why is personality the unit?](../using/explanation/what-is-a-personality.md) — the headline thesis
 2. [Why Ethos?](why-ethos.md) — honest comparison to LangChain, CrewAI, OpenClaw, Hermes
 3. [Use Ethos: quickstart](../using/quickstart.md) — install, talk to the agent, switch personalities
+4. [Web UI guide](../using/web-ui.md) — dashboard, plugin widgets, admin panel
 
 ## See also
 
 - [What is Ethos?](what-is-ethos.md) — start here if this page assumed too much
 - [Why Ethos?](why-ethos.md) — comparison to LangChain, CrewAI, OpenClaw, Hermes
 - [AgentEvent reference](../building/reference/agent-event.md) — every variant in detail
+- [Plugin development](../building/how-to/write-a-plugin.md) — data sources, widgets, slash commands
+- [MCP server](../building/reference/mcp-server.md) — serving Ethos as an MCP server

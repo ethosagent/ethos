@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 300" width="800" height="300">
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#2C3E50" />
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="800" height="300" fill="#ECF0F1" />
+
+  <!-- Node 1: Plugin (blue, taller for sub-labels) -->
+  <rect x="12" y="105" width="100" height="68" rx="8" fill="#4A90D9" />
+  <text x="62" y="131" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="600">Plugin</text>
+  <text x="62" y="148" text-anchor="middle" fill="rgba(255,255,255,0.78)" font-family="system-ui, -apple-system, sans-serif" font-size="11">widgets.yaml</text>
+  <text x="62" y="163" text-anchor="middle" fill="rgba(255,255,255,0.78)" font-family="system-ui, -apple-system, sans-serif" font-size="11">SQLite DB</text>
+
+  <!-- Arrow 1 -->
+  <line x1="112" y1="139" x2="130" y2="139" stroke="#2C3E50" stroke-width="1.5" marker-end="url(#arrowhead)" />
+
+  <!-- Node 2: registerDataSource (dark) -->
+  <rect x="138" y="119" width="106" height="40" rx="8" fill="#2C3E50" />
+  <text x="191" y="143" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="500">registerDataSource</text>
+
+  <!-- Arrow 2 -->
+  <line x1="244" y1="139" x2="262" y2="139" stroke="#2C3E50" stroke-width="1.5" marker-end="url(#arrowhead)" />
+
+  <!-- Node 3: PluginLoader (dark) -->
+  <rect x="270" y="119" width="94" height="40" rx="8" fill="#2C3E50" />
+  <text x="317" y="143" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="500">PluginLoader</text>
+
+  <!-- Arrow 3 -->
+  <line x1="364" y1="139" x2="382" y2="139" stroke="#2C3E50" stroke-width="1.5" marker-end="url(#arrowhead)" />
+
+  <!-- Node 4: Dashboard UI (blue) -->
+  <rect x="390" y="119" width="98" height="40" rx="8" fill="#4A90D9" />
+  <text x="439" y="143" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="500">Dashboard UI</text>
+
+  <!-- Arrow 4 -->
+  <line x1="488" y1="139" x2="506" y2="139" stroke="#2C3E50" stroke-width="1.5" marker-end="url(#arrowhead)" />
+
+  <!-- Node 5: runQuery (dark) -->
+  <rect x="514" y="119" width="78" height="40" rx="8" fill="#2C3E50" />
+  <text x="553" y="143" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="500">runQuery</text>
+
+  <!-- Arrow 5 -->
+  <line x1="592" y1="139" x2="610" y2="139" stroke="#2C3E50" stroke-width="1.5" marker-end="url(#arrowhead)" />
+
+  <!-- Node 6: Read-only SQL (dark) -->
+  <rect x="618" y="119" width="92" height="40" rx="8" fill="#2C3E50" />
+  <text x="664" y="143" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="500">Read-only SQL</text>
+
+  <!-- Arrow 6 -->
+  <line x1="710" y1="139" x2="728" y2="139" stroke="#2C3E50" stroke-width="1.5" marker-end="url(#arrowhead)" />
+
+  <!-- Node 7: Results (green) -->
+  <rect x="736" y="119" width="52" height="40" rx="8" fill="#27AE60" />
+  <text x="762" y="143" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="600">Results</text>
+</svg>

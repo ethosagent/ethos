@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model, channel t
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-05-22
+updated: 2026-06-09
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. The parser ignores quotes around values.
@@ -353,6 +353,30 @@ logs.rotation.maxBytes: 20971520
 logs.rotation.maxFiles: 10
 logs.rotation.enabled: true
 ```
+
+## evolver.cron_enabled {#evolver-cron-enabled}
+
+Type: boolean · Default: `false`
+
+When `true`, registers an in-process cron job that runs `ethos evolve run --quiet` on the schedule defined by [`evolver.schedule`](#evolver-schedule). The cron job executes inside the chat process — no separate daemon.
+
+```yaml
+evolver.cron_enabled: true
+```
+
+## evolver.schedule {#evolver-schedule}
+
+Type: string (5-field cron expression) · Default: `"0 3 * * *"`
+
+Controls when the evolve cron fires. Only meaningful when [`evolver.cron_enabled`](#evolver-cron-enabled) is `true`.
+
+```yaml
+evolver.schedule: 0 3 * * *
+```
+
+Notes:
+
+- Skill evolution config that is per-personality (e.g. `skill_evolution.enabled`, `skill_evolution.min_tool_calls`) lives in the [personality config.yaml](./personality-yaml.md#skill-evolution), not here. The evolver cron keys above control the global schedule; the personality keys control which personalities participate and when.
 
 ## activeContext {#active-context}
 

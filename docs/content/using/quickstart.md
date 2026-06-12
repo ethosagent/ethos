@@ -5,7 +5,7 @@ kind: tutorial
 audience: user
 slug: quickstart
 time: "5 min"
-updated: 2026-05-22
+updated: 2026-06-09
 ---
 
 Install the CLI, paste one API key, send one message. No config files to hand-edit before the first reply.
@@ -145,6 +145,8 @@ Three things happen, all visible on screen:
 
 The conversation is captured in a [session](../getting-started/glossary.md#session) keyed to this working directory — the session key is `cli:<basename-of-cwd>`. The session lives in `~/.ethos/sessions.db` (SQLite with WAL and FTS5). Close the chat, reopen it from the same directory, and the agent remembers what you asked. Different working directories get different sessions; the agent does not see across them.
 
+To pick up where you left off explicitly, use `ethos chat --continue` (or `-c`) to resume the most recent session, or `--resume <id>` to jump to a specific conversation by ID or title. See the [CLI reference](./reference/cli.md#ethos-chat) for the full flag list.
+
 Two things to notice as you watch the reply stream:
 
 - The first chunk arrives within 1–2 seconds. Subsequent chunks should land sub-second. If the gap between chunks is longer than that, the provider is rate-limiting or the model is slow.
@@ -200,7 +202,7 @@ A working install creates exactly one directory: `~/.ethos/`. After this tutoria
 
 Two files you may want to back up: `config.yaml` (cheap to recreate, but contains the API key) and `sessions.db` (every conversation you have had). Memory files (`MEMORY.md`, `USER.md`) land here as well once a personality writes to them — the next tutorial covers that layer.
 
-For a graphical view, run `ethos serve --web` — the web dashboard lets you manage personalities, memory, cron jobs, and MCP servers from the browser. See [Use the web dashboard](./how-to/use-web-dashboard.md).
+For a graphical view, run `ethos serve` — the web dashboard lets you manage personalities, memory, skills, cron jobs, sessions, and MCP servers from the browser. See [Use the web dashboard](./how-to/use-web-dashboard.md).
 
 Everything else (`mcp.json`, `communications.json`, `keys.json`, `skills/`) is created by features you have not yet used.
 
@@ -210,6 +212,10 @@ Everything else (`mcp.json`, `communications.json`, `keys.json`, `skills/`) is c
 - `ethos chat` opens a streaming REPL bound to one provider and one personality.
 - Sessions persist across restarts, keyed by working directory.
 - `/usage` reports tokens and estimated cost for the current session.
+
+## Beyond the CLI
+
+The CLI is one of several ways to interact with Ethos. `ethos serve` starts a local [web dashboard](./how-to/use-web-dashboard.md) for managing personalities, memory, skills, cron jobs, and sessions from the browser. An [Electron desktop app](./how-to/install-desktop-app.md) wraps the same dashboard as a native application. For messaging, [channel adapters](./how-to/configure-channels.md) bring Telegram, Slack, Discord, and Email into the same agent — configure them with `ethos setup messaging` or `ethos gateway setup`. The quickstart focuses on the CLI because it is the fastest path to a working session; the other surfaces build on top of the same config and sessions.
 
 ## Next step
 

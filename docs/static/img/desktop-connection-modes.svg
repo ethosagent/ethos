@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 300" width="800" height="300">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto" fill="#2C3E50">
+      <polygon points="0 0, 10 3.5, 0 7" />
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="800" height="300" rx="0" fill="#ECF0F1" />
+
+  <!-- Desktop App box -->
+  <rect x="80" y="120" width="160" height="60" rx="8" fill="#4A90D9" />
+  <text x="160" y="155" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="600">Desktop App</text>
+
+  <!-- Top path: Desktop App -> Embedded web-api -->
+  <line x1="240" y1="140" x2="420" y2="90" stroke="#2C3E50" stroke-width="2" marker-end="url(#arrowhead)" />
+  <text x="320" y="100" text-anchor="middle" fill="#2C3E50" font-family="system-ui, -apple-system, sans-serif" font-size="14">Local</text>
+
+  <!-- Embedded web-api box -->
+  <rect x="430" y="60" width="180" height="60" rx="8" fill="#27AE60" />
+  <text x="520" y="95" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="600">Embedded web-api</text>
+
+  <!-- Bottom path: Desktop App -> HTTPS -> VPS / Server -->
+  <line x1="240" y1="160" x2="340" y2="210" stroke="#2C3E50" stroke-width="2" marker-end="url(#arrowhead)" />
+  <text x="278" y="200" text-anchor="middle" fill="#2C3E50" font-family="system-ui, -apple-system, sans-serif" font-size="14">Remote</text>
+
+  <!-- HTTPS box -->
+  <rect x="350" y="185" width="120" height="50" rx="8" fill="#2C3E50" />
+  <text x="410" y="215" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="600">HTTPS</text>
+
+  <!-- Arrow from HTTPS to VPS / Server -->
+  <line x1="470" y1="210" x2="560" y2="210" stroke="#2C3E50" stroke-width="2" marker-end="url(#arrowhead)" />
+
+  <!-- VPS / Server box -->
+  <rect x="570" y="180" width="160" height="60" rx="8" fill="#27AE60" />
+  <text x="650" y="215" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="600">VPS / Server</text>
+</svg>

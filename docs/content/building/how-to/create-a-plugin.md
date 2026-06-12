@@ -5,7 +5,7 @@ kind: how-to
 audience: developer
 slug: create-a-plugin
 time: "30 min"
-updated: 2026-05-28
+updated: 2026-06-09
 ---
 
 ## Task
@@ -133,7 +133,7 @@ const unsubs: Array<() => void> = [];
 export function activate(api: EthosPluginApi): void {
   api.registerTool(lookupTool);
   api.registerTool(createAuthedTool(api));
-  // registerMonitor, registerVoidHook, registerToolFilter, etc. — shown in later steps
+  // registerMonitor, registerVoidHook, registerToolFilter, registerSlashCommand, registerDataSource, etc. — shown in later steps
   unsubs.push(api.on('price_alert', () => {}));
 }
 
@@ -249,7 +249,37 @@ api.registerHealthCheck({
 
 `ethos doctor my-plugin` runs all registered health checks.
 
-### 14. Test
+### 14. Register slash commands (optional)
+
+Use `api.registerSlashCommand()` to register custom slash commands that appear in `/help` and in platform command menus (Telegram, Discord).
+
+```ts
+api.registerSlashCommand({
+  name: 'portfolio',
+  description: 'Show your current portfolio summary.',
+  async execute(args, ctx) {
+    return { text: 'Portfolio: ...' };
+  },
+});
+```
+
+See [Register plugin slash commands](./register-plugin-commands.md) for the full walkthrough.
+
+### 15. Register a data source (optional)
+
+Use `api.registerDataSource()` to expose a SQLite database for read-only dashboard queries.
+
+```ts
+api.registerDataSource({
+  name: 'finance-history',
+  description: 'Historical trade data.',
+  dbPath: '~/.ethos/plugins/my-plugin/trades.db',
+});
+```
+
+See [Register a plugin data source](./register-plugin-data-source.md) for the full walkthrough.
+
+### 16. Test
 
 Instantiate `PluginApiImpl` with real registries from `@ethosagent/core`, call `activate(api)`, then assert tools are registered:
 
@@ -268,13 +298,243 @@ assert(tools.get('stock_lookup'));
 
 Use `mockTool` and `createTestRuntime` from `@ethosagent/plugin-sdk/testing` for end-to-end tests.
 
-### 15. Install and activate
+### 17. Install and activate
 
 ```bash
 pnpm build && ethos plugin install . && ethos plugin credentials my-plugin
 ```
 
 Add tools to the personality's `toolset.yaml`: `stock_lookup`, `authed_search`.
+
+---
+
+## Local development workflow
+
+Custom tools for your agent, slash commands for your workflow, data sources that feed dashboards — all from one package. If the scaffold-and-publish path above feels heavyweight for experimentation, this section shows the faster loop: create a plugin directory, write code, install locally, test, iterate.
+
+### Scaffold a plugin directory
+
+Create the plugin directory and initialize it:
+
+```bash
+mkdir -p ~/.ethos/plugins/my-notes/src
+cd ~/.ethos/plugins/my-notes
+pnpm init
+pnpm add -D typescript @ethosagent/plugin-sdk @ethosagent/types
+pnpm add better-sqlite3
+pnpm add -D @types/better-sqlite3
+```
+
+Edit `package.json` to include the `ethos` block. The `pluginContractMajor` must be `2` — the loader rejects mismatches.
+
+```json
+{
+  "name": "ethos-plugin-my-notes",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "ethos": {
+    "type": "plugin",
+    "id": "my-notes",
+    "pluginContractMajor": 2
+  }
+}
+```
+
+The plugin id must be unique across all installed plugins.
+
+The resulting directory tree:
+
+```
+~/.ethos/plugins/my-notes/
+├── package.json
+├── node_modules/
+└── src/
+    └── index.ts
+```
+
+### Write the plugin entry point
+
+Create `src/index.ts`. This plugin stores project notes in a local SQLite database, exposes slash commands for quick capture, a tool so the agent can search notes during conversation, a data source for dashboard queries, and a health check.
+
+```ts title="src/index.ts"
+import Database from 'better-sqlite3';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import type { EthosPlugin, EthosPluginApi } from '@ethosagent/plugin-sdk';
+import { defineTool, ok, err } from '@ethosagent/plugin-sdk/tool-helpers';
+
+const DB_PATH = join(homedir(), '.ethos', 'plugins', 'my-notes', 'notes.db');
+
+let db: ReturnType<typeof Database> | null = null;
+
+function getDb(): ReturnType<typeof Database> {
+  if (!db) {
+    db = new Database(DB_PATH);
+    db.pragma('journal_mode = WAL');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        text TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  }
+  return db;
+}
+
+const searchNotesTool = defineTool<{ query: string; limit?: number }>({
+  name: 'search_notes',
+  description: 'Search project notes by keyword. Returns matching notes with timestamps.',
+  toolset: 'notes',
+  schema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'Search term to match against note text.' },
+      limit: { type: 'number', description: 'Max results (default 10).' },
+    },
+    required: ['query'],
+  },
+  async execute({ query, limit }) {
+    const d = getDb();
+    const cap = Math.min(limit ?? 10, 50);
+    const rows = d
+      .prepare('SELECT id, text, created_at FROM notes WHERE text LIKE ? ORDER BY created_at DESC LIMIT ?')
+      .all(`%${query}%`, cap) as Array<{ id: number; text: string; created_at: string }>;
+    if (rows.length === 0) return ok('No notes match that query.');
+    const formatted = rows
+      .map((r) => `[${r.created_at}] (id:${r.id}) ${r.text}`)
+      .join('\n');
+    return ok(formatted);
+  },
+});
+
+export function activate(api: EthosPluginApi): void {
+  api.diagnostics.info('my-notes plugin activating', { dbPath: DB_PATH });
+
+  // -- Tool: search_notes (available to the agent during conversation) --
+  api.registerTool(searchNotesTool);
+
+  // -- Slash command: /notes add <text> | /notes list --
+  api.registerSlashCommand({
+    name: 'notes',
+    description: 'Manage project notes. Usage: /notes add <text> | /notes list',
+    async execute(args) {
+      const trimmed = (args ?? '').trim();
+      const addMatch = trimmed.match(/^add\s+(.+)$/s);
+
+      if (addMatch) {
+        const text = addMatch[1].trim();
+        if (!text) return { text: 'Provide text after "add".' };
+        const d = getDb();
+        const info = d.prepare('INSERT INTO notes (text) VALUES (?)').run(text);
+        return { text: `Saved note #${info.lastInsertRowid}.` };
+      }
+
+      if (trimmed === 'list' || trimmed === '') {
+        const d = getDb();
+        const rows = d
+          .prepare('SELECT id, text, created_at FROM notes ORDER BY created_at DESC LIMIT 20')
+          .all() as Array<{ id: number; text: string; created_at: string }>;
+        if (rows.length === 0) return { text: 'No notes yet. Add one with /notes add <text>.' };
+        const formatted = rows
+          .map((r) => `[${r.created_at}] #${r.id}: ${r.text}`)
+          .join('\n');
+        return { text: formatted };
+      }
+
+      return { text: 'Usage: /notes add <text> | /notes list' };
+    },
+  });
+
+  // -- Data source: expose the SQLite DB for dashboard queries --
+  api.registerDataSource('my-notes', DB_PATH);
+
+  // -- Health check: verify the database is readable --
+  api.registerHealthCheck({
+    name: 'notes-db',
+    description: 'Verify the notes database is accessible and has the expected schema.',
+    async run() {
+      try {
+        const d = getDb();
+        const row = d.prepare("SELECT count(*) AS cnt FROM notes").get() as { cnt: number };
+        return { status: 'ok', message: `Database OK. ${row.cnt} note(s) stored.` };
+      } catch (e) {
+        return { status: 'error', message: `Database error: ${(e as Error).message}` };
+      }
+    },
+  });
+
+  api.diagnostics.info('my-notes plugin activated', { tools: ['search_notes'] });
+}
+
+export function deactivate(): void {
+  if (db) {
+    db.close();
+    db = null;
+  }
+}
+
+const plugin: EthosPlugin = { activate, deactivate };
+export default plugin;
+```
+
+### Install locally
+
+Install the plugin by pointing `ethos` at the directory:
+
+```bash
+ethos plugin install --path ~/.ethos/plugins/my-notes
+```
+
+This creates a symlink so the host loads your source directly. Changes take effect on restart — no `npm publish` needed.
+
+### Test the plugin
+
+Restart ethos to pick up the new plugin:
+
+```bash
+ethos restart
+```
+
+Verify registration:
+
+```bash
+ethos plugin list          # should show my-notes with 1 tool
+ethos doctor my-notes      # should pass the notes-db health check
+```
+
+Try the slash commands:
+
+```bash
+/notes add "Set up CI for the billing service"
+/notes add "Review the auth token rotation PR"
+/notes list
+```
+
+Start a conversation and confirm the agent can use `search_notes`:
+
+```
+You: What notes do I have about CI?
+```
+
+The agent calls `search_notes` with `{ "query": "CI" }` and returns matching notes.
+
+### Iterate
+
+Edit `src/index.ts`, restart ethos, test. Plugins reload on restart.
+
+No build step is needed during development if your `package.json` points `main` at `./src/index.ts` — `tsx` handles TypeScript directly. For production builds, add a build script using `tsup`:
+
+```json
+{
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts"
+  }
+}
+```
+
+Then update `main` to `./dist/index.js` before publishing.
 
 ## Verify
 
