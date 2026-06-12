@@ -173,12 +173,12 @@ Newcomers usually go from here in this order:
 1. [Why is personality the unit?](../using/explanation/what-is-a-personality.md) — the headline thesis
 2. [Why Ethos?](why-ethos.md) — honest comparison to LangChain, CrewAI, OpenClaw, Hermes
 3. [Use Ethos: quickstart](../using/quickstart.md) — install, talk to the agent, switch personalities
-4. [Web UI guide](../using/web-ui.md) — dashboard, plugin widgets, admin panel
+4. [Web UI guide](../using/how-to/use-web-dashboard.md) — dashboard, plugin widgets, admin panel
 
 ## See also
 
 - [What is Ethos?](what-is-ethos.md) — start here if this page assumed too much
 - [Why Ethos?](why-ethos.md) — comparison to LangChain, CrewAI, OpenClaw, Hermes
 - [AgentEvent reference](../building/reference/agent-event.md) — every variant in detail
-- [Plugin development](../building/how-to/write-a-plugin.md) — data sources, widgets, slash commands
-- [MCP server](../building/reference/mcp-server.md) — serving Ethos as an MCP server
+- [Plugin development](../building/how-to/create-a-plugin.md) — data sources, widgets, slash commands
+- [MCP server](../using/how-to/use-as-mcp-server.md) — serving Ethos as an MCP server

@@ -215,7 +215,7 @@ Everything else (`mcp.json`, `communications.json`, `keys.json`, `skills/`) is c
 
 ## Beyond the CLI
 
-The CLI is one of several ways to interact with Ethos. `ethos serve` starts a local [web dashboard](./how-to/use-web-dashboard.md) for managing personalities, memory, skills, cron jobs, and sessions from the browser. An [Electron desktop app](./how-to/install-desktop-app.md) wraps the same dashboard as a native application. For messaging, [channel adapters](./how-to/configure-channels.md) bring Telegram, Slack, Discord, and Email into the same agent — configure them with `ethos setup messaging` or `ethos gateway setup`. The quickstart focuses on the CLI because it is the fastest path to a working session; the other surfaces build on top of the same config and sessions.
+The CLI is one of several ways to interact with Ethos. `ethos serve` starts a local [web dashboard](./how-to/use-web-dashboard.md) for managing personalities, memory, skills, cron jobs, and sessions from the browser. An [Electron desktop app](../platforms/desktop.md) wraps the same dashboard as a native application. For messaging, channel adapters bring Telegram, Slack, Discord, and Email into the same agent — the [first Telegram deploy tutorial](./tutorials/first-deploy-telegram.md) walks through the setup, starting from `ethos setup messaging` or `ethos gateway setup`. The quickstart focuses on the CLI because it is the fastest path to a working session; the other surfaces build on top of the same config and sessions.
 
 ## Next step
 
