@@ -1,6 +1,6 @@
 ---
 title: "Glossary"
-description: "Every Ethos domain term in one place: personality, skill, tool, hook, mesh, session, memory, audience boundary, storage, plugin, adapter, gateway, dashboard, widget template, admin panel, zero mode, plugin command, data source, skill evolution, desktop app, remote gateway, inline context reference."
+description: "Every Ethos domain term in one place: personality, skill, tool, hook, session, memory, mesh, gateway, plugin, adapter, and the rest of the vocabulary."
 kind: reference
 audience: shared
 slug: glossary
