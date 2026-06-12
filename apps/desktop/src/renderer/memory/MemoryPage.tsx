@@ -1,5 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useServerUrl } from '../shell/ServerUrl';
 import { useAppState } from '../state/AppContext';
 import { MemoryPanel } from './MemoryPanel';
 import { SessionMemoryContext } from './SessionMemoryContext';
@@ -29,12 +30,10 @@ function formatUserLabel(u: UserOption): string {
 
 export function MemoryPage() {
   const { state } = useAppState();
-  const { port, desktopUserId } = state;
+  const { desktopUserId } = state;
 
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [personalities, setPersonalities] = useState<PersonalityOption[]>([]);
   const [activePersonalityId, setActivePersonalityId] = useState<string | null>(null);

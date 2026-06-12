@@ -1,6 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useMemo, useState } from 'react';
-import { useAppState } from '../../state/AppContext';
+import { useServerUrl } from '../../shell/ServerUrl';
 
 interface RouteResult {
   ok: boolean;
@@ -9,13 +9,8 @@ interface RouteResult {
 }
 
 export function RouteTestSection() {
-  const { state } = useAppState();
-  const { port } = state;
-
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [capability, setCapability] = useState('');
   const [result, setResult] = useState<RouteResult | null>(null);

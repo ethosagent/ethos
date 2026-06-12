@@ -1,6 +1,7 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import type { McpPolicy, Personality } from '@ethosagent/web-contracts';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../shell/ServerUrl';
 import { CharacterSheetTab } from './tabs/CharacterSheetTab';
 import { IdentityTab } from './tabs/IdentityTab';
 import { MCPTab } from './tabs/MCPTab';
@@ -46,7 +47,6 @@ interface EditorDraft {
 interface PersonalityEditorProps {
   personalityId: string | null;
   isNew: boolean;
-  port: number;
   onSaved: (savedId?: string) => void;
   onDeleted: () => void;
 }
@@ -104,14 +104,11 @@ function personalityToDraft(
 export function PersonalityEditor({
   personalityId,
   isNew,
-  port,
   onSaved,
   onDeleted,
 }: PersonalityEditorProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [activeTab, setActiveTab] = useState<TabId>('identity');
   const [personality, setPersonality] = useState<Personality | null>(null);
@@ -395,36 +392,25 @@ export function PersonalityEditor({
               if (changes.tags !== undefined) mapped.tags = changes.tags;
               updateDraft(mapped);
             }}
-            port={port}
           />
         )}
         {activeTab === 'model' && (
           <ModelTab
             personality={{ model: draft.model }}
             onChange={(model) => updateDraft({ model })}
-            port={port}
           />
         )}
         {activeTab === 'tools' && (
-          <ToolsTab
-            toolset={draft.toolset}
-            onChange={(toolset) => updateDraft({ toolset })}
-            port={port}
-          />
+          <ToolsTab toolset={draft.toolset} onChange={(toolset) => updateDraft({ toolset })} />
         )}
         {activeTab === 'plugins' && (
-          <PluginsTab
-            plugins={draft.plugins}
-            onChange={(next) => updateDraft({ plugins: next })}
-            port={port}
-          />
+          <PluginsTab plugins={draft.plugins} onChange={(next) => updateDraft({ plugins: next })} />
         )}
         {activeTab === 'mcp' && (
           <MCPTab
             mcpServers={draft.mcpServers}
             mcpTools={draft.mcpTools}
             onChange={(mcpServers, mcpTools) => updateDraft({ mcpServers, mcpTools })}
-            port={port}
             personalityId={draft.id}
           />
         )}
@@ -445,11 +431,9 @@ export function PersonalityEditor({
             }}
           />
         )}
-        {activeTab === 'skills' && (
-          <SkillsTab personalityId={isNew ? null : personalityId} port={port} />
-        )}
+        {activeTab === 'skills' && <SkillsTab personalityId={isNew ? null : personalityId} />}
         {activeTab === 'sheet' && !isNew && personalityId && (
-          <CharacterSheetTab personalityId={personalityId} port={port} />
+          <CharacterSheetTab personalityId={personalityId} />
         )}
       </div>
 

@@ -135,14 +135,16 @@ export class SkillsInjector implements ContextInjector {
       );
     }
 
+    // null = tool availability unknown (no getter wired) — checkRequirements
+    // skips the tools gate instead of treating every tool as missing.
     const toolNames = this.toolNamesForPersonality
       ? this.toolNamesForPersonality(personality)
-      : new Set<string>();
+      : null;
 
     for (const [, skill] of globalPool) {
       if (perPersonalityDirs.some((d) => skill.filePath.startsWith(d))) continue;
 
-      const result = filterSkill(skill, personality, toolNames, (msg) =>
+      const result = filterSkill(skill, personality, toolNames ?? new Set(), (msg) =>
         process.stdout.write(`${msg}\n`),
       );
       if (!result.include) {

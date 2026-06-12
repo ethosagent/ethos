@@ -13,7 +13,6 @@ interface ModelTabProps {
     model: string | ModelTierConfig | null;
   };
   onChange: (model: string | ModelTierConfig | null) => void;
-  port: number;
 }
 
 const MODEL_OPTIONS = ['claude-haiku-3-5', 'claude-sonnet-4', 'claude-opus-4'];

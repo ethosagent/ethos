@@ -118,9 +118,11 @@ function pushNotification(prev: DrawerState, n: DrawerNotification): DrawerState
   };
 }
 
-export function useDrawerStream(): DrawerState {
+// Takes baseUrl as a parameter (rather than useServerUrl()) because AppShell
+// calls this hook above the ServerUrlContext provider it renders.
+export function useDrawerStream(baseUrl: string): DrawerState {
   const { state } = useAppState();
-  const { port, activeSessionId } = state;
+  const { activeSessionId } = state;
 
   const [drawerState, setDrawerState] = useState<DrawerState>(() => emptyState(activeSessionId));
 
@@ -141,8 +143,6 @@ export function useDrawerStream(): DrawerState {
       }
       return;
     }
-
-    const baseUrl = `http://localhost:${port}`;
 
     function connect() {
       const sinceSeq = subRef.current?.lastSeq;
@@ -187,7 +187,7 @@ export function useDrawerStream(): DrawerState {
         subRef.current = null;
       }
     };
-  }, [activeSessionId, port]);
+  }, [activeSessionId, baseUrl]);
 
   return drawerState;
 }

@@ -215,9 +215,16 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const completionsRepo = new CompletionsRepository(opts.sessionStore);
   const configRepo = new ConfigRepository({ dataDir: opts.dataDir });
   const allowlistRepo = new AllowlistRepository({ dataDir: opts.dataDir });
+  // Gap 11 — lazy getter so skills' `requires.tools` gates see the live
+  // registry (including MCP/plugin tools registered after boot). Omitted
+  // when no registry is wired: the tools gate is skipped, not failed.
+  const skillsToolRegistry = opts.toolRegistry;
   const skillsLibrary = new SkillsLibrary({
     dataDir: opts.dataDir,
     ...(opts.catalogDir ? { catalogDir: opts.catalogDir } : {}),
+    ...(skillsToolRegistry
+      ? { availableTools: () => new Set(skillsToolRegistry.getAvailable().map((t) => t.name)) }
+      : {}),
   });
   const evolverRepo = new EvolverRepository({ dataDir: opts.dataDir });
   // The mesh registry lives at `<dataDir>/mesh-registry.json`. ACP servers
@@ -247,7 +254,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     secrets,
     mcpJsonStore: sharedMcpJsonStore,
   });
-  const configService = new ConfigService({ config: configRepo });
+  const configService = new ConfigService({ config: configRepo, secrets });
   const onboardingService = new OnboardingService({
     config: configRepo,
     personalities: opts.personalities,
@@ -338,13 +345,35 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     chatService.forget(sessionId);
   };
 
-  // Register web notification adapter — delivers plugin monitor notifications
-  // to whichever web session is active. The buffer's onReap already handles
-  // cleanup (via chatService.forget), so we piggyback deregistration there.
-  if (opts.notificationRouter) {
+  // Register web notification adapter — delivers process/plugin notifications
+  // (router keyed by sessionKey) to the session's SSE stream as a
+  // `notification` event. The `session_start` hook is the one place both
+  // `sessionId` (what the SSE buffer is keyed by) and `sessionKey` (what the
+  // router routes by) are known. Deregistration piggybacks on the buffer's
+  // onReap (which already drives chatService.forget).
+  if (opts.notificationRouter && opts.agentLoop) {
+    const router = opts.notificationRouter;
+    const sessionKeysById = new Map<string, string>();
+    agentLoop.hooks.registerVoid('session_start', async (payload) => {
+      sessionKeysById.set(payload.sessionId, payload.sessionKey);
+      router.register(payload.sessionKey, {
+        send: async (message: string) => {
+          chatService.broadcast(payload.sessionId, { type: 'notification', message });
+        },
+        injectUserMessage: async (message: string) => {
+          // Input injection isn't supported on the web surface — surface the
+          // message as a notification instead of dropping it.
+          chatService.broadcast(payload.sessionId, { type: 'notification', message });
+        },
+      });
+    });
     const originalOnReap = buffer.onReap;
     buffer.onReap = (sessionId: string) => {
-      opts.notificationRouter?.deregister(sessionId);
+      const sessionKey = sessionKeysById.get(sessionId);
+      if (sessionKey !== undefined) {
+        router.deregister(sessionKey);
+        sessionKeysById.delete(sessionId);
+      }
       originalOnReap?.(sessionId);
     };
   }

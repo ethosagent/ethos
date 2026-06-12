@@ -1,5 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { ToolToggleRow } from '../components/ToolToggleRow';
 
 interface ToolGroup {
@@ -10,14 +11,11 @@ interface ToolGroup {
 interface ToolsTabProps {
   toolset: string[];
   onChange: (toolset: string[]) => void;
-  port: number;
 }
 
-export function ToolsTab({ toolset, onChange, port }: ToolsTabProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+export function ToolsTab({ toolset, onChange }: ToolsTabProps) {
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [groups, setGroups] = useState<ToolGroup[]>([]);
   const [loading, setLoading] = useState(true);

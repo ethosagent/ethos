@@ -1,6 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { basename, extname, join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { clearLine, createInterface } from 'node:readline';
 import { BackgroundRunner, InMemorySteerSink } from '@ethosagent/agent-bridge';
 import { type AgentEvent, type AgentLoop, stripAnsiEscapes } from '@ethosagent/core';
@@ -9,6 +8,7 @@ import type { SplashInventory } from '@ethosagent/tui';
 import type { Attachment, NotificationAdapter, SteerSink, Storage } from '@ethosagent/types';
 import type { EthosConfig, QuickCommandConfig } from '../config';
 import { ethosDir } from '../config';
+import { resolveAtRefs } from '../lib/at-refs';
 import { makeCompleter } from '../lib/autocomplete';
 import { formatClarifyPrompt, parseClarifyAnswer } from '../lib/clarify-prompt';
 import { grantQuickCommandConsent, hasQuickCommandConsent } from '../lib/onboarding';
@@ -20,47 +20,15 @@ import { buildBaseRegistry, type SlashCommandRegistry } from '../lib/slash-comma
 import { SpinnerState } from '../lib/spinner';
 import { renderStatusBar, type Threshold } from '../lib/status-bar';
 import { formatToolFeedLine } from '../lib/tool-feed';
+import {
+  formatSkillProposedNotice,
+  makeTuiNotificationSubscriber,
+  makeTuiSlashCommands,
+} from '../lib/tui-capabilities';
 import { isVerbosity, nextVerbosity, projectEvent, type Verbosity } from '../lib/verbosity';
 import { resolveActiveLoop, startEvolverCron, startNightlyPrune } from '../wiring';
 import { runPairingCommand } from './pairing-commands';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
-
-async function resolveAtRefs(text: string, cwd: string): Promise<string> {
-  const parts: string[] = [];
-  let lastIndex = 0;
-  const pattern = /@(https?:\/\/[\w./:#?=&%-]+|[\w./~-]+)/g;
-  let match: RegExpExecArray | null;
-
-  match = pattern.exec(text);
-  while (match !== null) {
-    parts.push(text.slice(lastIndex, match.index));
-    const ref = match[1];
-
-    if (ref && (ref.startsWith('http://') || ref.startsWith('https://'))) {
-      try {
-        const body = await fetch(ref).then((r) => r.text());
-        parts.push(`\`\`\`\n${body.slice(0, 8000)}\n\`\`\`\n(source: ${ref})`);
-      } catch {
-        parts.push(match[0]);
-      }
-    } else if (ref) {
-      const resolved = resolve(cwd, ref);
-      if (existsSync(resolved)) {
-        const content = readFileSync(resolved, 'utf8');
-        const ext = extname(ref).slice(1);
-        parts.push(`\`\`\`${ext}\n// ${ref}\n${content.slice(0, 8000)}\n\`\`\``);
-      } else {
-        parts.push(match[0]);
-      }
-    } else {
-      parts.push(match[0]);
-    }
-    lastIndex = match.index + match[0].length;
-    match = pattern.exec(text);
-  }
-  parts.push(text.slice(lastIndex));
-  return parts.join('');
-}
 
 async function buildInventory(loop: AgentLoop, _config: EthosConfig): Promise<SplashInventory> {
   const tools = loop.getAvailableTools();
@@ -213,11 +181,13 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       );
     });
   }
-  const { loop, personalityId, displayName, setOnSkillProposed, notificationRouter, pluginLoader } =
-    await resolveActiveLoop(config);
-
   // FW-14 — build the shared slash command registry. FW-15 and FW-16 extend it.
+  // Built BEFORE the loop so plugin loading (inside resolveActiveLoop) can
+  // register plugin slash commands into it via registerSlashCommand.
   const registry = buildBaseRegistry();
+
+  const { loop, personalityId, displayName, setOnSkillProposed, notificationRouter, pluginLoader } =
+    await resolveActiveLoop(config, { slashRegistry: registry });
 
   // FW-15 — scan global and per-personality skill directories into the registry.
   const storage: Storage = new FsStorage();
@@ -267,6 +237,21 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
         const { loop: newLoop } = await resolveActiveLoop({ ...config, model: modelId });
         return newLoop;
       },
+      preprocessInput: (text) => resolveAtRefs(text, process.cwd()),
+      slashCommands: makeTuiSlashCommands(pluginLoader),
+      onNotification: makeTuiNotificationSubscriber(notificationRouter),
+      ...(setOnSkillProposed
+        ? {
+            onSkillProposed: (cb: (text: string) => void) => {
+              setOnSkillProposed((skillId, _personalityId) => {
+                cb(formatSkillProposedNotice(skillId));
+              });
+              return () => {
+                setOnSkillProposed(() => {});
+              };
+            },
+          }
+        : {}),
     });
     return;
   }
@@ -282,10 +267,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   // Wire skill-evolution notifications into the interactive readline session.
   setOnSkillProposed?.((skillId, _personalityId) => {
     clearLine(process.stdout, 0);
-    process.stdout.write(
-      `\n${c.dim}[skill-evolver] Proposed skill: ${skillId} — ` +
-        `run \`ethos evolve apply ${skillId}.md\` to activate${c.reset}\n> `,
-    );
+    process.stdout.write(`\n${c.dim}${formatSkillProposedNotice(skillId)}${c.reset}\n> `);
   });
 
   const bgRunner = new BackgroundRunner({ maxConcurrent: config.backgroundMaxConcurrent ?? 4 });
@@ -932,6 +914,48 @@ interface SlashHandlerContext {
   pluginLoader?: import('@ethosagent/plugin-loader').PluginLoader;
 }
 
+/**
+ * Build the /help body. Static built-in commands first, then any
+ * plugin-registered slash commands with a `[plugin]` suffix. Exported for
+ * unit testing the merge.
+ */
+export function buildChatHelpText(
+  pluginCommands: { name: string; description: string }[] = [],
+): string {
+  let text =
+    `  /title <name>         set a name for this session\n` +
+    `  /title                show current session title\n` +
+    `  /new                  start a fresh session\n` +
+    `  /personality          show current personality\n` +
+    `  /personality list     list all personalities\n` +
+    `  /personality <id>     switch personality\n` +
+    `  /model <name>         switch model for this session\n` +
+    `  /tier <name>          override tier for next turn (trivial|default|deep)\n` +
+    `  /memory               show ~/.ethos/MEMORY.md and USER.md\n` +
+    `  /usage                show token and cost stats\n` +
+    `  /budget               show session spend against cap\n` +
+    `  /budget reset         reset the session budget counter\n` +
+    `  /verbose              cycle quiet → default → verbose → debug\n` +
+    `  /verbose <level>      set level directly\n` +
+    `  /background <prompt>  spawn a background agent task\n` +
+    `  /background list      show all background tasks\n` +
+    `  /background cancel <id>  abort a running background task\n` +
+    `  /verbose status       show current level\n` +
+    `  /busy <mode|status>   busy-input mode (interrupt/queue/steer)\n` +
+    `  /attach <path>        attach a file to the next message\n` +
+    `  /undo [N]             undo last N turns (default 1)\n` +
+    `  /dry-run on|off      toggle dry-run mode (plan tools without executing)\n` +
+    `  /steer <text>         inject [USER STEER] mid-turn\n` +
+    `  /allow <code>         approve a pending channel sender by pairing code\n` +
+    `  /deny <platform> <id> revoke an approved channel sender\n` +
+    `  /communications       list approved senders + pending pairing codes\n` +
+    `  /exit                 quit\n`;
+  for (const cmd of pluginCommands) {
+    text += `  /${cmd.name.padEnd(20)} ${cmd.description} [plugin]\n`;
+  }
+  return text;
+}
+
 async function handleSlashCommand(
   raw: string,
   state: ChatState,
@@ -947,37 +971,7 @@ async function handleSlashCommand(
 
   switch (name) {
     case 'help':
-      out(
-        `\n${c.dim}` +
-          `  /title <name>         set a name for this session\n` +
-          `  /title                show current session title\n` +
-          `  /new                  start a fresh session\n` +
-          `  /personality          show current personality\n` +
-          `  /personality list     list all personalities\n` +
-          `  /personality <id>     switch personality\n` +
-          `  /model <name>         switch model for this session\n` +
-          `  /tier <name>          override tier for next turn (trivial|default|deep)\n` +
-          `  /memory               show ~/.ethos/MEMORY.md and USER.md\n` +
-          `  /usage                show token and cost stats\n` +
-          `  /budget               show session spend against cap\n` +
-          `  /budget reset         reset the session budget counter\n` +
-          `  /verbose              cycle quiet → default → verbose → debug\n` +
-          `  /verbose <level>      set level directly\n` +
-          `  /background <prompt>  spawn a background agent task\n` +
-          `  /background list      show all background tasks\n` +
-          `  /background cancel <id>  abort a running background task\n` +
-          `  /verbose status       show current level\n` +
-          `  /busy <mode|status>   busy-input mode (interrupt/queue/steer)\n` +
-          `  /attach <path>        attach a file to the next message\n` +
-          `  /undo [N]             undo last N turns (default 1)\n` +
-          `  /dry-run on|off      toggle dry-run mode (plan tools without executing)\n` +
-          `  /steer <text>         inject [USER STEER] mid-turn\n` +
-          `  /allow <code>         approve a pending channel sender by pairing code\n` +
-          `  /deny <platform> <id> revoke an approved channel sender\n` +
-          `  /communications       list approved senders + pending pairing codes\n` +
-          `  /exit                 quit\n` +
-          `${c.reset}\n`,
-      );
+      out(`\n${c.dim}${buildChatHelpText(ctx.pluginLoader?.getAllSlashCommands())}${c.reset}\n`);
       break;
 
     case 'new':

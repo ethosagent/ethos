@@ -82,6 +82,7 @@ export function spawnDetached(
   cwd: string,
   env: Record<string, string> | undefined,
   dataDir: string,
+  onExit?: (result: { exitCode: number | null; signal: NodeJS.Signals | null }) => void,
 ): SpawnResult {
   const dir = join(dataDir, 'processes', id);
   mkdirSync(dir, { recursive: true });
@@ -126,6 +127,10 @@ export function spawnDetached(
     // process_list's liveness check re-marks it `orphan` on the next touch.
     // No console.* in library code, and there is no observability channel here.
     updateEntryIf(dataDir, id, (e) => e.status === 'running', patch).catch(() => {});
+    // Gap 10 — surface the real exit to the caller (process_complete hook).
+    // Fired after the registry patch is kicked off; the callback receives the
+    // exit data directly so it never depends on the async registry write.
+    onExit?.({ exitCode: code, signal });
   });
 
   child.unref();

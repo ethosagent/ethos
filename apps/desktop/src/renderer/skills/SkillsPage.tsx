@@ -1,6 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useEffect, useMemo, useState } from 'react';
-import { useAppState } from '../state/AppContext';
+import { useServerUrl } from '../shell/ServerUrl';
 import { EvolverQueueTab } from './tabs/EvolverQueueTab';
 import { SkillsLibraryTab } from './tabs/SkillsLibraryTab';
 
@@ -12,13 +12,8 @@ const tabs: { id: TabId; label: string }[] = [
 ];
 
 export function SkillsPage() {
-  const { state } = useAppState();
-  const { port } = state;
-
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [activeTab, setActiveTab] = useState<TabId>('library');
   const [pendingCount, setPendingCount] = useState(0);
@@ -101,10 +96,8 @@ export function SkillsPage() {
 
       {/* Tab content */}
       <div style={{ flex: 1, overflow: 'hidden' }}>
-        {activeTab === 'library' && <SkillsLibraryTab port={port} />}
-        {activeTab === 'evolver' && (
-          <EvolverQueueTab port={port} onPendingCountChange={setPendingCount} />
-        )}
+        {activeTab === 'library' && <SkillsLibraryTab />}
+        {activeTab === 'evolver' && <EvolverQueueTab onPendingCountChange={setPendingCount} />}
       </div>
     </div>
   );

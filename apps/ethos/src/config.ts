@@ -458,6 +458,12 @@ export interface EthosConfig {
   /** Whether to auto-install plugins from plugins.lock on personality load.
    *  Config key: plugins.auto_install */
   pluginsAutoInstall?: boolean;
+  /**
+   * Web admin panel gate. The `/admin` page and the `admin.*` RPC namespace
+   * are available only when `admin.enabled: true` is set explicitly —
+   * default false. Config key: admin.enabled
+   */
+  admin?: { enabled?: boolean };
 }
 
 export function ethosDir(): string {
@@ -678,6 +684,7 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   if (config.webBaseUrl) lines.push(`webBaseUrl: ${config.webBaseUrl}`);
   if (config.pluginsAutoInstall !== undefined)
     lines.push(`plugins.auto_install: ${config.pluginsAutoInstall}`);
+  if (config.admin?.enabled !== undefined) lines.push(`admin.enabled: ${config.admin.enabled}`);
   await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`, { mode: 0o600 });
 }
 
@@ -953,6 +960,12 @@ function parseConfigYaml(src: string): EthosConfig {
       kv['plugins.auto_install'] = pai[1].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // admin.enabled: <value>
+    const adm = line.match(/^admin\.enabled:\s*(.+)$/);
+    if (adm) {
+      kv['admin.enabled'] = adm[1].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     const m = line.match(/^(\w+):\s*(.+)$/);
     if (m) kv[m[1].trim()] = m[2].trim().replace(/^["']|["']$/g, '');
   }
@@ -1130,6 +1143,8 @@ function parseConfigYaml(src: string): EthosConfig {
     webBaseUrl: process.env.ETHOS_PUBLIC_URL ?? kv.webBaseUrl ?? undefined,
     storage: kv['storage.encryption'] === 'true' ? { encryption: true } : undefined,
     pluginsAutoInstall,
+    admin:
+      kv['admin.enabled'] !== undefined ? { enabled: kv['admin.enabled'] === 'true' } : undefined,
   };
   // Stash parse errors so the strict loader can surface them at boot.
   // readRawConfig (used by CLI commands that don't gateway-boot) ignores them

@@ -1,6 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useMemo, useState } from 'react';
-import { useAppState } from '../../state/AppContext';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { PersonalityBindingRow } from '../../ui/PersonalityBindingRow';
 import { Toggle } from '../../ui/Toggle';
 import { AccessControlSection } from '../components/AccessControlSection';
@@ -39,8 +39,7 @@ const labelStyle: React.CSSProperties = {
 };
 
 export function EmailDrawer({ onBotChange }: EmailDrawerProps) {
-  const { state } = useAppState();
-  const baseUrl = `http://localhost:${state.port}`;
+  const baseUrl = useServerUrl();
   const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [activeTab, setActiveTab] = useState<Tab>('receive');

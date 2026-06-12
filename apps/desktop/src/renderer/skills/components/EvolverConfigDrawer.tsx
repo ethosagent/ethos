@@ -1,15 +1,15 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { DrawerShell } from '../../ui/DrawerShell';
 import { SectionLabel } from '../../ui/SectionLabel';
 
 interface EvolverConfigDrawerProps {
   open: boolean;
-  port: number;
   onClose: () => void;
 }
 
-export function EvolverConfigDrawer({ open, port, onClose }: EvolverConfigDrawerProps) {
+export function EvolverConfigDrawer({ open, onClose }: EvolverConfigDrawerProps) {
   const [rewriteThreshold, setRewriteThreshold] = useState(0.5);
   const [newSkillPatternThreshold, setNewSkillPatternThreshold] = useState(0.5);
   const [minRunsBeforeEvolve, setMinRunsBeforeEvolve] = useState(3);
@@ -18,10 +18,8 @@ export function EvolverConfigDrawer({ open, port, onClose }: EvolverConfigDrawer
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   useEffect(() => {
     if (!open) return;

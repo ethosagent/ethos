@@ -1,5 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { SectionLabel } from '../../ui/SectionLabel';
 import { EvolverConfigDrawer } from '../components/EvolverConfigDrawer';
 import { EvolverHistoryRow } from '../components/EvolverHistoryRow';
@@ -22,19 +23,16 @@ interface HistoryRun {
 }
 
 interface EvolverQueueTabProps {
-  port: number;
   onPendingCountChange: (count: number) => void;
 }
 
-export function EvolverQueueTab({ port, onPendingCountChange }: EvolverQueueTabProps) {
+export function EvolverQueueTab({ onPendingCountChange }: EvolverQueueTabProps) {
   const [pending, setPending] = useState<PendingCandidate[]>([]);
   const [history, setHistory] = useState<HistoryRun[]>([]);
   const [configDrawerOpen, setConfigDrawerOpen] = useState(false);
 
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -137,11 +135,7 @@ export function EvolverQueueTab({ port, onPendingCountChange }: EvolverQueueTabP
         </button>
       </div>
 
-      <EvolverConfigDrawer
-        open={configDrawerOpen}
-        port={port}
-        onClose={() => setConfigDrawerOpen(false)}
-      />
+      <EvolverConfigDrawer open={configDrawerOpen} onClose={() => setConfigDrawerOpen(false)} />
     </div>
   );
 }

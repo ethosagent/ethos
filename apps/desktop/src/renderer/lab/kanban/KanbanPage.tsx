@@ -1,18 +1,13 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAppState } from '../../state/AppContext';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { KanbanBoard } from './KanbanBoard';
 import type { KanbanTask } from './KanbanTaskTile';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
 
 export function KanbanPage() {
-  const { state } = useAppState();
-  const { port } = state;
-
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [teams, setTeams] = useState<Array<{ name: string; description: string }>>([]);
   const [selectedTeam, setSelectedTeam] = useState<string>('');

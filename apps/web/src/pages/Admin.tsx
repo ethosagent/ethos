@@ -64,6 +64,29 @@ export function Admin() {
     },
   });
 
+  const testSendMut = useMutation({
+    mutationFn: (channel: string) => rpc.admin.testSend({ channel }),
+    onSuccess: (data) => {
+      if (data.ok) {
+        notification.success({
+          message: 'Test message sent',
+          placement: 'topRight',
+        });
+      } else {
+        notification.warning({
+          message: 'Test send failed',
+          description: data.error,
+          placement: 'topRight',
+        });
+      }
+    },
+    onError: (err) =>
+      notification.error({
+        message: 'Test send failed',
+        description: (err as Error).message,
+      }),
+  });
+
   const removeMcpMut = useMutation({
     mutationFn: (name: string) => rpc.admin.removeMcpServer({ name }),
     onSuccess: () => {
@@ -152,6 +175,19 @@ export function Admin() {
         ) : (
           <Typography.Text type="secondary">-</Typography.Text>
         ),
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_: unknown, record: { id: string }) => (
+        <Button
+          size="small"
+          onClick={() => testSendMut.mutate(record.id)}
+          loading={testSendMut.isPending}
+        >
+          Test send
+        </Button>
+      ),
     },
   ];
 

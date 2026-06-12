@@ -1,16 +1,14 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 
 interface CharacterSheetTabProps {
   personalityId: string;
-  port: number;
 }
 
-export function CharacterSheetTab({ personalityId, port }: CharacterSheetTabProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+export function CharacterSheetTab({ personalityId }: CharacterSheetTabProps) {
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [markdown, setMarkdown] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

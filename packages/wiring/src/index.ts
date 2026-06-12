@@ -164,6 +164,17 @@ export interface WiringConfig {
 
 export type WiringProfile = 'cli' | 'tui' | 'web' | 'acp';
 
+/**
+ * Minimal structural shape of the app-layer slash command registry. Wiring
+ * must not import the apps' concrete class (layering: apps depend on wiring,
+ * never the reverse), so this declares exactly what plugin loading needs to
+ * surface plugin-registered commands in autocomplete + /help.
+ */
+export interface WiringSlashRegistry {
+  register(cmd: { name: string; description: string; usage: string; prefix?: string }): void;
+  get(name: string): { description?: string; usage?: string } | undefined;
+}
+
 export interface CreateAgentLoopOptions {
   /** Root data directory (typically `~/.ethos`). Sessions DB, memory, and
    *  user personalities all resolve under this path. */
@@ -209,6 +220,13 @@ export interface CreateAgentLoopOptions {
    * `ethos serve` pass their scheduler instance through.
    */
   cronScheduler?: CronScheduler;
+  /**
+   * App-layer slash command registry. When provided, plugins that call
+   * `registerSlashCommand` during loading land their commands here so the
+   * CLI's autocomplete and /help can surface them. Omit for surfaces with
+   * no slash command UI (web, ACP).
+   */
+  slashRegistry?: WiringSlashRegistry;
 }
 
 // ---------------------------------------------------------------------------
@@ -591,6 +609,7 @@ export async function createAgentLoop(
       config.auxiliaryCompression?.model
         ? buildCompressionSummarizer(infra.llmProviders, config, opts.observability, log)
         : undefined,
+    ...(opts.slashRegistry ? { slashRegistry: opts.slashRegistry } : {}),
   });
 
   // -------------------------------------------------------------------------

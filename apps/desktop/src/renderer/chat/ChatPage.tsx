@@ -2,6 +2,7 @@ import { createEthosClient } from '@ethosagent/sdk';
 import { TurnStatusBar } from '@ethosagent/ui-components';
 import type { SseEvent, StoredMessage } from '@ethosagent/web-contracts';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useServerUrl } from '../shell/ServerUrl';
 import { useAppState } from '../state/AppContext';
 import { ChatThread } from './ChatThread';
 import { Composer } from './Composer';
@@ -19,9 +20,9 @@ interface ChatPageProps {
 
 export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
   const { state, setActiveSessionId, setActivePersonalityId, setLastTitledSession } = useAppState();
-  const { port, activeSessionId, activePersonalityId, desktopUserId, lastTitledSession } = state;
+  const { activeSessionId, activePersonalityId, desktopUserId, lastTitledSession } = state;
 
-  const baseUrl = `http://localhost:${port}`;
+  const baseUrl = useServerUrl();
 
   const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
@@ -520,7 +521,6 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
     >
       <PersonalityBar
         personalityId={activePersonalityId}
-        port={port}
         onSwitchPersonality={handleSwitchPersonality}
         sessionTitle={sessionTitle}
         onTitleChange={handleTitleChange}

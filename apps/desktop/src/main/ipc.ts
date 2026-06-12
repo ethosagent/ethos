@@ -9,6 +9,7 @@ import { restartBackend, startBackend } from './backend';
 import { getKeychainValue, setKeychainValue } from './keychain';
 import { getLoginItem, setLoginItem } from './login-item';
 import { testDiscord, testImap, testSmtp, testTelegram } from './platform-validator';
+import { syncRemoteAuth } from './remote-auth';
 import { store } from './store';
 
 const PROVIDER_MODELS: Record<string, string[]> = {
@@ -934,6 +935,7 @@ export function registerIpcHandlers(): void {
       if (req.token) {
         await setKeychainValue('remote-token', req.token);
       }
+      await syncRemoteAuth();
       return { ok: true };
     },
   );
@@ -943,7 +945,8 @@ export function registerIpcHandlers(): void {
     async (_event, req: { url: string; token?: string }) => {
       const url = req.url.replace(/\/$/, '');
       const headers: Record<string, string> = {};
-      if (req.token) headers.Authorization = `Bearer ${req.token}`;
+      const token = req.token ?? (await getKeychainValue('remote-token'));
+      if (token) headers.Authorization = `Bearer ${token}`;
       const start = Date.now();
       try {
         const res = await fetch(`${url}/healthz`, {

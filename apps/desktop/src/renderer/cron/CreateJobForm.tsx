@@ -1,24 +1,18 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useMemo, useState } from 'react';
+import { useServerUrl } from '../shell/ServerUrl';
 import { DeliveryOptions } from './components/DeliveryOptions';
 import { PersonalityPicker } from './components/PersonalityPicker';
 import { ScheduleInput } from './components/ScheduleInput';
 
 interface CreateJobFormProps {
-  port: number;
   open: boolean;
   onToggle: () => void;
   onCreated: () => void;
   platformStatus: { telegram: boolean; slack: boolean; discord: boolean };
 }
 
-export function CreateJobForm({
-  port,
-  open,
-  onToggle,
-  onCreated,
-  platformStatus,
-}: CreateJobFormProps) {
+export function CreateJobForm({ open, onToggle, onCreated, platformStatus }: CreateJobFormProps) {
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [personalityId, setPersonalityId] = useState<string | null>(null);
@@ -26,10 +20,8 @@ export function CreateJobForm({
   const [cronExpression, setCronExpression] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const canSubmit = name.trim() && cronExpression && personalityId && !submitting;
 
@@ -128,7 +120,7 @@ export function CreateJobForm({
             }}
           />
 
-          <PersonalityPicker port={port} value={personalityId} onChange={setPersonalityId} />
+          <PersonalityPicker value={personalityId} onChange={setPersonalityId} />
 
           <ScheduleInput
             value={scheduleText}

@@ -1,5 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useServerUrl } from '../shell/ServerUrl';
 import { Chip } from '../ui/Chip';
 import { DrawerShell } from '../ui/DrawerShell';
 import { SectionLabel } from '../ui/SectionLabel';
@@ -15,7 +16,6 @@ interface ServerDetailDrawerProps {
   onClose: () => void;
   onDeleted: () => void;
   onRenamed: (newName: string) => void;
-  port: number;
 }
 
 interface ToolInfo {
@@ -67,12 +67,9 @@ export function ServerDetailDrawer({
   onClose,
   onDeleted,
   onRenamed,
-  port,
 }: ServerDetailDrawerProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState(serverName);
@@ -356,7 +353,7 @@ export function ServerDetailDrawer({
               {authType}
             </div>
 
-            {isBearer && <BearerTokenUpdateFlow serverName={serverName} port={port} />}
+            {isBearer && <BearerTokenUpdateFlow serverName={serverName} />}
 
             {isOAuth && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -421,7 +418,7 @@ export function ServerDetailDrawer({
         >
           <SectionLabel>ATTACHED PERSONALITIES</SectionLabel>
         </div>
-        {personalitiesOpen && <PerPersonalityToggles serverName={serverName} port={port} />}
+        {personalitiesOpen && <PerPersonalityToggles serverName={serverName} />}
       </div>
     </DrawerShell>
   );

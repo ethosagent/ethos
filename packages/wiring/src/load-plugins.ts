@@ -21,7 +21,7 @@ import type {
   ToolRegistry,
 } from '@ethosagent/types';
 import type { InfrastructureResult } from './build-infrastructure';
-import type { CreateAgentLoopOptions, WiringConfig } from './index';
+import type { CreateAgentLoopOptions, WiringConfig, WiringSlashRegistry } from './index';
 import type { WiringContext } from './types';
 
 export interface LoadPluginsResult {
@@ -47,10 +47,7 @@ export interface LoadPluginsDeps {
   skillScanner: UniversalScanner;
   skillPool: Map<string, Skill>;
   buildCompressionSummarizer: () => import('@ethosagent/core').SummarizerFn | undefined;
-  slashRegistry?: {
-    register(cmd: { name: string; description: string; usage: string; prefix?: string }): void;
-    get(name: string): { description?: string; usage?: string } | undefined;
-  };
+  slashRegistry?: WiringSlashRegistry;
 }
 
 /**

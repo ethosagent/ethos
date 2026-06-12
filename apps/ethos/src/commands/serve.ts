@@ -199,6 +199,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   let toolRegistry: ToolRegistry | undefined;
   let mcpManager: McpManager | undefined;
   let pluginLoader: import('@ethosagent/plugin-loader').PluginLoader | undefined;
+  let notificationRouter: import('@ethosagent/types').NotificationRouter | undefined;
   let activeMeshName: string;
   let activePersonality: string;
   let setOnSkillProposed:
@@ -284,6 +285,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     toolRegistry = result.toolRegistry;
     mcpManager = result.mcpManager;
     pluginLoader = result.pluginLoader;
+    notificationRouter = result.notificationRouter;
     setOnSkillProposed = result.setOnSkillProposed;
   } else if (teamFlag) {
     // Chat UX: `ethos serve --team <name>` → run as the team's coordinator.
@@ -294,6 +296,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       meshName: teamMesh,
       setOnSkillProposed: teamSetOnSkillProposed,
       pluginLoader: teamPluginLoader,
+      notificationRouter: teamNotificationRouter,
     } = await createTeamAgentLoop(config, teamFlag, {
       profile: loopProfile,
       ...(roleFlag ? { role: roleFlag } : {}),
@@ -304,6 +307,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     activePersonality = coordinatorPersonality;
     setOnSkillProposed = teamSetOnSkillProposed;
     pluginLoader = teamPluginLoader;
+    notificationRouter = teamNotificationRouter;
   } else {
     activeMeshName = meshName;
     activePersonality = config.personality;
@@ -316,6 +320,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     toolRegistry = result.toolRegistry;
     mcpManager = result.mcpManager;
     pluginLoader = result.pluginLoader;
+    notificationRouter = result.notificationRouter;
     setOnSkillProposed = result.setOnSkillProposed;
   }
   let titleFn: ((systemPrompt: string, userMessage: string) => Promise<string>) | undefined;
@@ -403,6 +408,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     ...(toolRegistry ? { toolRegistry } : {}),
     ...(mcpManager ? { mcpManager } : {}),
     ...(pluginLoader ? { pluginLoader } : {}),
+    ...(notificationRouter ? { notificationRouter } : {}),
     apiKeys,
     listTeams: async () => listRegisteredTeams(dir),
     ...(webDist ? { webDist } : {}),

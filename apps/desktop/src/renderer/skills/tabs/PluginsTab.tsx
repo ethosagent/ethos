@@ -1,5 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { SectionLabel } from '../../ui/SectionLabel';
 import { PluginRow } from '../components/PluginRow';
 
@@ -13,11 +14,7 @@ interface Plugin {
   pluginContractMajor: number | null;
 }
 
-interface PluginsTabProps {
-  port: number;
-}
-
-export function PluginsTab({ port }: PluginsTabProps) {
+export function PluginsTab() {
   const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [explainerDismissed, setExplainerDismissed] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -27,10 +24,8 @@ export function PluginsTab({ port }: PluginsTabProps) {
   const [installError, setInstallError] = useState<string | null>(null);
   const [installSuccess, setInstallSuccess] = useState<string | null>(null);
 
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   useEffect(() => {
     // refreshKey is intentionally read to re-trigger this effect after install.

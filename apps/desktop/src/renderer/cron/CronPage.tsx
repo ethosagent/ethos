@@ -1,6 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAppState } from '../state/AppContext';
+import { useServerUrl } from '../shell/ServerUrl';
 import { CreateJobForm } from './CreateJobForm';
 import { CronJobCard } from './CronJobCard';
 import { JobDetailDrawer } from './JobDetailDrawer';
@@ -20,13 +20,8 @@ interface CronJob {
 }
 
 export function CronPage() {
-  const { state } = useAppState();
-  const { port } = state;
-
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
@@ -219,7 +214,6 @@ export function CronPage() {
 
         {/* Create form */}
         <CreateJobForm
-          port={port}
           open={createFormOpen}
           onToggle={handleToggleCreateForm}
           onCreated={handleCreated}
@@ -231,7 +225,6 @@ export function CronPage() {
       {selectedJobId && (
         <JobDetailDrawer
           jobId={selectedJobId}
-          port={port}
           onClose={handleCloseDrawer}
           onJobChanged={handleJobChanged}
         />

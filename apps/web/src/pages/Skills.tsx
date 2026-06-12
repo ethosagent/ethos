@@ -44,7 +44,7 @@ export function Skills() {
 
   const skillsQuery = useQuery({
     queryKey: ['skills', 'list'],
-    queryFn: () => rpc.skills.list({}),
+    queryFn: () => rpc.skills.list({ includeUnavailable: true }),
   });
 
   const pendingCount = skillsQuery.data?.pendingCount ?? 0;

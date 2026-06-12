@@ -1,5 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { Toggle } from '../../ui/Toggle';
 
 interface PersonalityEntry {
@@ -10,14 +11,11 @@ interface PersonalityEntry {
 
 interface PerPersonalityTogglesProps {
   serverName: string;
-  port: number;
 }
 
-export function PerPersonalityToggles({ serverName, port }: PerPersonalityTogglesProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+export function PerPersonalityToggles({ serverName }: PerPersonalityTogglesProps) {
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [entries, setEntries] = useState<PersonalityEntry[]>([]);
   const [loading, setLoading] = useState(true);

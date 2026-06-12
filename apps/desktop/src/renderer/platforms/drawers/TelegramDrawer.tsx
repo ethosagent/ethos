@@ -1,6 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAppState } from '../../state/AppContext';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { PersonalityBindingRow } from '../../ui/PersonalityBindingRow';
 import { AccessControlSection } from '../components/AccessControlSection';
 import { BotRow } from '../components/BotRow';
@@ -27,8 +27,7 @@ const microLabel: React.CSSProperties = {
 };
 
 export function TelegramDrawer({ onBotChange }: TelegramDrawerProps) {
-  const { state } = useAppState();
-  const baseUrl = `http://localhost:${state.port}`;
+  const baseUrl = useServerUrl();
   const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [bots, setBots] = useState<TelegramBot[]>([]);

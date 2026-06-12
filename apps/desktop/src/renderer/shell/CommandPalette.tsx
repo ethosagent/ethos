@@ -1,6 +1,7 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import type { Session } from '@ethosagent/web-contracts';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useServerUrl } from './ServerUrl';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -46,7 +47,6 @@ function matchesQuery(item: CommandItem, query: string): boolean {
 
 interface CommandPaletteProps {
   open: boolean;
-  port: number;
   onClose: () => void;
   onNavigate: (route: string) => void;
   onSelectSession: (id: string) => void;
@@ -81,13 +81,13 @@ const PAGE_DEFS: Array<{ id: string; label: string; hint: string; keywords: stri
 
 export function CommandPalette({
   open,
-  port,
   onClose,
   onNavigate,
   onSelectSession,
   onNewChat,
   onToggleDrawer,
 }: CommandPaletteProps) {
+  const baseUrl = useServerUrl();
   const [query, setQuery] = useState('');
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -112,7 +112,7 @@ export function CommandPalette({
   useEffect(() => {
     if (!open) return;
     const client = createEthosClient({
-      baseUrl: `http://localhost:${port}`,
+      baseUrl,
       fetch: globalThis.fetch,
     });
     client.rpc.sessions
@@ -121,7 +121,7 @@ export function CommandPalette({
       .catch(() => {
         // best-effort — sessions section stays empty
       });
-  }, [open, port]);
+  }, [open, baseUrl]);
 
   // Stable helper: close the palette then run an action.
   const closeAfter = useCallback(

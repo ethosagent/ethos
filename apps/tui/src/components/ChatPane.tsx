@@ -3,7 +3,7 @@ import { useSkin } from '../skin';
 
 export interface ChatMessage {
   id: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   text: string;
   accentColor?: string;
 }
@@ -22,7 +22,14 @@ export function ChatRow({ message, accentColor }: ChatRowProps) {
   const tokens = useSkin();
   return (
     <Box flexDirection="column" marginBottom={1}>
-      {message.role === 'user' ? (
+      {message.role === 'system' ? (
+        <Box gap={1}>
+          <Text dimColor>{tokens.glyphs.accentStripe}</Text>
+          <Text dimColor wrap="wrap">
+            {message.text}
+          </Text>
+        </Box>
+      ) : message.role === 'user' ? (
         <Box gap={1}>
           <Text color={tokens.semantic.info} bold>
             You

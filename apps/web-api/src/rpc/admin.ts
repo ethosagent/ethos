@@ -1,69 +1,18 @@
+import { adminTestSend, gatherAdminStatus, requireAdmin } from '../services/admin.service';
 import { os } from './context';
+
+// Every admin procedure is gated by `requireAdmin` — `admin.enabled: true`
+// in ~/.ethos/config.yaml (default false). Disabled → FORBIDDEN, which the
+// rpc interceptor renders as HTTP 403.
 
 export const adminRouter = {
   getStatus: os.admin.getStatus.handler(async ({ context }) => {
-    // Gather channel status from platforms service
-    type Channel = {
-      id: string;
-      platform: string;
-      status: 'connected' | 'disconnected' | 'error';
-      webhookUrl?: string;
-    };
-    let channels: Channel[] = [];
-    try {
-      const result = await context.platforms.list();
-      channels = result.platforms.map((p) => ({
-        id: p.id,
-        platform: p.id,
-        status: (p.configured ? 'connected' : 'disconnected') as 'connected' | 'disconnected',
-      }));
-    } catch {
-      // platforms service may not be available
-    }
-
-    // Gather provider status from config service
-    type Provider = {
-      id: string;
-      name: string;
-      hasKey: boolean;
-      healthy?: boolean;
-      latencyMs?: number;
-    };
-    let providers: Provider[] = [];
-    try {
-      const cfg = await context.config.get();
-      providers = cfg.providers.map((p) => ({
-        id: p.provider,
-        name: p.provider,
-        hasKey: Boolean(p.apiKeyPreview),
-      }));
-    } catch {
-      // config service may not be available
-    }
-
-    // Gather MCP server status from plugins service
-    type McpServer = {
-      name: string;
-      status: 'connected' | 'disconnected' | 'error';
-      toolCount?: number;
-    };
-    let mcpServers: McpServer[] = [];
-    try {
-      const result = await context.plugins.list();
-      mcpServers = result.mcpServers.map((s) => ({
-        name: s.name,
-        status: (s.auth_status === 'authorized' ? 'connected' : 'disconnected') as
-          | 'connected'
-          | 'disconnected',
-      }));
-    } catch {
-      // plugins service may not be available
-    }
-
-    return { channels, providers, mcpServers };
+    await requireAdmin(context.config);
+    return gatherAdminStatus(context);
   }),
 
   rotateKey: os.admin.rotateKey.handler(async ({ input, context }) => {
+    await requireAdmin(context.config);
     await context.config.update({
       providers: [{ provider: input.provider, apiKey: input.key }],
     });
@@ -71,9 +20,12 @@ export const adminRouter = {
   }),
 
   checkProvider: os.admin.checkProvider.handler(async ({ input, context }) => {
+    await requireAdmin(context.config);
+    const creds = await context.config.resolveProviderCredentials(input.provider);
+    if (!creds) return { ok: false, latencyMs: 0 };
     const start = Date.now();
     try {
-      await context.onboarding.validateProvider({
+      const result = await context.onboarding.validateProvider({
         provider: input.provider as
           | 'anthropic'
           | 'openai'
@@ -82,15 +34,22 @@ export const adminRouter = {
           | 'ollama'
           | 'azure'
           | 'codex',
-        apiKey: '',
+        apiKey: creds.apiKey,
+        ...(creds.baseUrl ? { baseUrl: creds.baseUrl } : {}),
       });
-      return { ok: true, latencyMs: Date.now() - start };
+      return { ok: result.ok, latencyMs: Date.now() - start };
     } catch {
       return { ok: false, latencyMs: Date.now() - start };
     }
   }),
 
+  testSend: os.admin.testSend.handler(async ({ input, context }) => {
+    await requireAdmin(context.config);
+    return adminTestSend(context.platforms, input.channel);
+  }),
+
   addMcpServer: os.admin.addMcpServer.handler(async ({ input, context }) => {
+    await requireAdmin(context.config);
     const result = await context.mcp.addServer({
       name: input.name,
       transport: 'streamable-http',
@@ -104,6 +63,7 @@ export const adminRouter = {
   }),
 
   removeMcpServer: os.admin.removeMcpServer.handler(async ({ input, context }) => {
+    await requireAdmin(context.config);
     await context.mcp.delete({ name: input.name });
     return { ok: true as const };
   }),

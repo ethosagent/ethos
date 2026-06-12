@@ -45,6 +45,31 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Once-guarded process_complete firing. The hook fires from two paths — the
+ * real `child.on('exit')` handler (via process_start's onExit callback) and
+ * process_wait observing a terminal entry — so a shared guard keyed by
+ * process id ensures exactly one fire per process per host process.
+ */
+interface CompletionNotifier {
+  fire(
+    entry: { id: string; startedAt: string; exitCode?: number },
+    sessionId: string,
+    sessionKey: string,
+  ): void;
+}
+
+function createCompletionNotifier(hookRegistry: HookRegistry, dataDir: string): CompletionNotifier {
+  const fired = new Set<string>();
+  return {
+    fire(entry, sessionId, sessionKey): void {
+      if (fired.has(entry.id)) return;
+      fired.add(entry.id);
+      void fireProcessComplete(hookRegistry, dataDir, entry, sessionId, sessionKey);
+    },
+  };
+}
+
 /** Read logs and fire the process_complete void hook. Best-effort — never throws. */
 async function fireProcessComplete(
   hookRegistry: HookRegistry,
@@ -86,7 +111,7 @@ async function fireProcessComplete(
 // process_start
 // ---------------------------------------------------------------------------
 
-function makeProcessStart(dataDir: string, capMax: number): Tool {
+function makeProcessStart(dataDir: string, capMax: number, notifier?: CompletionNotifier): Tool {
   return {
     name: 'process_start',
     description: 'Start a long-running process in the background. Returns an id for tracking.',
@@ -176,7 +201,19 @@ function makeProcessStart(dataDir: string, capMax: number): Tool {
 
         let pid: number;
         try {
-          const result = spawnDetached(id, command, effectiveCwd, env, dataDir);
+          // Gap 10 — fire process_complete on the REAL child exit, not just
+          // when process_wait happens to observe it. The notifier's once-guard
+          // keeps a later process_wait from double-firing.
+          const onExit = notifier
+            ? (exit: { exitCode: number | null; signal: NodeJS.Signals | null }) => {
+                notifier.fire(
+                  { id, startedAt, exitCode: exit.exitCode ?? -1 },
+                  ctx.sessionId,
+                  ctx.sessionKey,
+                );
+              }
+            : undefined;
+          const result = spawnDetached(id, command, effectiveCwd, env, dataDir, onExit);
           pid = result.pid;
         } catch (err) {
           return {
@@ -350,7 +387,7 @@ function makeProcessStop(dataDir: string): Tool {
 // process_wait
 // ---------------------------------------------------------------------------
 
-function makeProcessWait(dataDir: string, hookRegistry?: HookRegistry): Tool {
+function makeProcessWait(dataDir: string, notifier?: CompletionNotifier): Tool {
   return {
     name: 'process_wait',
     description: 'Wait for a process to exit, up to timeout_s seconds.',
@@ -388,9 +425,7 @@ function makeProcessWait(dataDir: string, hookRegistry?: HookRegistry): Tool {
       }
 
       if (entry.status !== 'running') {
-        if (hookRegistry) {
-          void fireProcessComplete(hookRegistry, dataDir, entry, ctx.sessionId, ctx.sessionKey);
-        }
+        notifier?.fire(entry, ctx.sessionId, ctx.sessionKey);
         return {
           ok: true,
           value: JSON.stringify({ exited: true, exit_code: entry.exitCode }),
@@ -409,9 +444,7 @@ function makeProcessWait(dataDir: string, hookRegistry?: HookRegistry): Tool {
         const current = loadRegistry(dataDir)[id];
         if (!current) break;
         if (current.status !== 'running') {
-          if (hookRegistry) {
-            void fireProcessComplete(hookRegistry, dataDir, current, ctx.sessionId, ctx.sessionKey);
-          }
+          notifier?.fire(current, ctx.sessionId, ctx.sessionKey);
           return {
             ok: true,
             value: JSON.stringify({ exited: true, exit_code: current.exitCode }),
@@ -419,9 +452,7 @@ function makeProcessWait(dataDir: string, hookRegistry?: HookRegistry): Tool {
         }
         if (!isAlive(current.pid)) {
           await updateEntry(dataDir, id, { status: 'orphan' });
-          if (hookRegistry) {
-            void fireProcessComplete(hookRegistry, dataDir, current, ctx.sessionId, ctx.sessionKey);
-          }
+          notifier?.fire(current, ctx.sessionId, ctx.sessionKey);
           return { ok: true, value: JSON.stringify({ exited: true }) };
         }
       }
@@ -559,12 +590,15 @@ export function createProcessTools(
     typeof requested === 'number' && Number.isInteger(requested) && requested > 0
       ? requested
       : DEFAULT_MAX_CONCURRENT;
+  const notifier = opts?.hookRegistry
+    ? createCompletionNotifier(opts.hookRegistry, dataDir)
+    : undefined;
   return [
-    makeProcessStart(dataDir, capMax),
+    makeProcessStart(dataDir, capMax, notifier),
     makeProcessList(dataDir),
     makeProcessLogs(dataDir),
     makeProcessStop(dataDir),
-    makeProcessWait(dataDir, opts?.hookRegistry),
+    makeProcessWait(dataDir, notifier),
     makeProcessWatch(dataDir),
   ];
 }

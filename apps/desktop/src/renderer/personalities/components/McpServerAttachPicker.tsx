@@ -1,10 +1,10 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 
 interface McpServerAttachPickerProps {
   attachedServers: string[];
   onAttach: (servers: string[]) => void;
-  port: number;
   onClose: () => void;
 }
 
@@ -15,13 +15,10 @@ interface ServerEntry {
 export function McpServerAttachPicker({
   attachedServers,
   onAttach,
-  port,
   onClose,
 }: McpServerAttachPickerProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [allServers, setAllServers] = useState<ServerEntry[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set(attachedServers));

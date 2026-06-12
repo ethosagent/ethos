@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { applySubstitutions, parseSkillFrontmatter, shouldInject } from '../skill-compat';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  applySubstitutions,
+  checkRequirements,
+  parseSkillFrontmatter,
+  shouldInject,
+} from '../skill-compat';
 
 describe('parseSkillFrontmatter', () => {
   it('returns null when no frontmatter is present', () => {
@@ -113,5 +118,72 @@ describe('applySubstitutions', () => {
     // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional ${OTHER_VAR} literal — this test asserts non-recognized vars pass through unchanged
     const input = 'No subs ${OTHER_VAR} here.';
     expect(applySubstitutions(input, '/x', 'y')).toBe(input);
+  });
+});
+
+describe('checkRequirements', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // Platform-independent helpers — the gate reads process.platform directly.
+  const hereOs = (): 'linux' | 'darwin' | 'win32' =>
+    process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'win32' : 'linux';
+  const otherOs = (): 'linux' | 'darwin' | 'win32' =>
+    process.platform === 'linux' ? 'darwin' : 'linux';
+
+  it('returns null when requires is undefined', () => {
+    expect(checkRequirements(undefined, new Set())).toBeNull();
+    expect(checkRequirements(undefined, null)).toBeNull();
+  });
+
+  it('returns null for an empty requires object', () => {
+    expect(checkRequirements({}, new Set())).toBeNull();
+  });
+
+  it('fails when a required env var is unset', () => {
+    const reason = checkRequirements({ env: ['ETHOS_TEST_UNSET_VAR'] }, new Set());
+    expect(reason).toBe('missing env var ETHOS_TEST_UNSET_VAR');
+  });
+
+  it('passes when the required env var is set', () => {
+    vi.stubEnv('ETHOS_TEST_SET_VAR', 'present');
+    expect(checkRequirements({ env: ['ETHOS_TEST_SET_VAR'] }, new Set())).toBeNull();
+  });
+
+  it('fails when a required tool is not in the available set', () => {
+    const reason = checkRequirements({ tools: ['bash'] }, new Set(['read_file']));
+    expect(reason).toBe('tool bash not available');
+  });
+
+  it('passes when all required tools are available', () => {
+    expect(
+      checkRequirements({ tools: ['bash', 'read_file'] }, new Set(['bash', 'read_file'])),
+    ).toBeNull();
+  });
+
+  it('passes with an empty tools list regardless of the available set', () => {
+    expect(checkRequirements({ tools: [] }, new Set())).toBeNull();
+  });
+
+  it('skips the tools gate when availableTools is null (availability unknown)', () => {
+    expect(checkRequirements({ tools: ['bash'] }, null)).toBeNull();
+  });
+
+  it('still checks env and os when availableTools is null', () => {
+    expect(checkRequirements({ env: ['ETHOS_TEST_UNSET_VAR'], tools: ['bash'] }, null)).toBe(
+      'missing env var ETHOS_TEST_UNSET_VAR',
+    );
+    expect(checkRequirements({ tools: ['bash'], os: [otherOs()] }, null)).toBe(
+      `requires OS: ${otherOs()}`,
+    );
+  });
+
+  it('passes when the current platform is in the os list', () => {
+    expect(checkRequirements({ os: [hereOs()] }, new Set())).toBeNull();
+  });
+
+  it('fails when the current platform is not in the os list', () => {
+    expect(checkRequirements({ os: [otherOs()] }, new Set())).toBe(`requires OS: ${otherOs()}`);
   });
 });

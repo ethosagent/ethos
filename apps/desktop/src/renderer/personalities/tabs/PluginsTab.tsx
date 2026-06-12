@@ -1,18 +1,16 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import type { PluginInfo } from '@ethosagent/web-contracts';
 import { useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 
 interface PluginsTabProps {
   plugins: string[];
   onChange: (plugins: string[]) => void;
-  port: number;
 }
 
-export function PluginsTab({ plugins, onChange, port }: PluginsTabProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+export function PluginsTab({ plugins, onChange }: PluginsTabProps) {
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [available, setAvailable] = useState<PluginInfo[]>([]);
   const [loading, setLoading] = useState(true);

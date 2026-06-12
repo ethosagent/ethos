@@ -1,7 +1,7 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import type { PluginCredentialSchema } from '@ethosagent/types';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useAppState } from '../state/AppContext';
+import { useServerUrl } from '../shell/ServerUrl';
 import { SectionLabel } from '../ui/SectionLabel';
 import { PluginHomeDrawer } from './PluginHomeDrawer';
 import { PluginSettingsDrawer } from './PluginSettingsDrawer';
@@ -54,13 +54,8 @@ interface ToolForPageResult {
 // ---------------------------------------------------------------------------
 
 export function PluginsPage() {
-  const { state } = useAppState();
-  const { port } = state;
-
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [pageSpecs, setPageSpecs] = useState<Map<string, PageSpec>>(new Map());

@@ -58,7 +58,7 @@ function toWire(record: SkillRecord): Skill {
     modifiedAt: record.modifiedAt,
     source: record.source,
     readonly: record.readonly,
-    unavailableReason: null,
+    unavailableReason: record.unavailableReason,
   };
 }
 

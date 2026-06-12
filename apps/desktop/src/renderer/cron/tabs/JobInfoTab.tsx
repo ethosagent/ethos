@@ -1,5 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { PersonalityPicker } from '../components/PersonalityPicker';
 import { ScheduleInput } from '../components/ScheduleInput';
 import { formatNextRun, getNextRun } from '../utils/cron-next-run';
@@ -21,11 +22,10 @@ interface CronJob {
 
 interface JobInfoTabProps {
   job: CronJob;
-  port: number;
   onSaved: () => void;
 }
 
-export function JobInfoTab({ job, port, onSaved }: JobInfoTabProps) {
+export function JobInfoTab({ job, onSaved }: JobInfoTabProps) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(job.name);
   const [prompt, setPrompt] = useState(job.prompt);
@@ -34,10 +34,8 @@ export function JobInfoTab({ job, port, onSaved }: JobInfoTabProps) {
   const [cronExpression, setCronExpression] = useState<string | null>(job.schedule);
   const [saving, setSaving] = useState(false);
 
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const parsed = parseScheduleInput(job.schedule);
   const nextRun = getNextRun(job.schedule);
@@ -113,7 +111,6 @@ export function JobInfoTab({ job, port, onSaved }: JobInfoTabProps) {
             Personality
           </label>
           <PersonalityPicker
-            port={port}
             value={personalityId}
             onChange={setPersonalityId}
             id="edit-job-personality"

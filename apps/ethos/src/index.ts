@@ -122,7 +122,8 @@ try {
     const prompt = args[zIdx + 1] ?? '';
     const { runZero } = await import('./commands/zero');
     await runZero(args, prompt);
-    process.exit(0);
+    // runZero signals failure via process.exitCode — don't clobber it with 0.
+    process.exit(process.exitCode ?? 0);
   }
 
   switch (effectiveCommand) {

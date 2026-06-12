@@ -1,7 +1,8 @@
 import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { assertSafeId, EthosError, type Storage } from '@ethosagent/types';
-import { parseSkillFrontmatter } from './skill-compat';
+import { parseEthosRequires } from './dialects/ethos-namespace';
+import { checkRequirements, parseSkillFrontmatter } from './skill-compat';
 
 // CRUD over the markdown-skill files under ~/.ethos/skills/ (global) and
 // ~/.ethos/personalities/<id>/skills/ (per-personality). Sits alongside
@@ -20,6 +21,12 @@ export interface SkillRecord {
   modifiedAt: string;
   source: 'system' | 'user' | 'evolver' | 'personality';
   readonly: boolean;
+  /**
+   * Gap 11 — non-null when the skill fails an `ethos.requires` gate
+   * (env / tools / os). Tool gating needs the `availableTools` option;
+   * without it the tools gate is skipped (availability unknown).
+   */
+  unavailableReason: string | null;
 }
 
 export interface PersonalitySkillRecord {
@@ -45,6 +52,14 @@ export interface SkillsLibraryOptions {
   catalogDir?: string;
   /** Storage backend. Defaults to FsStorage. */
   storage?: Storage;
+  /**
+   * Gap 11 — lazy getter for the tool names registered in this deployment,
+   * used to evaluate `ethos.requires.tools`. A getter (not a snapshot) so
+   * tools registered after construction (MCP, plugins) are visible. Pass
+   * `() => new Set(registry.getAvailable().map((t) => t.name))` from boot
+   * code. When omitted, the tools gate is skipped (availability unknown).
+   */
+  availableTools?: () => Set<string>;
 }
 
 export class SkillsLibrary {
@@ -53,6 +68,7 @@ export class SkillsLibrary {
   private readonly pendingDir: string;
   private readonly personalitiesDir: string;
   private readonly catalogDir: string | null;
+  private readonly availableTools: (() => Set<string>) | null;
   private catalogIndex: Map<string, string> | null = null;
 
   constructor(opts: SkillsLibraryOptions) {
@@ -61,6 +77,7 @@ export class SkillsLibrary {
     this.pendingDir = join(this.skillsDir, '.pending');
     this.personalitiesDir = join(opts.dataDir, 'personalities');
     this.catalogDir = opts.catalogDir ?? null;
+    this.availableTools = opts.availableTools ?? null;
   }
 
   /** Absolute path to the directory holding live (global) skills. */
@@ -77,7 +94,7 @@ export class SkillsLibrary {
   // Global skills
   // ---------------------------------------------------------------------------
 
-  async listSkills(_opts?: { includeUnavailable?: boolean }): Promise<SkillRecord[]> {
+  async listSkills(opts?: { includeUnavailable?: boolean }): Promise<SkillRecord[]> {
     const systemSkills = await this.readSystemSkills();
 
     const names = await this.storage.list(this.skillsDir);
@@ -91,7 +108,8 @@ export class SkillsLibrary {
     const userIds = new Set(userSkills.map((s) => s.id));
     const merged = [...systemSkills.filter((s) => !userIds.has(s.id)), ...userSkills];
     merged.sort((a, b) => a.name.localeCompare(b.name));
-    return merged;
+    if (opts?.includeUnavailable) return merged;
+    return merged.filter((s) => s.unavailableReason === null);
   }
 
   async getSkill(id: string): Promise<SkillRecord | null> {
@@ -318,7 +336,17 @@ export class SkillsLibrary {
       modifiedAt: new Date(mtimeMs).toISOString(),
       source: 'user',
       readonly: false,
+      unavailableReason: this.computeUnavailableReason(fm),
     };
+  }
+
+  /**
+   * Gap 11 — evaluate `ethos.requires` gates for a skill's frontmatter.
+   * Passes null for the tool set when no `availableTools` getter was
+   * provided (tools gate skipped — availability unknown).
+   */
+  private computeUnavailableReason(fm: Record<string, unknown>): string | null {
+    return checkRequirements(parseEthosRequires(fm), this.availableTools?.() ?? null);
   }
 
   private async readPersonalitySkill(
@@ -419,6 +447,7 @@ export class SkillsLibrary {
       modifiedAt: new Date(mtimeMs).toISOString(),
       source: 'system',
       readonly: true,
+      unavailableReason: this.computeUnavailableReason(fm),
     };
   }
 

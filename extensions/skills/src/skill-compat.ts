@@ -142,6 +142,12 @@ export function applySubstitutions(content: string, skillDir: string, sessionId:
  * Returns a human-readable reason string when ANY gate fails, or `null`
  * when all requirements are satisfied.
  *
+ * `availableTools` is the set of tool names registered in the current
+ * deployment (wiring passes a live registry-backed set). Pass `null` when
+ * tool availability is unknown — e.g. surfaces with no tool registry, like
+ * the standalone `ethos skills list` command — to skip the tools gate
+ * rather than falsely reporting every tool-requiring skill as unavailable.
+ *
  * This is intentionally separate from `shouldInject` (which checks the
  * OpenClaw `metadata.*.requires` block). Both gates run at load time;
  * `shouldInject` handles the legacy OpenClaw format, while
@@ -149,15 +155,17 @@ export function applySubstitutions(content: string, skillDir: string, sessionId:
  */
 export function checkRequirements(
   requires: { env?: string[]; tools?: string[]; os?: ('linux' | 'darwin' | 'win32')[] } | undefined,
-  availableTools: Set<string>,
+  availableTools: Set<string> | null,
 ): string | null {
   if (!requires) return null;
 
   for (const envVar of requires.env ?? []) {
     if (!process.env[envVar]) return `missing env var ${envVar}`;
   }
-  for (const tool of requires.tools ?? []) {
-    if (!availableTools.has(tool)) return `tool ${tool} not available`;
+  if (availableTools !== null) {
+    for (const tool of requires.tools ?? []) {
+      if (!availableTools.has(tool)) return `tool ${tool} not available`;
+    }
   }
   if (
     requires.os &&

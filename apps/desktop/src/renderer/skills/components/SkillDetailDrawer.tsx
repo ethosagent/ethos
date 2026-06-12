@@ -1,5 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { DrawerShell } from '../../ui/DrawerShell';
 import { SectionLabel } from '../../ui/SectionLabel';
 
@@ -7,7 +8,6 @@ interface SkillDetailDrawerProps {
   open: boolean;
   skillId: string | null;
   isNew: boolean;
-  port: number;
   onClose: () => void;
   onSaved: () => void;
   onDeleted: () => void;
@@ -17,15 +17,12 @@ export function SkillDetailDrawer({
   open,
   skillId,
   isNew,
-  port,
   onClose,
   onSaved,
   onDeleted,
 }: SkillDetailDrawerProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [id, setId] = useState('');
   const [name, setName] = useState('');

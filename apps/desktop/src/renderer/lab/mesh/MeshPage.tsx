@@ -1,19 +1,14 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAppState } from '../../state/AppContext';
+import { useServerUrl } from '../../shell/ServerUrl';
 import type { MeshAgent } from './AgentTable';
 import { AgentTable } from './AgentTable';
 import { RegisterAgentDrawer } from './RegisterAgentDrawer';
 import { RouteTestSection } from './RouteTestSection';
 
 export function MeshPage() {
-  const { state } = useAppState();
-  const { port } = state;
-
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [agents, setAgents] = useState<MeshAgent[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);

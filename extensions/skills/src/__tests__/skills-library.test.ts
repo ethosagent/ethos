@@ -45,6 +45,111 @@ describe('SkillsLibrary', () => {
     });
   });
 
+  describe('requires gating (Gap 11)', () => {
+    const NEEDS_BASH = [
+      '---',
+      'name: Needs Bash',
+      'ethos:',
+      '  requires:',
+      '    tools: [bash]',
+      '---',
+      '',
+      'body',
+    ].join('\n');
+    const NEEDS_ENV = [
+      '---',
+      'name: Needs Env',
+      'ethos:',
+      '  requires:',
+      '    env: [ETHOS_TEST_UNSET_VAR]',
+      '---',
+      '',
+      'body',
+    ].join('\n');
+
+    it('excludes unavailable skills from listSkills by default', async () => {
+      const gated = new SkillsLibrary({
+        dataDir: DATA,
+        storage,
+        availableTools: () => new Set<string>(),
+      });
+      await storage.mkdir(join(DATA, 'skills'));
+      await storage.write(join(DATA, 'skills', 'needs-bash.md'), NEEDS_BASH);
+      await storage.write(join(DATA, 'skills', 'plain.md'), 'plain body');
+
+      const skills = await gated.listSkills();
+      expect(skills.map((s) => s.id)).toEqual(['plain']);
+    });
+
+    it('includes unavailable skills with unavailableReason when includeUnavailable is set', async () => {
+      const gated = new SkillsLibrary({
+        dataDir: DATA,
+        storage,
+        availableTools: () => new Set<string>(),
+      });
+      await storage.mkdir(join(DATA, 'skills'));
+      await storage.write(join(DATA, 'skills', 'needs-bash.md'), NEEDS_BASH);
+      await storage.write(join(DATA, 'skills', 'needs-env.md'), NEEDS_ENV);
+
+      const skills = await gated.listSkills({ includeUnavailable: true });
+      expect(skills.map((s) => [s.id, s.unavailableReason])).toEqual([
+        ['needs-bash', 'tool bash not available'],
+        ['needs-env', 'missing env var ETHOS_TEST_UNSET_VAR'],
+      ]);
+    });
+
+    it('marks the skill available when the required tool is in availableTools', async () => {
+      const gated = new SkillsLibrary({
+        dataDir: DATA,
+        storage,
+        availableTools: () => new Set(['bash']),
+      });
+      await storage.mkdir(join(DATA, 'skills'));
+      await storage.write(join(DATA, 'skills', 'needs-bash.md'), NEEDS_BASH);
+
+      const skills = await gated.listSkills();
+      expect(skills.map((s) => [s.id, s.unavailableReason])).toEqual([['needs-bash', null]]);
+    });
+
+    it('skips the tools gate when no availableTools getter is provided', async () => {
+      // `lib` has no availableTools — tool availability is unknown, so the
+      // skill must NOT be reported unavailable (env/os gates still apply).
+      await storage.mkdir(join(DATA, 'skills'));
+      await storage.write(join(DATA, 'skills', 'needs-bash.md'), NEEDS_BASH);
+
+      const skills = await lib.listSkills();
+      expect(skills.map((s) => [s.id, s.unavailableReason])).toEqual([['needs-bash', null]]);
+    });
+
+    it('re-evaluates the lazy getter so late-registered tools become visible', async () => {
+      const registered = new Set<string>();
+      const gated = new SkillsLibrary({
+        dataDir: DATA,
+        storage,
+        availableTools: () => new Set(registered),
+      });
+      await storage.mkdir(join(DATA, 'skills'));
+      await storage.write(join(DATA, 'skills', 'needs-bash.md'), NEEDS_BASH);
+
+      expect(await gated.listSkills()).toEqual([]);
+      registered.add('bash');
+      expect((await gated.listSkills()).map((s) => s.id)).toEqual(['needs-bash']);
+    });
+
+    it('getSkill populates unavailableReason', async () => {
+      const gated = new SkillsLibrary({
+        dataDir: DATA,
+        storage,
+        availableTools: () => new Set<string>(),
+      });
+      await storage.mkdir(join(DATA, 'skills'));
+      await storage.write(join(DATA, 'skills', 'needs-bash.md'), NEEDS_BASH);
+
+      const skill = await gated.getSkill('needs-bash');
+      expect(skill?.unavailableReason).toBe('tool bash not available');
+    });
+  });
+
   describe('createSkill', () => {
     it('writes the file and returns the parsed skill', async () => {
       const created = await lib.createSkill('hello', '---\nname: Hi\n---\n\nbody');

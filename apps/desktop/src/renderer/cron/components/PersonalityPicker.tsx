@@ -1,8 +1,8 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 
 interface PersonalityPickerProps {
-  port: number;
   value: string | null;
   onChange: (personalityId: string) => void;
   id?: string;
@@ -13,13 +13,11 @@ interface PersonalityItem {
   name: string;
 }
 
-export function PersonalityPicker({ port, value, onChange, id }: PersonalityPickerProps) {
+export function PersonalityPicker({ value, onChange, id }: PersonalityPickerProps) {
   const [items, setItems] = useState<PersonalityItem[]>([]);
 
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   useEffect(() => {
     let cancelled = false;

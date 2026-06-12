@@ -40,9 +40,15 @@ export async function compose(
     hooks: HookRegistry;
     platformPrompts: Map<string, string>;
     log: Logger;
+    /**
+     * Gap 11 — live tool-reach getter (registry-backed) for `requires.tools`
+     * gating and capability-mode filtering. Lazy so tools registered after
+     * skills composition (MCP, plugins) are visible.
+     */
+    toolNamesForPersonality?: (personality: PersonalityConfig) => Set<string>;
   },
 ): Promise<SkillsCompose> {
-  const { personalities, hooks, platformPrompts, log } = deps;
+  const { personalities, hooks, platformPrompts, log, toolNamesForPersonality } = deps;
 
   const codingBundleSource = bundledSkillsSource();
   const skillPool = await new UniversalScanner({
@@ -53,6 +59,7 @@ export async function compose(
     onSkillSkip: (skillId, reason) => log.info(`skill ${skillId} skipped: ${reason}`),
     trustedFirstPartySources: [codingBundleSource],
     hooks,
+    ...(toolNamesForPersonality ? { toolNamesForPersonality } : {}),
   });
 
   injectors.unshift(new PlatformFormattingInjector(platformPrompts));

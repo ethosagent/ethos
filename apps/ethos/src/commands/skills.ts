@@ -230,9 +230,12 @@ async function listSkills(args: string[] = []): Promise<void> {
   }
 
   // Gap 11 — check `requires` gates so we can surface unavailable skills.
-  const emptyToolSet = new Set<string>();
+  // This command runs standalone (no agent loop, no tool registry), so tool
+  // availability is unknown: pass null so checkRequirements skips the tools
+  // gate (env/os still checked) instead of marking every tool-requiring
+  // skill unavailable against an empty set.
   for (const skill of pool.values()) {
-    const reason = checkRequirements(skill.requires, emptyToolSet);
+    const reason = checkRequirements(skill.requires, null);
     if (reason) skill.unavailableReason = reason;
   }
 

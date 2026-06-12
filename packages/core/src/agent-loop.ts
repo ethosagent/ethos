@@ -2050,6 +2050,20 @@ export class AgentLoop {
   // Assistant messages with tool calls produce proper tool_use content blocks.
   // Consecutive tool_result rows are grouped into a single user message.
   private toLLMMessages(stored: StoredMessage[]): Message[] {
+    // History truncation invariant: `getMessages({ limit })` returns the newest
+    // N rows, so the window head can slice between an assistant row carrying
+    // `toolCalls` and its tool_result rows. Replaying such an orphaned
+    // tool_result violates both provider contracts (Anthropic requires a
+    // preceding tool_use; OpenAI Responses 400s on a function_call_output with
+    // no matching function_call). Collect the surviving tool-call ids so
+    // orphans can be dropped below.
+    const knownToolCallIds = new Set<string>();
+    for (const msg of stored) {
+      if (msg.role === 'assistant' && msg.toolCalls) {
+        for (const tc of msg.toolCalls) knownToolCallIds.add(tc.id);
+      }
+    }
+
     const messages: Message[] = [];
 
     for (const msg of stored) {
@@ -2069,7 +2083,8 @@ export class AgentLoop {
           messages.push({ role: 'assistant', content: msg.content });
         }
       } else if (msg.role === 'tool_result') {
-        if (!msg.toolCallId) continue;
+        // Skip orphans whose tool_use pair was truncated off the window.
+        if (!msg.toolCallId || !knownToolCallIds.has(msg.toolCallId)) continue;
         const resultBlock: MessageContent = {
           type: 'tool_result',
           tool_use_id: msg.toolCallId,
@@ -2088,6 +2103,44 @@ export class AgentLoop {
         // the tool_result user message that was constructed live during the turn.
         // The stored user_steer row exists for transcript fidelity / debugging
         // only — it must NOT be replayed as a standalone LLM message.
+      }
+    }
+
+    // Mirror guard: every tool_use must have a tool_result in the immediately
+    // following user message (sessions interrupted mid-turn persist the
+    // assistant's toolCalls but never the results). Synthesize error results
+    // for any gap so the replayed history stays pair-consistent.
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      if (msg?.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+      const toolUseIds = msg.content
+        .filter((b): b is Extract<MessageContent, { type: 'tool_use' }> => b.type === 'tool_use')
+        .map((b) => b.id);
+      if (toolUseIds.length === 0) continue;
+
+      const next = messages[i + 1];
+      const nextResults = next?.role === 'user' && Array.isArray(next.content) ? next.content : [];
+      const resultIds = new Set(
+        nextResults
+          .filter(
+            (b): b is Extract<MessageContent, { type: 'tool_result' }> => b.type === 'tool_result',
+          )
+          .map((b) => b.tool_use_id),
+      );
+      const synthesized: MessageContent[] = toolUseIds
+        .filter((id) => !resultIds.has(id))
+        .map((id) => ({
+          type: 'tool_result',
+          tool_use_id: id,
+          content: '[result unavailable — interrupted before completion]',
+          is_error: true,
+        }));
+      if (synthesized.length === 0) continue;
+
+      if (next?.role === 'user' && Array.isArray(next.content)) {
+        (next.content as MessageContent[]).push(...synthesized);
+      } else {
+        messages.splice(i + 1, 0, { role: 'user', content: synthesized });
       }
     }
 

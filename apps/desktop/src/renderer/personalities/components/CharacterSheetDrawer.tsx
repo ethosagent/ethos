@@ -1,23 +1,16 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 
 interface CharacterSheetDrawerProps {
   personalityId: string;
   open: boolean;
   onClose: () => void;
-  port: number;
 }
 
-export function CharacterSheetDrawer({
-  personalityId,
-  open,
-  onClose,
-  port,
-}: CharacterSheetDrawerProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+export function CharacterSheetDrawer({ personalityId, open, onClose }: CharacterSheetDrawerProps) {
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [markdown, setMarkdown] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

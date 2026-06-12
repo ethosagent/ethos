@@ -1,6 +1,10 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { LastWriteWinsPolicy, LazyOnDemandPolicy } from '@ethosagent/core';
+import {
+  type DefaultToolRegistry,
+  LastWriteWinsPolicy,
+  LazyOnDemandPolicy,
+} from '@ethosagent/core';
 import { autonomyTier, KanbanStore } from '@ethosagent/kanban-store';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import {
@@ -58,6 +62,7 @@ import type {
   MemoryContext,
   MemoryEntryRef,
   MemoryProvider,
+  PersonalityConfig,
   PromptContext,
   Skill,
   Storage,
@@ -236,6 +241,25 @@ export function createPersonalityFilesInjector(
   };
 }
 
+/**
+ * Gap 11 — live tool-reach getter for skills gating (`requires.tools` +
+ * capability-mode filtering). Lazy on purpose: the closure re-reads the
+ * registry on every `resolveSkills()` call, so MCP and plugin tools
+ * registered after skills composition are visible. The personality's reach
+ * (toolset ∪ attached MCP servers ∪ plugins) is intersected with
+ * `getAvailable()` so registered-but-unavailable tools (failed
+ * `isAvailable()`, e.g. missing env) don't satisfy `requires.tools`.
+ */
+export function createToolReachGetter(
+  registry: DefaultToolRegistry,
+): (personality: PersonalityConfig) => Set<string> {
+  return (personality) => {
+    const available = new Set(registry.getAvailable().map((t) => t.name));
+    const reach = registry.toolNamesForPersonality(personality);
+    return new Set([...reach].filter((name) => available.has(name)));
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Main export types
 // ---------------------------------------------------------------------------
@@ -380,6 +404,7 @@ export async function composeAllTools(
     hooks,
     platformPrompts,
     log,
+    toolNamesForPersonality: createToolReachGetter(tools),
   });
   const { skillPool, injectors, scanner: skillScanner } = skillsCompose;
   for (const tool of skillsCompose.tools) tools.register(tool);

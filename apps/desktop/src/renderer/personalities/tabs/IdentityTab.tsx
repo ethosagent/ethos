@@ -21,7 +21,6 @@ interface IdentityTabProps {
   };
   isNew: boolean;
   onChange: (changes: Partial<EditorState>) => void;
-  port: number;
 }
 
 function toId(name: string): string {
@@ -31,7 +30,7 @@ function toId(name: string): string {
     .replace(/[^a-z0-9_-]/g, '');
 }
 
-export function IdentityTab({ personality, isNew, onChange, port }: IdentityTabProps) {
+export function IdentityTab({ personality, isNew, onChange }: IdentityTabProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const previewId = useMemo(() => {
@@ -236,7 +235,6 @@ export function IdentityTab({ personality, isNew, onChange, port }: IdentityTabP
           personalityId={personality.id || previewId}
           open={drawerOpen}
           onClose={() => setDrawerOpen(false)}
-          port={port}
         />
       </div>
     </div>

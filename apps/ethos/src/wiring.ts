@@ -214,6 +214,12 @@ export async function createAgentLoop(
      * scheduled work can't persist past process exit.
      */
     cronScheduler?: import('@ethosagent/cron').CronScheduler;
+    /**
+     * App-layer slash command registry (chat REPL). Threaded through to
+     * plugin loading so plugin-registered slash commands show up in
+     * autocomplete and /help.
+     */
+    slashRegistry?: import('@ethosagent/wiring').WiringSlashRegistry;
   } = {},
 ): Promise<CreateAgentLoopResult> {
   const rotated = await withRotation(config);
@@ -242,6 +248,7 @@ export async function createAgentLoop(
     meshRegistryPath: opts.meshRegistryPath,
     observability: getEthosObservability(),
     ...(opts.cronScheduler ? { cronScheduler: opts.cronScheduler } : {}),
+    ...(opts.slashRegistry ? { slashRegistry: opts.slashRegistry } : {}),
   });
 
   return result;
@@ -293,7 +300,11 @@ export function loadTeamManifest(teamName: string): TeamManifest {
 export async function createTeamAgentLoop(
   config: EthosConfig,
   teamName: string,
-  opts: { profile?: WiringProfile; role?: 'coordinator' | 'member' } = {},
+  opts: {
+    profile?: WiringProfile;
+    role?: 'coordinator' | 'member';
+    slashRegistry?: import('@ethosagent/wiring').WiringSlashRegistry;
+  } = {},
 ): Promise<TeamLoopInfo> {
   const manifest = loadTeamManifest(teamName);
   const coordinatorPersonality =
@@ -318,7 +329,11 @@ export async function createTeamAgentLoop(
         postmortems: manifest.postmortems,
         trustPolicy: manifest.trust_policy,
       },
-      { profile: opts.profile ?? 'cli', meshRegistryPath: meshRegistryPath(meshName) },
+      {
+        profile: opts.profile ?? 'cli',
+        meshRegistryPath: meshRegistryPath(meshName),
+        ...(opts.slashRegistry ? { slashRegistry: opts.slashRegistry } : {}),
+      },
     );
 
   const coordinatorSystem = buildCoordinatorTeamPrompt(manifest);
@@ -373,7 +388,10 @@ export interface ActiveLoop {
 
 export async function resolveActiveLoop(
   config: EthosConfig,
-  opts: { profile?: WiringProfile } = {},
+  opts: {
+    profile?: WiringProfile;
+    slashRegistry?: import('@ethosagent/wiring').WiringSlashRegistry;
+  } = {},
 ): Promise<ActiveLoop> {
   if (config.activeContext?.type === 'team') {
     const teamName = config.activeContext.name;

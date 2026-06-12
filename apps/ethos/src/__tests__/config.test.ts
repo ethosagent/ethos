@@ -151,3 +151,62 @@ describe('parseConfigYaml — whatsapp.<n>.<field>', () => {
     expect(cfg.whatsapp?.[0]?.bind).toBeUndefined();
   });
 });
+
+describe('parseConfigYaml — admin.enabled', () => {
+  it('parses admin.enabled: true into config.admin', async () => {
+    const cfg = await loadYaml(
+      [
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'apiKey: sk',
+        'personality: researcher',
+        'admin.enabled: true',
+      ].join('\n'),
+    );
+    expect(cfg.admin).toEqual({ enabled: true });
+  });
+
+  it('parses admin.enabled: false into config.admin', async () => {
+    const cfg = await loadYaml(
+      [
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'apiKey: sk',
+        'personality: researcher',
+        'admin.enabled: false',
+      ].join('\n'),
+    );
+    expect(cfg.admin).toEqual({ enabled: false });
+  });
+
+  it('leaves config.admin undefined when the key is absent (default off)', async () => {
+    const cfg = await loadYaml(
+      [
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'apiKey: sk',
+        'personality: researcher',
+      ].join('\n'),
+    );
+    expect(cfg.admin).toBeUndefined();
+  });
+
+  it('round-trips through writeConfig and back', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    const original: EthosConfig = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      apiKey: 'sk',
+      personality: 'researcher',
+      admin: { enabled: true },
+    };
+    await writeConfig(storage, original);
+
+    const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+    expect(raw).toContain('admin.enabled: true');
+
+    const roundTripped = await readRawConfig(storage);
+    expect(roundTripped?.admin).toEqual({ enabled: true });
+  });
+});

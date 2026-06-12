@@ -1,4 +1,4 @@
-import { EthosError } from '@ethosagent/types';
+import { EthosError, type SecretsResolver } from '@ethosagent/types';
 import type { ConfigRepository, RawProviderEntry } from '../repositories/config.repository';
 
 // Read/update the parts of `~/.ethos/config.yaml` the web UI exposes. The
@@ -55,6 +55,11 @@ export interface ConfigUpdateInput {
 
 export interface ConfigServiceOptions {
   config: ConfigRepository;
+  /** Resolves `${secrets:ref}` indirection in stored API keys (admin
+   *  provider health checks). Optional — when omitted, secret-ref keys
+   *  resolve to '' so checks fail honestly instead of probing with the
+   *  literal reference string. */
+  secrets?: SecretsResolver;
 }
 
 export class ConfigService {
@@ -90,8 +95,65 @@ export class ConfigService {
       contextLayering: raw.contextLayering ?? false,
       debugPanelEnabled: raw.debugPanelEnabled ?? false,
       debugPanelModel: raw.debugPanelModel ?? null,
-      adminEnabled: true,
+      adminEnabled: raw.passthrough['admin.enabled'] === 'true',
     };
+  }
+
+  /**
+   * Whether the web admin panel is enabled. Gated by `admin.enabled: true`
+   * in ~/.ethos/config.yaml — default false; admin access must be enabled
+   * explicitly. Missing config counts as disabled.
+   */
+  async adminEnabled(): Promise<boolean> {
+    const raw = await this.opts.config.read();
+    return raw?.passthrough['admin.enabled'] === 'true';
+  }
+
+  /**
+   * Resolve the stored credentials for a provider so admin health checks
+   * probe with the real key. The raw key still never crosses the RPC
+   * boundary — it travels provider-ward only. Prefers the provider-chain
+   * entry; falls back to the primary provider fields. Returns null when
+   * the provider isn't configured.
+   */
+  async resolveProviderCredentials(
+    provider: string,
+  ): Promise<{ apiKey: string; baseUrl?: string } | null> {
+    const raw = await this.opts.config.read();
+    if (!raw) return null;
+    const entry = raw.providers.find((p) => p.provider === provider);
+    if (entry) {
+      return {
+        apiKey: await this.resolveSecretRefs(entry.apiKey ?? ''),
+        ...(entry.baseUrl ? { baseUrl: entry.baseUrl } : {}),
+      };
+    }
+    if (raw.provider === provider) {
+      return {
+        apiKey: await this.resolveSecretRefs(raw.apiKey ?? ''),
+        ...(raw.baseUrl ? { baseUrl: raw.baseUrl } : {}),
+      };
+    }
+    return null;
+  }
+
+  /** Substitute `${secrets:ref}` references via the resolver. An
+   *  unresolvable reference (or no resolver) yields '' — the caller's
+   *  health check then fails honestly rather than probing with a
+   *  literal `${secrets:...}` string. */
+  private async resolveSecretRefs(value: string): Promise<string> {
+    const matches = [...value.matchAll(SECRETS_REF_RE)];
+    if (matches.length === 0) return value;
+    if (!this.opts.secrets) return '';
+    let resolved = value;
+    for (const m of matches) {
+      const ref = m[1];
+      if (!ref) continue;
+      const secret = await this.opts.secrets.get(ref);
+      if (secret === null) return '';
+      resolved = resolved.replace(m[0], () => secret);
+    }
+    return resolved;
   }
 
   async update(patch: ConfigUpdateInput): Promise<void> {
@@ -117,6 +179,10 @@ export class ConfigService {
     });
   }
 }
+
+// `${secrets:ref}` — same indirection syntax the CLI's config loader
+// resolves (apps/ethos/src/config.ts).
+const SECRETS_REF_RE = /\$\{secrets:([^}]+)\}/g;
 
 // ---------------------------------------------------------------------------
 // API-key redaction

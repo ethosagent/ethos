@@ -1,6 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAppState } from '../state/AppContext';
+import { useServerUrl } from '../shell/ServerUrl';
 import { PersonalityEditor } from './PersonalityEditor';
 import { PersonalityList } from './PersonalityList';
 import { PersonalityWizard } from './PersonalityWizard';
@@ -13,13 +13,8 @@ interface PersonalityListItem {
 }
 
 export function PersonalitiesPage() {
-  const { state } = useAppState();
-  const { port } = state;
-
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [personalities, setPersonalities] = useState<PersonalityListItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -87,13 +82,11 @@ export function PersonalitiesPage() {
       <PersonalityEditor
         personalityId={activeId}
         isNew={isNew}
-        port={port}
         onSaved={handleSaved}
         onDeleted={handleDeleted}
       />
       {wizardOpen && (
         <PersonalityWizard
-          port={port}
           onClose={() => setWizardOpen(false)}
           onCreated={(id) => {
             setWizardOpen(false);

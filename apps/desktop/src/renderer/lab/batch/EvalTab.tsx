@@ -1,6 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useAppState } from '../../state/AppContext';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { ProgressBar } from '../../ui/ProgressBar';
 import { BatchResultsTable } from './BatchResultsTable';
 import { FileDropZone } from './FileDropZone';
@@ -33,13 +33,8 @@ interface EvalResult {
 type Scorer = 'exact' | 'contains' | 'regex' | 'llm';
 
 export function EvalTab() {
-  const { state } = useAppState();
-  const { port } = state;
-
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [tasksContent, setTasksContent] = useState<string | null>(null);
   const [expectedContent, setExpectedContent] = useState<string | null>(null);

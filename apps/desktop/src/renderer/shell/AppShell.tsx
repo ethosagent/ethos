@@ -21,7 +21,7 @@ import { useAppState } from '../state/AppContext';
 import { AppSidebar } from './AppSidebar';
 import { CommandPalette } from './CommandPalette';
 import { RightDrawer } from './RightDrawer';
-import { ServerUrlContext } from './ServerUrl';
+import { localServerUrl, ServerUrlContext } from './ServerUrl';
 import { StatusBar } from './StatusBar';
 import { type Toast, ToastContainer } from './ToastContainer';
 import { useDrawerStream } from './useDrawerStream';
@@ -65,9 +65,9 @@ export function AppShell() {
   const [providerModel, setProviderModel] = useState('');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  const drawerState = useDrawerStream();
+  const baseUrl = connectionMode === 'remote' ? remoteUrl : localServerUrl(resolvedPort);
 
-  const baseUrl = connectionMode === 'remote' ? remoteUrl : `http://localhost:${resolvedPort}`;
+  const drawerState = useDrawerStream(baseUrl);
   const sessionList = useSessionList({ baseUrl, enabled: healthy });
   const sessionListRefresh = sessionList.refresh;
 
@@ -228,20 +228,21 @@ export function AppShell() {
           const { healthy: isHealthy } = await window.ethos.health.check({ port: resolvedPort });
           if (isHealthy) {
             clearInterval(poll);
+            const localBase = localServerUrl(resolvedPort);
             try {
               const token = await window.ethos.backend.getAuthToken();
               if (token) {
-                await fetch(
-                  `http://localhost:${resolvedPort}/auth/exchange?t=${encodeURIComponent(token)}`,
-                  { credentials: 'include', redirect: 'follow' },
-                );
+                await fetch(`${localBase}/auth/exchange?t=${encodeURIComponent(token)}`, {
+                  credentials: 'include',
+                  redirect: 'follow',
+                });
               }
             } catch {
               // best-effort
             }
             try {
               const sdkClient = createEthosClient({
-                baseUrl: `http://localhost:${resolvedPort}`,
+                baseUrl: localBase,
                 fetch: globalThis.fetch,
               });
               const usersRes = await sdkClient.rpc.memory.listUsers({});
@@ -518,7 +519,6 @@ export function AppShell() {
       </div>
       <CommandPalette
         open={paletteOpen}
-        port={resolvedPort}
         onClose={() => setPaletteOpen(false)}
         onNavigate={(r) => setRoute(r as ShellRoute)}
         onSelectSession={handleSelectSessionFromPalette}

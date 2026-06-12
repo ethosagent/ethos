@@ -1,5 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../shell/ServerUrl';
 import { Chip } from '../ui/Chip';
 import { JobHistoryTab } from './tabs/JobHistoryTab';
 import { JobInfoTab } from './tabs/JobInfoTab';
@@ -21,7 +22,6 @@ interface CronJob {
 
 interface JobDetailDrawerProps {
   jobId: string;
-  port: number;
   onClose: () => void;
   onJobChanged: () => void;
 }
@@ -37,7 +37,7 @@ const statusChip: Record<
   done: { label: 'Done', variant: 'neutral' },
 };
 
-export function JobDetailDrawer({ jobId, port, onClose, onJobChanged }: JobDetailDrawerProps) {
+export function JobDetailDrawer({ jobId, onClose, onJobChanged }: JobDetailDrawerProps) {
   const [job, setJob] = useState<CronJob | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>('info');
   const [selectedRun, setSelectedRun] = useState<{
@@ -46,10 +46,8 @@ export function JobDetailDrawer({ jobId, port, onClose, onJobChanged }: JobDetai
     outputPath: string;
   } | null>(null);
 
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const loadJob = useCallback(async () => {
     try {
@@ -191,10 +189,8 @@ export function JobDetailDrawer({ jobId, port, onClose, onJobChanged }: JobDetai
 
       {/* Tab content */}
       <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
-        {activeTab === 'info' && <JobInfoTab job={job} port={port} onSaved={handleJobSaved} />}
-        {activeTab === 'history' && (
-          <JobHistoryTab jobId={jobId} port={port} onViewOutput={handleViewOutput} />
-        )}
+        {activeTab === 'info' && <JobInfoTab job={job} onSaved={handleJobSaved} />}
+        {activeTab === 'history' && <JobHistoryTab jobId={jobId} onViewOutput={handleViewOutput} />}
         {activeTab === 'output' && selectedRun && selectedRun.output !== null && (
           <JobOutputTab jobName={job.name} ranAt={selectedRun.ranAt} output={selectedRun.output} />
         )}

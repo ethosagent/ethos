@@ -5,9 +5,9 @@ import { AssistantMessage } from '../chat/AssistantMessage';
 import { Composer } from '../chat/Composer';
 import { MessageBubble } from '../chat/MessageBubble';
 import type { ToolCallState } from '../chat/types';
+import { useServerUrl } from '../shell/ServerUrl';
 
 interface PersonalityWizardProps {
-  port: number;
   onClose: () => void;
   onCreated: (personalityId: string) => void;
 }
@@ -21,11 +21,9 @@ interface WizardMessage {
 
 const CLIENT_ID = `wizard-${Math.random().toString(36).slice(2)}`;
 
-export function PersonalityWizard({ port, onClose, onCreated }: PersonalityWizardProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+export function PersonalityWizard({ onClose, onCreated }: PersonalityWizardProps) {
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [messages, setMessages] = useState<WizardMessage[]>([]);
   const [streamingText, setStreamingText] = useState('');
@@ -53,7 +51,7 @@ export function PersonalityWizard({ port, onClose, onCreated }: PersonalityWizar
     if (!sessionId) return;
 
     const sub = EventStream({
-      baseUrl: `http://localhost:${port}`,
+      baseUrl,
       sessionId,
       onEvent: (event: SseEvent) => {
         switch (event.type) {
@@ -124,7 +122,7 @@ export function PersonalityWizard({ port, onClose, onCreated }: PersonalityWizar
     });
 
     return () => sub.close();
-  }, [sessionId, port]);
+  }, [sessionId, baseUrl]);
 
   const handleSend = useCallback(
     async (text: string) => {

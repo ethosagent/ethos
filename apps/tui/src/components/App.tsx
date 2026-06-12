@@ -7,6 +7,7 @@ import type { PendingClarify, Session } from '@ethosagent/types';
 import { createMemoryProvider } from '@ethosagent/wiring';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { buildHelpText, type ExternalSlashCommand } from '../help';
 import {
   BUILTIN_SKIN_NAMES,
   BUILTIN_SKINS,
@@ -84,6 +85,21 @@ function extractDiff(result: string | undefined): string | undefined {
   return lines.slice(diffStart).join('\n');
 }
 
+/**
+ * Slash commands injected from outside the TUI (plugin commands). `dispatch`
+ * returns null when no handler exists for `name` — the TUI then shows its
+ * unknown-command hint. Provided by the host process; the TUI never imports
+ * the plugin loader itself (layering).
+ */
+export interface ExternalSlashCommands {
+  list(): ExternalSlashCommand[];
+  dispatch(
+    name: string,
+    args: string,
+    ctx: { sessionKey: string; personalityId: string },
+  ): Promise<string | null>;
+}
+
 interface AppProps {
   bridge: AgentBridge;
   model: string;
@@ -99,6 +115,14 @@ interface AppProps {
   rebuildLoop?: (modelId: string) => Promise<AgentLoop>;
   inventory?: SplashInventory;
   version?: string;
+  /** Transform user input before it is sent to the loop (e.g. @file/@url refs). */
+  preprocessInput?: (text: string) => Promise<string>;
+  /** Plugin slash commands — merged into /help and tried for unknown commands. */
+  slashCommands?: ExternalSlashCommands;
+  /** Subscribe to session-scoped notifications. Returns an unsubscribe. */
+  onNotification?: (sessionKey: string, cb: (text: string) => void) => () => void;
+  /** Subscribe to skill-evolver proposal notices. Returns an unsubscribe. */
+  onSkillProposed?: (cb: (text: string) => void) => () => void;
 }
 
 /**
@@ -153,6 +177,10 @@ export function App({
   rebuildLoop,
   inventory,
   version,
+  preprocessInput,
+  slashCommands,
+  onNotification,
+  onSkillProposed,
 }: AppProps) {
   const { exit } = useApp();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -373,6 +401,29 @@ export function App({
         .catch(() => null);
     }
   }, [version]);
+
+  // Session-scoped notifications (e.g. plugin monitors via notify_session).
+  // Re-subscribes when the session key changes (/new, /sessions) so routing
+  // follows the active session, mirroring the readline path's re-register.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nextId closes over a stable ref
+  useEffect(() => {
+    if (!onNotification) return;
+    return onNotification(sessionKey, (text) => {
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId(), role: 'system', text: `[notification] ${text}` },
+      ]);
+    });
+  }, [onNotification, sessionKey]);
+
+  // Skill-evolver proposal notices land in the transcript as system lines.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nextId closes over a stable ref
+  useEffect(() => {
+    if (!onSkillProposed) return;
+    return onSkillProposed((text) => {
+      setMessages((prev) => [...prev, { id: nextId(), role: 'system', text }]);
+    });
+  }, [onSkillProposed]);
 
   // Append a fresh HUD snapshot whenever the personality, model, or session
   // changes — these are the rare events that warrant re-showing the chrome.
@@ -697,7 +748,17 @@ export function App({
     firstTextDeltaAtRef.current = null;
     turnToolDurationsRef.current = [];
     turnUsageRef.current = null;
-    bridge.send(value, { sessionKey, personalityId: personality });
+    // Resolve @file/@url refs (and any other host preprocessing) before the
+    // loop sees the input; the transcript keeps the raw text the user typed.
+    let outgoing = value;
+    if (preprocessInput) {
+      try {
+        outgoing = await preprocessInput(value);
+      } catch {
+        outgoing = value;
+      }
+    }
+    bridge.send(outgoing, { sessionKey, personalityId: personality });
   };
 
   const handleSlashCommand = async (cmd: string) => {
@@ -712,22 +773,10 @@ export function App({
           {
             id: nextId(),
             role: 'assistant',
-            text:
-              '/new                          fresh session\n' +
-              '/personality [list|<id>]      switch personality\n' +
-              '/model                        open model picker\n' +
-              '/sessions                     open session picker\n' +
-              '/memory                       show ~/.ethos/MEMORY.md\n' +
-              '/usage                        token + cost stats\n' +
-              '/budget                       show session spend vs cap\n' +
-              '/budget reset                 reset budget counter\n' +
-              `/readonly                     toggle readonly mode (now: ${readonlyMode ? 'on' : 'off'})\n` +
-              `/verbose                      toggle timing (now: ${verboseDisplay ? 'on' : 'off'})\n` +
-              '/details [hidden|collapsed|expanded] [section]\n' +
-              '/skin [list|<name>]           switch UI theme\n' +
-              '/tools                        list all available tools\n' +
-              '/skills                       list available skills\n' +
-              '/exit                         quit',
+            text: buildHelpText(
+              { readonlyMode, verbose: verboseDisplay },
+              slashCommands?.list() ?? [],
+            ),
           },
         ]);
         break;
@@ -916,8 +965,28 @@ export function App({
       case 'quit':
         exit();
         break;
-      default:
+      default: {
+        // Unknown built-in — fall through to externally injected commands
+        // (plugins). dispatch returns null when nothing claims the name.
+        if (slashCommands) {
+          try {
+            const result = await slashCommands.dispatch(name, args.join(' '), {
+              sessionKey,
+              personalityId: personality,
+            });
+            if (result !== null) {
+              if (result.trim()) {
+                setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', text: result }]);
+              }
+              break;
+            }
+          } catch (err) {
+            setStatusMsg(`[/${name} failed: ${err instanceof Error ? err.message : String(err)}]`);
+            break;
+          }
+        }
         setStatusMsg(`Unknown command /${name} — type /help`);
+      }
     }
   };
 

@@ -8,6 +8,7 @@ import { registerIpcHandlers } from './ipc';
 import { showMinimizeNotification } from './notifications';
 import { registerProtocolHandler } from './protocol-handler';
 import { registerQuickChatIpc, showQuickChat } from './quick-chat-window';
+import { syncRemoteAuth } from './remote-auth';
 import { isBackgroundMode, logBackgroundStartup } from './startup-mode';
 import { store } from './store';
 import { createTray, destroyTray } from './tray';
@@ -88,7 +89,7 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Seed dataDir from --dir CLI arg (takes precedence; saved for subsequent launches)
   const dirFlagIdx = process.argv.indexOf('--dir');
   if (dirFlagIdx !== -1 && process.argv[dirFlagIdx + 1]) {
@@ -96,6 +97,7 @@ app.whenReady().then(() => {
   }
 
   registerIpcHandlers();
+  await syncRemoteAuth();
 
   registerProtocolHandler({
     getMainWindow: () => mainWindow,

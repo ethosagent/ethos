@@ -1,6 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useAppState } from '../../state/AppContext';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { ProgressBar } from '../../ui/ProgressBar';
 import { BatchResultsTable } from './BatchResultsTable';
 import { FileDropZone } from './FileDropZone';
@@ -30,13 +30,8 @@ interface BatchResult {
 }
 
 export function BatchTab() {
-  const { state } = useAppState();
-  const { port } = state;
-
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [personalities, setPersonalities] = useState<PersonalityOption[]>([]);

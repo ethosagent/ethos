@@ -4,6 +4,7 @@ import type { CompletionChunk, CompletionOptions, LLMProvider, Message } from '@
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
 import { AgentLoop, KNOWN_AGENT_EVENT_TYPES } from '../agent-loop';
+import { InMemorySessionStore } from '../defaults/in-memory-session';
 
 function makeMockLLM(
   responses: string[],
@@ -910,6 +911,181 @@ describe('AgentLoop', () => {
 
       await collect(loop.run('hi', { sessionKey: sk }));
       expect(loop.getSessionCost(sk)).toBeCloseTo(0.0002);
+    });
+  });
+
+  describe('history replay tool_use/tool_result pairing', () => {
+    const zeroUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      estimatedCostUsd: 0,
+      apiCallCount: 0,
+      compactionCount: 0,
+    };
+
+    function makeCapturingLLM(captured: Message[][]): LLMProvider {
+      return {
+        name: 'mock',
+        model: 'mock-model',
+        maxContextTokens: 200_000,
+        supportsCaching: false,
+        supportsThinking: false,
+        async *complete(messages: Message[]): AsyncIterable<CompletionChunk> {
+          captured.push(messages);
+          yield { type: 'text_delta', text: 'ok' };
+          yield { type: 'done', finishReason: 'end_turn' };
+        },
+        async countTokens() {
+          return 10;
+        },
+      };
+    }
+
+    function blocksOf(messages: Message[]) {
+      return messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+    }
+
+    it('drops tool_result rows whose tool_use was truncated off the history window', async () => {
+      const session = new InMemorySessionStore();
+      const s = await session.createSession({
+        key: 'cli:orphan',
+        platform: 'cli',
+        model: 'mock-model',
+        provider: 'mock',
+        usage: { ...zeroUsage },
+      });
+      await session.appendMessage({
+        sessionId: s.id,
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'tc_orphan', name: 'read_file', input: { path: '/a.txt' } }],
+      });
+      await session.appendMessage({
+        sessionId: s.id,
+        role: 'tool_result',
+        toolCallId: 'tc_orphan',
+        toolName: 'read_file',
+        content: 'orphaned result',
+      });
+      await session.appendMessage({ sessionId: s.id, role: 'user', content: 'next question' });
+      await session.appendMessage({ sessionId: s.id, role: 'assistant', content: 'next answer' });
+
+      const captured: Message[][] = [];
+      // historyLimit 4: after run() appends the new user message, the window is
+      // [tool_result, user, assistant, user] — the assistant toolCalls row is
+      // truncated off, leaving the tool_result orphaned at the window head.
+      const loop = new AgentLoop({
+        llm: makeCapturingLLM(captured),
+        session,
+        options: { historyLimit: 4 },
+      });
+      await collect(loop.run('continue', { sessionKey: 'cli:orphan' }));
+
+      const blocks = blocksOf(captured[0] ?? []);
+      expect(blocks.filter((b) => b.type === 'tool_result')).toHaveLength(0);
+    });
+
+    it('synthesizes error tool_results for tool_use blocks with no stored results', async () => {
+      const session = new InMemorySessionStore();
+      const s = await session.createSession({
+        key: 'cli:interrupted',
+        platform: 'cli',
+        model: 'mock-model',
+        provider: 'mock',
+        usage: { ...zeroUsage },
+      });
+      await session.appendMessage({ sessionId: s.id, role: 'user', content: 'do the thing' });
+      await session.appendMessage({
+        sessionId: s.id,
+        role: 'assistant',
+        content: 'on it',
+        toolCalls: [
+          { id: 'tcA', name: 'read_file', input: { path: '/a.txt' } },
+          { id: 'tcB', name: 'read_file', input: { path: '/b.txt' } },
+        ],
+      });
+      // Interrupted mid-turn: no tool_result rows were persisted.
+
+      const captured: Message[][] = [];
+      const loop = new AgentLoop({ llm: makeCapturingLLM(captured), session });
+      await collect(loop.run('continue', { sessionKey: 'cli:interrupted' }));
+
+      const messages = captured[0] ?? [];
+      const assistantIdx = messages.findIndex(
+        (m) =>
+          m.role === 'assistant' &&
+          Array.isArray(m.content) &&
+          m.content.some((b) => b.type === 'tool_use'),
+      );
+      expect(assistantIdx).toBeGreaterThanOrEqual(0);
+      const next = messages[assistantIdx + 1];
+      expect(next?.role).toBe('user');
+      const results = (Array.isArray(next?.content) ? next.content : []).filter(
+        (b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result',
+      );
+      expect(results.map((r) => r.tool_use_id).sort()).toEqual(['tcA', 'tcB']);
+      for (const r of results) {
+        expect(r.is_error).toBe(true);
+        expect(r.content).toBe('[result unavailable — interrupted before completion]');
+      }
+    });
+
+    it('replays intact tool_use/tool_result pairs unchanged', async () => {
+      const session = new InMemorySessionStore();
+      const s = await session.createSession({
+        key: 'cli:intact',
+        platform: 'cli',
+        model: 'mock-model',
+        provider: 'mock',
+        usage: { ...zeroUsage },
+      });
+      await session.appendMessage({ sessionId: s.id, role: 'user', content: 'read both files' });
+      await session.appendMessage({
+        sessionId: s.id,
+        role: 'assistant',
+        content: '',
+        toolCalls: [
+          { id: 'tc1', name: 'read_file', input: { path: '/a.txt' } },
+          { id: 'tc2', name: 'read_file', input: { path: '/b.txt' } },
+        ],
+      });
+      await session.appendMessage({
+        sessionId: s.id,
+        role: 'tool_result',
+        toolCallId: 'tc1',
+        toolName: 'read_file',
+        content: 'contents of a',
+      });
+      await session.appendMessage({
+        sessionId: s.id,
+        role: 'tool_result',
+        toolCallId: 'tc2',
+        toolName: 'read_file',
+        content: 'contents of b',
+      });
+
+      const captured: Message[][] = [];
+      const loop = new AgentLoop({ llm: makeCapturingLLM(captured), session });
+      await collect(loop.run('continue', { sessionKey: 'cli:intact' }));
+
+      const messages = captured[0] ?? [];
+      const assistantIdx = messages.findIndex(
+        (m) =>
+          m.role === 'assistant' &&
+          Array.isArray(m.content) &&
+          m.content.some((b) => b.type === 'tool_use'),
+      );
+      expect(assistantIdx).toBeGreaterThanOrEqual(0);
+      const next = messages[assistantIdx + 1];
+      const results = (Array.isArray(next?.content) ? next.content : []).filter(
+        (b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result',
+      );
+      expect(results).toEqual([
+        { type: 'tool_result', tool_use_id: 'tc1', content: 'contents of a', is_error: false },
+        { type: 'tool_result', tool_use_id: 'tc2', content: 'contents of b', is_error: false },
+      ]);
     });
   });
 });

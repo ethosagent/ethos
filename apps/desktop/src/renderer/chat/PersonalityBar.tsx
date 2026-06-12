@@ -1,10 +1,10 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useServerUrl } from '../shell/ServerUrl';
 import { PersonalityRingAvatar } from '../ui/PersonalityRingAvatar';
 
 interface PersonalityBarProps {
   personalityId: string | null;
-  port: number;
   onSwitchPersonality: (id: string | null) => void;
   sessionTitle: string | null;
   onTitleChange: (title: string) => void;
@@ -18,7 +18,6 @@ interface PersonalityBarProps {
 
 export function PersonalityBar({
   personalityId,
-  port,
   onSwitchPersonality,
   sessionTitle,
   onTitleChange,
@@ -38,10 +37,8 @@ export function PersonalityBar({
   const pickerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   useEffect(() => {
     client.rpc.personalities

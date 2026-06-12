@@ -1,7 +1,7 @@
 import { createEthosClient, EventStream } from '@ethosagent/sdk';
 import type { SseEvent, StoredMessage } from '@ethosagent/web-contracts';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAppState } from '../state/AppContext';
+import { useServerUrl } from '../shell/ServerUrl';
 
 interface ActivityEvent {
   id: string;
@@ -296,13 +296,8 @@ interface SessionData {
 }
 
 export function ActivityPage() {
-  const { state } = useAppState();
-  const { port } = state;
-
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [groups, setGroups] = useState<ConversationGroup[]>([]);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
@@ -419,7 +414,7 @@ export function ActivityPage() {
     if (!activeSessionId) return;
     const title = sessions.find((s) => s.id === activeSessionId)?.title ?? null;
     const sub = EventStream({
-      baseUrl: `http://localhost:${port}`,
+      baseUrl,
       sessionId: activeSessionId,
       onEvent: (sseEvent) => {
         const converted = convertSseEvent(sseEvent, activeSessionId, title);
@@ -428,7 +423,7 @@ export function ActivityPage() {
       onError: () => {},
     });
     return () => sub.close();
-  }, [activeSessionId, port, sessions, appendEvent]);
+  }, [activeSessionId, baseUrl, sessions, appendEvent]);
 
   const filtered = groups.filter((group) => {
     if (!groupMatchesFilter(group, typeFilter)) return false;

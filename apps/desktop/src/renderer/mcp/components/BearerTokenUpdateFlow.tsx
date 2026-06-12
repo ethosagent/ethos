@@ -1,16 +1,14 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 
 interface BearerTokenUpdateFlowProps {
   serverName: string;
-  port: number;
 }
 
-export function BearerTokenUpdateFlow({ serverName, port }: BearerTokenUpdateFlowProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+export function BearerTokenUpdateFlow({ serverName }: BearerTokenUpdateFlowProps) {
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [editing, setEditing] = useState(false);
   const [token, setToken] = useState('');

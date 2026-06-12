@@ -18,6 +18,7 @@ import {
   EthosError,
   type InboundMessage,
   type MemoryContext,
+  type NotificationRouter,
   type PlatformAdapter,
   resolveModelDisplay,
 } from '@ethosagent/types';
@@ -378,7 +379,11 @@ export async function runGatewayStart(): Promise<void> {
   // `createAgentLoop`; team bots use `createTeamAgentLoop`. Each loop
   // receives the shared `scheduler` so its `cron` tool lands in the
   // same scheduler store as everything else.
-  const { bots, messagingSetters: botMessagingSetters } = await buildGatewayBots(config, scheduler);
+  const {
+    bots,
+    messagingSetters: botMessagingSetters,
+    notificationRouters: botNotificationRouters,
+  } = await buildGatewayBots(config, scheduler);
 
   // Phase 3: for each team-bound bot, ensure the supervisor is running.
   const supervisorDeps: TeamSupervisorDeps = {
@@ -407,11 +412,32 @@ export async function runGatewayStart(): Promise<void> {
   // their own `job.personalityId` field, not through the platform bot
   // routing table. The scheduler is passed in so agent-callable cron
   // tools register against the same instance the firing engine uses.
-  const { loop: systemLoopReady, setMessagingSend: setSystemMessagingSend } = await createAgentLoop(
-    config,
-    { cronScheduler: scheduler },
-  );
+  const {
+    loop: systemLoopReady,
+    setMessagingSend: setSystemMessagingSend,
+    pluginLoader,
+    notificationRouter: systemNotificationRouter,
+  } = await createAgentLoop(config, { cronScheduler: scheduler });
   systemLoop = systemLoopReady;
+
+  // Gap 10 — every loop (per-bot + system) owns its own NotificationRouter,
+  // and `process_complete` hooks fire on the owning loop's instance. The
+  // Gateway holds a single router reference, so fan registrations out to all
+  // of them; whichever loop's hook fires finds the same per-session adapter.
+  const allNotificationRouters = [...botNotificationRouters, systemNotificationRouter];
+  const gatewayNotificationRouter: NotificationRouter = {
+    // Registrations are mirrored on every router, so routing through the
+    // first reaches the same adapter set — fanning route() out would
+    // double-send.
+    route: (pluginId, opts) =>
+      allNotificationRouters[0]?.route(pluginId, opts) ?? Promise.resolve(),
+    register: (sessionKey, adapter) => {
+      for (const r of allNotificationRouters) r.register(sessionKey, adapter);
+    },
+    deregister: (sessionKey) => {
+      for (const r of allNotificationRouters) r.deregister(sessionKey);
+    },
+  };
 
   // Shared attachment cache for all platform adapters. Hoisted here so the
   // same instance flows into both `buildAdapters` (Telegram, Slack) and the
@@ -568,6 +594,8 @@ export async function runGatewayStart(): Promise<void> {
           adapters: adapterMap,
           resolveUserId,
           showToolCalls: process.env.ETHOS_CHANNEL_TOOL_CALLS !== 'false',
+          pluginLoader,
+          notificationRouter: gatewayNotificationRouter,
           ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
           ...(pairingDb ? { pairingDb } : {}),
         })
@@ -577,6 +605,8 @@ export async function runGatewayStart(): Promise<void> {
           adapters: adapterMap,
           resolveUserId,
           showToolCalls: process.env.ETHOS_CHANNEL_TOOL_CALLS !== 'false',
+          pluginLoader,
+          notificationRouter: gatewayNotificationRouter,
           ...(clarifyMessageCorrelator ? { clarifyMessageCorrelator } : {}),
           ...(telegramCardReader ? { personalityCardReader: telegramCardReader } : {}),
           ...(telegramGreetingProvider ? { greetingProvider: telegramGreetingProvider } : {}),
@@ -639,6 +669,11 @@ export async function runGatewayStart(): Promise<void> {
 
   // Start all adapters
   await Promise.all(adapters.map((a) => a.start()));
+
+  // Plugins finished loading inside createAgentLoop above; now that the
+  // adapters are constructed and started, push plugin slash commands to each
+  // platform's command menu (Telegram setMyCommands, Slack, Discord).
+  await gateway.pluginsReady();
 
   // Health checks — include botKey and binding for multi-bot adapters so the
   // startup log shows exactly which bot is live and what it's bound to.
@@ -741,6 +776,10 @@ export async function runGatewayStart(): Promise<void> {
 interface BuildGatewayBotsResult {
   bots: GatewayBotConfig[];
   messagingSetters: Array<(fn: MessagingSendFn) => void>;
+  /** One NotificationRouter per bot loop — `process_complete` hooks fire on
+   *  the owning loop's router, so the Gateway must register its per-session
+   *  adapter on every one of them. */
+  notificationRouters: NotificationRouter[];
 }
 
 /**
@@ -764,12 +803,14 @@ async function buildGatewayBots(
 ): Promise<BuildGatewayBotsResult> {
   const out: GatewayBotConfig[] = [];
   const setters: Array<(fn: MessagingSendFn) => void> = [];
+  const routers: NotificationRouter[] = [];
   const buildOne = async (bot: TelegramBotConfig | SlackAppConfig): Promise<GatewayBotConfig> => {
     const botKey = deriveBotKey(bot);
     let loop: AgentLoop;
     if (bot.bind.type === 'team') {
       const team = await createTeamAgentLoop(config, bot.bind.name);
       loop = team.loop;
+      routers.push(team.notificationRouter);
     } else {
       // Per-bot personality loop. Threads the shared scheduler so
       // `create_cron_job` etc. lands in the same store as the
@@ -780,6 +821,7 @@ async function buildGatewayBots(
       );
       loop = result.loop;
       setters.push(result.setMessagingSend);
+      routers.push(result.notificationRouter);
     }
     return { botKey, loop, binding: { ...bot.bind }, piiRedaction: bot.piiRedaction };
   };
@@ -800,6 +842,7 @@ async function buildGatewayBots(
     if (bind.type === 'team') {
       const team = await createTeamAgentLoop(config, bind.name);
       loop = team.loop;
+      routers.push(team.notificationRouter);
     } else {
       const result = await createAgentLoop(
         { ...config, personality: bind.name },
@@ -807,10 +850,11 @@ async function buildGatewayBots(
       );
       loop = result.loop;
       setters.push(result.setMessagingSend);
+      routers.push(result.notificationRouter);
     }
     out.push({ botKey, loop, binding: { ...bind }, piiRedaction: waCfg.piiRedaction });
   }
-  return { bots: out, messagingSetters: setters };
+  return { bots: out, messagingSetters: setters, notificationRouters: routers };
 }
 
 // ---------------------------------------------------------------------------

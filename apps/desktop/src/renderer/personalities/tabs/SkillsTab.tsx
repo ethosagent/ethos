@@ -1,10 +1,10 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import type { PersonalitySkill } from '@ethosagent/web-contracts';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 
 interface SkillsTabProps {
   personalityId: string | null;
-  port: number;
 }
 
 const btnStyle: React.CSSProperties = {
@@ -154,16 +154,13 @@ function CreateSkillForm({ personalityId, client, onSaved, onCancel }: CreateSki
 interface EditSkillDrawerProps {
   personalityId: string;
   skill: PersonalitySkill;
-  port: number;
   onSaved: () => void;
   onClose: () => void;
 }
 
-function EditSkillDrawer({ personalityId, skill, port, onSaved, onClose }: EditSkillDrawerProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+function EditSkillDrawer({ personalityId, skill, onSaved, onClose }: EditSkillDrawerProps) {
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
   const [body, setBody] = useState(skill.body);
   const [saving, setSaving] = useState(false);
 
@@ -299,7 +296,6 @@ function EditSkillDrawer({ personalityId, skill, port, onSaved, onClose }: EditS
 interface ImportSkillsDrawerProps {
   personalityId: string;
   existingIds: Set<string>;
-  port: number;
   onSaved: () => void;
   onClose: () => void;
 }
@@ -307,14 +303,11 @@ interface ImportSkillsDrawerProps {
 function ImportSkillsDrawer({
   personalityId,
   existingIds,
-  port,
   onSaved,
   onClose,
 }: ImportSkillsDrawerProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
   const [globalSkills, setGlobalSkills] = useState<Array<{ id: string; name: string }>>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -501,11 +494,9 @@ function ImportSkillsDrawer({
   );
 }
 
-export function SkillsTab({ personalityId, port }: SkillsTabProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+export function SkillsTab({ personalityId }: SkillsTabProps) {
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [skills, setSkills] = useState<PersonalitySkill[]>([]);
   const [loading, setLoading] = useState(false);
@@ -615,7 +606,6 @@ export function SkillsTab({ personalityId, port }: SkillsTabProps) {
         <EditSkillDrawer
           personalityId={personalityId}
           skill={editing}
-          port={port}
           onSaved={() => {
             setEditing(null);
             reload();
@@ -628,7 +618,6 @@ export function SkillsTab({ personalityId, port }: SkillsTabProps) {
         <ImportSkillsDrawer
           personalityId={personalityId}
           existingIds={new Set(skills.map((s) => s.id))}
-          port={port}
           onSaved={() => {
             setImportOpen(false);
             reload();

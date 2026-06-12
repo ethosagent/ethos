@@ -1,5 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { Toggle } from '../../ui/Toggle';
 import { McpServerAttachPicker } from '../components/McpServerAttachPicker';
 
@@ -12,15 +13,12 @@ interface MCPTabProps {
   mcpServers: string[];
   mcpTools: Record<string, string[]>;
   onChange: (servers: string[], tools: Record<string, string[]>) => void;
-  port: number;
   personalityId: string;
 }
 
-export function MCPTab({ mcpServers, mcpTools, onChange, port, personalityId }: MCPTabProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+export function MCPTab({ mcpServers, mcpTools, onChange, personalityId }: MCPTabProps) {
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [expanded, setExpanded] = useState<string | null>(null);
   const [serverToolsCache, setServerToolsCache] = useState<Record<string, McpToolEntry[]>>({});
@@ -274,7 +272,6 @@ export function MCPTab({ mcpServers, mcpTools, onChange, port, personalityId }: 
           <McpServerAttachPicker
             attachedServers={mcpServers}
             onAttach={handleAttach}
-            port={port}
             onClose={() => setShowPicker(false)}
           />
         )}

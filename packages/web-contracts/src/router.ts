@@ -1466,6 +1466,13 @@ const admin = {
       }),
     )
     .output(z.object({ ok: z.boolean(), latencyMs: z.number() })),
+  testSend: oc
+    .input(
+      z.object({
+        channel: z.string(),
+      }),
+    )
+    .output(z.object({ ok: z.boolean(), error: z.string().optional() })),
   addMcpServer: oc
     .input(
       z.object({

@@ -1,4 +1,4 @@
-import type { HookRegistry, PersonalityRegistry, Tool } from '@ethosagent/types';
+import type { HookRegistry, PersonalityConfig, PersonalityRegistry, Tool } from '@ethosagent/types';
 import { FileContextInjector } from './file-context-injector';
 import { GetSkillTool } from './get-skill-tool';
 import { MemoryGuidanceInjector } from './memory-guidance-injector';
@@ -75,6 +75,14 @@ export interface InjectorConfig {
    * monorepos. Without it, the injector falls back to static-only.
    */
   hooks?: HookRegistry;
+  /**
+   * Gap 11 — live tool-reach getter for `requires.tools` gating and
+   * capability-mode filtering. Wiring passes a registry-backed closure
+   * (evaluated per resolveSkills() call, so late-registered MCP/plugin
+   * tools are visible). When omitted, tool availability is unknown and
+   * the `requires.tools` gate is skipped.
+   */
+  toolNamesForPersonality?: (personality: PersonalityConfig) => Set<string>;
 }
 
 /**
@@ -101,6 +109,9 @@ export function createInjectors(
     globalSkillsDir: config.globalSkillsDir,
     onSkip: config.onSkillSkip,
     scanner,
+    ...(config.toolNamesForPersonality
+      ? { toolNamesForPersonality: config.toolNamesForPersonality }
+      : {}),
   });
   const fileContext = new FileContextInjector({
     personalities,

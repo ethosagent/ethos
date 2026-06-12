@@ -1,5 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useEffect, useMemo, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 
 interface CronRun {
   ranAt: string;
@@ -9,18 +10,15 @@ interface CronRun {
 
 interface JobHistoryTabProps {
   jobId: string;
-  port: number;
   onViewOutput: (run: { ranAt: string; output: string | null; outputPath: string }) => void;
 }
 
-export function JobHistoryTab({ jobId, port, onViewOutput }: JobHistoryTabProps) {
+export function JobHistoryTab({ jobId, onViewOutput }: JobHistoryTabProps) {
   const [runs, setRuns] = useState<CronRun[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   useEffect(() => {
     let cancelled = false;

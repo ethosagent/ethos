@@ -1,19 +1,14 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAppState } from '../../state/AppContext';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { CreateKeyDrawer } from './CreateKeyDrawer';
 import { KeyRevealPanel } from './KeyRevealPanel';
 import type { ApiKey } from './KeyTable';
 import { KeyTable } from './KeyTable';
 
 export function ApiKeysPage() {
-  const { state } = useAppState();
-  const { port } = state;
-
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);

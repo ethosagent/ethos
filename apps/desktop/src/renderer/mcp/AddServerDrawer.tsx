@@ -1,6 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useMemo, useState } from 'react';
-import { useAppState } from '../state/AppContext';
+import { useServerUrl } from '../shell/ServerUrl';
 import { DrawerShell } from '../ui/DrawerShell';
 import { RadioOptionRow } from '../ui/RadioOptionRow';
 import { SectionLabel } from '../ui/SectionLabel';
@@ -16,7 +16,6 @@ interface AddServerDrawerProps {
   open?: boolean;
   onClose: () => void;
   onServerAdded: () => void;
-  port?: number;
 }
 
 function deriveServerName(transport: Transport, url: string, command: string): string {
@@ -98,15 +97,8 @@ function StepDots({ current }: { current: Step }) {
   );
 }
 
-export function AddServerDrawer({
-  open = true,
-  onClose,
-  onServerAdded,
-  port: portProp,
-}: AddServerDrawerProps) {
-  const { state } = useAppState();
-  const port = portProp ?? state.port;
-  const baseUrl = `http://localhost:${port}`;
+export function AddServerDrawer({ open = true, onClose, onServerAdded }: AddServerDrawerProps) {
+  const baseUrl = useServerUrl();
   const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [step, setStep] = useState<Step>(0);

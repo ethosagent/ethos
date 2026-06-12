@@ -1,6 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAppState } from '../../state/AppContext';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { PersonalityBindingRow } from '../../ui/PersonalityBindingRow';
 import { AccessControlSection } from '../components/AccessControlSection';
 import { BotRow } from '../components/BotRow';
@@ -47,8 +47,7 @@ const inputStyle: React.CSSProperties = {
 };
 
 export function WhatsAppDrawer({ onBotChange }: WhatsAppDrawerProps) {
-  const { state } = useAppState();
-  const baseUrl = `http://localhost:${state.port}`;
+  const baseUrl = useServerUrl();
   const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [paired, setPaired] = useState(false);
@@ -396,7 +395,7 @@ export function WhatsAppDrawer({ onBotChange }: WhatsAppDrawerProps) {
         <div style={{ marginTop: 8 }}>
           1. The pairing code appears here once the gateway is back, or visit{' '}
           <code style={{ fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-            http://localhost:{state.port}/setup/whatsapp/
+            {baseUrl}/setup/whatsapp/
             {unpairedBot?.botKey ?? 'default'}
           </code>
         </div>

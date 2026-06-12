@@ -1,5 +1,6 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useServerUrl } from '../../shell/ServerUrl';
 import { ImportPersonalityPicker } from '../components/ImportPersonalityPicker';
 import { PersonalitySubTabPicker } from '../components/PersonalitySubTabPicker';
 import { SkillCard } from '../components/SkillCard';
@@ -23,15 +24,9 @@ interface PersonalitySkill {
   modifiedAt: string;
 }
 
-interface SkillsLibraryTabProps {
-  port: number;
-}
-
-export function SkillsLibraryTab({ port }: SkillsLibraryTabProps) {
-  const client = useMemo(
-    () => createEthosClient({ baseUrl: `http://localhost:${port}`, fetch: globalThis.fetch }),
-    [port],
-  );
+export function SkillsLibraryTab() {
+  const baseUrl = useServerUrl();
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const [skills, setSkills] = useState<Skill[]>([]);
   const [personalitySkills, setPersonalitySkills] = useState<PersonalitySkill[]>([]);
@@ -304,7 +299,6 @@ export function SkillsLibraryTab({ port }: SkillsLibraryTabProps) {
         open={selectedSkillId !== null || isNewSkill}
         skillId={selectedSkillId}
         isNew={isNewSkill}
-        port={port}
         onClose={() => {
           setSelectedSkillId(null);
           setIsNewSkill(false);
