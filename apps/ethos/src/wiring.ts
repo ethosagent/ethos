@@ -244,13 +244,6 @@ export async function createAgentLoop(
     ...(opts.cronScheduler ? { cronScheduler: opts.cronScheduler } : {}),
   });
 
-  result.setOnSkillProposed?.((skillId, personalityId) => {
-    console.warn(
-      `[skill-evolution] Proposed skill candidate "${skillId}" for personality "${personalityId}". ` +
-        `Review with: ethos evolve --list-pending`,
-    );
-  });
-
   return result;
 }
 
@@ -370,6 +363,8 @@ export interface ActiveLoop {
   personalityId: string;
   /** Human-readable label for the banner: "researcher" or "team:myteam". */
   displayName: string;
+  /** Forward the skill-evolution callback setter so surfaces can wire SSE/CLI notifications. */
+  setOnSkillProposed?: (fn: (skillId: string, personalityId: string) => void) => void;
   /** v2.2 — Notification router for registering per-session adapters. */
   notificationRouter: import('@ethosagent/types').NotificationRouter;
   /** v2.2 — Plugin loader for health checks and diagnostics. */
@@ -388,6 +383,7 @@ export async function resolveActiveLoop(
       loop: teamResult.loop,
       personalityId: teamResult.coordinatorPersonality,
       displayName: `team:${teamName}`,
+      setOnSkillProposed: teamResult.setOnSkillProposed,
       notificationRouter: teamResult.notificationRouter,
       pluginLoader: teamResult.pluginLoader,
     };
@@ -399,6 +395,7 @@ export async function resolveActiveLoop(
     loop: result.loop,
     personalityId,
     displayName: personalityId,
+    setOnSkillProposed: result.setOnSkillProposed,
     notificationRouter: result.notificationRouter,
     pluginLoader: result.pluginLoader,
   };

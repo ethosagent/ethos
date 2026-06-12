@@ -21,6 +21,7 @@ import { useAppState } from '../state/AppContext';
 import { AppSidebar } from './AppSidebar';
 import { CommandPalette } from './CommandPalette';
 import { RightDrawer } from './RightDrawer';
+import { ServerUrlContext } from './ServerUrl';
 import { StatusBar } from './StatusBar';
 import { type Toast, ToastContainer } from './ToastContainer';
 import { useDrawerStream } from './useDrawerStream';
@@ -55,6 +56,8 @@ export function AppShell() {
   const [healthy, setHealthy] = useState(false);
   const [backendConnected, setBackendConnected] = useState(false);
   const [resolvedPort, setResolvedPort] = useState(3001);
+  const [connectionMode, setConnectionMode] = useState<'local' | 'remote'>('local');
+  const [remoteUrl, setRemoteUrl] = useState('');
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -64,15 +67,11 @@ export function AppShell() {
 
   const drawerState = useDrawerStream();
 
-  const baseUrl = `http://localhost:${resolvedPort}`;
+  const baseUrl = connectionMode === 'remote' ? remoteUrl : `http://localhost:${resolvedPort}`;
   const sessionList = useSessionList({ baseUrl, enabled: healthy });
   const sessionListRefresh = sessionList.refresh;
 
-  const client = useMemo(
-    () =>
-      createEthosClient({ baseUrl: `http://localhost:${resolvedPort}`, fetch: globalThis.fetch }),
-    [resolvedPort],
-  );
+  const client = useMemo(() => createEthosClient({ baseUrl, fetch: globalThis.fetch }), [baseUrl]);
 
   const pinnedSessions = useMemo(
     () => sessionList.sessions.filter((s) => s.pinned),
@@ -185,6 +184,30 @@ export function AppShell() {
         // Keep default false
       }
 
+      // Fetch connection mode
+      let connMode: 'local' | 'remote' = 'local';
+      let connUrl = '';
+      try {
+        const conn = await window.ethos.connection.get();
+        connMode = conn.mode;
+        connUrl = conn.url ?? '';
+        setConnectionMode(connMode);
+        setRemoteUrl(connUrl);
+      } catch {
+        // fallback to local
+      }
+
+      if (connMode === 'remote' && connUrl) {
+        // Remote mode — skip local backend start, test remote directly
+        const testResult = await window.ethos.connection.test({ url: connUrl });
+        if (testResult.ok) {
+          setHealthy(true);
+          setBackendConnected(true);
+        }
+        return;
+      }
+
+      // Local mode — start backend and poll health
       let resolvedPort = 3001;
       try {
         resolvedPort = await window.ethos.backend.getPort();
@@ -250,15 +273,20 @@ export function AppShell() {
     if (!healthy) return;
     const check = async () => {
       try {
-        const { healthy: ok } = await window.ethos.health.check({ port: resolvedPort });
-        setBackendConnected(ok);
+        if (connectionMode === 'remote' && remoteUrl) {
+          const result = await window.ethos.connection.test({ url: remoteUrl });
+          setBackendConnected(result.ok);
+        } else {
+          const { healthy: ok } = await window.ethos.health.check({ port: resolvedPort });
+          setBackendConnected(ok);
+        }
       } catch {
         setBackendConnected(false);
       }
     };
     const id = setInterval(check, 30_000);
     return () => clearInterval(id);
-  }, [healthy, resolvedPort]);
+  }, [healthy, resolvedPort, connectionMode, remoteUrl]);
 
   useEffect(() => {
     if (!healthy) return;
@@ -272,7 +300,7 @@ export function AppShell() {
 
   useEffect(() => {
     if (!healthy) return;
-    const source = new EventSource(`http://localhost:${resolvedPort}/sse/system`, {
+    const source = new EventSource(`${baseUrl}/sse/system`, {
       withCredentials: true,
     });
     source.onmessage = (raw) => {
@@ -291,7 +319,7 @@ export function AppShell() {
       }
     };
     return () => source.close();
-  }, [healthy, resolvedPort, setLastTitledSession, sessionListRefresh]);
+  }, [healthy, baseUrl, setLastTitledSession, sessionListRefresh]);
 
   const prevNotifCountRef = useRef(0);
   useEffect(() => {
@@ -374,7 +402,7 @@ export function AppShell() {
   }
 
   return (
-    <>
+    <ServerUrlContext.Provider value={baseUrl}>
       <div
         style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}
       >
@@ -484,6 +512,8 @@ export function AppShell() {
           onToggleDrawer={() => setDrawerOpen((v) => !v)}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
+          connectionMode={connectionMode}
+          remoteUrl={remoteUrl}
         />
       </div>
       <CommandPalette
@@ -499,6 +529,6 @@ export function AppShell() {
         toasts={toasts}
         onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))}
       />
-    </>
+    </ServerUrlContext.Provider>
   );
 }

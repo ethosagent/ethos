@@ -1,7 +1,8 @@
 import { personalityAccent } from '@ethosagent/design-tokens';
 import { Input } from 'antd';
-import { type KeyboardEvent, useRef, useState } from 'react';
+import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import type { AttachmentPreview } from '../../lib/attachments';
+import { rpc } from '../../rpc';
 
 export interface ComposerProps {
   personalityId: string;
@@ -29,18 +30,108 @@ export function Composer({
   const [text, setText] = useState('');
   const accent = personalityAccent(personalityId);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [atQuery, setAtQuery] = useState<string | null>(null);
+  const [atResults, setAtResults] = useState<string[]>([]);
+  const [atIndex, setAtIndex] = useState(0);
 
   const hasReadyAttachments = attachments && attachments.length > 0;
   const isUploading = attachments?.some((a) => a.state === 'uploading');
 
-  const handleSend = () => {
+  useEffect(() => {
+    if (atQuery === null) {
+      setAtResults([]);
+      return;
+    }
+    let cancelled = false;
+    rpc.files
+      .list({ prefix: atQuery || undefined })
+      .then((res) => {
+        if (!cancelled) {
+          setAtResults(res.paths.slice(0, 8));
+          setAtIndex(0);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAtResults([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [atQuery]);
+
+  const handleTextChange = useCallback((value: string) => {
+    setText(value);
+    const atPos = value.lastIndexOf('@');
+    if (atPos >= 0) {
+      const afterAt = value.slice(atPos + 1);
+      if (!afterAt.includes(' ')) {
+        setAtQuery(afterAt);
+        return;
+      }
+    }
+    setAtQuery(null);
+  }, []);
+
+  const handleSend = async () => {
     const trimmed = text.trim();
     if ((!trimmed && !hasReadyAttachments) || disabled || isUploading) return;
     setText('');
-    void onSend(trimmed);
+
+    let resolved = trimmed;
+    const refPattern = /@([\w./~-]+)/g;
+    const matches = [...trimmed.matchAll(refPattern)];
+    if (matches.length > 0) {
+      const refs = matches.map((m) => m[1]);
+      try {
+        const result = await rpc.context.resolve({ refs });
+        for (const entry of result.resolved) {
+          if (entry.content) {
+            resolved = resolved.replace(
+              `@${entry.ref}`,
+              `\`\`\`${entry.lang}\n// ${entry.ref}\n${entry.content}\n\`\`\``,
+            );
+          }
+        }
+      } catch {
+        // Resolution failed — send with raw @ref tokens
+      }
+    }
+
+    void onSend(resolved);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (atQuery !== null && atResults.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setAtIndex((i) => (i + 1) % atResults.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setAtIndex((i) => (i - 1 + atResults.length) % atResults.length);
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault();
+        const selected = atResults[atIndex];
+        if (selected) {
+          const atPos = text.lastIndexOf('@');
+          const before = text.slice(0, atPos + 1);
+          const newText = `${before}${selected} `;
+          setText(newText);
+          setAtQuery(null);
+          setAtResults([]);
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setAtQuery(null);
+        setAtResults([]);
+        return;
+      }
+    }
     if (e.key !== 'Enter') return;
     if (e.shiftKey) return;
     e.preventDefault();
@@ -85,7 +176,12 @@ export function Composer({
     <div className="composer">
       <div className="composer-inner">
         {/* biome-ignore lint/a11y/noStaticElementInteractions: drop zone for file attachments */}
-        <div className="composer-card" onDragOver={handleDragOver} onDrop={handleDrop}>
+        <div
+          className="composer-card"
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+          style={{ position: 'relative' }}
+        >
           <input
             type="file"
             ref={fileInputRef}
@@ -115,9 +211,55 @@ export function Composer({
               ))}
             </div>
           )}
+          {atQuery !== null && atResults.length > 0 && (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: '100%',
+                left: 0,
+                right: 0,
+                background: 'var(--ethos-bg-surface, #1a1a1a)',
+                border: '1px solid var(--ethos-border, #333)',
+                borderRadius: 'var(--radius-sm)',
+                maxHeight: 200,
+                overflow: 'auto',
+                zIndex: 10,
+                marginBottom: 4,
+              }}
+            >
+              {atResults.map((path, i) => (
+                <button
+                  type="button"
+                  key={path}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    const atPos = text.lastIndexOf('@');
+                    const before = text.slice(0, atPos + 1);
+                    setText(`${before}${path} `);
+                    setAtQuery(null);
+                    setAtResults([]);
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    fontFamily: 'monospace',
+                    background: i === atIndex ? 'var(--ethos-bg-hover, #2a2a2a)' : 'transparent',
+                    border: 'none',
+                    color: 'inherit',
+                    textAlign: 'left',
+                    width: '100%',
+                    display: 'block',
+                  }}
+                >
+                  {path}
+                </button>
+              ))}
+            </div>
+          )}
           <Input.TextArea
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => handleTextChange(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder={placeholder ?? 'Send a message…'}

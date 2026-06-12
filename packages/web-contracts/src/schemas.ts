@@ -237,6 +237,8 @@ export const SkillSchema = z.object({
   modifiedAt: z.string(),
   source: z.enum(['system', 'user', 'evolver', 'personality']),
   readonly: z.boolean(),
+  /** Gap 11 — non-null when the skill failed an `ethos.requires` gate at load time. */
+  unavailableReason: z.string().nullable().optional(),
 });
 export type Skill = z.infer<typeof SkillSchema>;
 

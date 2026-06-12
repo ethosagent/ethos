@@ -6,6 +6,7 @@ import {
   parseEthosExternalCliAlternatives,
   parseEthosFallbackForTools,
   parseEthosPermissions,
+  parseEthosRequires,
 } from './ethos-namespace';
 
 /** Detect agentskills.io standard: `required_tools` or `tags` at the top level. */
@@ -57,5 +58,6 @@ export function parseAgentSkills(
     dialect: 'agentskills',
     mtimeMs,
     permissions: parseEthosPermissions(data),
+    requires: parseEthosRequires(data),
   };
 }

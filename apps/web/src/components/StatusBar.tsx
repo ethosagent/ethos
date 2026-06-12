@@ -1,15 +1,51 @@
+import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useConfig } from '../features/config/api/queries';
+import { getLastSessionId } from '../lib/lastSession';
+import { subscribeToSession } from '../sse';
 
 interface StatusBarProps {
   drawerOpen: boolean;
   onToggleDrawer: () => void;
 }
 
+/** Track pending skill proposals via SSE events. */
+function useSkillProposalCount(): number {
+  const [count, setCount] = useState(0);
+  const [sessionId, setSessionId] = useState<string | null>(() => getLastSessionId());
+
+  useEffect(() => {
+    const refresh = () => setSessionId(getLastSessionId());
+    window.addEventListener('storage', refresh);
+    window.addEventListener('ethos:active-session-changed', refresh);
+    return () => {
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('ethos:active-session-changed', refresh);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const sub = subscribeToSession(sessionId, {
+      onEvent: (event) => {
+        if (event.type === 'evolve.skill_pending') {
+          setCount((c) => c + 1);
+        } else if (event.type === 'evolve.skill_applied') {
+          setCount((c) => Math.max(0, c - 1));
+        }
+      },
+    });
+    return () => sub.close();
+  }, [sessionId]);
+
+  return count;
+}
+
 export function StatusBar({ drawerOpen, onToggleDrawer }: StatusBarProps) {
   const { data, error, isLoading } = useConfig();
   const { pathname } = useLocation();
   const isChat = pathname === '/chat';
+  const skillProposalCount = useSkillProposalCount();
 
   const statusState: 'connected' | 'connecting' | 'offline' = isLoading
     ? 'connecting'
@@ -34,6 +70,32 @@ export function StatusBar({ drawerOpen, onToggleDrawer }: StatusBarProps) {
       <Link to="/cron" className="sb-link">
         Cron
       </Link>
+      {skillProposalCount > 0 && (
+        <>
+          <span className="sb-sep" />
+          <Link to="/skills" className="sb-link">
+            Skills{' '}
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minWidth: 16,
+                height: 16,
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: 'var(--ethos-accent, #1677ff)',
+                color: '#fff',
+                fontSize: 10,
+                fontWeight: 600,
+                padding: '0 4px',
+                marginLeft: 2,
+              }}
+            >
+              {skillProposalCount}
+            </span>
+          </Link>
+        </>
+      )}
 
       <span className="sb-spacer" />
       {isChat && (

@@ -81,3 +81,38 @@ export function parseEthosExternalCliAlternatives(
   const list = raw.filter((x): x is string => typeof x === 'string');
   return list.length > 0 ? list : undefined;
 }
+
+/**
+ * Gap 11 — parse `ethos.requires` from frontmatter. Accepts:
+ *   ethos:
+ *     requires:
+ *       env: [OPENAI_API_KEY]
+ *       tools: [bash, read_file]
+ *       os: [linux, darwin]
+ */
+export function parseEthosRequires(
+  data: Record<string, unknown>,
+): { env?: string[]; tools?: string[]; os?: ('linux' | 'darwin' | 'win32')[] } | undefined {
+  const ethos = getEthosBlock(data);
+  if (!ethos) return undefined;
+  const req = ethos.requires;
+  if (typeof req !== 'object' || req === null || Array.isArray(req)) return undefined;
+  const r = req as Record<string, unknown>;
+  const result: { env?: string[]; tools?: string[]; os?: ('linux' | 'darwin' | 'win32')[] } = {};
+  if (Array.isArray(r.env)) {
+    const list = r.env.filter((x): x is string => typeof x === 'string');
+    if (list.length > 0) result.env = list;
+  }
+  if (Array.isArray(r.tools)) {
+    const list = r.tools.filter((x): x is string => typeof x === 'string');
+    if (list.length > 0) result.tools = list;
+  }
+  if (Array.isArray(r.os)) {
+    const valid = new Set<string>(['linux', 'darwin', 'win32']);
+    const list = r.os
+      .filter((x): x is string => typeof x === 'string')
+      .filter((x) => valid.has(x)) as ('linux' | 'darwin' | 'win32')[];
+    if (list.length > 0) result.os = list;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}

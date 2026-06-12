@@ -5,7 +5,9 @@ import { os } from './context';
 // (handlers ≤10 lines, business logic in the service).
 
 export const skillsRouter = {
-  list: os.skills.list.handler(({ context }) => context.skills.list()),
+  list: os.skills.list.handler(({ input, context }) =>
+    context.skills.list({ includeUnavailable: input.includeUnavailable }),
+  ),
 
   get: os.skills.get.handler(({ input, context }) => context.skills.get(input.id)),
 

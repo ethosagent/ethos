@@ -13,9 +13,11 @@ export interface SkillsServiceOptions {
 export class SkillsService {
   constructor(private readonly opts: SkillsServiceOptions) {}
 
-  async list(): Promise<{ skills: Skill[]; pendingCount: number }> {
+  async list(opts?: {
+    includeUnavailable?: boolean;
+  }): Promise<{ skills: Skill[]; pendingCount: number }> {
     const [skills, pending] = await Promise.all([
-      this.opts.library.listSkills(),
+      this.opts.library.listSkills({ includeUnavailable: opts?.includeUnavailable }),
       this.opts.library.listPending(),
     ]);
     return { skills: skills.map(toWire), pendingCount: pending.length };
@@ -56,6 +58,7 @@ function toWire(record: SkillRecord): Skill {
     modifiedAt: record.modifiedAt,
     source: record.source,
     readonly: record.readonly,
+    unavailableReason: null,
   };
 }
 

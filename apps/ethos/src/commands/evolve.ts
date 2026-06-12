@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import {
   loadEvolveConfig,
   runEvolveApply,
+  runEvolveArchive,
+  runEvolvePrune,
   runEvolveStatus,
   SkillEvolver,
 } from '@ethosagent/skill-evolver';
@@ -62,6 +64,8 @@ function printUsage(): void {
   console.log('  ethos evolve status');
   console.log('  ethos evolve run [--quiet]');
   console.log('  ethos evolve apply <filename> | --all [-y]');
+  console.log('  ethos evolve prune [--older-than <days>] [--yes]');
+  console.log('  ethos evolve archive [--older-than <days>]');
   console.log('  ethos evolve --eval-output <file.eval.jsonl> [--auto-approve]');
   console.log('  ethos evolve --list-pending');
   console.log('  ethos evolve --approve <filename> | --approve-all');
@@ -85,6 +89,16 @@ export async function runEvolve(args: string[], config: EthosConfig): Promise<vo
 
   if (sub === 'run') {
     await runEvolveRun(args.slice(1), config, dir);
+    return;
+  }
+
+  if (sub === 'prune') {
+    await runEvolvePrune(args.slice(1), dir);
+    return;
+  }
+
+  if (sub === 'archive') {
+    await runEvolveArchive(args.slice(1), dir);
     return;
   }
 

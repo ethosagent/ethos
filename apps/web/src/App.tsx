@@ -9,6 +9,7 @@ import { useConfig, useOnboardingState } from './features/config/api/queries';
 import { usePushEventToasts } from './hooks/usePushEventToasts';
 import { useSessionTitleSync } from './hooks/useSessionTitleSync';
 import { Activity } from './pages/Activity';
+import { Admin } from './pages/Admin';
 import { Batch } from './pages/Batch';
 import { Chat } from './pages/Chat';
 import { Communications } from './pages/Communications';
@@ -140,6 +141,7 @@ export function App() {
           <Route path="/dashboards" element={<Dashboards />} />
           <Route path="/dashboards/create" element={<CreateDashboardFlow />} />
           <Route path="/dashboards/:id" element={<DashboardView />} />
+          <Route path="/admin" element={<Admin />} />
           <Route path="/onboarding" element={<Onboarding />} />
           <Route path="/setup/provider" element={<Onboarding startAtStep="provider" />} />
           <Route path="/setup/providers" element={<Onboarding startAtStep="multi-provider" />} />

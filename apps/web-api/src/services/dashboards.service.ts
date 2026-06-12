@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import type { PluginLoader } from '@ethosagent/plugin-loader';
+import { loadWidgetTemplates } from '@ethosagent/plugin-loader';
 import type { WidgetTemplate } from '@ethosagent/types';
 import Database from 'better-sqlite3';
 
@@ -85,6 +87,7 @@ export interface AddPanelInput {
 
 export interface DashboardsServiceOptions {
   dbPath: string;
+  pluginLoader?: PluginLoader;
 }
 
 // ---------------------------------------------------------------------------
@@ -249,9 +252,11 @@ function toPanel(row: PanelRow): DashboardPanel {
 
 export class DashboardsService {
   private readonly db: Database.Database;
+  private readonly pluginLoader?: PluginLoader;
 
   constructor(opts: DashboardsServiceOptions) {
     this.db = new Database(opts.dbPath);
+    this.pluginLoader = opts.pluginLoader;
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.createTables();
@@ -907,7 +912,16 @@ export class DashboardsService {
   // -------------------------------------------------------------------------
 
   async listWidgetTemplates(): Promise<WidgetTemplate[]> {
-    return [];
+    if (!this.pluginLoader) return [];
+    const manifests = this.pluginLoader.listManifests();
+    const templates: WidgetTemplate[] = [];
+    for (const m of manifests) {
+      if (!m.hasWidgets) continue;
+      const pluginDir = this.pluginLoader.getPluginPath(m.id);
+      if (!pluginDir) continue;
+      templates.push(...loadWidgetTemplates(pluginDir, m.id));
+    }
+    return templates;
   }
 
   // -------------------------------------------------------------------------
@@ -979,4 +993,39 @@ export function buildPromptSummary(
     }
   }
   return `Based on the following conversation, produce the same kind of output:\n\n${parts.join('\n\n')}`;
+}
+
+/**
+ * Execute a read-only SQL query against a plugin data source.
+ */
+export async function runPluginQuery(
+  pluginLoader: { getDataSourcePath(pluginId: string, sourceId: string): string | null },
+  pluginId: string,
+  sourceId: string,
+  sql: string,
+): Promise<{ columns: string[]; rows: Record<string, unknown>[] }> {
+  const dbPath = pluginLoader.getDataSourcePath(pluginId, sourceId);
+  if (!dbPath) {
+    throw new Error(`Data source '${sourceId}' not registered by plugin '${pluginId}'`);
+  }
+
+  // Reject mutating SQL
+  const trimmed = sql.trim().toUpperCase();
+  const MUTATING = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'CREATE', 'ALTER', 'PRAGMA', 'ATTACH'];
+  for (const kw of MUTATING) {
+    if (trimmed.startsWith(kw)) {
+      throw new Error(`Mutating SQL not allowed: ${kw}`);
+    }
+  }
+
+  const { default: Database } = await import('better-sqlite3');
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const stmt = db.prepare(sql);
+    const rows = stmt.all() as Record<string, unknown>[];
+    const columns = rows.length > 0 ? Object.keys(rows[0] ?? {}) : [];
+    return { columns, rows };
+  } finally {
+    db.close();
+  }
 }

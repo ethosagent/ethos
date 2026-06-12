@@ -29,6 +29,7 @@ import { type PluginLockEntry, readLockfile } from './lockfile';
 
 export type { PluginLockEntry, PluginLockfile } from './lockfile';
 export { computeIntegrity, readLockfile, verifyIntegrity, writeLockfile } from './lockfile';
+export { loadWidgetTemplates } from './widgets-loader';
 
 export interface InstalledPluginManifest {
   /** The plugin's id — `ethos.id` if declared, else `name`. */
@@ -483,6 +484,26 @@ export class PluginLoader {
 
   getPluginPath(pluginId: string): string | null {
     return this.pluginPaths.get(pluginId) ?? null;
+  }
+
+  getSlashHandler(
+    name: string,
+  ):
+    | ((args: string, ctx: import('@ethosagent/types').SlashCommandContext) => Promise<string>)
+    | undefined {
+    for (const api of this.apis.values()) {
+      const handler = api.getSlashHandler(name);
+      if (handler) return handler;
+    }
+    return undefined;
+  }
+
+  getAllSlashCommands(): { name: string; description: string; usage: string }[] {
+    const result: { name: string; description: string; usage: string }[] = [];
+    for (const api of this.apis.values()) {
+      result.push(...api.getAllSlashCommands());
+    }
+    return result;
   }
 
   // ---------------------------------------------------------------------------

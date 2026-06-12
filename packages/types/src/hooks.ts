@@ -212,6 +212,16 @@ export interface AfterTicketRevisionPayload {
   successRatio?: number;
 }
 
+export interface ProcessCompleteEvent {
+  processId: string;
+  sessionId: string;
+  sessionKey: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+}
+
 // ---------------------------------------------------------------------------
 // Hook map — groups by execution model
 // ---------------------------------------------------------------------------
@@ -228,6 +238,7 @@ export interface VoidHooks {
   subagent_spawned: SubagentSpawnedPayload;
   subagent_ended: SubagentEndedPayload;
   after_ticket_revision: AfterTicketRevisionPayload;
+  process_complete: ProcessCompleteEvent;
 }
 
 export interface ModifyingHooks {

@@ -322,7 +322,7 @@ export async function composeAllTools(
     for (const tool of composeKanban(wiringCtx, kanbanOpts).tools) tools.register(tool);
   }
 
-  for (const tool of composeProcess(wiringCtx).tools) tools.register(tool);
+  for (const tool of composeProcess(wiringCtx, { hookRegistry: hooks }).tools) tools.register(tool);
   for (const tool of createImageTools({
     openaiApiKey: config.provider === 'openai' ? config.apiKey : undefined,
   }))

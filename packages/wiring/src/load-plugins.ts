@@ -47,6 +47,10 @@ export interface LoadPluginsDeps {
   skillScanner: UniversalScanner;
   skillPool: Map<string, Skill>;
   buildCompressionSummarizer: () => import('@ethosagent/core').SummarizerFn | undefined;
+  slashRegistry?: {
+    register(cmd: { name: string; description: string; usage: string; prefix?: string }): void;
+    get(name: string): { description?: string; usage?: string } | undefined;
+  };
 }
 
 /**
@@ -115,6 +119,7 @@ export async function loadPlugins(
     baseUrl: config.baseUrl,
     pluginPages: new Map(),
     renderers: new Map(),
+    slashRegistry: deps.slashRegistry,
     // v2.2 — llmFactory is set after LLM resolution (below). Monitors only
     // start after full wiring, so lazy assignment is safe.
   };

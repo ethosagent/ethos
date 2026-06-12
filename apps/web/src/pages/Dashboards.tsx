@@ -33,6 +33,36 @@ export function Dashboards() {
     },
   });
 
+  const { data: templatesData } = useQuery({
+    queryKey: ['widgetTemplates'],
+    queryFn: () => rpc.dashboards.listWidgetTemplates(),
+  });
+
+  const templates = templatesData?.templates ?? [];
+
+  const addFromTemplateMut = useMutation({
+    mutationFn: (t: (typeof templates)[number]) =>
+      rpc.dashboards.addPanel({
+        dashboardId: null,
+        newDashboardTitle: t.title,
+        personalityId: 'default',
+        panel: {
+          queryType: t.queryType,
+          blockType: t.queryType === 'sql' ? 'table' : 'html',
+          content: '',
+          title: t.title,
+          sqlQuery: t.sql,
+          prompt: t.prompt,
+          pluginId: t.pluginId,
+          dataSourceId: t.dataSource,
+        },
+      }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['dashboards'] });
+      navigate(`/dashboards/${result.panel.dashboardId}`);
+    },
+  });
+
   if (isLoading) return <Skeleton active />;
 
   const dashboards = data?.dashboards ?? [];
@@ -107,6 +137,31 @@ export function Dashboards() {
               />
             </Card>
           ))}
+        </div>
+      )}
+      {templates.length > 0 && (
+        <div style={{ marginTop: 32 }}>
+          <Typography.Title level={5} style={{ marginBottom: 12 }}>
+            Available Plugin Widgets
+          </Typography.Title>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+              gap: 12,
+            }}
+          >
+            {templates.map((t) => (
+              <Card
+                key={`${t.pluginId}-${t.id}`}
+                size="small"
+                hoverable
+                onClick={() => addFromTemplateMut.mutate(t)}
+              >
+                <Card.Meta title={t.title} description={`${t.queryType} · ${t.pluginId}`} />
+              </Card>
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -289,6 +289,17 @@ export interface GatewayConfig {
     platformUserId: string,
     displayLabel?: string,
   ) => Promise<string>;
+  /** Plugin loader for dispatching plugin-registered slash commands. */
+  pluginLoader?: {
+    getSlashHandler(
+      name: string,
+    ):
+      | ((args: string, ctx: import('@ethosagent/types').SlashCommandContext) => Promise<string>)
+      | undefined;
+    getAllSlashCommands(): { name: string; description: string; usage: string }[];
+  };
+  /** Notification router for delivering process completion alerts to channels. */
+  notificationRouter?: import('@ethosagent/types').NotificationRouter;
 }
 
 // ---------------------------------------------------------------------------
@@ -368,6 +379,8 @@ export class Gateway {
   private readonly activeTurns = new Map<string, { adapter: PlatformAdapter; chatId: string }>();
   /** Active steer sinks by laneKey — inbound messages during a turn push here. */
   private readonly activeSinks = new Map<string, SteerSink>();
+  /** Buffered notifications for sessions whose turn has ended. */
+  private readonly unreadNotifications = new Map<string, string[]>();
   /** Live status message per lane — edited in place during tool execution. */
   private readonly activeStatusMessages = new Map<
     string,
@@ -434,6 +447,8 @@ export class Gateway {
     | ((platform: string, platformUserId: string, displayLabel?: string) => Promise<string>)
     | undefined;
   private readonly backgroundRunner: BackgroundRunner;
+  private readonly pluginLoader: GatewayConfig['pluginLoader'];
+  private readonly notificationRouter: GatewayConfig['notificationRouter'];
   private readonly backgroundCallbacks = new Map<
     string,
     { adapter: PlatformAdapter; chatId: string; threadId?: string }
@@ -508,6 +523,8 @@ export class Gateway {
     this.attachmentCache = config.attachmentCache;
     this.adapterRegistry = config.adapters ?? new Map();
     this.resolveUserIdFn = config.resolveUserId;
+    this.pluginLoader = config.pluginLoader;
+    this.notificationRouter = config.notificationRouter;
 
     this.backgroundRunner = new BackgroundRunner({ maxConcurrent: 4 });
     this.backgroundRunner.onComplete((task) => {
@@ -715,14 +732,22 @@ export class Gateway {
             `/personality <id> — switch personality`,
           ]
         : [`/personality — show current binding (${current}; switching disabled)`];
+      let helpText =
+        `/new — start a fresh session\n` +
+        `/stop — abort current response\n` +
+        `${personalityLines.join('\n')}\n` +
+        `/usage — token and cost stats\n` +
+        `/help — this message`;
+      const pluginCmds = this.pluginLoader?.getAllSlashCommands() ?? [];
+      if (pluginCmds.length > 0) {
+        const pluginLines = pluginCmds
+          .map((c) => `/${c.name} — ${c.description} [plugin]`)
+          .join('\n');
+        helpText += `\n\n${pluginLines}`;
+      }
       await adapter
         .send(message.chatId, {
-          text:
-            `/new — start a fresh session\n` +
-            `/stop — abort current response\n` +
-            `${personalityLines.join('\n')}\n` +
-            `/usage — token and cost stats\n` +
-            `/help — this message`,
+          text: helpText,
         })
         .catch(() => {});
       return;
@@ -1054,6 +1079,35 @@ export class Gateway {
       }
     }
 
+    // --- Plugin slash commands ---
+    if (!cmdType && text.startsWith('/')) {
+      const cmdName = text.split(/\s+/)[0]?.slice(1).toLowerCase();
+      const pluginHandler = cmdName ? this.pluginLoader?.getSlashHandler(cmdName) : undefined;
+      if (pluginHandler) {
+        const cmdArgs = text.split(/\s+/).slice(1).join(' ');
+        const sessionId = this.sessionKeys.get(laneKey) ?? laneKey;
+        const personalityId = this.activePersonalityFor(laneKey, bot);
+        const ctx: import('@ethosagent/types').SlashCommandContext = {
+          sessionId,
+          personalityId,
+          platform: message.platform,
+          send: async (t: string) => {
+            await adapter.send(message.chatId, { text: t, threadId }).catch(() => {});
+          },
+        };
+        try {
+          const result = await pluginHandler(cmdArgs, ctx);
+          if (result)
+            await adapter.send(message.chatId, { text: result, threadId }).catch(() => {});
+        } catch (err) {
+          await adapter
+            .send(message.chatId, { text: `Plugin command error: ${String(err)}`, threadId })
+            .catch(() => {});
+        }
+        return;
+      }
+    }
+
     // --- Auto-steer: if a turn is already running, push into its steer sink ---
     const activeSink = this.activeSinks.get(laneKey);
     if (activeSink) {
@@ -1089,6 +1143,33 @@ export class Gateway {
         : (this.personalityIds.get(laneKey) ?? bot.binding.name);
 
     this.activeTurns.set(laneKey, { adapter, chatId: message.chatId });
+
+    // Flush buffered notifications from previous disconnected period
+    if (this.notificationRouter) {
+      const buffered = this.unreadNotifications.get(sessionKey);
+      if (buffered && buffered.length > 0) {
+        this.unreadNotifications.delete(sessionKey);
+        for (const note of buffered) {
+          await adapter.send(message.chatId, { text: note, threadId }).catch(() => {});
+        }
+      }
+    }
+
+    let turnActive = true;
+    if (this.notificationRouter) {
+      this.notificationRouter.register(sessionKey, {
+        send: async (text: string) => {
+          if (turnActive) {
+            await adapter.send(message.chatId, { text, threadId }).catch(() => {});
+          } else {
+            const buf = this.unreadNotifications.get(sessionKey) ?? [];
+            buf.push(text);
+            this.unreadNotifications.set(sessionKey, buf);
+          }
+        },
+        injectUserMessage: async (_msg: string) => {},
+      });
+    }
 
     const steerSink = createSteerSink();
     this.activeSinks.set(laneKey, steerSink);
@@ -1224,6 +1305,8 @@ export class Gateway {
         this.activeStatusMessages.delete(laneKey);
       }
 
+      turnActive = false;
+      // Don't deregister — keep the adapter alive to buffer offline notifications
       this.sessionRouting.delete(sessionKey);
       const sessionId = this.sessionIdByKey.get(sessionKey);
       if (sessionId !== undefined) {
@@ -1274,6 +1357,18 @@ export class Gateway {
     this.sessionRouting.clear();
     this.approvalRoutes.clear();
     this.sessionIdByKey.clear();
+  }
+
+  /** Call after all plugins are loaded to register plugin slash commands with platform adapters. */
+  async pluginsReady(): Promise<void> {
+    const cmds =
+      this.pluginLoader
+        ?.getAllSlashCommands()
+        .map((c) => ({ name: c.name, description: c.description })) ?? [];
+    if (cmds.length === 0) return;
+    for (const adapter of this.adapterRegistry.values()) {
+      await adapter.registerCommands?.(cmds).catch(() => {});
+    }
   }
 
   // ---------------------------------------------------------------------------

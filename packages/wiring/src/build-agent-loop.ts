@@ -209,6 +209,23 @@ export async function buildAgentLoop(
   });
 
   // -------------------------------------------------------------------------
+  // Gap 10 — process_complete notification via notificationRouter
+  // -------------------------------------------------------------------------
+
+  hooks.registerVoid('process_complete', async (event) => {
+    const elapsed = `${Math.round(event.durationMs / 1000)}s`;
+    const summary =
+      event.exitCode === 0
+        ? `Process \`${event.processId}\` complete (${elapsed})`
+        : `Process \`${event.processId}\` failed (exit ${event.exitCode}, ${elapsed})`;
+    const details = event.exitCode !== 0 ? `\n\`\`\`\n${event.stderr.slice(-1000)}\n\`\`\`` : '';
+    await notificationRouter.route('process_complete', {
+      sessionKey: event.sessionKey,
+      message: `${summary}${details}`,
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Ch.6a — In-process watcher
   // -------------------------------------------------------------------------
 

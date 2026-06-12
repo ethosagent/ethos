@@ -190,16 +190,19 @@ describe('SSE event union', () => {
 describe('contract router', () => {
   it('exposes the v0 + v0.5 + v1 namespaces', () => {
     expect(Object.keys(contract).sort()).toEqual([
+      'admin',
       'apiKeys',
       'batch',
       'chat',
       'clarify',
       'config',
+      'context',
       'cron',
       'dashboards',
       'debug',
       'eval',
       'evolver',
+      'files',
       'kanban',
       'mcp',
       'memory',
@@ -211,6 +214,7 @@ describe('contract router', () => {
       'plugins',
       'sessions',
       'skills',
+      'slashCommands',
       'tools',
     ]);
   });

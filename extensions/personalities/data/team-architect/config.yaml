@@ -3,3 +3,6 @@ description: Designs and scaffolds teams of specialist personalities with coordi
 model: claude-sonnet-4-6
 capabilities: personality-design, team-design
 fs_reach.write: ~/.ethos/personalities/, ~/.ethos/teams/
+skill_evolution.enabled: true
+skill_evolution.min_tool_calls: 3
+skill_evolution.cooldown_minutes: 30

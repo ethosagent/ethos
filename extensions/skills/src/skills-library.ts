@@ -77,7 +77,7 @@ export class SkillsLibrary {
   // Global skills
   // ---------------------------------------------------------------------------
 
-  async listSkills(): Promise<SkillRecord[]> {
+  async listSkills(_opts?: { includeUnavailable?: boolean }): Promise<SkillRecord[]> {
     const systemSkills = await this.readSystemSkills();
 
     const names = await this.storage.list(this.skillsDir);

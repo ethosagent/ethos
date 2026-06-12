@@ -3,3 +3,6 @@ description: Designs focused AI specialist personalities for the Ethos framework
 model: claude-sonnet-4-6
 capabilities: personality-design
 fs_reach.write: ~/.ethos/personalities/
+skill_evolution.enabled: true
+skill_evolution.min_tool_calls: 3
+skill_evolution.cooldown_minutes: 30

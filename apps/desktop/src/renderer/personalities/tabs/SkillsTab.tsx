@@ -324,7 +324,7 @@ function ImportSkillsDrawer({
     let cancelled = false;
     async function load() {
       try {
-        const res = await client.rpc.skills.list();
+        const res = await client.rpc.skills.list({});
         if (!cancelled) {
           setGlobalSkills(res.skills.filter((s) => !existingIds.has(s.id)));
         }

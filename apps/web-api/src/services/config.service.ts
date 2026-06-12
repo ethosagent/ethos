@@ -27,6 +27,7 @@ export interface ConfigGetResult {
   contextLayering: boolean;
   debugPanelEnabled: boolean;
   debugPanelModel: string | null;
+  adminEnabled: boolean;
 }
 
 export interface ConfigUpdateInput {
@@ -89,6 +90,7 @@ export class ConfigService {
       contextLayering: raw.contextLayering ?? false,
       debugPanelEnabled: raw.debugPanelEnabled ?? false,
       debugPanelModel: raw.debugPanelModel ?? null,
+      adminEnabled: true,
     };
   }
 

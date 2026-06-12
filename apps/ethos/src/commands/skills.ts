@@ -10,7 +10,7 @@ import {
   scanSkillMd,
   type TrustTier,
 } from '@ethosagent/safety-scanner';
-import { bundledSkillsSource, UniversalScanner } from '@ethosagent/skills';
+import { bundledSkillsSource, checkRequirements, UniversalScanner } from '@ethosagent/skills';
 import { isSafePathSegment } from '@ethosagent/storage-fs';
 import { EthosError, type Skill } from '@ethosagent/types';
 import { ethosDir } from '../config';
@@ -229,6 +229,13 @@ async function listSkills(args: string[] = []): Promise<void> {
     return;
   }
 
+  // Gap 11 — check `requires` gates so we can surface unavailable skills.
+  const emptyToolSet = new Set<string>();
+  for (const skill of pool.values()) {
+    const reason = checkRequirements(skill.requires, emptyToolSet);
+    if (reason) skill.unavailableReason = reason;
+  }
+
   console.log();
   for (const source of sortedSources) {
     const skills = (bySource.get(source) ?? []).sort((a, b) => a.name.localeCompare(b.name));
@@ -238,7 +245,10 @@ async function listSkills(args: string[] = []): Promise<void> {
       const ethosFm = skill.rawFrontmatter.ethos as { category?: unknown } | undefined;
       const category = typeof ethosFm?.category === 'string' ? ethosFm.category : undefined;
       const tag = category ? `  ${c.dim}[${category}]${c.reset}` : '';
-      console.log(`  ${c.cyan}${skill.name}${c.reset}${tag}`);
+      const unavail = skill.unavailableReason
+        ? `  ${c.dim}[unavailable: ${skill.unavailableReason}]${c.reset}`
+        : '';
+      console.log(`  ${c.cyan}${skill.name}${c.reset}${tag}${unavail}`);
     }
     console.log();
   }

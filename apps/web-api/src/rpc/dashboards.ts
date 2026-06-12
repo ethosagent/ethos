@@ -1,5 +1,5 @@
 import { refreshAllPanels, refreshPanelById } from '../services/dashboard-refresh';
-import { buildPromptSummary } from '../services/dashboards.service';
+import { buildPromptSummary, runPluginQuery } from '../services/dashboards.service';
 import { os } from './context';
 
 export const dashboardsRouter = {
@@ -91,6 +91,11 @@ export const dashboardsRouter = {
   listWidgetTemplates: os.dashboards.listWidgetTemplates.handler(async ({ context }) => {
     const templates = (await context.dashboards?.listWidgetTemplates()) ?? [];
     return { templates };
+  }),
+
+  runQuery: os.dashboards.runQuery.handler(async ({ context, input }) => {
+    if (!context.pluginLoader) throw new Error('Plugin loader not configured');
+    return runPluginQuery(context.pluginLoader, input.pluginId, input.sourceId, input.sql);
   }),
 
   updateParams: os.dashboards.updateParams.handler(async ({ context, input }) => {

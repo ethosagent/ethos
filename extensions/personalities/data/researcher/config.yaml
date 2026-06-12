@@ -5,3 +5,6 @@ model.trivial: claude-haiku-4-5
 model.default: claude-opus-4-7
 model.deep: claude-opus-4-7
 capabilities: research, web
+skill_evolution.enabled: true
+skill_evolution.min_tool_calls: 3
+skill_evolution.cooldown_minutes: 30

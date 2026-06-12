@@ -1,3 +1,6 @@
 name: Debug Assistant
 description: Read-only session inspector. Diagnoses tool failures, loops, context issues.
 model: claude-sonnet-4-5
+skill_evolution.enabled: true
+skill_evolution.min_tool_calls: 3
+skill_evolution.cooldown_minutes: 30

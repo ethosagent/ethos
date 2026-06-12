@@ -1,6 +1,7 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
-import { createInterface } from 'node:readline';
+import { basename, extname, join, resolve } from 'node:path';
+import { clearLine, createInterface } from 'node:readline';
 import { BackgroundRunner, InMemorySteerSink } from '@ethosagent/agent-bridge';
 import { type AgentEvent, type AgentLoop, stripAnsiEscapes } from '@ethosagent/core';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
@@ -23,6 +24,43 @@ import { isVerbosity, nextVerbosity, projectEvent, type Verbosity } from '../lib
 import { resolveActiveLoop, startEvolverCron, startNightlyPrune } from '../wiring';
 import { runPairingCommand } from './pairing-commands';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
+
+async function resolveAtRefs(text: string, cwd: string): Promise<string> {
+  const parts: string[] = [];
+  let lastIndex = 0;
+  const pattern = /@(https?:\/\/[\w./:#?=&%-]+|[\w./~-]+)/g;
+  let match: RegExpExecArray | null;
+
+  match = pattern.exec(text);
+  while (match !== null) {
+    parts.push(text.slice(lastIndex, match.index));
+    const ref = match[1];
+
+    if (ref && (ref.startsWith('http://') || ref.startsWith('https://'))) {
+      try {
+        const body = await fetch(ref).then((r) => r.text());
+        parts.push(`\`\`\`\n${body.slice(0, 8000)}\n\`\`\`\n(source: ${ref})`);
+      } catch {
+        parts.push(match[0]);
+      }
+    } else if (ref) {
+      const resolved = resolve(cwd, ref);
+      if (existsSync(resolved)) {
+        const content = readFileSync(resolved, 'utf8');
+        const ext = extname(ref).slice(1);
+        parts.push(`\`\`\`${ext}\n// ${ref}\n${content.slice(0, 8000)}\n\`\`\``);
+      } else {
+        parts.push(match[0]);
+      }
+    } else {
+      parts.push(match[0]);
+    }
+    lastIndex = match.index + match[0].length;
+    match = pattern.exec(text);
+  }
+  parts.push(text.slice(lastIndex));
+  return parts.join('');
+}
 
 async function buildInventory(loop: AgentLoop, _config: EthosConfig): Promise<SplashInventory> {
   const tools = loop.getAvailableTools();
@@ -175,7 +213,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       );
     });
   }
-  const { loop, personalityId, displayName, notificationRouter } = await resolveActiveLoop(config);
+  const { loop, personalityId, displayName, setOnSkillProposed, notificationRouter, pluginLoader } =
+    await resolveActiveLoop(config);
 
   // FW-14 — build the shared slash command registry. FW-15 and FW-16 extend it.
   const registry = buildBaseRegistry();
@@ -238,6 +277,15 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     output: process.stdout,
     terminal: true,
     ...(completer ? { completer } : {}),
+  });
+
+  // Wire skill-evolution notifications into the interactive readline session.
+  setOnSkillProposed?.((skillId, _personalityId) => {
+    clearLine(process.stdout, 0);
+    process.stdout.write(
+      `\n${c.dim}[skill-evolver] Proposed skill: ${skillId} — ` +
+        `run \`ethos evolve apply ${skillId}.md\` to activate${c.reset}\n> `,
+    );
   });
 
   const bgRunner = new BackgroundRunner({ maxConcurrent: config.backgroundMaxConcurrent ?? 4 });
@@ -408,6 +456,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     attachmentCache,
     notificationRouter,
     cliAdapter,
+    pluginLoader,
   };
 
   // Switch from blocking rl.question to event-driven rl.on('line') so mid-turn
@@ -470,7 +519,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     }
 
     state.draining = true;
-    runTurn(input, state, loop)
+    resolveAtRefs(input, process.cwd())
+      .then((resolved) => runTurn(resolved, state, loop))
       .then(() => {
         const drainNext = () => {
           const next = state.inputQueue.shift();
@@ -879,6 +929,7 @@ interface SlashHandlerContext {
   attachmentCache: import('@ethosagent/types').AttachmentCache;
   notificationRouter: import('@ethosagent/types').NotificationRouter;
   cliAdapter: NotificationAdapter;
+  pluginLoader?: import('@ethosagent/plugin-loader').PluginLoader;
 }
 
 async function handleSlashCommand(
@@ -1244,6 +1295,23 @@ async function handleSlashCommand(
         const result = runQuickCommand(qcfg.command);
         out(`${formatQuickCommandOutput(result)}\n`);
         break;
+      }
+      // v3 — Plugin slash commands (dynamic handlers via registerSlashCommand).
+      if (ctx.pluginLoader) {
+        const pluginHandler = ctx.pluginLoader.getSlashHandler(name);
+        if (pluginHandler) {
+          const slashCtx: import('@ethosagent/types').SlashCommandContext = {
+            sessionId: state.sessionKey,
+            personalityId: state.personalityId,
+            platform: 'cli',
+            send: async (text) => {
+              out(text);
+            },
+          };
+          const result = await pluginHandler(arg, slashCtx);
+          if (result) out(`${result}\n`);
+          break;
+        }
       }
       out(`${c.dim}Unknown command /${name} — type /help${c.reset}\n`);
       break;

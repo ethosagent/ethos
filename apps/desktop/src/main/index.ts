@@ -20,7 +20,10 @@ let desktopActivated = false;
 function activateDesktop(): void {
   if (desktopActivated) return;
   desktopActivated = true;
-  startBackend(3001);
+  const connMode = store.get('connectionMode') ?? 'local';
+  if (connMode !== 'remote') {
+    startBackend(3001);
+  }
   trayInstance = createTray(() => mainWindow, createWindow);
   if (mainWindow && !mainWindow.isDestroyed()) {
     registerGlobalShortcuts(mainWindow, showQuickChat);

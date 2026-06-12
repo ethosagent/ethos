@@ -15,6 +15,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
@@ -43,7 +44,7 @@ export function Skills() {
 
   const skillsQuery = useQuery({
     queryKey: ['skills', 'list'],
-    queryFn: () => rpc.skills.list(),
+    queryFn: () => rpc.skills.list({}),
   });
 
   const pendingCount = skillsQuery.data?.pendingCount ?? 0;
@@ -179,12 +180,17 @@ function LibraryPanel({ skillsQuery }: LibraryPanelProps) {
         <div className="skills-grid">
           {filteredSkills.map((skill) => {
             const origin = getSkillOrigin(skill);
-            const config = ORIGIN_CONFIG[origin];
-            return (
-              <div key={skill.id} className="skill-card">
+            const cfg = ORIGIN_CONFIG[origin];
+            const isUnavailable = !!skill.unavailableReason;
+            const card = (
+              <div
+                key={skill.id}
+                className="skill-card"
+                style={isUnavailable ? { opacity: 0.5 } : undefined}
+              >
                 <div className="skill-card-header">
                   <div style={{ fontWeight: 500 }}>{skill.name}</div>
-                  <Tag color={config.color}>{config.label}</Tag>
+                  <Tag color={cfg.color}>{cfg.label}</Tag>
                 </div>
                 <div className="skill-card-description">
                   {skill.description ?? (
@@ -201,6 +207,13 @@ function LibraryPanel({ skillsQuery }: LibraryPanelProps) {
                   <SkillCardActions skill={skill} onEdit={() => setEditingSkill(skill)} />
                 </div>
               </div>
+            );
+            return isUnavailable ? (
+              <Tooltip key={skill.id} title={`Unavailable: ${skill.unavailableReason}`}>
+                {card}
+              </Tooltip>
+            ) : (
+              card
             );
           })}
         </div>

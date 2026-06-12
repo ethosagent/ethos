@@ -167,6 +167,8 @@ export interface CreateWebApiOptions {
    * the improvement fork auto-promotes a skill to the live library.
    */
   setOnSkillApplied?: (fn: (skillId: string, personalityId: string) => void) => void;
+  /** Notification router for delivering process completion alerts to web sessions via SSE. */
+  notificationRouter?: import('@ethosagent/types').NotificationRouter;
   /**
    * Fired after the onboarding wizard durably writes config.yaml. Boot code
    * (onboarding-mode `ethos serve`) uses this to eagerly boot the real agent
@@ -303,6 +305,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
 
   const dashboardsService = new DashboardsService({
     dbPath: join(opts.dataDir, 'dashboards.db'),
+    pluginLoader: opts.pluginLoader,
   });
 
   // Share the DashboardsService's DB handle with DashboardStore so
@@ -334,6 +337,17 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   buffer.onReap = (sessionId) => {
     chatService.forget(sessionId);
   };
+
+  // Register web notification adapter — delivers plugin monitor notifications
+  // to whichever web session is active. The buffer's onReap already handles
+  // cleanup (via chatService.forget), so we piggyback deregistration there.
+  if (opts.notificationRouter) {
+    const originalOnReap = buffer.onReap;
+    buffer.onReap = (sessionId: string) => {
+      opts.notificationRouter?.deregister(sessionId);
+      originalOnReap?.(sessionId);
+    };
+  }
 
   // Bridge approvals → SSE. The hook fires when the agent reaches a
   // dangerous tool call; the resolved event lets every tab on the same

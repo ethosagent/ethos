@@ -6,6 +6,7 @@ import {
   parseEthosExternalCliAlternatives,
   parseEthosFallbackForTools,
   parseEthosPermissions,
+  parseEthosRequires,
 } from './ethos-namespace';
 
 const META_KEYS = ['openclaw', 'clawdbot', 'clawdis'] as const;
@@ -54,5 +55,6 @@ export function parseOpenClaw(
     dialect: 'openclaw',
     mtimeMs,
     permissions: parseEthosPermissions(data),
+    requires: parseEthosRequires(data),
   };
 }

@@ -20,6 +20,7 @@ import type {
   PluginPageSpec,
   PluginRendererSpec,
   PostTurnEvaluator,
+  SlashCommandContext,
   Storage,
   Tool,
   ToolInvocationFilter,
@@ -229,6 +230,14 @@ export interface EthosPluginApi {
   /** Register a SQLite data source by id and file path. */
   registerDataSource(id: string, path: string): void;
 
+  /** Register a plugin slash command (v3 — dynamic command registration). */
+  registerSlashCommand(cmd: {
+    name: string;
+    description: string;
+    usage: string;
+    handler: (args: string, ctx: SlashCommandContext) => Promise<string>;
+  }): void;
+
   /** Diagnostics emitter for structured logging and metrics (v2.2). */
   readonly diagnostics: DiagnosticsEmitter;
 }
@@ -291,6 +300,12 @@ export interface PluginRegistries {
   renderers?: Map<string, PluginRendererSpec>;
   /** pluginId → sourceId → resolvedPath. Populated by registerDataSource calls. */
   dataSources?: Map<string, Map<string, string>>;
+  /** v3 — Slash command registry. When present, plugins can register dynamic
+   *  commands visible in the CLI and exposed via the web API. */
+  slashRegistry?: {
+    register(cmd: { name: string; description: string; usage: string; prefix?: string }): void;
+    get(name: string): { description?: string; usage?: string } | undefined;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -314,6 +329,15 @@ export class PluginApiImpl implements EthosPluginApi {
   private readonly healthChecks: PluginHealthCheck[] = [];
   private registeredRendererTypes: string[] = [];
   private readonly registeredDataSources = new Map<string, string>();
+  private readonly slashHandlers = new Map<
+    string,
+    {
+      name: string;
+      description: string;
+      usage: string;
+      handler: (args: string, ctx: SlashCommandContext) => Promise<string>;
+    }
+  >();
   private oauthConfig?: OAuthConfig;
 
   constructor(
@@ -637,6 +661,36 @@ export class PluginApiImpl implements EthosPluginApi {
     this.registries.dataSources.get(this.pluginId)?.set(id, path);
   }
 
+  registerSlashCommand(cmd: {
+    name: string;
+    description: string;
+    usage: string;
+    handler: (args: string, ctx: SlashCommandContext) => Promise<string>;
+  }): void {
+    const lower = cmd.name.toLowerCase();
+    this.slashHandlers.set(lower, { ...cmd, name: lower });
+    this.registries.slashRegistry?.register({
+      name: lower,
+      description: cmd.description,
+      usage: cmd.usage,
+      prefix: `[plugin:${this.pluginId}]`,
+    });
+  }
+
+  getSlashHandler(
+    name: string,
+  ): ((args: string, ctx: SlashCommandContext) => Promise<string>) | undefined {
+    return this.slashHandlers.get(name.toLowerCase())?.handler;
+  }
+
+  getAllSlashCommands(): { name: string; description: string; usage: string }[] {
+    return [...this.slashHandlers.values()].map(({ name, description, usage }) => ({
+      name,
+      description,
+      usage,
+    }));
+  }
+
   getHealthChecks(): PluginHealthCheck[] {
     return this.healthChecks;
   }
@@ -653,6 +707,9 @@ export class PluginApiImpl implements EthosPluginApi {
 
   /** Remove everything this plugin registered. Called by PluginLoader.unload(). */
   cleanup(): void {
+    // v3 — Slash commands
+    this.slashHandlers.clear();
+
     // Monitors
     this.monitorRunner.stopAll();
 
@@ -744,6 +801,7 @@ export type {
   PostTurnEvaluator,
   PostTurnEvaluatorPayload,
   PromptContext,
+  SlashCommandContext,
   Storage,
   Tool,
   ToolContext,
