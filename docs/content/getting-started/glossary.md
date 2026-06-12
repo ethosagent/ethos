@@ -1,6 +1,6 @@
 ---
 title: "Glossary"
-description: "Canonical definitions for every Ethos domain term: personality, skill, tool, hook, session, memory, plugin, adapter, gateway, and more."
+description: "Every Ethos domain term in one place: personality, skill, tool, hook, session, memory, mesh, gateway, plugin, adapter, and the rest of the vocabulary."
 kind: reference
 audience: shared
 slug: glossary

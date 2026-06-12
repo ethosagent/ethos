@@ -173,7 +173,7 @@ Newcomers usually go from here in this order:
 1. [Why is personality the unit?](../using/explanation/what-is-a-personality.md) — the headline thesis
 2. [Why Ethos?](why-ethos.md) — honest comparison to LangChain, CrewAI, OpenClaw, Hermes
 3. [Use Ethos: quickstart](../using/quickstart.md) — install, talk to the agent, switch personalities
-4. [Web UI guide](../using/how-to/use-web-dashboard.md) — dashboard, plugin widgets, admin panel
+4. [Use the web dashboard](../using/how-to/use-web-dashboard.md) — personalities, memory, cron jobs, and MCP from the browser
 
 ## See also
 
