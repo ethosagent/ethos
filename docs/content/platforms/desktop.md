@@ -9,7 +9,7 @@ updated: 2026-06-09
 
 The Ethos desktop app is an Electron shell that provides a native Mac, Windows, and Linux interface with the same [agent](../getting-started/glossary.md#agent) capabilities as the CLI and web dashboard. It runs in local mode (embedded server) or remote mode (connected to an external Ethos instance).
 
-## Overview {#overview}
+## Synopsis {#synopsis}
 
 The desktop app wraps the Ethos web UI in a native window. It provides:
 
