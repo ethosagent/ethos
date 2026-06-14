@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ScopedFsImpl } from '@ethosagent/core';
-import { FsStorage } from '@ethosagent/storage-fs';
+import { defaultAlwaysDeny, FsStorage } from '@ethosagent/storage-fs';
 import type { ToolContext } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readFileTool, writeFileTool } from '../index';
@@ -57,7 +57,7 @@ describe('tools-file — fs_reach boundary enforcement', () => {
 
   function researcherFs() {
     const reach = new Set([join(dataDir, 'personalities', 'researcher'), cwd]);
-    return new ScopedFsImpl(new FsStorage(), reach, reach);
+    return new ScopedFsImpl(new FsStorage(), reach, reach, defaultAlwaysDeny());
   }
 
   it('researcher CAN read its own MEMORY.md', async () => {
@@ -153,7 +153,12 @@ describe('tools-file — fs_reach boundary enforcement', () => {
     // The researcher's reach intentionally does NOT include /etc, but
     // even if it did, the floor would still fire — that's the test.
     const reachIncludingEtc = new Set([cwd, '/etc']);
-    const permissive = new ScopedFsImpl(new FsStorage(), reachIncludingEtc, reachIncludingEtc);
+    const permissive = new ScopedFsImpl(
+      new FsStorage(),
+      reachIncludingEtc,
+      reachIncludingEtc,
+      defaultAlwaysDeny(),
+    );
     const ctx = makeCtx({ workingDir: cwd, scopedFs: permissive });
     const result = await readFileTool.execute({ path: '/etc/passwd' }, ctx);
     expect(result.ok).toBe(false);
@@ -169,7 +174,7 @@ describe('tools-file — fs_reach boundary enforcement', () => {
 
     beforeEach(() => {
       const reach = new Set([cwd]);
-      scoped = new ScopedFsImpl(new FsStorage(), reach, reach);
+      scoped = new ScopedFsImpl(new FsStorage(), reach, reach, defaultAlwaysDeny());
     });
 
     it.each([

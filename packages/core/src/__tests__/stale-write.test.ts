@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
 import type { CapabilityBackends } from '../capability-resolver';
+import { createTestSafety } from './helpers/test-safety';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -121,7 +122,13 @@ describe('FW-28: stale-write guard', () => {
       { text: 'done' },
     ]);
 
-    const loop = new AgentLoop({ llm, tools, personalities, options: { workingDir: testDir } });
+    const loop = new AgentLoop({
+      llm,
+      tools,
+      personalities,
+      safety: createTestSafety(),
+      options: { workingDir: testDir },
+    });
 
     const allEvents: AgentEvent[] = [];
     const gen = loop.run('test stale write', { sessionKey: 'sk-stale-1' });
@@ -157,7 +164,13 @@ describe('FW-28: stale-write guard', () => {
       { text: 'done' },
     ]);
 
-    const loop = new AgentLoop({ llm, tools, personalities, options: { workingDir: testDir } });
+    const loop = new AgentLoop({
+      llm,
+      tools,
+      personalities,
+      safety: createTestSafety(),
+      options: { workingDir: testDir },
+    });
     const events = await collect(loop.run('test clean write', { sessionKey: 'sk-clean' }));
 
     const writeEnd = events
@@ -179,7 +192,13 @@ describe('FW-28: stale-write guard', () => {
       { text: 'done' },
     ]);
 
-    const loop = new AgentLoop({ llm, tools, personalities, options: { workingDir: testDir } });
+    const loop = new AgentLoop({
+      llm,
+      tools,
+      personalities,
+      safety: createTestSafety(),
+      options: { workingDir: testDir },
+    });
     const events = await collect(loop.run('test fresh write', { sessionKey: 'sk-fresh' }));
 
     const writeEnd = events
@@ -208,7 +227,13 @@ describe('FW-28: stale-write guard', () => {
       { text: 'done' },
     ]);
 
-    const loop = new AgentLoop({ llm, tools, personalities, options: { workingDir: testDir } });
+    const loop = new AgentLoop({
+      llm,
+      tools,
+      personalities,
+      safety: createTestSafety(),
+      options: { workingDir: testDir },
+    });
 
     const allEvents: AgentEvent[] = [];
     const gen = loop.run('test recovery', { sessionKey: 'sk-recovery' });
@@ -248,7 +273,13 @@ describe('FW-28: stale-write guard', () => {
       { text: 'done' },
     ]);
 
-    const loop = new AgentLoop({ llm, tools, personalities, options: { workingDir: testDir } });
+    const loop = new AgentLoop({
+      llm,
+      tools,
+      personalities,
+      safety: createTestSafety(),
+      options: { workingDir: testDir },
+    });
 
     const allEvents: AgentEvent[] = [];
     const gen = loop.run('test deleted file', { sessionKey: 'sk-deleted' });

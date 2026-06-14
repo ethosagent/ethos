@@ -1,6 +1,18 @@
 import type { AgentLoopConfig } from '@ethosagent/core';
 import { AgentLoop, DefaultHookRegistry, DefaultToolRegistry } from '@ethosagent/core';
+import {
+  c2PatternCheck,
+  DOWNGRADE_REJECTION_MESSAGE,
+  INJECTION_DEFENSE_PRELUDE,
+  resolveDowngradedTools,
+  sanitize,
+  shortPatternCheck,
+  wrapUntrusted,
+} from '@ethosagent/safety-injection';
+import { detectSecrets, redactPii, redactString } from '@ethosagent/safety-redact';
+import { defaultAlwaysDeny, ScopedStorage } from '@ethosagent/storage-fs';
 import type {
+  AgentSafety,
   CompletionChunk,
   CompletionOptions,
   LLMProvider,
@@ -69,6 +81,27 @@ export function mockTool(name: string, result: ToolResult | string): Tool {
 }
 
 // ---------------------------------------------------------------------------
+// createPluginTestSafety — safety bundle for plugin tests
+// ---------------------------------------------------------------------------
+
+function createPluginTestSafety(): AgentSafety {
+  return {
+    injection: {
+      prelude: INJECTION_DEFENSE_PRELUDE,
+      downgradeRejectionMessage: DOWNGRADE_REJECTION_MESSAGE,
+      sanitize,
+      wrapUntrusted,
+      shortPatternCheck,
+      c2PatternCheck,
+      resolveDowngradedTools,
+    },
+    redaction: { redactPii, redactString, detectSecrets },
+    scopedStorageFactory: (base, scope) =>
+      new ScopedStorage(base, { ...scope, alwaysDeny: defaultAlwaysDeny() }),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // createTestRuntime — minimal AgentLoop for plugin tests
 // ---------------------------------------------------------------------------
 
@@ -89,6 +122,7 @@ export function createTestRuntime(
   return new AgentLoop({
     tools: new DefaultToolRegistry(),
     hooks: new DefaultHookRegistry(),
+    safety: createPluginTestSafety(),
     ...config,
   });
 }

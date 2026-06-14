@@ -61,7 +61,7 @@ export { DefaultLLMProviderRegistry } from './providers/llm-registry';
 export { DefaultMemoryProviderRegistry } from './providers/memory-registry';
 export { InMemoryRequestDumpStore } from './request-dump-store';
 export { stripAnsiEscapes } from './sanitize-output';
-export type { SecretsBackend } from './scoped';
+export type { SafeFetchFn, SecretsBackend } from './scoped';
 export { ScopedFetchImpl, ScopedFsImpl, ScopedProcessImpl, ScopedSecretsImpl } from './scoped';
 export { SimpleCompletionImpl } from './simple-completion';
 export { applyTemporalDecay, parseTemporalBound, toJournalKey } from './temporal';

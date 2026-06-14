@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
 import { AgentLoop, KNOWN_AGENT_EVENT_TYPES } from '../agent-loop';
 import { InMemorySessionStore } from '../defaults/in-memory-session';
+import { createTestSafety } from './helpers/test-safety';
 
 function makeMockLLM(
   responses: string[],
@@ -53,7 +54,7 @@ async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
 
 describe('AgentLoop', () => {
   it('produces text_delta and done events for a simple turn', async () => {
-    const loop = new AgentLoop({ llm: makeMockLLM(['Hello, world!']) });
+    const loop = new AgentLoop({ llm: makeMockLLM(['Hello, world!']), safety: createTestSafety() });
     const events = await collect(loop.run('hi'));
 
     const textDeltas = events.filter((e) => e.type === 'text_delta');
@@ -68,7 +69,7 @@ describe('AgentLoop', () => {
   });
 
   it('accumulates full text in done event', async () => {
-    const loop = new AgentLoop({ llm: makeMockLLM(['response text']) });
+    const loop = new AgentLoop({ llm: makeMockLLM(['response text']), safety: createTestSafety() });
     const events = await collect(loop.run('ping'));
     const done = events.find((e) => e.type === 'done') as Extract<AgentEvent, { type: 'done' }>;
     expect(done.text).toBe('response text');
@@ -76,7 +77,7 @@ describe('AgentLoop', () => {
 
   it('aborts cleanly when signal is fired', async () => {
     const controller = new AbortController();
-    const loop = new AgentLoop({ llm: makeMockLLM(['text']) });
+    const loop = new AgentLoop({ llm: makeMockLLM(['text']), safety: createTestSafety() });
 
     // Abort before run
     controller.abort();
@@ -92,6 +93,7 @@ describe('AgentLoop', () => {
     const llm = makeMockLLM(['ok'], (opts) => capturedOpts.push(opts));
     const loop = new AgentLoop({
       llm,
+      safety: createTestSafety(),
       modelRouting: { default: 'routed-model' },
     });
     await collect(loop.run('hi'));
@@ -103,6 +105,7 @@ describe('AgentLoop', () => {
     const llm = makeMockLLM(['ok'], (opts) => capturedOpts.push(opts));
     const loop = new AgentLoop({
       llm,
+      safety: createTestSafety(),
       modelRouting: { default: 'mock-model' }, // same as llm.model
     });
     await collect(loop.run('hi'));
@@ -112,7 +115,7 @@ describe('AgentLoop', () => {
   it('passes no modelOverride when no routing is configured', async () => {
     const capturedOpts: CompletionOptions[] = [];
     const llm = makeMockLLM(['ok'], (opts) => capturedOpts.push(opts));
-    const loop = new AgentLoop({ llm });
+    const loop = new AgentLoop({ llm, safety: createTestSafety() });
     await collect(loop.run('hi'));
     expect(capturedOpts[0]?.modelOverride).toBeUndefined();
   });
@@ -171,7 +174,7 @@ describe('AgentLoop', () => {
       toolset: ['allowed_tool'],
     });
 
-    const loop = new AgentLoop({ llm, tools, personalities });
+    const loop = new AgentLoop({ llm, tools, personalities, safety: createTestSafety() });
     await collect(loop.run('hi'));
 
     expect(capturedTools[0]).toHaveLength(1);
@@ -262,6 +265,7 @@ describe('AgentLoop', () => {
       const loop = new AgentLoop({
         llm,
         tools,
+        safety: createTestSafety(),
         options: { maxToolCallsPerTurn: 3, maxIdenticalToolCalls: 100 },
       });
       const events = await collect(loop.run('hi'));
@@ -285,6 +289,7 @@ describe('AgentLoop', () => {
       const loop = new AgentLoop({
         llm,
         tools,
+        safety: createTestSafety(),
         options: { maxToolCallsPerTurn: 100, maxIdenticalToolCalls: 3 },
       });
       const events = await collect(loop.run('hi'));
@@ -328,6 +333,7 @@ describe('AgentLoop', () => {
 
       const loop = new AgentLoop({
         llm: hangingLlm,
+        safety: createTestSafety(),
         options: { streamingTimeoutMs: 50 },
       });
       const events = await collect(loop.run('hi'));
@@ -373,7 +379,7 @@ describe('AgentLoop', () => {
       });
 
       const start = Date.now();
-      const loop = new AgentLoop({ llm: hangingLlm, personalities });
+      const loop = new AgentLoop({ llm: hangingLlm, personalities, safety: createTestSafety() });
       const events = await collect(loop.run('hi'));
       const elapsed = Date.now() - start;
 
@@ -426,6 +432,7 @@ describe('AgentLoop', () => {
       const loop = new AgentLoop({
         llm,
         tools,
+        safety: createTestSafety(),
         options: { maxToolCallsPerTurn: 20, maxIdenticalToolCalls: 5 },
       });
       const events = await collect(loop.run('hi'));
@@ -452,6 +459,7 @@ describe('AgentLoop', () => {
       const loop = new AgentLoop({
         llm,
         tools,
+        safety: createTestSafety(),
         options: { maxToolCallsPerTurn: 100, maxIdenticalToolCalls: 2 },
       });
       const events = await collect(loop.run('hi'));
@@ -521,7 +529,7 @@ describe('AgentLoop', () => {
         },
       };
 
-      const loop = new AgentLoop({ llm, tools });
+      const loop = new AgentLoop({ llm, tools, safety: createTestSafety() });
       const events = await collect(loop.run('hi'));
       const progresses = events.filter((e) => e.type === 'tool_progress') as Array<
         Extract<AgentEvent, { type: 'tool_progress' }>
@@ -632,7 +640,14 @@ describe('AgentLoop', () => {
         },
       };
 
-      const loop = new AgentLoop({ llm, tools, personalities, storage, dataDir: '/ethos' });
+      const loop = new AgentLoop({
+        llm,
+        tools,
+        personalities,
+        storage,
+        dataDir: '/ethos',
+        safety: createTestSafety(),
+      });
       await collect(loop.run('hi'));
 
       expect(captured).toEqual([
@@ -723,7 +738,14 @@ describe('AgentLoop', () => {
         },
       };
 
-      const loop = new AgentLoop({ llm, tools, personalities, storage, dataDir: '/ethos' });
+      const loop = new AgentLoop({
+        llm,
+        tools,
+        personalities,
+        storage,
+        dataDir: '/ethos',
+        safety: createTestSafety(),
+      });
       await collect(loop.run('hi'));
 
       expect(calls).toEqual([
@@ -770,7 +792,7 @@ describe('AgentLoop', () => {
         },
       };
 
-      const loop = new AgentLoop({ llm, tools });
+      const loop = new AgentLoop({ llm, tools, safety: createTestSafety() });
       await collect(loop.run('hi'));
       expect(sawStorage).toBe(false);
     });
@@ -815,6 +837,7 @@ describe('AgentLoop', () => {
       hooks,
       tools: new DefaultToolRegistry(),
       personalities,
+      safety: createTestSafety(),
     });
 
     // Run as personality A — plugin hook should fire once
@@ -832,7 +855,7 @@ describe('AgentLoop', () => {
 
   describe('budget cap (budgetCapUsd)', () => {
     it('allows the turn when no cap is set', async () => {
-      const loop = new AgentLoop({ llm: makeMockLLM(['ok']) });
+      const loop = new AgentLoop({ llm: makeMockLLM(['ok']), safety: createTestSafety() });
       const events = await collect(loop.run('hi', { sessionKey: 'no-cap' }));
       expect(events.find((e) => e.type === 'done')).toBeDefined();
       expect(events.find((e) => e.type === 'error')).toBeUndefined();
@@ -846,7 +869,11 @@ describe('AgentLoop', () => {
         name: 'Default',
         budgetCapUsd: 1.0,
       });
-      const loop = new AgentLoop({ llm: makeMockLLM(['ok']), personalities });
+      const loop = new AgentLoop({
+        llm: makeMockLLM(['ok']),
+        personalities,
+        safety: createTestSafety(),
+      });
       // makeMockLLM emits 0.0001 per turn, well below $1.00
       const events = await collect(loop.run('hi', { sessionKey: 'under-cap' }));
       expect(events.find((e) => e.type === 'done')).toBeDefined();
@@ -861,7 +888,11 @@ describe('AgentLoop', () => {
         name: 'Default',
         budgetCapUsd: 0.00005, // tighter than the 0.0001 mock emits
       });
-      const loop = new AgentLoop({ llm: makeMockLLM(['ok']), personalities });
+      const loop = new AgentLoop({
+        llm: makeMockLLM(['ok']),
+        personalities,
+        safety: createTestSafety(),
+      });
       const sk = 'over-cap';
 
       // First turn — cost 0.0001 USD, which exceeds 0.00005
@@ -885,7 +916,11 @@ describe('AgentLoop', () => {
         name: 'Default',
         budgetCapUsd: 0.00005,
       });
-      const loop = new AgentLoop({ llm: makeMockLLM(['ok']), personalities });
+      const loop = new AgentLoop({
+        llm: makeMockLLM(['ok']),
+        personalities,
+        safety: createTestSafety(),
+      });
       const sk = 'reset-cap';
 
       // Run once to exceed cap
@@ -901,7 +936,7 @@ describe('AgentLoop', () => {
     });
 
     it('getSessionCost() returns 0 before any turns and accumulates correctly', async () => {
-      const loop = new AgentLoop({ llm: makeMockLLM(['ok']) });
+      const loop = new AgentLoop({ llm: makeMockLLM(['ok']), safety: createTestSafety() });
       const sk = 'cost-tracking';
       expect(loop.getSessionCost(sk)).toBe(0);
 
@@ -979,6 +1014,7 @@ describe('AgentLoop', () => {
       const loop = new AgentLoop({
         llm: makeCapturingLLM(captured),
         session,
+        safety: createTestSafety(),
         options: { historyLimit: 4 },
       });
       await collect(loop.run('continue', { sessionKey: 'cli:orphan' }));
@@ -1009,7 +1045,11 @@ describe('AgentLoop', () => {
       // Interrupted mid-turn: no tool_result rows were persisted.
 
       const captured: Message[][] = [];
-      const loop = new AgentLoop({ llm: makeCapturingLLM(captured), session });
+      const loop = new AgentLoop({
+        llm: makeCapturingLLM(captured),
+        session,
+        safety: createTestSafety(),
+      });
       await collect(loop.run('continue', { sessionKey: 'cli:interrupted' }));
 
       const messages = captured[0] ?? [];
@@ -1067,7 +1107,11 @@ describe('AgentLoop', () => {
       });
 
       const captured: Message[][] = [];
-      const loop = new AgentLoop({ llm: makeCapturingLLM(captured), session });
+      const loop = new AgentLoop({
+        llm: makeCapturingLLM(captured),
+        session,
+        safety: createTestSafety(),
+      });
       await collect(loop.run('continue', { sessionKey: 'cli:intact' }));
 
       const messages = captured[0] ?? [];

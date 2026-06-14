@@ -36,6 +36,7 @@ export interface ImprovementRuntime {
   memoryProvider: MemoryProvider;
   /** Parent's session store — used to read turn messages for context. */
   sessionStore: SessionStore;
+  safety: import('@ethosagent/types').AgentSafety;
 }
 
 export interface ImprovementForkOptions {
@@ -168,6 +169,7 @@ export class ImprovementFork {
       session: forkSession,
       hooks: forkHooks,
       memory: this.opts.runtime.memoryProvider,
+      safety: this.opts.runtime.safety,
     });
 
     // 5. Run the fork — single turn, drain all events.

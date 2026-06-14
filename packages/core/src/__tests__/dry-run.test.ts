@@ -1,3 +1,4 @@
+import { redactString } from '@ethosagent/safety-redact';
 import { describe, expect, it } from 'vitest';
 import { redactArgs, synthesizeDryRunCapResult, synthesizeDryRunResult } from '../dry-run';
 
@@ -9,7 +10,7 @@ describe('redactArgs', () => {
   });
 
   it('redacts known secret patterns', () => {
-    const result = redactArgs('my key is ghp_abcdefghij1234567890abcdefghij123456');
+    const result = redactArgs('my key is ghp_abcdefghij1234567890abcdefghij123456', redactString);
     expect(result).toContain('[REDACTED:github-pat]');
   });
 
@@ -21,17 +22,23 @@ describe('redactArgs', () => {
   });
 
   it('deep-walks objects', () => {
-    const result = redactArgs({
-      safe: 'hello',
-      nested: { secret: 'ghp_abcdefghij1234567890abcdefghij123456' },
-    }) as Record<string, unknown>;
+    const result = redactArgs(
+      {
+        safe: 'hello',
+        nested: { secret: 'ghp_abcdefghij1234567890abcdefghij123456' },
+      },
+      redactString,
+    ) as Record<string, unknown>;
     const nested = result.nested as Record<string, unknown>;
     expect(nested.secret).toContain('[REDACTED:github-pat]');
     expect(result.safe).toBe('hello');
   });
 
   it('deep-walks arrays', () => {
-    const result = redactArgs(['safe', 'ghp_abcdefghij1234567890abcdefghij123456']) as string[];
+    const result = redactArgs(
+      ['safe', 'ghp_abcdefghij1234567890abcdefghij123456'],
+      redactString,
+    ) as string[];
     expect(result[0]).toBe('safe');
     expect(result[1]).toContain('[REDACTED:github-pat]');
   });

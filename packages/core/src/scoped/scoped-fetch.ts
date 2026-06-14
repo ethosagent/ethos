@@ -1,4 +1,4 @@
-import { type NetworkPolicy, safeFetch } from '@ethosagent/safety-network';
+import type { NetworkPolicy } from '@ethosagent/safety-network';
 import type { ScopedFetch } from '@ethosagent/types';
 
 /**
@@ -11,6 +11,21 @@ export interface ScopedFetchTestSeam {
   fetchImpl?: typeof fetch;
   resolveHost?: (hostname: string) => Promise<string[]>;
 }
+
+/** Injected `safeFetch` function type — matches the export from `@ethosagent/safety-network`. */
+export type SafeFetchFn = (
+  url: string,
+  opts: {
+    policy: NetworkPolicy;
+    init?: Omit<RequestInit, 'redirect'>;
+    fetchImpl?: typeof fetch;
+    resolveHost?: (hostname: string) => Promise<string[]>;
+    maxRedirects?: number;
+  },
+) => Promise<
+  | { ok: true; response: Response; finalUrl: string; hops: number }
+  | { ok: false; reason: string; hop: number; url: string }
+>;
 
 /**
  * Scoped network capability. Enforces two layers in order:
@@ -33,6 +48,7 @@ export class ScopedFetchImpl implements ScopedFetch {
   constructor(
     private readonly allowedHosts: Set<string>,
     private readonly policy: NetworkPolicy,
+    private readonly safeFetchFn: SafeFetchFn,
     private readonly testSeam: ScopedFetchTestSeam = {},
   ) {}
 
@@ -44,7 +60,7 @@ export class ScopedFetchImpl implements ScopedFetch {
     // redirect is forced to 'manual' inside safeFetch — strip it so the
     // omit-typed init shape lines up.
     const { redirect: _redirect, ...rest } = init ?? {};
-    const result = await safeFetch(parsed.toString(), {
+    const result = await this.safeFetchFn(parsed.toString(), {
       policy: this.policy,
       init: rest,
       fetchImpl: this.testSeam.fetchImpl,

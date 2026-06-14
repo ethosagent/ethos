@@ -1,0 +1,16 @@
+{
+  "events": [
+    {
+      "type": "error",
+      "error": "Budget cap of $0.00 exceeded for this session ($0.0000 spent). Use /budget reset to start a new budget window.",
+      "code": "BUDGET_EXCEEDED"
+    },
+    {
+      "type": "done",
+      "text": "",
+      "turnCount": 0
+    }
+  ],
+  "messages": [],
+  "llmInputs": []
+}

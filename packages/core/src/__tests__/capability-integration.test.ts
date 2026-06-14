@@ -1,3 +1,4 @@
+import { safeFetch } from '@ethosagent/safety-network';
 import type { KeyValueStore, Tool, ToolContext } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import type { CapabilityBackends } from '../capability-resolver';
@@ -45,6 +46,7 @@ const makeBackends = (): CapabilityBackends => ({
     chmod: vi.fn(),
   },
   personalityFsReach: { read: ['/data'], write: ['/out'] },
+  safeFetch,
 });
 
 const allCapsTool = (capture: { ctx?: ToolContext }): Tool => ({

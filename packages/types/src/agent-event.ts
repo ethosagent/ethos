@@ -1,0 +1,146 @@
+// ---------------------------------------------------------------------------
+// Agent events emitted by run()
+//
+// AgentEvent is a forward-compatible discriminated union. New event `type`
+// values may be added in any release. **Consumers MUST treat unknown event
+// types as a no-op, not throw.** A `switch (event.type)` with no `default`
+// case is a forward-compat bug — it will silently break the moment a new
+// variant ships. Use `isKnownAgentEvent(event)` if you want an opt-in
+// warning during development that a new event type appeared.
+//
+// Known event types live in `KNOWN_AGENT_EVENT_TYPES` below. Keep it in
+// sync when adding a new variant — the `isKnownAgentEvent` helper reads
+// from it, and downstream tools (the CLI verbose mode, telemetry filters)
+// can iterate it.
+// ---------------------------------------------------------------------------
+
+export const KNOWN_AGENT_EVENT_TYPES = [
+  'text_delta',
+  'thinking_delta',
+  'tool_start',
+  'tool_progress',
+  'tool_end',
+  'usage',
+  'error',
+  'done',
+  'context_meta',
+  'run_start',
+  'dry_run_summary',
+  'tool_approval_required',
+  'tool_approval_response',
+  'evaluators_complete',
+  'credential_required',
+  'notification_received',
+] as const;
+
+export type KnownAgentEventType = (typeof KNOWN_AGENT_EVENT_TYPES)[number];
+
+/**
+ * Returns true when the event's `type` is one a current consumer knows
+ * about. Useful for development-mode warnings:
+ *
+ *     for await (const event of loop.run(...)) {
+ *       if (!isKnownAgentEvent(event)) {
+ *         console.warn('Unknown AgentEvent type:', event.type);
+ *         continue;
+ *       }
+ *       switch (event.type) { ... }
+ *     }
+ *
+ * Production code should silently skip unknown events; this helper is for
+ * test runs and dev surfaces that want to alert on newly-added variants.
+ */
+export function isKnownAgentEvent(event: { type: string }): event is AgentEvent {
+  return (KNOWN_AGENT_EVENT_TYPES as readonly string[]).includes(event.type);
+}
+
+export interface DryRunToolPlan {
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+}
+
+export type ToolProgressAudience = 'internal' | 'user' | 'dashboard';
+
+export type AgentEvent =
+  | { type: 'text_delta'; text: string }
+  | { type: 'thinking_delta'; thinking: string }
+  | { type: 'tool_start'; toolCallId: string; toolName: string; args: unknown }
+  // Phase 30.2 — `audience` gates whether channel adapters / chat.ts surface
+  // this event to the user. Default is `'internal'`; tools opt in to `'user'`
+  // per event. Framework-emitted budget warnings are `'user'` (see step 7).
+  | {
+      type: 'tool_progress';
+      toolName: string;
+      message: string;
+      percent?: number;
+      audience: ToolProgressAudience;
+    }
+  | {
+      type: 'tool_end';
+      toolCallId: string;
+      toolName: string;
+      ok: boolean;
+      durationMs: number;
+      // Phase 30.2 — same boundary applies to tool_end success rendering.
+      // Failures (`ok: false`) ignore the field and always render.
+      audience?: ToolProgressAudience;
+      /**
+       * Tool output body — the success value when `ok`, or the error
+       * message when `ok: false`. Optional so consumers that only care
+       * about the status (CLI ASCII chips, telemetry) can ignore it.
+       * The web chip surfaces this on expand-on-click without a
+       * follow-up history fetch.
+       */
+      result?: string;
+      /** Structured payload from the tool's ToolResult, passed through for
+       *  rich-content rendering (e.g. _uiType: 'image' | 'html'). */
+      structured?: Record<string, unknown>;
+    }
+  | { type: 'usage'; inputTokens: number; outputTokens: number; estimatedCostUsd: number }
+  | { type: 'error'; error: string; code: string }
+  | { type: 'done'; text: string; turnCount: number }
+  // Emitted once after context injectors run; carries any metadata they wrote to PromptContext.meta.
+  | { type: 'context_meta'; data: Record<string, unknown> }
+  /**
+   * Emitted once at the very start of each turn, before any LLM call.
+   * Carries the resolved provider/model and the routing source so consumers
+   * (TUI status bar, CLI verbose mode, telemetry) can show the effective model.
+   * `source` reflects which routing rule selected the model (see model_update.md).
+   */
+  | {
+      type: 'run_start';
+      provider: string;
+      model: string;
+      source: 'team-coordinator' | 'team-personality' | 'personality' | 'global';
+    }
+  | {
+      type: 'dry_run_summary';
+      plan: DryRunToolPlan[];
+      capped: number;
+    }
+  | { type: 'tool_approval_required'; toolCallId: string; toolName: string; args: unknown }
+  | { type: 'tool_approval_response'; toolCallId: string; approved: boolean; reason?: string }
+  | {
+      type: 'evaluators_complete';
+      results: Array<{ name: string; pass: boolean; reason?: string; score?: number }>;
+    }
+  | {
+      type: 'credential_required';
+      pluginId: string;
+      credentialKey: string;
+      kind: 'oauth' | 'api_key' | 'text';
+      label: string;
+      description?: string;
+      authUrl?: string;
+      sessionKey: string;
+      pendingUserMessage: string;
+    }
+  | {
+      type: 'notification_received';
+      pluginId: string;
+      sessionKey: string;
+      message: string;
+      startTurn: boolean;
+      payload?: Record<string, unknown>;
+    };

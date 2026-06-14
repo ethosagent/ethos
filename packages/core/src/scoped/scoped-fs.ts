@@ -1,14 +1,13 @@
 import { normalize, resolve } from 'node:path';
-import { defaultAlwaysDeny } from '@ethosagent/storage-fs';
 import type { ScopedFs, ScopedFsEntry, Storage } from '@ethosagent/types';
 
 /**
  * Scoped filesystem capability. Enforces two layers on every call:
  *
- *  1. **Non-overridable deny floor** — `defaultAlwaysDeny()` lists
- *     `.ssh`, `.aws/credentials`, `/etc/passwd`, `/root`, etc. A path
- *     that touches any of these denies even when the capability and
- *     personality both grant the parent (mirror of
+ *  1. **Non-overridable deny floor** — `alwaysDenyPaths` (injected at
+ *     construction) lists `.ssh`, `.aws/credentials`, `/etc/passwd`,
+ *     `/root`, etc. A path that touches any of these denies even when
+ *     the capability and personality both grant the parent (mirror of
  *     `safety-network`'s cloud-metadata block).
  *
  *  2. **Declared reach allowlist** — the intersection of the tool's
@@ -27,8 +26,9 @@ export class ScopedFsImpl implements ScopedFs {
     private readonly storage: Storage,
     private readonly readPaths: Set<string>,
     private readonly writePaths: Set<string>,
+    alwaysDenyPaths: string[] = [],
   ) {
-    this.denyPaths = defaultAlwaysDeny().map((p) => normalize(resolve(p)));
+    this.denyPaths = alwaysDenyPaths.map((p) => normalize(resolve(p)));
   }
 
   async read(path: string): Promise<string> {

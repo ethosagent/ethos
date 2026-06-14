@@ -8,6 +8,7 @@ import type {
   SessionStore,
 } from '@ethosagent/types';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { createTestSafety } from '../../../../packages/core/src/__tests__/helpers/test-safety';
 import { buildForkContext } from '../fork-context';
 import { ImprovementFork, resetImprovementForkCooldowns } from '../improvement-fork';
 
@@ -203,6 +204,7 @@ describe('ImprovementFork', () => {
         model: 'test-model',
         memoryProvider: createMockMemoryProvider(),
         sessionStore: createMockSessionStore([]),
+        safety: createTestSafety(),
       },
       personalities: opts.personalities ?? makeRegistry(),
       dataDir: '/tmp/test-evolver',
@@ -281,6 +283,7 @@ describe('ImprovementFork', () => {
           { role: 'user', content: 'Hello' },
           { role: 'assistant', content: 'World' },
         ]),
+        safety: createTestSafety(),
       },
       personalities: makeRegistry(),
       dataDir: '/tmp/test-evolver',
@@ -321,6 +324,7 @@ describe('ImprovementFork', () => {
           { role: 'user', content: 'Hello' },
           { role: 'assistant', content: 'World' },
         ]),
+        safety: createTestSafety(),
       },
       personalities: makeRegistry(),
       dataDir: '/tmp/test-evolver',
@@ -415,6 +419,7 @@ describe('ImprovementFork', () => {
           { role: 'user', content: 'Hello' },
           { role: 'assistant', content: 'World' },
         ]),
+        safety: createTestSafety(),
       },
       personalities: makeRegistry(),
       dataDir: '/tmp/test-evolver',
@@ -518,6 +523,7 @@ describe('ImprovementFork', () => {
           { role: 'user', content: 'Hello' },
           { role: 'assistant', content: 'World' },
         ]),
+        safety: createTestSafety(),
       },
       personalities: makeRegistry(),
       dataDir: '/tmp/test-evolver',
@@ -564,6 +570,7 @@ describe('ImprovementFork', () => {
           { role: 'user', content: 'Hello' },
           { role: 'assistant', content: 'World' },
         ]),
+        safety: createTestSafety(),
       },
       personalities: makeRegistry(),
       dataDir: '/tmp/test-evolver',
