@@ -522,7 +522,12 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
     personalities.setDefault('default');
 
     const watcher = new Watcher({ rules: [suspiciousSequenceRule()] });
-    const loop = new AgentLoop({ llm, tools, personalities, safety: createTestSafety({ watcher }) });
+    const loop = new AgentLoop({
+      llm,
+      tools,
+      personalities,
+      safety: createTestSafety({ watcher }),
+    });
     const events = await collect(loop.run('go'));
     const err = events.find((e): e is Extract<AgentEvent, { type: 'error' }> => e.type === 'error');
     expect(err).toBeDefined();
@@ -578,7 +583,12 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
     personalities.setDefault('default');
 
     const watcher = new Watcher({ rules: [suspiciousSequenceRule()] });
-    const loop = new AgentLoop({ llm, tools, personalities, safety: createTestSafety({ watcher }) });
+    const loop = new AgentLoop({
+      llm,
+      tools,
+      personalities,
+      safety: createTestSafety({ watcher }),
+    });
     await collect(loop.run('go'));
     expect(webPostCalls).toBe(0);
   });

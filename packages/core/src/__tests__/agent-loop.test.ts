@@ -640,7 +640,14 @@ describe('AgentLoop', () => {
         },
       };
 
-      const loop = new AgentLoop({ llm, tools, personalities, storage, dataDir: '/ethos', safety: createTestSafety() });
+      const loop = new AgentLoop({
+        llm,
+        tools,
+        personalities,
+        storage,
+        dataDir: '/ethos',
+        safety: createTestSafety(),
+      });
       await collect(loop.run('hi'));
 
       expect(captured).toEqual([
@@ -731,7 +738,14 @@ describe('AgentLoop', () => {
         },
       };
 
-      const loop = new AgentLoop({ llm, tools, personalities, storage, dataDir: '/ethos', safety: createTestSafety() });
+      const loop = new AgentLoop({
+        llm,
+        tools,
+        personalities,
+        storage,
+        dataDir: '/ethos',
+        safety: createTestSafety(),
+      });
       await collect(loop.run('hi'));
 
       expect(calls).toEqual([
@@ -855,7 +869,11 @@ describe('AgentLoop', () => {
         name: 'Default',
         budgetCapUsd: 1.0,
       });
-      const loop = new AgentLoop({ llm: makeMockLLM(['ok']), personalities, safety: createTestSafety() });
+      const loop = new AgentLoop({
+        llm: makeMockLLM(['ok']),
+        personalities,
+        safety: createTestSafety(),
+      });
       // makeMockLLM emits 0.0001 per turn, well below $1.00
       const events = await collect(loop.run('hi', { sessionKey: 'under-cap' }));
       expect(events.find((e) => e.type === 'done')).toBeDefined();
@@ -870,7 +888,11 @@ describe('AgentLoop', () => {
         name: 'Default',
         budgetCapUsd: 0.00005, // tighter than the 0.0001 mock emits
       });
-      const loop = new AgentLoop({ llm: makeMockLLM(['ok']), personalities, safety: createTestSafety() });
+      const loop = new AgentLoop({
+        llm: makeMockLLM(['ok']),
+        personalities,
+        safety: createTestSafety(),
+      });
       const sk = 'over-cap';
 
       // First turn — cost 0.0001 USD, which exceeds 0.00005
@@ -894,7 +916,11 @@ describe('AgentLoop', () => {
         name: 'Default',
         budgetCapUsd: 0.00005,
       });
-      const loop = new AgentLoop({ llm: makeMockLLM(['ok']), personalities, safety: createTestSafety() });
+      const loop = new AgentLoop({
+        llm: makeMockLLM(['ok']),
+        personalities,
+        safety: createTestSafety(),
+      });
       const sk = 'reset-cap';
 
       // Run once to exceed cap
@@ -1019,7 +1045,11 @@ describe('AgentLoop', () => {
       // Interrupted mid-turn: no tool_result rows were persisted.
 
       const captured: Message[][] = [];
-      const loop = new AgentLoop({ llm: makeCapturingLLM(captured), session, safety: createTestSafety() });
+      const loop = new AgentLoop({
+        llm: makeCapturingLLM(captured),
+        session,
+        safety: createTestSafety(),
+      });
       await collect(loop.run('continue', { sessionKey: 'cli:interrupted' }));
 
       const messages = captured[0] ?? [];
@@ -1077,7 +1107,11 @@ describe('AgentLoop', () => {
       });
 
       const captured: Message[][] = [];
-      const loop = new AgentLoop({ llm: makeCapturingLLM(captured), session, safety: createTestSafety() });
+      const loop = new AgentLoop({
+        llm: makeCapturingLLM(captured),
+        session,
+        safety: createTestSafety(),
+      });
       await collect(loop.run('continue', { sessionKey: 'cli:intact' }));
 
       const messages = captured[0] ?? [];

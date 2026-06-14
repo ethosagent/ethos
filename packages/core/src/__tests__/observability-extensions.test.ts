@@ -87,7 +87,11 @@ describe('Observability Extensions', () => {
         payloads.push(payload);
       });
 
-      const loop = new AgentLoop({ llm: makeMockLLM(['response']), hooks, safety: createTestSafety() });
+      const loop = new AgentLoop({
+        llm: makeMockLLM(['response']),
+        hooks,
+        safety: createTestSafety(),
+      });
       // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
       loop['personalities'].define({
         id: 'obs-test',
@@ -129,7 +133,11 @@ describe('Observability Extensions', () => {
         payloads.push(payload);
       });
 
-      const loop = new AgentLoop({ llm: makeMockLLM(['enriched response']), hooks, safety: createTestSafety() });
+      const loop = new AgentLoop({
+        llm: makeMockLLM(['enriched response']),
+        hooks,
+        safety: createTestSafety(),
+      });
       // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
       loop['personalities'].define({
         id: 'obs-test',

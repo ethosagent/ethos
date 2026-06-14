@@ -34,7 +34,8 @@ export function createTestSafety(overrides?: TestSafetyOverrides): AgentSafety {
       detectSecrets,
       ...overrides?.redaction,
     },
-    scopedStorageFactory: overrides?.scopedStorageFactory ??
+    scopedStorageFactory:
+      overrides?.scopedStorageFactory ??
       ((base, scope) => new ScopedStorage(base, { ...scope, alwaysDeny: defaultAlwaysDeny() })),
     watcher: overrides?.watcher,
   };

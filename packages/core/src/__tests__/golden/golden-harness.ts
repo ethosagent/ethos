@@ -8,9 +8,9 @@ import { InMemorySessionStore } from '../../defaults/in-memory-session';
 import { DefaultPersonalityRegistry } from '../../defaults/noop-personality';
 import { DefaultHookRegistry } from '../../hook-registry';
 import { DefaultToolRegistry } from '../../tool-registry';
+import { createTestSafety } from '../helpers/test-safety';
 import type { CapturedCall, Step } from './scripted-llm';
 import { makeScriptedLLM } from './scripted-llm';
-import { createTestSafety } from '../helpers/test-safety';
 
 export interface GoldenScenario {
   name: string;

@@ -87,7 +87,11 @@ describe('Q1 — tool-result dedup', () => {
     }
 
     const captured: Message[][] = [];
-    const loop = new AgentLoop({ llm: makeCapturingLLM(captured), session, safety: createTestSafety() });
+    const loop = new AgentLoop({
+      llm: makeCapturingLLM(captured),
+      session,
+      safety: createTestSafety(),
+    });
     await collect(loop.run('continue', { sessionKey: 'cli:dedup' }));
 
     const blocks = toolResultBlocks(captured[0] ?? []);
@@ -126,7 +130,11 @@ describe('Q1 — tool-result dedup', () => {
       });
     }
     const captured: Message[][] = [];
-    const loop = new AgentLoop({ llm: makeCapturingLLM(captured), session, safety: createTestSafety() });
+    const loop = new AgentLoop({
+      llm: makeCapturingLLM(captured),
+      session,
+      safety: createTestSafety(),
+    });
     await collect(loop.run('continue', { sessionKey: 'cli:distinct' }));
 
     const blocks = toolResultBlocks(captured[0] ?? []);
@@ -166,7 +174,11 @@ describe('V1 + Q2 — compaction notice and anti-thrashing cooldown', () => {
     const session = new InMemorySessionStore();
     await seedHeavySession(session, 'cli:notice');
     const captured: Message[][] = [];
-    const loop = new AgentLoop({ llm: makeCapturingLLM(captured), session, safety: createTestSafety() });
+    const loop = new AgentLoop({
+      llm: makeCapturingLLM(captured),
+      session,
+      safety: createTestSafety(),
+    });
 
     const events = await collect(loop.run('next', { sessionKey: 'cli:notice' }));
     const notices = events.filter(
@@ -182,7 +194,11 @@ describe('V1 + Q2 — compaction notice and anti-thrashing cooldown', () => {
     const session = new InMemorySessionStore();
     await seedHeavySession(session, 'cli:cooldown');
     const captured: Message[][] = [];
-    const loop = new AgentLoop({ llm: makeCapturingLLM(captured), session, safety: createTestSafety() });
+    const loop = new AgentLoop({
+      llm: makeCapturingLLM(captured),
+      session,
+      safety: createTestSafety(),
+    });
 
     // Turn 1 — over pressure, never compacted before → compaction fires.
     const turn1 = await collect(loop.run('first', { sessionKey: 'cli:cooldown' }));
@@ -209,7 +225,11 @@ describe('V1 + Q2 — compaction notice and anti-thrashing cooldown', () => {
       await session.appendMessage({ sessionId: s.id, role: 'assistant', content: `reply ${i}` });
     }
     const captured: Message[][] = [];
-    const loop = new AgentLoop({ llm: makeCapturingLLM(captured), session, safety: createTestSafety() });
+    const loop = new AgentLoop({
+      llm: makeCapturingLLM(captured),
+      session,
+      safety: createTestSafety(),
+    });
 
     const turn1 = await collect(loop.run('first', { sessionKey: 'cli:overflow' }));
     expect(compactionNotice(turn1)).toBeDefined();

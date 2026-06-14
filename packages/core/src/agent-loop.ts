@@ -16,8 +16,8 @@ import type {
 } from '@ethosagent/types';
 import { checkTurnBudgets } from './agent-loop/budgets';
 import { assembleContext } from './agent-loop/stages/context-assembly';
-import { streamStep } from './agent-loop/stages/stream-step';
 import type { StreamStepDeps } from './agent-loop/stages/stream-step';
+import { streamStep } from './agent-loop/stages/stream-step';
 import { processTools } from './agent-loop/stages/tool-processing';
 import { finalizeTurn } from './agent-loop/stages/turn-finalizer';
 import { setupTurn } from './agent-loop/stages/turn-setup';
@@ -539,32 +539,36 @@ export class AgentLoop {
       }
 
       // Stage: Stream one LLM call
-      const stepResult = yield* streamStep(streamDeps, {
-        sessionId,
-        sessionKey,
-        personalityId: personality.id,
-        personality,
-        traceId,
-        obsConfig,
-        activeTier,
-        effectiveModel,
-        modelOverride,
-        allowedPlugins,
-        allowedTools,
-        filterOpts,
-        systemPrompt,
-        llmMessages,
-        cacheBreakpoints,
-        abortSignal,
-        turnCount,
-        watcherTap,
-        opts: {
-          temperature: opts.temperature,
-          topP: opts.topP,
-          maxCompletionTokens: opts.maxCompletionTokens,
-          seed: opts.seed,
+      const stepResult = yield* streamStep(
+        streamDeps,
+        {
+          sessionId,
+          sessionKey,
+          personalityId: personality.id,
+          personality,
+          traceId,
+          obsConfig,
+          activeTier,
+          effectiveModel,
+          modelOverride,
+          allowedPlugins,
+          allowedTools,
+          filterOpts,
+          systemPrompt,
+          llmMessages,
+          cacheBreakpoints,
+          abortSignal,
+          turnCount,
+          watcherTap,
+          opts: {
+            temperature: opts.temperature,
+            topP: opts.topP,
+            maxCompletionTokens: opts.maxCompletionTokens,
+            seed: opts.seed,
+          },
         },
-      }, tierEscalationRef);
+        tierEscalationRef,
+      );
 
       if (stepResult.outcome === 'fatal') return;
 
@@ -633,7 +637,12 @@ export class AgentLoop {
           dryRunState,
           tierEscalationRef,
           steerSink: opts.steerSink,
-          opts: { agentId: opts.agentId, attachments: opts.attachments, dryRun: opts.dryRun, userId: opts.userId },
+          opts: {
+            agentId: opts.agentId,
+            attachments: opts.attachments,
+            dryRun: opts.dryRun,
+            userId: opts.userId,
+          },
         },
       );
 

@@ -22,17 +22,23 @@ describe('redactArgs', () => {
   });
 
   it('deep-walks objects', () => {
-    const result = redactArgs({
-      safe: 'hello',
-      nested: { secret: 'ghp_abcdefghij1234567890abcdefghij123456' },
-    }, redactString) as Record<string, unknown>;
+    const result = redactArgs(
+      {
+        safe: 'hello',
+        nested: { secret: 'ghp_abcdefghij1234567890abcdefghij123456' },
+      },
+      redactString,
+    ) as Record<string, unknown>;
     const nested = result.nested as Record<string, unknown>;
     expect(nested.secret).toContain('[REDACTED:github-pat]');
     expect(result.safe).toBe('hello');
   });
 
   it('deep-walks arrays', () => {
-    const result = redactArgs(['safe', 'ghp_abcdefghij1234567890abcdefghij123456'], redactString) as string[];
+    const result = redactArgs(
+      ['safe', 'ghp_abcdefghij1234567890abcdefghij123456'],
+      redactString,
+    ) as string[];
     expect(result[0]).toBe('safe');
     expect(result[1]).toContain('[REDACTED:github-pat]');
   });

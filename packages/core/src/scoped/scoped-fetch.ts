@@ -22,7 +22,10 @@ export type SafeFetchFn = (
     resolveHost?: (hostname: string) => Promise<string[]>;
     maxRedirects?: number;
   },
-) => Promise<{ ok: true; response: Response; finalUrl: string; hops: number } | { ok: false; reason: string; hop: number; url: string }>;
+) => Promise<
+  | { ok: true; response: Response; finalUrl: string; hops: number }
+  | { ok: false; reason: string; hop: number; url: string }
+>;
 
 /**
  * Scoped network capability. Enforces two layers in order:
