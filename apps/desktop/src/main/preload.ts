@@ -120,6 +120,10 @@ const api = {
   },
   gateway: {
     platformStatus: () => ipcRenderer.invoke(IPC_CHANNELS['gateway:platformStatus']),
+    status: () => ipcRenderer.invoke(IPC_CHANNELS['gateway:status']),
+    start: () => ipcRenderer.invoke(IPC_CHANNELS['gateway:start']),
+    stop: () => ipcRenderer.invoke(IPC_CHANNELS['gateway:stop']),
+    logPath: () => ipcRenderer.invoke(IPC_CHANNELS['gateway:logPath']),
   },
   connection: {
     get: () => ipcRenderer.invoke(IPC_CHANNELS['connection:get']),

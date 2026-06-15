@@ -219,6 +219,13 @@ export interface IpcContract {
     request: { url: string; token?: string };
     response: { ok: boolean; latencyMs?: number; error?: string };
   };
+  'gateway:status': {
+    request: undefined;
+    response: { state: 'running' | 'stopped' | 'crashed' | 'starting'; serviceInstalled: boolean };
+  };
+  'gateway:start': { request: undefined; response: { ok: boolean } };
+  'gateway:stop': { request: undefined; response: { ok: boolean } };
+  'gateway:logPath': { request: undefined; response: { path: string } };
 }
 
 /** Main-to-renderer push events (via webContents.send, NOT ipcMain.handle) */
@@ -287,4 +294,8 @@ export const IPC_CHANNELS: { [K in IpcChannel]: K } = {
   'connection:get': 'connection:get',
   'connection:set': 'connection:set',
   'connection:test': 'connection:test',
+  'gateway:status': 'gateway:status',
+  'gateway:start': 'gateway:start',
+  'gateway:stop': 'gateway:stop',
+  'gateway:logPath': 'gateway:logPath',
 };

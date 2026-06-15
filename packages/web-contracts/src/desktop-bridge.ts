@@ -204,6 +204,13 @@ export interface EthosDesktopBridge {
       discord: boolean;
       whatsapp: boolean;
     }>;
+    status: () => Promise<{
+      state: 'running' | 'stopped' | 'crashed' | 'starting';
+      serviceInstalled: boolean;
+    }>;
+    start: () => Promise<{ ok: boolean }>;
+    stop: () => Promise<{ ok: boolean }>;
+    logPath: () => Promise<{ path: string }>;
   };
 
   connection: {

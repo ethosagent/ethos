@@ -6,6 +6,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electro
 import type { RetentionValues } from '../shared/ipc-contract';
 import { IPC_CHANNELS } from '../shared/ipc-contract';
 import { restartBackend, startBackend } from './backend';
+import { getGatewayLogPath, getGatewayStatus, startGateway, stopGateway } from './gateway-control';
 import { getKeychainValue, setKeychainValue } from './keychain';
 import { getLoginItem, setLoginItem } from './login-item';
 import { testDiscord, testImap, testSmtp, testTelegram } from './platform-validator';
@@ -964,4 +965,34 @@ export function registerIpcHandlers(): void {
       }
     },
   );
+
+  // -------------------------------------------------------------------------
+  // Gateway control IPC handlers
+  // -------------------------------------------------------------------------
+
+  ipcMain.handle(IPC_CHANNELS['gateway:status'], async () => {
+    return getGatewayStatus();
+  });
+
+  ipcMain.handle(IPC_CHANNELS['gateway:start'], async () => {
+    try {
+      await startGateway();
+      return { ok: true };
+    } catch {
+      return { ok: false };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS['gateway:stop'], async () => {
+    try {
+      await stopGateway();
+      return { ok: true };
+    } catch {
+      return { ok: false };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS['gateway:logPath'], () => {
+    return { path: getGatewayLogPath() };
+  });
 }

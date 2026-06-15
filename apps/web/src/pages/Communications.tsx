@@ -25,7 +25,8 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { bridge, isDesktop } from '../lib/desktop';
 import { rpc } from '../rpc';
 
 type BindType = 'personality' | 'team';
@@ -1109,6 +1110,86 @@ function AccessControlSection({ platform }: { platform: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Gateway status pill (DT4) — desktop only
+// ---------------------------------------------------------------------------
+
+const GATEWAY_STATE_CONFIG = {
+  running: { color: 'success', label: 'Running' },
+  stopped: { color: 'default', label: 'Stopped' },
+  crashed: { color: 'error', label: 'Crashed' },
+  starting: { color: 'processing', label: 'Starting' },
+} as const;
+
+function GatewayControl() {
+  const [status, setStatus] = useState<{
+    state: 'running' | 'stopped' | 'crashed' | 'starting';
+    serviceInstalled: boolean;
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(() => {
+    bridge?.gateway.status().then(setStatus);
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktop || !bridge) return;
+    refresh();
+    const interval = setInterval(refresh, 5000);
+    return () => clearInterval(interval);
+  }, [refresh]);
+
+  if (!isDesktop || !bridge || !status) return null;
+  const b = bridge;
+
+  const cfg = GATEWAY_STATE_CONFIG[status.state];
+
+  const handleToggle = async () => {
+    setLoading(true);
+    try {
+      if (status.state === 'running') {
+        await b.gateway.stop();
+      } else {
+        await b.gateway.start();
+      }
+      // Wait briefly for state to propagate, then refresh
+      setTimeout(refresh, 1500);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleViewLogs = async () => {
+    const { path } = await b.gateway.logPath();
+    await b.shell.openExternal({ url: `file://${path}` });
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+      <Tag color={cfg.color}>
+        <Badge status={cfg.color as 'success' | 'default' | 'error' | 'processing'} /> Gateway:{' '}
+        {cfg.label}
+      </Tag>
+      <Button
+        size="small"
+        type={status.state === 'running' ? 'default' : 'primary'}
+        loading={loading}
+        onClick={handleToggle}
+      >
+        {status.state === 'running' ? 'Stop' : 'Start'}
+      </Button>
+      <Typography.Link onClick={handleViewLogs} style={{ fontSize: 12 }}>
+        View logs
+      </Typography.Link>
+      {!status.serviceInstalled && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          (no OS service — using fallback)
+        </Typography.Text>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Root Communications component
 // ---------------------------------------------------------------------------
 
@@ -1137,6 +1218,7 @@ export function Communications() {
 
   return (
     <div className="comms-tab">
+      <GatewayControl />
       <Tabs
         defaultActiveKey="telegram"
         items={[
