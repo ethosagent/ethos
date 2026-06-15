@@ -35,6 +35,14 @@ export function Composer({
   const [atQuery, setAtQuery] = useState<string | null>(null);
   const [atResults, setAtResults] = useState<string[]>([]);
   const [atIndex, setAtIndex] = useState(0);
+  const [slashQuery, setSlashQuery] = useState<string | null>(null);
+  const [slashResults, setSlashResults] = useState<
+    Array<{ name: string; description: string; usage: string }>
+  >([]);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [slashCommandsCache, setSlashCommandsCache] = useState<
+    Array<{ name: string; description: string; usage: string }>
+  >([]);
 
   const hasReadyAttachments = attachments && attachments.length > 0;
   const isUploading = attachments?.some((a) => a.state === 'uploading');
@@ -61,6 +69,24 @@ export function Composer({
     };
   }, [atQuery]);
 
+  useEffect(() => {
+    rpc.slashCommands
+      .list()
+      .then((res) => setSlashCommandsCache(res.commands))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (slashQuery === null) {
+      setSlashResults([]);
+      return;
+    }
+    const q = slashQuery.toLowerCase();
+    const filtered = slashCommandsCache.filter((c) => c.name.includes(q)).slice(0, 8);
+    setSlashResults(filtered);
+    setSlashIndex(0);
+  }, [slashQuery, slashCommandsCache]);
+
   const handleTextChange = useCallback((value: string) => {
     setText(value);
     const atPos = value.lastIndexOf('@');
@@ -68,10 +94,20 @@ export function Composer({
       const afterAt = value.slice(atPos + 1);
       if (!afterAt.includes(' ')) {
         setAtQuery(afterAt);
+        setSlashQuery(null);
+        return;
+      }
+    }
+    if (value.startsWith('/')) {
+      const afterSlash = value.slice(1);
+      if (!afterSlash.includes(' ')) {
+        setSlashQuery(afterSlash);
+        setAtQuery(null);
         return;
       }
     }
     setAtQuery(null);
+    setSlashQuery(null);
   }, []);
 
   const handleSend = async () => {
@@ -103,6 +139,35 @@ export function Composer({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashQuery !== null && slashResults.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSlashIndex((i) => (i + 1) % slashResults.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashIndex((i) => (i - 1 + slashResults.length) % slashResults.length);
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault();
+        const selected = slashResults[slashIndex];
+        if (selected) {
+          const newText = `/${selected.name} `;
+          setText(newText);
+          setSlashQuery(null);
+          setSlashResults([]);
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSlashQuery(null);
+        setSlashResults([]);
+        return;
+      }
+    }
     if (atQuery !== null && atResults.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -256,6 +321,53 @@ export function Composer({
                   }}
                 >
                   {path}
+                </button>
+              ))}
+            </div>
+          )}
+          {slashQuery !== null && slashResults.length > 0 && (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: '100%',
+                left: 0,
+                right: 0,
+                background: 'var(--ethos-bg-surface, #1a1a1a)',
+                border: '1px solid var(--ethos-border, #333)',
+                borderRadius: 'var(--radius-sm)',
+                maxHeight: 200,
+                overflow: 'auto',
+                zIndex: 10,
+                marginBottom: 4,
+              }}
+            >
+              {slashResults.map((cmd, i) => (
+                <button
+                  type="button"
+                  key={cmd.name}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setText(`/${cmd.name} `);
+                    setSlashQuery(null);
+                    setSlashResults([]);
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    fontFamily: 'monospace',
+                    background: i === slashIndex ? 'var(--ethos-bg-hover, #2a2a2a)' : 'transparent',
+                    border: 'none',
+                    color: 'inherit',
+                    textAlign: 'left',
+                    width: '100%',
+                    display: 'block',
+                  }}
+                >
+                  <span>/{cmd.name}</span>
+                  <span style={{ marginLeft: 8, opacity: 0.5, fontSize: 12 }}>
+                    {cmd.description}
+                  </span>
                 </button>
               ))}
             </div>

@@ -329,6 +329,8 @@ try {
         await runPersonalityDuplicate(args.slice(2));
       } else if (sub === 'show') {
         await runPersonalityShow(args.slice(2));
+      } else if (sub === 'diff') {
+        await runPersonalityDiff(args.slice(2));
       } else if (sub === 'export') {
         const { runPersonalityExport } = await import('./commands/personality-export');
         await runPersonalityExport(args.slice(2));
@@ -337,7 +339,7 @@ try {
         await runPersonalityImport(args.slice(2));
       } else {
         console.log(
-          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | set <id> | duplicate <src> <dst> | export <id> [--output <path>] | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
+          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | diff <a> <b> | set <id> | duplicate <src> <dst> | export <id> [--output <path>] | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
         );
       }
       break;
@@ -723,10 +725,15 @@ try {
       break;
     }
 
-    default:
-      console.log(`Unknown command: ${command}`);
-      console.log(USAGE);
-      process.exit(1);
+    default: {
+      const pluginCmd = await tryPluginCliSubcommand(effectiveCommand, args.slice(1));
+      if (!pluginCmd) {
+        console.log(`Unknown command: ${command}`);
+        console.log(USAGE);
+        process.exit(1);
+      }
+      break;
+    }
   }
 } catch (err) {
   // Phase 30.9 - render every surface-level failure through the EthosError
@@ -974,6 +981,109 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Minimal unified diff — LCS-based, no external dependency.
+// ---------------------------------------------------------------------------
+
+function unifiedDiff(a: string, b: string, labelA: string, labelB: string): string {
+  const linesA = a.split('\n');
+  const linesB = b.split('\n');
+
+  // Build LCS table
+  const m = linesA.length;
+  const n = linesB.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0) as number[]);
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (linesA[i - 1] === linesB[j - 1]) {
+        dp[i][j] = (dp[i - 1]?.[j - 1] ?? 0) + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1]?.[j] ?? 0, dp[i]?.[j - 1] ?? 0);
+      }
+    }
+  }
+
+  // Backtrack to produce diff lines
+  const result: Array<{ tag: ' ' | '-' | '+'; line: string }> = [];
+  let i = m;
+  let j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && linesA[i - 1] === linesB[j - 1]) {
+      result.push({ tag: ' ', line: linesA[i - 1] ?? '' });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || (dp[i]?.[j - 1] ?? 0) >= (dp[i - 1]?.[j] ?? 0))) {
+      result.push({ tag: '+', line: linesB[j - 1] ?? '' });
+      j--;
+    } else {
+      result.push({ tag: '-', line: linesA[i - 1] ?? '' });
+      i--;
+    }
+  }
+  result.reverse();
+
+  // ANSI coloring
+  const red = '\x1b[31m';
+  const green = '\x1b[32m';
+  const dim = '\x1b[2m';
+  const reset = '\x1b[0m';
+
+  const out: string[] = [`${red}--- ${labelA}${reset}`, `${green}+++ ${labelB}${reset}`];
+  for (const entry of result) {
+    if (entry.tag === '-') {
+      out.push(`${red}-${entry.line}${reset}`);
+    } else if (entry.tag === '+') {
+      out.push(`${green}+${entry.line}${reset}`);
+    } else {
+      out.push(`${dim} ${entry.line}${reset}`);
+    }
+  }
+  return out.join('\n');
+}
+
+// `ethos personality diff <a> <b>` — render both character sheets and print
+// a unified diff so you can see what changed between two personalities.
+async function runPersonalityDiff(argv: string[]): Promise<void> {
+  const [idA, idB] = argv;
+  if (!idA || !idB) {
+    console.log('Usage: ethos personality diff <a> <b>');
+    process.exit(1);
+  }
+  const { createPersonalityRegistry, renderCharacterSheet } = await import(
+    '@ethosagent/personalities'
+  );
+  const { ethosDir } = await import('./config');
+  const storage = getStorage();
+  const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: ethosDir() });
+  await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
+
+  const descA = reg.describe(idA);
+  if (!descA) {
+    console.error(`Unknown personality: ${idA}`);
+    console.error('Run `ethos personality list` to see available ids.');
+    process.exit(1);
+  }
+  const descB = reg.describe(idB);
+  if (!descB) {
+    console.error(`Unknown personality: ${idB}`);
+    console.error('Run `ethos personality list` to see available ids.');
+    process.exit(1);
+  }
+
+  const soulA = await reg.readSoulMd(idA);
+  const soulB = await reg.readSoulMd(idB);
+  const sheetA = renderCharacterSheet(descA.config, soulA);
+  const sheetB = renderCharacterSheet(descB.config, soulB);
+
+  if (sheetA === sheetB) {
+    console.log(`\nNo differences between "${idA}" and "${idB}".\n`);
+    return;
+  }
+
+  const diff = unifiedDiff(sheetA, sheetB, idA, idB);
+  console.log(`\n${diff}`);
+}
+
+// ---------------------------------------------------------------------------
 // ethos plugins status - global plugin × personality matrix
 // ---------------------------------------------------------------------------
 
@@ -1034,4 +1144,34 @@ function parseCliFlags(argv: string[]): Record<string, string> {
     }
   }
   return out;
+}
+
+async function tryPluginCliSubcommand(cmd: string, argv: string[]): Promise<boolean> {
+  try {
+    const { PluginLoader } = await import('@ethosagent/plugin-loader');
+    const {
+      DefaultHookRegistry,
+      DefaultLLMProviderRegistry,
+      DefaultMemoryProviderRegistry,
+      DefaultPersonalityRegistry,
+      DefaultToolRegistry,
+    } = await import('@ethosagent/core');
+    const registries: import('@ethosagent/plugin-sdk').PluginRegistries = {
+      tools: new DefaultToolRegistry(),
+      hooks: new DefaultHookRegistry(),
+      injectors: [],
+      injectorPluginIds: new Map(),
+      personalities: new DefaultPersonalityRegistry(),
+      llmProviders: new DefaultLLMProviderRegistry(),
+      memoryProviders: new DefaultMemoryProviderRegistry(),
+    };
+    const loader = new PluginLoader(registries, { storage: getStorage() });
+    await loader.loadAll();
+    const handler = loader.getCliSubcommandHandler(cmd);
+    if (!handler) return false;
+    await handler(argv);
+    return true;
+  } catch {
+    return false;
+  }
 }

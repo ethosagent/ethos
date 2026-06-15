@@ -119,6 +119,7 @@ function shapeRun(r: TaskRun) {
     outcome: r.outcome,
     summary: r.summary,
     last_heartbeat_at: r.lastHeartbeatAt,
+    completed_by: r.completedBy,
   };
 }
 
@@ -598,6 +599,7 @@ function createKanbanComplete(
   store: KanbanStore,
   hooks?: HookRegistry,
   autonomyTierOf?: AutonomyTierOf,
+  personalityLookup?: PersonalityLookup,
 ): Tool {
   return {
     name: 'kanban_complete',
@@ -668,7 +670,14 @@ function createKanbanComplete(
             return jsonResult(fullTask(t));
           }
         }
-        const t = store.completeRun(taskId, summary, actorOf(ctx));
+        const actor = actorOf(ctx);
+        const personalityId = ctx.personalityId;
+        let completedBy: { id: string; name: string } | undefined;
+        if (personalityId) {
+          const info = personalityLookup?.(personalityId);
+          completedBy = { id: personalityId, name: info?.name ?? personalityId };
+        }
+        const t = store.completeRun(taskId, summary, actor, completedBy);
         return jsonResult(fullTask(t));
       } catch (err) {
         return storeError(err);
@@ -903,10 +912,13 @@ export interface AutonomyInfo {
 
 export type AutonomyTierOf = (assignee: string) => AutonomyInfo | undefined;
 
+export type PersonalityLookup = (id: string) => { name: string } | undefined;
+
 export function createKanbanTools(opts: {
   store: KanbanStore;
   hooks?: HookRegistry;
   autonomyTierOf?: AutonomyTierOf;
+  personalityLookup?: PersonalityLookup;
 }): Tool[] {
   const { store, hooks } = opts;
   return [
@@ -916,7 +928,7 @@ export function createKanbanTools(opts: {
     createKanbanShow(store),
     createKanbanUpdateStatus(store),
     createKanbanComment(store),
-    createKanbanComplete(store, hooks, opts.autonomyTierOf),
+    createKanbanComplete(store, hooks, opts.autonomyTierOf, opts.personalityLookup),
     createKanbanBlock(store),
     createKanbanUnblock(store),
     createKanbanHeartbeat(store),

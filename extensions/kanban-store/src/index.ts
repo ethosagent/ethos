@@ -84,6 +84,7 @@ export interface TaskRun {
   outcome: RunOutcome | null;
   summary: string | null;
   lastHeartbeatAt: number;
+  completedBy: { id: string; name: string } | null;
 }
 
 export interface TaskEvent {
@@ -209,6 +210,8 @@ const SCHEMA = `
     outcome           TEXT CHECK (outcome IS NULL OR outcome IN ('completed','blocked','stalled','cancelled')),
     summary           TEXT,
     last_heartbeat_at INTEGER NOT NULL,
+    completed_by_id   TEXT,
+    completed_by_name TEXT,
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
   ) STRICT;
 
@@ -309,9 +312,9 @@ export class KanbanStore {
     // Version check FIRST — refuse to touch a DB whose schema is newer than this code.
     const versionRows = this.db.pragma('user_version') as Array<{ user_version: number }>;
     const currentVersion = versionRows[0]?.user_version ?? 0;
-    if (currentVersion > 4) {
+    if (currentVersion > 5) {
       throw new Error(
-        `kanban-store: database user_version=${currentVersion} is newer than code (4); refusing to open to avoid downgrade`,
+        `kanban-store: database user_version=${currentVersion} is newer than code (5); refusing to open to avoid downgrade`,
       );
     }
     // SCHEMA describes the current (v4) shape. A fresh DB (user_version=0) gets it
@@ -321,7 +324,7 @@ export class KanbanStore {
     // `exec(SCHEMA)` above on every version, so v3 needs only the version bump.
     this.db.exec(SCHEMA);
     if (currentVersion === 0) {
-      this.db.pragma('user_version = 4');
+      this.db.pragma('user_version = 5');
     } else {
       // Stepwise migration chain: a v1 DB runs v1->v2->v2->v3 then the v3->v4
       // bump; a v2 DB runs v2->v3 then the bump; a v3 DB just bumps. The v1ToV2
@@ -336,6 +339,9 @@ export class KanbanStore {
       }
       if (currentVersion <= 3) {
         this.db.pragma('user_version = 4');
+      }
+      if (currentVersion <= 4) {
+        this.migrateV4ToV5();
       }
     }
   }
@@ -528,6 +534,19 @@ export class KanbanStore {
     } finally {
       this.db.pragma('foreign_keys = ON');
     }
+  }
+
+  private migrateV4ToV5(): void {
+    try {
+      this.db.exec(`
+        ALTER TABLE task_runs ADD COLUMN completed_by_id TEXT;
+        ALTER TABLE task_runs ADD COLUMN completed_by_name TEXT;
+      `);
+    } catch (_e) {
+      // Columns may already exist on a fresh DB where exec(SCHEMA) created
+      // them via CREATE TABLE IF NOT EXISTS. Ignore duplicate-column errors.
+    }
+    this.db.pragma('user_version = 5');
   }
 
   createTask(input: CreateTaskInput): Task {
@@ -771,8 +790,13 @@ export class KanbanStore {
     return this.getTask(taskId) as Task;
   }
 
-  completeRun(taskId: string, summary: string, actor = 'system'): Task {
-    return this.endRun(taskId, 'done', 'completed', summary, actor);
+  completeRun(
+    taskId: string,
+    summary: string,
+    actor = 'system',
+    completedBy?: { id: string; name: string },
+  ): Task {
+    return this.endRun(taskId, 'done', 'completed', summary, actor, { completedBy });
   }
 
   blockRun(taskId: string, reason: string, actor = 'system'): Task {
@@ -787,7 +811,7 @@ export class KanbanStore {
     outcome: RunOutcome,
     summary: string | null,
     actor: string,
-    opts: { comment?: string } = {},
+    opts: { comment?: string; completedBy?: { id: string; name: string } } = {},
   ): Task {
     const now = Date.now();
     // The whole "claim the run and end it" sequence runs inside one transaction so that
@@ -804,10 +828,17 @@ export class KanbanStore {
       }
       const result = this.db
         .prepare(
-          `UPDATE task_runs SET ended_at = ?, outcome = ?, summary = ?
+          `UPDATE task_runs SET ended_at = ?, outcome = ?, summary = ?, completed_by_id = ?, completed_by_name = ?
            WHERE id = ? AND ended_at IS NULL`,
         )
-        .run(now, outcome, summary, row.current_run_id);
+        .run(
+          now,
+          outcome,
+          summary,
+          opts.completedBy?.id ?? null,
+          opts.completedBy?.name ?? null,
+          row.current_run_id,
+        );
       if (result.changes !== 1) {
         throw new Error(`no open run: race ended run ${row.current_run_id} concurrently`);
       }
@@ -829,7 +860,11 @@ export class KanbanStore {
           .run(commentId, taskId, actor, opts.comment, now);
         this.emit(taskId, 'commented', actor, { commentId });
       }
-      this.emit(taskId, 'run_completed', actor, { outcome, summary });
+      this.emit(taskId, 'run_completed', actor, {
+        outcome,
+        summary,
+        completedBy: opts.completedBy ?? null,
+      });
       if (row.status !== newStatus) {
         this.emit(taskId, 'status_changed', actor, { from: row.status, to: newStatus });
       }
@@ -1339,6 +1374,8 @@ interface TaskRunRow {
   outcome: string | null;
   summary: string | null;
   last_heartbeat_at: number;
+  completed_by_id: string | null;
+  completed_by_name: string | null;
 }
 
 interface TaskCommentRow {
@@ -1358,6 +1395,10 @@ function rowToRun(r: TaskRunRow): TaskRun {
     outcome: (r.outcome as RunOutcome | null) ?? null,
     summary: r.summary,
     lastHeartbeatAt: r.last_heartbeat_at,
+    completedBy:
+      r.completed_by_id !== null
+        ? { id: r.completed_by_id, name: r.completed_by_name ?? r.completed_by_id }
+        : null,
   };
 }
 

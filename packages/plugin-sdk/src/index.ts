@@ -238,6 +238,13 @@ export interface EthosPluginApi {
     handler: (args: string, ctx: SlashCommandContext) => Promise<string>;
   }): void;
 
+  /** Register a CLI subcommand — plugins can extend `ethos <name>`. */
+  registerCliSubcommand(cmd: {
+    name: string;
+    description: string;
+    handler: (argv: string[]) => Promise<void>;
+  }): void;
+
   /** Diagnostics emitter for structured logging and metrics (v2.2). */
   readonly diagnostics: DiagnosticsEmitter;
 }
@@ -336,6 +343,14 @@ export class PluginApiImpl implements EthosPluginApi {
       description: string;
       usage: string;
       handler: (args: string, ctx: SlashCommandContext) => Promise<string>;
+    }
+  >();
+  private readonly cliSubcommandHandlers = new Map<
+    string,
+    {
+      name: string;
+      description: string;
+      handler: (argv: string[]) => Promise<void>;
     }
   >();
   private oauthConfig?: OAuthConfig;
@@ -691,6 +706,26 @@ export class PluginApiImpl implements EthosPluginApi {
     }));
   }
 
+  registerCliSubcommand(cmd: {
+    name: string;
+    description: string;
+    handler: (argv: string[]) => Promise<void>;
+  }): void {
+    const lower = cmd.name.toLowerCase();
+    this.cliSubcommandHandlers.set(lower, { ...cmd, name: lower });
+  }
+
+  getCliSubcommandHandler(name: string): ((argv: string[]) => Promise<void>) | undefined {
+    return this.cliSubcommandHandlers.get(name.toLowerCase())?.handler;
+  }
+
+  getAllCliSubcommands(): { name: string; description: string }[] {
+    return [...this.cliSubcommandHandlers.values()].map(({ name, description }) => ({
+      name,
+      description,
+    }));
+  }
+
   getHealthChecks(): PluginHealthCheck[] {
     return this.healthChecks;
   }
@@ -709,6 +744,7 @@ export class PluginApiImpl implements EthosPluginApi {
   cleanup(): void {
     // v3 — Slash commands
     this.slashHandlers.clear();
+    this.cliSubcommandHandlers.clear();
 
     // Monitors
     this.monitorRunner.stopAll();

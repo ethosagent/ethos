@@ -849,6 +849,7 @@ export const KanbanRunSchema = z.object({
   outcome: z.enum(['completed', 'blocked', 'stalled', 'cancelled']).nullable(),
   summary: z.string().nullable(),
   lastHeartbeatAt: z.string(), // ISO-8601
+  completedBy: z.object({ id: z.string(), name: z.string() }).nullable(),
 });
 export type KanbanRun = z.infer<typeof KanbanRunSchema>;
 

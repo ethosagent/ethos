@@ -368,6 +368,45 @@ describe('kanban tools', () => {
     );
     expect(out.status).toBe('archived');
   });
+
+  it('kanban_complete stamps completedBy on the run record', async () => {
+    const lookup = (id: string) => (id === 'engineer' ? { name: 'Engineer' } : undefined);
+    const t2 = toolsByName(createKanbanTools({ store, personalityLookup: lookup }));
+    const t = store.createTask({ title: 'x' });
+    store.updateStatus(t.id, 'running');
+    await call(
+      t2.kanban_complete as Tool,
+      { task_id: t.id, summary: 'shipped' },
+      makeCtx('engineer'),
+    );
+    const runs = store.listRuns(t.id);
+    const completedRun = runs.find((r) => r.outcome === 'completed');
+    expect(completedRun?.completedBy).toEqual({ id: 'engineer', name: 'Engineer' });
+  });
+
+  it('kanban_complete stamps completedBy with id as fallback name when lookup returns undefined', async () => {
+    const lookup = () => undefined;
+    const t2 = toolsByName(createKanbanTools({ store, personalityLookup: lookup }));
+    const t = store.createTask({ title: 'x' });
+    store.updateStatus(t.id, 'running');
+    await call(
+      t2.kanban_complete as Tool,
+      { task_id: t.id, summary: 'shipped' },
+      makeCtx('unknown-bot'),
+    );
+    const runs = store.listRuns(t.id);
+    const completedRun = runs.find((r) => r.outcome === 'completed');
+    expect(completedRun?.completedBy).toEqual({ id: 'unknown-bot', name: 'unknown-bot' });
+  });
+
+  it('kanban_complete without personalityId does not stamp completedBy', async () => {
+    const t = store.createTask({ title: 'x' });
+    store.updateStatus(t.id, 'running');
+    await call(tools.kanban_complete as Tool, { task_id: t.id, summary: 'shipped' }, makeCtx());
+    const runs = store.listRuns(t.id);
+    const completedRun = runs.find((r) => r.outcome === 'completed');
+    expect(completedRun?.completedBy).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

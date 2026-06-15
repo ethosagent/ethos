@@ -343,7 +343,15 @@ export async function composeAllTools(
       store: KanbanStore;
       hooks?: typeof hooks;
       autonomyTierOf?: AutonomyTierOf;
-    } = { store, hooks };
+      personalityLookup?: (id: string) => { name: string } | undefined;
+    } = {
+      store,
+      hooks,
+      personalityLookup: (id: string) => {
+        const p = personalities.get(id);
+        return p ? { name: p.name } : undefined;
+      },
+    };
     if (config.trustPolicy?.mode === 'tiered') {
       const policy = config.trustPolicy;
       kanbanOpts.autonomyTierOf = (assignee) => {

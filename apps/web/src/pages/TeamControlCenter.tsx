@@ -755,8 +755,9 @@ function describeEvent(e: KanbanEvent): string {
     case 'run_started':
       return 'started run on';
     case 'run_completed': {
-      const data = e.data as { outcome?: string };
-      return `ended run (${data.outcome ?? 'completed'}) on`;
+      const data = e.data as { outcome?: string; completedBy?: { name?: string } | null };
+      const by = data.completedBy?.name ? ` · by ${data.completedBy.name}` : '';
+      return `ended run (${data.outcome ?? 'completed'})${by} on`;
     }
     case 'heartbeat':
       return '♥ on';

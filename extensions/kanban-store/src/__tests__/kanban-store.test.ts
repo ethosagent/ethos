@@ -170,6 +170,24 @@ describe('KanbanStore', () => {
     expect(runs[0]?.endedAt).not.toBeNull();
   });
 
+  it('completeRun stamps completedBy on the run record', () => {
+    const task = store.createTask({ title: 'stamped' });
+    store.updateStatus(task.id, 'running');
+    store.completeRun(task.id, 'shipped', 'system', { id: 'engineer', name: 'Engineer' });
+
+    const runs = store.listRuns(task.id);
+    expect(runs[0]?.completedBy).toEqual({ id: 'engineer', name: 'Engineer' });
+  });
+
+  it('completeRun without completedBy leaves completedBy null', () => {
+    const task = store.createTask({ title: 'plain' });
+    store.updateStatus(task.id, 'running');
+    store.completeRun(task.id, 'shipped');
+
+    const runs = store.listRuns(task.id);
+    expect(runs[0]?.completedBy).toBeNull();
+  });
+
   it('blockRun ends the current run with outcome=blocked + reason as comment and sets status=blocked', () => {
     const task = store.createTask({ title: 'work' });
     store.updateStatus(task.id, 'running');
@@ -1056,7 +1074,7 @@ describe('KanbanStore', () => {
     const dbPath = join(dir, 'board.db');
     try {
       const future = new Database(dbPath);
-      future.pragma('user_version = 5');
+      future.pragma('user_version = 6');
       future.close();
       expect(() => new KanbanStore(dbPath)).toThrow(/newer than code/);
     } finally {
@@ -1349,13 +1367,13 @@ describe('KanbanStore', () => {
       }
 
       // The stepwise chain runs v1->v2->v3 then the additive v3->v4 bump, so the
-      // DB lands at the current code version (4). The dedicated v1->v4 test
+      // DB lands at the current code version (5). The dedicated v1->v4 test
       // asserts the full chain; here we just confirm the chain doesn't stall.
       const raw = new Database(dbPath);
       try {
         const version = (raw.pragma('user_version') as Array<{ user_version: number }>)[0]
           ?.user_version;
-        expect(version).toBe(4);
+        expect(version).toBe(5);
       } finally {
         raw.close();
       }
@@ -1585,7 +1603,7 @@ describe('KanbanStore', () => {
     const dbPath = join(dir, 'board.db');
     try {
       const future = new Database(dbPath);
-      future.pragma('user_version = 5');
+      future.pragma('user_version = 6');
       future.close();
       expect(() => new KanbanStore(dbPath)).toThrow(/newer than code/);
     } finally {
@@ -1603,7 +1621,7 @@ describe('KanbanStore', () => {
       try {
         const version = (raw.pragma('user_version') as Array<{ user_version: number }>)[0]
           ?.user_version;
-        expect(version).toBe(4);
+        expect(version).toBe(5);
         const tables = (
           raw
             .prepare(
@@ -1733,7 +1751,7 @@ describe('KanbanStore', () => {
       try {
         const version = (raw.pragma('user_version') as Array<{ user_version: number }>)[0]
           ?.user_version;
-        expect(version).toBe(4);
+        expect(version).toBe(5);
       } finally {
         raw.close();
       }
@@ -1846,7 +1864,7 @@ describe('KanbanStore', () => {
       try {
         const version = (raw.pragma('user_version') as Array<{ user_version: number }>)[0]
           ?.user_version;
-        expect(version).toBe(4);
+        expect(version).toBe(5);
       } finally {
         raw.close();
       }
@@ -2003,7 +2021,7 @@ describe('KanbanStore', () => {
       const migrated = snapshot(migratedPath);
       const fresh = snapshot(freshPath);
 
-      expect(migrated.userVersion).toBe(4);
+      expect(migrated.userVersion).toBe(5);
       expect(migrated.userVersion).toBe(fresh.userVersion);
       // `tasks` columns + types (covers the v1->v2 max_retries / retry_count and
       // v2->v3 acceptance_criteria additions converging on the fresh shape).
