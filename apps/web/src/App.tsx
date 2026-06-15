@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { bridge, isDesktop } from './lib/desktop';
+import { reinitializeClient } from './rpc';
 import { CommandPalette } from './components/CommandPalette';
 import { MobileTabBar } from './components/MobileTabBar';
 import { RightDrawer } from './components/RightDrawer';
@@ -57,6 +59,7 @@ export function App() {
     typeof window === 'undefined' ? false : window.innerWidth >= DRAWER_BREAKPOINT,
   );
   const [paletteOpen, setPaletteOpen] = useState(false);
+  useDesktopBootstrap();
   useOnboardingRedirect();
   usePushEventToasts();
   useSessionTitleSync();
@@ -177,6 +180,23 @@ export function App() {
       <MobileTabBar />
     </div>
   );
+}
+
+/**
+ * On desktop, read the Electron bridge connection config on mount.
+ * When mode is 'remote', point the SDK client at the remote URL.
+ * Bearer-token injection is handled at the network layer by
+ * Electron's session.defaultSession.webRequest.onBeforeSendHeaders.
+ */
+function useDesktopBootstrap(): void {
+  useEffect(() => {
+    if (!isDesktop || !bridge) return;
+    bridge.connection.get().then((conn) => {
+      if (conn.mode === 'remote' && conn.url) {
+        reinitializeClient(conn.url);
+      }
+    });
+  }, []);
 }
 
 /**
