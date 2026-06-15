@@ -153,16 +153,10 @@ async function createWindow(): Promise<void> {
     store.set('theme', isDark ? 'dark' : 'light');
   }
 
-  if (store.get('useSpaMode')) {
-    const port = store.get('backendPort', 3001);
-    const actualPort = await startBackendWithRetry(port);
-    store.set('backendPort', actualPort);
-    await loadSpaUrl(mainWindow, actualPort);
-  } else if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:5173');
-  } else {
-    mainWindow.loadFile(join(__dirname, '..', 'renderer', 'index.html'));
-  }
+  const port = store.get('backendPort', 3001);
+  const actualPort = await startBackendWithRetry(port);
+  store.set('backendPort', actualPort);
+  await loadSpaUrl(mainWindow, actualPort);
 
   registerQuickChatIpc(mainWindow);
   if (desktopActivated) {
@@ -200,9 +194,7 @@ app.whenReady().then(async () => {
     },
   });
 
-  if (store.get('useSpaMode')) {
-    setupSpaCsp();
-  }
+  setupSpaCsp();
 
   const hidden = isBackgroundMode();
 
@@ -218,7 +210,7 @@ app.whenReady().then(async () => {
 
   (app as unknown as EventEmitter).on('ethos:onboarding-complete', () => {
     activateDesktop();
-    if (store.get('useSpaMode') && mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       const port = store.get('backendPort', 3001);
       restartBackendAsync(port)
         .then((actualPort) => {

@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import react from '@vitejs/plugin-react';
 import { defineConfig } from 'electron-vite';
 
 const ROOT = resolve(import.meta.dirname, '../..');
@@ -84,32 +83,10 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: 'src/main/preload.ts',
-          'quick-chat': 'src/main/preload-quick-chat.ts',
         },
         output: {
           format: 'cjs',
           entryFileNames: '[name].js',
-        },
-      },
-    },
-  },
-  renderer: {
-    plugins: [react()],
-    optimizeDeps: {
-      exclude: ['@ethosagent/ui-components'],
-    },
-    define: {
-      'process.env': '{}',
-      'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
-      'process.platform': JSON.stringify(process.platform),
-      'process.version': JSON.stringify(process.version),
-    },
-    build: {
-      outDir: 'dist/renderer',
-      rollupOptions: {
-        input: {
-          index: 'src/renderer/index.html',
-          'quick-chat': 'src/renderer/quick-chat.html',
         },
       },
     },

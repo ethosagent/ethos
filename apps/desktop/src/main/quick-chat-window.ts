@@ -52,19 +52,12 @@ function createQuickChatWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      preload: join(__dirname, '..', 'preload', 'quick-chat.js'),
+      preload: join(__dirname, '..', 'preload', 'index.js'),
     },
   });
 
-  const useSpa = store.get('useSpaMode');
-  if (useSpa) {
-    const port = store.get('backendPort');
-    win.loadURL(`http://127.0.0.1:${port}?mode=quickchat`);
-  } else if (process.env.NODE_ENV === 'development') {
-    win.loadURL('http://localhost:5173/quick-chat.html');
-  } else {
-    win.loadFile(join(__dirname, '..', 'renderer', 'quick-chat.html'));
-  }
+  const port = store.get('backendPort');
+  win.loadURL(`http://127.0.0.1:${port}?mode=quickchat`);
 
   win.on('blur', () => {
     win.hide();

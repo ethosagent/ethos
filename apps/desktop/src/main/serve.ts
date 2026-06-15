@@ -92,6 +92,9 @@ export async function startServer(port: number): Promise<number> {
 
   const webDistDir = (() => {
     const candidates = [
+      // Packaged app: extraResources lands under process.resourcesPath
+      join(process.resourcesPath ?? '', 'web-dist'),
+      // Dev: relative to bundled output
       join(__dirname, '..', '..', 'apps', 'web', 'dist'),
       join(__dirname, '..', '..', '..', '..', 'apps', 'web', 'dist'),
     ];
