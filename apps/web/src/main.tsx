@@ -13,6 +13,7 @@ import {
   REDUCED_MOTION_STYLESHEET,
   watchReducedMotion,
 } from './lib/reduced-motion';
+import { QuickChat } from './pages/QuickChat';
 
 // Boot order: QueryClientProvider → Root → ConfigProvider → ...
 //
@@ -100,6 +101,20 @@ function Root() {
     }
     el.textContent = REDUCED_MOTION_STYLESHEET;
   }, [reduceMotion]);
+
+  const isQuickChat =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('mode') === 'quickchat';
+
+  if (isQuickChat) {
+    return (
+      <ConfigProvider theme={antdTheme}>
+        <AntApp>
+          <QuickChat />
+        </AntApp>
+      </ConfigProvider>
+    );
+  }
 
   return (
     <ConfigProvider theme={antdTheme}>

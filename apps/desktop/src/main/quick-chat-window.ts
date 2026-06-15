@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { BrowserWindow, ipcMain, screen } from 'electron';
+import { store } from './store';
 
 let quickChatWindow: BrowserWindow | null = null;
 
@@ -55,7 +56,11 @@ function createQuickChatWindow(): BrowserWindow {
     },
   });
 
-  if (process.env.NODE_ENV === 'development') {
+  const useSpa = store.get('useSpaMode');
+  if (useSpa) {
+    const port = store.get('backendPort');
+    win.loadURL(`http://127.0.0.1:${port}?mode=quickchat`);
+  } else if (process.env.NODE_ENV === 'development') {
     win.loadURL('http://localhost:5173/quick-chat.html');
   } else {
     win.loadFile(join(__dirname, '..', 'renderer', 'quick-chat.html'));
