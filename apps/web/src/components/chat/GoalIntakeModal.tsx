@@ -13,6 +13,9 @@ interface GoalIntakeModalProps {
     boundaries: string;
     costLimit: number;
     trials: number;
+    maxToolCallsPerTurn: number;
+    maxRecoveryAttempts: number;
+    allowDangerousToolCalls: boolean;
   }) => void;
 }
 
@@ -38,6 +41,9 @@ export function GoalIntakeModal({
   const [boundaries, setBoundaries] = useState('');
   const [costLimit, setCostLimit] = useState(5);
   const [trials, setTrials] = useState(3);
+  const [maxToolCallsPerTurn, setMaxToolCallsPerTurn] = useState(100);
+  const [maxRecoveryAttempts, setMaxRecoveryAttempts] = useState(2);
+  const [allowDangerousToolCalls, setAllowDangerousToolCalls] = useState(false);
 
   if (!open) return null;
 
@@ -74,6 +80,9 @@ export function GoalIntakeModal({
       boundaries,
       costLimit,
       trials,
+      maxToolCallsPerTurn,
+      maxRecoveryAttempts,
+      allowDangerousToolCalls,
     });
   };
 
@@ -488,6 +497,120 @@ export function GoalIntakeModal({
                     +
                   </button>
                 </div>
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    textTransform: 'uppercase',
+                    color: 'var(--text-secondary)',
+                    letterSpacing: '0.08em',
+                    marginBottom: 8,
+                  }}
+                >
+                  Max tool calls per turn
+                </div>
+                <input
+                  type="number"
+                  value={maxToolCallsPerTurn}
+                  onChange={(e) => setMaxToolCallsPerTurn(Number(e.target.value))}
+                  min={1}
+                  style={{
+                    width: 80,
+                    background: 'var(--bg-overlay)',
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--text-primary)',
+                    borderRadius: '6px',
+                    padding: 8,
+                    fontSize: 13,
+                  }}
+                />
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--text-tertiary)',
+                    marginTop: 6,
+                    maxWidth: 160,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  Higher = the agent can call more tools in a single turn before pausing.
+                </div>
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    textTransform: 'uppercase',
+                    color: 'var(--text-secondary)',
+                    letterSpacing: '0.08em',
+                    marginBottom: 8,
+                  }}
+                >
+                  Recovery attempts on loop
+                </div>
+                <input
+                  type="number"
+                  value={maxRecoveryAttempts}
+                  onChange={(e) => setMaxRecoveryAttempts(Number(e.target.value))}
+                  min={0}
+                  style={{
+                    width: 80,
+                    background: 'var(--bg-overlay)',
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--text-primary)',
+                    borderRadius: '6px',
+                    padding: 8,
+                    fontSize: 13,
+                  }}
+                />
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--text-tertiary)',
+                    marginTop: 6,
+                    maxWidth: 160,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  When the agent gets stuck looping, how many times to reflect and try a different
+                  approach before failing.
+                </div>
+              </div>
+            </div>
+
+            {/* Dangerous tool calls */}
+            <div style={{ marginBottom: 16 }}>
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  color: 'var(--text-primary)',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={allowDangerousToolCalls}
+                  onChange={(e) => setAllowDangerousToolCalls(e.target.checked)}
+                  style={{ cursor: 'pointer' }}
+                />
+                Enable dangerous tool calls
+              </label>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: 'var(--warning)',
+                  marginTop: 6,
+                  lineHeight: 1.4,
+                }}
+              >
+                Bypasses safety stops (e.g. repeated tool failures) so the goal keeps running. Use
+                only when the goal matters more than the safety guard.
               </div>
             </div>
 

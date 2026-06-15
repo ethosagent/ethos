@@ -29,6 +29,21 @@
   --ethos-warning: #f59e0b;
   --ethos-error: #f87171;
   --ethos-info: #4a9eff;
+  /* Canonical DESIGN.md token names, aliased to the active --ethos-* skin
+     values so components authored against DESIGN.md (e.g. the goal intake
+     modal) resolve correctly. The var() indirection tracks skin changes. */
+  --bg-base: var(--ethos-bg);
+  --bg-elevated: var(--ethos-bg-elevated);
+  --bg-overlay: var(--ethos-bg-overlay);
+  --border-subtle: var(--ethos-border);
+  --border-strong: var(--ethos-border-strong);
+  --text-primary: var(--ethos-text);
+  --text-secondary: var(--ethos-text-dim);
+  --text-tertiary: var(--ethos-text-tertiary);
+  --success: var(--ethos-success);
+  --warning: var(--ethos-warning);
+  --error: var(--ethos-error);
+  --info: var(--ethos-info);
   --sidebar-width: var(--layout-sidebar-expanded);
   --sidebar-collapsed-width: var(--layout-sidebar-collapsed);
   --drawer-width: var(--layout-right-drawer);
@@ -1708,6 +1723,17 @@ body,
   overflow: hidden;
 }
 
+.app-main:has(.goal-detail-tab) {
+  padding: 0;
+  overflow: hidden;
+}
+
+.goal-detail-tab {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+}
+
 .chat-tab {
   display: grid;
   grid-template-rows: auto 1fr auto;
@@ -2157,6 +2183,33 @@ textarea {
 
 .composer-stop-btn:hover {
   background: #dc2626;
+}
+
+.composer-goal-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.composer-goal-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--ethos-text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.composer-goal-btn:hover {
+  background: var(--ethos-hover);
+  color: var(--ethos-text);
 }
 
 .chat-error {

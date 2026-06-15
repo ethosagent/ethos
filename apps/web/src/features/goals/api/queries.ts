@@ -16,3 +16,12 @@ export function useGoalDetail(id: string) {
     refetchInterval: 3000,
   });
 }
+
+export function useToolResult(goalId: string, toolCallId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [...goalsKeys.detail(goalId), 'toolResult', toolCallId],
+    queryFn: () => rpc.goals.toolResult({ goalId, toolCallId }),
+    enabled: enabled && goalId.length > 0 && toolCallId.length > 0,
+    staleTime: 30_000,
+  });
+}

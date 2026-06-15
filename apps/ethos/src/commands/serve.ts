@@ -205,6 +205,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   let setOnSkillProposed:
     | ((fn: (skillId: string, personalityId: string) => void) => void)
     | undefined;
+  let goalRunner: import('@ethosagent/goal-runner').GoalRunner | undefined;
 
   // Cron scheduler — hoisted ABOVE the agent-loop construction so the
   // same scheduler instance can be threaded into createAgentLoop (registers
@@ -287,6 +288,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     pluginLoader = result.pluginLoader;
     notificationRouter = result.notificationRouter;
     setOnSkillProposed = result.setOnSkillProposed;
+    goalRunner = result.goalRunner;
   } else if (teamFlag) {
     // Chat UX: `ethos serve --team <name>` → run as the team's coordinator.
     const {
@@ -322,6 +324,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     pluginLoader = result.pluginLoader;
     notificationRouter = result.notificationRouter;
     setOnSkillProposed = result.setOnSkillProposed;
+    goalRunner = result.goalRunner;
   }
   let titleFn: ((systemPrompt: string, userMessage: string) => Promise<string>) | undefined;
   try {
@@ -414,6 +417,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     ...(webDist ? { webDist } : {}),
     ...(config.webBaseUrl ? { webBaseUrl: config.webBaseUrl } : {}),
     ...(setOnSkillProposed ? { setOnSkillProposed } : {}),
+    ...(goalRunner ? { goalRunner } : {}),
     ...(titleFn ? { titleFn } : {}),
   });
   chatService = created.chatService;

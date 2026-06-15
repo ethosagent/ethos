@@ -1573,6 +1573,37 @@ const GoalClassifyOutput = z.object({
   restatedGoal: z.string().optional(),
 });
 
+const GoalCreateInput = z.object({
+  personalityId: z.string().min(1),
+  goalText: z.string().min(1),
+  title: z.string().optional(),
+  acceptanceCriteria: z
+    .object({
+      checks: z.array(z.object({ description: z.string() })).optional(),
+      rubric: z.array(z.object({ description: z.string(), weight: z.number() })).optional(),
+      threshold: z.number().optional(),
+    })
+    .optional(),
+  maxAttempts: z.number().int().min(1).optional(),
+  maxCostUsd: z.number().optional(),
+  maxToolCallsPerTurn: z.number().int().min(1).optional(),
+  allowDangerousToolCalls: z.boolean().optional(),
+  maxRecoveryAttempts: z.number().int().min(0).optional(),
+  deadline: z.string().optional(),
+});
+const GoalCreateOutput = z.object({ goal: GoalSchema });
+
+const GoalToolResultInput = z.object({
+  goalId: z.string().min(1),
+  toolCallId: z.string().min(1),
+});
+const GoalToolResultOutput = z.object({
+  found: z.boolean(),
+  toolName: z.string().optional(),
+  input: z.string().optional(),
+  output: z.string().optional(),
+});
+
 /** @experimental */
 const goals = {
   get: oc.input(GoalGetInput).output(GoalGetOutput),
@@ -1581,6 +1612,8 @@ const goals = {
   cancel: oc.input(GoalCancelInput).output(GoalCancelOutput),
   resume: oc.input(GoalResumeInput).output(GoalResumeOutput),
   classify: oc.input(GoalClassifyInput).output(GoalClassifyOutput),
+  create: oc.input(GoalCreateInput).output(GoalCreateOutput),
+  toolResult: oc.input(GoalToolResultInput).output(GoalToolResultOutput),
 };
 
 // ---------------------------------------------------------------------------

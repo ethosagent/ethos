@@ -997,6 +997,7 @@ export type GoalAttemptWire = z.infer<typeof GoalAttemptSchema>;
 
 export const GoalEventTypeSchema = z.enum([
   'run_start',
+  'attempt_start',
   'turn_text',
   'tool_start',
   'tool_end',
@@ -1041,5 +1042,8 @@ export const GoalSchema = z.object({
   toolCount: z.number().int().nullable(),
   tokenCount: z.number().int().nullable(),
   costUsd: z.number().nullable(),
+  maxToolCallsPerTurn: z.number().int().min(1).nullable().optional(),
+  allowDangerousToolCalls: z.boolean().nullable().optional(),
+  maxRecoveryAttempts: z.number().int().min(0).nullable().optional(),
 });
 export type GoalWire = z.infer<typeof GoalSchema>;

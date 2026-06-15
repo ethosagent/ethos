@@ -781,6 +781,13 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ethosagent/goal-store':
+        specifier: workspace:*
+        version: link:../goal-store
 
   extensions/goal-store:
     dependencies:

@@ -136,6 +136,7 @@ export function Composer({
     }
     if (e.key !== 'Enter') return;
     if (e.shiftKey) return;
+    if (e.nativeEvent.isComposing) return;
     e.preventDefault();
     handleSend();
   };
@@ -277,31 +278,6 @@ export function Composer({
           >
             +
           </button>
-          {onGoalRun && !isStreaming ? (
-            <button
-              type="button"
-              onClick={onGoalRun}
-              aria-label="Run as goal"
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                color: 'var(--text-secondary)',
-                padding: 4,
-                display: 'flex',
-                alignItems: 'center',
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
-                <circle cx="8" cy="8" r="2" fill="currentColor" />
-                <line x1="8" y1="0.5" x2="8" y2="3" stroke="currentColor" strokeWidth="1.5" />
-                <line x1="8" y1="13" x2="8" y2="15.5" stroke="currentColor" strokeWidth="1.5" />
-                <line x1="0.5" y1="8" x2="3" y2="8" stroke="currentColor" strokeWidth="1.5" />
-                <line x1="13" y1="8" x2="15.5" y2="8" stroke="currentColor" strokeWidth="1.5" />
-              </svg>
-            </button>
-          ) : null}
           {isStreaming && onAbort ? (
             <button
               type="button"
@@ -333,6 +309,27 @@ export function Composer({
             </button>
           )}
         </div>
+        {onGoalRun && !isStreaming ? (
+          <div className="composer-goal-row">
+            <button
+              type="button"
+              className="composer-goal-btn"
+              onClick={onGoalRun}
+              aria-label="Send as goal"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                <path
+                  d="M2 11.5V8.5h5.5M7.5 4.5l3 3-3 3"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Send as Goal
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

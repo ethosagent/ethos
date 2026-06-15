@@ -51,16 +51,17 @@ export class SessionsRepository {
         : [];
       // Apply the caller's limit after intersection.
       const matchedIds = intersected.slice(0, opts.limit);
-      const sessions = (
-        await Promise.all(matchedIds.map((id) => this.store.getSession(id)))
-      ).filter((s): s is Session => s !== null);
+      const sessions = (await Promise.all(matchedIds.map((id) => this.store.getSession(id))))
+        .filter((s): s is Session => s !== null)
+        .filter((s) => !s.key.startsWith('goal:'));
       return { sessions, nextCursor: null };
     }
 
     const offset = decodeCursor(opts.cursor);
-    const filter: SessionFilter = {
+    const filter: SessionFilter & { excludeKeyPrefixes?: string[] } = {
       limit: opts.limit + 1,
       offset,
+      excludeKeyPrefixes: ['goal:'],
     };
     if (opts.personalityId) filter.personalityId = opts.personalityId;
 

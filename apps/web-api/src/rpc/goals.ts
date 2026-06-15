@@ -13,4 +13,8 @@ export const goalsRouter = {
   classify: os.goals.classify.handler(({ input, context }) =>
     context.goals.classify(input.message),
   ),
+  create: os.goals.create.handler(({ input, context }) => context.goals.create(input)),
+  toolResult: os.goals.toolResult.handler(({ input, context }) =>
+    context.goals.toolResult(input.goalId, input.toolCallId),
+  ),
 };

@@ -31,7 +31,7 @@ interface CreateArgs {
   deadline?: string;
 }
 
-function createGoalCreate(store: GoalStore): Tool {
+function createGoalCreate(store: GoalStore, onCreated?: (goalId: string) => void): Tool {
   return {
     name: 'goal_create',
     description:
@@ -99,6 +99,7 @@ function createGoalCreate(store: GoalStore): Tool {
           ...(args.max_cost_usd !== undefined ? { maxCostUsd: args.max_cost_usd } : {}),
           ...(args.deadline !== undefined ? { deadline: args.deadline } : {}),
         });
+        onCreated?.(goal.id);
         return jsonResult(goal);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -206,6 +207,9 @@ function createGoalComplete(): Tool {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createGoalTools(store: GoalStore): Tool<unknown>[] {
-  return [createGoalCreate(store), createGoalStatus(store), createGoalComplete()];
+export function createGoalTools(
+  store: GoalStore,
+  onCreated?: (goalId: string) => void,
+): Tool<unknown>[] {
+  return [createGoalCreate(store, onCreated), createGoalStatus(store), createGoalComplete()];
 }

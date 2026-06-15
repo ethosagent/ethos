@@ -228,6 +228,10 @@ export interface RunOptions {
    * the `cron` tool from cron-spawned sessions (recursion guard).
    */
   toolsetOverride?: string[];
+  /** Override the per-turn tool-call cap for this run only (goal runs raise it; default applies when absent). */
+  maxToolCallsPerTurn?: number;
+  /** When true, bypass safety-watcher halts for this run (opt-in, dangerous; caps still apply). */
+  allowDangerousToolCalls?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -301,7 +305,7 @@ export class AgentLoop {
     this.platform = config.options?.platform ?? 'cli';
     this.workingDir = config.options?.workingDir ?? process.cwd();
     this.resultBudgetChars = config.options?.resultBudgetChars ?? 80_000;
-    this.maxToolCallsPerTurn = config.options?.maxToolCallsPerTurn ?? 20;
+    this.maxToolCallsPerTurn = config.options?.maxToolCallsPerTurn ?? 100;
     this.maxIdenticalToolCalls = config.options?.maxIdenticalToolCalls ?? 5;
     this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? 600_000;
     this.modelRouting = config.modelRouting ?? {};
@@ -435,6 +439,7 @@ export class AgentLoop {
     const abortSignal = opts.abortSignal ?? new AbortController().signal;
     let fullText = '';
     let turnCount = 0;
+    const effectiveMaxToolCalls = opts.maxToolCallsPerTurn ?? this.maxToolCallsPerTurn;
 
     // Tool-call budget tracking — prevents runaway loops (see IMPROVEMENT.md P1-3).
     // Counted across all iterations within a single user turn.
@@ -463,8 +468,9 @@ export class AgentLoop {
 
     const tierEscalationRef: { value?: string } = {};
 
-    // Watcher tap
+    // Watcher tap. Dangerous mode neutralizes halts for this run (consumer-side).
     const watcherTap = createWatcherTap(this.safety);
+    if (opts.allowDangerousToolCalls) watcherTap.getHalt = () => null;
     const getHalt = watcherTap.getHalt;
 
     const streamDeps: StreamStepDeps = {
@@ -524,7 +530,7 @@ export class AgentLoop {
       // stays valid; we just refuse to call again.
       const budgetResult = checkTurnBudgets(
         totalToolCalls,
-        this.maxToolCallsPerTurn,
+        effectiveMaxToolCalls,
         toolNameCounts,
         this.maxIdenticalToolCalls,
       );

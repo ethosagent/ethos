@@ -3,6 +3,7 @@ import { SessionStreamBuffer } from '@ethosagent/agent-bridge';
 import { AgentMesh } from '@ethosagent/agent-mesh';
 import type { AgentLoop } from '@ethosagent/core';
 import type { CronScheduler } from '@ethosagent/cron';
+import type { GoalRunner } from '@ethosagent/goal-runner';
 import type { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { SkillsLibrary } from '@ethosagent/skills';
 import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
@@ -70,6 +71,9 @@ export interface CreateWebApiOptions {
    *  hooks, providers etc. (typically via `@ethosagent/wiring`). When omitted
    *  (onboarding mode), a stub loop that yields a SETUP_REQUIRED error is used. */
   agentLoop?: AgentLoop;
+  /** Loop-bearing goal runner from `createAgentLoop`. When provided, web-created
+   *  goals execute on the same runner+store as the CLI/gateway path. */
+  goalRunner?: GoalRunner;
   /** Personality registry — shared with the loop so hot-reloads (mtime cache)
    *  reach both surfaces. Must be a `FilePersonalityRegistry` so the web-api's
    *  Personalities tab can drive its CRUD methods (create / update / delete /
@@ -270,7 +274,11 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   });
   const skillsService = new SkillsService({ library: skillsLibrary });
   const evolverService = new EvolverService({ evolver: evolverRepo, library: skillsLibrary });
-  const goalsService = new GoalsService({ dataDir: opts.dataDir });
+  const goalsService = new GoalsService({
+    dataDir: opts.dataDir,
+    sessionStore: opts.sessionStore,
+    ...(opts.goalRunner ? { runner: opts.goalRunner } : {}),
+  });
   const meshService = new MeshService({ mesh });
   const memoryService = new MemoryService({
     memory: memoryProvider,

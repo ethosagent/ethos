@@ -91,6 +91,17 @@ describe('SQLiteSessionStore', () => {
     expect(bgSessions.every((s) => s.key.startsWith('bg:'))).toBe(true);
   });
 
+  it('excludes sessions by excludeKeyPrefixes — goal: sessions are hidden', async () => {
+    await store.createSession({ ...baseSession, key: 'web:1', platform: 'web' });
+    await store.createSession({ ...baseSession, key: 'cli:default', platform: 'cli' });
+    await store.createSession({ ...baseSession, key: 'goal:abc:attempt-1', platform: 'web' });
+    await store.createSession({ ...baseSession, key: 'goal:def:attempt-2', platform: 'web' });
+
+    const chatSessions = await store.listSessions({ excludeKeyPrefixes: ['goal:'] });
+    expect(chatSessions).toHaveLength(2);
+    expect(chatSessions.every((s) => !s.key.startsWith('goal:'))).toBe(true);
+  });
+
   // -------------------------------------------------------------------------
   // Messages
   // -------------------------------------------------------------------------

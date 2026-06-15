@@ -295,9 +295,7 @@ export class ChatService {
     bridge.on('error', (error, code) => this.append(sessionId, { type: 'error', error, code }));
     bridge.on('done', (text, turnCount) => {
       this.append(sessionId, { type: 'done', text, turnCount });
-      if (turnCount === 1) {
-        void this.tryAutoTitle(sessionId);
-      }
+      void this.tryAutoTitle(sessionId);
     });
   }
 

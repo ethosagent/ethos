@@ -15,5 +15,9 @@
   },
   "dependencies": {
     "@ethosagent/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@ethosagent/core": "workspace:*",
+    "@ethosagent/goal-store": "workspace:*"
   }
 }

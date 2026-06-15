@@ -15,6 +15,31 @@ function surfaceError(
   });
 }
 
+export function useGoalCreate() {
+  const queryClient = useQueryClient();
+  const { notification } = AntApp.useApp();
+  return useMutation({
+    mutationFn: (input: {
+      personalityId: string;
+      goalText: string;
+      title?: string;
+      acceptanceCriteria?: {
+        checks?: Array<{ description: string }>;
+        rubric?: Array<{ description: string; weight: number }>;
+        threshold?: number;
+      };
+      maxAttempts?: number;
+      maxToolCallsPerTurn?: number;
+      allowDangerousToolCalls?: boolean;
+      maxRecoveryAttempts?: number;
+      maxCostUsd?: number;
+      deadline?: string;
+    }) => rpc.goals.create(input),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: goalsKeys.all() }),
+    onError: (err) => surfaceError(notification, 'Goal creation failed', err),
+  });
+}
+
 export function useGoalCancel(id: string) {
   const queryClient = useQueryClient();
   const { notification } = AntApp.useApp();

@@ -173,6 +173,31 @@ describe('ChatService', () => {
     unA();
     unB();
   });
+
+  it('auto-titles on the first done even when turnCount > 1 (multi-turn first response)', async () => {
+    let titleCalls = 0;
+    const loop = makeStubAgentLoop({
+      events: [
+        { type: 'text_delta', text: 'hello' },
+        { type: 'done', text: 'hello', turnCount: 3 },
+      ],
+    });
+    const service = new ChatService({
+      loop,
+      sessions,
+      buffer,
+      defaults: { model: 'claude-test', provider: 'anthropic' },
+      titleFn: async () => {
+        titleCalls++;
+        return 'Generated Title';
+      },
+    });
+    const result = await service.send({ clientId: 'tab-1', text: 'first question' });
+    await waitFor(() => titleCalls > 0);
+    expect(titleCalls).toBe(1);
+    const updated = await sessions.get(result.sessionId);
+    expect(updated?.title).toBe('Generated Title');
+  });
 });
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {

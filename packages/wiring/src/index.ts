@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { type AgentLoop, ChainedProvider, type SummarizerFn, validateUrl } from '@ethosagent/core';
 import type { CronScheduler } from '@ethosagent/cron';
+import type { GoalRunner } from '@ethosagent/goal-runner';
 import type { TrustPolicy } from '@ethosagent/kanban-store';
 import { AnthropicProvider, AuthRotatingProvider } from '@ethosagent/llm-anthropic';
 import { AzureOpenAIProvider } from '@ethosagent/llm-azure';
@@ -568,6 +569,9 @@ export interface CreateAgentLoopResult {
   notificationRouter: import('@ethosagent/types').NotificationRouter;
   /** v2.2 — Plugin loader instance for health checks and diagnostics. */
   pluginLoader: PluginLoader;
+  /** Loop-bearing goal runner — always present (backed by the shared goals.db).
+   *  Shared with the web-api GoalsService so web-created goals execute on the same runner+store. */
+  goalRunner: GoalRunner;
 }
 
 export async function createAgentLoop(

@@ -1,40 +1,113 @@
 import type {
+  AgentEvent,
+  Goal,
   GoalCompletedPayload,
   GoalExhaustedPayload,
+  GoalFailedPayload,
   GoalOrigin,
   GoalStore,
   HookRegistry,
+  SteerSink,
   Verdict,
 } from '@ethosagent/types';
 import { isConverged, judge } from './judge';
-import { buildRetryContext, classifyFailure } from './retry-context';
+import { buildRetryContext, classifyFailure, type RetryStrategy } from './retry-context';
 
 export { type ClassificationResult, classifyGoal, prefilterGoal } from './intake-classifier';
 export { isConverged, judge } from './judge';
 export { buildRetryContext, classifyFailure, type RetryStrategy } from './retry-context';
 
+/** Consecutive same-tool failures before the run is treated as a compounding
+ *  failure. Mirrors `compoundingErrorRule`'s default threshold in
+ *  packages/safety/watcher — when the watcher pauses the turn we mark the goal
+ *  failed rather than letting the judge complete a run that actually failed. */
+const COMPOUNDING_FAILURE_THRESHOLD = 3;
+
+/** Matches the watcher's compounding-error pause marker text (e.g.
+ *  "⚠ compounding-error: terminal failed 3 times in a row"). Covers custom
+ *  watcher thresholds where the per-tool streak count alone wouldn't reach
+ *  COMPOUNDING_FAILURE_THRESHOLD. */
+const COMPOUNDING_MARKER_RE = /compounding-error|failed\s+\d+\s+times in a row/i;
+
+/** Extract `{ tool, count }` from a watcher marker like "X failed 3 times in a
+ *  row". Returns null when the marker doesn't carry a parseable tool/count. */
+function parseCompoundingMarker(text: string): { tool: string; count: number } | null {
+  const m = text.match(/(\S+)\s+failed\s+(\d+)\s+times in a row/i);
+  if (!m) return null;
+  const tool = m[1];
+  const count = Number(m[2]);
+  if (!tool || !Number.isFinite(count)) return null;
+  return { tool, count };
+}
+
+/** Injected into the goal session's system prompt so the agent never blocks on a
+ *  user. A goal is fire-and-forget — there is no interactive user to answer. */
+const GOAL_AUTONOMY_DIRECTIVE =
+  'This is an autonomous goal run with no interactive user available. Do NOT ask ' +
+  'questions or request clarification. Make reasonable assumptions, decide, and ' +
+  'proceed. If information is missing, pick a sensible default and state the ' +
+  'assumption in your output.';
+
+/** Minimal in-memory SteerSink — an array-backed FIFO queue. */
+class ArraySteerSink implements SteerSink {
+  private queue: string[] = [];
+
+  push(text: string): boolean {
+    this.queue.push(text);
+    return true;
+  }
+
+  drain(): string[] {
+    return this.queue.splice(0, this.queue.length);
+  }
+
+  depth(): number {
+    return this.queue.length;
+  }
+}
+
 export interface GoalRunnerConfig {
   store: GoalStore;
   maxTurnsSafetyValve?: number;
   hooks?: HookRegistry;
+  /** Loop-bearing attempt runner. When absent the runner records the run_start
+   *  event and returns (store-only construction). Wired in build-agent-loop to
+   *  AgentLoop.run(). */
+  runAttempt?: (
+    sessionKey: string,
+    firstMessage: string,
+    opts: {
+      abortSignal: AbortSignal;
+      steerSink?: SteerSink;
+      personalityId?: string;
+      userId?: string;
+      maxToolCallsPerTurn?: number;
+      allowDangerousToolCalls?: boolean;
+    },
+  ) => AsyncGenerator<AgentEvent>;
 }
 
 export class GoalRunner {
   private store: GoalStore;
   private maxTurnsSafetyValve: number;
   private activeRuns = new Map<string, AbortController>();
+  private activeRunState = new Map<string, { getPartial: () => string; queuedSteers: string[] }>();
+  private activeSteerSinks = new Map<string, SteerSink>();
   private hooks: HookRegistry | undefined;
+  private runAttempt: GoalRunnerConfig['runAttempt'];
 
   constructor(config: GoalRunnerConfig) {
     this.store = config.store;
     this.maxTurnsSafetyValve = config.maxTurnsSafetyValve ?? 100;
     this.hooks = config.hooks;
+    this.runAttempt = config.runAttempt;
   }
 
   /**
-   * Start a goal run. In a full implementation, this orchestrates AgentLoop.run()
-   * in a per-attempt session. Phase 1 stores the structural record and transitions
-   * status; the actual agent-loop integration arrives in the wiring phase.
+   * Start a goal run. If a loop-bearing runAttempt was wired, launches the
+   * convergence/retry loop fire-and-forget and returns immediately. Without
+   * runAttempt this is store-only (records run_start and returns), which keeps
+   * store-only construction type-checking.
    */
   async startGoal(goalId: string): Promise<void> {
     const goal = this.store.get(goalId);
@@ -44,10 +117,419 @@ export class GoalRunner {
     const controller = new AbortController();
     this.activeRuns.set(goalId, controller);
 
-    this.store.appendEvent(goalId, 'run_start', {
-      attemptN: 1,
-      sessionKey: `goal:${goalId}:attempt-1`,
+    if (!this.runAttempt) {
+      // Store-only construction: record the run_start event and return.
+      this.store.appendEvent(goalId, 'run_start', {
+        attemptN: 1,
+        sessionKey: `goal:${goalId}:attempt-1`,
+      });
+      return;
+    }
+
+    // Fire-and-forget: launch the convergence/retry loop without awaiting.
+    void this.runAttemptLoop(goal, controller, 1, this.renderGoalPrompt(goal)).catch(() => {});
+  }
+
+  /**
+   * Render the goal spec into prompt text. Used as BOTH the first message and
+   * the before_prompt_build prepend so the agent always sees the goal + criteria.
+   */
+  private renderGoalPrompt(goal: Goal): string {
+    const spec = goal.acceptanceCriteria;
+    if (!spec) return `Goal: ${goal.goalText}`;
+
+    const lines: string[] = [`Goal: ${goal.goalText}`, '', 'Acceptance criteria:'];
+    for (const check of spec.checks ?? []) {
+      lines.push(`- ${check.description}`);
+    }
+    for (const item of spec.rubric ?? []) {
+      lines.push(`- ${item.description} (weight ${item.weight})`);
+    }
+    lines.push(`Threshold: ${spec.threshold}`);
+    return lines.join('\n');
+  }
+
+  /**
+   * Run attempt n to completion, then judge it. On a non-converged 'retrying'
+   * verdict, recurse for attempt n+1 with the retry context. The AbortController
+   * stays registered in activeRuns for the whole multi-attempt loop; the
+   * per-attempt prompt injector is registered and cleaned up per attempt.
+   */
+  private async runAttemptLoop(
+    goal: Goal,
+    controller: AbortController,
+    n: number,
+    firstMessage: string,
+    strategy?: RetryStrategy,
+  ): Promise<void> {
+    const runAttempt = this.runAttempt;
+    if (!runAttempt) return;
+
+    const sessionKey = `goal:${goal.id}:attempt-${n}`;
+
+    // Create the attempt row ONCE per n. On resume the row for n already exists;
+    // re-inserting would duplicate it, so guard on the existing row.
+    const existing = this.store.getAttempts(goal.id).find((a) => a.n === n);
+    if (!existing) {
+      this.store.saveAttempt({
+        goalId: goal.id,
+        n,
+        sessionKey,
+        outputMd: null,
+        artifacts: null,
+        verdict: null,
+        strategyUsed: 'first',
+        costUsd: null,
+        traceId: null,
+        startedAt: Date.now(),
+        completedAt: null,
+      });
+    }
+
+    if (n === 1) {
+      this.store.appendEvent(goal.id, 'run_start', { attemptN: 1, sessionKey });
+    } else {
+      this.store.appendEvent(goal.id, 'attempt_start', {
+        attemptN: n,
+        sessionKey,
+        strategy: strategy ?? 'first',
+      });
+    }
+
+    // Inject the goal spec into the system prompt for THIS attempt's session only.
+    let cleanupInjector: (() => void) | undefined;
+    if (this.hooks) {
+      cleanupInjector = this.hooks.registerModifying('before_prompt_build', async (payload) => {
+        if (payload.sessionId !== sessionKey) return null;
+        return { prependSystem: `${this.renderGoalPrompt(goal)}\n\n${GOAL_AUTONOMY_DIRECTIVE}` };
+      });
+    }
+
+    let output = '';
+    let turns = 0;
+    let tools = 0;
+    let costUsd = 0;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let pendingText = '';
+    let accumulated = '';
+    let budgetCapped = false;
+    let completionSummary: string | undefined;
+    let recoveryCount = 0;
+    const lastToolError = '';
+
+    // Track consecutive tool failures per tool to detect a compounding-error
+    // halt (mirrors compoundingErrorRule in packages/safety/watcher). A success
+    // breaks the streak. When any tool reaches the threshold — or a watcher
+    // marker is seen in turn text / done text — the run is treated as failed,
+    // not completed.
+    const consecutiveFailures = new Map<string, number>();
+    let compoundingFailure: { tool: string; count: number } | null = null;
+
+    const checkCompoundingMarker = (text: string): void => {
+      if (compoundingFailure || !COMPOUNDING_MARKER_RE.test(text)) return;
+      compoundingFailure = parseCompoundingMarker(text) ?? { tool: 'tool', count: 0 };
+    };
+
+    const flushText = (): void => {
+      if (pendingText) {
+        this.store.appendEvent(goal.id, 'turn_text', { text: pendingText });
+        pendingText = '';
+      }
+    };
+
+    // Create the per-attempt steer sink and register run-state. queuedSteers is a
+    // SINGLE array reused across attempts for this goal so between-attempt steers
+    // survive into the next attempt. getPartial reads the live accumulator.
+    const steerSink = new ArraySteerSink();
+    this.activeSteerSinks.set(goal.id, steerSink);
+    const queuedSteers: string[] = this.activeRunState.get(goal.id)?.queuedSteers ?? [];
+    this.activeRunState.set(goal.id, { getPartial: () => accumulated || output, queuedSteers });
+
+    // Drain any steers queued between attempts into this attempt's first message.
+    let effectiveFirstMessage = firstMessage;
+    if (queuedSteers.length) {
+      effectiveFirstMessage = `${queuedSteers.join('\n')}\n${firstMessage}`;
+      queuedSteers.length = 0;
+    }
+
+    let currentMessage = effectiveFirstMessage;
+
+    try {
+      while (true) {
+        for await (const event of runAttempt(sessionKey, currentMessage, {
+          abortSignal: controller.signal,
+          steerSink,
+          ...(goal.personalityId ? { personalityId: goal.personalityId } : {}),
+          ...(goal.userId ? { userId: goal.userId } : {}),
+          ...(goal.maxToolCallsPerTurn != null
+            ? { maxToolCallsPerTurn: goal.maxToolCallsPerTurn }
+            : {}),
+          ...(goal.allowDangerousToolCalls ? { allowDangerousToolCalls: true } : {}),
+        })) {
+          // Coalesce text deltas into turn-grained checkpoints — never per-delta.
+          if (event.type !== 'text_delta') flushText();
+
+          switch (event.type) {
+            case 'text_delta':
+              pendingText += event.text;
+              accumulated += event.text;
+              checkCompoundingMarker(event.text);
+              break;
+            case 'thinking_delta':
+              break;
+            case 'tool_start':
+              tools++;
+              this.store.appendEvent(goal.id, 'tool_start', {
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                args: event.args,
+              });
+              if (event.toolName === 'goal_complete') {
+                const a = event.args as { summary?: unknown };
+                if (typeof a?.summary === 'string') completionSummary = a.summary;
+              }
+              break;
+            case 'tool_end':
+              this.store.appendEvent(goal.id, 'tool_end', {
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                ok: event.ok,
+                durationMs: event.durationMs,
+              });
+              if (event.ok === false) {
+                const count = (consecutiveFailures.get(event.toolName) ?? 0) + 1;
+                consecutiveFailures.set(event.toolName, count);
+                if (!compoundingFailure && count >= COMPOUNDING_FAILURE_THRESHOLD) {
+                  compoundingFailure = { tool: event.toolName, count };
+                }
+              } else {
+                consecutiveFailures.delete(event.toolName);
+              }
+              break;
+            case 'tool_progress':
+              // Audience gate — only 'user' events surface; 'internal' is dropped.
+              if (event.audience === 'user') {
+                this.store.appendEvent(goal.id, 'turn_text', { text: event.message });
+                checkCompoundingMarker(event.message);
+              }
+              break;
+            case 'usage':
+              costUsd += event.estimatedCostUsd;
+              inputTokens += event.inputTokens;
+              outputTokens += event.outputTokens;
+              this.store.appendEvent(goal.id, 'usage', {
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                estimatedCostUsd: event.estimatedCostUsd,
+              });
+              if (goal.maxCostUsd != null && costUsd > goal.maxCostUsd) {
+                budgetCapped = true;
+                controller.abort();
+              }
+              break;
+            case 'error':
+              this.store.appendEvent(goal.id, 'error', { error: event.error, code: event.code });
+              this.store.updateStatus(goal.id, 'failed', {
+                errorText: event.error,
+                outputPartial: accumulated || output,
+              });
+              this.fireGoalFailed(goal, event.error, accumulated || output);
+              cleanupInjector?.();
+              this.activeRuns.delete(goal.id);
+              this.activeRunState.delete(goal.id);
+              return;
+            case 'done':
+              output = event.text;
+              turns = event.turnCount;
+              checkCompoundingMarker(event.text);
+              break;
+            default:
+              // Forward-compat: ignore unknown event types.
+              break;
+          }
+        }
+
+        // After each run finishes: flush trailing text from this continuation.
+        flushText();
+
+        // Budget cap or cancel during this run → break out; the existing budget /
+        // interrupt handling below the loop takes over.
+        if (budgetCapped || controller.signal.aborted) {
+          break;
+        }
+
+        // Compounding tool failure (watcher pause). In dangerous mode the watcher
+        // never halts, so recovery is skipped and we fall through to judge/complete.
+        if (!goal.allowDangerousToolCalls && compoundingFailure) {
+          const max = goal.maxRecoveryAttempts ?? 2;
+          if (recoveryCount < max) {
+            recoveryCount++;
+            const { tool, count } = compoundingFailure;
+            // Journey marker so the graph shows the recovery (reuse turn_text).
+            this.store.appendEvent(goal.id, 'turn_text', {
+              text: `↻ Recovering: detected a loop on \`${tool}\`, reflecting and trying a different approach (recovery ${recoveryCount}/${max})`,
+            });
+            const reflection =
+              `⚠ You are stuck in a loop: you called \`${tool}\` ${count} times and it kept ` +
+              `failing with: ${lastToolError || 'repeated failures'}. STOP repeating that exact ` +
+              `call. Step back and reason explicitly: what is actually going wrong, and why? Then ` +
+              `take a genuinely DIFFERENT approach — a different tool, different parameters, or a ` +
+              `revised plan. If a sub-goal is impossible, work around it and continue toward the ` +
+              `overall goal. Do not give up.`;
+            // Reset per-tool streak tracking + compounding flag so the next stretch
+            // starts fresh; a recovery continuation that loops AGAIN re-sets it.
+            consecutiveFailures.clear();
+            compoundingFailure = null;
+            currentMessage = reflection;
+            continue; // re-run the SAME session with the reflection message
+          }
+          // Recovery exhausted → terminal failure (owner decision: fail, don't ask).
+          const { tool } = compoundingFailure;
+          const errorText = `Stuck: couldn't recover after ${recoveryCount} recovery attempts — ${tool} kept failing`;
+          const partial = accumulated || output;
+          this.store.updateStatus(goal.id, 'failed', { errorText, outputPartial: partial });
+          this.fireGoalFailed(goal, errorText, partial);
+          cleanupInjector?.();
+          this.activeRuns.delete(goal.id);
+          this.activeRunState.delete(goal.id);
+          return;
+        }
+
+        // Clean done (no compounding) → leave the recovery loop and proceed to the
+        // normal judge/complete path.
+        break;
+      }
+
+      if (budgetCapped) {
+        this.store.appendEvent(goal.id, 'error', {
+          error: 'Budget ceiling exceeded',
+          code: 'budget_exceeded',
+        });
+        this.store.updateStatus(goal.id, 'interrupted', {
+          outputPartial: accumulated || output,
+          errorText: `Budget limit reached ($${goal.maxCostUsd?.toFixed?.(2) ?? goal.maxCostUsd})`,
+        });
+        cleanupInjector?.();
+        this.activeRuns.delete(goal.id);
+        this.activeRunState.delete(goal.id);
+        return;
+      }
+    } catch (err) {
+      // Generator threw (not an error event) — treat as failure (terminal).
+      const msg = err instanceof Error ? err.message : String(err);
+      flushText();
+      this.store.appendEvent(goal.id, 'error', { error: msg, code: 'execution_failed' });
+      this.store.updateStatus(goal.id, 'failed', {
+        errorText: msg,
+        outputPartial: accumulated || output,
+      });
+      this.fireGoalFailed(goal, msg, accumulated || output);
+      cleanupInjector?.();
+      this.activeRuns.delete(goal.id);
+      this.activeRunState.delete(goal.id);
+      return;
+    } finally {
+      cleanupInjector?.();
+      // The steer sink lives only for this attempt; run-state (queuedSteers)
+      // survives across retries and is cleared at terminal points below.
+      this.activeSteerSinks.delete(goal.id);
+    }
+
+    if (turns >= this.maxTurnsSafetyValve) {
+      controller.abort();
+      this.store.updateStatus(goal.id, 'interrupted', {
+        outputPartial: output || accumulated,
+        errorText: `Turn limit reached (${this.maxTurnsSafetyValve} turns)`,
+      });
+      this.activeRuns.delete(goal.id);
+      this.activeRunState.delete(goal.id);
+      return;
+    }
+
+    // Persist this attempt's output/cost onto the attempt row.
+    this.store.updateAttempt(goal.id, n, {
+      costUsd,
+      outputMd: output,
+      completedAt: Date.now(),
     });
+
+    // Persist run-level metrics onto the goal. judgeAttempt sets 'judging' again
+    // (or completed/exhausted/retrying after); writing 'judging' here is consistent.
+    this.store.updateStatus(goal.id, 'judging', {
+      turnCount: turns,
+      toolCount: tools,
+      tokenCount: inputTokens + outputTokens,
+      costUsd,
+    });
+
+    if (completionSummary !== undefined) {
+      const gate = await this.fireBeforeGoalComplete(goal, completionSummary, output);
+      if (gate.rejected) {
+        const reason = gate.reason ?? 'completion rejected';
+        this.store.appendEvent(goal.id, 'complete_rejected', { reason });
+        if (n >= goal.maxAttempts) {
+          this.store.updateStatus(goal.id, 'exhausted', { outputPartial: output });
+          this.fireGoalExhausted(goal, output, null);
+          this.activeRuns.delete(goal.id);
+          this.activeRunState.delete(goal.id);
+          return;
+        }
+        this.store.updateStatus(goal.id, 'retrying');
+        const updatedAfterReject = this.store.get(goal.id);
+        if (!updatedAfterReject) {
+          this.activeRuns.delete(goal.id);
+          this.activeRunState.delete(goal.id);
+          return;
+        }
+        const retryCtx = this.getRetryContext(goal.id) ?? this.renderGoalPrompt(updatedAfterReject);
+        await this.runAttemptLoop(updatedAfterReject, controller, n + 1, retryCtx);
+        return;
+      }
+    }
+
+    const converged = await this.judgeAttempt(goal.id, n, output, completionSummary);
+    if (converged) {
+      this.activeRuns.delete(goal.id);
+      this.activeRunState.delete(goal.id);
+      return;
+    }
+
+    const updated = this.store.get(goal.id);
+    if (!updated) {
+      this.activeRuns.delete(goal.id);
+      this.activeRunState.delete(goal.id);
+      return;
+    }
+
+    if (updated.status === 'retrying') {
+      const attempts = this.store.getAttempts(goal.id);
+      const lastVerdict = attempts[attempts.length - 1]?.verdict ?? null;
+      const nextStrategy = lastVerdict ? classifyFailure(attempts, lastVerdict) : undefined;
+      if (nextStrategy === 'clarify') {
+        this.store.updateStatus(goal.id, 'needs_clarification');
+        const gaps = lastVerdict?.perCriterion
+          .filter((c) => c.gap)
+          .map((c) => c.gap)
+          .join('; ');
+        this.fireGoalNeedsClarification(goal.id, gaps?.length ? gaps : 'clarification needed');
+        this.activeRuns.delete(goal.id);
+        this.activeRunState.delete(goal.id);
+        return;
+      }
+      const ctx = this.getRetryContext(goal.id);
+      if (!ctx) {
+        this.activeRuns.delete(goal.id);
+        this.activeRunState.delete(goal.id);
+        return;
+      }
+      await this.runAttemptLoop(updated, controller, n + 1, ctx, nextStrategy);
+      return;
+    }
+
+    // exhausted / needs_clarification / any other terminal status.
+    this.activeRuns.delete(goal.id);
+    this.activeRunState.delete(goal.id);
   }
 
   /**
@@ -56,6 +538,17 @@ export class GoalRunner {
   steer(goalId: string, message: string): boolean {
     const goal = this.store.get(goalId);
     if (goal?.status !== 'running') return false;
+
+    const formatted = `[USER STEER] ${message}`;
+    const sink = this.activeSteerSinks.get(goalId);
+    if (sink) {
+      // Live attempt: hand the steer to the loop's iteration seam.
+      sink.push(formatted);
+    } else {
+      // Between attempts: queue it for the next attempt's first message.
+      const state = this.activeRunState.get(goalId);
+      if (state) state.queuedSteers.push(formatted);
+    }
 
     this.store.appendEvent(goalId, 'steer', {
       message,
@@ -74,13 +567,17 @@ export class GoalRunner {
       return false;
     }
 
-    const controller = this.activeRuns.get(goalId);
-    if (controller) {
-      controller.abort();
-      this.activeRuns.delete(goalId);
-    }
+    const state = this.activeRunState.get(goalId);
+    const outputPartial = state?.getPartial() ?? '';
 
-    this.store.updateStatus(goalId, 'cancelled');
+    const controller = this.activeRuns.get(goalId);
+    if (controller) controller.abort();
+    this.activeRuns.delete(goalId);
+    this.activeRunState.delete(goalId);
+    this.activeSteerSinks.delete(goalId);
+
+    // Only persist a non-empty partial so cancelling early doesn't overwrite with ''.
+    this.store.updateStatus(goalId, 'cancelled', outputPartial ? { outputPartial } : undefined);
     return true;
   }
 
@@ -96,7 +593,33 @@ export class GoalRunner {
 
     this.store.incrementResumeCount(goalId);
     this.store.updateStatus(goalId, 'running');
-    await this.startGoal(goalId);
+
+    const refreshed = this.store.get(goalId);
+    if (!refreshed) return false;
+
+    // Store-only construction: no loop-bearing runner. Fall back to startGoal.
+    if (!this.runAttempt) {
+      await this.startGoal(goalId);
+      return true;
+    }
+
+    // Never ran (no attempt rows) — a fresh attempt 1 is the right resume.
+    const attempts = this.store.getAttempts(goalId);
+    if (attempts.length === 0) {
+      await this.startGoal(goalId);
+      return true;
+    }
+
+    // Re-enter the loop at the SAME latest attempt n with its existing session
+    // key (runAttemptLoop derives the key from n). The saveAttempt guard keeps
+    // this idempotent — no new attempt row, no incremented n.
+    const latest = attempts[attempts.length - 1];
+    if (!latest) return false;
+    const n = latest.n;
+    const controller = new AbortController();
+    this.activeRuns.set(goalId, controller);
+    const resumeNote = `The goal run was interrupted: ${refreshed.errorText ?? goal.status}. Review prior progress and continue.`;
+    void this.runAttemptLoop(refreshed, controller, n, resumeNote).catch(() => {});
     return true;
   }
 
@@ -104,7 +627,12 @@ export class GoalRunner {
    * Judge an attempt's output against the acceptance criteria.
    * Returns whether the goal converged.
    */
-  async judgeAttempt(goalId: string, attemptN: number, output: string): Promise<boolean> {
+  async judgeAttempt(
+    goalId: string,
+    attemptN: number,
+    output: string,
+    summary?: string,
+  ): Promise<boolean> {
     const goal = this.store.get(goalId);
     if (!goal) return false;
 
@@ -114,24 +642,21 @@ export class GoalRunner {
         outputMd: output,
         completedAt: Date.now(),
       });
-      this.fireGoalCompleted(goal, output);
+      this.store.appendEvent(goalId, 'done', { attemptN });
+      this.fireGoalCompleted(goal, output, summary);
       return true;
     }
 
     this.store.updateStatus(goalId, 'judging');
     const verdict = await judge({ output, spec });
 
+    this.store.updateAttempt(goalId, attemptN, {
+      verdict,
+      outputMd: output,
+      completedAt: Date.now(),
+    });
+
     const attempts = this.store.getAttempts(goalId);
-    const currentAttempt = attempts.find((a) => a.n === attemptN);
-    if (currentAttempt) {
-      const { id: _id, ...attemptWithoutId } = currentAttempt;
-      this.store.saveAttempt({
-        ...attemptWithoutId,
-        verdict,
-        outputMd: output,
-        completedAt: Date.now(),
-      });
-    }
 
     if (isConverged(verdict, spec.threshold)) {
       this.store.updateStatus(goalId, 'completed', {
@@ -142,7 +667,7 @@ export class GoalRunner {
         score: verdict.score,
         attemptN,
       });
-      this.fireGoalCompleted(goal, output);
+      this.fireGoalCompleted(goal, output, summary);
       return true;
     }
 
@@ -228,12 +753,13 @@ export class GoalRunner {
       startedAt: number;
     },
     output: string,
+    summary?: string,
   ): void {
     if (!this.hooks) return;
     const payload: GoalCompletedPayload = {
       goalId: goal.id,
       title: goal.title,
-      summary: '',
+      summary: summary ?? '',
       outputMd: output,
       origin: goal.origin,
       personalityId: goal.personalityId,
@@ -258,6 +784,44 @@ export class GoalRunner {
       personalityId: goal.personalityId,
     };
     void this.hooks.fireVoid('goal_exhausted', payload);
+  }
+
+  private fireGoalFailed(
+    goal: { id: string; title: string; origin: GoalOrigin; personalityId: string },
+    errorText: string,
+    outputPartial: string,
+  ): void {
+    if (!this.hooks) return;
+    const payload: GoalFailedPayload = {
+      goalId: goal.id,
+      title: goal.title,
+      errorText,
+      outputPartial,
+      origin: goal.origin,
+      personalityId: goal.personalityId,
+    };
+    void this.hooks.fireVoid('goal_failed', payload);
+  }
+
+  private async fireBeforeGoalComplete(
+    goal: Goal,
+    summary: string,
+    output: string,
+  ): Promise<{ rejected: boolean; reason?: string }> {
+    if (!this.hooks) return { rejected: false };
+    const verdict = await this.hooks.fireClaiming('before_goal_complete', {
+      goalId: goal.id,
+      summary,
+      outputMd: output,
+      acceptanceCriteria: goal.acceptanceCriteria,
+    });
+    if (verdict.handled) return { rejected: true, reason: verdict.reason };
+    return { rejected: false };
+  }
+
+  private fireGoalNeedsClarification(goalId: string, reason: string): void {
+    if (!this.hooks) return;
+    void this.hooks.fireVoid('goal_needs_clarification', { goalId, reason });
   }
 }
 

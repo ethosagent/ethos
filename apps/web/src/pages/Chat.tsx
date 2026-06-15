@@ -2,7 +2,7 @@ import { TurnStatusBar } from '@ethosagent/ui-components';
 import { useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, ConfigProvider } from 'antd';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ApprovalModal } from '../components/chat/ApprovalModal';
 import { ClarifyCard } from '../components/chat/ClarifyCard';
 import { Composer } from '../components/chat/Composer';
@@ -10,6 +10,7 @@ import { GoalIntakeModal } from '../components/chat/GoalIntakeModal';
 import { MessageList } from '../components/chat/MessageList';
 import { PersonalityBar } from '../components/chat/PersonalityBar';
 import { PersonalityPickerModal } from '../components/PersonalityPickerModal';
+import { useGoalCreate } from '../features/goals/api/mutations';
 import { useGoalDetection } from '../features/goals/useGoalDetection';
 import { useSessionRenameFromChat } from '../features/sessions/api/mutations';
 import { useSessionGet } from '../features/sessions/api/queries';
@@ -49,6 +50,8 @@ export function Chat() {
   const { id: personalityId, model, isLoading, setOverride } = useActivePersonality();
   const { notification } = AntApp.useApp();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const createGoal = useGoalCreate();
 
   // Pre-fetch the session key from the URL param so we can thread it into
   // useChat. React Query deduplicates this with the sessionQuery below when
@@ -161,7 +164,7 @@ export function Chat() {
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentPreview[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  const { intakeOpen, setIntakeOpen, detectedMessage, restatedGoal, detectGoal } =
+  const { intakeOpen, setIntakeOpen, detectedMessage, restatedGoal, detectGoal, openIntake } =
     useGoalDetection();
 
   const handleAttach = useCallback(async (files: File[]) => {
@@ -208,7 +211,8 @@ export function Chat() {
 
   const handleGoalQuickStart = async (goalText: string) => {
     setIntakeOpen(false);
-    await sendMessage(`[goal] ${goalText}`);
+    const { goal } = await createGoal.mutateAsync({ personalityId, goalText });
+    navigate(`/goals/${goal.id}`);
   };
 
   const handleGoalConfiguredRun = async (config: {
@@ -218,19 +222,32 @@ export function Chat() {
     boundaries: string;
     costLimit: number;
     trials: number;
+    maxToolCallsPerTurn: number;
+    maxRecoveryAttempts: number;
+    allowDangerousToolCalls: boolean;
   }) => {
     setIntakeOpen(false);
-    const configJson = JSON.stringify(config);
-    await sendMessage(`[goal:configured] ${configJson}`);
+    const goalText = config.boundaries.trim()
+      ? `${config.goalText}\n\nBoundaries: ${config.boundaries.trim()}`
+      : config.goalText;
+    const { goal } = await createGoal.mutateAsync({
+      personalityId,
+      goalText,
+      acceptanceCriteria: { checks: config.checks, rubric: config.rubric },
+      maxAttempts: config.trials,
+      maxCostUsd: config.costLimit,
+      maxToolCallsPerTurn: config.maxToolCallsPerTurn,
+      maxRecoveryAttempts: config.maxRecoveryAttempts,
+      allowDangerousToolCalls: config.allowDangerousToolCalls,
+    });
+    navigate(`/goals/${goal.id}`);
   };
 
   const handleGoalRunDirect = () => {
-    // Open intake modal with current composer text
+    // Open intake modal directly with current composer text, skipping detection
     const composerText = document.querySelector<HTMLTextAreaElement>('.composer-card textarea');
     const text = composerText?.value?.trim() ?? '';
-    if (text) {
-      void detectGoal(text);
-    }
+    openIntake(text);
   };
 
   // Render the head of the queue. Multiple back-to-back approvals are

@@ -114,21 +114,27 @@ export function GoalDetail() {
     );
   }
 
-  const cfg = STATUS_CONFIG[goal.status] ?? {
-    color: 'var(--text-secondary)',
-    label: goal.status,
-    icon: '?',
-  };
+  const isLimitHit = goal.status === 'interrupted' && /limit/i.test(goal.errorText ?? '');
+  const isCompleted = goal.status === 'completed';
+  // only completed goals with real outputMd get Full Analysis
+  const hasFullAnalysis = isCompleted && !!goal.outputMd;
+  const outputHeading = goal.status === 'failed' ? 'FAILURE' : 'OUTPUT';
+  const bodyText = isCompleted
+    ? goal.outputMd || goal.outputPartial || '(no output)'
+    : goal.outputPartial?.trim()
+      ? goal.outputPartial
+      : '(no output)';
+  const cfg = isLimitHit
+    ? { color: 'var(--warning)', label: 'Limit hit', icon: '✗' }
+    : (STATUS_CONFIG[goal.status] ?? {
+        color: 'var(--text-secondary)',
+        label: goal.status,
+        icon: '?',
+      });
 
   return (
-    <div
-      style={{
-        padding: '0 0 32px 0',
-        maxWidth: 1100,
-        margin: '0 auto',
-      }}
-    >
-      {/* ---- Goal bar ---- */}
+    <div className="goal-detail-tab">
+      {/* ---- Goal bar (row 1) ---- */}
       <div
         style={{
           display: 'flex',
@@ -273,15 +279,221 @@ export function GoalDetail() {
         </div>
       </div>
 
-      {/* ---- Output section (visible when terminal) ---- */}
-      {isTerminal && (
-        <div style={{ padding: '24px 32px' }}>
-          <div
+      {/* ---- Middle scrollable row (output + journey) (row 2) ---- */}
+      <div
+        style={{
+          minHeight: 0,
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        {/* ---- Output section (visible when terminal) ---- */}
+        {isTerminal && (
+          <div style={{ padding: '24px 32px' }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                marginBottom: 16,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 500,
+                  color: goal.status === 'failed' ? 'var(--error)' : 'var(--text-tertiary)',
+                  textTransform: 'uppercase' as const,
+                  letterSpacing: '0.08em',
+                }}
+              >
+                {outputHeading}
+              </span>
+              {goal.completedAt && (
+                <span
+                  style={{
+                    fontSize: 12,
+                    color: 'var(--text-secondary)',
+                    fontFamily: "'Geist Mono', monospace",
+                  }}
+                >
+                  · {formatDuration(goal.startedAt, goal.completedAt)} elapsed
+                </span>
+              )}
+              {hasFullAnalysis && (
+                <button
+                  type="button"
+                  onClick={() => setOutputModalOpen(true)}
+                  style={{
+                    marginLeft: 'auto',
+                    background: 'none',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 4,
+                    color: 'var(--text-secondary)',
+                    fontSize: 12,
+                    padding: '4px 10px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Full Analysis
+                </button>
+              )}
+            </div>
+
+            {/* Error banner for failed/cancelled goals */}
+            {goal.errorText && (
+              <div
+                style={{
+                  padding: '10px 14px',
+                  marginBottom: 16,
+                  borderRadius: 8,
+                  background: 'rgba(248,113,113,0.08)',
+                  border: '1px solid rgba(248,113,113,0.2)',
+                  color: 'var(--error)',
+                  fontSize: 13,
+                  fontFamily: "'Geist Mono', monospace",
+                }}
+              >
+                {goal.errorText}
+              </div>
+            )}
+
+            {!isCompleted && goal.outputPartial && (
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 500,
+                  color: 'var(--text-tertiary)',
+                  textTransform: 'uppercase' as const,
+                  letterSpacing: '0.08em',
+                  marginBottom: 6,
+                }}
+              >
+                Partial output
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 24 }}>
+              {/* Left: output text */}
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  padding: '16px 20px',
+                  borderRadius: 8,
+                  border: '1px solid var(--border-subtle)',
+                  background: 'var(--bg-elevated)',
+                  fontSize: 14,
+                  lineHeight: 1.6,
+                  color: 'var(--text-primary)',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  maxHeight: 500,
+                  overflowY: 'auto',
+                }}
+              >
+                {bodyText}
+              </div>
+
+              {/* Right: verdict */}
+              {latestAttempt?.verdict && (
+                <div style={{ width: 220, flexShrink: 0 }}>
+                  <div
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: 8,
+                      border: '1px solid var(--border-subtle)',
+                      background: 'var(--bg-elevated)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 500,
+                        color: 'var(--text-tertiary)',
+                        textTransform: 'uppercase' as const,
+                        letterSpacing: '0.08em',
+                        marginBottom: 8,
+                      }}
+                    >
+                      Judge Verdict
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 20,
+                        fontWeight: 600,
+                        color:
+                          latestAttempt.verdict.score >= 0.8 ? 'var(--success)' : 'var(--warning)',
+                        marginBottom: 10,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {Math.round(latestAttempt.verdict.score * 100)}%
+                    </div>
+                    {latestAttempt.verdict.perCriterion.map((c) => (
+                      <div
+                        key={c.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: 6,
+                          marginBottom: 6,
+                          fontSize: 12,
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        <span
+                          style={{
+                            color:
+                              c.pass || (c.score != null && c.score >= 0.8)
+                                ? 'var(--success)'
+                                : 'var(--error)',
+                            flexShrink: 0,
+                            marginTop: 1,
+                          }}
+                        >
+                          {c.pass || (c.score != null && c.score >= 0.8) ? '✓' : '✗'}
+                        </span>
+                        <span
+                          style={{
+                            color: 'var(--text-secondary)',
+                          }}
+                        >
+                          {c.evidence}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ---- Journey section ---- */}
+        <div
+          style={{
+            padding: '0 32px 32px 32px',
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setJourneyOpen((v) => !v)}
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: 8,
-              marginBottom: 16,
+              padding: '12px 0',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: 'var(--text-primary)',
+              width: '100%',
             }}
           >
             <span
@@ -293,209 +505,41 @@ export function GoalDetail() {
                 letterSpacing: '0.08em',
               }}
             >
-              OUTPUT
+              JOURNEY
             </span>
-            {goal.completedAt && (
-              <span
-                style={{
-                  fontSize: 12,
-                  color: 'var(--text-secondary)',
-                  fontFamily: "'Geist Mono', monospace",
-                }}
-              >
-                · {formatDuration(goal.startedAt, goal.completedAt)} elapsed
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={() => setOutputModalOpen(true)}
+            <span
+              style={{
+                fontSize: 12,
+                color: 'var(--text-secondary)',
+              }}
+            >
+              Execution trace
+            </span>
+            <span
               style={{
                 marginLeft: 'auto',
-                background: 'none',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 4,
-                color: 'var(--text-secondary)',
                 fontSize: 12,
-                padding: '4px 10px',
-                cursor: 'pointer',
+                color: 'var(--text-tertiary)',
+                transform: journeyOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+                transition: 'transform 180ms cubic-bezier(0.16, 1, 0.3, 1)',
               }}
             >
-              Full Analysis
-            </button>
-          </div>
+              &#x25B8;
+            </span>
+          </button>
 
-          {/* Error banner for failed/cancelled goals */}
-          {goal.errorText && (
-            <div
-              style={{
-                padding: '10px 14px',
-                marginBottom: 16,
-                borderRadius: 8,
-                background: 'rgba(248,113,113,0.08)',
-                border: '1px solid rgba(248,113,113,0.2)',
-                color: 'var(--error)',
-                fontSize: 13,
-                fontFamily: "'Geist Mono', monospace",
-              }}
-            >
-              {goal.errorText}
+          {journeyOpen && (
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <ExecutionGraph
+                events={journeyEvents}
+                goalId={goalId}
+                goalText={goal.goalText}
+                personalityId={goal.personalityId}
+                isActive={isActive}
+              />
             </div>
           )}
-
-          <div style={{ display: 'flex', gap: 24 }}>
-            {/* Left: output text */}
-            <div
-              style={{
-                flex: 1,
-                minWidth: 0,
-                padding: '16px 20px',
-                borderRadius: 8,
-                border: '1px solid var(--border-subtle)',
-                background: 'var(--bg-elevated)',
-                fontSize: 14,
-                lineHeight: 1.6,
-                color: 'var(--text-primary)',
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                maxHeight: 500,
-                overflowY: 'auto',
-              }}
-            >
-              {goal.outputMd || goal.outputPartial || '(no output)'}
-            </div>
-
-            {/* Right: verdict */}
-            {latestAttempt?.verdict && (
-              <div style={{ width: 220, flexShrink: 0 }}>
-                <div
-                  style={{
-                    padding: '12px 14px',
-                    borderRadius: 8,
-                    border: '1px solid var(--border-subtle)',
-                    background: 'var(--bg-elevated)',
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 500,
-                      color: 'var(--text-tertiary)',
-                      textTransform: 'uppercase' as const,
-                      letterSpacing: '0.08em',
-                      marginBottom: 8,
-                    }}
-                  >
-                    Judge Verdict
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 20,
-                      fontWeight: 600,
-                      color:
-                        latestAttempt.verdict.score >= 0.8 ? 'var(--success)' : 'var(--warning)',
-                      marginBottom: 10,
-                      fontVariantNumeric: 'tabular-nums',
-                    }}
-                  >
-                    {Math.round(latestAttempt.verdict.score * 100)}%
-                  </div>
-                  {latestAttempt.verdict.perCriterion.map((c) => (
-                    <div
-                      key={c.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: 6,
-                        marginBottom: 6,
-                        fontSize: 12,
-                        lineHeight: 1.4,
-                      }}
-                    >
-                      <span
-                        style={{
-                          color:
-                            c.pass || (c.score != null && c.score >= 0.8)
-                              ? 'var(--success)'
-                              : 'var(--error)',
-                          flexShrink: 0,
-                          marginTop: 1,
-                        }}
-                      >
-                        {c.pass || (c.score != null && c.score >= 0.8) ? '✓' : '✗'}
-                      </span>
-                      <span
-                        style={{
-                          color: 'var(--text-secondary)',
-                        }}
-                      >
-                        {c.evidence}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
         </div>
-      )}
-
-      {/* ---- Journey section ---- */}
-      <div style={{ padding: '0 32px' }}>
-        <button
-          type="button"
-          onClick={() => setJourneyOpen((v) => !v)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '12px 0',
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            color: 'var(--text-primary)',
-            width: '100%',
-          }}
-        >
-          <span
-            style={{
-              fontSize: 10,
-              fontWeight: 500,
-              color: 'var(--text-tertiary)',
-              textTransform: 'uppercase' as const,
-              letterSpacing: '0.08em',
-            }}
-          >
-            JOURNEY
-          </span>
-          <span
-            style={{
-              fontSize: 12,
-              color: 'var(--text-secondary)',
-            }}
-          >
-            Execution trace
-          </span>
-          <span
-            style={{
-              marginLeft: 'auto',
-              fontSize: 12,
-              color: 'var(--text-tertiary)',
-              transform: journeyOpen ? 'rotate(90deg)' : 'rotate(0deg)',
-              transition: 'transform 180ms cubic-bezier(0.16, 1, 0.3, 1)',
-            }}
-          >
-            &#x25B8;
-          </span>
-        </button>
-
-        {journeyOpen && (
-          <ExecutionGraph
-            events={journeyEvents}
-            goalText={goal.goalText}
-            personalityId={goal.personalityId}
-            isActive={isActive}
-          />
-        )}
       </div>
 
       {/* ---- Steer composer (only while active) ---- */}
@@ -552,13 +596,15 @@ export function GoalDetail() {
         <span>{formatDuration(goal.startedAt, goal.completedAt)} elapsed</span>
       </div>
 
-      <GoalOutputModal
-        open={outputModalOpen}
-        onClose={() => setOutputModalOpen(false)}
-        title={goal.title || goal.goalText}
-        personalityId={goal.personalityId}
-        outputMd={goal.outputMd || goal.outputPartial || ''}
-      />
+      {hasFullAnalysis && (
+        <GoalOutputModal
+          open={outputModalOpen}
+          onClose={() => setOutputModalOpen(false)}
+          title={goal.title || goal.goalText}
+          personalityId={goal.personalityId}
+          outputMd={goal.outputMd ?? ''}
+        />
+      )}
 
       {/* Pulse animation */}
       <style>{`

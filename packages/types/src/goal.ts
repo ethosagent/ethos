@@ -103,6 +103,9 @@ export interface Goal {
   toolCount: number | null;
   tokenCount: number | null;
   costUsd: number | null;
+  maxToolCallsPerTurn?: number;
+  allowDangerousToolCalls?: boolean;
+  maxRecoveryAttempts?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +114,7 @@ export interface Goal {
 
 export type GoalEventType =
   | 'run_start'
+  | 'attempt_start'
   | 'turn_text'
   | 'tool_start'
   | 'tool_end'
@@ -145,6 +149,9 @@ export interface CreateGoalInput {
   maxAttempts?: number;
   maxCostUsd?: number | null;
   deadline?: string | null;
+  maxToolCallsPerTurn?: number;
+  allowDangerousToolCalls?: boolean;
+  maxRecoveryAttempts?: number;
 }
 
 export interface GoalStore {
@@ -171,6 +178,11 @@ export interface GoalStore {
   appendEvent(goalId: string, eventType: GoalEventType, payload: Record<string, unknown>): void;
   getEvents(goalId: string): GoalEvent[];
   saveAttempt(attempt: Omit<GoalAttempt, 'id'>): GoalAttempt;
+  updateAttempt(
+    goalId: string,
+    n: number,
+    patch: Partial<Pick<GoalAttempt, 'verdict' | 'outputMd' | 'costUsd' | 'completedAt'>>,
+  ): void;
   getAttempts(goalId: string): GoalAttempt[];
   incrementResumeCount(id: string): void;
 }
@@ -184,6 +196,13 @@ export interface BeforeGoalCompletePayload {
   summary: string;
   outputMd: string;
   acceptanceCriteria: AcceptanceSpec | null;
+}
+
+export interface BeforeGoalCompleteResult {
+  /** true = this handler rejects the completion (claiming semantics). */
+  handled: boolean;
+  /** Why the completion was rejected. Required when handled is true. */
+  reason?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -217,4 +236,9 @@ export interface GoalExhaustedPayload {
   verdict: Verdict | null;
   origin: GoalOrigin;
   personalityId: string;
+}
+
+export interface GoalNeedsClarificationPayload {
+  goalId: string;
+  reason: string;
 }

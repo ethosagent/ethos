@@ -21,5 +21,11 @@ export function useGoalDetection() {
     return false;
   }, []);
 
-  return { intakeOpen, setIntakeOpen, detectedMessage, restatedGoal, detectGoal };
+  const openIntake = useCallback((message: string) => {
+    setDetectedMessage(message);
+    setRestatedGoal(message);
+    setIntakeOpen(true);
+  }, []);
+
+  return { intakeOpen, setIntakeOpen, detectedMessage, restatedGoal, detectGoal, openIntake };
 }

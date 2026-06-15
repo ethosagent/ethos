@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { AgentLoop, EagerPrefetchPolicy, SimpleCompletionImpl } from '@ethosagent/core';
+import { GoalRunner } from '@ethosagent/goal-runner';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { createDelegationTools } from '@ethosagent/tools-delegation';
 import { createMemoryTools } from '@ethosagent/tools-memory';
@@ -38,7 +39,7 @@ export async function buildAgentLoop(
   const { dataDir, log } = wiringCtx;
   const { infra, toolsResult, pluginsResult, llm, profile } = deps;
   const { memoryProviders, personalities, hooks, sessionCompose, tools } = infra;
-  const { gatewaySendRef, injectors, mcpManager } = toolsResult;
+  const { gatewaySendRef, goalStore, goalRunnerRef, injectors, mcpManager } = toolsResult;
   const {
     pluginLoader,
     pluginRegistries,
@@ -376,6 +377,36 @@ export async function buildAgentLoop(
   // Delegation tools need the loop reference; register after loop creation.
   for (const tool of createDelegationTools(loop, opts.meshRegistryPath)) tools.register(tool);
 
+  // Goal runner — loop-bearing, constructed after the loop exists (mirrors
+  // createDelegationTools handing the loop to tools post-construction). Shares
+  // the single goalStore from tool composition via goalRunnerRef late-binding.
+  // Always built so web-created goals execute for any personality, regardless of
+  // whether the personality exposes goal_* tools.
+  // Interactive tools that break goal autonomy: a fire-and-forget goal run has no
+  // user to answer them, so a call would hang the run forever. Stripped from the
+  // goal session's effective toolset. Extend this set as new interactive tools land.
+  const GOAL_EXCLUDED_TOOLS = new Set(['clarify']);
+  const goalRunner = new GoalRunner({
+    store: goalStore,
+    hooks,
+    runAttempt: (sessionKey, firstMessage, o) => {
+      const ptoolset = o.personalityId ? personalities.get(o.personalityId)?.toolset : undefined;
+      const toolsetOverride = ptoolset?.filter((t) => !GOAL_EXCLUDED_TOOLS.has(t));
+      return loop.run(firstMessage, {
+        sessionKey,
+        abortSignal: o.abortSignal,
+        ...(o.steerSink ? { steerSink: o.steerSink } : {}),
+        ...(o.personalityId ? { personalityId: o.personalityId } : {}),
+        ...(o.userId ? { userId: o.userId } : {}),
+        ...(o.maxToolCallsPerTurn != null ? { maxToolCallsPerTurn: o.maxToolCallsPerTurn } : {}),
+        ...(o.allowDangerousToolCalls ? { allowDangerousToolCalls: true } : {}),
+        ...(toolsetOverride ? { toolsetOverride } : {}),
+      });
+    },
+  });
+  goalRunner.recoverOrphans();
+  goalRunnerRef.runner = goalRunner;
+
   // Phase tool-cap P1 — fail-loud-at-boot validation.
   const validationErrors = tools.validateToolsForPersonality(activePerson);
   if (validationErrors.length > 0) {
@@ -405,5 +436,6 @@ export async function buildAgentLoop(
     },
     notificationRouter,
     pluginLoader,
+    goalRunner,
   };
 }

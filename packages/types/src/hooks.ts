@@ -1,4 +1,11 @@
-import type { GoalCompletedPayload, GoalExhaustedPayload, GoalFailedPayload } from './goal';
+import type {
+  BeforeGoalCompletePayload,
+  BeforeGoalCompleteResult,
+  GoalCompletedPayload,
+  GoalExhaustedPayload,
+  GoalFailedPayload,
+  GoalNeedsClarificationPayload,
+} from './goal';
 import type { Message, ToolDefinitionLite } from './llm';
 import type { PersonalityConfig } from './personality';
 import type { InboundMessage, OutboundMessage } from './platform';
@@ -243,6 +250,7 @@ export interface VoidHooks {
   goal_completed: GoalCompletedPayload;
   goal_failed: GoalFailedPayload;
   goal_exhausted: GoalExhaustedPayload;
+  goal_needs_clarification: GoalNeedsClarificationPayload;
 }
 
 export interface ModifyingHooks {
@@ -261,6 +269,7 @@ export interface ClaimingHooks {
   // "completion rejected". `fireClaiming` returns `{ handled: false }` when no
   // handler claims, so the completion proceeds (the default no-op behaviour).
   before_ticket_complete: [BeforeTicketCompletePayload, BeforeTicketCompleteResult];
+  before_goal_complete: [BeforeGoalCompletePayload, BeforeGoalCompleteResult];
 }
 
 export type HookName = keyof VoidHooks | keyof ModifyingHooks | keyof ClaimingHooks;

@@ -251,7 +251,9 @@ export class SQLiteSessionStore implements SessionStore {
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
   }
 
-  async listSessions(filter?: SessionFilter & { keyPrefix?: string }): Promise<Session[]> {
+  async listSessions(
+    filter?: SessionFilter & { keyPrefix?: string; excludeKeyPrefixes?: string[] },
+  ): Promise<Session[]> {
     const conditions: string[] = [];
     const values: unknown[] = [];
 
@@ -262,6 +264,12 @@ export class SQLiteSessionStore implements SessionStore {
     if (filter?.keyPrefix) {
       conditions.push("key LIKE ? ESCAPE '\\'");
       values.push(`${filter.keyPrefix.replace(/[%_\\]/g, '\\$&')}%`);
+    }
+    if (filter?.excludeKeyPrefixes) {
+      for (const prefix of filter.excludeKeyPrefixes) {
+        conditions.push("key NOT LIKE ? ESCAPE '\\'");
+        values.push(`${prefix.replace(/[%_\\]/g, '\\$&')}%`);
+      }
     }
     if (filter?.personalityId) {
       conditions.push('personality_id = ?');

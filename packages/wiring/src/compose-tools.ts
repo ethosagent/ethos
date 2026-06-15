@@ -5,7 +5,7 @@ import {
   LastWriteWinsPolicy,
   LazyOnDemandPolicy,
 } from '@ethosagent/core';
-import { GoalRunner } from '@ethosagent/goal-runner';
+import type { GoalRunner } from '@ethosagent/goal-runner';
 import { SQLiteGoalStore } from '@ethosagent/goal-store';
 import { autonomyTier, KanbanStore } from '@ethosagent/kanban-store';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
@@ -272,9 +272,18 @@ export interface GatewaySendRef {
   fn: MessagingSendFn;
 }
 
+/** Late-binding ref for the loop-bearing GoalRunner, assigned in build-agent-loop. */
+export interface GoalRunnerRef {
+  runner?: GoalRunner;
+}
+
 export interface ComposeToolsResult {
   /** Mutable ref for injecting the real gateway send function post-construction. */
   gatewaySendRef: GatewaySendRef;
+  /** Shared SQLite goal store — always present (one goals.db per dataDir). */
+  goalStore: SQLiteGoalStore;
+  /** Late-binding ref for the loop-bearing GoalRunner, assigned in build-agent-loop. */
+  goalRunnerRef: GoalRunnerRef;
   /** Skill pool built from composeSkills (needed by loadPlugins). */
   skillPool: Map<string, Skill>;
   /** Context injectors array (passed through to loadPlugins and AgentLoop). */
@@ -349,13 +358,16 @@ export async function composeAllTools(
     for (const tool of composeKanban(wiringCtx, kanbanOpts).tools) tools.register(tool);
   }
 
-  // Goal tools — wired only when the active personality uses them.
+  // Goal store is shared infrastructure — a single goals.db per dataDir backs the
+  // loop-bearing runner constructed later in build-agent-loop (it needs the
+  // AgentLoop). It must exist for ANY personality so web-created goals execute,
+  // independent of whether the personality exposes goal_* tools. Only the
+  // agent-facing goal_* TOOLS stay gated by the personality's toolset.
+  const goalStore = new SQLiteGoalStore(join(dataDir, 'goals.db'));
+  const goalRunnerRef: GoalRunnerRef = {};
   if ((activePerson.toolset ?? []).some((name: string) => name.startsWith('goal_'))) {
-    const goalDbPath = join(dataDir, 'goals.db');
-    const goalStore = new SQLiteGoalStore(goalDbPath);
-    const goalRunner = new GoalRunner({ store: goalStore });
-    goalRunner.recoverOrphans();
-    for (const tool of createGoalTools(goalStore)) tools.register(tool);
+    for (const tool of createGoalTools(goalStore, (id) => goalRunnerRef.runner?.startGoal(id)))
+      tools.register(tool);
   }
 
   for (const tool of composeProcess(wiringCtx, { hookRegistry: hooks }).tools) tools.register(tool);
@@ -613,6 +625,8 @@ export async function composeAllTools(
 
   return {
     gatewaySendRef,
+    goalRunnerRef,
+    goalStore,
     skillPool,
     injectors,
     skillScanner,

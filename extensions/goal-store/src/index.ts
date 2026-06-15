@@ -39,7 +39,10 @@ const SCHEMA = `
     turn_count          INTEGER,
     tool_count          INTEGER,
     token_count         INTEGER,
-    cost_usd            REAL
+    cost_usd            REAL,
+    max_tool_calls_per_turn INTEGER,
+    allow_dangerous_tool_calls INTEGER,
+    max_recovery_attempts INTEGER
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS goal_attempts (
@@ -99,6 +102,9 @@ interface GoalRow {
   tool_count: number | null;
   token_count: number | null;
   cost_usd: number | null;
+  max_tool_calls_per_turn: number | null;
+  allow_dangerous_tool_calls: number | null;
+  max_recovery_attempts: number | null;
 }
 
 interface GoalAttemptRow {
@@ -153,6 +159,9 @@ function rowToGoal(r: GoalRow): Goal {
     toolCount: r.tool_count,
     tokenCount: r.token_count,
     costUsd: r.cost_usd,
+    maxToolCallsPerTurn: r.max_tool_calls_per_turn ?? undefined,
+    allowDangerousToolCalls: r.allow_dangerous_tool_calls === 1,
+    maxRecoveryAttempts: r.max_recovery_attempts ?? undefined,
   };
 }
 
@@ -218,19 +227,44 @@ export class SQLiteGoalStore implements GoalStore {
     // Version check — refuse to open a DB whose schema is newer than this code.
     const versionRows = this.db.pragma('user_version') as Array<{ user_version: number }>;
     const currentVersion = versionRows[0]?.user_version ?? 0;
-    if (currentVersion > 1) {
+    if (currentVersion > 4) {
       throw new Error(
-        `goal-store: database user_version=${currentVersion} is newer than code (1); refusing to open to avoid downgrade`,
+        `goal-store: database user_version=${currentVersion} is newer than code (4); refusing to open to avoid downgrade`,
       );
     }
 
     this.db.exec(SCHEMA);
 
-    if (currentVersion === 0) {
-      this.db.pragma('user_version = 1');
+    // v1 → v2: add max_tool_calls_per_turn to pre-existing STRICT goals tables.
+    // The table_info check makes the ALTER idempotent (fresh DBs already have it
+    // from CREATE TABLE).
+    if (currentVersion < 2) {
+      const cols = this.db.pragma('table_info(goals)') as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === 'max_tool_calls_per_turn')) {
+        this.db.exec('ALTER TABLE goals ADD COLUMN max_tool_calls_per_turn INTEGER');
+      }
     }
-    // Future migrations would go here:
-    // if (currentVersion === 1) { this.migrateV1ToV2(); }
+
+    // v2 → v3: add allow_dangerous_tool_calls. Idempotent via table_info; runs
+    // for both fresh-from-v1 and existing-v2 databases.
+    if (currentVersion < 3) {
+      const cols = this.db.pragma('table_info(goals)') as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === 'allow_dangerous_tool_calls')) {
+        this.db.exec('ALTER TABLE goals ADD COLUMN allow_dangerous_tool_calls INTEGER');
+      }
+    }
+
+    // v3 → v4: add max_recovery_attempts. Idempotent via table_info.
+    if (currentVersion < 4) {
+      const cols = this.db.pragma('table_info(goals)') as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === 'max_recovery_attempts')) {
+        this.db.exec('ALTER TABLE goals ADD COLUMN max_recovery_attempts INTEGER');
+      }
+    }
+
+    if (currentVersion < 4) {
+      this.db.pragma('user_version = 4');
+    }
   }
 
   create(input: CreateGoalInput): Goal {
@@ -245,8 +279,8 @@ export class SQLiteGoalStore implements GoalStore {
         `INSERT INTO goals
          (id, user_id, personality_id, origin, source_session, title, goal_text,
           acceptance_criteria, status, max_attempts, max_cost_usd, deadline,
-          started_at, resume_count)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          started_at, resume_count, max_tool_calls_per_turn, allow_dangerous_tool_calls, max_recovery_attempts)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -263,6 +297,9 @@ export class SQLiteGoalStore implements GoalStore {
         input.deadline ?? null,
         now,
         0,
+        input.maxToolCallsPerTurn ?? null,
+        input.allowDangerousToolCalls ? 1 : 0,
+        input.maxRecoveryAttempts ?? null,
       );
 
     const goal = this.get(id);
@@ -415,6 +452,42 @@ export class SQLiteGoalStore implements GoalStore {
       | undefined;
     if (!row) throw new Error(`saveAttempt: inserted attempt ${id} not found`);
     return rowToAttempt(row);
+  }
+
+  updateAttempt(
+    goalId: string,
+    n: number,
+    patch: Partial<Pick<GoalAttempt, 'verdict' | 'outputMd' | 'costUsd' | 'completedAt'>>,
+  ): void {
+    const sets: string[] = [];
+    const values: unknown[] = [];
+
+    if (patch.verdict !== undefined) {
+      sets.push('verdict = ?');
+      values.push(patch.verdict ? JSON.stringify(patch.verdict) : null);
+    }
+    if (patch.outputMd !== undefined) {
+      sets.push('output_md = ?');
+      values.push(patch.outputMd);
+    }
+    if (patch.costUsd !== undefined) {
+      sets.push('cost_usd = ?');
+      values.push(patch.costUsd);
+    }
+    if (patch.completedAt !== undefined) {
+      sets.push('completed_at = ?');
+      values.push(patch.completedAt);
+    }
+
+    if (sets.length === 0) return;
+
+    values.push(goalId, n);
+    const result = this.db
+      .prepare(`UPDATE goal_attempts SET ${sets.join(', ')} WHERE goal_id = ? AND n = ?`)
+      .run(...values);
+    if (result.changes === 0) {
+      throw new Error(`updateAttempt: attempt n=${n} for goal ${goalId} not found`);
+    }
   }
 
   getAttempts(goalId: string): GoalAttempt[] {
