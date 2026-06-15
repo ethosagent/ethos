@@ -61,7 +61,7 @@
     "@ethosagent/goal-runner": "workspace:*",
     "@ethosagent/goal-store": "workspace:*",
     "@ethosagent/types": "workspace:*",
-    "@anthropic-ai/sdk": "^0.96.0",
+    "@anthropic-ai/sdk": "^0.104.2",
     "@aws-sdk/client-secrets-manager": "^3.800.0",
     "@hono/node-server": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
