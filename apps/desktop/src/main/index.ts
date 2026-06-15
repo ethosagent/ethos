@@ -2,9 +2,10 @@ import type { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { app, BrowserWindow, dialog, nativeTheme, session, type Tray } from 'electron';
+import { app, BrowserWindow, nativeTheme, session, type Tray } from 'electron';
 import { initAutoUpdater } from './auto-update';
 import { restartBackendAsync, startBackend, startBackendAsync, stopBackend } from './backend';
+import { showErrorWindow } from './error-window';
 import { registerGlobalShortcuts, unregisterGlobalShortcuts } from './global-shortcut';
 import { registerIpcHandlers } from './ipc';
 import { showMinimizeNotification } from './notifications';
@@ -73,20 +74,18 @@ function setupSpaCsp(): void {
 }
 
 async function startBackendWithRetry(port: number): Promise<number> {
+  const logPath = join(getDataDir(), 'ethos.log');
   for (;;) {
     try {
       return await startBackendAsync(port);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const { response } = await dialog.showMessageBox({
-        type: 'error',
-        title: 'Ethos Backend Failed',
-        message: `Could not start the backend server.\n\n${message}`,
-        buttons: ['Retry', 'Quit'],
-        defaultId: 0,
-        cancelId: 1,
+      const result = await showErrorWindow({
+        title: 'Backend Failed',
+        message: `Could not start the backend server.\n${message}`,
+        logPath,
       });
-      if (response === 1) {
+      if (result === 'quit') {
         app.quit();
         throw err;
       }
@@ -105,6 +104,28 @@ function activateDesktop(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     registerGlobalShortcuts(mainWindow, showQuickChat);
   }
+}
+
+function buildSplashHtml(): string {
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0F0F0F; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; height: 100vh;
+    font-family: 'Geist', system-ui, sans-serif; -webkit-app-region: drag;
+  }
+  .logo { color: #E8E8E6; font-size: 24px; font-weight: 600; margin-bottom: 24px; }
+  .track { width: 120px; height: 2px; background: #333; border-radius: 1px; overflow: hidden; }
+  .bar {
+    width: 40%; height: 100%; background: #94A3B8; border-radius: 1px;
+    animation: slide 1.2s ease-in-out infinite;
+  }
+  @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
+</style></head><body>
+  <div class="logo">ethos</div>
+  <div class="track"><div class="bar"></div></div>
+</body></html>`;
 }
 
 async function createWindow(): Promise<void> {
@@ -126,9 +147,9 @@ async function createWindow(): Promise<void> {
     },
   });
 
-  mainWindow.on('ready-to-show', () => {
-    mainWindow?.show();
-  });
+  const splashHtml = buildSplashHtml();
+  await mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splashHtml)}`);
+  mainWindow.show();
 
   mainWindow.on('close', (event: { preventDefault(): void }) => {
     if (isQuitting) return;
