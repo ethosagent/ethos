@@ -29,6 +29,13 @@ const api = {
   },
   theme: {
     get: () => ipcRenderer.invoke(IPC_CHANNELS['theme:get']),
+    onChange: (cb: (theme: 'dark' | 'light') => void) => {
+      const listener = (_e: unknown, theme: 'dark' | 'light') => cb(theme);
+      ipcRenderer.on('theme:changed', listener);
+      return () => {
+        ipcRenderer.removeListener('theme:changed', listener);
+      };
+    },
   },
   settings: {
     getAdvancedMode: () => ipcRenderer.invoke(IPC_CHANNELS['advancedMode:get']),

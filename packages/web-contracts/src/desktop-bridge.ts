@@ -119,6 +119,7 @@ export interface EthosDesktopBridge {
 
   theme: {
     get: () => Promise<'dark' | 'light'>;
+    onChange: (cb: (theme: 'dark' | 'light') => void) => () => void;
   };
 
   settings: {

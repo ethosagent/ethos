@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { CommandPalette } from './components/CommandPalette';
@@ -60,6 +61,9 @@ export function App() {
   );
   const [paletteOpen, setPaletteOpen] = useState(false);
   useDesktopBootstrap();
+  useDesktopNavigation();
+  useDesktopOAuthCallback();
+  useDesktopThemeSync();
   useOnboardingRedirect();
   usePushEventToasts();
   useSessionTitleSync();
@@ -189,6 +193,7 @@ export function App() {
  * Electron's session.defaultSession.webRequest.onBeforeSendHeaders.
  */
 function useDesktopBootstrap(): void {
+  const qc = useQueryClient();
   useEffect(() => {
     if (!isDesktop || !bridge) return;
     bridge.connection.get().then((conn) => {
@@ -196,7 +201,40 @@ function useDesktopBootstrap(): void {
         reinitializeClient(conn.url);
       }
     });
-  }, []);
+    bridge.plugin.onOAuthComplete(() => {
+      qc.invalidateQueries({ queryKey: ['plugins'] });
+    });
+  }, [qc]);
+}
+
+function useDesktopNavigation(): void {
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!isDesktop || !bridge) return;
+    return bridge.navigate.onSession((sessionId) => {
+      navigate(`/chat?session=${sessionId}`);
+    });
+  }, [navigate]);
+}
+
+function useDesktopOAuthCallback(): void {
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!isDesktop || !bridge) return;
+    return bridge.oauth.onCallback((data) => {
+      navigate(`/oauth/callback?code=${data.code}&state=${data.state}`);
+    });
+  }, [navigate]);
+}
+
+function useDesktopThemeSync(): void {
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!isDesktop || !bridge) return;
+    return bridge.theme.onChange(() => {
+      qc.invalidateQueries({ queryKey: ['config'] });
+    });
+  }, [qc]);
 }
 
 /**
