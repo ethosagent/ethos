@@ -69,6 +69,8 @@ const PAGE_DEFS: Array<{ id: string; label: string; hint: string; keywords: stri
   { id: 'memory', label: 'Memory', hint: 'memory', keywords: ['notes', 'context'] },
   { id: 'cron', label: 'Cron', hint: 'cron', keywords: ['schedule', 'job'] },
   { id: 'platforms', label: 'Platforms', hint: 'platforms', keywords: ['telegram', 'discord'] },
+  { id: 'goals', label: 'Goals', hint: 'goals', keywords: ['target', 'objective'] },
+  { id: 'dashboards', label: 'Dashboards', hint: 'dashboards', keywords: ['charts', 'metrics'] },
   { id: 'skills', label: 'Skills', hint: 'skills', keywords: ['tools', 'evolver'] },
   { id: 'mcp', label: 'MCP', hint: 'mcp', keywords: ['model', 'protocol'] },
   { id: 'activity', label: 'Activity', hint: 'activity', keywords: ['stream', 'events'] },

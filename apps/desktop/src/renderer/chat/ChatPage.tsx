@@ -2,6 +2,7 @@ import { createEthosClient } from '@ethosagent/sdk';
 import { TurnStatusBar } from '@ethosagent/ui-components';
 import type { SseEvent, StoredMessage } from '@ethosagent/web-contracts';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type GoalConfig, GoalIntakeModal } from '../goals/GoalIntakeModal';
 import { useServerUrl } from '../shell/ServerUrl';
 import { useAppState } from '../state/AppContext';
 import { ChatThread } from './ChatThread';
@@ -40,6 +41,9 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentPreview[]>([]);
+  const [goalIntakeOpen, setGoalIntakeOpen] = useState(false);
+  const [goalSourceText, setGoalSourceText] = useState('');
+  const [goalRestated, setGoalRestated] = useState('');
 
   const isNewSessionAssignment = useRef(false);
   const lastManualTitleRef = useRef<{ sessionId: string; title: string } | null>(null);
@@ -405,6 +409,62 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
     }
   }, [activeSessionId, client]);
 
+  const handleSendAsGoal = useCallback(
+    async (text: string) => {
+      setGoalSourceText(text);
+      setGoalRestated(text);
+      setGoalIntakeOpen(true);
+      try {
+        const result = await client.rpc.goals.classify({ message: text });
+        if (result.isGoal && result.restatedGoal) {
+          setGoalRestated(result.restatedGoal);
+        }
+      } catch {
+        // Classification is best-effort; keep the raw text as the restated goal.
+      }
+    },
+    [client],
+  );
+
+  const handleGoalQuickStart = useCallback(
+    async (goalText: string) => {
+      setGoalIntakeOpen(false);
+      try {
+        await client.rpc.goals.create({
+          personalityId: activePersonalityId ?? 'researcher',
+          goalText,
+        });
+      } catch {
+        // best-effort
+      }
+    },
+    [client, activePersonalityId],
+  );
+
+  const handleGoalConfiguredRun = useCallback(
+    async (config: GoalConfig) => {
+      setGoalIntakeOpen(false);
+      const goalText = config.boundaries.trim()
+        ? `${config.goalText}\n\nBoundaries: ${config.boundaries.trim()}`
+        : config.goalText;
+      try {
+        await client.rpc.goals.create({
+          personalityId: activePersonalityId ?? 'researcher',
+          goalText,
+          acceptanceCriteria: { checks: config.checks, rubric: config.rubric },
+          maxAttempts: config.trials,
+          maxCostUsd: config.costLimit,
+          maxToolCallsPerTurn: config.maxToolCallsPerTurn,
+          maxRecoveryAttempts: config.maxRecoveryAttempts,
+          allowDangerousToolCalls: config.allowDangerousToolCalls,
+        });
+      } catch {
+        // best-effort
+      }
+    },
+    [client, activePersonalityId],
+  );
+
   const handleApprove = useCallback(
     async (approvalId: string) => {
       try {
@@ -562,6 +622,16 @@ export function ChatPage({ onSessionListDirty, onForkSession }: ChatPageProps) {
         attachments={pendingAttachments}
         onAttach={handleAttach}
         onRemoveAttachment={handleRemoveAttachment}
+        onSendAsGoal={(text) => void handleSendAsGoal(text)}
+      />
+
+      <GoalIntakeModal
+        open={goalIntakeOpen}
+        onClose={() => setGoalIntakeOpen(false)}
+        userMessage={goalSourceText}
+        restatedGoal={goalRestated}
+        onQuickStart={(g) => void handleGoalQuickStart(g)}
+        onConfiguredRun={(c) => void handleGoalConfiguredRun(c)}
       />
     </div>
   );

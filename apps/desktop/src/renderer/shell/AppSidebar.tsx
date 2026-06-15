@@ -7,6 +7,7 @@ export interface AppSidebarProps {
   route: string;
   onNavigate: (route: string) => void;
   backendConnected: boolean;
+  adminEnabled: boolean;
   sessions: Session[];
   pinnedSessions: Session[];
   loading: boolean;
@@ -39,6 +40,8 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'mcp', label: 'MCP Servers', emoji: '⬡' },
   { id: 'memory', label: 'Memory', emoji: '🧠' },
   { id: 'platforms', label: 'Platforms', emoji: '⇄' },
+  { id: 'goals', label: 'Goals', emoji: '◉' },
+  { id: 'dashboards', label: 'Dashboards', emoji: '▤' },
 ];
 
 const ADVANCED_ITEMS: NavItem[] = [
@@ -53,6 +56,7 @@ export function AppSidebar({
   route,
   onNavigate,
   backendConnected,
+  adminEnabled,
   sessions,
   pinnedSessions,
   loading,
@@ -429,6 +433,15 @@ export function AppSidebar({
                 onHover={setHoveredNavId}
               />
             ))}
+            {adminEnabled && (
+              <NavRow
+                item={{ id: 'admin', label: 'Admin', emoji: '⛨' }}
+                active={route === 'admin'}
+                hovered={hoveredNavId === 'admin'}
+                onNavigate={onNavigate}
+                onHover={setHoveredNavId}
+              />
+            )}
           </>
         )}
 

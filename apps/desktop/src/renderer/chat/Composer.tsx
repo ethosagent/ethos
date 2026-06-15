@@ -11,6 +11,7 @@ interface ComposerProps {
   attachments?: AttachmentPreview[];
   onAttach?: (files: File[]) => void;
   onRemoveAttachment?: (localId: string) => void;
+  onSendAsGoal?: (text: string) => void;
 }
 
 export function Composer({
@@ -22,6 +23,7 @@ export function Composer({
   attachments,
   onAttach,
   onRemoveAttachment,
+  onSendAsGoal,
 }: ComposerProps) {
   const [text, setText] = useState('');
   const [showSlash, setShowSlash] = useState(false);
@@ -335,26 +337,55 @@ export function Composer({
             </button>
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!text.trim() && !hasAttachments}
-            style={{
-              height: 28,
-              minWidth: 60,
-              borderRadius: 'var(--radius-sm)',
-              background: text.trim() || hasAttachments ? 'var(--info)' : 'var(--bg-overlay)',
-              color: text.trim() || hasAttachments ? '#ffffff' : 'var(--text-tertiary)',
-              border: 'none',
-              fontFamily: 'var(--font-display)',
-              fontSize: 13,
-              fontWeight: 500,
-              cursor: text.trim() || hasAttachments ? 'pointer' : 'default',
-              opacity: text.trim() || hasAttachments ? 1 : 0.5,
-            }}
-          >
-            Send
-          </button>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {onSendAsGoal && (
+              <button
+                type="button"
+                onClick={() => {
+                  const trimmed = text.trim();
+                  if (!trimmed) return;
+                  onSendAsGoal(trimmed);
+                  setText('');
+                }}
+                disabled={!text.trim()}
+                style={{
+                  height: 28,
+                  minWidth: 60,
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'none',
+                  color: text.trim() ? 'var(--text-secondary)' : 'var(--text-tertiary)',
+                  border: '1px solid var(--border-subtle)',
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  cursor: text.trim() ? 'pointer' : 'default',
+                  opacity: text.trim() ? 1 : 0.5,
+                }}
+              >
+                Goal
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!text.trim() && !hasAttachments}
+              style={{
+                height: 28,
+                minWidth: 60,
+                borderRadius: 'var(--radius-sm)',
+                background: text.trim() || hasAttachments ? 'var(--info)' : 'var(--bg-overlay)',
+                color: text.trim() || hasAttachments ? '#ffffff' : 'var(--text-tertiary)',
+                border: 'none',
+                fontFamily: 'var(--font-display)',
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: text.trim() || hasAttachments ? 'pointer' : 'default',
+                opacity: text.trim() || hasAttachments ? 1 : 0.5,
+              }}
+            >
+              Send
+            </button>
+          </div>
         )}
       </div>
     </div>

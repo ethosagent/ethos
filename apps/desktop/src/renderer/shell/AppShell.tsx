@@ -1,10 +1,13 @@
 import { createEthosClient } from '@ethosagent/sdk';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityPage } from '../activity/ActivityPage';
+import { AdminPage } from '../admin/AdminPage';
 import { ChatPage } from '../chat/ChatPage';
 import { useSessionList } from '../chat/useSessionList';
 import { CronPage } from '../cron/CronPage';
+import { DashboardsPage } from '../dashboards/DashboardsPage';
 import { ErrorBoundary } from '../ErrorBoundary';
+import { GoalsPage } from '../goals/GoalsPage';
 import { ApiKeysPage } from '../lab/api-keys/ApiKeysPage';
 import { BatchPage } from '../lab/batch/BatchPage';
 import { KanbanPage } from '../lab/kanban/KanbanPage';
@@ -41,7 +44,10 @@ type ShellRoute =
   | 'kanban'
   | 'observability'
   | 'mesh'
-  | 'api-keys';
+  | 'api-keys'
+  | 'goals'
+  | 'dashboards'
+  | 'admin';
 
 export function AppShell() {
   const {
@@ -63,6 +69,7 @@ export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [providerModel, setProviderModel] = useState('');
+  const [adminEnabled, setAdminEnabled] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const baseUrl = connectionMode === 'remote' ? remoteUrl : localServerUrl(resolvedPort);
@@ -295,6 +302,7 @@ export function AppShell() {
       .get({})
       .then((cfg) => {
         setProviderModel(`${cfg.provider} · ${cfg.model}`);
+        setAdminEnabled(cfg.adminEnabled);
       })
       .catch(() => {});
   }, [healthy, client]);
@@ -413,6 +421,7 @@ export function AppShell() {
               route={route}
               onNavigate={(r) => setRoute(r as ShellRoute)}
               backendConnected={backendConnected}
+              adminEnabled={adminEnabled}
               sessions={sessionList.sessions}
               pinnedSessions={pinnedSessions}
               loading={sessionList.loading}
@@ -492,6 +501,18 @@ export function AppShell() {
             ) : route === 'activity' ? (
               <ErrorBoundary label="ActivityPage">
                 <ActivityPage />
+              </ErrorBoundary>
+            ) : route === 'goals' ? (
+              <ErrorBoundary label="GoalsPage">
+                <GoalsPage />
+              </ErrorBoundary>
+            ) : route === 'dashboards' ? (
+              <ErrorBoundary label="DashboardsPage">
+                <DashboardsPage />
+              </ErrorBoundary>
+            ) : route === 'admin' ? (
+              <ErrorBoundary label="AdminPage">
+                <AdminPage />
               </ErrorBoundary>
             ) : (
               <div>coming soon</div>
