@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, Button, ConfigProvider } from 'antd';
 import { useCallback, useEffect, useReducer, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { bridge, isDesktop } from '../lib/desktop';
 import { personalityTheme } from '../lib/theme';
 import { type CatalogProviderId, getCatalogEntry } from '../onboarding/catalog/providers';
 import { clearDraft, type DraftState, loadDraft, saveDraft } from '../onboarding/draft';
@@ -187,6 +188,10 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
         ...(answers.baseUrl ? { baseUrl: answers.baseUrl } : {}),
         personalityId: answers.personalityId,
       });
+      // Restart desktop backend so it picks up the new API key.
+      if (isDesktop && bridge) {
+        bridge.backend.restart().catch(() => {});
+      }
       clearDraft();
       void queryClient.invalidateQueries({ queryKey: ['config'] });
       void queryClient.invalidateQueries({ queryKey: ['onboarding'] });

@@ -22,7 +22,9 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { isDesktop } from '../lib/desktop';
 import { rpc } from '../rpc';
+import { DesktopSettings } from './DesktopSettings';
 
 // Settings tab — read/write surface for ~/.ethos/config.yaml.
 //
@@ -606,6 +608,8 @@ export function Settings() {
       </Card>
 
       <ApiKeysSection />
+
+      {isDesktop ? <DesktopSettings /> : null}
     </div>
   );
 }
