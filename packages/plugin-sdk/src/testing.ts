@@ -1,16 +1,5 @@
 import type { AgentLoopConfig } from '@ethosagent/core';
 import { AgentLoop, DefaultHookRegistry, DefaultToolRegistry } from '@ethosagent/core';
-import {
-  c2PatternCheck,
-  DOWNGRADE_REJECTION_MESSAGE,
-  INJECTION_DEFENSE_PRELUDE,
-  resolveDowngradedTools,
-  sanitize,
-  shortPatternCheck,
-  wrapUntrusted,
-} from '@ethosagent/safety-injection';
-import { detectSecrets, redactPii, redactString } from '@ethosagent/safety-redact';
-import { defaultAlwaysDeny, ScopedStorage } from '@ethosagent/storage-fs';
 import type {
   AgentSafety,
   CompletionChunk,
@@ -84,20 +73,27 @@ export function mockTool(name: string, result: ToolResult | string): Tool {
 // createPluginTestSafety — safety bundle for plugin tests
 // ---------------------------------------------------------------------------
 
+// Passthrough no-op safety bundle for plugin tests. Plugin tests exercise plugin
+// tools and hooks, not the safety subsystem, so the real (private) safety
+// implementations are intentionally not used here — keeping the published
+// plugin-sdk free of any dependency on private safety/storage packages.
 function createPluginTestSafety(): AgentSafety {
   return {
     injection: {
-      prelude: INJECTION_DEFENSE_PRELUDE,
-      downgradeRejectionMessage: DOWNGRADE_REJECTION_MESSAGE,
-      sanitize,
-      wrapUntrusted,
-      shortPatternCheck,
-      c2PatternCheck,
-      resolveDowngradedTools,
+      prelude: '',
+      downgradeRejectionMessage: '',
+      sanitize: (content) => content,
+      wrapUntrusted: ({ content }) => ({ content, strippedTokens: 0 }),
+      shortPatternCheck: () => ({ containsInstructions: false, hits: [] }),
+      c2PatternCheck: () => ({ containsInstructions: false }),
+      resolveDowngradedTools: () => new Set<string>(),
     },
-    redaction: { redactPii, redactString, detectSecrets },
-    scopedStorageFactory: (base, scope) =>
-      new ScopedStorage(base, { ...scope, alwaysDeny: defaultAlwaysDeny() }),
+    redaction: {
+      redactPii: (text) => text,
+      redactString: (text) => text,
+      detectSecrets: () => [],
+    },
+    scopedStorageFactory: (base) => base,
   };
 }
 
