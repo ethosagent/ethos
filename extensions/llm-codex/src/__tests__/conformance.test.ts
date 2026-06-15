@@ -236,4 +236,32 @@ describe('CodexProvider conformance', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it('does not forward max_output_tokens to the Responses API', async () => {
+    const events: Array<[string, unknown]> = [
+      ['response.completed', { response: { usage: { input_tokens: 1, output_tokens: 1 } } }],
+    ];
+
+    const mockFetch = makeMockFetch(events);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch;
+
+    try {
+      const provider = new CodexProvider({
+        model: 'gpt-5.4-mini',
+        getAccessToken: async () => 'mock-token',
+      });
+      for await (const _chunk of provider.complete([], [], { maxTokens: 64 })) {
+        // drain the stream to drive the request
+      }
+
+      const calls = vi.mocked(mockFetch).mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
+      const init = calls[0]?.[1];
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
+      expect(body.max_output_tokens).toBeUndefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

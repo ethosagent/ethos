@@ -56,6 +56,11 @@ export interface ToolContext {
   platform: string;
   workingDir: string;
   agentId?: string;
+  /**
+   * Where this turn originated, as `platform:chatId` for channel turns (else unset).
+   * Generic per-run context; goal_create reads it to stamp Goal.origin.
+   */
+  origin?: string;
   /** Active personality for this turn. Tools that touch memory must thread this through. */
   personalityId?: string;
   /**
@@ -184,6 +189,7 @@ export interface ToolExecuteRequest {
   personalityId?: string;
   teamId?: string;
   agentId?: string;
+  origin?: string;
   memoryScopeId?: string;
   userScopeId?: string;
   currentTurn: number;

@@ -86,9 +86,9 @@ export class CodexProvider implements LLMProvider {
       body.parallel_tool_calls = true;
     }
 
-    if (options.maxTokens) {
-      body.max_output_tokens = options.maxTokens;
-    }
+    // The Codex Responses API rejects `max_output_tokens` with a 400
+    // ("Unsupported parameter") — output length is managed server-side, so
+    // `options.maxTokens` is intentionally not forwarded.
 
     // Per-slice token estimate (best-effort, mirrors other providers).
     let requestTokens: { system: number; tools: number; messages: number } | undefined;

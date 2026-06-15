@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline';
 import type { AgentLoop } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
 import { Gateway, type GatewayBotConfig } from '@ethosagent/gateway';
+import { registerGoalNotifications } from '@ethosagent/goal-runner';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry, firstParagraph } from '@ethosagent/personalities';
 import { initPairingDb } from '@ethosagent/safety-channel';
@@ -614,6 +615,20 @@ export async function runGatewayStart(): Promise<void> {
           ...(pairingDb ? { pairingDb } : {}),
         });
   gatewayRef = gateway;
+
+  // Wire goal completion notifications back to their originating channel.
+  // Each bot's goalRunner fires on that bot's own hooks; register per bot
+  // (registries are distinct, so no double-send) plus the system loop for
+  // the email/legacy path.
+  const sendGoalNote = async (platform: string, chatId: string, text: string): Promise<void> => {
+    await gateway.sendTo(platform, chatId, text);
+  };
+  for (const bot of bots) {
+    registerGoalNotifications(bot.loop.hooks, sendGoalNote);
+  }
+  if (systemLoop) {
+    registerGoalNotifications(systemLoop.hooks, sendGoalNote);
+  }
 
   // Wire send_message tool to the real Gateway send path.
   // Each loop's messaging send function is scoped — set on all active loops.

@@ -302,18 +302,27 @@ export class ChatService {
   private async tryAutoTitle(sessionId: string): Promise<void> {
     try {
       const session = await this.opts.sessions.get(sessionId);
-      if (!session || session.title) return;
+      if (!session) {
+        return;
+      }
+      if (session.title) {
+        return;
+      }
       const firstMessage = this.firstUserMessages.get(sessionId);
-      if (!firstMessage) return;
+      if (!firstMessage) {
+        return;
+      }
       this.firstUserMessages.delete(sessionId);
       await this.titleSession(sessionId, firstMessage);
     } catch {
-      // Best-effort
+      // Best-effort: auto-title failures are non-fatal.
     }
   }
 
   private async titleSession(sessionId: string, firstUserMessage: string): Promise<void> {
-    if (!this.opts.titleFn) return;
+    if (!this.opts.titleFn) {
+      return;
+    }
     try {
       const title = await this.opts.titleFn(
         'Generate a title for this conversation in 6 words or fewer. Reply with only the title, no punctuation.',
@@ -325,7 +334,7 @@ export class ChatService {
         this.opts.systemBus?.emitSystem({ type: 'session.titled', sessionId, title: trimmed });
       }
     } catch {
-      // Best-effort — never affect the chat experience.
+      // Best-effort: title generation failures are non-fatal.
     }
   }
 

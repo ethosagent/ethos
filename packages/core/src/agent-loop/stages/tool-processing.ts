@@ -101,7 +101,13 @@ export interface ToolProcessingContext {
   steerSink?: SteerSink;
 
   // Run options
-  opts: { agentId?: string; attachments?: Attachment[]; dryRun?: boolean; userId?: string };
+  opts: {
+    agentId?: string;
+    origin?: string;
+    attachments?: Attachment[];
+    dryRun?: boolean;
+    userId?: string;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +155,7 @@ export async function* processTools(
     platform: deps.platform,
     workingDir: deps.workingDir,
     agentId: ctx.opts.agentId,
+    origin: ctx.opts.origin,
     personalityId: ctx.personality.id,
     memoryScopeId: ctx.memScopeId,
     ...(ctx.userScopeId ? { userScopeId: ctx.userScopeId } : {}),

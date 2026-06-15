@@ -339,8 +339,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       }
       return text.trim();
     };
-  } catch {
-    // Best-effort — title generation is optional
+  } catch (err) {
+    console.warn('[ethos] session auto-title disabled: failed to create title LLM:', err);
   }
 
   const session = createSessionStore({ dataDir: dir });

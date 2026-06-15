@@ -199,6 +199,8 @@ export interface RunOptions {
    * `MAX_SPAWN_DEPTH` can be enforced across recursive sub-agent calls.
    */
   agentId?: string;
+  /** Origin of this run (`platform:chatId` for channel turns). Threaded to `ToolContext.origin`. Generic — not goal-specific. */
+  origin?: string;
   /**
    * FW-9 — `steer` busy-input mode. Surfaces (CLI REPL) push user-typed text
    * here while the agent is mid-turn. AgentLoop drains the sink at the
@@ -645,6 +647,7 @@ export class AgentLoop {
           steerSink: opts.steerSink,
           opts: {
             agentId: opts.agentId,
+            origin: opts.origin,
             attachments: opts.attachments,
             dryRun: opts.dryRun,
             userId: opts.userId,

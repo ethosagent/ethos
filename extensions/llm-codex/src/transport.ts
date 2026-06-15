@@ -86,7 +86,6 @@ export interface ResponsesApiBody {
   tools?: unknown[];
   tool_choice?: string;
   parallel_tool_calls?: boolean;
-  max_output_tokens?: number;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import type { AcceptanceSpec, GoalStore, Tool, ToolResult } from '@ethosagent/types';
+import type { AcceptanceSpec, GoalOrigin, GoalStore, Tool, ToolResult } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -12,6 +12,12 @@ type ErrorCode = Extract<ToolResult, { ok: false }>['code'];
 
 function errorResult(error: string, code: ErrorCode): ToolResult {
   return { ok: false, error, code };
+}
+
+function deriveOrigin(raw: string | undefined): GoalOrigin {
+  if (raw === 'cli') return 'cli';
+  if (raw?.includes(':')) return raw as `${string}:${string}`;
+  return 'web';
 }
 
 // ---------------------------------------------------------------------------
@@ -89,7 +95,7 @@ function createGoalCreate(store: GoalStore, onCreated?: (goalId: string) => void
         const goal = store.create({
           userId: typeof userId === 'string' ? userId : 'default-user',
           personalityId: ctx.personalityId ?? 'default',
-          origin: 'web',
+          origin: deriveOrigin(ctx.origin),
           title: args.title,
           goalText: args.goal_text,
           ...(args.acceptance_spec !== undefined

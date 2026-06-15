@@ -1227,6 +1227,7 @@ export class Gateway {
         attachments: message.attachments,
         userId,
         steerSink,
+        origin: `${message.platform}:${message.chatId}`,
       })) {
         if (event.type === 'tool_start' && this.showToolCalls) {
           const status = this.activeStatusMessages.get(laneKey);
