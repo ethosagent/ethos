@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import type { AddressInfo } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
@@ -19,13 +20,14 @@ import { store } from './store';
 type ServerHandle = ReturnType<typeof honoServe>;
 
 let serverHandle: ServerHandle | null = null;
+let boundPort: number | null = null;
 
 function getDataDir(): string {
   return store.get('dataDir') ?? join(homedir(), '.ethos');
 }
 
-export async function startServer(port: number): Promise<void> {
-  if (serverHandle) return;
+export async function startServer(port: number): Promise<number> {
+  if (serverHandle) return boundPort ?? port;
 
   const dataDir = getDataDir();
 
@@ -88,6 +90,17 @@ export async function startServer(port: number): Promise<void> {
     return undefined;
   })();
 
+  const webDistDir = (() => {
+    const candidates = [
+      join(__dirname, '..', '..', 'apps', 'web', 'dist'),
+      join(__dirname, '..', '..', '..', '..', 'apps', 'web', 'dist'),
+    ];
+    for (const c of candidates) {
+      if (existsSync(join(c, 'index.html'))) return c;
+    }
+    return undefined;
+  })();
+
   const { app: webApp } = createWebApi({
     dataDir,
     sessionStore: session,
@@ -99,22 +112,46 @@ export async function startServer(port: number): Promise<void> {
     dangerPredicate: createDangerPredicate(),
     toolRegistry,
     ...(skillsCatalogDir ? { catalogDir: skillsCatalogDir } : {}),
+    ...(webDistDir ? { webDist: webDistDir } : {}),
   });
 
-  await new Promise<void>((resolve, reject) => {
-    const s = honoServe({ fetch: webApp.fetch, port, hostname: '127.0.0.1' }, () => {
-      serverHandle = s;
-      resolve();
+  function bind(p: number): Promise<number> {
+    return new Promise<number>((resolve, reject) => {
+      const s = honoServe(
+        { fetch: webApp.fetch, port: p, hostname: '127.0.0.1' },
+        (info: AddressInfo) => {
+          serverHandle = s;
+          resolve(info.port);
+        },
+      );
+      s.once('error', reject);
     });
-    s.once('error', reject);
-  });
+  }
 
-  console.log(`[ethos-backend] in-process server listening on http://127.0.0.1:${port}`);
+  let actual: number;
+  try {
+    actual = await bind(port);
+  } catch (err: unknown) {
+    if (err && typeof err === 'object' && 'code' in err && err.code === 'EADDRINUSE') {
+      actual = await bind(0);
+    } else {
+      throw err;
+    }
+  }
+
+  boundPort = actual;
+  console.log(`[ethos-backend] in-process server listening on http://127.0.0.1:${actual}`);
+  return actual;
 }
 
 export async function stopServer(): Promise<void> {
   if (!serverHandle) return;
   const s = serverHandle;
   serverHandle = null;
+  boundPort = null;
   await new Promise<void>((resolve) => s.close(() => resolve()));
+}
+
+export function getPort(): number | null {
+  return boundPort;
 }

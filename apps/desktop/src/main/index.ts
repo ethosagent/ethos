@@ -1,8 +1,10 @@
 import type { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { app, BrowserWindow, nativeTheme, type Tray } from 'electron';
+import { app, BrowserWindow, dialog, nativeTheme, session, type Tray } from 'electron';
 import { initAutoUpdater } from './auto-update';
-import { startBackend, stopBackend } from './backend';
+import { restartBackendAsync, startBackend, startBackendAsync, stopBackend } from './backend';
 import { registerGlobalShortcuts, unregisterGlobalShortcuts } from './global-shortcut';
 import { registerIpcHandlers } from './ipc';
 import { showMinimizeNotification } from './notifications';
@@ -18,6 +20,80 @@ let trayInstance: Tray | null = null;
 let isQuitting = false;
 let desktopActivated = false;
 
+function getDataDir(): string {
+  return store.get('dataDir') ?? join(homedir(), '.ethos');
+}
+
+function readWebToken(): string | null {
+  try {
+    return readFileSync(join(getDataDir(), 'web-token'), 'utf-8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadSpaUrl(win: BrowserWindow, port: number): Promise<void> {
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const cookies = await session.defaultSession.cookies.get({
+    url: baseUrl,
+    name: 'ethos_auth',
+  });
+  if (cookies.length > 0) {
+    win.loadURL(baseUrl);
+    return;
+  }
+  const token = readWebToken();
+  if (token) {
+    win.loadURL(`${baseUrl}/auth/exchange?t=${token}`);
+  } else {
+    win.loadURL(baseUrl);
+  }
+}
+
+function setupSpaCsp(): void {
+  const isDev = process.env.NODE_ENV === 'development';
+  const localConnect = isDev ? ' http://localhost:* ws://localhost:*' : '';
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    `connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*${localConnect}`,
+    "img-src 'self' data: https:",
+    "font-src 'self'",
+  ].join('; ');
+
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [csp],
+      },
+    });
+  });
+}
+
+async function startBackendWithRetry(port: number): Promise<number> {
+  for (;;) {
+    try {
+      return await startBackendAsync(port);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const { response } = await dialog.showMessageBox({
+        type: 'error',
+        title: 'Ethos Backend Failed',
+        message: `Could not start the backend server.\n\n${message}`,
+        buttons: ['Retry', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (response === 1) {
+        app.quit();
+        throw err;
+      }
+    }
+  }
+}
+
 function activateDesktop(): void {
   if (desktopActivated) return;
   desktopActivated = true;
@@ -31,7 +107,7 @@ function activateDesktop(): void {
   }
 }
 
-function createWindow(): void {
+async function createWindow(): Promise<void> {
   const bounds = store.get('windowBounds');
   const isOnboarding = !store.get('onboardingComplete', false);
 
@@ -77,7 +153,12 @@ function createWindow(): void {
     store.set('theme', isDark ? 'dark' : 'light');
   }
 
-  if (process.env.NODE_ENV === 'development') {
+  if (store.get('useSpaMode')) {
+    const port = store.get('backendPort', 3001);
+    const actualPort = await startBackendWithRetry(port);
+    store.set('backendPort', actualPort);
+    await loadSpaUrl(mainWindow, actualPort);
+  } else if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:5173');
   } else {
     mainWindow.loadFile(join(__dirname, '..', 'renderer', 'index.html'));
@@ -119,13 +200,17 @@ app.whenReady().then(async () => {
     },
   });
 
+  if (store.get('useSpaMode')) {
+    setupSpaCsp();
+  }
+
   const hidden = isBackgroundMode();
 
   if (hidden && store.get('onboardingComplete', false)) {
     logBackgroundStartup();
     activateDesktop();
   } else {
-    createWindow();
+    await createWindow();
     if (store.get('onboardingComplete', false)) {
       activateDesktop();
     }
@@ -133,6 +218,19 @@ app.whenReady().then(async () => {
 
   (app as unknown as EventEmitter).on('ethos:onboarding-complete', () => {
     activateDesktop();
+    if (store.get('useSpaMode') && mainWindow && !mainWindow.isDestroyed()) {
+      const port = store.get('backendPort', 3001);
+      restartBackendAsync(port)
+        .then((actualPort) => {
+          store.set('backendPort', actualPort);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            loadSpaUrl(mainWindow, actualPort);
+          }
+        })
+        .catch((err: unknown) => {
+          console.error('[ethos] failed to restart backend after onboarding:', err);
+        });
+    }
   });
 
   if (process.env.NODE_ENV !== 'development') {
@@ -151,7 +249,9 @@ app.whenReady().then(async () => {
       mainWindow.show();
       mainWindow.focus();
     } else {
-      createWindow();
+      createWindow().catch((err: unknown) => {
+        console.error('[ethos] failed to create window on activate:', err);
+      });
     }
   });
 });

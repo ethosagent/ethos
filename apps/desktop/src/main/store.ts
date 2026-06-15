@@ -30,6 +30,7 @@ export interface AppStoreType {
   dataDir?: string;
   connectionMode?: 'local' | 'remote';
   remoteUrl?: string;
+  useSpaMode: boolean;
 }
 
 export const store = new Store<AppStoreType>({
@@ -51,5 +52,6 @@ export const store = new Store<AppStoreType>({
     autoUpdate: true,
     launchAtLogin: false,
     hasShownLoginItemHint: false,
+    useSpaMode: true,
   },
 });
