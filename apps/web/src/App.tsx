@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { bridge, isDesktop } from './lib/desktop';
-import { reinitializeClient } from './rpc';
 import { CommandPalette } from './components/CommandPalette';
 import { MobileTabBar } from './components/MobileTabBar';
 import { RightDrawer } from './components/RightDrawer';
@@ -10,6 +8,7 @@ import { StatusBar } from './components/StatusBar';
 import { useConfig, useOnboardingState } from './features/config/api/queries';
 import { usePushEventToasts } from './hooks/usePushEventToasts';
 import { useSessionTitleSync } from './hooks/useSessionTitleSync';
+import { bridge, isDesktop } from './lib/desktop';
 import { Activity } from './pages/Activity';
 import { Admin } from './pages/Admin';
 import { Batch } from './pages/Batch';
@@ -40,6 +39,7 @@ import { Skills } from './pages/Skills';
 import { TeamControlCenter } from './pages/TeamControlCenter';
 import { TeamCreate } from './pages/TeamCreate';
 import { Teams } from './pages/Teams';
+import { reinitializeClient } from './rpc';
 
 // Top-level route map. v0 ships only Talk-group routes (Chat + Sessions)
 // plus the onboarding flow and the signing-in placeholder. v0.5 adds the
