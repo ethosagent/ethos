@@ -151,7 +151,7 @@ sqlite-for-electron:
 
 # ---------- desktop ----------
 
-desktop-dev: sqlite-for-electron
+desktop-dev: sqlite-for-electron web-build
 	@echo "Starting Electron dev (renderer at http://localhost:5173/)..."
 	@$(NVM_EXEC) pnpm --filter @ethosagent/desktop dev
 
