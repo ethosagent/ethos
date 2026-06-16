@@ -141,7 +141,8 @@
       "@ethosagent/safety-watcher": ["./packages/safety/watcher/src"],
       "@ethosagent/tools-skills": ["./extensions/tools-skills/src"],
       "@ethosagent/tools-tts": ["./extensions/tools-tts/src"],
-      "@ethosagent/example-mission-control": ["./examples/mission-control/src"]
+      "@ethosagent/example-mission-control": ["./examples/mission-control/src"],
+      "@ethosagent/constitution": ["./extensions/constitution/src"]
     }
   },
   "include": [

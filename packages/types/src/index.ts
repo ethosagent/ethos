@@ -3,6 +3,7 @@
 
 export * from './agent-event';
 export * from './clarify';
+export * from './constitution';
 export * from './context-engine';
 export * from './diagnostics';
 export * from './errors';

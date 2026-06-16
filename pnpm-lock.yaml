@@ -719,6 +719,28 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/constitution:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      yaml:
+        specifier: ^2.7.1
+        version: 2.9.0
+    devDependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ethosagent/safety-injection':
+        specifier: workspace:*
+        version: link:../../packages/safety/injection
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../../packages/safety/redact
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+
   extensions/cron:
     dependencies:
       '@ethosagent/logger':
@@ -1556,6 +1578,9 @@ importers:
 
   packages/wiring:
     dependencies:
+      '@ethosagent/constitution':
+        specifier: workspace:*
+        version: link:../../extensions/constitution
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../core

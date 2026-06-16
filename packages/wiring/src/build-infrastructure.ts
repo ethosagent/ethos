@@ -1,5 +1,11 @@
 import { join } from 'node:path';
 import {
+  applySafeMode,
+  BUILTIN_PERSONALITY_IDS,
+  enforceConstitution,
+  loadConstitution,
+} from '@ethosagent/constitution';
+import {
   type CapabilityBackends,
   ClarifyBridge,
   DefaultExecutionBackendRegistry,
@@ -28,6 +34,7 @@ import { readFileReducer } from '@ethosagent/tools-code/reducers/read-file';
 import { kanbanListReducer } from '@ethosagent/tools-kanban/reducers/kanban-list';
 import { bashReducer } from '@ethosagent/tools-terminal/reducers/bash';
 import type {
+  ConstitutionEnforcement,
   ExecutionBackendRegistry,
   HookRegistry,
   LLMProviderFactoryContext,
@@ -56,6 +63,7 @@ export interface InfrastructureResult {
   capabilityBackends: CapabilityBackends;
   tools: DefaultToolRegistry;
   clarifyBridge: ClarifyBridge;
+  constitutionEnforcement?: ConstitutionEnforcement;
 }
 
 /**
@@ -156,6 +164,35 @@ export async function buildInfrastructure(
     personality: config.personality,
   });
 
+  // ---------------------------------------------------------------------------
+  // Constitution — operator-authoritative ceiling layered over personalities.
+  // Malformed constitution → SAFE MODE: only built-ins load, read-only tools.
+  // Hard violations throw ConstitutionViolationError and abort the run.
+  // ---------------------------------------------------------------------------
+  const constLoad = await loadConstitution(wiringCtx.storage, dataDir);
+  let constitutionEnforcement: ConstitutionEnforcement | undefined;
+  let effectiveActivePerson = activePerson;
+  if (constLoad.status === 'malformed') {
+    log.error(
+      `Constitution malformed — entering SAFE MODE: ${constLoad.error} (see docs/content/operating/how-to/safe-mode.md)`,
+    );
+    const safe = applySafeMode(personalities.list(), BUILTIN_PERSONALITY_IDS);
+    const survivors = new Set(safe.map((p) => p.id));
+    for (const p of personalities.list()) {
+      if (!survivors.has(p.id)) personalities.remove(p.id);
+    }
+    effectiveActivePerson = personalities.getDefault();
+  } else {
+    const result = enforceConstitution({
+      constitution: constLoad.constitution,
+      personalities: personalities.list(),
+      ethosHome: dataDir,
+      workingDir: wiringCtx.workingDir,
+      log,
+    });
+    constitutionEnforcement = result.enforcement;
+  }
+
   // -------------------------------------------------------------------------
   // Sandbox — shared by browser and code tools
   // -------------------------------------------------------------------------
@@ -204,10 +241,10 @@ export async function buildInfrastructure(
     },
     storage: new FsStorage(),
     personalityFsReach: {
-      read: activePerson.fs_reach?.read ?? [],
-      write: activePerson.fs_reach?.write ?? [],
+      read: effectiveActivePerson.fs_reach?.read ?? [],
+      write: effectiveActivePerson.fs_reach?.write ?? [],
     },
-    personalityNetworkPolicy: activePerson.safety?.network ?? {},
+    personalityNetworkPolicy: effectiveActivePerson.safety?.network ?? {},
     safeFetch,
     alwaysDenyPaths: defaultAlwaysDeny(),
     attachmentCache: new FsAttachmentCache(new FsStorage(), join(dataDir, 'cache', 'attachments')),
@@ -236,12 +273,13 @@ export async function buildInfrastructure(
     executionBackends,
     memoryProviders,
     personalities,
-    activePerson,
+    activePerson: effectiveActivePerson,
     sandbox,
     hooks,
     sessionCompose,
     capabilityBackends,
     tools,
     clarifyBridge,
+    constitutionEnforcement,
   };
 }
