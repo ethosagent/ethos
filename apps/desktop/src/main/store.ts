@@ -33,25 +33,42 @@ export interface AppStoreType {
   useSpaMode: boolean;
 }
 
-export const store = new Store<AppStoreType>({
-  defaults: {
-    theme: 'dark',
-    onboardingComplete: false,
-    advancedMode: false,
-    backendPort: 3001,
-    memory: 'markdown',
-    approvalMode: 'manual',
-    contextLayering: false,
-    debugMode: false,
-    verbosity: 'balanced',
-    messageFontSize: 14,
-    codeBlockFontSize: 13,
-    retentionDays: 90,
-    traceLogDays: 30,
-    observabilityDays: 7,
-    autoUpdate: true,
-    launchAtLogin: false,
-    hasShownLoginItemHint: false,
-    useSpaMode: true,
+let storeInstance: Store<AppStoreType> | null = null;
+
+function getStore(): Store<AppStoreType> {
+  if (!storeInstance) {
+    storeInstance = new Store<AppStoreType>({
+      defaults: {
+        theme: 'dark',
+        onboardingComplete: false,
+        advancedMode: false,
+        backendPort: 3001,
+        memory: 'markdown',
+        approvalMode: 'manual',
+        contextLayering: false,
+        debugMode: false,
+        verbosity: 'balanced',
+        messageFontSize: 14,
+        codeBlockFontSize: 13,
+        retentionDays: 90,
+        traceLogDays: 30,
+        observabilityDays: 7,
+        autoUpdate: true,
+        launchAtLogin: false,
+        hasShownLoginItemHint: false,
+        useSpaMode: true,
+      },
+    });
+  }
+  return storeInstance;
+}
+
+export const store = new Proxy({} as Store<AppStoreType>, {
+  get(_target, prop, receiver) {
+    const value = Reflect.get(getStore(), prop, receiver);
+    return typeof value === 'function' ? value.bind(getStore()) : value;
+  },
+  set(_target, prop, value) {
+    return Reflect.set(getStore(), prop, value);
   },
 });

@@ -6,7 +6,24 @@ import Store from 'electron-store';
 // (separate from config.json) as base64.
 // No native module required — safeStorage is built into Electron 15+.
 
-const keychainStore = new Store<Record<string, string>>({ name: 'keychain' });
+let keychainStoreInstance: Store<Record<string, string>> | null = null;
+
+function getKeychainStore(): Store<Record<string, string>> {
+  if (!keychainStoreInstance) {
+    keychainStoreInstance = new Store<Record<string, string>>({ name: 'keychain' });
+  }
+  return keychainStoreInstance;
+}
+
+const keychainStore = new Proxy({} as Store<Record<string, string>>, {
+  get(_target, prop, receiver) {
+    const value = Reflect.get(getKeychainStore(), prop, receiver);
+    return typeof value === 'function' ? value.bind(getKeychainStore()) : value;
+  },
+  set(_target, prop, value) {
+    return Reflect.set(getKeychainStore(), prop, value);
+  },
+});
 
 export async function setKeychainValue(key: string, value: string): Promise<void> {
   const encrypted = safeStorage.encryptString(value);

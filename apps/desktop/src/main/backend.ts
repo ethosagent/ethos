@@ -1,14 +1,36 @@
+import { appendFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { getPort, startServer, stopServer } from './serve';
+import { store } from './store';
 
 let serverRunning = false;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
+
+function logBackendError(message: string): void {
+  const dataDir = (() => {
+    try {
+      return store.get('dataDir') ?? join(homedir(), '.ethos');
+    } catch {
+      return join(homedir(), '.ethos');
+    }
+  })();
+  const logPath = join(dataDir, 'ethos.log');
+
+  process.stderr.write(message);
+  try {
+    appendFileSync(logPath, `${new Date().toISOString()} ${message}`);
+  } catch {
+    // logging must never throw
+  }
+}
 
 export function startBackend(port: number): void {
   if (serverRunning) return;
   serverRunning = true;
 
   startServer(port).catch((err: unknown) => {
-    process.stderr.write(
+    logBackendError(
       `[ethos-backend] failed to start in-process server: ${err instanceof Error ? err.message : String(err)}\n`,
     );
     serverRunning = false;
@@ -33,7 +55,7 @@ export function restartBackend(port: number): void {
         }, 600);
       })
       .catch((err: unknown) => {
-        process.stderr.write(
+        logBackendError(
           `[ethos-backend] error stopping server on restart: ${err instanceof Error ? err.message : String(err)}\n`,
         );
         restartTimer = setTimeout(() => {
@@ -53,7 +75,7 @@ export function stopBackend(): void {
     restartTimer = null;
   }
   stopServer().catch((err: unknown) => {
-    process.stderr.write(
+    logBackendError(
       `[ethos-backend] error stopping server: ${err instanceof Error ? err.message : String(err)}\n`,
     );
   });
