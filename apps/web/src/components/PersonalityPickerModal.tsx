@@ -1,6 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { personalityAccent } from '@ethosagent/design-tokens';
+import { Input, type InputRef, Modal } from 'antd';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePersonalityList } from '../features/personalities/api/queries';
+import { useActivePersonality } from '../hooks/useActivePersonality';
+import {
+  buildNewSessionPath,
+  filterPersonalities,
+  moveSelection,
+  type PickerPersonality,
+  resolveInitialSelection,
+} from '../lib/newSessionPicker';
 import { PersonalityRingAvatar } from './ui/PersonalityRingAvatar';
 
 interface PersonalityPickerModalProps {
@@ -8,92 +18,130 @@ interface PersonalityPickerModalProps {
   onClose: () => void;
 }
 
+const SEARCH_THRESHOLD = 6;
+
 export function PersonalityPickerModal({ open, onClose }: PersonalityPickerModalProps) {
   const navigate = useNavigate();
   const { data } = usePersonalityList({ enabled: open });
-  const personalities = data?.items ?? [];
+  const { id: activeId } = useActivePersonality();
+  const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<InputRef>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
-  // Reset selection when opening
+  const items = useMemo<PickerPersonality[]>(
+    () => (data?.items ?? []).map((p) => ({ id: p.id, name: p.name, description: p.description })),
+    [data?.items],
+  );
+  const filtered = useMemo(() => filterPersonalities(items, query), [items, query]);
+  const showSearch = items.length > SEARCH_THRESHOLD;
+
+  // Reset query each open; recompute the highlighted tile from the active
+  // personality whenever the modal opens or the filtered list changes.
   useEffect(() => {
-    if (open) setSelectedId(personalities[0]?.id ?? null);
-  }, [open, personalities]);
+    if (open) setQuery('');
+  }, [open]);
 
-  // Close on Escape
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+    setSelectedId((prev) => {
+      if (prev && filtered.some((p) => p.id === prev)) return prev;
+      return resolveInitialSelection(filtered, activeId);
+    });
+  }, [open, filtered, activeId]);
 
-  if (!open) return null;
+  // Focus the search input when shown, else the list container so arrow
+  // keys work immediately.
+  useEffect(() => {
+    if (!open) return;
+    const t = setTimeout(() => {
+      if (showSearch) searchRef.current?.focus();
+      else listRef.current?.focus();
+    }, 0);
+    return () => clearTimeout(t);
+  }, [open, showSearch]);
 
-  const handleStart = () => {
-    if (!selectedId) return;
+  const confirm = (id: string | null) => {
+    if (!id) return;
     onClose();
-    navigate(`/chat?personality=${encodeURIComponent(selectedId)}`);
+    navigate(buildNewSessionPath(id));
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSelectedId((cur) => moveSelection(filtered, cur, 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSelectedId((cur) => moveSelection(filtered, cur, -1));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      confirm(selectedId);
+    }
   };
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: modal overlay click-to-dismiss
-    <div
-      ref={overlayRef}
-      role="presentation"
-      className="personality-picker-overlay"
-      onClick={(e) => {
-        if (e.target === overlayRef.current) onClose();
-      }}
+    <Modal
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      closable={false}
+      width={480}
+      destroyOnClose
+      maskClosable
+      styles={{ body: { padding: 0 } }}
+      style={{ top: 96 }}
     >
-      <div className="personality-picker-modal">
-        <h2 className="personality-picker-title">Start a new session</h2>
-
-        <div className="personality-picker-list">
-          {personalities.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className={`personality-picker-row${selectedId === p.id ? ' selected' : ''}`}
-              onClick={() => setSelectedId(p.id)}
-            >
-              <PersonalityRingAvatar personalityId={p.id} name={p.name} size={32} />
-              <div className="personality-picker-info">
-                <span className="personality-picker-name">{p.name}</span>
-                {p.description ? (
-                  <span className="personality-picker-desc">{p.description}</span>
-                ) : null}
-              </div>
-              {p.model ? (
-                <span className="badge badge-dim personality-picker-model">
-                  {typeof p.model === 'string' ? p.model : 'multi-model'}
-                </span>
-              ) : null}
-              {selectedId === p.id ? (
-                <span className="personality-picker-check" aria-hidden="true">
-                  ✓
-                </span>
-              ) : null}
-            </button>
-          ))}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: keyboard handler delegates arrow/enter nav to the inner focusable list and option buttons */}
+      <div className="np-picker" onKeyDown={onKeyDown}>
+        <div className="np-picker-header">
+          <h3 className="np-picker-title">Start a new session</h3>
+          <p className="np-picker-subtitle">Who do you want to talk to?</p>
         </div>
-
-        <div className="personality-picker-footer">
-          <button type="button" className="btn btn-ghost" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn btn-blue"
-            disabled={!selectedId}
-            onClick={handleStart}
-          >
-            Start session →
-          </button>
+        {showSearch ? (
+          <Input
+            ref={searchRef}
+            size="large"
+            placeholder="Filter personalities…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            bordered={false}
+            style={{ borderBottom: '1px solid var(--ethos-border)', borderRadius: 0, padding: 16 }}
+          />
+        ) : null}
+        <div className="np-picker-list" ref={listRef} tabIndex={-1} role="listbox">
+          {filtered.length === 0 ? (
+            <div className="np-picker-empty">No personalities match.</div>
+          ) : (
+            filtered.map((p) => {
+              const selected = p.id === selectedId;
+              const accent = personalityAccent(p.id);
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  className={`np-picker-row${selected ? ' np-picker-row--selected' : ''}`}
+                  style={
+                    selected
+                      ? { borderColor: accent, boxShadow: `inset 0 0 0 1px ${accent}` }
+                      : undefined
+                  }
+                  onMouseEnter={() => setSelectedId(p.id)}
+                  onClick={() => confirm(p.id)}
+                >
+                  <PersonalityRingAvatar personalityId={p.id} name={p.name} size={32} />
+                  <span className="np-picker-info">
+                    <span className="np-picker-name">{p.name}</span>
+                    {p.description ? <span className="np-picker-desc">{p.description}</span> : null}
+                  </span>
+                </button>
+              );
+            })
+          )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

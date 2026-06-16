@@ -262,6 +262,9 @@ body,
   font-size: 13px;
   font-weight: 500;
   text-decoration: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
   transition: background-color 80ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -2882,6 +2885,92 @@ textarea {
   font-size: 11px;
   font-family: "Geist Mono", ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
+}
+
+/* New-session personality picker — dense selectable tiles. Selected state
+   borrows the personality accent (applied inline via personalityAccent) so
+   selection reads as the agent's color, not a static decorative border. */
+
+.np-picker-header {
+  padding: 20px 20px 12px;
+}
+
+.np-picker-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.np-picker-subtitle {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.np-picker-list {
+  max-height: 56vh;
+  overflow-y: auto;
+  padding: 8px;
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.np-picker-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.np-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 80ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.np-picker-row:hover {
+  background: var(--ethos-surface-tint);
+}
+
+.np-picker-row--selected {
+  background: var(--ethos-surface-tint);
+}
+
+.np-picker-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.np-picker-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.np-picker-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Settings tab — header + advanced toggle. Form lives in Antd Cards

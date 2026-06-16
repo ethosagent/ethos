@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useConfig } from '../features/config/api/queries';
 import { useRecentSessions } from '../features/sessions/api/queries';
+import { useNewSessionModal } from '../hooks/useNewSessionModal';
 
 export interface SidebarProps {
   collapsed: boolean;
@@ -14,6 +15,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const { pathname } = useLocation();
   const [searchParams] = useSearchParams();
   const activeSessionId = searchParams.get('session');
+  const { openNewSessionModal } = useNewSessionModal();
   const [sessionSearch, setSessionSearch] = useState('');
   const [advancedMode, setAdvancedMode] = useState(() => {
     try {
@@ -81,9 +83,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
       {!collapsed && (
         <>
-          <Link to="/chat" className="sidebar-new-btn">
+          <button type="button" className="sidebar-new-btn" onClick={openNewSessionModal}>
             + New session
-          </Link>
+          </button>
 
           <div className="sidebar-section-label">Agent</div>
           <div className="sidebar-nav">

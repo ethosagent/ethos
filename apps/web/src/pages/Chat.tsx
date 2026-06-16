@@ -9,13 +9,13 @@ import { Composer } from '../components/chat/Composer';
 import { GoalIntakeModal } from '../components/chat/GoalIntakeModal';
 import { MessageList } from '../components/chat/MessageList';
 import { PersonalityBar } from '../components/chat/PersonalityBar';
-import { PersonalityPickerModal } from '../components/PersonalityPickerModal';
 import { useGoalCreate } from '../features/goals/api/mutations';
 import { useGoalDetection } from '../features/goals/useGoalDetection';
 import { useSessionRenameFromChat } from '../features/sessions/api/mutations';
 import { useSessionGet } from '../features/sessions/api/queries';
 import { useActivePersonality } from '../hooks/useActivePersonality';
 import { useChat } from '../hooks/useChat';
+import { useNewSessionModal } from '../hooks/useNewSessionModal';
 import { type AttachmentPreview, fileToPreview } from '../lib/attachments';
 import { clearLastSessionId, getLastSessionId, setLastSessionId } from '../lib/lastSession';
 import { personalityTheme } from '../lib/theme';
@@ -52,6 +52,7 @@ export function Chat() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const createGoal = useGoalCreate();
+  const { openNewSessionModal } = useNewSessionModal();
 
   // Pre-fetch the session key from the URL param so we can thread it into
   // useChat. React Query deduplicates this with the sessionQuery below when
@@ -139,13 +140,21 @@ export function Chat() {
   // *had* an active conversation, the bar's switcher is the right path
   // (it forks). Treat the deep-link as a "configure-then-chat" intent.
   const personalityParam = searchParams.get('personality');
+  const newSessionParam = searchParams.get('new');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resetSession/clearLastSessionId are stable; deps intentionally key on the params only
   useEffect(() => {
     if (!personalityParam) return;
     setOverride(personalityParam);
+    if (newSessionParam === '1') {
+      // New Session flow: start fresh under the chosen personality.
+      resetSession();
+      clearLastSessionId();
+    }
     const next = new URLSearchParams(searchParams);
     next.delete('personality');
+    next.delete('new');
     setSearchParams(next, { replace: true });
-  }, [personalityParam, searchParams, setSearchParams, setOverride]);
+  }, [personalityParam, newSessionParam, searchParams, setSearchParams, setOverride]);
 
   // Periodically re-render while streaming so the stall indicator can
   // compare lastStreamEventAt to the current wall clock.
@@ -162,7 +171,6 @@ export function Chat() {
     Date.now() - state.lastStreamEventAt > 30_000;
 
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentPreview[]>([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
 
   const { intakeOpen, setIntakeOpen, detectedMessage, restatedGoal, detectGoal, openIntake } =
     useGoalDetection();
@@ -294,7 +302,7 @@ export function Chat() {
   };
 
   const handleNewSession = () => {
-    setPickerOpen(true);
+    openNewSessionModal();
   };
 
   return (
@@ -308,7 +316,6 @@ export function Chat() {
           sessionTitle={sessionTitle}
           onRenameSession={handleRenameSession}
         />
-        <PersonalityPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} />
         <GoalIntakeModal
           open={intakeOpen}
           onClose={() => setIntakeOpen(false)}

@@ -3,10 +3,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { CommandPalette } from './components/CommandPalette';
 import { MobileTabBar } from './components/MobileTabBar';
+import { PersonalityPickerModal } from './components/PersonalityPickerModal';
 import { RightDrawer } from './components/RightDrawer';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { useConfig, useOnboardingState } from './features/config/api/queries';
+import { useNewSessionModal } from './hooks/useNewSessionModal';
 import { usePushEventToasts } from './hooks/usePushEventToasts';
 import { useSessionTitleSync } from './hooks/useSessionTitleSync';
 import { bridge, isDesktop } from './lib/desktop';
@@ -68,6 +70,7 @@ export function App() {
   usePushEventToasts();
   useSessionTitleSync();
   const { data: config } = useConfig();
+  const { open: newSessionOpen, closeNewSessionModal } = useNewSessionModal();
   const { pathname } = useLocation();
   const isChat = pathname === '/chat';
 
@@ -181,6 +184,7 @@ export function App() {
         onClose={() => setPaletteOpen(false)}
         onToggleDrawer={toggleDrawer}
       />
+      <PersonalityPickerModal open={newSessionOpen} onClose={closeNewSessionModal} />
       <MobileTabBar />
     </div>
   );

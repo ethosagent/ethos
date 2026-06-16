@@ -3,7 +3,8 @@ import { Input, Modal } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePalettePersonalities } from '../features/personalities/api/queries';
-import { clearLastSessionId, setLastSessionId } from '../lib/lastSession';
+import { useNewSessionModal } from '../hooks/useNewSessionModal';
+import { setLastSessionId } from '../lib/lastSession';
 import { rpc } from '../rpc';
 
 // ⌘K command palette — global keyboard nav surface that indexes every
@@ -50,6 +51,7 @@ interface CommandItem {
 
 export function CommandPalette({ open, onClose, onToggleDrawer }: CommandPaletteProps) {
   const navigate = useNavigate();
+  const { openNewSessionModal } = useNewSessionModal();
   const [query, setQuery] = useState('');
   const [selectedIdx, setSelectedIdx] = useState(0);
 
@@ -111,10 +113,7 @@ export function CommandPalette({ open, onClose, onToggleDrawer }: CommandPalette
         label: 'New chat session',
         hint: '⏎',
         keywords: ['fresh', 'reset'],
-        run: closeAfter(() => {
-          clearLastSessionId();
-          navigate('/chat');
-        }),
+        run: closeAfter(() => openNewSessionModal()),
       },
       {
         id: 'action:toggle-drawer',
@@ -164,7 +163,14 @@ export function CommandPalette({ open, onClose, onToggleDrawer }: CommandPalette
         run: () => {},
       };
     }
-  }, [navigate, onClose, onToggleDrawer, sessionsQuery.data, personalitiesQuery.data]);
+  }, [
+    navigate,
+    onClose,
+    onToggleDrawer,
+    openNewSessionModal,
+    sessionsQuery.data,
+    personalitiesQuery.data,
+  ]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

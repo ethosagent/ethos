@@ -8,6 +8,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './App';
 import { useConfigRetryFalse } from './features/config/api/queries';
+import { NewSessionModalProvider } from './hooks/useNewSessionModal';
 import {
   applyReducedMotion,
   REDUCED_MOTION_STYLESHEET,
@@ -120,7 +121,9 @@ function Root() {
     <ConfigProvider theme={antdTheme}>
       <AntApp>
         <BrowserRouter>
-          <App />
+          <NewSessionModalProvider>
+            <App />
+          </NewSessionModalProvider>
         </BrowserRouter>
       </AntApp>
     </ConfigProvider>
