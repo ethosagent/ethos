@@ -97,6 +97,42 @@ export function scratchTmpfsFor(mounts: MountSpec[]): string[] {
   return SCRATCH_TMPFS_PATHS.filter((p) => !mounted.has(p));
 }
 
+/**
+ * Resolve a personality's `safety.network` policy to the binary container
+ * network posture (Phase 2a, review g). The OS-layer gate is binary —
+ * `bridge` (open egress) or `none` (air-gapped) — because per-hostname egress
+ * filtering is an explicit follow-up (it needs a filtering proxy plus
+ * direct-to-IP handling; see plan §(g)).
+ *
+ * Resolution (SAFE-by-default — only an explicit open-egress opt-in yields
+ * `bridge`):
+ *
+ *   - no `safety.network` block            → deny-all → `none` (unspecified is safe)
+ *   - `allow` is an empty array `[]`        → deny-all → `none`
+ *       (matches the constitution A5 deny-all signal in
+ *        `extensions/constitution`: `isDenyAll = Array.isArray(allow) &&
+ *        allow.length === 0`; the OS gate MUST agree so a constitution that
+ *        forbids hosts is honored at the container layer, not just at load.)
+ *   - `allow` is a non-empty allowlist      → deny-all → `none`
+ *       (per-host filtering is deferred; we cannot honor the allowlist at the
+ *        OS layer, so we fail safe rather than open the whole bridge.)
+ *   - `allow` is absent (network block set) → allow-all → `bridge`
+ *       (open public internet — the same "empty/absent allow = open" reading
+ *        SafeFetch uses in `packages/safety/network/src/policy.ts`.)
+ *
+ * The host-side `SafeFetch` allow[]/deny[]/allow_private_urls enforcement is
+ * unchanged — this gate is the complementary OS-layer egress control for
+ * shell/code, not a replacement.
+ */
+export function resolveNetworkMode(p?: PersonalityConfig): 'none' | 'bridge' {
+  const network = p?.safety?.network;
+  if (!network) return 'none';
+  // `allow` present (even as `[]`) means the personality constrains egress to
+  // specific hosts — which the binary OS gate cannot honor — so we fail safe.
+  if (network.allow !== undefined) return 'none';
+  return 'bridge';
+}
+
 /** Output byte ceiling per exec (review #6). Past this the exec is killed. */
 const MAX_EXEC_OUTPUT_BYTES = 1_000_000;
 
@@ -400,7 +436,7 @@ class DockerPersistentSession implements ExecSession {
         image,
         containerName,
         memoryMb,
-        networkMode: 'none',
+        networkMode: resolveNetworkMode(opts.personality),
         uid: info.uid,
         gid: info.gid,
         mounts,
@@ -646,7 +682,7 @@ export class DockerExecutionBackend implements ExecutionBackend {
       cmd,
       containerName,
       memoryMb,
-      networkMode: 'none',
+      networkMode: resolveNetworkMode(opts.personality),
       uid: info.uid,
       gid: info.gid,
       stdin: opts.stdin !== undefined,

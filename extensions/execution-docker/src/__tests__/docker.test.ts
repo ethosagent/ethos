@@ -14,11 +14,13 @@ import type {
 import { describe, expect, it } from 'vitest';
 import {
   buildDockerArgs,
+  buildKeepAliveArgs,
   DockerExecutionBackend,
   DockerUnavailableError,
   EmptySubstitutionError,
   ForbiddenMountError,
   InvalidImageRefError,
+  resolveNetworkMode,
   scratchTmpfsFor,
   withByteCeiling,
 } from '../index';
@@ -101,6 +103,72 @@ describe('buildDockerArgs', () => {
     });
     expect(args).toContain('python@sha256:def456');
     expect(args).toContain('--pull=never');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveNetworkMode — safety.network → binary network posture (review g)
+// ---------------------------------------------------------------------------
+
+describe('resolveNetworkMode', () => {
+  const withNetwork = (network: unknown): PersonalityConfig =>
+    ({ id: 'p', name: 'p', safety: { network } }) as unknown as PersonalityConfig;
+
+  it('defaults to deny-all (none) when no personality is provided', () => {
+    expect(resolveNetworkMode(undefined)).toBe('none');
+  });
+
+  it('defaults to deny-all (none) when safety.network is unspecified', () => {
+    expect(resolveNetworkMode({ id: 'p', name: 'p' } as unknown as PersonalityConfig)).toBe('none');
+    expect(resolveNetworkMode(withNetwork(undefined))).toBe('none');
+  });
+
+  it('resolves an empty allowlist to deny-all (none) — matches constitution A5 signal', () => {
+    expect(resolveNetworkMode(withNetwork({ allow: [] }))).toBe('none');
+  });
+
+  it('resolves a non-empty allowlist to deny-all (none) — per-host filtering deferred', () => {
+    expect(resolveNetworkMode(withNetwork({ allow: ['api.anthropic.com'] }))).toBe('none');
+  });
+
+  it('resolves an open network block (allow absent) to allow-all (bridge)', () => {
+    expect(resolveNetworkMode(withNetwork({ deny: ['evil.com'] }))).toBe('bridge');
+    expect(resolveNetworkMode(withNetwork({ allow_private_urls: true }))).toBe('bridge');
+    expect(resolveNetworkMode(withNetwork({}))).toBe('bridge');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildDockerArgs / buildKeepAliveArgs — network mode wiring (review g)
+// ---------------------------------------------------------------------------
+
+describe('docker args network mode', () => {
+  const baseArgs = {
+    image: 'busybox@sha256:abc',
+    uid: 1000,
+    gid: 1000,
+    memoryMb: 256,
+    containerName: 'x',
+  };
+
+  const networkFlag = (args: string[]): string | undefined => {
+    const i = args.indexOf('--network');
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+
+  it('buildDockerArgs threads networkMode none', () => {
+    const args = buildDockerArgs({ ...baseArgs, networkMode: 'none', stdin: false, cmd: 'echo' });
+    expect(networkFlag(args)).toBe('none');
+  });
+
+  it('buildDockerArgs threads networkMode bridge', () => {
+    const args = buildDockerArgs({ ...baseArgs, networkMode: 'bridge', stdin: false, cmd: 'echo' });
+    expect(networkFlag(args)).toBe('bridge');
+  });
+
+  it('buildKeepAliveArgs threads networkMode none and bridge', () => {
+    expect(networkFlag(buildKeepAliveArgs({ ...baseArgs, networkMode: 'none' }))).toBe('none');
+    expect(networkFlag(buildKeepAliveArgs({ ...baseArgs, networkMode: 'bridge' }))).toBe('bridge');
   });
 });
 
@@ -445,6 +513,73 @@ describe.skipIf(!dockerAvailable || !testImage)('red-team escape (docker-gated)'
       if (chunk.stream !== 'exit') combined += chunk.data;
     }
     expect(combined).toContain('ok');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Network egress red-team (docker-gated, review g). A deny-all personality
+// (no `safety.network` → `--network none`) must not reach the network from a
+// shell. Skips cleanly when the daemon / test image is absent.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!dockerAvailable || !testImage)('network egress (docker-gated)', () => {
+  // Use a real temp dir for ethosHome/cwd: Docker Desktop denies bind mounts of
+  // non-existent host paths, so the fake /home/u paths used elsewhere will not
+  // start a container here.
+  const mkConfig = (): { config: ExecutionBackendConfig; dir: string } => {
+    const dir = mkdtempSync(join(tmpdir(), 'ethos-net-'));
+    return {
+      dir,
+      config: {
+        images: { default: testImage as string },
+        substitutionVars: { ethosHome: dir, cwd: dir },
+      },
+    };
+  };
+  const denyAll = (dir: string): PersonalityConfig =>
+    ({
+      id: 'noegress',
+      name: 'noegress',
+      fs_reach: { read: [dir], write: [dir] },
+    }) as unknown as PersonalityConfig;
+
+  it('a deny-all dockerized shell cannot connect to a raw public IP', async () => {
+    const { config, dir } = mkConfig();
+    const be = new DockerExecutionBackend({ config, secrets: secretsStub, logger: loggerStub });
+    // Raw-IP connect to a public DNS resolver: with --network none there is no
+    // route, so the attempt fails. Tools (curl/nc/wget) vary by image, so probe
+    // several and assert no success token is emitted.
+    const probe =
+      '(timeout 5 curl -s -o /dev/null http://1.1.1.1 && echo NET_OK) || ' +
+      '(timeout 5 wget -q -O /dev/null http://1.1.1.1 && echo NET_OK) || ' +
+      '(timeout 5 nc -z -w3 1.1.1.1 53 && echo NET_OK) || echo NET_BLOCKED';
+    let combined = '';
+    for await (const chunk of be.exec(probe, {
+      personality: denyAll(dir),
+      timeoutMs: 20_000,
+    })) {
+      if (chunk.stream !== 'exit') combined += chunk.data;
+    }
+    rmSync(dir, { recursive: true, force: true });
+    expect(combined).not.toContain('NET_OK');
+    expect(combined).toContain('NET_BLOCKED');
+  });
+
+  it('a deny-all persistent session has no default route', async () => {
+    const { config, dir } = mkConfig();
+    const be = new DockerExecutionBackend({ config, secrets: secretsStub, logger: loggerStub });
+    const session = be.spawnSession('noegress');
+    let out = '';
+    // With --network none the only interface is loopback; no eth0 / default route.
+    for await (const c of session.exec('ip route 2>/dev/null || echo NO_ROUTES', {
+      personality: denyAll(dir),
+      timeoutMs: 20_000,
+    })) {
+      if (c.stream !== 'exit') out += c.data;
+    }
+    await session.dispose();
+    rmSync(dir, { recursive: true, force: true });
+    expect(out).not.toMatch(/default via/);
   });
 });
 
