@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import {
   type CapabilityBackends,
   ClarifyBridge,
+  DefaultExecutionBackendRegistry,
   DefaultHookRegistry,
   DefaultLLMProviderRegistry,
   DefaultMemoryProviderRegistry,
@@ -9,6 +10,9 @@ import {
   DefaultToolResultReducerRegistry,
   FileClarifyStore,
 } from '@ethosagent/core';
+import { DockerExecutionBackend } from '@ethosagent/execution-docker';
+import { LocalExecutionBackend } from '@ethosagent/execution-local';
+import { SshExecutionBackend } from '@ethosagent/execution-ssh';
 import { AnthropicProvider } from '@ethosagent/llm-anthropic';
 import { AzureOpenAIProvider } from '@ethosagent/llm-azure';
 import { CodexProvider, ensureValidToken } from '@ethosagent/llm-codex';
@@ -24,6 +28,7 @@ import { readFileReducer } from '@ethosagent/tools-code/reducers/read-file';
 import { kanbanListReducer } from '@ethosagent/tools-kanban/reducers/kanban-list';
 import { bashReducer } from '@ethosagent/tools-terminal/reducers/bash';
 import type {
+  ExecutionBackendRegistry,
   HookRegistry,
   LLMProviderFactoryContext,
   LLMProviderRegistry,
@@ -41,6 +46,7 @@ const AZURE_DEFAULT_API_VERSION = '2024-12-01-preview';
 
 export interface InfrastructureResult {
   llmProviders: LLMProviderRegistry;
+  executionBackends: ExecutionBackendRegistry;
   memoryProviders: MemoryProviderRegistry;
   personalities: PersonalityCompose['personalities'];
   activePerson: PersonalityConfig;
@@ -123,6 +129,13 @@ export async function buildInfrastructure(
   for (const id of ['openai', 'openrouter', 'gemini', 'groq', 'deepseek', 'ollama']) {
     llmProviders.register(id, openaiCompatFactory);
   }
+
+  // Execution backend registry — built-ins registered here.
+  // backends resolved on demand in Lane B/c
+  const executionBackends = new DefaultExecutionBackendRegistry();
+  executionBackends.register('local', (ctx) => new LocalExecutionBackend(ctx));
+  executionBackends.register('docker', (ctx) => new DockerExecutionBackend(ctx));
+  executionBackends.register('ssh', (ctx) => new SshExecutionBackend(ctx));
 
   // Memory provider registry — built-ins registered here; plugins add more via
   // registerMemoryProvider.
@@ -220,6 +233,7 @@ export async function buildInfrastructure(
 
   return {
     llmProviders,
+    executionBackends,
     memoryProviders,
     personalities,
     activePerson,

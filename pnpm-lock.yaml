@@ -749,6 +749,24 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/execution-docker:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
+  extensions/execution-local:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
+  extensions/execution-ssh:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/gateway:
     dependencies:
       '@ethosagent/agent-bridge':
@@ -1544,6 +1562,15 @@ importers:
       '@ethosagent/cron':
         specifier: workspace:*
         version: link:../../extensions/cron
+      '@ethosagent/execution-docker':
+        specifier: workspace:*
+        version: link:../../extensions/execution-docker
+      '@ethosagent/execution-local':
+        specifier: workspace:*
+        version: link:../../extensions/execution-local
+      '@ethosagent/execution-ssh':
+        specifier: workspace:*
+        version: link:../../extensions/execution-ssh
       '@ethosagent/goal-runner':
         specifier: workspace:*
         version: link:../../extensions/goal-runner
