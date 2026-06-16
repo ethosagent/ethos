@@ -1,3 +1,6 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: fs_reach substitution
+// tokens (`${ETHOS_HOME}` etc.) are literal markers resolved at runtime, not JS
+// template strings.
 import { type ChildProcess, spawn } from 'node:child_process';
 import { homedir, userInfo } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
@@ -53,6 +56,17 @@ export class ForbiddenMountError extends Error {
   }
 }
 
+export class EmptySubstitutionError extends Error {
+  readonly code = 'EMPTY_SUBSTITUTION';
+  constructor(
+    public readonly variable: string,
+    public readonly template: string,
+  ) {
+    super(`Substitution variable ${variable} is empty/unresolved in fs_reach path "${template}"`);
+    this.name = 'EmptySubstitutionError';
+  }
+}
+
 /**
  * Built-in critical denylist (review A2). These host paths grant container
  * escape (docker socket) or expose the host kernel/devices; `mountsFor`
@@ -71,6 +85,18 @@ const FORBIDDEN_MOUNT_ROOTS = [
 /** Ephemeral writable scratch (review #5). tmpfs — not a host bind mount. */
 const SCRATCH_TMPFS_PATHS = ['/tmp', '/home/sandbox'] as const;
 
+/**
+ * Scratch tmpfs entries that don't collide with a derived fs_reach mount.
+ * Precedence: an explicit fs_reach bind mount wins over the convenience
+ * scratch tmpfs — when both target the same mount point, Docker rejects the
+ * container ("Duplicate mount point"), so we drop the scratch entry and let
+ * the fs_reach bind provide that path.
+ */
+export function scratchTmpfsFor(mounts: MountSpec[]): string[] {
+  const mounted = new Set(mounts.map((m) => m.containerPath));
+  return SCRATCH_TMPFS_PATHS.filter((p) => !mounted.has(p));
+}
+
 /** Output byte ceiling per exec (review #6). Past this the exec is killed. */
 const MAX_EXEC_OUTPUT_BYTES = 1_000_000;
 
@@ -80,15 +106,30 @@ function isForbiddenMount(p: string): boolean {
   return FORBIDDEN_MOUNT_ROOTS.some((root) => abs === root || abs.startsWith(`${root}/`));
 }
 
-/** Local copy of the core substitution helper — extensions must not import core. */
+/**
+ * Local copy of the core substitution helper — extensions must not import core.
+ * Throws EmptySubstitutionError when a token present in the template maps to an
+ * empty value: an explicitly-declared fs_reach path whose substitution variable
+ * is empty is a configuration error — fail loudly rather than mount a bogus path
+ * (e.g. `${ETHOS_HOME}/skills` with an empty ethosHome would bind `/skills`).
+ */
 function substitute(
   template: string,
   vars: { ethosHome: string; self: string; cwd: string },
 ): string {
-  return template
-    .replace(/\$\{ETHOS_HOME\}/g, vars.ethosHome)
-    .replace(/\$\{self\}/g, vars.self)
-    .replace(/\$\{CWD\}/g, vars.cwd);
+  const checks: Array<[token: string, re: RegExp, value: string]> = [
+    ['${ETHOS_HOME}', /\$\{ETHOS_HOME\}/g, vars.ethosHome],
+    ['${self}', /\$\{self\}/g, vars.self],
+    ['${CWD}', /\$\{CWD\}/g, vars.cwd],
+  ];
+  let out = template;
+  for (const [token, re, value] of checks) {
+    if (template.includes(token)) {
+      if (value === '') throw new EmptySubstitutionError(token, template);
+      out = out.replace(re, value);
+    }
+  }
+  return out;
 }
 
 /**
@@ -363,7 +404,7 @@ class DockerPersistentSession implements ExecSession {
         uid: info.uid,
         gid: info.gid,
         mounts,
-        tmpfs: SCRATCH_TMPFS_PATHS,
+        tmpfs: scratchTmpfsFor(mounts),
       });
       await new Promise<void>((resolve, reject) => {
         const run = spawn('docker', args, { stdio: 'ignore' });
@@ -611,7 +652,7 @@ export class DockerExecutionBackend implements ExecutionBackend {
       stdin: opts.stdin !== undefined,
       env: opts.env,
       mounts,
-      tmpfs: SCRATCH_TMPFS_PATHS,
+      tmpfs: scratchTmpfsFor(mounts),
     });
     const killContainer = () => {
       spawn('docker', ['kill', containerName], { stdio: 'ignore' }).on('close', () => {

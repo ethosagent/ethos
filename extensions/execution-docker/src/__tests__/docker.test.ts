@@ -16,8 +16,10 @@ import {
   buildDockerArgs,
   DockerExecutionBackend,
   DockerUnavailableError,
+  EmptySubstitutionError,
   ForbiddenMountError,
   InvalidImageRefError,
+  scratchTmpfsFor,
   withByteCeiling,
 } from '../index';
 
@@ -233,6 +235,57 @@ describe('mountsFor', () => {
     expect(paths).toContain(`${ETHOS_HOME}/skills`);
     expect(paths).toContain(CWD);
   });
+
+  // DEFECT 2 — an empty substitution variable must throw, not synthesize a
+  // bogus bind path (e.g. `${ETHOS_HOME}/skills` → `/skills`).
+  it('throws EmptySubstitutionError when a referenced substitution var is empty', () => {
+    const config: ExecutionBackendConfig = {
+      images: { default: 'x@sha256:abc' },
+      substitutionVars: { ethosHome: '', cwd: CWD },
+    };
+    const be = new DockerExecutionBackend(
+      { config, secrets: secretsStub, logger: loggerStub },
+      async () => false,
+    );
+    const p = {
+      id: 'tester',
+      name: 'tester',
+      fs_reach: { read: ['${ETHOS_HOME}/skills'] },
+    } as unknown as PersonalityConfig;
+    expect(() => be.mountsFor(p)).toThrow(EmptySubstitutionError);
+    try {
+      be.mountsFor(p);
+    } catch (err) {
+      expect(err).toBeInstanceOf(EmptySubstitutionError);
+      expect((err as EmptySubstitutionError).variable).toBe('${ETHOS_HOME}');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scratchTmpfsFor — DEFECT 1: scratch tmpfs must not collide with an explicit
+// fs_reach bind mount (Docker rejects a duplicate mount point otherwise).
+// ---------------------------------------------------------------------------
+
+describe('scratchTmpfsFor (DEFECT 1)', () => {
+  it('drops the scratch entry that a derived fs_reach mount already provides', () => {
+    const { be, p } = makeBackend({ read: ['/tmp'] });
+    const mounts = be.mountsFor(p);
+    expect(mounts).toContainEqual({ hostPath: '/tmp', containerPath: '/tmp', mode: 'ro' });
+    const scratch = scratchTmpfsFor(mounts);
+    expect(scratch).not.toContain('/tmp');
+    expect(scratch).toContain('/home/sandbox');
+  });
+
+  it('drops only the colliding mount point and keeps the rest', () => {
+    expect(scratchTmpfsFor([{ hostPath: '/tmp', containerPath: '/tmp', mode: 'rw' }])).toEqual([
+      '/home/sandbox',
+    ]);
+  });
+
+  it('returns the full scratch defaults when there are no mounts', () => {
+    expect(scratchTmpfsFor([])).toEqual(['/tmp', '/home/sandbox']);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -370,6 +423,28 @@ describe.skipIf(!dockerAvailable || !testImage)('red-team escape (docker-gated)'
     }
     // /etc was never mounted; the read must fail (file absent inside the sandbox).
     expect(combined).toMatch(/DENIED|No such file|cannot open/i);
+  });
+
+  // DEFECT 1 — with `fs_reach.read: ['/tmp']`, the derived bind and the scratch
+  // tmpfs both targeted /tmp; Docker rejected the duplicate mount point and the
+  // container never started. With the fix the scratch /tmp is dropped and the
+  // container starts, producing output.
+  it('starts the container when fs_reach declares a scratch path (no duplicate mount)', async () => {
+    const config: ExecutionBackendConfig = {
+      images: { default: testImage as string },
+      substitutionVars: { ethosHome: ETHOS_HOME, cwd: CWD },
+    };
+    const be = new DockerExecutionBackend({ config, secrets: secretsStub, logger: loggerStub });
+    const personality = {
+      id: 'dup',
+      name: 'dup',
+      fs_reach: { read: ['/tmp'] },
+    } as unknown as PersonalityConfig;
+    let combined = '';
+    for await (const chunk of be.exec('echo ok', { personality, timeoutMs: 20_000 })) {
+      if (chunk.stream !== 'exit') combined += chunk.data;
+    }
+    expect(combined).toContain('ok');
   });
 });
 
