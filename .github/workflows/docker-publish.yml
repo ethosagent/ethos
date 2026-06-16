@@ -1,18 +1,36 @@
-name: Docker Publish
+name: docker-publish
+
+# Build and publish the Docker image to the public Docker Hub repo (ethosagent/ethos).
+#
+# Usage:
+#   1. Ensure the npm release for this version is already published (run the
+#      `release` workflow first if needed) — the image installs @ethosagent/cli
+#      from npm at the given version.
+#   2. GitHub → Actions → docker-publish → Run workflow → enter version (e.g. 0.4.17)
+#
+# Non-prerelease versions are also tagged `latest`; prereleases (vX.Y.Z-...) are not.
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 0.4.17)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-publish
+  cancel-in-progress: false   # never overlap image publishes
 
 jobs:
   docker-publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
@@ -26,10 +44,12 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract version from tag
+      - name: Extract version from input
         id: meta
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${INPUT_VERSION#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           TAGS="ethosagent/ethos:${VERSION}"
           case "$VERSION" in
