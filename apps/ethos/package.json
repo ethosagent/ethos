@@ -1,6 +1,6 @@
 {
   "name": "@ethosagent/cli",
-  "version": "0.4.17",
+  "version": "0.4.18",
   "description": "Ethos — TypeScript AI agent framework where personality is architecture. Curated toolsets, first-person identities, scoped memory.",
   "keywords": [
     "agent",
@@ -58,8 +58,6 @@
   },
   "dependencies": {
     "@ethosagent/core": "workspace:*",
-    "@ethosagent/goal-runner": "workspace:*",
-    "@ethosagent/goal-store": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@anthropic-ai/sdk": "^0.96.0",
     "@aws-sdk/client-secrets-manager": "^3.800.0",
@@ -87,6 +85,8 @@
     "@ethosagent/agent-mesh": "workspace:*",
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/gateway": "workspace:*",
+    "@ethosagent/goal-runner": "workspace:*",
+    "@ethosagent/goal-store": "workspace:*",
     "@ethosagent/logger": "workspace:*",
     "@ethosagent/mcp-server": "workspace:*",
     "@ethosagent/observability-sqlite": "workspace:*",
