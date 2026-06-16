@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: run-in-docker
 time: 10 min
-updated: 2026-05-22
+updated: 2026-06-16
 ---
 
 Run Ethos via Docker Compose. Pass a provider API key, bring up the stack, and open the web UI. The `init` service auto-generates `config.yaml` on first boot so there is no interactive setup.
@@ -104,9 +104,25 @@ See [config.yaml reference](../reference/config-yaml.md) for every supported fie
 
 ## Advanced: manual docker run
 
-If you prefer not to use Compose, build and run the image directly.
+If you prefer not to use Compose, run the image directly. Both services bind to `127.0.0.1` inside the container by default, so you must set `ETHOS_WEB_HOST=0.0.0.0` (web dashboard, port 3000) and `ETHOS_SERVE_HOST=0.0.0.0` (the `run-all` health server, port 3003) for `-p` to reach them from the host.
 
-**Build:**
+### Option A — run the published image (recommended)
+
+```bash
+docker run -d --name ethos \
+  --restart unless-stopped \
+  -e ETHOS_MANAGED=1 \
+  -e ETHOS_WEB_HOST=0.0.0.0 \
+  -e ETHOS_SERVE_HOST=0.0.0.0 \
+  -e ANTHROPIC_API_KEY=sk-ant-… \
+  -v ~/ethos-data:/home/ethos/.ethos \
+  -p 3000:3000 \
+  ethosagent/ethos:latest
+```
+
+`ethosagent/ethos:latest` always tracks the newest published release, so no version pinning is needed. To pin a specific version, use `ethosagent/ethos:<version>` (for example `ethosagent/ethos:0.4.18`).
+
+### Option B — build from source then run
 
 ```bash
 git clone https://github.com/MiteshSharma/ethos.git
@@ -114,19 +130,19 @@ cd ethos
 docker build -t ethos:local -f docker/Dockerfile docker/
 ```
 
-**Run:**
-
 ```bash
 docker run -d --name ethos \
   --restart unless-stopped \
   -e ETHOS_MANAGED=1 \
+  -e ETHOS_WEB_HOST=0.0.0.0 \
+  -e ETHOS_SERVE_HOST=0.0.0.0 \
   -e ANTHROPIC_API_KEY=sk-ant-… \
   -v ~/ethos-data:/home/ethos/.ethos \
   -p 3000:3000 \
   ethos:local
 ```
 
-The resulting image runs as `ethos:1000` and exposes port 3000. `ETHOS_MANAGED=1` skips the interactive setup wizard and exits with code 2 if `config.yaml` is missing.
+The image runs as `ethos:1000` and exposes port 3000. `ETHOS_MANAGED=1` skips the interactive setup wizard and exits with code 2 if `config.yaml` is missing.
 
 To run only the gateway (no web API), pass `-e ETHOS_MODE=gateway`. To run only the web API, pass `-e ETHOS_MODE=ui`.
 
