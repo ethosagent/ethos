@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
-import { BoundaryError, type HookRegistry, type Tool, type ToolResult } from '@ethosagent/types';
+import {
+  BoundaryError,
+  type ExecutionBackend,
+  type HookRegistry,
+  type PersonalityConfig,
+  type Tool,
+  type ToolResult,
+} from '@ethosagent/types';
 import {
   DEFAULT_LOG_LINES,
   listProcesses,
@@ -18,7 +25,7 @@ import {
   updateEntry,
   withRegistryLock,
 } from './registry';
-import { spawnDetached } from './spawn';
+import { spawnDetached, spawnViaBackend } from './spawn';
 import { buildLogFiles, compilePatterns, watchLogs } from './watcher';
 
 // Default per-personality concurrency cap. The plan calls the cap
@@ -111,7 +118,13 @@ async function fireProcessComplete(
 // process_start
 // ---------------------------------------------------------------------------
 
-function makeProcessStart(dataDir: string, capMax: number, notifier?: CompletionNotifier): Tool {
+function makeProcessStart(
+  dataDir: string,
+  capMax: number,
+  notifier?: CompletionNotifier,
+  backend?: ExecutionBackend,
+  personality?: PersonalityConfig,
+): Tool {
   return {
     name: 'process_start',
     description: 'Start a long-running process in the background. Returns an id for tracking.',
@@ -213,7 +226,13 @@ function makeProcessStart(dataDir: string, capMax: number, notifier?: Completion
                 );
               }
             : undefined;
-          const result = spawnDetached(id, command, effectiveCwd, env, dataDir, onExit);
+          // Routed path (review c): when a backend is injected (posture
+          // docker), the process runs inside the mount-confined backend session
+          // via spawnViaBackend. Otherwise the existing detached host child is
+          // used unchanged. Both write the same log files and fire onExit.
+          const result = backend
+            ? spawnViaBackend(id, command, effectiveCwd, env, dataDir, backend, personality, onExit)
+            : spawnDetached(id, command, effectiveCwd, env, dataDir, onExit);
           pid = result.pid;
         } catch (err) {
           return {
@@ -580,7 +599,12 @@ function makeProcessWatch(dataDir: string): Tool {
 
 export function createProcessTools(
   dataDir: string,
-  opts?: { capMax?: number; hookRegistry?: HookRegistry },
+  opts?: {
+    capMax?: number;
+    hookRegistry?: HookRegistry;
+    backend?: ExecutionBackend;
+    personality?: PersonalityConfig;
+  },
 ): Tool[] {
   // Guard the public option: a non-positive / non-integer capMax would either
   // disable the cap (NaN, Infinity) or wedge the tool (0, negative). Fall back
@@ -594,7 +618,7 @@ export function createProcessTools(
     ? createCompletionNotifier(opts.hookRegistry, dataDir)
     : undefined;
   return [
-    makeProcessStart(dataDir, capMax, notifier),
+    makeProcessStart(dataDir, capMax, notifier, opts?.backend, opts?.personality),
     makeProcessList(dataDir),
     makeProcessLogs(dataDir),
     makeProcessStop(dataDir),

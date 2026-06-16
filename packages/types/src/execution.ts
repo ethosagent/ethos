@@ -11,6 +11,12 @@ export interface ExecOpts {
   timeoutMs?: number;
   stdin?: string;
   signal?: AbortSignal;
+  /**
+   * Personality whose `fs_reach` derives the container mount set (docker
+   * backend). Routed execution tools pass this so the OS-layer mount boundary
+   * matches the personality's declared reach. Ignored by `local`/`ssh`.
+   */
+  personality?: PersonalityConfig;
 }
 
 export interface ExecSession {
@@ -41,6 +47,13 @@ export interface ExecutionBackendConfig {
   memoryMb?: number;
   /** ssh target — remote-host trust, NOT mount-confinement (review A3). */
   ssh?: { host: string; user?: string; port?: number; identityFile?: string };
+  /**
+   * Substitution roots for resolving `${ETHOS_HOME}` and `${CWD}` in
+   * `fs_reach` before deriving mounts. `${self}` resolves to the personality
+   * id at `mountsFor` time. When absent, the docker backend falls back to
+   * `~/.ethos` and `process.cwd()`.
+   */
+  substitutionVars?: { ethosHome: string; cwd: string };
 }
 
 export type ExecutionBackendFactory = (ctx: {
@@ -51,6 +64,15 @@ export type ExecutionBackendFactory = (ctx: {
 
 export interface ExecutionBackendRegistry {
   register(name: string, factory: ExecutionBackendFactory): void;
+  /** Resolve (and cache) a registered factory into a concrete backend instance. */
+  resolve(
+    name: string,
+    ctx: {
+      config: ExecutionBackendConfig;
+      secrets: import('./secrets').SecretsResolver;
+      logger: import('./logger').Logger;
+    },
+  ): Promise<ExecutionBackend>;
   get(name: string): ExecutionBackend | undefined;
   list(): string[];
 }

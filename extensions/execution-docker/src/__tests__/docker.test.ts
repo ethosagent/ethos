@@ -1,10 +1,21 @@
-import type { Logger, SecretsResolver } from '@ethosagent/types';
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: fs_reach values are
+// literal substitution tokens (`${ETHOS_HOME}` etc.) resolved at runtime, not
+// JS template strings.
+import type {
+  ExecChunk,
+  ExecutionBackendConfig,
+  Logger,
+  PersonalityConfig,
+  SecretsResolver,
+} from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import {
   buildDockerArgs,
   DockerExecutionBackend,
   DockerUnavailableError,
+  ForbiddenMountError,
   InvalidImageRefError,
+  withByteCeiling,
 } from '../index';
 
 const secretsStub: SecretsResolver = {
@@ -85,6 +96,275 @@ describe('buildDockerArgs', () => {
     });
     expect(args).toContain('python@sha256:def456');
     expect(args).toContain('--pull=never');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mountsFor — fs_reach → mounts (review d, A2, A7, invariant)
+// ---------------------------------------------------------------------------
+
+const ETHOS_HOME = '/home/u/.ethos';
+const CWD = '/work/project';
+
+function makeBackend(fsReach?: PersonalityConfig['fs_reach'], id = 'tester') {
+  const config: ExecutionBackendConfig = {
+    images: { default: 'x@sha256:abc' },
+    substitutionVars: { ethosHome: ETHOS_HOME, cwd: CWD },
+  };
+  const be = new DockerExecutionBackend(
+    { config, secrets: secretsStub, logger: loggerStub },
+    async () => false,
+  );
+  const p = { id, name: id, fs_reach: fsReach } as unknown as PersonalityConfig;
+  return { be, p };
+}
+
+describe('mountsFor', () => {
+  it('maps read[] → ro and write[] → rw with hostPath === containerPath', () => {
+    const { be, p } = makeBackend({ read: ['/data/in'], write: ['/data/out'] });
+    const mounts = be.mountsFor(p);
+    expect(mounts).toContainEqual({ hostPath: '/data/in', containerPath: '/data/in', mode: 'ro' });
+    expect(mounts).toContainEqual({
+      hostPath: '/data/out',
+      containerPath: '/data/out',
+      mode: 'rw',
+    });
+  });
+
+  it('resolves ${ETHOS_HOME}, ${self}, ${CWD} substitutions before deriving mounts', () => {
+    const { be, p } = makeBackend(
+      { read: ['${ETHOS_HOME}/skills', '${CWD}'], write: ['${ETHOS_HOME}/personalities/${self}'] },
+      'alice',
+    );
+    const paths = be.mountsFor(p).map((m) => m.hostPath);
+    expect(paths).toContain(`${ETHOS_HOME}/skills`);
+    expect(paths).toContain(CWD);
+    expect(paths).toContain(`${ETHOS_HOME}/personalities/alice`);
+  });
+
+  it('keeps BOTH a ro parent and a rw child (child wins in its subtree)', () => {
+    const { be, p } = makeBackend({ read: ['/repo'], write: ['/repo/build'] });
+    const mounts = be.mountsFor(p);
+    expect(mounts).toContainEqual({ hostPath: '/repo', containerPath: '/repo', mode: 'ro' });
+    expect(mounts).toContainEqual({
+      hostPath: '/repo/build',
+      containerPath: '/repo/build',
+      mode: 'rw',
+    });
+  });
+
+  it('rw wins when the same exact path is both ro and rw (write subsumes read)', () => {
+    const { be, p } = makeBackend({ read: ['/shared'], write: ['/shared'] });
+    const mounts = be.mountsFor(p).filter((m) => m.hostPath === '/shared');
+    expect(mounts).toEqual([{ hostPath: '/shared', containerPath: '/shared', mode: 'rw' }]);
+  });
+
+  it('dedups identical (path, mode) specs', () => {
+    const { be, p } = makeBackend({ read: ['/a', '/a'], write: ['/keep'] });
+    const mounts = be.mountsFor(p).filter((m) => m.hostPath === '/a');
+    expect(mounts).toHaveLength(1);
+  });
+
+  // A2 — built-in critical denylist, INDEPENDENT of any constitution (none here).
+  it.each([
+    '/var/run/docker.sock',
+    '/run/docker.sock',
+    '/proc',
+    '/sys',
+    '/dev',
+    '/proc/self',
+    '/dev/mem',
+    '/sys/kernel',
+  ])('refuses to mount forbidden path %s (ForbiddenMountError, no constitution)', (path) => {
+    const { be, p } = makeBackend({ read: [path] });
+    expect(() => be.mountsFor(p)).toThrow(ForbiddenMountError);
+  });
+
+  it('also refuses a forbidden path declared as write', () => {
+    const { be, p } = makeBackend({ write: ['/proc/sys'] });
+    expect(() => be.mountsFor(p)).toThrow(ForbiddenMountError);
+  });
+
+  // CI invariant: derived host-mount path set ≡ resolved fs_reach path set
+  // (exactly), AFTER per-list defaults are filled — mirroring ScopedStorage,
+  // which applies the read/write defaults independently per list.
+  describe('invariant: mounts ≡ resolved fs_reach', () => {
+    const OWN = `${ETHOS_HOME}/personalities/bob`;
+    const SKILLS = `${ETHOS_HOME}/skills`;
+    const READ_DEFAULT = [OWN, SKILLS, CWD];
+    const WRITE_DEFAULT = [OWN, CWD];
+
+    const shapes: Array<{ name: string; reach: PersonalityConfig['fs_reach'] }> = [
+      { name: 'read-only', reach: { read: ['/r1', '/r2'] } },
+      { name: 'write-only', reach: { write: ['/w1'] } },
+      { name: 'mixed', reach: { read: ['/r'], write: ['/w'] } },
+      { name: 'nested', reach: { read: ['/repo'], write: ['/repo/out'] } },
+      {
+        name: 'with substitution tokens',
+        reach: { read: ['${ETHOS_HOME}/skills', '${CWD}'], write: ['${ETHOS_HOME}/x/${self}'] },
+      },
+    ];
+    it.each(shapes)('$name', ({ reach }) => {
+      const { be, p } = makeBackend(reach, 'bob');
+      const mounts = be.mountsFor(p);
+      const sub = (s: string) =>
+        s
+          .replace(/\$\{ETHOS_HOME\}/g, ETHOS_HOME)
+          .replace(/\$\{self\}/g, 'bob')
+          .replace(/\$\{CWD\}/g, CWD);
+      const readResolved = reach?.read?.length ? reach.read.map(sub) : READ_DEFAULT;
+      const writeResolved = reach?.write?.length ? reach.write.map(sub) : WRITE_DEFAULT;
+      const expected = new Set([...readResolved, ...writeResolved]);
+      const got = new Set(mounts.map((m) => m.hostPath));
+      expect(got).toEqual(expected);
+      // Ephemeral scratch is NOT a host mount and must never appear here.
+      expect(got.has('/tmp')).toBe(false);
+      expect(got.has('/home/sandbox')).toBe(false);
+    });
+  });
+
+  it('applies ScopedStorage defaults when fs_reach is unset', () => {
+    const { be, p } = makeBackend(undefined, 'carol');
+    const paths = be.mountsFor(p).map((m) => m.hostPath);
+    expect(paths).toContain(`${ETHOS_HOME}/personalities/carol`);
+    expect(paths).toContain(`${ETHOS_HOME}/skills`);
+    expect(paths).toContain(CWD);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildDockerArgs — mounts + ephemeral scratch (review #5) + clean env (#3)
+// ---------------------------------------------------------------------------
+
+describe('buildDockerArgs mounts + scratch + env', () => {
+  it('emits -v flags for host mounts and --tmpfs for ephemeral scratch (#5)', () => {
+    const args = buildDockerArgs({
+      image: 'x@sha256:abc',
+      uid: 1000,
+      gid: 1000,
+      memoryMb: 256,
+      networkMode: 'none',
+      stdin: false,
+      cmd: 'echo hi',
+      containerName: 'x',
+      mounts: [{ hostPath: '/data', containerPath: '/data', mode: 'ro' }],
+      tmpfs: ['/tmp', '/home/sandbox'],
+    });
+    expect(args).toContain('-v');
+    expect(args).toContain('/data:/data:ro');
+    // tmpfs is writable + ephemeral; appears as --tmpfs, NOT as a -v host mount.
+    const tmpfsCount = args.filter((a) => a === '--tmpfs').length;
+    expect(tmpfsCount).toBe(2);
+    expect(args).toContain('/tmp');
+    expect(args).toContain('/home/sandbox');
+    expect(args).not.toContain('/tmp:/tmp');
+  });
+
+  it('forwards no host secrets when env is empty (#3)', () => {
+    const prev = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-secret';
+    try {
+      const args = buildDockerArgs({
+        image: 'x@sha256:abc',
+        uid: 1000,
+        gid: 1000,
+        memoryMb: 256,
+        networkMode: 'none',
+        stdin: false,
+        cmd: 'printenv',
+        containerName: 'x',
+        env: {},
+      });
+      expect(args.join(' ')).not.toContain('ANTHROPIC_API_KEY');
+      expect(args.join(' ')).not.toContain('sk-secret');
+    } finally {
+      if (prev === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prev;
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// withByteCeiling — output byte ceiling (review #6)
+// ---------------------------------------------------------------------------
+
+describe('withByteCeiling', () => {
+  it('kills the exec and emits a truncation marker once the ceiling is exceeded', async () => {
+    let killed = false;
+    async function* infinite(): AsyncIterable<ExecChunk> {
+      // Each chunk is 100 bytes; ceiling 250 → stops after the third chunk.
+      for (let i = 0; i < 1000; i++) {
+        yield { stream: 'stdout', data: 'x'.repeat(100) };
+      }
+    }
+    const out: ExecChunk[] = [];
+    for await (const c of withByteCeiling(infinite(), 250, () => {
+      killed = true;
+    })) {
+      out.push(c);
+    }
+    expect(killed).toBe(true);
+    const last = out[out.length - 1];
+    expect(last?.stream).toBe('stderr');
+    expect(last?.data).toMatch(/\[output truncated at 250 bytes\]/);
+    // The stream stopped — far fewer than 1000 chunks were yielded.
+    expect(out.length).toBeLessThan(10);
+  });
+
+  it('passes through under the ceiling without a marker', async () => {
+    async function* small(): AsyncIterable<ExecChunk> {
+      yield { stream: 'stdout', data: 'hello' };
+    }
+    const out: ExecChunk[] = [];
+    for await (const c of withByteCeiling(small(), 1000, () => {})) out.push(c);
+    expect(out).toEqual([{ stream: 'stdout', data: 'hello' }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Red-team escape (docker-gated). Skips cleanly when the daemon is absent so
+// Node-24-no-docker CI passes. Requires a digest-pinned image in
+// ETHOS_TEST_DOCKER_IMAGE (e.g. busybox@sha256:...) to actually run a
+// container — skipped otherwise to avoid --pull=never flakiness.
+// ---------------------------------------------------------------------------
+
+async function dockerInfoOk(): Promise<boolean> {
+  const { spawn } = await import('node:child_process');
+  return new Promise<boolean>((resolve) => {
+    try {
+      const c = spawn('docker', ['info'], { stdio: 'ignore' });
+      c.on('close', (code) => resolve(code === 0));
+      c.on('error', () => resolve(false));
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+const dockerAvailable = await dockerInfoOk();
+const testImage = process.env.ETHOS_TEST_DOCKER_IMAGE;
+
+describe.skipIf(!dockerAvailable || !testImage)('red-team escape (docker-gated)', () => {
+  it('a docker-backed shell cannot cat a path outside the mount set', async () => {
+    const config: ExecutionBackendConfig = {
+      images: { default: testImage as string },
+      substitutionVars: { ethosHome: ETHOS_HOME, cwd: CWD },
+    };
+    const be = new DockerExecutionBackend({ config, secrets: secretsStub, logger: loggerStub });
+    const personality = {
+      id: 'redteam',
+      name: 'redteam',
+      fs_reach: { read: ['/tmp'] },
+    } as unknown as PersonalityConfig;
+    let combined = '';
+    for await (const chunk of be.exec('cat /etc/hostname 2>&1 || echo DENIED', {
+      personality,
+      timeoutMs: 20_000,
+    })) {
+      combined += chunk.data;
+    }
+    // /etc was never mounted; the read must fail (file absent inside the sandbox).
+    expect(combined).toMatch(/DENIED|No such file|cannot open/i);
   });
 });
 

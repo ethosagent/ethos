@@ -7,8 +7,17 @@ import { spawn } from 'node:child_process';
 // stat/unlink/mkdir) on the dataDir. These could migrate to ctx.scopedFs once the
 // tool threads ctx through to spawnDetached, but the function is also called from
 // non-tool code paths (operations.ts rotate-on-touch). Deferred.
-import { closeSync, mkdirSync, openSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import {
+  appendFileSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+} from 'node:fs';
 import { join } from 'node:path';
+import type { ExecutionBackend, PersonalityConfig } from '@ethosagent/types';
 import { updateEntryIf } from './registry';
 
 export interface SpawnResult {
@@ -140,4 +149,72 @@ export function spawnDetached(
   }
 
   return { pid: child.pid, stdoutLog, stderrLog };
+}
+
+/** Sentinel pid for backend-routed (containerized) processes — they have no
+ * host pid. `isAlive(SENTINEL)` is false, so liveness for these entries is
+ * driven by stream completion (onExit), not host pid polling. */
+export const BACKEND_ROUTED_PID = -1;
+
+/**
+ * Route a long-running process through an ExecutionBackend session (review c).
+ * Streams the session's stdout/stderr into the same per-process log files that
+ * `spawnDetached` writes, so process_list/process_logs keep working. Output is
+ * appended as the stream yields; `onExit` fires once the stream completes.
+ *
+ * Lane-C scope (NOT this lane): in-container liveness, signal delivery
+ * (process_stop) and live tailing (process_watch) against a containerized
+ * process require container-side pid tracking the thin Lane-A `exec` does not
+ * expose. Routed processes therefore carry BACKEND_ROUTED_PID and rely on
+ * stream completion for terminal state; pid-based stop/watch is deferred.
+ */
+export function spawnViaBackend(
+  id: string,
+  command: string,
+  cwd: string,
+  env: Record<string, string> | undefined,
+  dataDir: string,
+  backend: ExecutionBackend,
+  personality: PersonalityConfig | undefined,
+  onExit?: (result: { exitCode: number | null; signal: NodeJS.Signals | null }) => void,
+): SpawnResult {
+  const dir = join(dataDir, 'processes', id);
+  mkdirSync(dir, { recursive: true });
+  const stdoutLog = join(dir, 'stdout.log');
+  const stderrLog = join(dir, 'stderr.log');
+  rotateLogIfNeeded(stdoutLog);
+  rotateLogIfNeeded(stderrLog);
+
+  const session = backend.spawnSession(personality?.id ?? 'unknown');
+  // Clean env by default (review #3): only explicitly-opted vars cross in.
+  const stream = session.exec(command, { cwd, env: env ?? {}, personality });
+
+  // Drain the stream in the background, appending to the log files. A detached
+  // host child is not created; the registry entry is flipped to terminal when
+  // the stream ends (or errors).
+  void (async () => {
+    let errored = false;
+    try {
+      for await (const chunk of stream) {
+        const target = chunk.stream === 'stdout' ? stdoutLog : stderrLog;
+        try {
+          appendFileSync(target, chunk.data);
+        } catch {
+          // best-effort log capture
+        }
+      }
+    } catch {
+      errored = true;
+    } finally {
+      await session.dispose().catch(() => {});
+      const exitCode = errored ? -1 : 0;
+      updateEntryIf(dataDir, id, (e) => e.status === 'running', {
+        status: 'exited' as const,
+        exitCode,
+      }).catch(() => {});
+      onExit?.({ exitCode, signal: null });
+    }
+  })();
+
+  return { pid: BACKEND_ROUTED_PID, stdoutLog, stderrLog };
 }

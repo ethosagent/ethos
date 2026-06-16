@@ -61,12 +61,15 @@ import { buildUiTools } from '@ethosagent/tools-ui';
 import { createWebTools } from '@ethosagent/tools-web';
 import type {
   ContextInjector,
+  ExecutionBackend,
+  ExecutionBackendConfig,
   InjectionResult,
   MemoryContext,
   MemoryEntryRef,
   MemoryProvider,
   PersonalityConfig,
   PromptContext,
+  SecretsResolver,
   Skill,
   Storage,
   Tool,
@@ -76,6 +79,7 @@ import type { CreateAgentLoopOptions, WiringConfig, WiringProfile } from './inde
 import { resolveKanbanDbPath } from './kanban-path';
 import { MODEL_CATALOG } from './model-catalog';
 import { fetchManifest, loadModelCatalog, manifestToEntries } from './model-catalog-loader';
+import { resolveExecutionBackendName } from './resolve-execution-backend';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
 import type { WiringContext } from './types';
 
@@ -314,15 +318,52 @@ export async function composeAllTools(
 ): Promise<ComposeToolsResult> {
   const { dataDir, log } = wiringCtx;
   const { infra, profile } = deps;
-  const { personalities, activePerson, sandbox, hooks, capabilityBackends, tools, clarifyBridge } =
-    infra;
+  const { personalities, activePerson, hooks, capabilityBackends, tools, clarifyBridge } = infra;
+
+  // -------------------------------------------------------------------------
+  // Execution backend (Phase 2a lane c) — route execution-bearing toolsets
+  // through a mount-confined backend. Minimal selector; the full posture
+  // resolver is Lane E. `none`/`local` leave the tools on the existing
+  // ScopedProcess host path (backend stays undefined).
+  // -------------------------------------------------------------------------
+  let executionBackend: ExecutionBackend | undefined;
+  if (!opts.disableDocker) {
+    const backendName = resolveExecutionBackendName(activePerson);
+    if (backendName === 'docker') {
+      const NOOP_SECRETS: SecretsResolver = {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => {},
+        list: async () => [],
+      };
+      const backendConfig: ExecutionBackendConfig = {
+        substitutionVars: { ethosHome: dataDir, cwd: wiringCtx.workingDir },
+      };
+      try {
+        executionBackend = await infra.executionBackends.resolve('docker', {
+          config: backendConfig,
+          secrets: config.secretsResolver ?? NOOP_SECRETS,
+          logger: log,
+        });
+      } catch (err) {
+        // Lane B: fail loud. No silent docker -> local fallback. The A1
+        // docker-absent guided-install/consent flow is Lane E.
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `execution backend "docker" (required by this personality's posture) could not be resolved: ${detail}`,
+          { cause: err },
+        );
+      }
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Group A: inline tool factories
   // -------------------------------------------------------------------------
 
   for (const tool of createFileTools()) tools.register(tool);
-  for (const tool of createTerminalTools()) tools.register(tool);
+  for (const tool of createTerminalTools({ backend: executionBackend, personality: activePerson }))
+    tools.register(tool);
   for (const tool of createWebTools()) tools.register(tool);
   for (const tool of buildUiTools()) tools.register(tool);
 
@@ -378,7 +419,12 @@ export async function composeAllTools(
       tools.register(tool);
   }
 
-  for (const tool of composeProcess(wiringCtx, { hookRegistry: hooks }).tools) tools.register(tool);
+  for (const tool of composeProcess(wiringCtx, {
+    hookRegistry: hooks,
+    backend: executionBackend,
+    personality: activePerson,
+  }).tools)
+    tools.register(tool);
   for (const tool of createImageTools({
     openaiApiKey: config.provider === 'openai' ? config.apiKey : undefined,
   }))
@@ -387,7 +433,11 @@ export async function composeAllTools(
   // Vision tools are registered after plugin loading (they need `llm`).
 
   if (!opts.disableDocker) {
-    for (const tool of composeCode(wiringCtx, { sandbox }).tools) tools.register(tool);
+    for (const tool of composeCode(wiringCtx, {
+      backend: executionBackend,
+      personality: activePerson,
+    }).tools)
+      tools.register(tool);
     for (const tool of composeBrowser(wiringCtx, {
       visionApiKey: config.apiKey,
       visionProvider: config.provider,

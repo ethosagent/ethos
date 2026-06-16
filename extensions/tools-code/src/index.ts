@@ -1,6 +1,11 @@
 import { stripAnsiEscapes } from '@ethosagent/core';
-import type { DockerSandbox } from '@ethosagent/sandbox-docker';
-import type { Tool, ToolResult } from '@ethosagent/types';
+import type {
+  ExecChunk,
+  ExecutionBackend,
+  PersonalityConfig,
+  Tool,
+  ToolResult,
+} from '@ethosagent/types';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -8,32 +13,55 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 // Runtime definitions
 // ---------------------------------------------------------------------------
 
+/**
+ * The per-runtime interpreter command. The code is piped to the interpreter on
+ * stdin via the backend `exec` (mount/network/memory policy is owned by the
+ * backend; runtime images are digest-pinned in `config.images` per Lane A #2).
+ */
 const RUNTIMES = {
-  python: { image: 'python:3.12-slim', cmd: ['python3', '-'] },
-  js: { image: 'node:22-slim', cmd: ['node', '--input-type=module'] },
-  bash: { image: 'bash:5.2', cmd: ['bash', '-s'] },
+  python: { cmd: 'python3 -' },
+  js: { cmd: 'node --input-type=module' },
+  bash: { cmd: 'bash -s' },
 } as const;
 
 type Runtime = keyof typeof RUNTIMES;
 
 const RUNTIME_NAMES = Object.keys(RUNTIMES).join(', ');
 
+async function drainExec(
+  stream: AsyncIterable<ExecChunk>,
+): Promise<{ stdout: string; stderr: string }> {
+  let stdout = '';
+  let stderr = '';
+  for await (const chunk of stream) {
+    if (chunk.stream === 'stdout') stdout += chunk.data;
+    else stderr += chunk.data;
+  }
+  return { stdout, stderr };
+}
+
 // ---------------------------------------------------------------------------
 // run_code
 // ---------------------------------------------------------------------------
 
-function createRunCodeTool(sandbox: DockerSandbox): Tool {
+function createRunCodeTool(
+  backend: ExecutionBackend | undefined,
+  personality: PersonalityConfig | undefined,
+): Tool {
   return {
     name: 'run_code',
-    description: `Run code in an isolated Docker container. Supported runtimes: ${RUNTIME_NAMES}. No network access, 256 MB memory limit.`,
+    description: `Run code in an isolated container. Supported runtimes: ${RUNTIME_NAMES}. No network access, memory-capped.`,
     toolset: 'code',
     maxResultChars: 10_000,
     outputIsUntrusted: true,
     capabilities: {
       process: { allowedBinaries: ['docker'] },
     },
+    // Sync gate per the Tool contract: report available when a backend is
+    // wired. The async daemon liveness check happens in execute(), which
+    // returns `not_available` if the backend is actually down.
     isAvailable() {
-      return sandbox.isAvailable();
+      return backend !== undefined;
     },
     schema: {
       type: 'object',
@@ -70,28 +98,37 @@ function createRunCodeTool(sandbox: DockerSandbox): Tool {
           code: 'input_invalid',
         };
       }
-      if (!sandbox.isAvailable()) {
-        return { ok: false, error: 'Docker is not available', code: 'not_available' };
-      }
-
-      const { image, cmd } = RUNTIMES[runtime as Runtime];
-      const timeout = timeout_ms ?? DEFAULT_TIMEOUT_MS;
-
-      const result = await sandbox.run(image, [...cmd], { stdin: code, timeoutMs: timeout });
-
-      const output = stripAnsiEscapes(
-        [result.stdout, result.stderr].filter(Boolean).join('\n').trim(),
-      );
-
-      if (result.exitCode !== 0) {
+      // No host fallback: if the backend is absent or unavailable, run_code is
+      // simply not available (it never executes on the host).
+      if (!backend || !(await backend.isAvailable())) {
         return {
           ok: false,
-          error: `Exited with code ${result.exitCode}:\n${output || '(no output)'}`,
-          code: 'execution_failed',
+          error: 'Code execution backend is not available',
+          code: 'not_available',
         };
       }
 
-      return { ok: true, value: output || '(no output)' };
+      const { cmd } = RUNTIMES[runtime as Runtime];
+      const timeout = timeout_ms ?? DEFAULT_TIMEOUT_MS;
+
+      try {
+        const { stdout, stderr } = await drainExec(
+          backend.exec(cmd, {
+            stdin: code,
+            timeoutMs: timeout,
+            env: {},
+            personality,
+          }),
+        );
+        const output = stripAnsiEscapes([stdout, stderr].filter(Boolean).join('\n').trim());
+        return { ok: true, value: output || '(no output)' };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+          code: 'execution_failed',
+        };
+      }
     },
   };
 }
@@ -232,6 +269,9 @@ const lintTool: Tool = {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createCodeTools(sandbox: DockerSandbox): Tool[] {
-  return [createRunCodeTool(sandbox), runTestsTool, lintTool];
+export function createCodeTools(opts?: {
+  backend?: ExecutionBackend;
+  personality?: PersonalityConfig;
+}): Tool[] {
+  return [createRunCodeTool(opts?.backend, opts?.personality), runTestsTool, lintTool];
 }

@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import { userInfo } from 'node:os';
+import { homedir, userInfo } from 'node:os';
+import { join, resolve as resolvePath } from 'node:path';
 import type {
   ExecChunk,
   ExecOpts,
@@ -42,6 +43,52 @@ export class DockerUnavailableError extends Error {
     super('Docker is not available; refusing to fall back to local execution');
     this.name = 'DockerUnavailableError';
   }
+}
+
+export class ForbiddenMountError extends Error {
+  readonly code = 'FORBIDDEN_MOUNT';
+  constructor(public readonly path: string) {
+    super(`Refusing to mount a forbidden host path: ${path}`);
+    this.name = 'ForbiddenMountError';
+  }
+}
+
+/**
+ * Built-in critical denylist (review A2). These host paths grant container
+ * escape (docker socket) or expose the host kernel/devices; `mountsFor`
+ * refuses them UNCONDITIONALLY — independent of any constitution. A path is
+ * forbidden if its resolved absolute form equals a denied root or is nested
+ * under one (e.g. `/proc/self`, `/dev/mem`).
+ */
+const FORBIDDEN_MOUNT_ROOTS = [
+  '/var/run/docker.sock',
+  '/run/docker.sock',
+  '/proc',
+  '/sys',
+  '/dev',
+] as const;
+
+/** Ephemeral writable scratch (review #5). tmpfs — not a host bind mount. */
+const SCRATCH_TMPFS_PATHS = ['/tmp', '/home/sandbox'] as const;
+
+/** Output byte ceiling per exec (review #6). Past this the exec is killed. */
+const MAX_EXEC_OUTPUT_BYTES = 1_000_000;
+
+/** True when `p` resolves to or under one of the forbidden mount roots. */
+function isForbiddenMount(p: string): boolean {
+  const abs = resolvePath(p);
+  return FORBIDDEN_MOUNT_ROOTS.some((root) => abs === root || abs.startsWith(`${root}/`));
+}
+
+/** Local copy of the core substitution helper — extensions must not import core. */
+function substitute(
+  template: string,
+  vars: { ethosHome: string; self: string; cwd: string },
+): string {
+  return template
+    .replace(/\$\{ETHOS_HOME\}/g, vars.ethosHome)
+    .replace(/\$\{self\}/g, vars.self)
+    .replace(/\$\{CWD\}/g, vars.cwd);
 }
 
 /**
@@ -133,6 +180,30 @@ async function* streamChild(
 }
 
 /**
+ * Byte-ceiling wrapper (review #6). Counts bytes yielded by `inner`; once the
+ * running total exceeds `maxBytes` it kills the child + container, emits a
+ * final stderr truncation marker, and stops. The cap is enforced HERE — inside
+ * the exec stream — so host memory stays bounded regardless of downstream
+ * result trimming.
+ */
+export async function* withByteCeiling(
+  inner: AsyncIterable<ExecChunk>,
+  maxBytes: number,
+  onCeiling: () => void,
+): AsyncIterable<ExecChunk> {
+  let total = 0;
+  for await (const chunk of inner) {
+    total += Buffer.byteLength(chunk.data, 'utf-8');
+    if (total > maxBytes) {
+      onCeiling();
+      yield { stream: 'stderr', data: `\n[output truncated at ${maxBytes} bytes]\n` };
+      return;
+    }
+    yield chunk;
+  }
+}
+
+/**
  * Build `docker run` args (after the program name). Pure — no spawning.
  * Throws InvalidImageRefError unless the image is digest-pinned (@sha256:).
  */
@@ -146,6 +217,8 @@ export function buildDockerArgs(opts: {
   gid: number;
   stdin: boolean;
   env?: Record<string, string>;
+  mounts?: MountSpec[];
+  tmpfs?: readonly string[];
 }): string[] {
   if (!opts.image.includes('@sha256:')) {
     throw new InvalidImageRefError(opts.image);
@@ -161,6 +234,15 @@ export function buildDockerArgs(opts: {
     args.push('--user', `${opts.uid}:${opts.gid}`);
   }
   args.push('--pull=never');
+  // Ephemeral writable scratch (review #5) — discarded on container teardown.
+  for (const path of opts.tmpfs ?? []) {
+    args.push('--tmpfs', path);
+  }
+  // Host bind mounts derived from fs_reach (review d). The container sees ONLY
+  // these host paths; nothing else from the host is reachable.
+  for (const m of opts.mounts ?? []) {
+    args.push('-v', `${m.hostPath}:${m.containerPath}:${m.mode}`);
+  }
   if (opts.env) {
     for (const [k, v] of Object.entries(opts.env)) {
       args.push('-e', `${k}=${v}`);
@@ -208,6 +290,7 @@ export class DockerExecutionBackend implements ExecutionBackend {
     const memoryMb = this.config.memoryMb ?? 256;
     const containerName = `ethos-sandbox-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const info = userInfo();
+    const mounts = opts.personality ? this.mountsFor(opts.personality) : [];
     const args = buildDockerArgs({
       image,
       cmd,
@@ -218,6 +301,8 @@ export class DockerExecutionBackend implements ExecutionBackend {
       gid: info.gid,
       stdin: opts.stdin !== undefined,
       env: opts.env,
+      mounts,
+      tmpfs: SCRATCH_TMPFS_PATHS,
     });
     const killContainer = () => {
       spawn('docker', ['kill', containerName], { stdio: 'ignore' }).on('close', () => {
@@ -225,7 +310,11 @@ export class DockerExecutionBackend implements ExecutionBackend {
       });
     };
     const child = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    yield* streamChild(child, opts, killContainer);
+    yield* withByteCeiling(
+      streamChild(child, opts, killContainer),
+      MAX_EXEC_OUTPUT_BYTES,
+      killContainer,
+    );
   }
 
   spawnSession(personalityId: string): ExecSession {
@@ -236,9 +325,52 @@ export class DockerExecutionBackend implements ExecutionBackend {
     };
   }
 
-  mountsFor(_p: PersonalityConfig): MountSpec[] {
-    // Lane B (component d): derive from fs_reach
-    return [];
+  /**
+   * Derive the container's host-mount set mechanically from `fs_reach`
+   * (review d). `read[]` → ro, `write[]` → rw, with `hostPath === containerPath`
+   * (the resolved host path is bound at the same path inside the container).
+   * Substitutions are resolved first. When `fs_reach` is unset the SAME defaults
+   * as ScopedStorage apply: read=[ownDir, ${ethosHome}/skills/, cwd],
+   * write=[ownDir, cwd] where ownDir=${ethosHome}/personalities/<id>/.
+   *
+   * Refuses the built-in critical denylist unconditionally (review A2). Nested
+   * ro-parent / rw-child mounts are BOTH kept — the child shadows the parent in
+   * its subtree (review A7). When the SAME exact path appears as both ro and
+   * rw, rw wins: write access subsumes read, so the path is mounted rw. (This
+   * is also why the default scope — which lists ownDir/cwd in both read and
+   * write — resolves cleanly to rw for those roots.)
+   */
+  mountsFor(p: PersonalityConfig): MountSpec[] {
+    const ethosHome = this.config.substitutionVars?.ethosHome ?? join(homedir(), '.ethos');
+    const cwd = this.config.substitutionVars?.cwd ?? process.cwd();
+    const self = p.id;
+    const ownDir = `${join(ethosHome, 'personalities', self)}/`;
+
+    const reach = p.fs_reach;
+    const readPaths =
+      reach?.read && reach.read.length > 0
+        ? reach.read.map((path) => substitute(path, { ethosHome, self, cwd }))
+        : [ownDir, `${join(ethosHome, 'skills')}/`, cwd];
+    const writePaths =
+      reach?.write && reach.write.length > 0
+        ? reach.write.map((path) => substitute(path, { ethosHome, self, cwd }))
+        : [ownDir, cwd];
+
+    const byPath = new Map<string, MountSpec>();
+    const add = (rawPath: string, mode: 'ro' | 'rw'): void => {
+      const hostPath = resolvePath(rawPath);
+      if (isForbiddenMount(hostPath)) throw new ForbiddenMountError(hostPath);
+      const existing = byPath.get(hostPath);
+      // rw wins: write access subsumes read. Dedups identical (path, mode) too.
+      if (existing && (existing.mode === 'rw' || mode === 'ro')) return;
+      byPath.set(hostPath, { hostPath, containerPath: hostPath, mode });
+    };
+
+    // Add writes first so the rw mode is established before any ro of the same
+    // path is seen; the rw-wins guard above then keeps rw regardless of order.
+    for (const path of writePaths) add(path, 'rw');
+    for (const path of readPaths) add(path, 'ro');
+    return [...byPath.values()];
   }
 
   dispose(): Promise<void> {
