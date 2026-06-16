@@ -17,14 +17,16 @@ const MAX_TIMEOUT_MS = 600_000; // 10 minutes
  */
 async function drainExec(
   stream: AsyncIterable<ExecChunk>,
-): Promise<{ stdout: string; stderr: string }> {
+): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   let stdout = '';
   let stderr = '';
+  let exitCode: number | null = null;
   for await (const chunk of stream) {
-    if (chunk.stream === 'stdout') stdout += chunk.data;
+    if (chunk.stream === 'exit') exitCode = chunk.code;
+    else if (chunk.stream === 'stdout') stdout += chunk.data;
     else stderr += chunk.data;
   }
-  return { stdout, stderr };
+  return { stdout, stderr, exitCode };
 }
 
 // ---------------------------------------------------------------------------
@@ -84,7 +86,7 @@ function makeTerminalTool(
       // default (review #3) so host secrets never cross into the container.
       if (backend) {
         try {
-          const { stdout, stderr } = await drainExec(
+          const { stdout, stderr, exitCode } = await drainExec(
             backend.exec(command, {
               cwd: workDir,
               timeoutMs: timeout,
@@ -94,6 +96,16 @@ function makeTerminalTool(
             }),
           );
           const out = [stdout, stderr].filter(Boolean).join('\n').trim();
+          // Mirror the local path: a non-zero exit is a failed command. A null
+          // exit code (older backend that never emits an exit chunk) is treated
+          // as success to preserve prior behavior.
+          if (exitCode !== null && exitCode !== 0) {
+            return {
+              ok: false,
+              error: `Command exited with error (code ${exitCode}):\n${out || '(no output)'}`,
+              code: 'execution_failed',
+            };
+          }
           return { ok: true, value: out || '(command completed with no output)' };
         } catch (err) {
           return {

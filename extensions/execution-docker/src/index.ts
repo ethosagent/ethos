@@ -105,6 +105,7 @@ async function* streamChild(
   let done = false;
   let error: Error | null = null;
   let resolveNext: (() => void) | null = null;
+  let exitCode: number | null = null;
 
   child.stdout?.on('data', (c: Buffer) => {
     chunks.push({ stream: 'stdout', data: c.toString('utf-8') });
@@ -114,7 +115,9 @@ async function* streamChild(
     chunks.push({ stream: 'stderr', data: c.toString('utf-8') });
     resolveNext?.();
   });
-  child.on('close', () => {
+  // `docker run` exits with the in-container command's exit code (bash -lc cmd).
+  child.on('close', (code) => {
+    exitCode = code ?? null;
     done = true;
     resolveNext?.();
   });
@@ -168,6 +171,7 @@ async function* streamChild(
           const c = chunks.shift();
           if (c) yield c;
         }
+        yield { stream: 'exit', code: exitCode ?? -1 };
         break;
       }
       await new Promise<void>((r) => {
@@ -193,6 +197,12 @@ export async function* withByteCeiling(
 ): AsyncIterable<ExecChunk> {
   let total = 0;
   for await (const chunk of inner) {
+    // The terminal exit chunk carries no payload — pass it through untouched so
+    // the exit code survives truncation, and don't count it toward the ceiling.
+    if (chunk.stream === 'exit') {
+      yield chunk;
+      continue;
+    }
     total += Buffer.byteLength(chunk.data, 'utf-8');
     if (total > maxBytes) {
       onCeiling();
@@ -303,7 +313,14 @@ function defaultDockerInfoCheck(): Promise<boolean> {
 }
 
 /**
- * Persistent-shell stderr is captured at the shell process level, not per-command; output ordering between stdout and stderr within a single exec is best-effort. Exit-code propagation through ExecChunk is out of scope (Lane C2).
+ * Persistent docker-exec shell. One serialized command at a time (the queue in
+ * `exec`). Each command is bracketed by a per-command sentinel emitted on BOTH
+ * stdout and stderr (Lane C2): the stderr sentinel bounds that command's stderr
+ * so it never bleeds into the next command's exec, and `runOne` declares the
+ * command done only once both sentinels have arrived — making per-command
+ * stderr ordering deterministic relative to completion. The stdout sentinel
+ * also carries `$?`, which is surfaced as a terminal `{ stream: 'exit', code }`
+ * chunk.
  */
 class DockerPersistentSession implements ExecSession {
   readonly personalityId: string;
@@ -397,10 +414,19 @@ class DockerPersistentSession implements ExecSession {
   ): AsyncIterable<ExecChunk> {
     const sentinel = `__ETHOS_EOT_${Math.random().toString(36).slice(2)}__`;
     const chunks: ExecChunk[] = [];
-    let done = false;
+    // Each stream's sentinel marks its end-of-command boundary. The command is
+    // `done` only once BOTH have arrived, so a command's stderr is fully drained
+    // (and bounded to this command) before the exec completes.
+    let stdoutSeen = false;
+    let stderrSeen = false;
     let error: Error | null = null;
     let resolveNext: (() => void) | null = null;
     let stdoutBuf = '';
+    let stderrBuf = '';
+    // Exit code parsed from the digits following the stdout sentinel.
+    let exitCode: number | null = null;
+
+    const settled = () => stdoutSeen && stderrSeen;
 
     const onStdout = (b: Buffer) => {
       stdoutBuf += b.toString('utf-8');
@@ -409,8 +435,17 @@ class DockerPersistentSession implements ExecSession {
         let pre = stdoutBuf.slice(0, idx);
         if (pre.endsWith('\n')) pre = pre.slice(0, -1);
         if (pre.length > 0) chunks.push({ stream: 'stdout', data: pre });
-        done = true;
-        stdoutBuf = '';
+        // After the sentinel: `<code>\n`. Wait for the trailing newline so the
+        // digits are complete even when split across socket reads.
+        const after = stdoutBuf.slice(idx + sentinel.length);
+        const nl = after.indexOf('\n');
+        if (nl >= 0) {
+          const parsed = Number.parseInt(after.slice(0, nl), 10);
+          exitCode = Number.isNaN(parsed) ? -1 : parsed;
+          stdoutSeen = true;
+          stdoutBuf = '';
+        }
+        // else: sentinel arrived but code digits not yet; keep buffering.
       } else {
         const safe = stdoutBuf.length - sentinel.length;
         if (safe > 0) {
@@ -421,7 +456,21 @@ class DockerPersistentSession implements ExecSession {
       resolveNext?.();
     };
     const onStderr = (b: Buffer) => {
-      chunks.push({ stream: 'stderr', data: b.toString('utf-8') });
+      stderrBuf += b.toString('utf-8');
+      const idx = stderrBuf.indexOf(sentinel);
+      if (idx >= 0) {
+        let pre = stderrBuf.slice(0, idx);
+        if (pre.endsWith('\n')) pre = pre.slice(0, -1);
+        if (pre.length > 0) chunks.push({ stream: 'stderr', data: pre });
+        stderrSeen = true;
+        stderrBuf = '';
+      } else {
+        const safe = stderrBuf.length - sentinel.length;
+        if (safe > 0) {
+          chunks.push({ stream: 'stderr', data: stderrBuf.slice(0, safe) });
+          stderrBuf = stderrBuf.slice(safe);
+        }
+      }
       resolveNext?.();
     };
     shell.stdout?.on('data', onStdout);
@@ -430,26 +479,35 @@ class DockerPersistentSession implements ExecSession {
     const timeoutMs = opts.timeoutMs ?? 30000;
     const timer = setTimeout(() => {
       error = new ExecTimeoutError();
-      done = true;
+      stdoutSeen = true;
+      stderrSeen = true;
       resolveNext?.();
     }, timeoutMs);
     const signal = opts.signal;
     const onAbort = () => {
       error = new ExecAbortedError();
-      done = true;
+      stdoutSeen = true;
+      stderrSeen = true;
       resolveNext?.();
     };
     if (signal) {
       if (signal.aborted) {
         error = new ExecAbortedError();
-        done = true;
+        stdoutSeen = true;
+        stderrSeen = true;
       } else {
         signal.addEventListener('abort', onAbort, { once: true });
       }
     }
 
-    // write the command + sentinel; $? is the exit code of the user command
-    shell.stdin?.write(`${cmd}\nprintf '\\n%s%d\\n' "${sentinel}" "$?"\n`, 'utf-8');
+    // Run the command, capture `$?`, then emit the stderr sentinel BEFORE the
+    // stdout sentinel (same shell, sequential writes) so this command's stderr
+    // boundary is flushed ahead of the stdout completion marker. The stdout
+    // sentinel carries the exit code.
+    shell.stdin?.write(
+      `${cmd}\n__ethos_rc=$?\nprintf '\\n%s\\n' "${sentinel}" 1>&2\nprintf '\\n%s%d\\n' "${sentinel}" "$__ethos_rc"\n`,
+      'utf-8',
+    );
 
     try {
       while (true) {
@@ -458,11 +516,12 @@ class DockerPersistentSession implements ExecSession {
           if (c) yield c;
         }
         if (error) throw error;
-        if (done) {
+        if (settled()) {
           while (chunks.length > 0) {
             const c = chunks.shift();
             if (c) yield c;
           }
+          yield { stream: 'exit', code: exitCode ?? -1 };
           break;
         }
         await new Promise<void>((r) => {
@@ -475,6 +534,27 @@ class DockerPersistentSession implements ExecSession {
       shell.stderr?.off('data', onStderr);
       if (signal) signal.removeEventListener('abort', onAbort);
     }
+  }
+
+  /**
+   * Signal the in-container process(es) (Lane C2). The container runs as a
+   * non-root user in its own PID namespace; `kill -<sig> -1` broadcasts to every
+   * process the user owns (the exec'd command and its children) without touching
+   * the host. The session container is dedicated to one logical workload, so a
+   * broadcast is the correct "stop this process" semantics. Best-effort: a
+   * not-yet-started or already-gone container is a no-op, not an error.
+   */
+  async stop(signal: 'SIGTERM' | 'SIGKILL'): Promise<void> {
+    const name = this.container;
+    if (!name) return;
+    const sig = signal === 'SIGKILL' ? 'KILL' : 'TERM';
+    await new Promise<void>((resolve) => {
+      const p = spawn('docker', ['exec', name, 'sh', '-c', `kill -${sig} -1 2>/dev/null || true`], {
+        stdio: 'ignore',
+      });
+      p.on('close', () => resolve());
+      p.on('error', () => resolve());
+    });
   }
 
   async dispose(): Promise<void> {

@@ -37,6 +37,7 @@ async function* streamChild(child: ChildProcess, opts: ExecOpts): AsyncIterable<
   let done = false;
   let error: Error | null = null;
   let resolveNext: (() => void) | null = null;
+  let exitCode: number | null = null;
 
   child.stdout?.on('data', (c: Buffer) => {
     chunks.push({ stream: 'stdout', data: c.toString('utf-8') });
@@ -46,7 +47,8 @@ async function* streamChild(child: ChildProcess, opts: ExecOpts): AsyncIterable<
     chunks.push({ stream: 'stderr', data: c.toString('utf-8') });
     resolveNext?.();
   });
-  child.on('close', () => {
+  child.on('close', (code) => {
+    exitCode = code ?? null;
     done = true;
     resolveNext?.();
   });
@@ -98,6 +100,9 @@ async function* streamChild(child: ChildProcess, opts: ExecOpts): AsyncIterable<
           const c = chunks.shift();
           if (c) yield c;
         }
+        // Terminal exit chunk (Lane C2). `null` (killed by signal with no code)
+        // maps to -1 so a non-zero exit is always observable downstream.
+        yield { stream: 'exit', code: exitCode ?? -1 };
         break;
       }
       await new Promise<void>((r) => {

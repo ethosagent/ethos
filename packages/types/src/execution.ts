@@ -1,9 +1,14 @@
 import type { PersonalityConfig } from './personality';
 
-export interface ExecChunk {
-  stream: 'stdout' | 'stderr';
-  data: string;
-}
+export type ExecChunk =
+  | { stream: 'stdout' | 'stderr'; data: string }
+  /**
+   * Terminal chunk carrying the command's exit code. Emitted as the LAST chunk
+   * of a naturally-completed exec stream (after all stdout/stderr). Backends do
+   * NOT emit it when the stream ends via timeout/abort — those throw instead.
+   * Consumers that ignore exit codes can skip this variant (`data` is absent).
+   */
+  | { stream: 'exit'; code: number };
 
 export interface ExecOpts {
   cwd?: string;
@@ -28,6 +33,13 @@ export interface ExecOpts {
 export interface ExecSession {
   readonly personalityId: string;
   exec(cmd: string, opts?: ExecOpts): AsyncIterable<ExecChunk>;
+  /**
+   * Signal the in-session process(es). For the docker backend this signals the
+   * containerized process (the boundary owns the real pid; the host never sees
+   * it). Optional: backends without a real in-session pid (local/ssh thin
+   * sessions) may omit it, in which case callers fall back to `dispose()`.
+   */
+  stop?(signal: 'SIGTERM' | 'SIGKILL'): Promise<void>;
   dispose(): Promise<void>;
 }
 

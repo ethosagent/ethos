@@ -1,6 +1,9 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: fs_reach values are
 // literal substitution tokens (`${ETHOS_HOME}` etc.) resolved at runtime, not
 // JS template strings.
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type {
   ExecChunk,
   ExecutionBackendConfig,
@@ -306,7 +309,9 @@ describe('withByteCeiling', () => {
     expect(killed).toBe(true);
     const last = out[out.length - 1];
     expect(last?.stream).toBe('stderr');
-    expect(last?.data).toMatch(/\[output truncated at 250 bytes\]/);
+    expect(last && last.stream !== 'exit' ? last.data : '').toMatch(
+      /\[output truncated at 250 bytes\]/,
+    );
     // The stream stopped — far fewer than 1000 chunks were yielded.
     expect(out.length).toBeLessThan(10);
   });
@@ -361,7 +366,7 @@ describe.skipIf(!dockerAvailable || !testImage)('red-team escape (docker-gated)'
       personality,
       timeoutMs: 20_000,
     })) {
-      combined += chunk.data;
+      if (chunk.stream !== 'exit') combined += chunk.data;
     }
     // /etc was never mounted; the read must fail (file absent inside the sandbox).
     expect(combined).toMatch(/DENIED|No such file|cannot open/i);
@@ -406,7 +411,8 @@ describe.skipIf(!dockerAvailable || !testImage)('persistent session (docker-gate
     } as unknown as PersonalityConfig;
     const drain = async (cmd: string) => {
       let out = '';
-      for await (const c of session.exec(cmd, { personality, timeoutMs: 20_000 })) out += c.data;
+      for await (const c of session.exec(cmd, { personality, timeoutMs: 20_000 }))
+        if (c.stream !== 'exit') out += c.data;
       return out;
     };
     await drain('cd /tmp');
@@ -428,12 +434,76 @@ describe.skipIf(!dockerAvailable || !testImage)('persistent session (docker-gate
     } as unknown as PersonalityConfig;
     const drain = async (cmd: string) => {
       let out = '';
-      for await (const c of session.exec(cmd, { personality, timeoutMs: 20_000 })) out += c.data;
+      for await (const c of session.exec(cmd, { personality, timeoutMs: 20_000 }))
+        if (c.stream !== 'exit') out += c.data;
       return out;
     };
     await drain('export FOO=bar');
     const echoed = await drain('echo $FOO');
     await session.dispose();
     expect(echoed).toMatch(/bar/);
+  });
+
+  it('surfaces the exit code as a terminal exit chunk (Lane C2)', async () => {
+    // Point substitution roots at real, existing host dirs so mountsFor derives
+    // only mountable paths (the synthetic /home/u/.ethos + /work/project of the
+    // other tests don't exist on this host; their defaults can't bind-mount).
+    const mountDir = mkdtempSync(join(tmpdir(), 'ethos-rc-'));
+    const config: ExecutionBackendConfig = {
+      images: { default: testImage as string },
+      substitutionVars: { ethosHome: mountDir, cwd: mountDir },
+    };
+    const be = new DockerExecutionBackend({ config, secrets: secretsStub, logger: loggerStub });
+    const session = be.spawnSession('rc');
+    const personality = {
+      id: 'rc',
+      name: 'rc',
+      fs_reach: { read: [mountDir], write: [mountDir] },
+    } as unknown as PersonalityConfig;
+    const exitCodeOf = async (cmd: string): Promise<number | undefined> => {
+      let code: number | undefined;
+      for await (const c of session.exec(cmd, { personality, timeoutMs: 20_000 })) {
+        if (c.stream === 'exit') code = c.code;
+      }
+      return code;
+    };
+    expect(await exitCodeOf('true')).toBe(0);
+    // Use a subshell: a bare `exit 5` would terminate the persistent shell
+    // itself (and thus the session), not just the command.
+    expect(await exitCodeOf('(exit 5)')).toBe(5);
+    await session.dispose();
+    rmSync(mountDir, { recursive: true, force: true });
+  });
+
+  it('orders per-command stderr within the same exec and bounds it to the command', async () => {
+    const mountDir = mkdtempSync(join(tmpdir(), 'ethos-order-'));
+    const config: ExecutionBackendConfig = {
+      images: { default: testImage as string },
+      substitutionVars: { ethosHome: mountDir, cwd: mountDir },
+    };
+    const be = new DockerExecutionBackend({ config, secrets: secretsStub, logger: loggerStub });
+    const session = be.spawnSession('order');
+    const personality = {
+      id: 'order',
+      name: 'order',
+      fs_reach: { read: [mountDir], write: [mountDir] },
+    } as unknown as PersonalityConfig;
+    const collect = async (cmd: string) => {
+      let stdout = '';
+      let stderr = '';
+      for await (const c of session.exec(cmd, { personality, timeoutMs: 20_000 })) {
+        if (c.stream === 'stdout') stdout += c.data;
+        else if (c.stream === 'stderr') stderr += c.data;
+      }
+      return { stdout, stderr };
+    };
+    const first = await collect('echo OUT1; echo ERR1 >&2');
+    expect(first.stdout).toContain('OUT1');
+    expect(first.stderr).toContain('ERR1');
+    // The next command's stderr must NOT contain the previous command's stderr.
+    const second = await collect('echo OUT2');
+    expect(second.stderr).not.toContain('ERR1');
+    await session.dispose();
+    rmSync(mountDir, { recursive: true, force: true });
   });
 });

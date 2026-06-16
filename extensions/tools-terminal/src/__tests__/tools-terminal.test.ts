@@ -112,4 +112,47 @@ describe('terminal routing', () => {
     // The local path must NOT be used when routed.
     expect(spawn).not.toHaveBeenCalled();
   });
+
+  it('returns ok:true when the routed backend reports exit code 0', async () => {
+    const backend = makeExitBackend('done', 0);
+    const [tool] = createTerminalTools({ backend });
+    const result = await tool.execute({ command: 'true' }, ctx);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toContain('done');
+  });
+
+  it('returns ok:false / execution_failed with the code on a non-zero routed exit', async () => {
+    const backend = makeExitBackend('boom', 3);
+    const [tool] = createTerminalTools({ backend });
+    const result = await tool.execute({ command: 'exit 3' }, ctx);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('execution_failed');
+      expect(result.error).toContain('code 3');
+      expect(result.error).toContain('boom');
+    }
+  });
 });
+
+/** Backend whose session/exec emit a terminal exit chunk with `code`. */
+function makeExitBackend(out: string, code: number): ExecutionBackend {
+  const exec = (_cmd: string, _opts: ExecOpts): AsyncIterable<ExecChunk> => {
+    async function* gen(): AsyncIterable<ExecChunk> {
+      yield { stream: 'stdout', data: out };
+      yield { stream: 'exit', code };
+    }
+    return gen();
+  };
+  return {
+    name: 'docker',
+    isAvailable: () => Promise.resolve(true),
+    exec,
+    spawnSession: (personalityId: string) => ({
+      personalityId,
+      exec,
+      dispose: () => Promise.resolve(),
+    }),
+    mountsFor: () => [],
+    dispose: () => Promise.resolve(),
+  };
+}

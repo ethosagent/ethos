@@ -14,7 +14,7 @@ interface FakeBackend extends ExecutionBackend {
 
 function makeBackend(
   available: boolean,
-  result?: Partial<{ stdout: string; stderr: string }>,
+  result?: Partial<{ stdout: string; stderr: string; exitCode: number }>,
 ): FakeBackend {
   const backend: FakeBackend = {
     name: 'docker',
@@ -25,6 +25,7 @@ function makeBackend(
       async function* gen(): AsyncIterable<ExecChunk> {
         if (result?.stdout) yield { stream: 'stdout', data: result.stdout };
         if (result?.stderr) yield { stream: 'stderr', data: result.stderr };
+        if (result?.exitCode !== undefined) yield { stream: 'exit', code: result.exitCode };
       }
       return gen();
     },
@@ -140,5 +141,24 @@ describe('run_code', () => {
     const [runCode] = createCodeTools({ backend });
     const result = await runCode.execute({ runtime, code: 'hello' }, ctx);
     expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:true when the routed exit code is 0', async () => {
+    const backend = makeBackend(true, { stdout: 'ok', exitCode: 0 });
+    const [runCode] = createCodeTools({ backend });
+    const result = await runCode.execute({ runtime: 'python', code: 'print(1)' }, ctx);
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:false / execution_failed with the code on a non-zero exit', async () => {
+    const backend = makeBackend(true, { stderr: 'Traceback', exitCode: 1 });
+    const [runCode] = createCodeTools({ backend });
+    const result = await runCode.execute({ runtime: 'python', code: 'raise SystemExit(1)' }, ctx);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('execution_failed');
+      expect(result.error).toContain('code 1');
+      expect(result.error).toContain('Traceback');
+    }
   });
 });

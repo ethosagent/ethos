@@ -17,7 +17,7 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import type { ExecutionBackend, PersonalityConfig } from '@ethosagent/types';
+import type { ExecSession, ExecutionBackend, PersonalityConfig } from '@ethosagent/types';
 import { updateEntryIf } from './registry';
 
 export interface SpawnResult {
@@ -153,8 +153,23 @@ export function spawnDetached(
 
 /** Sentinel pid for backend-routed (containerized) processes — they have no
  * host pid. `isAlive(SENTINEL)` is false, so liveness for these entries is
- * driven by stream completion (onExit), not host pid polling. */
+ * driven by the registry status (flipped on stream completion), not host pid
+ * polling. process_stop/process_watch special-case this pid. */
 export const BACKEND_ROUTED_PID = -1;
+
+/**
+ * Live handle to a backend-routed process's session, keyed by process id. Lets
+ * process_stop deliver a real signal to the in-container process and lets the
+ * drain loop be unblocked. Cleared once the stream completes. In-process only —
+ * a backend-routed process cannot outlive the host that spawned it (the
+ * container is torn down on dispose), so cross-process recovery is N/A.
+ */
+const routedSessions = new Map<string, ExecSession>();
+
+/** Resolve the live session for a backend-routed process, if still running. */
+export function routedSessionFor(id: string): ExecSession | undefined {
+  return routedSessions.get(id);
+}
 
 /**
  * Route a long-running process through an ExecutionBackend session (review c).
@@ -162,11 +177,10 @@ export const BACKEND_ROUTED_PID = -1;
  * `spawnDetached` writes, so process_list/process_logs keep working. Output is
  * appended as the stream yields; `onExit` fires once the stream completes.
  *
- * Lane-C scope (NOT this lane): in-container liveness, signal delivery
- * (process_stop) and live tailing (process_watch) against a containerized
- * process require container-side pid tracking the thin Lane-A `exec` does not
- * expose. Routed processes therefore carry BACKEND_ROUTED_PID and rely on
- * stream completion for terminal state; pid-based stop/watch is deferred.
+ * Lane C2: the session is registered in `routedSessions` so process_stop can
+ * deliver a real signal to the in-container process via `session.stop()`, and
+ * process_watch can tail the live log + observe terminal state via the
+ * registry. The handle is removed once the stream ends.
  */
 export function spawnViaBackend(
   id: string,
@@ -186,16 +200,23 @@ export function spawnViaBackend(
   rotateLogIfNeeded(stderrLog);
 
   const session = backend.spawnSession(personality?.id ?? 'unknown');
+  routedSessions.set(id, session);
   // Clean env by default (review #3): only explicitly-opted vars cross in.
   const stream = session.exec(command, { cwd, env: env ?? {}, personality });
 
   // Drain the stream in the background, appending to the log files. A detached
   // host child is not created; the registry entry is flipped to terminal when
-  // the stream ends (or errors).
+  // the stream ends (or errors). The exit chunk (Lane C2) carries the real exit
+  // code; absent it (older backend), fall back to 0 on clean completion.
   void (async () => {
     let errored = false;
+    let exitCode = 0;
     try {
       for await (const chunk of stream) {
+        if (chunk.stream === 'exit') {
+          exitCode = chunk.code;
+          continue;
+        }
         const target = chunk.stream === 'stdout' ? stdoutLog : stderrLog;
         try {
           appendFileSync(target, chunk.data);
@@ -206,13 +227,14 @@ export function spawnViaBackend(
     } catch {
       errored = true;
     } finally {
+      routedSessions.delete(id);
       await session.dispose().catch(() => {});
-      const exitCode = errored ? -1 : 0;
+      const finalExit = errored ? -1 : exitCode;
       updateEntryIf(dataDir, id, (e) => e.status === 'running', {
         status: 'exited' as const,
-        exitCode,
+        exitCode: finalExit,
       }).catch(() => {});
-      onExit?.({ exitCode, signal: null });
+      onExit?.({ exitCode: finalExit, signal: null });
     }
   })();
 

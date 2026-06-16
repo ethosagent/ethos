@@ -30,14 +30,16 @@ const RUNTIME_NAMES = Object.keys(RUNTIMES).join(', ');
 
 async function drainExec(
   stream: AsyncIterable<ExecChunk>,
-): Promise<{ stdout: string; stderr: string }> {
+): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   let stdout = '';
   let stderr = '';
+  let exitCode: number | null = null;
   for await (const chunk of stream) {
-    if (chunk.stream === 'stdout') stdout += chunk.data;
+    if (chunk.stream === 'exit') exitCode = chunk.code;
+    else if (chunk.stream === 'stdout') stdout += chunk.data;
     else stderr += chunk.data;
   }
-  return { stdout, stderr };
+  return { stdout, stderr, exitCode };
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +114,7 @@ function createRunCodeTool(
       const timeout = timeout_ms ?? DEFAULT_TIMEOUT_MS;
 
       try {
-        const { stdout, stderr } = await drainExec(
+        const { stdout, stderr, exitCode } = await drainExec(
           backend.exec(cmd, {
             stdin: code,
             timeoutMs: timeout,
@@ -122,6 +124,15 @@ function createRunCodeTool(
           }),
         );
         const output = stripAnsiEscapes([stdout, stderr].filter(Boolean).join('\n').trim());
+        // A non-zero interpreter exit means the code failed (syntax/runtime
+        // error). A null exit code (older backend) preserves prior success.
+        if (exitCode !== null && exitCode !== 0) {
+          return {
+            ok: false,
+            error: `Code exited with error (code ${exitCode}):\n${output || '(no output)'}`,
+            code: 'execution_failed',
+          };
+        }
         return { ok: true, value: output || '(no output)' };
       } catch (err) {
         return {
