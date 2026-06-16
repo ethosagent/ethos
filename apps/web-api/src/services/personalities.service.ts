@@ -8,7 +8,7 @@ import {
 } from '@ethosagent/personalities';
 import type { PersonalitySkillRecord, SkillsLibrary } from '@ethosagent/skills';
 import { type McpJsonStore, mcpTokenSecretRef } from '@ethosagent/tools-mcp';
-import { EthosError } from '@ethosagent/types';
+import { EthosError, type ExecutionPosture } from '@ethosagent/types';
 import type { McpPolicy, Personality, PersonalitySkill } from '@ethosagent/web-contracts';
 
 // Personalities service. Calls into FilePersonalityRegistry for the
@@ -50,14 +50,18 @@ export class PersonalitiesService {
   }
 
   /** Generated Markdown character sheet — the same artifact `ethos personality
-   *  show` prints, rendered for the Web Personalities tab. */
-  async characterSheet(id: string): Promise<{ markdown: string }> {
+   *  show` prints, rendered for the Web Personalities tab. Also returns the
+   *  structured `ExecutionPosture` (Phase 2a, lane E1) so the web Execution UI
+   *  renders the posture the resolver produced rather than recomputing it. */
+  async characterSheet(
+    id: string,
+  ): Promise<{ markdown: string; posture: ExecutionPosture | null }> {
     const described = this.opts.personalities.describe(id);
     if (!described) throw notFound(id);
     const soulMd = await this.opts.personalities.readSoulMd(id);
     const dataDir = this.opts.dataDir;
     if (!dataDir) {
-      return { markdown: renderCharacterSheet(described.config, soulMd) };
+      return { markdown: renderCharacterSheet(described.config, soulMd), posture: null };
     }
     // Same posture resolver + renderer the CLI `personality show` uses — one
     // artifact, no second renderer (Phase 2a, lane E1).
@@ -66,7 +70,10 @@ export class PersonalitiesService {
       personality: described.config,
       substitutionVars: { ethosHome: dataDir, cwd: process.cwd() },
     });
-    return { markdown: renderCharacterSheet(described.config, soulMd, { posture }) };
+    return {
+      markdown: renderCharacterSheet(described.config, soulMd, { posture }),
+      posture,
+    };
   }
 
   async create(input: CreatePersonalityInput): Promise<{ personality: Personality }> {

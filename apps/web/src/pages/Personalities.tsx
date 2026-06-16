@@ -30,7 +30,9 @@ import {
 } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ExecutionTab } from '../components/personality/ExecutionTab';
 import { PersonalityRingAvatar } from '../components/ui/PersonalityRingAvatar';
+import { toolAffordance } from '../lib/execution-posture';
 import { rpc } from '../rpc';
 
 // Personalities tab — v1.
@@ -1173,6 +1175,11 @@ export function EditModal({ id, onClose }: { id: string; onClose: () => void }) 
               children: <ToolsetEditor id={id} initialToolset={data.personality.toolset ?? []} />,
             },
             {
+              key: 'execution',
+              label: 'Execution',
+              children: <ExecutionTab id={id} />,
+            },
+            {
               key: 'config',
               label: 'Config',
               children: <ConfigEditor id={id} personality={data.personality} />,
@@ -1321,7 +1328,46 @@ function ToolsetEditor({ id, initialToolset }: { id: string; initialToolset: str
       >
         Save
       </Button>
+      <ToolsetAffordances draft={draft} />
     </Form>
+  );
+}
+
+// Per-tool affordance legend (Phase 2a, lane E2). Exec tools route through the
+// execution backend ("runs sandboxed", linking to the Execution tab); host-side
+// tools stay app-confined. No per-tool docker variants — posture is a property
+// of the persona, set on the Execution tab.
+function ToolsetAffordances({ draft }: { draft: string }) {
+  const tools = draft
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (tools.length === 0) return null;
+  return (
+    <div style={{ marginTop: 16, borderTop: '1px solid var(--border-subtle)', paddingTop: 12 }}>
+      <Typography.Text type="secondary" style={{ fontSize: 11, letterSpacing: '0.04em' }}>
+        EXECUTION
+      </Typography.Text>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
+        {tools.map((tool) => {
+          const a = toolAffordance(tool);
+          return (
+            <div key={tool} style={{ display: 'flex', gap: 10, fontSize: 12.5 }}>
+              <span style={{ fontFamily: 'Geist Mono, monospace', minWidth: 140 }}>{tool}</span>
+              {a.kind === 'exec' ? (
+                <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
+                  runs sandboxed ↗ Execution
+                </Typography.Text>
+              ) : (
+                <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
+                  host-side (app-confined)
+                </Typography.Text>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
