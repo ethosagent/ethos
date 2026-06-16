@@ -103,6 +103,9 @@ export async function startBackendAsync(port: number): Promise<number> {
     return actual;
   } catch (err) {
     serverRunning = false;
+    logBackendError(
+      `[ethos-backend] backend failed to start: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
     throw err;
   }
 }
