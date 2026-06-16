@@ -90,6 +90,7 @@ function makeTerminalTool(
               timeoutMs: timeout,
               env: {},
               personality,
+              sessionId: ctx.sessionId,
             }),
           );
           const out = [stdout, stderr].filter(Boolean).join('\n').trim();

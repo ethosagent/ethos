@@ -4,6 +4,7 @@ import {
   type DefaultToolRegistry,
   LastWriteWinsPolicy,
   LazyOnDemandPolicy,
+  SessionManager,
 } from '@ethosagent/core';
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import { SQLiteGoalStore } from '@ethosagent/goal-store';
@@ -354,6 +355,17 @@ export async function composeAllTools(
           { cause: err },
         );
       }
+    }
+    if (executionBackend) {
+      executionBackend = new SessionManager(executionBackend, {
+        onEvent: (e) => {
+          log.info(`execution session ${e.type}`, {
+            personalityId: e.personalityId,
+            sessionId: e.sessionId,
+            reason: e.reason,
+          });
+        },
+      });
     }
   }
 

@@ -252,6 +252,44 @@ export function buildDockerArgs(opts: {
   return args;
 }
 
+/**
+ * Build `docker run -d ... sleep infinity` args for a long-lived session
+ * container. Distinct from buildDockerArgs (which is `--rm` + `bash -lc cmd`):
+ * this keeps the container alive so a persistent `docker exec` shell can run
+ * many commands against it. Throws InvalidImageRefError unless digest-pinned.
+ */
+export function buildKeepAliveArgs(opts: {
+  image: string;
+  containerName: string;
+  memoryMb: number;
+  networkMode: 'none' | 'bridge';
+  uid: number;
+  gid: number;
+  mounts?: MountSpec[];
+  tmpfs?: readonly string[];
+}): string[] {
+  if (!opts.image.includes('@sha256:')) {
+    throw new InvalidImageRefError(opts.image);
+  }
+  const args: string[] = ['run', '-d', '--name', opts.containerName];
+  args.push('--network', opts.networkMode);
+  args.push(`--memory=${opts.memoryMb}m`, '--memory-swap', `${opts.memoryMb}m`);
+  args.push('--cpus', '2', '--pids-limit', '256');
+  args.push('--cap-drop', 'ALL', '--security-opt', 'no-new-privileges');
+  if (opts.uid >= 0 && opts.gid >= 0) {
+    args.push('--user', `${opts.uid}:${opts.gid}`);
+  }
+  args.push('--pull=never');
+  for (const path of opts.tmpfs ?? []) {
+    args.push('--tmpfs', path);
+  }
+  for (const m of opts.mounts ?? []) {
+    args.push('-v', `${m.hostPath}:${m.containerPath}:${m.mode}`);
+  }
+  args.push('--', opts.image, 'sleep', 'infinity');
+  return args;
+}
+
 function defaultDockerInfoCheck(): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     try {
@@ -262,6 +300,197 @@ function defaultDockerInfoCheck(): Promise<boolean> {
       resolve(false);
     }
   });
+}
+
+/**
+ * Persistent-shell stderr is captured at the shell process level, not per-command; output ordering between stdout and stderr within a single exec is best-effort. Exit-code propagation through ExecChunk is out of scope (Lane C2).
+ */
+class DockerPersistentSession implements ExecSession {
+  readonly personalityId: string;
+  private readonly backend: DockerExecutionBackend;
+  private readonly config: ExecutionBackendConfig;
+  private container: string | null = null;
+  private shell: ChildProcess | null = null;
+  private started = false;
+  private disposed = false;
+  private starting: Promise<void> | null = null;
+  // serialize execs on the single persistent shell — one command at a time
+  private queue: Promise<unknown> = Promise.resolve();
+
+  constructor(
+    backend: DockerExecutionBackend,
+    personalityId: string,
+    config: ExecutionBackendConfig,
+  ) {
+    this.backend = backend;
+    this.personalityId = personalityId;
+    this.config = config;
+  }
+
+  private async start(opts: ExecOpts): Promise<void> {
+    if (this.started) return;
+    if (this.starting) return this.starting;
+    this.starting = (async () => {
+      if (!(await this.backend.isAvailable())) throw new DockerUnavailableError();
+      const image = this.config.images?.default ?? '';
+      if (!image) throw new InvalidImageRefError(image);
+      const memoryMb = this.config.memoryMb ?? 256;
+      const containerName = `ethos-sandbox-sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const info = userInfo();
+      const mounts = opts.personality ? this.backend.mountsFor(opts.personality) : [];
+      const args = buildKeepAliveArgs({
+        image,
+        containerName,
+        memoryMb,
+        networkMode: 'none',
+        uid: info.uid,
+        gid: info.gid,
+        mounts,
+        tmpfs: SCRATCH_TMPFS_PATHS,
+      });
+      await new Promise<void>((resolve, reject) => {
+        const run = spawn('docker', args, { stdio: 'ignore' });
+        run.on('close', (code) =>
+          code === 0 ? resolve() : reject(new Error(`docker run failed (${code})`)),
+        );
+        run.on('error', reject);
+      });
+      this.container = containerName;
+      this.shell = spawn('docker', ['exec', '-i', containerName, 'bash'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      this.started = true;
+    })();
+    try {
+      await this.starting;
+    } finally {
+      this.starting = null;
+    }
+  }
+
+  exec(cmd: string, opts: ExecOpts = {}): AsyncIterable<ExecChunk> {
+    const self = this;
+    async function* gen(): AsyncIterable<ExecChunk> {
+      await self.start(opts);
+      const shell = self.shell;
+      if (!shell?.stdin || !shell.stdout) throw new DockerUnavailableError();
+      // serialize: chain onto the queue so only one command runs at a time
+      let release: () => void = () => {};
+      const prev = self.queue;
+      self.queue = new Promise<void>((r) => {
+        release = r;
+      });
+      await prev;
+      try {
+        yield* withByteCeiling(self.runOne(shell, cmd, opts), MAX_EXEC_OUTPUT_BYTES, () => {});
+      } finally {
+        release();
+      }
+    }
+    return gen();
+  }
+
+  private async *runOne(
+    shell: ChildProcess,
+    cmd: string,
+    opts: ExecOpts,
+  ): AsyncIterable<ExecChunk> {
+    const sentinel = `__ETHOS_EOT_${Math.random().toString(36).slice(2)}__`;
+    const chunks: ExecChunk[] = [];
+    let done = false;
+    let error: Error | null = null;
+    let resolveNext: (() => void) | null = null;
+    let stdoutBuf = '';
+
+    const onStdout = (b: Buffer) => {
+      stdoutBuf += b.toString('utf-8');
+      const idx = stdoutBuf.indexOf(sentinel);
+      if (idx >= 0) {
+        let pre = stdoutBuf.slice(0, idx);
+        if (pre.endsWith('\n')) pre = pre.slice(0, -1);
+        if (pre.length > 0) chunks.push({ stream: 'stdout', data: pre });
+        done = true;
+        stdoutBuf = '';
+      } else {
+        const safe = stdoutBuf.length - sentinel.length;
+        if (safe > 0) {
+          chunks.push({ stream: 'stdout', data: stdoutBuf.slice(0, safe) });
+          stdoutBuf = stdoutBuf.slice(safe);
+        }
+      }
+      resolveNext?.();
+    };
+    const onStderr = (b: Buffer) => {
+      chunks.push({ stream: 'stderr', data: b.toString('utf-8') });
+      resolveNext?.();
+    };
+    shell.stdout?.on('data', onStdout);
+    shell.stderr?.on('data', onStderr);
+
+    const timeoutMs = opts.timeoutMs ?? 30000;
+    const timer = setTimeout(() => {
+      error = new ExecTimeoutError();
+      done = true;
+      resolveNext?.();
+    }, timeoutMs);
+    const signal = opts.signal;
+    const onAbort = () => {
+      error = new ExecAbortedError();
+      done = true;
+      resolveNext?.();
+    };
+    if (signal) {
+      if (signal.aborted) {
+        error = new ExecAbortedError();
+        done = true;
+      } else {
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+    }
+
+    // write the command + sentinel; $? is the exit code of the user command
+    shell.stdin?.write(`${cmd}\nprintf '\\n%s%d\\n' "${sentinel}" "$?"\n`, 'utf-8');
+
+    try {
+      while (true) {
+        while (chunks.length > 0) {
+          const c = chunks.shift();
+          if (c) yield c;
+        }
+        if (error) throw error;
+        if (done) {
+          while (chunks.length > 0) {
+            const c = chunks.shift();
+            if (c) yield c;
+          }
+          break;
+        }
+        await new Promise<void>((r) => {
+          resolveNext = r;
+        });
+      }
+    } finally {
+      clearTimeout(timer);
+      shell.stdout?.off('data', onStdout);
+      shell.stderr?.off('data', onStderr);
+      if (signal) signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    try {
+      this.shell?.stdin?.end();
+    } catch {
+      /* shell may already be closed */
+    }
+    this.shell?.kill('SIGKILL');
+    const name = this.container;
+    if (name) {
+      spawn('docker', ['rm', '-f', name], { stdio: 'ignore' });
+    }
+  }
 }
 
 export class DockerExecutionBackend implements ExecutionBackend {
@@ -318,11 +547,7 @@ export class DockerExecutionBackend implements ExecutionBackend {
   }
 
   spawnSession(personalityId: string): ExecSession {
-    return {
-      personalityId,
-      exec: (cmd: string, opts: ExecOpts = {}) => this.exec(cmd, opts),
-      dispose: () => Promise.resolve(),
-    };
+    return new DockerPersistentSession(this, personalityId, this.config);
   }
 
   /**

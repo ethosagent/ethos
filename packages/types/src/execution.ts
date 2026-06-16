@@ -17,6 +17,12 @@ export interface ExecOpts {
    * matches the personality's declared reach. Ignored by `local`/`ssh`.
    */
   personality?: PersonalityConfig;
+  /**
+   * Session lane key. The lifecycle manager (SessionManager) keys persistent
+   * exec sessions by (personality.id, sessionId). When absent, all execs for a
+   * personality share a single default lane (sessionId defaults to '').
+   */
+  sessionId?: string;
 }
 
 export interface ExecSession {

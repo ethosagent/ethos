@@ -387,3 +387,53 @@ describe('DockerExecutionBackend', () => {
     ).rejects.toBeInstanceOf(DockerUnavailableError);
   });
 });
+
+describe.skipIf(!dockerAvailable || !testImage)('persistent session (docker-gated)', () => {
+  // These tests are docker-gated: they only run when docker is available and
+  // ETHOS_TEST_DOCKER_IMAGE is set. They verify cwd/env persistence across
+  // exec calls on a single persistent session, opportunistically.
+  it('cwd persists across exec calls', async () => {
+    const config: ExecutionBackendConfig = {
+      images: { default: testImage as string },
+      substitutionVars: { ethosHome: ETHOS_HOME, cwd: CWD },
+    };
+    const be = new DockerExecutionBackend({ config, secrets: secretsStub, logger: loggerStub });
+    const session = be.spawnSession('redteam');
+    const personality = {
+      id: 'redteam',
+      name: 'redteam',
+      fs_reach: { read: ['/tmp'] },
+    } as unknown as PersonalityConfig;
+    const drain = async (cmd: string) => {
+      let out = '';
+      for await (const c of session.exec(cmd, { personality, timeoutMs: 20_000 })) out += c.data;
+      return out;
+    };
+    await drain('cd /tmp');
+    const pwd = await drain('pwd');
+    await session.dispose();
+    expect(pwd).toMatch(/\/tmp/);
+  });
+  it('env vars persist across exec calls', async () => {
+    const config: ExecutionBackendConfig = {
+      images: { default: testImage as string },
+      substitutionVars: { ethosHome: ETHOS_HOME, cwd: CWD },
+    };
+    const be = new DockerExecutionBackend({ config, secrets: secretsStub, logger: loggerStub });
+    const session = be.spawnSession('redteam');
+    const personality = {
+      id: 'redteam',
+      name: 'redteam',
+      fs_reach: { read: ['/tmp'] },
+    } as unknown as PersonalityConfig;
+    const drain = async (cmd: string) => {
+      let out = '';
+      for await (const c of session.exec(cmd, { personality, timeoutMs: 20_000 })) out += c.data;
+      return out;
+    };
+    await drain('export FOO=bar');
+    const echoed = await drain('echo $FOO');
+    await session.dispose();
+    expect(echoed).toMatch(/bar/);
+  });
+});

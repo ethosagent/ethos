@@ -82,7 +82,7 @@ function createRunCodeTool(
       },
       required: ['runtime', 'code'],
     },
-    async execute(args): Promise<ToolResult> {
+    async execute(args, ctx): Promise<ToolResult> {
       const { runtime, code, timeout_ms } = args as {
         runtime: string;
         code: string;
@@ -118,6 +118,7 @@ function createRunCodeTool(
             timeoutMs: timeout,
             env: {},
             personality,
+            sessionId: ctx.sessionId,
           }),
         );
         const output = stripAnsiEscapes([stdout, stderr].filter(Boolean).join('\n').trim());
