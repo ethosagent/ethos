@@ -132,6 +132,21 @@ describe('terminal routing', () => {
       expect(result.error).toContain('boom');
     }
   });
+
+  it('refuses (not_available) when host exec is forbidden and no backend (F1)', async () => {
+    // docker posture + no backend + constitution forbids local → must NOT fall
+    // through to the host ScopedProcess.
+    const spawn = vi.fn();
+    const routedCtx = { ...ctx, scopedProcess: { spawn } as unknown as typeof ctx.scopedProcess };
+    const [tool] = createTerminalTools({ hostExecForbidden: true });
+    const result = await tool.execute({ command: 'whoami' }, routedCtx);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('not_available');
+      expect(result.error).toMatch(/constitution forbids running un-sandboxed/);
+    }
+    expect(spawn).not.toHaveBeenCalled();
+  });
 });
 
 /** Backend whose session/exec emit a terminal exit chunk with `code`. */

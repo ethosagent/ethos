@@ -6,6 +6,8 @@ export interface ProcessToolsComposeOpts {
   hookRegistry?: HookRegistry;
   backend?: ExecutionBackend;
   personality?: PersonalityConfig;
+  /** Refuse host spawn when the posture requires Docker but none is wired. */
+  hostExecForbidden?: boolean;
 }
 
 export interface ProcessToolsCompose {
@@ -18,6 +20,7 @@ export function compose(ctx: WiringContext, opts?: ProcessToolsComposeOpts): Pro
       hookRegistry: opts?.hookRegistry,
       backend: opts?.backend,
       personality: opts?.personality,
+      hostExecForbidden: opts?.hostExecForbidden,
     }),
   };
 }

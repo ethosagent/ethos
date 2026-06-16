@@ -2,9 +2,11 @@
 // tokens (`${ETHOS_HOME}` etc.) are literal markers resolved at runtime, not JS
 // template strings.
 import { type ChildProcess, spawn } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import type {
+  Constitution,
   ExecChunk,
   ExecOpts,
   ExecSession,
@@ -53,6 +55,17 @@ export class ForbiddenMountError extends Error {
   constructor(public readonly path: string) {
     super(`Refusing to mount a forbidden host path: ${path}`);
     this.name = 'ForbiddenMountError';
+  }
+}
+
+export class ConstitutionMountError extends Error {
+  readonly code = 'CONSTITUTION_MOUNT_DENIED';
+  constructor(
+    public readonly path: string,
+    public readonly reason: string,
+  ) {
+    super(`Refusing to mount "${path}": ${reason}`);
+    this.name = 'ConstitutionMountError';
   }
 }
 
@@ -140,6 +153,67 @@ const MAX_EXEC_OUTPUT_BYTES = 1_000_000;
 function isForbiddenMount(p: string): boolean {
   const abs = resolvePath(p);
   return FORBIDDEN_MOUNT_ROOTS.some((root) => abs === root || abs.startsWith(`${root}/`));
+}
+
+/**
+ * Resolve a host path's real (symlink-followed) target (F5). `resolvePath` is
+ * purely lexical, so a declared mount that is a SYMLINK to `/var/run/docker.sock`
+ * (or `/proc`, `/dev`, …) would pass the lexical denylist while Docker follows
+ * the link into the forbidden target. Re-checking the realpath closes that
+ * bypass. Non-existent paths have no real target — `realpathSync` throws ENOENT;
+ * we fall back to the lexical path (the not-yet-created case is still subject to
+ * the lexical check, and Docker creates a fresh dir, not a forbidden target).
+ */
+function realPathOrLexical(hostPath: string): string {
+  try {
+    return realpathSync(hostPath);
+  } catch {
+    return hostPath;
+  }
+}
+
+/** True when `path` equals `prefix` or is nested under it (path-segment safe). */
+function isUnderPath(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`);
+}
+
+/**
+ * Enforce the operator constitution's filesystem mount policy against an
+ * already-resolved host path (F2). Unlike the load-time `enforceConstitution`
+ * check — which only sees a personality's DECLARED `fs_reach` and is skipped
+ * entirely when `fs_reach` is empty — this runs against the ACTUAL derived mount
+ * set, so the `ownDir`/`skills`/`cwd` defaults a personality with no `fs_reach`
+ * gets are covered too. Throws `ConstitutionMountError` on the first violation.
+ *
+ * - `deniedPathPrefixes`: refuse any mount at or under a denied prefix.
+ * - `allowedMountRoots` (when non-empty): every mount must sit under at least
+ *   one allowed root; otherwise refuse. An empty/absent list is permissive.
+ *
+ * The built-in `FORBIDDEN_MOUNT_ROOTS` denylist still applies unconditionally
+ * on top (checked separately in `mountsFor`).
+ */
+function checkConstitutionMount(
+  hostPath: string,
+  constitution: Constitution | undefined,
+  vars: { ethosHome: string; self: string; cwd: string },
+): void {
+  const fs = constitution?.filesystem;
+  if (!fs) return;
+
+  const denied = (fs.deniedPathPrefixes ?? []).map((d) => substitute(d, vars));
+  for (const prefix of denied) {
+    if (isUnderPath(hostPath, prefix)) {
+      throw new ConstitutionMountError(hostPath, `under constitution denied prefix "${prefix}"`);
+    }
+  }
+
+  const roots = (fs.allowedMountRoots ?? []).map((r) => substitute(r, vars));
+  if (roots.length > 0 && !roots.some((root) => isUnderPath(hostPath, root))) {
+    throw new ConstitutionMountError(
+      hostPath,
+      'outside the constitution allowedMountRoots allowlist',
+    );
+  }
 }
 
 /**
@@ -476,7 +550,16 @@ class DockerPersistentSession implements ExecSession {
       });
       await prev;
       try {
-        yield* withByteCeiling(self.runOne(shell, cmd, opts), MAX_EXEC_OUTPUT_BYTES, () => {});
+        // F4 — kill the in-container process when the byte ceiling trips, so a
+        // runaway command in a persistent session is actually stopped, not just
+        // truncated on the host side (the previous no-op callback left the
+        // flooding command running in the container). `stop('SIGKILL')`
+        // broadcasts to the session container's user processes; the session is
+        // dedicated to one logical workload, so a broadcast is the correct
+        // "stop this" semantics (mirroring the one-shot path's killContainer).
+        yield* withByteCeiling(self.runOne(shell, cmd, opts), MAX_EXEC_OUTPUT_BYTES, () => {
+          void self.stop('SIGKILL');
+        });
       } finally {
         release();
       }
@@ -741,7 +824,20 @@ export class DockerExecutionBackend implements ExecutionBackend {
     const byPath = new Map<string, MountSpec>();
     const add = (rawPath: string, mode: 'ro' | 'rw'): void => {
       const hostPath = resolvePath(rawPath);
-      if (isForbiddenMount(hostPath)) throw new ForbiddenMountError(hostPath);
+      // F5 — follow symlinks before the denylist so a path that links into a
+      // forbidden target (docker.sock, /proc, …) is caught, not just literal
+      // forbidden paths. Both the lexical path and its real target are checked.
+      const realPath = realPathOrLexical(hostPath);
+      if (isForbiddenMount(hostPath) || isForbiddenMount(realPath)) {
+        throw new ForbiddenMountError(hostPath);
+      }
+      // F2 — enforce the constitution's allow-roots / denied-prefixes against the
+      // ACTUAL derived host path (and its symlink target), including the defaults
+      // a no-fs_reach personality gets. The built-in denylist above still applies
+      // unconditionally on top.
+      const vars = { ethosHome, self, cwd };
+      checkConstitutionMount(hostPath, this.config.constitution, vars);
+      if (realPath !== hostPath) checkConstitutionMount(realPath, this.config.constitution, vars);
       const existing = byPath.get(hostPath);
       // rw wins: write access subsumes read. Dedups identical (path, mode) too.
       if (existing && (existing.mode === 'rw' || mode === 'ro')) return;

@@ -210,6 +210,26 @@ describe('renderCharacterSheet — ## Execution section', () => {
     expect(sheet).not.toMatch(/explicit consent required/);
   });
 
+  it('renders the honest local host-fallback posture (F1) instead of claiming Docker', () => {
+    const sheet = renderCharacterSheet(fullConfig, soulMd, {
+      posture: {
+        backend: 'local',
+        networkMode: 'none',
+        memoryMb: 256,
+        containerized: false,
+        mounts: [],
+        scratchPaths: [],
+        hostFallback: { reason: 'docker-disabled' },
+      },
+      platform: 'linux',
+    });
+    // The posture line must say it runs un-sandboxed on the host, never "docker".
+    expect(sheet).toMatch(/Posture:\s+local \(un-sandboxed — runs on host; Docker unavailable\)/);
+    expect(sheet).toMatch(/Host fallback \(F1\)/);
+    expect(sheet).toMatch(/Docker execution is disabled in this process/);
+    expect(sheet).not.toMatch(/docker \(sandboxed\)/);
+  });
+
   it('renders a constitution clamp notice for the active personality', () => {
     const sheet = renderCharacterSheet(fullConfig, soulMd, {
       posture: dockerPosture(),

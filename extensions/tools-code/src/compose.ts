@@ -8,7 +8,17 @@ export interface CodeToolsCompose {
 
 export function compose(
   _ctx: WiringContext,
-  deps: { backend?: ExecutionBackend; personality?: PersonalityConfig },
+  deps: {
+    backend?: ExecutionBackend;
+    personality?: PersonalityConfig;
+    hostExecForbidden?: boolean;
+  },
 ): CodeToolsCompose {
-  return { tools: createCodeTools({ backend: deps.backend, personality: deps.personality }) };
+  return {
+    tools: createCodeTools({
+      backend: deps.backend,
+      personality: deps.personality,
+      hostExecForbidden: deps.hostExecForbidden,
+    }),
+  };
 }

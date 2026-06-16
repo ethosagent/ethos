@@ -1,10 +1,11 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: fs_reach values are
 // literal substitution tokens (`${ETHOS_HOME}` etc.) resolved at runtime, not
 // JS template strings.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
+  Constitution,
   ExecChunk,
   ExecutionBackendConfig,
   Logger,
@@ -15,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildDockerArgs,
   buildKeepAliveArgs,
+  ConstitutionMountError,
   DockerExecutionBackend,
   DockerUnavailableError,
   EmptySubstitutionError,
@@ -256,6 +258,98 @@ describe('mountsFor', () => {
   it('also refuses a forbidden path declared as write', () => {
     const { be, p } = makeBackend({ write: ['/proc/sys'] });
     expect(() => be.mountsFor(p)).toThrow(ForbiddenMountError);
+  });
+
+  // F2 — constitution mount policy enforced against the ACTUAL derived mount set
+  // (including the ownDir/skills/cwd defaults a no-fs_reach personality gets),
+  // not just declared fs_reach.
+  describe('F2 — constitution mount policy on the derived mount set', () => {
+    function makeWithConstitution(
+      constitution: Constitution,
+      fsReach?: PersonalityConfig['fs_reach'],
+      id = 'tester',
+    ) {
+      const config: ExecutionBackendConfig = {
+        images: { default: 'x@sha256:abc' },
+        substitutionVars: { ethosHome: ETHOS_HOME, cwd: CWD },
+        constitution,
+      };
+      const be = new DockerExecutionBackend(
+        { config, secrets: secretsStub, logger: loggerStub },
+        async () => false,
+      );
+      const p = { id, name: id, fs_reach: fsReach } as unknown as PersonalityConfig;
+      return { be, p };
+    }
+
+    it('rejects the DEFAULT cwd mount when it is outside allowedMountRoots (empty fs_reach)', () => {
+      // No fs_reach → defaults include CWD (=/work/project). An allowlist that
+      // only permits ${ETHOS_HOME} must reject the cwd default mount.
+      const { be, p } = makeWithConstitution({
+        filesystem: { allowedMountRoots: ['${ETHOS_HOME}'] },
+      });
+      expect(() => be.mountsFor(p)).toThrow(ConstitutionMountError);
+    });
+
+    it('rejects a DEFAULT mount under a denied prefix (empty fs_reach)', () => {
+      const { be, p } = makeWithConstitution({
+        filesystem: { deniedPathPrefixes: [CWD] },
+      });
+      expect(() => be.mountsFor(p)).toThrow(ConstitutionMountError);
+    });
+
+    it('allows the defaults when allowedMountRoots covers both ${ETHOS_HOME} and ${CWD}', () => {
+      const { be, p } = makeWithConstitution({
+        filesystem: { allowedMountRoots: ['${ETHOS_HOME}', '${CWD}'] },
+      });
+      expect(() => be.mountsFor(p)).not.toThrow();
+    });
+
+    it('rejects a declared fs_reach path outside allowedMountRoots', () => {
+      const { be, p } = makeWithConstitution(
+        { filesystem: { allowedMountRoots: ['${CWD}'] } },
+        { read: ['/etc/secrets'] },
+      );
+      expect(() => be.mountsFor(p)).toThrow(ConstitutionMountError);
+    });
+
+    it('keeps the built-in FORBIDDEN_MOUNT_ROOTS denylist on top of an allow-all constitution', () => {
+      const { be, p } = makeWithConstitution(
+        { filesystem: { allowedMountRoots: ['/'] } },
+        { read: ['/proc'] },
+      );
+      expect(() => be.mountsFor(p)).toThrow(ForbiddenMountError);
+    });
+  });
+
+  // F5 — symlink that targets a forbidden root must be refused (realpath check).
+  describe('F5 — symlink-to-forbidden-target is refused', () => {
+    it('refuses a declared path that is a symlink into a forbidden root', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'ethos-symlink-'));
+      try {
+        const link = join(dir, 'sneaky');
+        // Symlink to a forbidden root that exists on both macOS and Linux (`/dev`
+        // is in FORBIDDEN_MOUNT_ROOTS). resolvePath is lexical and would pass the
+        // symlink path; realpathSync follows the link so the denylist catches it.
+        symlinkSync('/dev', link);
+        const config: ExecutionBackendConfig = {
+          images: { default: 'x@sha256:abc' },
+          substitutionVars: { ethosHome: ETHOS_HOME, cwd: CWD },
+        };
+        const be = new DockerExecutionBackend(
+          { config, secrets: secretsStub, logger: loggerStub },
+          async () => false,
+        );
+        const p = {
+          id: 't',
+          name: 't',
+          fs_reach: { read: [link] },
+        } as unknown as PersonalityConfig;
+        expect(() => be.mountsFor(p)).toThrow(ForbiddenMountError);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   // CI invariant: derived host-mount path set ≡ resolved fs_reach path set
@@ -713,6 +807,42 @@ describe.skipIf(!dockerAvailable || !testImage)('persistent session (docker-gate
     // The next command's stderr must NOT contain the previous command's stderr.
     const second = await collect('echo OUT2');
     expect(second.stderr).not.toContain('ERR1');
+    await session.dispose();
+    rmSync(mountDir, { recursive: true, force: true });
+  });
+
+  // F4 — a runaway command in a persistent session is KILLED at the byte
+  // ceiling (previously the persistent path passed a no-op kill callback, so the
+  // stream truncated but the in-container process kept running). The exec stream
+  // terminates with the truncation marker and bounded output; the kill broadcast
+  // (`stop('SIGKILL')`) reaps the runaway in the container.
+  it('kills a runaway persistent-session command at the byte ceiling', async () => {
+    const mountDir = mkdtempSync(join(tmpdir(), 'ethos-runaway-'));
+    const config: ExecutionBackendConfig = {
+      images: { default: testImage as string },
+      substitutionVars: { ethosHome: mountDir, cwd: mountDir },
+    };
+    const be = new DockerExecutionBackend({ config, secrets: secretsStub, logger: loggerStub });
+    const session = be.spawnSession('runaway');
+    const personality = {
+      id: 'runaway',
+      name: 'runaway',
+      fs_reach: { read: [mountDir], write: [mountDir] },
+    } as unknown as PersonalityConfig;
+    // `yes` floods stdout far past the 1MB ceiling. The stream must terminate
+    // with the truncation marker rather than hang forever.
+    let sawTruncation = false;
+    let bytes = 0;
+    for await (const c of session.exec('yes ETHOS_RUNAWAY', {
+      personality,
+      timeoutMs: 30_000,
+    })) {
+      if (c.stream === 'stderr' && c.data.includes('[output truncated at')) sawTruncation = true;
+      if (c.stream !== 'exit') bytes += Buffer.byteLength(c.data, 'utf-8');
+    }
+    expect(sawTruncation).toBe(true);
+    // Bounded — not the unbounded flood `yes` would otherwise produce.
+    expect(bytes).toBeLessThan(2_000_000);
     await session.dispose();
     rmSync(mountDir, { recursive: true, force: true });
   });

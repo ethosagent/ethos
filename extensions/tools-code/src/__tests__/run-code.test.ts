@@ -162,3 +162,57 @@ describe('run_code', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// run_tests / lint — F1: route through the backend (docker posture), not host
+// ---------------------------------------------------------------------------
+
+describe('run_tests / lint routing (F1)', () => {
+  it('run_tests routes through backend.exec when a backend is wired (sandboxed, not host)', async () => {
+    const backend = makeBackend(true, { stdout: 'PASS\n', exitCode: 0 });
+    const [, runTests] = createCodeTools({ backend, hostExecForbidden: false });
+    const result = await runTests.execute({}, ctx);
+    expect(result.ok).toBe(true);
+    // The default command went through the container backend with a clean env —
+    // not the host ScopedProcess.
+    expect(backend.lastCmd).toBe('pnpm test');
+    expect(backend.lastOpts?.env).toEqual({});
+  });
+
+  it('lint routes through backend.exec when a backend is wired', async () => {
+    const backend = makeBackend(true, { stdout: '', exitCode: 0 });
+    const [, , lint] = createCodeTools({ backend });
+    const result = await lint.execute({}, ctx);
+    expect(result.ok).toBe(true);
+    expect(backend.lastCmd).toBe('pnpm lint');
+    expect(backend.lastOpts?.env).toEqual({});
+  });
+
+  it('run_tests surfaces a non-zero container exit as execution_failed', async () => {
+    const backend = makeBackend(true, { stderr: '1 failing', exitCode: 1 });
+    const [, runTests] = createCodeTools({ backend });
+    const result = await runTests.execute({}, ctx);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('execution_failed');
+      expect(result.error).toContain('code 1');
+    }
+  });
+
+  it('run_tests refuses (not_available) when host exec is forbidden and no backend', async () => {
+    const [, runTests] = createCodeTools({ hostExecForbidden: true });
+    const result = await runTests.execute({}, ctx);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('not_available');
+      expect(result.error).toMatch(/constitution forbids running un-sandboxed/);
+    }
+  });
+
+  it('lint refuses (not_available) when host exec is forbidden and no backend', async () => {
+    const [, , lint] = createCodeTools({ hostExecForbidden: true });
+    const result = await lint.execute({}, ctx);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('not_available');
+  });
+});

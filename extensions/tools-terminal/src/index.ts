@@ -41,6 +41,7 @@ async function drainExec(
 function makeTerminalTool(
   backend: ExecutionBackend | undefined,
   personality: PersonalityConfig | undefined,
+  hostExecForbidden = false,
 ): Tool {
   return {
     name: 'terminal',
@@ -116,6 +117,18 @@ function makeTerminalTool(
         }
       }
 
+      // Host execution forbidden: the personality's posture requires Docker but
+      // no backend is available AND the constitution forbids the host fallback.
+      // Refuse rather than silently run on the host (F1).
+      if (hostExecForbidden) {
+        return {
+          ok: false,
+          error:
+            'Execution requires a Docker sandbox, but none is available and the constitution forbids running un-sandboxed on the host.',
+          code: 'not_available' as const,
+        };
+      }
+
       // Local path (posture local/none): unchanged ScopedProcess execution.
       if (!ctx.scopedProcess) {
         return {
@@ -170,8 +183,10 @@ export const terminalTool: Tool = makeTerminalTool(undefined, undefined);
 export function createTerminalTools(opts?: {
   backend?: ExecutionBackend;
   personality?: PersonalityConfig;
+  /** Refuse host execution when the posture requires Docker but none is wired. */
+  hostExecForbidden?: boolean;
 }): Tool[] {
-  return [makeTerminalTool(opts?.backend, opts?.personality)];
+  return [makeTerminalTool(opts?.backend, opts?.personality, opts?.hostExecForbidden)];
 }
 
 export { checkCommand, createTerminalGuardHook } from './guard';

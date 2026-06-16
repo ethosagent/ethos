@@ -34,6 +34,7 @@ import { readFileReducer } from '@ethosagent/tools-code/reducers/read-file';
 import { kanbanListReducer } from '@ethosagent/tools-kanban/reducers/kanban-list';
 import { bashReducer } from '@ethosagent/tools-terminal/reducers/bash';
 import type {
+  Constitution,
   ConstitutionEnforcement,
   ExecutionBackendRegistry,
   HookRegistry,
@@ -64,6 +65,13 @@ export interface InfrastructureResult {
   tools: DefaultToolRegistry;
   clarifyBridge: ClarifyBridge;
   constitutionEnforcement?: ConstitutionEnforcement;
+  /**
+   * The loaded operator constitution. `undefined` only in SAFE MODE (malformed
+   * constitution). Threaded to compose-tools so the execution-posture resolver
+   * and docker backend enforce `execution.*` and `filesystem.*` at runtime, not
+   * just at load time.
+   */
+  constitution?: Constitution;
 }
 
 /**
@@ -171,6 +179,7 @@ export async function buildInfrastructure(
   // ---------------------------------------------------------------------------
   const constLoad = await loadConstitution(wiringCtx.storage, dataDir);
   let constitutionEnforcement: ConstitutionEnforcement | undefined;
+  let constitution: Constitution | undefined;
   let effectiveActivePerson = activePerson;
   if (constLoad.status === 'malformed') {
     log.error(
@@ -183,6 +192,7 @@ export async function buildInfrastructure(
     }
     effectiveActivePerson = personalities.getDefault();
   } else {
+    constitution = constLoad.constitution;
     const result = enforceConstitution({
       constitution: constLoad.constitution,
       personalities: personalities.list(),
@@ -281,5 +291,6 @@ export async function buildInfrastructure(
     tools,
     clarifyBridge,
     constitutionEnforcement,
+    constitution,
   };
 }

@@ -148,6 +148,16 @@ export interface ResolveExecutionPostureInput {
   /** Whether the Docker daemon is reachable — drives the A1 decision state. */
   dockerAvailable?: boolean;
   /**
+   * Whether a Docker backend can be BUILT in this process at all (F1). False
+   * when Docker execution is disabled in-process (e.g. the desktop in-process
+   * backend sets `disableDocker: true`) — distinct from the daemon being down.
+   * When false and the computed posture is `docker`, the resolver falls back to
+   * an HONEST `local` posture (un-sandboxed, runs on host) if the constitution
+   * permits, or stays a `docker` hard-fail when it forbids `local`. Defaults to
+   * `true` (read surfaces that don't gate execution leave it unset).
+   */
+  dockerBuildable?: boolean;
+  /**
    * Mount set for the docker posture, derived by the caller from the docker
    * backend's `mountsFor(personality)`. The resolver stays free of a docker
    * instance so it remains pure/testable. When absent, `mounts` is `[]`.
@@ -178,6 +188,7 @@ export function resolveExecutionPosture(input: ResolveExecutionPostureInput): Ex
     personality,
     constitution,
     dockerAvailable,
+    dockerBuildable,
     mounts,
     memoryMb = DEFAULT_MEMORY_MB,
     log,
@@ -208,6 +219,30 @@ export function resolveExecutionPosture(input: ResolveExecutionPostureInput): Ex
     });
   }
 
+  // F1 — when the computed posture is `docker` but NO Docker backend can be
+  // BUILT in this process (`dockerBuildable === false`, e.g. the desktop
+  // in-process backend sets `disableDocker: true`), execution cannot be
+  // sandboxed AT ALL. Previously this silently fell through to the host
+  // ScopedProcess while the sheet still claimed Docker. The posture must say
+  // what actually executes:
+  //   - constitution permits `local` → resolve to an HONEST `local` posture
+  //     (un-sandboxed, runs on host) and record `hostFallback`.
+  //   - constitution forbids `local` → stay `docker`, attach a hard-fail
+  //     `dockerAbsent` decision (canConsentLocal:false); the compose path then
+  //     makes exec tools `not_available` rather than silently running on host.
+  //
+  // NOTE: the DAEMON-DOWN case (`dockerAvailable === false`) is deliberately NOT
+  // folded in here. That path keeps the `docker` posture + an A1 consent
+  // decision (handled below): the wiring path fails loud rather than silently
+  // running host, and the user must explicitly consent to local. Auto-fallback
+  // is reserved for the build-impossible case where there is no daemon question
+  // to ask.
+  const forbidsLocal = constitutionForbidsLocal(constitution);
+  const dockerUnbuildable = backend === 'docker' && dockerBuildable === false;
+  if (dockerUnbuildable && !forbidsLocal) {
+    backend = 'local';
+  }
+
   const derivedMounts = backend === 'docker' ? (mounts ?? []) : [];
   const scratchPaths = backend === 'docker' ? scratchTmpfsFor(derivedMounts) : [];
 
@@ -220,11 +255,37 @@ export function resolveExecutionPosture(input: ResolveExecutionPostureInput): Ex
     scratchPaths,
   };
 
+  if (dockerUnbuildable && !forbidsLocal) {
+    // Honest local fallback — un-sandboxed, runs on host. Surfaced on the
+    // character sheet so the UI never claims "Sandboxed · Docker".
+    posture.hostFallback = { reason: 'docker-disabled' };
+    if (log) {
+      log.warn('execution posture: docker disabled in-process → honest local (un-sandboxed)', {
+        personalityId: personality.id,
+      });
+    }
+  } else if (dockerUnbuildable && forbidsLocal) {
+    // Constitution forbids host fallback — stay a docker hard-fail. The compose
+    // path reads `dockerAbsent.canConsentLocal === false` and the absent backend
+    // to make exec tools `not_available`, never host.
+    posture.dockerAbsent = {
+      blocked: true,
+      canInstall: true,
+      canConsentLocal: false,
+      consentForbiddenReason:
+        'the constitution forbids the local posture (execution.requireSandbox / forbidLocal)',
+    };
+    if (log) {
+      log.warn('execution posture: docker disabled in-process but local forbidden (F1)', {
+        personalityId: personality.id,
+      });
+    }
+  }
+
   // A1 — docker posture + daemon unavailable. Produce the typed decision state;
   // never a silent local fallback. The consent option is withheld when the
   // constitution forbids `local` (A4) — then it stays a hard error.
-  if (backend === 'docker' && dockerAvailable === false) {
-    const forbidsLocal = constitutionForbidsLocal(constitution);
+  if (backend === 'docker' && dockerAvailable === false && !posture.dockerAbsent) {
     const decision: DockerAbsentDecision = {
       blocked: true,
       canInstall: true,
@@ -262,6 +323,13 @@ export interface BuildExecutionPostureInput {
    * `personality show`) pass nothing; surfaces that gate exec pass a real probe.
    */
   checkDockerAvailable?: () => Promise<boolean>;
+  /**
+   * Whether a Docker backend can be built in this process at all (F1). Pass
+   * `false` from surfaces that disable Docker (e.g. the desktop in-process
+   * backend) so the resolved posture honestly falls back to `local` instead of
+   * claiming Docker. Defaults to `true`.
+   */
+  dockerBuildable?: boolean;
   log?: Logger;
 }
 
@@ -308,6 +376,7 @@ export async function buildExecutionPosture(
     mounts,
     memoryMb: input.memoryMb,
     dockerAvailable,
+    dockerBuildable: input.dockerBuildable,
     log: input.log,
   });
 }

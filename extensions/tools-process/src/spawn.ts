@@ -26,6 +26,42 @@ export interface SpawnResult {
   stderrLog: string;
 }
 
+/**
+ * Host env vars passed through to a spawned child. The full `process.env`
+ * carries the host's secrets (API keys, tokens, cloud creds) — forwarding it
+ * into an exec-bearing tool's child process leaks them to arbitrary commands
+ * the agent runs (review #3, clean-env intent). We forward only the minimal set
+ * needed for a shell + common toolchains to function, then layer the caller's
+ * explicitly-opted `env` on top. Anything secret the command genuinely needs
+ * must be passed explicitly via the tool's `env` arg, not inherited silently.
+ */
+const PASSTHROUGH_ENV_KEYS = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'LC_ALL',
+  'TERM',
+  'TMPDIR',
+  'TZ',
+] as const;
+
+/**
+ * Build the minimal base env for a host child process: the passthrough
+ * allowlist drawn from `process.env`, with the caller's explicit `env` merged
+ * on top (explicit wins). Host secrets outside the allowlist are not forwarded.
+ */
+export function minimalHostEnv(env: Record<string, string> | undefined): Record<string, string> {
+  const base: Record<string, string> = {};
+  for (const key of PASSTHROUGH_ENV_KEYS) {
+    const val = process.env[key];
+    if (val !== undefined) base[key] = val;
+  }
+  return env ? { ...base, ...env } : base;
+}
+
 /** Per-log-file size ceiling. At rotation a file is renamed to `.log.1`. */
 export const LOG_MAX_BYTES = 10 * 1024 * 1024;
 /** Rotated generations kept (.1 .. .5). Total ceiling ~50MB per stream. */
@@ -111,7 +147,9 @@ export function spawnDetached(
     shell: true,
     detached: true,
     cwd,
-    env: env ? { ...process.env, ...env } : process.env,
+    // F3 — minimal explicit env: forward only the passthrough allowlist plus the
+    // caller's explicit vars, never the host's full secret-bearing process.env.
+    env: minimalHostEnv(env),
     stdio: ['ignore', outFd, errFd],
   });
 

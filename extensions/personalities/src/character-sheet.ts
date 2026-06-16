@@ -70,9 +70,16 @@ function executionSection(config: PersonalityConfig, exec: CharacterSheetExecuti
   const platform = exec.platform ?? process.platform;
   const lines: string[] = ['## Execution'];
 
-  const postureLabel = posture.containerized
-    ? 'containerized (local)'
-    : POSTURE_LABEL[posture.backend];
+  let postureLabel: string;
+  if (posture.containerized) {
+    postureLabel = 'containerized (local)';
+  } else if (posture.hostFallback) {
+    // F1 — Docker was wanted but unavailable; execution honestly runs on the
+    // host. Never claim "Sandboxed · Docker" while running un-sandboxed.
+    postureLabel = 'local (un-sandboxed — runs on host; Docker unavailable)';
+  } else {
+    postureLabel = POSTURE_LABEL[posture.backend];
+  }
   lines.push(`- Posture:    ${postureLabel}`);
   lines.push(`- Network:    ${posture.networkMode}`);
   lines.push(`- Memory cap: ${posture.memoryMb} MB`);
@@ -117,6 +124,19 @@ function executionSection(config: PersonalityConfig, exec: CharacterSheetExecuti
     lines.push(
       '- macOS (#7): boundary is best-effort via Docker Desktop’s VM —',
       '  best-effort, NOT a hard security boundary. Rootless/gVisor is deferred.',
+    );
+  }
+
+  // F1 honest host fallback — Docker wanted but disabled/unavailable in this
+  // process, constitution permits local, so execution runs un-sandboxed on the
+  // host. Surfaced so the UI never claims a sandbox it doesn't have.
+  if (posture.hostFallback) {
+    const why =
+      posture.hostFallback.reason === 'docker-disabled'
+        ? 'Docker execution is disabled in this process'
+        : 'the Docker daemon is unavailable';
+    lines.push(
+      `- Host fallback (F1): ${why}; running un-sandboxed on the host (constitution permits local).`,
     );
   }
 

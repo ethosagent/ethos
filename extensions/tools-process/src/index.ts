@@ -124,6 +124,7 @@ function makeProcessStart(
   notifier?: CompletionNotifier,
   backend?: ExecutionBackend,
   personality?: PersonalityConfig,
+  hostExecForbidden = false,
 ): Tool {
   return {
     name: 'process_start',
@@ -158,6 +159,18 @@ function makeProcessStart(
       };
 
       if (!command) return { ok: false, error: 'command is required', code: 'input_invalid' };
+
+      // Host execution forbidden: posture requires Docker but no backend is
+      // available AND the constitution forbids the host fallback. Refuse rather
+      // than silently spawn a detached host process (F1).
+      if (!backend && hostExecForbidden) {
+        return {
+          ok: false,
+          error:
+            'Execution requires a Docker sandbox, but none is available and the constitution forbids running un-sandboxed on the host.',
+          code: 'not_available' as const,
+        };
+      }
 
       const id = randomUUID();
       // Resolve cwd to an absolute path ONCE. The same value is validated,
@@ -604,6 +617,8 @@ export function createProcessTools(
     hookRegistry?: HookRegistry;
     backend?: ExecutionBackend;
     personality?: PersonalityConfig;
+    /** Refuse host spawn when the posture requires Docker but none is wired. */
+    hostExecForbidden?: boolean;
   },
 ): Tool[] {
   // Guard the public option: a non-positive / non-integer capMax would either
@@ -618,7 +633,14 @@ export function createProcessTools(
     ? createCompletionNotifier(opts.hookRegistry, dataDir)
     : undefined;
   return [
-    makeProcessStart(dataDir, capMax, notifier, opts?.backend, opts?.personality),
+    makeProcessStart(
+      dataDir,
+      capMax,
+      notifier,
+      opts?.backend,
+      opts?.personality,
+      opts?.hostExecForbidden,
+    ),
     makeProcessList(dataDir),
     makeProcessLogs(dataDir),
     makeProcessStop(dataDir),

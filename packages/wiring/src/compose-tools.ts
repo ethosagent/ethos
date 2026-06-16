@@ -80,7 +80,7 @@ import type { CreateAgentLoopOptions, WiringConfig, WiringProfile } from './inde
 import { resolveKanbanDbPath } from './kanban-path';
 import { MODEL_CATALOG } from './model-catalog';
 import { fetchManifest, loadModelCatalog, manifestToEntries } from './model-catalog-loader';
-import { resolveExecutionBackendName } from './resolve-execution-backend';
+import { resolveExecutionPosture } from './resolve-execution-posture';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
 import type { WiringContext } from './types';
 
@@ -322,43 +322,58 @@ export async function composeAllTools(
   const { personalities, activePerson, hooks, capabilityBackends, tools, clarifyBridge } = infra;
 
   // -------------------------------------------------------------------------
-  // Execution backend (Phase 2a lane c) — route execution-bearing toolsets
-  // through a mount-confined backend. Minimal selector; the full posture
-  // resolver is Lane E. `none`/`local` leave the tools on the existing
-  // ScopedProcess host path (backend stays undefined).
+  // Execution posture + backend (Phase 2a lane c + security fix F1) — resolve
+  // ONE posture and route every execution-bearing tool through it consistently.
+  //
+  // The posture resolver accounts for backend AVAILABILITY: `dockerBuildable`
+  // is false when Docker is disabled in this process (e.g. the desktop
+  // in-process backend sets `opts.disableDocker`). When the computed posture is
+  // `docker` but no backend can be built, the resolver returns either an honest
+  // `local` posture (un-sandboxed, runs on host) when the constitution permits,
+  // or a `docker` hard-fail (`dockerAbsent.canConsentLocal === false`) when it
+  // forbids `local`. We then:
+  //   - posture `docker` + backend built → tools run mount-confined in the container;
+  //   - posture `local`/`none`           → tools use the host ScopedProcess (honest);
+  //   - posture `docker` + NO backend    → host execution is FORBIDDEN: exec
+  //     tools become `not_available` rather than silently running on the host.
+  // This makes actual execution match what the character sheet claims.
   // -------------------------------------------------------------------------
+  const posture = resolveExecutionPosture({
+    personality: activePerson,
+    constitution: infra.constitution,
+    containerized: { env: process.env },
+    dockerBuildable: !opts.disableDocker,
+  });
+
   let executionBackend: ExecutionBackend | undefined;
-  if (!opts.disableDocker) {
-    // Containerized detection (lane E1): when Ethos itself runs in a container,
-    // exec personalities use `local` (the container is the boundary) instead of
-    // attempting Docker-in-Docker. Logged, never silent — the character sheet
-    // surfaces it via the posture resolver.
-    const backendName = resolveExecutionBackendName(activePerson, { env: process.env });
-    if (backendName === 'docker') {
-      const NOOP_SECRETS: SecretsResolver = {
-        get: async () => null,
-        set: async () => {},
-        delete: async () => {},
-        list: async () => [],
-      };
-      const backendConfig: ExecutionBackendConfig = {
-        substitutionVars: { ethosHome: dataDir, cwd: wiringCtx.workingDir },
-      };
-      try {
-        executionBackend = await infra.executionBackends.resolve('docker', {
-          config: backendConfig,
-          secrets: config.secretsResolver ?? NOOP_SECRETS,
-          logger: log,
-        });
-      } catch (err) {
-        // Lane B: fail loud. No silent docker -> local fallback. The A1
-        // docker-absent guided-install/consent flow is Lane E.
-        const detail = err instanceof Error ? err.message : String(err);
-        throw new Error(
-          `execution backend "docker" (required by this personality's posture) could not be resolved: ${detail}`,
-          { cause: err },
-        );
-      }
+  if (posture.backend === 'docker' && !opts.disableDocker && !posture.dockerAbsent) {
+    const NOOP_SECRETS: SecretsResolver = {
+      get: async () => null,
+      set: async () => {},
+      delete: async () => {},
+      list: async () => [],
+    };
+    const backendConfig: ExecutionBackendConfig = {
+      substitutionVars: { ethosHome: dataDir, cwd: wiringCtx.workingDir },
+      // F2 — pass the resolved constitution so the docker backend enforces
+      // allowedMountRoots / deniedPathPrefixes against the ACTUAL mount set
+      // (including the ownDir/skills/cwd defaults), not just declared fs_reach.
+      constitution: infra.constitution,
+    };
+    try {
+      executionBackend = await infra.executionBackends.resolve('docker', {
+        config: backendConfig,
+        secrets: config.secretsResolver ?? NOOP_SECRETS,
+        logger: log,
+      });
+    } catch (err) {
+      // Lane B: fail loud. No silent docker -> local fallback. The A1
+      // docker-absent guided-install/consent flow is Lane E.
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `execution backend "docker" (required by this personality's posture) could not be resolved: ${detail}`,
+        { cause: err },
+      );
     }
     if (executionBackend) {
       executionBackend = new SessionManager(executionBackend, {
@@ -373,12 +388,28 @@ export async function composeAllTools(
     }
   }
 
+  // Host execution is forbidden when the personality's posture requires Docker
+  // but no backend is wired (disableDocker / daemon down) AND the constitution
+  // forbids the `local` host fallback. In that case exec tools must refuse
+  // (`not_available`) — never silently run on the host.
+  const hostExecForbidden = posture.backend === 'docker' && executionBackend === undefined;
+  if (hostExecForbidden) {
+    log.warn('execution posture: docker required but no backend available; host exec forbidden', {
+      personalityId: activePerson.id,
+      disableDocker: opts.disableDocker === true,
+    });
+  }
+
   // -------------------------------------------------------------------------
   // Group A: inline tool factories
   // -------------------------------------------------------------------------
 
   for (const tool of createFileTools()) tools.register(tool);
-  for (const tool of createTerminalTools({ backend: executionBackend, personality: activePerson }))
+  for (const tool of createTerminalTools({
+    backend: executionBackend,
+    personality: activePerson,
+    hostExecForbidden,
+  }))
     tools.register(tool);
   for (const tool of createWebTools()) tools.register(tool);
   for (const tool of buildUiTools()) tools.register(tool);
@@ -439,6 +470,7 @@ export async function composeAllTools(
     hookRegistry: hooks,
     backend: executionBackend,
     personality: activePerson,
+    hostExecForbidden,
   }).tools)
     tools.register(tool);
   for (const tool of createImageTools({
@@ -448,12 +480,18 @@ export async function composeAllTools(
 
   // Vision tools are registered after plugin loading (they need `llm`).
 
+  // Code tools (run_code/run_tests/lint) are registered unconditionally and
+  // route through the SAME resolved posture as terminal/process (F1): docker →
+  // backend, local/none → host ScopedProcess, docker-without-backend → refuse.
+  // run_code self-gates on `backend !== undefined` via its `isAvailable()`.
+  for (const tool of composeCode(wiringCtx, {
+    backend: executionBackend,
+    personality: activePerson,
+    hostExecForbidden,
+  }).tools)
+    tools.register(tool);
+
   if (!opts.disableDocker) {
-    for (const tool of composeCode(wiringCtx, {
-      backend: executionBackend,
-      personality: activePerson,
-    }).tools)
-      tools.register(tool);
     for (const tool of composeBrowser(wiringCtx, {
       visionApiKey: config.apiKey,
       visionProvider: config.provider,

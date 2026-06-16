@@ -1,3 +1,4 @@
+import type { Constitution } from './constitution';
 import type { PersonalityConfig } from './personality';
 
 export type ExecChunk =
@@ -85,6 +86,21 @@ export interface ExecutionPosture {
    * the daemon is unavailable. Drives the E2 modal — never a silent fallback.
    */
   dockerAbsent?: DockerAbsentDecision;
+  /**
+   * Honest host fallback (Phase 2a security fix F1). Present when a personality
+   * that would otherwise run in Docker cannot — because Docker is disabled in
+   * this process (e.g. desktop in-process backend) or the daemon is unavailable
+   * — AND the constitution permits the un-sandboxed `local` posture. In that
+   * case `backend` is `local`, `containerized` is false, and execution genuinely
+   * runs on the host. The character sheet labels this distinctly so the UI never
+   * claims "Sandboxed · Docker" while running host. When the constitution
+   * forbids `local`, this field is absent and `backend` stays `docker` with a
+   * `dockerAbsent` hard-fail decision (tools become `not_available`).
+   */
+  hostFallback?: {
+    /** Why Docker could not run. */
+    reason: 'docker-disabled' | 'docker-unavailable';
+  };
 }
 
 /**
@@ -130,6 +146,15 @@ export interface ExecutionBackendConfig {
    * `~/.ethos` and `process.cwd()`.
    */
   substitutionVars?: { ethosHome: string; cwd: string };
+  /**
+   * Operator constitution. When present, the docker backend enforces
+   * `filesystem.allowedMountRoots` / `filesystem.deniedPathPrefixes` against the
+   * ACTUAL derived mount set (including the `ownDir`/`skills`/`cwd` defaults a
+   * personality with no `fs_reach` gets), not just the declared `fs_reach` at
+   * load time. The built-in `FORBIDDEN_MOUNT_ROOTS` denylist still applies
+   * unconditionally on top. Substitution roots come from `substitutionVars`.
+   */
+  constitution?: Constitution;
 }
 
 export type ExecutionBackendFactory = (ctx: {

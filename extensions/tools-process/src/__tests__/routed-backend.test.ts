@@ -163,4 +163,19 @@ describe('process_start routed through an execution backend', () => {
     expect(r2.ok).toBe(false);
     if (!r2.ok) expect(r2.error).toMatch(/PROCESS_CAP_EXCEEDED/);
   });
+
+  it('refuses (not_available) when host exec is forbidden and no backend (F1)', async () => {
+    // docker posture + no backend + constitution forbids local → process_start
+    // must NOT spawn a detached host process.
+    const tools = createProcessTools(dataDir, { hostExecForbidden: true });
+    const start = getTool(tools, 'process_start');
+    const result = await start.execute({ command: 'echo hi' }, makeCtx('/tmp'));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('not_available');
+      expect(result.error).toMatch(/constitution forbids running un-sandboxed/);
+    }
+    // No registry entry was created (no spawn happened).
+    expect(Object.keys(loadRegistry(dataDir))).toHaveLength(0);
+  });
 });

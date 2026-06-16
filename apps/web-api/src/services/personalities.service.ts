@@ -27,6 +27,13 @@ export interface PersonalitiesServiceOptions {
    * absent, the sheet renders without the Execution block.
    */
   dataDir?: string;
+  /**
+   * Whether a Docker backend can be built in this process (F1). False for the
+   * desktop in-process backend (`disableDocker: true`), so the character sheet
+   * honestly shows a `local` (un-sandboxed) posture instead of claiming Docker.
+   * Defaults to `true` (server deployments where Docker is available).
+   */
+  dockerBuildable?: boolean;
 }
 
 export class PersonalitiesService {
@@ -69,6 +76,7 @@ export class PersonalitiesService {
     const posture = await buildExecutionPosture({
       personality: described.config,
       substitutionVars: { ethosHome: dataDir, cwd: process.cwd() },
+      ...(this.opts.dockerBuildable === false ? { dockerBuildable: false } : {}),
     });
     return {
       markdown: renderCharacterSheet(described.config, soulMd, { posture }),

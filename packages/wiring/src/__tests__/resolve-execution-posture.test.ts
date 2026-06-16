@@ -255,6 +255,59 @@ describe('resolveExecutionPosture — A1 docker-absent decision', () => {
   });
 });
 
+describe('resolveExecutionPosture — F1 docker-unbuildable honest fallback', () => {
+  it('resolves an honest local posture when docker is disabled in-process (constitution permits)', () => {
+    const posture = resolveExecutionPosture({
+      personality: p({ toolset: ['terminal'] }),
+      containerized: NOT_CONTAINERIZED,
+      dockerBuildable: false,
+    });
+    // Honest: backend reflects what actually runs (host), not Docker.
+    expect(posture.backend).toBe('local');
+    expect(posture.hostFallback).toEqual({ reason: 'docker-disabled' });
+    // Not the containerized case — Ethos is not in a container here.
+    expect(posture.containerized).toBe(false);
+    expect(posture.dockerAbsent).toBeUndefined();
+  });
+
+  it('stays a docker hard-fail when docker is disabled but the constitution forbids local', () => {
+    const posture = resolveExecutionPosture({
+      personality: p({ toolset: ['terminal'] }),
+      containerized: NOT_CONTAINERIZED,
+      dockerBuildable: false,
+      constitution: { execution: { forbidLocal: true } },
+    });
+    // Never silently runs host: posture stays docker with no consent escape.
+    expect(posture.backend).toBe('docker');
+    expect(posture.hostFallback).toBeUndefined();
+    expect(posture.dockerAbsent).toEqual({
+      blocked: true,
+      canInstall: true,
+      canConsentLocal: false,
+      consentForbiddenReason: expect.stringMatching(/forbids the local posture/),
+    });
+  });
+
+  it('keeps the docker posture (no fallback) when dockerBuildable is unset', () => {
+    const posture = resolveExecutionPosture({
+      personality: p({ toolset: ['terminal'] }),
+      containerized: NOT_CONTAINERIZED,
+    });
+    expect(posture.backend).toBe('docker');
+    expect(posture.hostFallback).toBeUndefined();
+  });
+
+  it('does not fall back a chat-only personality (no exec tool)', () => {
+    const posture = resolveExecutionPosture({
+      personality: p({ toolset: ['memory_read'] }),
+      containerized: NOT_CONTAINERIZED,
+      dockerBuildable: false,
+    });
+    expect(posture.backend).toBe('none');
+    expect(posture.hostFallback).toBeUndefined();
+  });
+});
+
 describe('constitutionForbidsLocal', () => {
   it('is false for an empty constitution', () => {
     expect(constitutionForbidsLocal(undefined)).toBe(false);

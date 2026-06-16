@@ -114,6 +114,10 @@ export async function startServer(port: number): Promise<number> {
     chatDefaults: { model, provider },
     dangerPredicate: createDangerPredicate(),
     toolRegistry,
+    // F1 — the desktop runs the in-process backend with Docker disabled, so the
+    // character sheet must render the honest local (un-sandboxed) posture rather
+    // than claiming Docker.
+    dockerBuildable: false,
     ...(skillsCatalogDir ? { catalogDir: skillsCatalogDir } : {}),
     ...(webDistDir ? { webDist: webDistDir } : {}),
   });

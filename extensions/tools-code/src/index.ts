@@ -146,136 +146,181 @@ function createRunCodeTool(
 }
 
 // ---------------------------------------------------------------------------
-// run_tests — runs the test suite locally (no Docker)
+// Shared command runner for run_tests / lint
+//
+// Both route through the SAME resolved execution posture as run_code and
+// terminal (security fix F1):
+//   - backend present (docker posture) → run mount-confined inside the container;
+//   - no backend + host allowed (local/none posture) → host ScopedProcess;
+//   - no backend + host forbidden (docker posture, no backend, constitution
+//     forbids local) → `not_available`, NEVER silently run on the host.
 // ---------------------------------------------------------------------------
 
-const runTestsTool: Tool = {
-  name: 'run_tests',
-  description:
-    'Run the project test suite. Defaults to "pnpm test" (vitest). Override with the command arg.',
-  toolset: 'code',
-  maxResultChars: 20_000,
-  outputIsUntrusted: true,
-  capabilities: {
-    process: { allowedBinaries: ['bash'] },
-  },
-  schema: {
-    type: 'object',
-    properties: {
-      command: {
-        type: 'string',
-        description: 'Test command to run (default: "pnpm test")',
-      },
-      cwd: {
-        type: 'string',
-        description: 'Working directory for the command',
+interface CommandToolOpts {
+  name: string;
+  description: string;
+  maxResultChars: number;
+  defaultCommand: string;
+  timeoutMs: number;
+  failurePrefix: (exitCode: number) => string;
+  emptySuccess: string;
+}
+
+function makeCommandTool(
+  opts: CommandToolOpts,
+  backend: ExecutionBackend | undefined,
+  personality: PersonalityConfig | undefined,
+  hostExecForbidden: boolean,
+): Tool {
+  return {
+    name: opts.name,
+    description: opts.description,
+    toolset: 'code',
+    maxResultChars: opts.maxResultChars,
+    outputIsUntrusted: true,
+    capabilities: {
+      process: { allowedBinaries: backend ? ['docker'] : ['bash'] },
+    },
+    schema: {
+      type: 'object',
+      properties: {
+        command: {
+          type: 'string',
+          description: `Command to run (default: "${opts.defaultCommand}")`,
+        },
+        cwd: {
+          type: 'string',
+          description: 'Working directory for the command',
+        },
       },
     },
-  },
-  async execute(args, ctx): Promise<ToolResult> {
-    const { command = 'pnpm test', cwd } = args as { command?: string; cwd?: string };
+    async execute(args, ctx): Promise<ToolResult> {
+      const { command = opts.defaultCommand, cwd } = args as { command?: string; cwd?: string };
+      const workDir = cwd ?? ctx.workingDir;
 
-    if (!ctx.scopedProcess) {
-      return {
-        ok: false,
-        error: 'Process capability not configured',
-        code: 'not_available' as const,
-      };
-    }
+      // Routed path (docker posture): run inside the mount-confined backend.
+      // env is empty so host secrets never cross into the container (review #3).
+      if (backend) {
+        try {
+          const { stdout, stderr, exitCode } = await drainExec(
+            backend.exec(command, {
+              cwd: workDir,
+              timeoutMs: opts.timeoutMs,
+              env: {},
+              personality,
+              sessionId: ctx.sessionId,
+            }),
+          );
+          const out = stripAnsiEscapes([stdout, stderr].filter(Boolean).join('\n').trim());
+          if (exitCode !== null && exitCode !== 0) {
+            return {
+              ok: false,
+              error: `${opts.failurePrefix(exitCode)}\n${out || '(no output)'}`,
+              code: 'execution_failed',
+            };
+          }
+          return { ok: true, value: out || opts.emptySuccess };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+            code: 'execution_failed',
+          };
+        }
+      }
 
-    const workDir = cwd ?? ctx.workingDir;
-
-    try {
-      const { exitCode, stdout, stderr } = await ctx.scopedProcess.spawn('bash', ['-c', command], {
-        cwd: workDir,
-        timeout: 120_000,
-      });
-      const out = stripAnsiEscapes([stdout, stderr].filter(Boolean).join('\n').trim());
-
-      if (exitCode !== 0) {
+      // Host execution forbidden: posture requires Docker but none is available
+      // and the constitution forbids the host fallback. Refuse (F1).
+      if (hostExecForbidden) {
         return {
           ok: false,
-          error: `Tests failed (code ${exitCode}):\n${out || '(no output)'}`,
-          code: 'execution_failed',
+          error:
+            'Execution requires a Docker sandbox, but none is available and the constitution forbids running un-sandboxed on the host.',
+          code: 'not_available' as const,
         };
       }
 
-      return { ok: true, value: out || '(tests passed with no output)' };
-    } catch (err) {
-      return {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        code: 'execution_failed',
-      };
-    }
-  },
-};
-
-// ---------------------------------------------------------------------------
-// lint — runs the linter locally (no Docker)
-// ---------------------------------------------------------------------------
-
-const lintTool: Tool = {
-  name: 'lint',
-  description:
-    'Run the project linter. Defaults to "pnpm lint" (Biome). Override with the command arg.',
-  toolset: 'code',
-  maxResultChars: 10_000,
-  outputIsUntrusted: true,
-  capabilities: {
-    process: { allowedBinaries: ['bash'] },
-  },
-  schema: {
-    type: 'object',
-    properties: {
-      command: {
-        type: 'string',
-        description: 'Lint command to run (default: "pnpm lint")',
-      },
-      cwd: {
-        type: 'string',
-        description: 'Working directory for the command',
-      },
-    },
-  },
-  async execute(args, ctx): Promise<ToolResult> {
-    const { command = 'pnpm lint', cwd } = args as { command?: string; cwd?: string };
-
-    if (!ctx.scopedProcess) {
-      return {
-        ok: false,
-        error: 'Process capability not configured',
-        code: 'not_available' as const,
-      };
-    }
-
-    const workDir = cwd ?? ctx.workingDir;
-
-    try {
-      const { exitCode, stdout, stderr } = await ctx.scopedProcess.spawn('bash', ['-c', command], {
-        cwd: workDir,
-        timeout: 60_000,
-      });
-      const out = stripAnsiEscapes([stdout, stderr].filter(Boolean).join('\n').trim());
-
-      if (exitCode !== 0) {
+      // Local path (posture local/none): host ScopedProcess execution.
+      if (!ctx.scopedProcess) {
         return {
           ok: false,
-          error: `Lint failed:\n${out || '(no output)'}`,
-          code: 'execution_failed',
+          error: 'Process capability not configured',
+          code: 'not_available' as const,
         };
       }
 
-      return { ok: true, value: out || '(no lint issues)' };
-    } catch (err) {
-      return {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        code: 'execution_failed',
-      };
-    }
-  },
-};
+      try {
+        const { exitCode, stdout, stderr } = await ctx.scopedProcess.spawn(
+          'bash',
+          ['-c', command],
+          {
+            cwd: workDir,
+            timeout: opts.timeoutMs,
+          },
+        );
+        const out = stripAnsiEscapes([stdout, stderr].filter(Boolean).join('\n').trim());
+        if (exitCode !== 0) {
+          return {
+            ok: false,
+            error: `${opts.failurePrefix(exitCode)}\n${out || '(no output)'}`,
+            code: 'execution_failed',
+          };
+        }
+        return { ok: true, value: out || opts.emptySuccess };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+          code: 'execution_failed',
+        };
+      }
+    },
+  };
+}
+
+function createRunTestsTool(
+  backend: ExecutionBackend | undefined,
+  personality: PersonalityConfig | undefined,
+  hostExecForbidden: boolean,
+): Tool {
+  return makeCommandTool(
+    {
+      name: 'run_tests',
+      description:
+        'Run the project test suite. Defaults to "pnpm test" (vitest). Override with the command arg.',
+      maxResultChars: 20_000,
+      defaultCommand: 'pnpm test',
+      timeoutMs: 120_000,
+      failurePrefix: (code) => `Tests failed (code ${code}):`,
+      emptySuccess: '(tests passed with no output)',
+    },
+    backend,
+    personality,
+    hostExecForbidden,
+  );
+}
+
+function createLintTool(
+  backend: ExecutionBackend | undefined,
+  personality: PersonalityConfig | undefined,
+  hostExecForbidden: boolean,
+): Tool {
+  return makeCommandTool(
+    {
+      name: 'lint',
+      description:
+        'Run the project linter. Defaults to "pnpm lint" (Biome). Override with the command arg.',
+      maxResultChars: 10_000,
+      defaultCommand: 'pnpm lint',
+      timeoutMs: 60_000,
+      failurePrefix: () => 'Lint failed:',
+      emptySuccess: '(no lint issues)',
+    },
+    backend,
+    personality,
+    hostExecForbidden,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -284,6 +329,13 @@ const lintTool: Tool = {
 export function createCodeTools(opts?: {
   backend?: ExecutionBackend;
   personality?: PersonalityConfig;
+  /** Refuse host execution when the posture requires Docker but none is wired. */
+  hostExecForbidden?: boolean;
 }): Tool[] {
-  return [createRunCodeTool(opts?.backend, opts?.personality), runTestsTool, lintTool];
+  const hostExecForbidden = opts?.hostExecForbidden ?? false;
+  return [
+    createRunCodeTool(opts?.backend, opts?.personality),
+    createRunTestsTool(opts?.backend, opts?.personality, hostExecForbidden),
+    createLintTool(opts?.backend, opts?.personality, hostExecForbidden),
+  ];
 }
