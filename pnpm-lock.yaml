@@ -501,6 +501,9 @@ importers:
       '@ethosagent/web-contracts':
         specifier: workspace:*
         version: link:../../packages/web-contracts
+      '@ethosagent/wiring':
+        specifier: workspace:*
+        version: link:../../packages/wiring
       '@hono/node-server':
         specifier: ^2.0.0
         version: 2.0.4(hono@4.12.23)

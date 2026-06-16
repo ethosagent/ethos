@@ -329,7 +329,11 @@ export async function composeAllTools(
   // -------------------------------------------------------------------------
   let executionBackend: ExecutionBackend | undefined;
   if (!opts.disableDocker) {
-    const backendName = resolveExecutionBackendName(activePerson);
+    // Containerized detection (lane E1): when Ethos itself runs in a container,
+    // exec personalities use `local` (the container is the boundary) instead of
+    // attempting Docker-in-Docker. Logged, never silent — the character sheet
+    // surfaces it via the posture resolver.
+    const backendName = resolveExecutionBackendName(activePerson, { env: process.env });
     if (backendName === 'docker') {
       const NOOP_SECRETS: SecretsResolver = {
         get: async () => null,

@@ -12,7 +12,11 @@ import {
   type Storage,
 } from '@ethosagent/types';
 
-export { firstParagraph, renderCharacterSheet } from './character-sheet';
+export {
+  type CharacterSheetExecution,
+  firstParagraph,
+  renderCharacterSheet,
+} from './character-sheet';
 
 export const SYSTEM_PERSONALITY_IDS: ReadonlySet<string> = new Set([
   'personality-architect',

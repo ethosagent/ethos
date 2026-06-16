@@ -21,6 +21,12 @@ export interface PersonalitiesServiceOptions {
   library: SkillsLibrary;
   secrets?: import('@ethosagent/types').SecretsResolver;
   mcpJsonStore?: McpJsonStore;
+  /**
+   * Root data directory (`~/.ethos`). Used to derive the `fs_reach` mount set
+   * for the character sheet's `## Execution` section (Phase 2a, lane E1). When
+   * absent, the sheet renders without the Execution block.
+   */
+  dataDir?: string;
 }
 
 export class PersonalitiesService {
@@ -49,7 +55,18 @@ export class PersonalitiesService {
     const described = this.opts.personalities.describe(id);
     if (!described) throw notFound(id);
     const soulMd = await this.opts.personalities.readSoulMd(id);
-    return { markdown: renderCharacterSheet(described.config, soulMd) };
+    const dataDir = this.opts.dataDir;
+    if (!dataDir) {
+      return { markdown: renderCharacterSheet(described.config, soulMd) };
+    }
+    // Same posture resolver + renderer the CLI `personality show` uses — one
+    // artifact, no second renderer (Phase 2a, lane E1).
+    const { buildExecutionPosture } = await import('@ethosagent/wiring');
+    const posture = await buildExecutionPosture({
+      personality: described.config,
+      substitutionVars: { ethosHome: dataDir, cwd: process.cwd() },
+    });
+    return { markdown: renderCharacterSheet(described.config, soulMd, { posture }) };
   }
 
   async create(input: CreatePersonalityInput): Promise<{ personality: Personality }> {

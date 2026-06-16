@@ -258,6 +258,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     library: skillsLibrary,
     secrets,
     mcpJsonStore: sharedMcpJsonStore,
+    dataDir: opts.dataDir,
   });
   const configService = new ConfigService({ config: configRepo, secrets });
   const onboardingService = new OnboardingService({

@@ -1,33 +1,24 @@
 import type { PersonalityConfig } from '@ethosagent/types';
+import {
+  type ContainerizedDetectionInput,
+  resolveExecutionPosture,
+} from './resolve-execution-posture';
 
 /**
- * Tool names that carry shell / code execution and therefore want a sandbox.
- * The personality `toolset` is a flat list of tool NAMES, not toolset groups:
- * `terminal`, the `process_*` family, and `run_code` are the exec-bearing
- * tools today.
- */
-function isExecTool(name: string): boolean {
-  return name === 'terminal' || name === 'run_code' || name.startsWith('process_');
-}
-
-/**
- * Minimal execution-backend selector for Phase 2a.
+ * Execution-backend selector used by tool composition. Delegates to the full
+ * posture resolver (Phase 2a, lane E1) so there is ONE posture-selection rule:
  *
- * - An explicit `execution:` string on the personality config wins (read
- *   defensively — `execution` is NOT on the frozen PersonalityConfig type).
- * - Any execution-bearing tool → `docker`.
- * - Chat-only (no exec tool) → `none`.
+ *   - explicit `execution:` override wins;
+ *   - chat-only (no exec tool) → `none`;
+ *   - exec-bearing → `docker`, unless Ethos is containerized → `local`.
  *
- * Minimal selector; the full posture resolver is Lane E (component b) and will
- * supersede this.
+ * `ssh` is a valid posture, but tool composition routes only `docker` through a
+ * backend today (local/ssh/none leave tools on the existing ScopedProcess host
+ * path), so callers branch on `=== 'docker'`.
  */
 export function resolveExecutionBackendName(
   personality: PersonalityConfig,
-): 'docker' | 'local' | 'none' {
-  const override = (personality as { execution?: string }).execution;
-  if (override === 'docker' || override === 'local' || override === 'none') return override;
-
-  const toolset = personality.toolset ?? [];
-  if (toolset.some(isExecTool)) return 'docker';
-  return 'none';
+  containerized?: ContainerizedDetectionInput,
+): 'docker' | 'local' | 'ssh' | 'none' {
+  return resolveExecutionPosture({ personality, containerized }).backend;
 }

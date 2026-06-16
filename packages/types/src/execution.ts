@@ -49,6 +49,64 @@ export interface MountSpec {
   mode: 'ro' | 'rw';
 }
 
+/**
+ * The resolved, legible execution posture of a personality (Phase 2a, lane E1).
+ * Computed from the personality toolset + `fs_reach` + `safety.network` + any
+ * `execution:` override + containerized detection — not hand-set. Surfaced
+ * read-only on the character sheet's `## Execution` section, identically on CLI
+ * and the web Personalities tab. Additive contract — not a frozen schema.
+ */
+export interface ExecutionPosture {
+  /**
+   * `docker` — exec-bearing toolset runs OS-mount-confined in a container.
+   * `local` — runs in the current process (containerized posture, or explicit
+   *   un-sandboxed consent); the host/container is the boundary.
+   * `ssh` — runs on a remote host; remote-host trust, NOT mount-confinement.
+   * `none` — chat-only personality; no execution backend at all.
+   */
+  backend: 'docker' | 'local' | 'ssh' | 'none';
+  /** OS-layer container network gate. `none` = air-gapped; `bridge` = open egress. */
+  networkMode: 'none' | 'bridge';
+  /** Container memory ceiling in MB (docker). */
+  memoryMb: number;
+  /**
+   * True when `local` was selected because Ethos itself runs inside a container
+   * (explicit env/config or auto-detect) — the container is the boundary,
+   * `fs_reach`/network enforced app-layer only. Distinct from the forbidden
+   * daemon-down fallback.
+   */
+  containerized: boolean;
+  /** Bind mounts derived from `fs_reach` (docker posture). Empty otherwise. */
+  mounts: MountSpec[];
+  /** Ephemeral tmpfs scratch container paths (docker posture), e.g. `/tmp`. */
+  scratchPaths: string[];
+  /**
+   * A1 docker-absent decision state. Present ONLY when posture is `docker` and
+   * the daemon is unavailable. Drives the E2 modal — never a silent fallback.
+   */
+  dockerAbsent?: DockerAbsentDecision;
+}
+
+/**
+ * A1 (review correction) — the typed choice surfaced when a `docker`-posture
+ * personality cannot reach the Docker daemon. NO silent host fallback. Exposed
+ * for the E2 UI to render; the resolver never picks for the user.
+ */
+export interface DockerAbsentDecision {
+  /** Always true when this object is present. */
+  blocked: true;
+  /** Guided-install option is always offered. */
+  canInstall: true;
+  /**
+   * Whether an explicit un-sandboxed `local` consent may be offered. False when
+   * the constitution forbids `local` (`requireSandbox` / `forbidLocal`) — then
+   * it stays a hard error with no consent escape hatch.
+   */
+  canConsentLocal: boolean;
+  /** Human-readable reason the consent option is withheld, when it is. */
+  consentForbiddenReason?: string;
+}
+
 export interface ExecutionBackend {
   readonly name: string; // 'local' | 'docker' | 'ssh'
   isAvailable(): Promise<boolean>;
