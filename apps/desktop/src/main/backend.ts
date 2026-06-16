@@ -85,7 +85,9 @@ async function pollHealth(port: number, attempts = 10, intervalMs = 500): Promis
   for (let i = 0; i < attempts; i++) {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/healthz`);
-      if (res.ok) return;
+      // /healthz is gateway-aware and returns 503 when the gateway is down (expected on the
+      // desktop, which starts independently of the gateway) — liveness only needs the server to respond.
+      if (res.status >= 200 && res.status < 600) return;
     } catch {
       // server not ready yet
     }
