@@ -388,16 +388,29 @@ export async function composeAllTools(
     }
   }
 
-  // Host execution is forbidden when the personality's posture requires Docker
-  // but no backend is wired (disableDocker / daemon down) AND the constitution
-  // forbids the `local` host fallback. In that case exec tools must refuse
-  // (`not_available`) — never silently run on the host.
-  const hostExecForbidden = posture.backend === 'docker' && executionBackend === undefined;
+  // Host execution is forbidden when the personality's posture requires a
+  // sandbox/remote backend that is not wired here, AND the host fallback is not
+  // permitted. Two cases:
+  //   - `docker` posture with no backend (disableDocker / daemon down) AND the
+  //     constitution forbids the `local` host fallback (resolver leaves it
+  //     `docker` + a `dockerAbsent` hard-fail);
+  //   - `ssh` posture with no backend (Phase 2a wires none) AND the constitution
+  //     forbids `local` (resolver leaves it `ssh`; a permitting constitution
+  //     already became honest `local` above, so an `ssh` posture reaching here
+  //     means refusal — never silent host).
+  // In both cases exec tools must refuse (`not_available`) — never silently run
+  // on the host while the sheet claims docker/ssh.
+  const hostExecForbidden =
+    (posture.backend === 'docker' || posture.backend === 'ssh') && executionBackend === undefined;
   if (hostExecForbidden) {
-    log.warn('execution posture: docker required but no backend available; host exec forbidden', {
-      personalityId: activePerson.id,
-      disableDocker: opts.disableDocker === true,
-    });
+    log.warn(
+      'execution posture: sandbox/remote backend required but none available; host exec forbidden',
+      {
+        personalityId: activePerson.id,
+        backend: posture.backend,
+        disableDocker: opts.disableDocker === true,
+      },
+    );
   }
 
   // -------------------------------------------------------------------------

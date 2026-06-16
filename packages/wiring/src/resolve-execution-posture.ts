@@ -31,12 +31,23 @@ const DEFAULT_MEMORY_MB = 256;
 
 /**
  * Tool names that carry shell / code execution and therefore want a sandbox.
- * The personality `toolset` is a flat list of tool NAMES, not toolset groups:
- * `terminal`, the `process_*` family, and `run_code` are the exec-bearing
- * tools today.
+ * The personality `toolset` is a flat list of tool NAMES, not toolset groups.
+ * The exec-bearing tools today: `terminal`, the `process_*` family, `run_code`,
+ * and the `@ethosagent/tools-code` command runners `run_tests` / `lint` (both
+ * run arbitrary `command` bash via `makeCommandTool`). Omitting `run_tests` /
+ * `lint` would resolve a personality whose toolset lists ONLY those to `none`
+ * posture — no docker backend, host bash silently runs while the sheet says
+ * "none". They must count as exec tools so the posture is `docker` (sandboxed)
+ * or an honest refusal, never silent host.
  */
 export function isExecTool(name: string): boolean {
-  return name === 'terminal' || name === 'run_code' || name.startsWith('process_');
+  return (
+    name === 'terminal' ||
+    name === 'run_code' ||
+    name === 'run_tests' ||
+    name === 'lint' ||
+    name.startsWith('process_')
+  );
 }
 
 /** True when the personality has at least one execution-bearing tool. */
@@ -243,6 +254,23 @@ export function resolveExecutionPosture(input: ResolveExecutionPostureInput): Ex
     backend = 'local';
   }
 
+  // P2 (honesty) — an `ssh` posture has NO backend wired in Phase 2a (the
+  // compose path only builds `docker`). Left untouched it would silently fall
+  // to the host `ScopedProcess` while the sheet claimed "ssh (remote host)" —
+  // the same claim-vs-reality lie F1 fixed for docker. Resolve it the SAME way
+  // as docker-unbuildable:
+  //   - constitution permits `local` → resolve to an HONEST `local` posture
+  //     (un-sandboxed, runs on host) and record `hostFallback`;
+  //   - constitution forbids `local` → keep `backend: 'ssh'`; the compose path
+  //     forbids host exec for an ssh posture with no backend, so tools become
+  //     `not_available` rather than silently running on host.
+  // No real ssh backend is wired here (deferred); when one lands this collapses
+  // to the same buildable/unbuildable shape as docker.
+  const sshUnavailable = backend === 'ssh';
+  if (sshUnavailable && !forbidsLocal) {
+    backend = 'local';
+  }
+
   const derivedMounts = backend === 'docker' ? (mounts ?? []) : [];
   const scratchPaths = backend === 'docker' ? scratchTmpfsFor(derivedMounts) : [];
 
@@ -277,6 +305,28 @@ export function resolveExecutionPosture(input: ResolveExecutionPostureInput): Ex
     };
     if (log) {
       log.warn('execution posture: docker disabled in-process but local forbidden (F1)', {
+        personalityId: personality.id,
+      });
+    }
+  }
+
+  // P2 — ssh posture with no ssh backend wired. Mirror the docker-unbuildable
+  // surfacing so the sheet is honest about where execution actually happens.
+  if (sshUnavailable && !forbidsLocal) {
+    // Resolved to honest local above — runs un-sandboxed on the host. The sheet
+    // labels this distinctly so it never claims "ssh (remote host)".
+    posture.hostFallback = { reason: 'ssh-unavailable' };
+    if (log) {
+      log.warn('execution posture: no ssh backend wired → honest local (un-sandboxed)', {
+        personalityId: personality.id,
+      });
+    }
+  } else if (sshUnavailable && forbidsLocal) {
+    // Constitution forbids the host fallback — keep `backend: 'ssh'`. The compose
+    // path forbids host exec for an ssh posture with no backend, so exec tools
+    // become `not_available`, never silently host.
+    if (log) {
+      log.warn('execution posture: no ssh backend wired and local forbidden → exec refused (P2)', {
         personalityId: personality.id,
       });
     }

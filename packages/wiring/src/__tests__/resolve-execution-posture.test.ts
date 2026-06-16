@@ -51,12 +51,15 @@ describe('resolveExecutionPosture — backend selection', () => {
         containerized: NOT_CONTAINERIZED,
       }).backend,
     ).toBe('local');
+    // An `ssh` override is honored as intent, but Phase 2a wires no ssh backend
+    // — with local permitted it resolves to honest `local` (host), see the P2
+    // suite below for the full claim-vs-reality contract.
     expect(
       resolveExecutionPosture({
         personality: p({ toolset: ['terminal'], execution: 'ssh' }),
         containerized: NOT_CONTAINERIZED,
       }).backend,
-    ).toBe('ssh');
+    ).toBe('local');
     expect(
       resolveExecutionPosture({
         personality: p({ toolset: ['terminal'], execution: 'none' }),
@@ -304,6 +307,64 @@ describe('resolveExecutionPosture — F1 docker-unbuildable honest fallback', ()
       dockerBuildable: false,
     });
     expect(posture.backend).toBe('none');
+    expect(posture.hostFallback).toBeUndefined();
+  });
+});
+
+describe('resolveExecutionPosture — P1 run_tests / lint are exec-bearing', () => {
+  // run_tests / lint route through makeCommandTool → arbitrary `command` bash.
+  // A personality whose toolset lists ONLY these must NOT resolve to `none`
+  // (which would wire no docker backend and silently run host bash).
+  for (const tool of ['run_tests', 'lint'] as const) {
+    it(`resolves docker (not none) for a [${tool}]-only toolset`, () => {
+      const posture = resolveExecutionPosture({
+        personality: p({ toolset: [tool] }),
+        containerized: NOT_CONTAINERIZED,
+      });
+      expect(posture.backend).toBe('docker');
+    });
+  }
+
+  it('a [run_tests]-only personality under disableDocker+forbidLocal refuses (never host)', () => {
+    // disableDocker is modeled as dockerBuildable:false; forbidLocal forbids the
+    // host fallback. Resolver keeps backend `docker` with a hard-fail decision —
+    // the compose path then sets hostExecForbidden=true so run_tests returns
+    // not_available rather than silently running host bash.
+    const posture = resolveExecutionPosture({
+      personality: p({ toolset: ['run_tests'] }),
+      containerized: NOT_CONTAINERIZED,
+      dockerBuildable: false,
+      constitution: { execution: { forbidLocal: true } },
+    });
+    expect(posture.backend).toBe('docker');
+    expect(posture.hostFallback).toBeUndefined();
+    expect(posture.dockerAbsent?.canConsentLocal).toBe(false);
+  });
+});
+
+describe('resolveExecutionPosture — P2 ssh posture is never silent host', () => {
+  // Phase 2a wires no ssh backend; a `backend: 'ssh'` posture left untouched
+  // would silently fall to host while the sheet claimed "ssh (remote host)".
+  it('resolves an honest local posture when local is permitted (runs host, not silent ssh)', () => {
+    const posture = resolveExecutionPosture({
+      personality: p({ toolset: ['terminal'], execution: 'ssh' }),
+      containerized: NOT_CONTAINERIZED,
+    });
+    // Honest: backend reflects what actually runs (host), not ssh.
+    expect(posture.backend).toBe('local');
+    expect(posture.hostFallback).toEqual({ reason: 'ssh-unavailable' });
+    expect(posture.containerized).toBe(false);
+  });
+
+  it('stays ssh (so exec tools refuse) when the constitution forbids local', () => {
+    const posture = resolveExecutionPosture({
+      personality: p({ toolset: ['terminal'], execution: 'ssh' }),
+      containerized: NOT_CONTAINERIZED,
+      constitution: { execution: { forbidLocal: true } },
+    });
+    // Never silently host: posture stays ssh; the compose path forbids host exec
+    // for an ssh posture with no backend, so exec tools become not_available.
+    expect(posture.backend).toBe('ssh');
     expect(posture.hostFallback).toBeUndefined();
   });
 });

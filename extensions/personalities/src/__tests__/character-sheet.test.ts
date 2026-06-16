@@ -230,6 +230,37 @@ describe('renderCharacterSheet — ## Execution section', () => {
     expect(sheet).not.toMatch(/docker \(sandboxed\)/);
   });
 
+  it('renders the honest local host-fallback posture (P2) instead of claiming ssh', () => {
+    const sheet = renderCharacterSheet(fullConfig, soulMd, {
+      posture: {
+        backend: 'local',
+        networkMode: 'none',
+        memoryMb: 256,
+        containerized: false,
+        mounts: [],
+        scratchPaths: [],
+        hostFallback: { reason: 'ssh-unavailable' },
+      },
+      platform: 'linux',
+    });
+    // Never claims "ssh (remote host)" — says it runs un-sandboxed on the host.
+    expect(sheet).toMatch(
+      /Posture:\s+local \(un-sandboxed — runs on host; ssh backend unavailable\)/,
+    );
+    expect(sheet).toMatch(/Host fallback \(P2\)/);
+    expect(sheet).toMatch(/no ssh execution backend is wired in this build/);
+    expect(sheet).not.toMatch(/ssh \(remote host\)/);
+  });
+
+  it('marks a forbidden-ssh posture as refusing exec (P2), never silent host', () => {
+    const sheet = renderCharacterSheet(fullConfig, soulMd, {
+      posture: { ...dockerPosture(), backend: 'ssh', mounts: [], scratchPaths: [] },
+      platform: 'linux',
+    });
+    expect(sheet).toMatch(/Note \(P2\)/);
+    expect(sheet).toMatch(/execution tools refuse \(not_available\)/);
+  });
+
   it('renders a constitution clamp notice for the active personality', () => {
     const sheet = renderCharacterSheet(fullConfig, soulMd, {
       posture: dockerPosture(),

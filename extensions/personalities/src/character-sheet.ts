@@ -74,9 +74,13 @@ function executionSection(config: PersonalityConfig, exec: CharacterSheetExecuti
   if (posture.containerized) {
     postureLabel = 'containerized (local)';
   } else if (posture.hostFallback) {
-    // F1 — Docker was wanted but unavailable; execution honestly runs on the
-    // host. Never claim "Sandboxed · Docker" while running un-sandboxed.
-    postureLabel = 'local (un-sandboxed — runs on host; Docker unavailable)';
+    // F1/P2 — a sandbox/remote backend was wanted but unavailable; execution
+    // honestly runs on the host. Never claim "Sandboxed · Docker" or
+    // "ssh (remote host)" while running un-sandboxed on the host.
+    postureLabel =
+      posture.hostFallback.reason === 'ssh-unavailable'
+        ? 'local (un-sandboxed — runs on host; ssh backend unavailable)'
+        : 'local (un-sandboxed — runs on host; Docker unavailable)';
   } else {
     postureLabel = POSTURE_LABEL[posture.backend];
   }
@@ -117,6 +121,13 @@ function executionSection(config: PersonalityConfig, exec: CharacterSheetExecuti
   // ssh relabel (A3) — remote-host trust, NOT mount-confinement.
   if (posture.backend === 'ssh') {
     lines.push('- Note (A3): ssh = remote-host trust — NOT mount-confined.');
+    // P2 — a `backend: 'ssh'` posture only survives resolution when NO ssh
+    // backend is wired AND the constitution forbids the local host fallback.
+    // Be honest: exec tools refuse rather than silently run on the host.
+    lines.push(
+      '- Note (P2): no ssh execution backend is wired in this build; the constitution',
+      '  forbids the un-sandboxed host fallback, so execution tools refuse (not_available).',
+    );
   }
 
   // #7 macOS caveat — docker on macOS is best-effort, not a hard boundary.
@@ -131,12 +142,20 @@ function executionSection(config: PersonalityConfig, exec: CharacterSheetExecuti
   // process, constitution permits local, so execution runs un-sandboxed on the
   // host. Surfaced so the UI never claims a sandbox it doesn't have.
   if (posture.hostFallback) {
-    const why =
-      posture.hostFallback.reason === 'docker-disabled'
-        ? 'Docker execution is disabled in this process'
-        : 'the Docker daemon is unavailable';
+    let why: string;
+    let tag: string;
+    if (posture.hostFallback.reason === 'docker-disabled') {
+      why = 'Docker execution is disabled in this process';
+      tag = 'F1';
+    } else if (posture.hostFallback.reason === 'ssh-unavailable') {
+      why = 'no ssh execution backend is wired in this build';
+      tag = 'P2';
+    } else {
+      why = 'the Docker daemon is unavailable';
+      tag = 'F1';
+    }
     lines.push(
-      `- Host fallback (F1): ${why}; running un-sandboxed on the host (constitution permits local).`,
+      `- Host fallback (${tag}): ${why}; running un-sandboxed on the host (constitution permits local).`,
     );
   }
 

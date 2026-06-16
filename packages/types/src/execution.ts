@@ -96,10 +96,16 @@ export interface ExecutionPosture {
    * claims "Sandboxed · Docker" while running host. When the constitution
    * forbids `local`, this field is absent and `backend` stays `docker` with a
    * `dockerAbsent` hard-fail decision (tools become `not_available`).
+   *
+   * `ssh-unavailable` mirrors this for an `ssh`-posture personality when no ssh
+   * execution backend is wired (Phase 2a wires none): rather than silently
+   * running on the host while the sheet claims "ssh (remote host)", a permitting
+   * constitution resolves to honest `local` (host) with this reason, and a
+   * forbidding one keeps `backend: 'ssh'` so exec tools refuse (`not_available`).
    */
   hostFallback?: {
-    /** Why Docker could not run. */
-    reason: 'docker-disabled' | 'docker-unavailable';
+    /** Why the requested sandbox/remote backend could not run. */
+    reason: 'docker-disabled' | 'docker-unavailable' | 'ssh-unavailable';
   };
 }
 
