@@ -1,0 +1,251 @@
+// `ethos nightly run [<id>]` (Phase 3c component E) — runs the full
+// governed-learning nightly pass on demand, building real per-personality
+// dependencies and invoking the @ethosagent/nightly-loop orchestrator.
+//
+// With an <id>, runs the pass for that one personality. With no id, runs it
+// for every user (mutable, non-builtin) personality. Each personality's pass
+// is wrapped so one failure prints and the run continues to the next. The
+// pass itself is on-demand only — this command adds no cron scheduling and no
+// gateway/serve triggers.
+import { join } from 'node:path';
+import {
+  type ConsolidationInput,
+  consolidateMemory,
+  type NightlyEvidence,
+  type NightlyPassDeps,
+  type NightlyState,
+  runNightlyPass,
+} from '@ethosagent/nightly-loop';
+import {
+  type JudgeResult,
+  type ScoreOutcome,
+  scorePersonality,
+} from '@ethosagent/personality-judge';
+import { draftExpressionUpdate } from '@ethosagent/skill-evolver';
+import { formatError, type LLMProvider, type MemoryUpdate, toEthosError } from '@ethosagent/types';
+import type { EthosConfig } from '../config';
+import { createLLM, getStorage } from '../wiring';
+import {
+  buildEvidenceDigest,
+  buildJudgeRunner,
+  gatherRecentUserPrompts,
+  readJudgeStreak,
+  signalNotice,
+  writeJudgeStreak,
+} from './personality-evolve';
+
+function surface(err: unknown): never {
+  process.stderr.write(`\n${formatError(toEthosError(err), { color: process.stderr.isTTY })}\n`);
+  process.exit(1);
+}
+
+// Read the nightly checkpoint sidecar. Tolerant: a missing or malformed file
+// returns null so the pass starts a fresh window rather than crashing.
+async function readNightlyState(ethosDir: string, id: string): Promise<NightlyState | null> {
+  const path = join(ethosDir, 'personalities', id, '.nightly-state.json');
+  const raw = await getStorage().read(path);
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && 'windowEnd' in parsed && 'completed' in parsed) {
+      const windowEnd = (parsed as { windowEnd: unknown }).windowEnd;
+      const completed = (parsed as { completed: unknown }).completed;
+      if (
+        typeof windowEnd === 'string' &&
+        Array.isArray(completed) &&
+        completed.every((c) => typeof c === 'string')
+      ) {
+        return { windowEnd, completed };
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function writeNightlyState(ethosDir: string, id: string, state: NightlyState): Promise<void> {
+  const dir = join(ethosDir, 'personalities', id);
+  await getStorage().mkdir(dir);
+  await getStorage().writeAtomic(join(dir, '.nightly-state.json'), JSON.stringify(state, null, 2));
+}
+
+// Build the real per-personality dependency object the orchestrator drives.
+// `llm` and the registry are constructed once by the caller and shared.
+function buildDeps(args: {
+  config: EthosConfig;
+  ethosDir: string;
+  reg: import('@ethosagent/personalities').FilePersonalityRegistry;
+  llm: LLMProvider;
+  memory: import('@ethosagent/types').MemoryProvider;
+}): NightlyPassDeps {
+  const { config, ethosDir, reg, llm, memory } = args;
+
+  // The Judge's writeJudgeStreak needs the JudgeResult, but the orchestrator's
+  // dep signature only carries (id, lowStreak). Capture the last scored result
+  // in scoreAlignment so writeJudgeStreak can persist it.
+  let lastJudgeResult: JudgeResult | null = null;
+
+  const memoryCtx = (id: string): import('@ethosagent/types').MemoryContext => ({
+    scopeId: `personality:${id}`,
+    sessionId: '',
+    sessionKey: 'nightly',
+    platform: 'cli',
+    workingDir: process.cwd(),
+  });
+
+  return {
+    async readLivingSoul(id) {
+      const soul = await reg.readLivingSoul(id);
+      return { core: soul.core, expression: soul.expression };
+    },
+
+    async gatherEvidence(id): Promise<NightlyEvidence> {
+      const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+      const store = new SQLiteSessionStore(join(ethosDir, 'sessions.db'));
+      try {
+        const recent = await gatherRecentUserPrompts(store, id);
+        const built = await buildEvidenceDigest(store, id);
+        return {
+          recentPrompts: recent.prompts,
+          evidenceDigest: built.digest,
+          windowStart: recent.windowStart,
+          windowEnd: recent.windowEnd,
+          elapsedHours: recent.elapsedHours,
+        };
+      } finally {
+        store.close();
+      }
+    },
+
+    async scoreAlignment(scoreArgs): Promise<ScoreOutcome> {
+      const runner = await buildJudgeRunner(config, scoreArgs.personalityId);
+      const outcome = await scorePersonality({
+        personalityId: scoreArgs.personalityId,
+        core: scoreArgs.core,
+        expression: scoreArgs.expression,
+        recentPrompts: scoreArgs.evidence.recentPrompts,
+        windowStart: scoreArgs.evidence.windowStart,
+        windowEnd: scoreArgs.evidence.windowEnd,
+        elapsedHours: scoreArgs.evidence.elapsedHours,
+        priorLowStreak: scoreArgs.priorLowStreak,
+        runner,
+      });
+      if (outcome.kind === 'scored') lastJudgeResult = outcome.result;
+      return outcome;
+    },
+
+    readJudgeStreak(id) {
+      return readJudgeStreak(id);
+    },
+
+    async writeJudgeStreak(id, lowStreak) {
+      if (!lastJudgeResult) return;
+      await writeJudgeStreak(id, lowStreak, lastJudgeResult);
+    },
+
+    draftExpression({ core, currentExpression, evidence }) {
+      return draftExpressionUpdate({ core, currentExpression, evidence }, llm);
+    },
+
+    async applyExpression(id, newExpression, opts) {
+      const { entry } = await reg.evolveExpression(id, newExpression, opts);
+      return { revisionId: entry.revisionId };
+    },
+
+    // createSkills omitted — Phase 3d not present; the orchestrator no-ops it.
+
+    async readMemory(id) {
+      const snapshot = await memory.prefetch(memoryCtx(id));
+      const find = (key: string): string =>
+        snapshot?.entries.find((e) => e.key === key)?.content ?? '';
+      return { memory: find('MEMORY.md'), user: find('USER.md') };
+    },
+
+    consolidate(input: ConsolidationInput) {
+      return consolidateMemory(input, llm);
+    },
+
+    async applyMemoryUpdates(id, updates: MemoryUpdate[]) {
+      await memory.sync(updates, memoryCtx(id));
+    },
+
+    readState(id) {
+      return readNightlyState(ethosDir, id);
+    },
+
+    writeState(id, state) {
+      return writeNightlyState(ethosDir, id, state);
+    },
+
+    onSignal(id, signal) {
+      console.log(signalNotice(id, signal));
+    },
+
+    log(msg) {
+      console.log(msg);
+    },
+  };
+}
+
+export async function runNightly(argv: string[]): Promise<void> {
+  const id = argv.find((a) => !a.startsWith('-'));
+
+  try {
+    const { createPersonalityRegistry } = await import('@ethosagent/personalities');
+    const { ethosDir, readConfig } = await import('../config');
+    const { getSecretsResolver } = await import('../wiring');
+    const { createMemoryProvider } = await import('@ethosagent/wiring');
+
+    const storage = getStorage();
+    const dir = ethosDir();
+    const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: dir });
+    await reg.loadFromDirectory(join(dir, 'personalities'));
+
+    const config = await readConfig(getStorage(), await getSecretsResolver());
+    if (!config) {
+      console.error('Run `ethos setup` first.');
+      process.exit(1);
+    }
+
+    // Resolve targets: the given id, or all user (mutable, non-builtin) ones.
+    let targets: string[];
+    if (id) {
+      const described = reg.describe(id);
+      if (!described) {
+        console.error(`Unknown personality: ${id}`);
+        console.error('Run `ethos personality list` to see available ids.');
+        process.exit(1);
+      }
+      targets = [id];
+    } else {
+      targets = reg
+        .describeAll()
+        .filter((d) => !d.builtin)
+        .map((d) => d.config.id);
+      if (targets.length === 0) {
+        console.log('No user personalities to run the nightly pass for.');
+        return;
+      }
+    }
+
+    const llm = await createLLM(config);
+    const memory = createMemoryProvider({ dataDir: dir });
+    const deps = buildDeps({ config, ethosDir: dir, reg, llm, memory });
+
+    for (const target of targets) {
+      try {
+        const result = await runNightlyPass(target, deps);
+        console.log(`\n=== Nightly pass: ${target} (window ${result.windowEnd}) ===`);
+        for (const step of result.steps) {
+          console.log(`  ${step.step.padEnd(12)} ${step.status.padEnd(8)} ${step.detail}`);
+        }
+      } catch (err) {
+        const e = toEthosError(err);
+        console.error(`\n✗ Nightly pass failed for ${target}: ${e.cause}`);
+      }
+    }
+  } catch (err) {
+    surface(err);
+  }
+}

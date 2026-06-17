@@ -40,7 +40,7 @@ function surface(err: unknown): never {
   process.exit(1);
 }
 
-interface RecentPrompts {
+export interface RecentPrompts {
   prompts: Array<{ id: string; prompt: string }>;
   windowStart: string;
   windowEnd: string;
@@ -53,7 +53,7 @@ const MAX_PROMPTS = 20;
 // Gather recent raw USER-role prompts for the Judge, newest sessions first.
 // Falls back to all-personality sessions (with a note) when none are scoped to
 // this personality yet.
-async function gatherRecentUserPrompts(
+export async function gatherRecentUserPrompts(
   store: import('@ethosagent/session-sqlite').SQLiteSessionStore,
   id: string,
 ): Promise<RecentPrompts> {
@@ -93,9 +93,48 @@ async function gatherRecentUserPrompts(
   };
 }
 
+// Build a newest-first user+assistant evidence digest for the Expression draft
+// and memory consolidation. Returns the joined digest text and whether any
+// sessions were found (callers decide how to handle the empty case).
+export async function buildEvidenceDigest(
+  store: import('@ethosagent/session-sqlite').SQLiteSessionStore,
+  id: string,
+): Promise<{ digest: string; hasSessions: boolean }> {
+  const digestLines: string[] = [];
+  let totalChars = 0;
+  const MAX_MSGS = 20;
+  const MAX_CHARS = 4000;
+
+  let sessions = await store.listSessions({ personalityId: id });
+  if (sessions.length === 0) sessions = await store.listSessions();
+  if (sessions.length === 0) return { digest: '', hasSessions: false };
+  sessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+
+  let capped = false;
+  for (const s of sessions) {
+    if (capped) break;
+    const msgs = await store.getMessages(s.id, { limit: 20 });
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (!m) continue;
+      if (m.role !== 'user' && m.role !== 'assistant') continue;
+      const line = `${m.role}: ${oneLine(m.content)}`;
+      if (digestLines.length >= MAX_MSGS || totalChars + line.length > MAX_CHARS) {
+        digestLines.push('… [evidence truncated]');
+        capped = true;
+        break;
+      }
+      digestLines.push(line);
+      totalChars += line.length;
+    }
+  }
+
+  return { digest: digestLines.join('\n'), hasSessions: true };
+}
+
 // Build an EvalRunner the Judge can drive: real AgentLoop, LLM judge scorer,
 // run history written under the personality's .judge-history/runs/.
-async function buildJudgeRunner(config: EthosConfig, id: string): Promise<EvalRunner> {
+export async function buildJudgeRunner(config: EthosConfig, id: string): Promise<EvalRunner> {
   const { ethosDir } = await import('../config');
   const { join } = await import('node:path');
   const storage = getStorage();
@@ -117,7 +156,7 @@ function judgeStatePath(ethosDir: string, id: string, join: (...p: string[]) => 
 }
 
 // Read the persisted consecutive-low-batch streak; 0 when missing/invalid.
-async function readJudgeStreak(id: string): Promise<number> {
+export async function readJudgeStreak(id: string): Promise<number> {
   const { ethosDir } = await import('../config');
   const { join } = await import('node:path');
   const raw = await getStorage().read(judgeStatePath(ethosDir(), id, join));
@@ -135,7 +174,11 @@ async function readJudgeStreak(id: string): Promise<number> {
 }
 
 // Persist the streak + last Judge result alongside the personality.
-async function writeJudgeStreak(id: string, lowStreak: number, result: JudgeResult): Promise<void> {
+export async function writeJudgeStreak(
+  id: string,
+  lowStreak: number,
+  result: JudgeResult,
+): Promise<void> {
   const { ethosDir } = await import('../config');
   const { join } = await import('node:path');
   const dir = join(ethosDir(), 'personalities', id, '.judge-history');
@@ -147,7 +190,7 @@ async function writeJudgeStreak(id: string, lowStreak: number, result: JudgeResu
 }
 
 // Actionable, voice-matched notification when the Judge fires a signal.
-function signalNotice(id: string, signal: NonNullable<JudgeResult['signal']>): string {
+export function signalNotice(id: string, signal: NonNullable<JudgeResult['signal']>): string {
   if (signal === 'underspecified_soul') {
     return `⚠ ${id} has scored low for a sustained run — its Core/Expression may be under-specified. Flesh out the soul.`;
   }
@@ -270,47 +313,23 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
 
     let scopedNote = '';
     let recent: RecentPrompts;
-    const digestLines: string[] = [];
-    let totalChars = 0;
-    const MAX_MSGS = 20;
-    const MAX_CHARS = 4000;
+    let evidence: string;
     try {
       recent = await gatherRecentUserPrompts(store, id);
       scopedNote = recent.scopedNote;
 
-      let sessions = await store.listSessions({ personalityId: id });
-      if (sessions.length === 0) sessions = await store.listSessions();
-      if (sessions.length === 0) {
+      const built = await buildEvidenceDigest(store, id);
+      if (!built.hasSessions) {
         console.log(
           'No recent session evidence yet — interact with this personality first, then evolve.',
         );
         return;
       }
-      sessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
-
-      let capped = false;
-      for (const s of sessions) {
-        if (capped) break;
-        const msgs = await store.getMessages(s.id, { limit: 20 });
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          const m = msgs[i];
-          if (!m) continue;
-          if (m.role !== 'user' && m.role !== 'assistant') continue;
-          const line = `${m.role}: ${oneLine(m.content)}`;
-          if (digestLines.length >= MAX_MSGS || totalChars + line.length > MAX_CHARS) {
-            digestLines.push('… [evidence truncated]');
-            capped = true;
-            break;
-          }
-          digestLines.push(line);
-          totalChars += line.length;
-        }
-      }
+      evidence = built.digest;
     } finally {
       store.close();
     }
 
-    const evidence = digestLines.join('\n');
     const soul = await reg.readLivingSoul(id);
     const llm = await createLLM(config);
 

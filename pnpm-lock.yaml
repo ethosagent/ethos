@@ -252,6 +252,9 @@ importers:
       '@ethosagent/mcp-server':
         specifier: workspace:*
         version: link:../mcp-server
+      '@ethosagent/nightly-loop':
+        specifier: workspace:*
+        version: link:../../extensions/nightly-loop
       '@ethosagent/observability-sqlite':
         specifier: workspace:*
         version: link:../../extensions/observability-sqlite

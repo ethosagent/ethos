@@ -89,6 +89,7 @@
     "@ethosagent/goal-store": "workspace:*",
     "@ethosagent/logger": "workspace:*",
     "@ethosagent/mcp-server": "workspace:*",
+    "@ethosagent/nightly-loop": "workspace:*",
     "@ethosagent/observability-sqlite": "workspace:*",
     "@ethosagent/request-dump": "workspace:*",
     "@ethosagent/personalities": "workspace:*",
