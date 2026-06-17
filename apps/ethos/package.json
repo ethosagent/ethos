@@ -92,6 +92,7 @@
     "@ethosagent/observability-sqlite": "workspace:*",
     "@ethosagent/request-dump": "workspace:*",
     "@ethosagent/personalities": "workspace:*",
+    "@ethosagent/personality-judge": "workspace:*",
     "@ethosagent/safety-channel": "workspace:*",
     "@ethosagent/safety-redact": "workspace:*",
     "@ethosagent/safety-scanner": "workspace:*",

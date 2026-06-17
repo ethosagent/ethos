@@ -337,6 +337,9 @@ try {
       } else if (sub === 'revert') {
         const { runPersonalityRevert } = await import('./commands/personality-evolve');
         await runPersonalityRevert(args.slice(2));
+      } else if (sub === 'judge') {
+        const { runPersonalityJudge } = await import('./commands/personality-evolve');
+        await runPersonalityJudge(args.slice(2));
       } else if (sub === 'export') {
         const { runPersonalityExport } = await import('./commands/personality-export');
         await runPersonalityExport(args.slice(2));
@@ -345,7 +348,7 @@ try {
         await runPersonalityImport(args.slice(2));
       } else {
         console.log(
-          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | diff <a> <b> | evolve <id> | revert <id> | set <id> | duplicate <src> <dst> | export <id> [--output <path>] | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
+          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | diff <a> <b> | evolve <id> | revert <id> | judge <id> | set <id> | duplicate <src> <dst> | export <id> [--output <path>] | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
         );
       }
       break;

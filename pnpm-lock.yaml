@@ -258,6 +258,9 @@ importers:
       '@ethosagent/personalities':
         specifier: workspace:*
         version: link:../../extensions/personalities
+      '@ethosagent/personality-judge':
+        specifier: workspace:*
+        version: link:../../extensions/personality-judge
       '@ethosagent/request-dump':
         specifier: workspace:*
         version: link:../../extensions/request-dump
