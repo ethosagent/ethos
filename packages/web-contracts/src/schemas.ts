@@ -118,6 +118,12 @@ export const PersonalitySchema = z.object({
       cooldown_minutes: z.number().int().optional(),
     })
     .optional(),
+  /** Per-personality safety dial. Optional (omitted when unset) so the editor
+   *  can read the current approval mode to populate its form. */
+  safety: z.object({ approvalMode: z.enum(['manual', 'smart', 'off']).optional() }).optional(),
+  /** Per-personality memory backend. Optional (omitted when unset) so the
+   *  editor can read the current provider to populate its form. */
+  memory: z.object({ provider: z.string().optional() }).optional(),
   system: z.boolean(),
   /** True when the personality lives in the package's built-in data directory
    *  (read-only). User-created personalities under `~/.ethos/personalities/`

@@ -436,6 +436,10 @@ function toWire(d: DescribedPersonality): Personality {
       ? { evolution_approval_mode: c.evolution_approval_mode }
       : {}),
     ...(c.skill_evolution !== undefined ? { skill_evolution: c.skill_evolution } : {}),
+    ...(c.safety?.approvalMode !== undefined
+      ? { safety: { approvalMode: c.safety.approvalMode } }
+      : {}),
+    ...(c.memory?.provider !== undefined ? { memory: { provider: c.memory.provider } } : {}),
     system: d.builtin && SYSTEM_PERSONALITY_IDS.has(c.id),
     builtin: d.builtin,
     version: 1,

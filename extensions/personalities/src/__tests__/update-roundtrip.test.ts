@@ -259,6 +259,76 @@ describe('governed-learning settings round-trip', () => {
   });
 });
 
+describe('safety + memory settings round-trip', () => {
+  it('persists safety.approvalMode through update and re-load', async () => {
+    await seedPersonality('sm-safety', 'name: SMSafety\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('sm-safety', { safety: { approvalMode: 'smart' } });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    expect(fresh.get('sm-safety')?.safety?.approvalMode).toBe('smart');
+  });
+
+  it('persists memory.provider through update and re-load', async () => {
+    await seedPersonality('sm-memory', 'name: SMMemory\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('sm-memory', { memory: { provider: 'vector' } });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    expect(fresh.get('sm-memory')?.memory?.provider).toBe('vector');
+  });
+
+  it('preserves safety + memory when an unrelated field is updated', async () => {
+    await seedPersonality(
+      'sm-preserve',
+      ['name: SMPreserve', 'memory.provider: vector', 'safety:', '  approvalMode: smart', ''].join(
+        '\n',
+      ),
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('sm-preserve', { description: 'changed' });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const after = fresh.get('sm-preserve');
+    expect(after?.description).toBe('changed');
+    expect(after?.safety?.approvalMode).toBe('smart');
+    expect(after?.memory?.provider).toBe('vector');
+  });
+
+  it('merges a safety.approvalMode patch without dropping sibling safety fields', async () => {
+    await seedPersonality(
+      'sm-merge',
+      [
+        'name: SMMerge',
+        'safety:',
+        '  approvalMode: manual',
+        '  observability:',
+        '    storeToolArgs: redacted',
+        '',
+      ].join('\n'),
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('sm-merge', { safety: { approvalMode: 'off' } });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const after = fresh.get('sm-merge');
+    expect(after?.safety?.approvalMode).toBe('off');
+    expect(after?.safety?.observability?.storeToolArgs).toBe('redacted');
+  });
+});
+
 describe('lossless update — full config round-trip', () => {
   // A config.yaml that populates EVERY droppable PersonalityConfig field with
   // realistic values. The syntax of each key mirrors what parseConfigYaml /

@@ -458,4 +458,34 @@ describe('PersonalitiesService', () => {
       });
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Per-personality safety + memory overrides — approvalMode + memory.provider
+  // round-trip through update → config.yaml → toWire.
+  // -------------------------------------------------------------------------
+  describe('safety + memory overrides round-trip', () => {
+    async function makeRealService() {
+      const storage = new InMemoryStorage();
+      const registry = new FilePersonalityRegistry(storage, DATA);
+      const library = new SkillsLibrary({ dataDir: DATA, storage });
+      const service = new PersonalitiesService({ personalities: registry, library });
+      return { service, storage };
+    }
+
+    it('update persists safety.approvalMode + memory.provider and toWire reflects them', async () => {
+      const { service } = await makeRealService();
+      await service.create({ id: 'agent', name: 'Agent', toolset: [], soulMd: '# Agent' });
+
+      const { personality } = await service.update('agent', {
+        safety: { approvalMode: 'smart' },
+        memory: { provider: 'vector' },
+      });
+      expect(personality.safety?.approvalMode).toBe('smart');
+      expect(personality.memory?.provider).toBe('vector');
+
+      const reloaded = await service.get('agent');
+      expect(reloaded.personality.safety?.approvalMode).toBe('smart');
+      expect(reloaded.personality.memory?.provider).toBe('vector');
+    });
+  });
 });

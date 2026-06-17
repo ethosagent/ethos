@@ -30,7 +30,7 @@ import {
   Typography,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { PersonalityRingAvatar } from '../components/ui/PersonalityRingAvatar';
 import { rpc } from '../rpc';
 
@@ -1490,6 +1490,8 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
     skillEvolutionEnabled: boolean;
     skillEvolutionMinToolCalls: number;
     skillEvolutionCooldownMinutes: number;
+    safetyApprovalMode: 'manual' | 'smart' | 'off';
+    memoryProvider: string;
   }>();
   const [tieredMode, setTieredMode] = useState(
     typeof personality.model === 'object' && personality.model !== null,
@@ -1515,6 +1517,8 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
       skillEvolutionEnabled: personality.skill_evolution?.enabled ?? false,
       skillEvolutionMinToolCalls: personality.skill_evolution?.min_tool_calls ?? 3,
       skillEvolutionCooldownMinutes: personality.skill_evolution?.cooldown_minutes ?? 30,
+      safetyApprovalMode: personality.safety?.approvalMode ?? 'manual',
+      memoryProvider: personality.memory?.provider ?? 'markdown',
     });
   }, [personality, form]);
 
@@ -1535,6 +1539,8 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
       skillEvolutionEnabled: boolean;
       skillEvolutionMinToolCalls: number;
       skillEvolutionCooldownMinutes: number;
+      safetyApprovalMode: 'manual' | 'smart' | 'off';
+      memoryProvider: string;
     }) => {
       let model: string | ModelTierConfigWire;
       if (tieredMode) {
@@ -1561,6 +1567,8 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
           min_tool_calls: values.skillEvolutionMinToolCalls,
           cooldown_minutes: values.skillEvolutionCooldownMinutes,
         },
+        safety: { approvalMode: values.safetyApprovalMode },
+        memory: { provider: values.memoryProvider },
       });
     },
     onSuccess: () => {
@@ -1594,6 +1602,8 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
           skillEvolutionEnabled: values.skillEvolutionEnabled ?? false,
           skillEvolutionMinToolCalls: values.skillEvolutionMinToolCalls ?? 3,
           skillEvolutionCooldownMinutes: values.skillEvolutionCooldownMinutes ?? 30,
+          safetyApprovalMode: values.safetyApprovalMode ?? 'manual',
+          memoryProvider: values.memoryProvider ?? 'markdown',
         })
       }
     >
@@ -1717,6 +1727,37 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
         extra="Minimum time between skill proposals to avoid noise."
       >
         <InputNumber min={0} step={5} style={{ width: '100%' }} />
+      </Form.Item>
+      <Form.Item
+        label="Approval mode (safety)"
+        name="safetyApprovalMode"
+        extra="What the agent may do without asking — Manual asks every sensitive call; Smart asks only high-risk; Off runs all, trusted machines only."
+      >
+        <Select
+          options={[
+            { label: 'Manual', value: 'manual' },
+            { label: 'Smart', value: 'smart' },
+            { label: 'Off', value: 'off' },
+          ]}
+        />
+      </Form.Item>
+      <Form.Item
+        label="Memory backend"
+        name="memoryProvider"
+        extra="Where this personality stores memory. Markdown is human-editable; Vector uses embeddings for semantic recall."
+      >
+        <Select
+          options={[
+            { label: 'Markdown', value: 'markdown' },
+            { label: 'Vector', value: 'vector' },
+          ]}
+        />
+      </Form.Item>
+      <Form.Item>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Provider API keys and Web API keys are account-wide — manage them in{' '}
+          <Link to="/settings">Settings</Link>.
+        </Typography.Text>
       </Form.Item>
       <Alert
         type="warning"

@@ -467,6 +467,12 @@ export interface UpdatePersonalityPatch {
   evolution_approval_mode?: 'auto' | 'user';
   /** Skill-evolution tuning — overwrites the existing config wholesale. */
   skill_evolution?: import('@ethosagent/types').PersonalityConfig['skill_evolution'];
+  /** Per-personality safety config (e.g. approval mode). Merged onto the
+   *  existing safety block so a partial patch never drops sibling fields. */
+  safety?: import('@ethosagent/types').PersonalityConfig['safety'];
+  /** Per-personality memory backend. Merged onto the existing memory block so
+   *  a provider patch never drops `options`. */
+  memory?: import('@ethosagent/types').PersonalityConfig['memory'];
 }
 
 export class FilePersonalityRegistry implements PersonalityRegistry {
@@ -707,7 +713,9 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       patch.dreaming !== undefined ||
       patch.dreamingEnable !== undefined ||
       patch.evolution_approval_mode !== undefined ||
-      patch.skill_evolution !== undefined
+      patch.skill_evolution !== undefined ||
+      patch.safety !== undefined ||
+      patch.memory !== undefined
     ) {
       const config = existing.config;
       if (patch.provider !== undefined && patch.provider !== '') {
@@ -797,6 +805,8 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         dreaming: mergedDreaming,
         evolution_approval_mode: patch.evolution_approval_mode ?? config.evolution_approval_mode,
         skill_evolution: patch.skill_evolution ?? config.skill_evolution,
+        safety: patch.safety === undefined ? config.safety : { ...config.safety, ...patch.safety },
+        memory: patch.memory === undefined ? config.memory : { ...config.memory, ...patch.memory },
       };
       await this.storage.write(join(dir, 'config.yaml'), renderConfigYaml(merged));
     }

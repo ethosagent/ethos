@@ -268,6 +268,11 @@ const PersonalityUpdateInput = z.object({
       cooldown_minutes: z.number().int().min(0).optional(),
     })
     .optional(),
+  /** Per-personality safety dial. Only `approvalMode` is editable from the
+   *  web; sibling safety fields are preserved by the registry merge. */
+  safety: z.object({ approvalMode: z.enum(['manual', 'smart', 'off']).optional() }).optional(),
+  /** Per-personality memory backend. Built-ins: 'markdown', 'vector'. */
+  memory: z.object({ provider: z.string().optional() }).optional(),
 });
 const PersonalityUpdateOutput = z.object({ personality: PersonalitySchema });
 
