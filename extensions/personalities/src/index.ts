@@ -58,6 +58,32 @@ function parseNestedBlock(
           const next = lines[i + 1];
           const nextIndent = next?.match(/^(\s+)/)?.[1]?.length ?? 0;
           if (next && nextIndent > indent) {
+            // A deeper-indented block follows. It is either a list (lines that
+            // start with `- `) or a nested object. Lists on following lines are
+            // not handled by the recursive object parser, so detect them here.
+            if (next.trim().startsWith('- ')) {
+              const items: string[] = [];
+              let j = i + 1;
+              while (j < lines.length) {
+                const al = lines[j] ?? '';
+                const alTrimmed = al.trim();
+                if (alTrimmed === '' || alTrimmed.startsWith('#')) {
+                  j++;
+                  continue;
+                }
+                if (!alTrimmed.startsWith('- ')) break;
+                items.push(
+                  alTrimmed
+                    .slice(2)
+                    .trim()
+                    .replace(/^["']|["']$/g, ''),
+                );
+                j++;
+              }
+              obj[key] = items;
+              i = j;
+              continue;
+            }
             const { obj: child, endIdx } = parseNestedBlock(lines, i + 1);
             obj[key] = child;
             i = endIdx;
@@ -746,20 +772,22 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
           ...(prev?.prompt !== undefined ? { prompt: prev.prompt } : {}),
         };
       }
-      const merged = {
-        id: config.id,
+      // Carry the FULL existing config and overlay only the patched fields,
+      // so an update to one field never drops the rest. `id`, `soulFile`, and
+      // `skillsDirs` are loader-populated and excluded from config.yaml.
+      const { id: _id, soulFile: _soulFile, skillsDirs: _skillsDirs, ...rest } = config;
+      const merged: RenderConfigInput = {
+        ...rest,
         name: patch.name ?? config.name,
         description: patch.description ?? config.description,
         model: patch.model ?? config.model,
         toolset: patch.toolset ?? config.toolset ?? [],
-        soulMd: '',
         mcp_servers: patch.mcp_servers ?? config.mcp_servers,
         plugins: patch.plugins ?? config.plugins,
         capabilities: patch.capabilities === undefined ? config.capabilities : patch.capabilities,
         provider: patch.provider === undefined ? config.provider : patch.provider,
         fs_reach: patch.fs_reach === undefined ? config.fs_reach : patch.fs_reach,
         dreaming: mergedDreaming,
-        evolution_approval_mode: config.evolution_approval_mode,
       };
       await this.storage.write(join(dir, 'config.yaml'), renderConfigYaml(merged));
     }
@@ -1400,7 +1428,86 @@ function buildSafetyConfig(raw: Record<string, unknown>): PersonalitySafetyConfi
     }
     result.approvalMode = mode;
   }
+
+  const asp = raw.allowed_skill_permissions as Record<string, unknown> | undefined;
+  if (asp) {
+    const out: NonNullable<PersonalitySafetyConfig['allowed_skill_permissions']> = {};
+    for (const cat of ['fs_read', 'fs_write', 'network', 'mcp_env_passthrough'] as const) {
+      const v = nestedListOrBool(asp[cat]);
+      if (v !== undefined) out[cat] = v;
+    }
+    if (Object.keys(out).length > 0) result.allowed_skill_permissions = out;
+  }
+
+  const net = raw.network as Record<string, unknown> | undefined;
+  if (net) {
+    const out: NonNullable<PersonalitySafetyConfig['network']> = {};
+    if (Array.isArray(net.allow)) out.allow = net.allow.map(String);
+    if (Array.isArray(net.deny)) out.deny = net.deny.map(String);
+    const priv = nestedBool(net.allow_private_urls);
+    if (priv !== undefined) out.allow_private_urls = priv;
+    if (Object.keys(out).length > 0) result.network = out;
+  }
+
+  const inj = raw.injectionDefense as Record<string, unknown> | undefined;
+  if (inj) {
+    const out: NonNullable<PersonalitySafetyConfig['injectionDefense']> = {};
+    const enabled = nestedBool(inj.enabled);
+    if (enabled !== undefined) out.enabled = enabled;
+    const classifier = inj.classifier as Record<string, unknown> | undefined;
+    if (classifier) {
+      const alwaysCallLLM = nestedBool(classifier.alwaysCallLLM);
+      if (alwaysCallLLM !== undefined) out.classifier = { alwaysCallLLM };
+    }
+    const prd = inj.postReadDowngrade as Record<string, unknown> | undefined;
+    if (prd) {
+      const downgrade: NonNullable<
+        NonNullable<PersonalitySafetyConfig['injectionDefense']>['postReadDowngrade']
+      > = {};
+      const dEnabled = nestedBool(prd.enabled);
+      if (dEnabled !== undefined) downgrade.enabled = dEnabled;
+      const turns = nestedInt(prd.turns);
+      if (turns !== undefined) downgrade.turns = turns;
+      if (prd.tools === 'auto') downgrade.tools = 'auto';
+      else if (Array.isArray(prd.tools)) downgrade.tools = prd.tools.map(String);
+      if (Object.keys(downgrade).length > 0) out.postReadDowngrade = downgrade;
+    }
+    const blockSecretResults = nestedBool(inj.blockSecretResults);
+    if (blockSecretResults !== undefined) out.blockSecretResults = blockSecretResults;
+    const toolResultDelimiters = nestedBool(inj.toolResultDelimiters);
+    if (toolResultDelimiters !== undefined) out.toolResultDelimiters = toolResultDelimiters;
+    if (Object.keys(out).length > 0) result.injectionDefense = out;
+  }
+
+  const pii = raw.piiRedaction as Record<string, unknown> | undefined;
+  if (pii) {
+    const enabled = nestedBool(pii.enabled);
+    if (enabled !== undefined) {
+      const out: NonNullable<PersonalitySafetyConfig['piiRedaction']> = { enabled };
+      if (Array.isArray(pii.extraPatterns)) out.extraPatterns = pii.extraPatterns.map(String);
+      result.piiRedaction = out;
+    }
+  }
   return result;
+}
+
+/** Coerce a nested-block scalar to a boolean. Returns undefined when the value
+ *  is absent or not a recognized boolean string. */
+function nestedBool(v: unknown): boolean | undefined {
+  if (v === 'true') return true;
+  if (v === 'false') return false;
+  return undefined;
+}
+
+/** Coerce a nested-block scalar to an integer, or undefined when not numeric. */
+function nestedInt(v: unknown): number | undefined {
+  return typeof v === 'string' && /^\d+$/.test(v) ? Number.parseInt(v, 10) : undefined;
+}
+
+/** A skill-permission category is either a string list or a boolean toggle. */
+function nestedListOrBool(v: unknown): string[] | boolean | undefined {
+  if (Array.isArray(v)) return v.map(String);
+  return nestedBool(v);
 }
 
 // Ch.4b — load-time refusal of unsafe combinations (v1 floor).
@@ -1447,10 +1554,33 @@ function yamlScalar(value: string): string {
   return value;
 }
 
-function renderConfigYaml(input: CreatePersonalityInput): string {
+/**
+ * Fields `renderConfigYaml` can emit. A superset of the user-settable
+ * `CreatePersonalityInput` and the full `PersonalityConfig` so `update()` can
+ * round-trip the entire existing config losslessly. Loader-populated fields
+ * (`id`, `soulFile`, `skillsDirs`) and `soulMd` are intentionally excluded —
+ * they are not part of config.yaml.
+ */
+type RenderConfigInput = Omit<CreatePersonalityInput, 'id' | 'soulMd'> &
+  Pick<
+    PersonalityConfig,
+    | 'platform'
+    | 'streamingTimeoutMs'
+    | 'budgetCapUsd'
+    | 'safety'
+    | 'context_engine'
+    | 'context_engine_options'
+    | 'context_layering'
+    | 'memory'
+    | 'mcp_export'
+    | 'outbound_policy'
+  >;
+
+function renderConfigYaml(input: RenderConfigInput): string {
   const lines: string[] = [`name: ${yamlScalar(input.name)}`];
   if (input.description) lines.push(`description: ${yamlScalar(input.description)}`);
   if (input.provider) lines.push(`provider: ${yamlScalar(input.provider)}`);
+  if (input.platform) lines.push(`platform: ${yamlScalar(input.platform)}`);
   if (input.model) {
     if (typeof input.model === 'string') {
       lines.push(`model: ${yamlScalar(input.model)}`);
@@ -1474,6 +1604,29 @@ function renderConfigYaml(input: CreatePersonalityInput): string {
   if (input.fs_reach?.write !== undefined && input.fs_reach.write.length > 0) {
     lines.push(`fs_reach.write: ${input.fs_reach.write.join(', ')}`);
   }
+  if (input.streamingTimeoutMs !== undefined) {
+    lines.push(`streamingTimeoutMs: ${input.streamingTimeoutMs}`);
+  }
+  if (input.budgetCapUsd !== undefined) lines.push(`budgetCapUsd: ${input.budgetCapUsd}`);
+  if (input.context_engine !== undefined) {
+    lines.push(`context_engine: ${yamlScalar(input.context_engine)}`);
+  }
+  if (input.context_engine_options !== undefined) {
+    for (const [k, v] of Object.entries(input.context_engine_options)) {
+      lines.push(`context_engine_options.${k}: ${renderScalarValue(v)}`);
+    }
+  }
+  if (input.context_layering !== undefined) {
+    const cl = input.context_layering;
+    if (cl.mode !== undefined) lines.push(`context_layering.mode: ${cl.mode}`);
+    if (cl.max_depth !== undefined) lines.push(`context_layering.max_depth: ${cl.max_depth}`);
+    if (cl.discovery_files !== undefined) {
+      lines.push(`context_layering.discovery_files: ${cl.discovery_files.join(', ')}`);
+    }
+    if (cl.cap_total_chars !== undefined) {
+      lines.push(`context_layering.cap_total_chars: ${cl.cap_total_chars}`);
+    }
+  }
   if (input.skill_evolution) {
     const se = input.skill_evolution;
     if (se.enabled !== undefined) lines.push(`skill_evolution.enabled: ${se.enabled}`);
@@ -1481,6 +1634,37 @@ function renderConfigYaml(input: CreatePersonalityInput): string {
       lines.push(`skill_evolution.min_tool_calls: ${se.min_tool_calls}`);
     if (se.cooldown_minutes !== undefined)
       lines.push(`skill_evolution.cooldown_minutes: ${se.cooldown_minutes}`);
+  }
+  if (input.memory !== undefined) {
+    lines.push(`memory.provider: ${yamlScalar(input.memory.provider)}`);
+    if (input.memory.options !== undefined) {
+      for (const [k, v] of Object.entries(input.memory.options)) {
+        lines.push(`memory.options.${k}: ${renderScalarValue(v)}`);
+      }
+    }
+  }
+  if (input.mcp_export !== undefined) {
+    const me = input.mcp_export;
+    lines.push(`mcp_export.enabled: ${me.enabled}`);
+    if (me.expose_tools !== undefined) {
+      const tools = Array.isArray(me.expose_tools) ? me.expose_tools.join(' ') : me.expose_tools;
+      lines.push(`mcp_export.expose_tools: ${tools}`);
+    }
+    if (me.expose_memory !== undefined) lines.push(`mcp_export.expose_memory: ${me.expose_memory}`);
+    if (me.expose_sessions !== undefined) {
+      lines.push(`mcp_export.expose_sessions: ${me.expose_sessions}`);
+    }
+    if (me.auth !== undefined) lines.push(`mcp_export.auth: ${me.auth}`);
+  }
+  if (input.outbound_policy !== undefined) {
+    const op = input.outbound_policy;
+    lines.push(`outbound_policy.approve_before_send: ${op.approve_before_send}`);
+    if (op.channels !== undefined) {
+      lines.push(`outbound_policy.channels: ${op.channels.join(' ')}`);
+    }
+    if (op.approver_personality !== undefined) {
+      lines.push(`outbound_policy.approver_personality: ${yamlScalar(op.approver_personality)}`);
+    }
   }
   if (input.dreaming !== undefined) {
     const d = input.dreaming;
@@ -1492,7 +1676,41 @@ function renderConfigYaml(input: CreatePersonalityInput): string {
   if (input.evolution_approval_mode !== undefined) {
     lines.push(`evolution_approval_mode: ${yamlScalar(input.evolution_approval_mode)}`);
   }
+  if (input.safety !== undefined && Object.keys(input.safety).length > 0) {
+    lines.push('safety:');
+    lines.push(...renderNestedBlock(input.safety as Record<string, unknown>, 1));
+  }
   return `${lines.join('\n')}\n`;
+}
+
+/** Render a scalar config value (string/number/boolean) for a dotted key. */
+function renderScalarValue(v: unknown): string {
+  if (typeof v === 'string') return yamlScalar(v);
+  return String(v);
+}
+
+/**
+ * Emit a nested object block (the inverse of `parseNestedBlock`) at the given
+ * indent depth (2 spaces per level). Mirrors the parser's value handling:
+ * scalars inline, string arrays as `- item` lists, and nested objects
+ * recursively. Used for `safety:`.
+ */
+function renderNestedBlock(obj: Record<string, unknown>, depth: number): string[] {
+  const pad = '  '.repeat(depth);
+  const out: string[] = [];
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      out.push(`${pad}${key}:`);
+      for (const item of value) out.push(`${pad}  - ${renderScalarValue(item)}`);
+    } else if (value !== null && typeof value === 'object') {
+      out.push(`${pad}${key}:`);
+      out.push(...renderNestedBlock(value as Record<string, unknown>, depth + 1));
+    } else {
+      out.push(`${pad}${key}: ${renderScalarValue(value)}`);
+    }
+  }
+  return out;
 }
 
 function renderToolsetYaml(toolset: string[]): string {

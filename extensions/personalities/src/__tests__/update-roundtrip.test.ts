@@ -197,3 +197,113 @@ describe('dreaming round-trip', () => {
     expect(fresh.get('dream-toggle')?.dreaming?.enable).not.toBe(true);
   });
 });
+
+describe('lossless update — full config round-trip', () => {
+  // A config.yaml that populates EVERY droppable PersonalityConfig field with
+  // realistic values. The syntax of each key mirrors what parseConfigYaml /
+  // the buildX helpers read back. Updating one unrelated field must preserve
+  // all of these verbatim.
+  const FULL_CONFIG = [
+    'name: FullPersona',
+    'description: Original description',
+    'provider: openai',
+    'platform: cli',
+    'model.trivial: gpt-4o-mini',
+    'model.default: gpt-4o',
+    'model.deep: o1',
+    'model.dreaming: gpt-4o-mini',
+    'capabilities: triage, release',
+    'mcp_servers: linear slack',
+    'plugins: kanban notes',
+    'fs_reach.read: /data, ${self}/docs',
+    'fs_reach.write: /data/output',
+    'streamingTimeoutMs: 90000',
+    'budgetCapUsd: 12.5',
+    'evolution_approval_mode: user',
+    'context_engine: drop_oldest',
+    'context_engine_options.threshold: 1000',
+    'context_engine_options.aggressive: true',
+    'context_layering.mode: progressive',
+    'context_layering.max_depth: 3',
+    'context_layering.discovery_files: AGENTS.md, CLAUDE.md',
+    'context_layering.cap_total_chars: 5000',
+    'skill_evolution.enabled: true',
+    'skill_evolution.min_tool_calls: 5',
+    'skill_evolution.cooldown_minutes: 30',
+    'memory.provider: vector',
+    'memory.options.dim: 768',
+    'memory.options.normalize: true',
+    'mcp_export.enabled: true',
+    'mcp_export.expose_tools: read_file write_file',
+    'mcp_export.expose_memory: scoped',
+    'mcp_export.expose_sessions: true',
+    'mcp_export.auth: bearer',
+    'outbound_policy.approve_before_send: true',
+    'outbound_policy.channels: telegram slack',
+    'outbound_policy.approver_personality: reviewer',
+    'dreaming.enable: true',
+    'dreaming.idleMinutes: 45',
+    'dreaming.maxPerDay: 2',
+    'dreaming.prompt: Reflect on the day.',
+    'safety:',
+    '  approvalMode: smart',
+    '  observability:',
+    '    storeToolArgs: redacted',
+    '    storeToolBodies: none',
+    '    storeLlmPayloads: metadata',
+    '    redactPatterns:',
+    '      - secret',
+    '      - token',
+    '  allowed_skill_permissions:',
+    '    fs_read:',
+    '      - /data',
+    '    network: true',
+    '  network:',
+    '    allow:',
+    '      - example.com',
+    '    deny:',
+    '      - evil.com',
+    '    allow_private_urls: true',
+    '  injectionDefense:',
+    '    enabled: false',
+    '    classifier:',
+    '      alwaysCallLLM: true',
+    '    postReadDowngrade:',
+    '      enabled: true',
+    '      turns: 3',
+    '      tools:',
+    '        - terminal',
+    '    blockSecretResults: true',
+    '    toolResultDelimiters: false',
+    '  piiRedaction:',
+    '    enabled: true',
+    '    extraPatterns:',
+    '      - ssn',
+    '',
+  ].join('\n');
+
+  it('preserves every config field when an unrelated field is updated', async () => {
+    await seedPersonality('full-persona', FULL_CONFIG);
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    const before = registry.get('full-persona');
+    expect(before).toBeDefined();
+    // Snapshot the loaded config before the update.
+    const snapshot = structuredClone(before);
+
+    // Update a single unrelated field. Every other field must survive the
+    // config.yaml rewrite untouched.
+    await registry.update('full-persona', { description: 'changed' });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const after = fresh.get('full-persona');
+    expect(after).toBeDefined();
+
+    // Everything except description must deep-equal the pre-update snapshot.
+    const expected = { ...structuredClone(snapshot), description: 'changed' };
+    expect(after).toEqual(expected);
+    expect(after?.description).toBe('changed');
+  });
+});
