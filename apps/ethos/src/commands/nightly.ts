@@ -144,6 +144,7 @@ function buildDeps(args: {
 
     async scoreAlignment(scoreArgs): Promise<ScoreOutcome> {
       const runner = await buildJudgeRunner(config, scoreArgs.personalityId);
+      const judge = reg.get(scoreArgs.personalityId)?.nightly?.judge;
       const outcome = await scorePersonality({
         personalityId: scoreArgs.personalityId,
         core: scoreArgs.core,
@@ -154,6 +155,7 @@ function buildDeps(args: {
         elapsedHours: scoreArgs.evidence.elapsedHours,
         priorLowStreak: scoreArgs.priorLowStreak,
         runner,
+        activation: { minInteractions: judge?.minInteractions ?? 20, minElapsedHours: 12 },
       });
       if (outcome.kind === 'scored') lastJudgeResult = outcome.result;
       return outcome;
@@ -277,8 +279,22 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
   const deps = buildDeps({ config, ethosDir: dir, reg, llm, memory });
 
   for (const target of targets) {
+    const nightly = reg.get(target)?.nightly;
+    // Master nightly toggle: an explicit `false` skips this personality
+    // entirely. Absent/undefined runs (today's behavior).
+    if (nightly?.enabled === false) {
+      console.log(`\n=== Nightly pass: ${target} — skipped (nightly disabled) ===`);
+      continue;
+    }
+    // Per-step gates: judge gated by both the master nightly toggle's judge
+    // sub-block and the judge-enabled flag; expression by its own flag. Both
+    // default true when absent.
+    const gates = {
+      judge: nightly?.judge?.enabled !== false,
+      expression: nightly?.expression !== false,
+    };
     try {
-      const result = await runNightlyPass(target, deps);
+      const result = await runNightlyPass(target, deps, gates);
       console.log(`\n=== Nightly pass: ${target} (window ${result.windowEnd}) ===`);
       for (const step of result.steps) {
         console.log(`  ${step.step.padEnd(12)} ${step.status.padEnd(8)} ${step.detail}`);

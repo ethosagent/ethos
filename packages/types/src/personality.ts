@@ -349,6 +349,28 @@ export interface PersonalityConfig {
    * Counts as ONE field for the schema-freeze gate.
    */
   evolution_approval_mode?: 'auto' | 'user';
+  /**
+   * Phase 3 (P5) — Gates the nightly governed-learning pass and its Personality
+   * Judge. Every field defaults to today's behavior when absent, so an existing
+   * personality with no `nightly` block runs the full pass (judge + expression)
+   * exactly as before.
+   *   `enabled`               — master nightly toggle. Default true: the pass
+   *                             runs for this personality.
+   *   `judge.enabled`         — run the Personality Judge step. Default true.
+   *                             When false, the judge step records `skipped`
+   *                             and no verdict is produced (expression short-
+   *                             circuits, as it does on insufficient data).
+   *   `judge.minInteractions` — activation threshold for the judge. Default 20
+   *                             (= DEFAULT_ACTIVATION.minInteractions).
+   *   `expression`            — run the expression-evolution step. Default true.
+   * Counts as ONE field for the schema-freeze gate (the nested shape is a
+   * leaf type — same precedent as `fs_reach`).
+   */
+  nightly?: {
+    enabled?: boolean;
+    judge?: { enabled?: boolean; minInteractions?: number };
+    expression?: boolean;
+  };
 }
 
 /**

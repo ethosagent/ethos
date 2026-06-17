@@ -8,6 +8,7 @@ export {
 } from './memory-consolidation';
 export type {
   NightlyEvidence,
+  NightlyGates,
   NightlyPassDeps,
   NightlyPassResult,
   NightlyState,

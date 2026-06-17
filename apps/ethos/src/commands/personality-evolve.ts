@@ -240,6 +240,7 @@ export async function runPersonalityJudge(argv: string[]): Promise<void> {
 
     const priorLowStreak = await readJudgeStreak(id);
     const runner = await buildJudgeRunner(config, id);
+    const judge = described.config.nightly?.judge;
     const outcome = await scorePersonality({
       personalityId: id,
       core: soul.core,
@@ -250,6 +251,7 @@ export async function runPersonalityJudge(argv: string[]): Promise<void> {
       elapsedHours: recent.elapsedHours,
       priorLowStreak,
       runner,
+      activation: { minInteractions: judge?.minInteractions ?? 20, minElapsedHours: 12 },
     });
 
     if (recent.scopedNote) console.log(recent.scopedNote);
@@ -338,6 +340,7 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
 
       const priorLowStreak = await readJudgeStreak(id);
       const runner = await buildJudgeRunner(config, id);
+      const judge = described.config.nightly?.judge;
       const outcome = await scorePersonality({
         personalityId: id,
         core: soul.core,
@@ -348,6 +351,7 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
         elapsedHours: recent.elapsedHours,
         priorLowStreak,
         runner,
+        activation: { minInteractions: judge?.minInteractions ?? 20, minElapsedHours: 12 },
       });
 
       if (outcome.kind === 'insufficient_data') {

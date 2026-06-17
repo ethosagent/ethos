@@ -447,6 +447,7 @@ export interface CreatePersonalityInput {
   };
   dreaming?: import('@ethosagent/types').DreamingConfig;
   evolution_approval_mode?: 'auto' | 'user';
+  nightly?: import('@ethosagent/types').PersonalityConfig['nightly'];
 }
 
 export interface UpdatePersonalityPatch {
@@ -480,6 +481,10 @@ export interface UpdatePersonalityPatch {
   /** Per-personality memory backend. Merged onto the existing memory block so
    *  a provider patch never drops `options`. */
   memory?: import('@ethosagent/types').PersonalityConfig['memory'];
+  /** Nightly governed-learning gates. The UI sends the FULL nightly object
+   *  (incl. the full judge sub-object), so a one-level shallow merge onto the
+   *  existing block is correct — `judge` is replaced wholesale, not deep-merged. */
+  nightly?: import('@ethosagent/types').PersonalityConfig['nightly'];
 }
 
 export class FilePersonalityRegistry implements PersonalityRegistry {
@@ -722,7 +727,8 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       patch.evolution_approval_mode !== undefined ||
       patch.skill_evolution !== undefined ||
       patch.safety !== undefined ||
-      patch.memory !== undefined
+      patch.memory !== undefined ||
+      patch.nightly !== undefined
     ) {
       const config = existing.config;
       if (patch.provider !== undefined && patch.provider !== '') {
@@ -831,6 +837,8 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         skill_evolution: mergedSkillEvolution,
         safety: patch.safety === undefined ? config.safety : { ...config.safety, ...patch.safety },
         memory: patch.memory === undefined ? config.memory : { ...config.memory, ...patch.memory },
+        nightly:
+          patch.nightly === undefined ? config.nightly : { ...config.nightly, ...patch.nightly },
       };
       await this.storage.write(join(dir, 'config.yaml'), renderConfigYaml(merged));
     }
@@ -1169,6 +1177,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     // E3 — skill_evolution.* dotted keys.
     const skillEvolution = buildSkillEvolution(cfg);
     const dreamingConfig = buildDreamingConfig(cfg);
+    const nightlyConfig = buildNightlyConfig(cfg);
     const memoryConfig = buildMemoryConfig(cfg);
     const mcpExport = buildMcpExportConfig(cfg);
     const outboundPolicy = buildOutboundPolicy(cfg);
@@ -1199,6 +1208,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         : {}),
       ...(skillEvolution !== undefined ? { skill_evolution: skillEvolution } : {}),
       ...(dreamingConfig !== undefined ? { dreaming: dreamingConfig } : {}),
+      ...(nightlyConfig !== undefined ? { nightly: nightlyConfig } : {}),
       ...(memoryConfig !== undefined ? { memory: memoryConfig } : {}),
       ...(mcpExport !== undefined ? { mcp_export: mcpExport } : {}),
       ...(outboundPolicy !== undefined ? { outbound_policy: outboundPolicy } : {}),
@@ -1344,6 +1354,35 @@ function buildDreamingConfig(cfg: Record<string, string>): DreamingConfig | unde
     maxPerDay: maxPerDay && /^\d+$/.test(maxPerDay) ? Number.parseInt(maxPerDay, 10) : 1,
   };
   if (prompt) out.prompt = prompt;
+  return out;
+}
+
+// Parse the dotted nightly.* keys into a PersonalityConfig['nightly'] block.
+// Only emits the keys actually present so absent fields fall back to their
+// behavior-preserving defaults at the call sites. Returns undefined when no
+// nightly.* key is set, so the personality carries no nightly block at all.
+function buildNightlyConfig(cfg: Record<string, string>): PersonalityConfig['nightly'] | undefined {
+  const enabled = cfg['nightly.enabled'];
+  const judgeEnabled = cfg['nightly.judge.enabled'];
+  const minInteractions = cfg['nightly.judge.minInteractions'];
+  const expression = cfg['nightly.expression'];
+  if (
+    enabled === undefined &&
+    judgeEnabled === undefined &&
+    minInteractions === undefined &&
+    expression === undefined
+  ) {
+    return undefined;
+  }
+  const out: NonNullable<PersonalityConfig['nightly']> = {};
+  if (enabled !== undefined) out.enabled = enabled === 'true';
+  const judge: NonNullable<NonNullable<PersonalityConfig['nightly']>['judge']> = {};
+  if (judgeEnabled !== undefined) judge.enabled = judgeEnabled === 'true';
+  if (minInteractions !== undefined && /^\d+$/.test(minInteractions)) {
+    judge.minInteractions = Number.parseInt(minInteractions, 10);
+  }
+  if (judge.enabled !== undefined || judge.minInteractions !== undefined) out.judge = judge;
+  if (expression !== undefined) out.expression = expression === 'true';
   return out;
 }
 
@@ -1731,6 +1770,15 @@ function renderConfigYaml(input: RenderConfigInput): string {
     if (d.idleMinutes !== undefined) lines.push(`dreaming.idleMinutes: ${d.idleMinutes}`);
     if (d.maxPerDay !== undefined) lines.push(`dreaming.maxPerDay: ${d.maxPerDay}`);
     if (d.prompt !== undefined) lines.push(`dreaming.prompt: ${yamlScalar(d.prompt)}`);
+  }
+  if (input.nightly !== undefined) {
+    const n = input.nightly;
+    if (n.enabled !== undefined) lines.push(`nightly.enabled: ${n.enabled}`);
+    if (n.judge?.enabled !== undefined) lines.push(`nightly.judge.enabled: ${n.judge.enabled}`);
+    if (n.judge?.minInteractions !== undefined) {
+      lines.push(`nightly.judge.minInteractions: ${n.judge.minInteractions}`);
+    }
+    if (n.expression !== undefined) lines.push(`nightly.expression: ${n.expression}`);
   }
   if (input.evolution_approval_mode !== undefined) {
     lines.push(`evolution_approval_mode: ${yamlScalar(input.evolution_approval_mode)}`);

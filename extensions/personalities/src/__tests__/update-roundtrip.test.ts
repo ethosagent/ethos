@@ -234,6 +234,89 @@ describe('dreaming round-trip', () => {
   });
 });
 
+describe('nightly round-trip', () => {
+  it('persists a nightly patch through update and re-load', async () => {
+    await seedPersonality('nightly-set', 'name: NightlySet\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    expect(registry.get('nightly-set')?.nightly).toBeUndefined();
+
+    await registry.update('nightly-set', {
+      nightly: {
+        enabled: false,
+        judge: { enabled: false, minInteractions: 30 },
+        expression: false,
+      },
+    });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const config = fresh.get('nightly-set');
+    expect(config?.nightly?.enabled).toBe(false);
+    expect(config?.nightly?.judge?.enabled).toBe(false);
+    expect(config?.nightly?.judge?.minInteractions).toBe(30);
+    expect(config?.nightly?.expression).toBe(false);
+  });
+
+  it('writes dotted nightly keys to config.yaml', async () => {
+    await seedPersonality('nightly-yaml', 'name: NightlyYaml\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('nightly-yaml', {
+      nightly: { enabled: true, judge: { enabled: true, minInteractions: 15 }, expression: true },
+    });
+
+    const raw = await readFile(
+      join(testDir, 'personalities', 'nightly-yaml', 'config.yaml'),
+      'utf-8',
+    );
+    expect(raw).toContain('nightly.enabled: true');
+    expect(raw).toContain('nightly.judge.enabled: true');
+    expect(raw).toContain('nightly.judge.minInteractions: 15');
+    expect(raw).toContain('nightly.expression: true');
+  });
+
+  it('does NOT drop nightly when an unrelated field is updated', async () => {
+    await seedPersonality(
+      'nightly-preserve',
+      'name: NightlyPreserve\nnightly.enabled: false\nnightly.judge.minInteractions: 40\n',
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('nightly-preserve', { description: 'changed' });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const config = fresh.get('nightly-preserve');
+    expect(config?.description).toBe('changed');
+    expect(config?.nightly?.enabled).toBe(false);
+    expect(config?.nightly?.judge?.minInteractions).toBe(40);
+  });
+
+  it('a full nightly patch replaces the judge sub-object (one-level merge)', async () => {
+    await seedPersonality(
+      'nightly-merge',
+      'name: NightlyMerge\nnightly.judge.enabled: true\nnightly.judge.minInteractions: 50\n',
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    // The UI sends the FULL nightly object incl. the full judge sub-object, so
+    // a one-level merge replaces `judge` wholesale.
+    await registry.update('nightly-merge', {
+      nightly: { judge: { enabled: false, minInteractions: 20 } },
+    });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const config = fresh.get('nightly-merge');
+    expect(config?.nightly?.judge?.enabled).toBe(false);
+    expect(config?.nightly?.judge?.minInteractions).toBe(20);
+  });
+});
+
 describe('skill_evolution round-trip', () => {
   it('persists skill_evolution.model through update and re-load', async () => {
     await seedPersonality('skill-model', 'name: SkillModel\n');
@@ -489,6 +572,10 @@ describe('lossless update — full config round-trip', () => {
     'dreaming.idleMinutes: 45',
     'dreaming.maxPerDay: 2',
     'dreaming.prompt: Reflect on the day.',
+    'nightly.enabled: true',
+    'nightly.judge.enabled: false',
+    'nightly.judge.minInteractions: 30',
+    'nightly.expression: false',
     'safety:',
     '  approvalMode: smart',
     '  observability:',

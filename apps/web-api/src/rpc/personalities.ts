@@ -34,6 +34,7 @@ export const personalitiesRouter = {
       ...(input.evolution_approval_mode !== undefined
         ? { evolution_approval_mode: input.evolution_approval_mode }
         : {}),
+      ...(input.nightly !== undefined ? { nightly: input.nightly } : {}),
     }),
   ),
 

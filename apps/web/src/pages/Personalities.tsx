@@ -1499,6 +1499,10 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
     skillEvolutionModel: string;
     safetyApprovalMode: 'manual' | 'smart' | 'off';
     memoryProvider: string;
+    nightlyEnabled: boolean;
+    nightlyJudgeEnabled: boolean;
+    nightlyJudgeMinInteractions: number;
+    nightlyExpression: boolean;
   }>();
   const [tieredMode, setTieredMode] = useState(
     typeof personality.model === 'object' && personality.model !== null,
@@ -1535,6 +1539,10 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
       skillEvolutionModel: personality.skill_evolution?.model ?? '',
       safetyApprovalMode: personality.safety?.approvalMode ?? 'manual',
       memoryProvider: personality.memory?.provider ?? 'markdown',
+      nightlyEnabled: personality.nightly?.enabled ?? true,
+      nightlyJudgeEnabled: personality.nightly?.judge?.enabled ?? true,
+      nightlyJudgeMinInteractions: personality.nightly?.judge?.minInteractions ?? 20,
+      nightlyExpression: personality.nightly?.expression ?? true,
     });
   }, [personality, form]);
 
@@ -1563,6 +1571,10 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
       skillEvolutionModel: string;
       safetyApprovalMode: 'manual' | 'smart' | 'off';
       memoryProvider: string;
+      nightlyEnabled: boolean;
+      nightlyJudgeEnabled: boolean;
+      nightlyJudgeMinInteractions: number;
+      nightlyExpression: boolean;
     }) => {
       let model: string | ModelTierConfigWire;
       if (tieredMode) {
@@ -1599,6 +1611,14 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
         },
         safety: { approvalMode: values.safetyApprovalMode },
         memory: { provider: values.memoryProvider },
+        nightly: {
+          enabled: values.nightlyEnabled,
+          judge: {
+            enabled: values.nightlyJudgeEnabled,
+            minInteractions: values.nightlyJudgeMinInteractions,
+          },
+          expression: values.nightlyExpression,
+        },
       });
     },
     onSuccess: () => {
@@ -1640,6 +1660,10 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
           skillEvolutionModel: values.skillEvolutionModel ?? '',
           safetyApprovalMode: values.safetyApprovalMode ?? 'manual',
           memoryProvider: values.memoryProvider ?? 'markdown',
+          nightlyEnabled: values.nightlyEnabled ?? true,
+          nightlyJudgeEnabled: values.nightlyJudgeEnabled ?? true,
+          nightlyJudgeMinInteractions: values.nightlyJudgeMinInteractions ?? 20,
+          nightlyExpression: values.nightlyExpression ?? true,
         })
       }
     >
@@ -1848,6 +1872,55 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
             { label: 'Vector', value: 'vector' },
           ]}
         />
+      </Form.Item>
+      <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
+        Nightly learning
+      </Typography.Text>
+      <Form.Item label="Nightly learning pass" style={{ marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Form.Item name="nightlyEnabled" valuePropName="checked" noStyle>
+            <Switch size="small" />
+          </Form.Item>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Master switch for the nightly governed-learning sweep.
+          </Typography.Text>
+        </div>
+      </Form.Item>
+      <Form.Item label="Personality Judge" style={{ marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Form.Item name="nightlyJudgeEnabled" valuePropName="checked" noStyle>
+            <Switch size="small" />
+          </Form.Item>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Score recent responses against Core; needs at least N interactions.
+          </Typography.Text>
+        </div>
+      </Form.Item>
+      <Form.Item
+        noStyle
+        shouldUpdate={(prev, cur) => prev.nightlyJudgeEnabled !== cur.nightlyJudgeEnabled}
+      >
+        {({ getFieldValue }) =>
+          getFieldValue('nightlyJudgeEnabled') ? (
+            <Form.Item
+              label="Activation threshold"
+              name="nightlyJudgeMinInteractions"
+              extra="Minimum interactions before the Judge scores this personality."
+            >
+              <InputNumber min={1} style={{ width: '100%' }} />
+            </Form.Item>
+          ) : null
+        }
+      </Form.Item>
+      <Form.Item label="Expression evolution" style={{ marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Form.Item name="nightlyExpression" valuePropName="checked" noStyle>
+            <Switch size="small" />
+          </Form.Item>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Sharpen voice toward what works during the nightly pass.
+          </Typography.Text>
+        </div>
       </Form.Item>
       <Form.Item>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>

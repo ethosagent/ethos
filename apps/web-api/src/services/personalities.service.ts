@@ -560,6 +560,7 @@ function toWire(d: DescribedPersonality): Personality {
       ? { safety: { approvalMode: c.safety.approvalMode } }
       : {}),
     ...(c.memory?.provider !== undefined ? { memory: { provider: c.memory.provider } } : {}),
+    ...(c.nightly !== undefined ? { nightly: c.nightly } : {}),
     system: d.builtin && SYSTEM_PERSONALITY_IDS.has(c.id),
     builtin: d.builtin,
     version: 1,

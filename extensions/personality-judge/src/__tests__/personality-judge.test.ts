@@ -62,6 +62,27 @@ describe('scorePersonality activation gate', () => {
       expect(outcome.reason).toContain('h of activity');
     }
   });
+
+  it('uses the default threshold of 20 when no activation is passed', async () => {
+    // 20 prompts clears the default gate; 19 does not. This is the contract the
+    // nightly call sites rely on when a personality has no nightly.judge config.
+    const ok = await scorePersonality(baseParams({ recentPrompts: prompts(20) }));
+    expect(ok.kind).toBe('scored');
+    const low = await scorePersonality(baseParams({ recentPrompts: prompts(19) }));
+    expect(low.kind).toBe('insufficient_data');
+  });
+
+  it('honors a configured activation.minInteractions over the default', async () => {
+    // A configured threshold of 30 makes 25 prompts insufficient even though
+    // they clear the default of 20 — proving the call site's value is applied.
+    const outcome = await scorePersonality(
+      baseParams({
+        recentPrompts: prompts(25),
+        activation: { minInteractions: 30, minElapsedHours: 12 },
+      }),
+    );
+    expect(outcome.kind).toBe('insufficient_data');
+  });
 });
 
 describe('scorePersonality scoring', () => {

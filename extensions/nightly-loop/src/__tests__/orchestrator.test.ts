@@ -210,4 +210,48 @@ describe('runNightlyPass', () => {
     expect(stepStatus(res.steps, 'memory')).toBe('noop');
     expect(spies.applyMemoryUpdates).not.toHaveBeenCalled();
   });
+
+  describe('gates (P5 — defaults preserve behavior)', () => {
+    it('gates absent: judge + expression run exactly as before', async () => {
+      const { deps, spies } = makeDeps();
+      const res = await runNightlyPass('sage', deps);
+      expect(stepStatus(res.steps, 'judge')).toBe('ran');
+      expect(stepStatus(res.steps, 'expression')).toBe('ran');
+      expect(spies.scoreAlignment).toHaveBeenCalledTimes(1);
+      expect(spies.applyExpression).toHaveBeenCalledTimes(1);
+    });
+
+    it('gates undefined fields: judge + expression run (default true)', async () => {
+      const { deps, spies } = makeDeps();
+      const res = await runNightlyPass('sage', deps, {});
+      expect(stepStatus(res.steps, 'judge')).toBe('ran');
+      expect(stepStatus(res.steps, 'expression')).toBe('ran');
+      expect(spies.applyExpression).toHaveBeenCalledTimes(1);
+    });
+
+    it('gates.judge false: judge skipped, expression short-circuits, memory still runs', async () => {
+      const { deps, spies } = makeDeps();
+      const res = await runNightlyPass('sage', deps, { judge: false });
+      const judge = res.steps.find((s) => s.step === 'judge');
+      expect(judge?.status).toBe('skipped');
+      expect(judge?.detail).toBe('judge disabled');
+      expect(stepStatus(res.steps, 'expression')).toBe('skipped');
+      expect(spies.scoreAlignment).not.toHaveBeenCalled();
+      expect(spies.applyExpression).not.toHaveBeenCalled();
+      expect(stepStatus(res.steps, 'memory')).toBe('ran');
+      expect(spies.applyMemoryUpdates).toHaveBeenCalledTimes(1);
+    });
+
+    it('gates.expression false: judge runs, expression skipped regardless of verdict', async () => {
+      const { deps, spies } = makeDeps();
+      const res = await runNightlyPass('sage', deps, { expression: false });
+      expect(stepStatus(res.steps, 'judge')).toBe('ran');
+      expect(spies.scoreAlignment).toHaveBeenCalledTimes(1);
+      const expr = res.steps.find((s) => s.step === 'expression');
+      expect(expr?.status).toBe('skipped');
+      expect(expr?.detail).toBe('expression disabled');
+      expect(spies.draftExpression).not.toHaveBeenCalled();
+      expect(spies.applyExpression).not.toHaveBeenCalled();
+    });
+  });
 });

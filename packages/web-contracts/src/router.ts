@@ -197,6 +197,21 @@ const PersonalityCharacterSheetOutput = z.object({
 
 const PersonalityIdRegex = /^[a-z0-9_-]+$/;
 
+/** Nightly governed-learning gates. Defaults reproduce today's behavior
+ *  (pass + judge + expression all run). Shared by create + update. */
+const PersonalityNightlyInput = z
+  .object({
+    enabled: z.boolean().optional(),
+    judge: z
+      .object({
+        enabled: z.boolean().optional(),
+        minInteractions: z.number().int().min(1).optional(),
+      })
+      .optional(),
+    expression: z.boolean().optional(),
+  })
+  .optional();
+
 const PersonalityCreateInput = z.object({
   /** Lowercase id; becomes the directory name. */
   id: z.string().min(1).regex(PersonalityIdRegex),
@@ -229,6 +244,7 @@ const PersonalityCreateInput = z.object({
   /** Governed-learning approval dial. 'auto' applies evolved Expression
    *  automatically; 'user' holds it for human approval. */
   evolution_approval_mode: z.enum(['auto', 'user']).optional(),
+  nightly: PersonalityNightlyInput,
 });
 const PersonalityCreateOutput = z.object({ personality: PersonalitySchema });
 
@@ -286,6 +302,9 @@ const PersonalityUpdateInput = z.object({
   safety: z.object({ approvalMode: z.enum(['manual', 'smart', 'off']).optional() }).optional(),
   /** Per-personality memory backend. Built-ins: 'markdown', 'vector'. */
   memory: z.object({ provider: z.string().optional() }).optional(),
+  /** Nightly governed-learning gates. The UI sends the FULL nightly object
+   *  (including the full judge sub-object); the registry one-level-merges it. */
+  nightly: PersonalityNightlyInput,
 });
 const PersonalityUpdateOutput = z.object({ personality: PersonalitySchema });
 

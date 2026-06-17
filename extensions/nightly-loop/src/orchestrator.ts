@@ -85,10 +85,24 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * Per-step gates resolved from `PersonalityConfig.nightly`. Both default to
+ * true (today's behavior). `judge: false` skips the judge step (no verdict, so
+ * expression short-circuits as on insufficient data); `expression: false` skips
+ * the expression step regardless of the verdict.
+ */
+export interface NightlyGates {
+  judge?: boolean;
+  expression?: boolean;
+}
+
 export async function runNightlyPass(
   personalityId: string,
   deps: NightlyPassDeps,
+  gates?: NightlyGates,
 ): Promise<NightlyPassResult> {
+  const judgeEnabled = gates?.judge !== false;
+  const expressionEnabled = gates?.expression !== false;
   const steps: NightlyStepLog[] = [];
 
   // Step 1: gather evidence. This is the precondition for every later step, so
@@ -118,6 +132,11 @@ export async function runNightlyPass(
   let judgeInsufficient = false;
   if (done('judge')) {
     steps.push({ step: 'judge', status: 'skipped', detail: 'already completed for this window' });
+  } else if (!judgeEnabled) {
+    // Judge disabled for this personality: no verdict is produced, so the
+    // expression step short-circuits exactly as it does on insufficient data.
+    judgeInsufficient = true;
+    steps.push({ step: 'judge', status: 'skipped', detail: 'judge disabled' });
   } else {
     try {
       const priorLowStreak = await deps.readJudgeStreak(personalityId);
@@ -159,6 +178,8 @@ export async function runNightlyPass(
       status: 'skipped',
       detail: 'already completed for this window',
     });
+  } else if (!expressionEnabled) {
+    steps.push({ step: 'expression', status: 'skipped', detail: 'expression disabled' });
   } else if (judgeInsufficient) {
     steps.push({ step: 'expression', status: 'skipped', detail: 'no verdict (insufficient data)' });
   } else if (!judgeOutcome) {

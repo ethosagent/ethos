@@ -134,6 +134,20 @@ export const PersonalitySchema = z.object({
   /** Per-personality memory backend. Optional (omitted when unset) so the
    *  editor can read the current provider to populate its form. */
   memory: z.object({ provider: z.string().optional() }).optional(),
+  /** Nightly governed-learning gates. Optional (omitted when unset) so the
+   *  editor can read the current toggles to populate its form. */
+  nightly: z
+    .object({
+      enabled: z.boolean().optional(),
+      judge: z
+        .object({
+          enabled: z.boolean().optional(),
+          minInteractions: z.number().int().optional(),
+        })
+        .optional(),
+      expression: z.boolean().optional(),
+    })
+    .optional(),
   system: z.boolean(),
   /** True when the personality lives in the package's built-in data directory
    *  (read-only). User-created personalities under `~/.ethos/personalities/`
