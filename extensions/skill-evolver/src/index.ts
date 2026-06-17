@@ -31,6 +31,13 @@ export {
   resetImprovementForkCooldowns,
 } from './improvement-fork';
 export {
+  type ApprovalMode,
+  type NightlySkillProposalResult,
+  type ProposalDecision,
+  type ProposeSkillInput,
+  proposeSkillFromEvidence,
+} from './nightly-propose';
+export {
   parseNewSkillResponse,
   parseRewriteResponse,
   renderNewSkillPrompt,

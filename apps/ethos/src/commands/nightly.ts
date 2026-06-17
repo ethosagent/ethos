@@ -21,7 +21,7 @@ import {
   type ScoreOutcome,
   scorePersonality,
 } from '@ethosagent/personality-judge';
-import { draftExpressionUpdate } from '@ethosagent/skill-evolver';
+import { draftExpressionUpdate, proposeSkillFromEvidence } from '@ethosagent/skill-evolver';
 import { formatError, type LLMProvider, type MemoryUpdate, toEthosError } from '@ethosagent/types';
 import type { EthosConfig } from '../config';
 import { createLLM, getStorage } from '../wiring';
@@ -37,6 +37,30 @@ import {
 function surface(err: unknown): never {
   process.stderr.write(`\n${formatError(toEthosError(err), { color: process.stderr.isTTY })}\n`);
   process.exit(1);
+}
+
+// Auto-mode proposal test for a drafted skill candidate. Asks the LLM whether
+// the candidate is a genuine, reusable skill (PASS) or noise (FAIL). Any error
+// or ambiguous reply is treated as FAIL — auto-promotion is fail-closed.
+async function judgeSkillCandidate(content: string, llm: LLMProvider): Promise<boolean> {
+  const prompt = [
+    'You are reviewing a proposed agent skill before it is added to the active skill set.',
+    'A good skill is a generalizable, reusable approach — not a one-off fact or a restated task.',
+    '',
+    '## Candidate skill',
+    content.trim(),
+    '',
+    'Reply with exactly PASS if this is a genuine, reusable skill worth keeping, or FAIL otherwise.',
+  ].join('\n');
+
+  let text = '';
+  for await (const chunk of llm.complete([{ role: 'user', content: prompt }], [], {
+    maxTokens: 16,
+    temperature: 0,
+  })) {
+    if (chunk.type === 'text_delta') text += chunk.text;
+  }
+  return text.trim().toUpperCase().startsWith('PASS');
 }
 
 // Read the nightly checkpoint sidecar. Tolerant: a missing or malformed file
@@ -153,7 +177,29 @@ function buildDeps(args: {
       return { revisionId: entry.revisionId };
     },
 
-    // createSkills omitted — Phase 3d not present; the orchestrator no-ops it.
+    async createSkills(id, evidence): Promise<number> {
+      const cfg = reg.get(id);
+      if (!cfg?.skill_evolution?.enabled) return 0;
+
+      const result = await proposeSkillFromEvidence({
+        personalityId: id,
+        approvalMode: cfg.evolution_approval_mode,
+        evidenceDigest: evidence.evidenceDigest,
+        windowEnd: evidence.windowEnd,
+        dataDir: ethosDir,
+        storage: getStorage(),
+        llm,
+        // Auto-mode proposal test: a candidate is promoted only if this LLM
+        // review judges it a genuine, reusable skill. This is the nightly-pass
+        // stand-in for the live ImprovementFork's classification step — same
+        // intent (is this worth keeping?), no AgentLoop spawn at nightly time.
+        validate: (candidate) => judgeSkillCandidate(candidate.content, llm),
+      });
+      console.log(
+        `  skill candidate ${result.fileName ?? '(none)'}: ${result.decision} — ${result.reason}`,
+      );
+      return result.decision === 'promoted' ? 1 : 0;
+    },
 
     async readMemory(id) {
       const snapshot = await memory.prefetch(memoryCtx(id));
