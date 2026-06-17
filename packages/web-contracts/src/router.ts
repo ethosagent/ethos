@@ -221,6 +221,9 @@ const PersonalityCreateInput = z.object({
       enabled: z.boolean().optional(),
       min_tool_calls: z.number().int().min(1).max(20).optional(),
       cooldown_minutes: z.number().int().min(0).optional(),
+      evolve_existing: z.boolean().optional(),
+      promotion: z.enum(['review', 'auto']).optional(),
+      scope: z.enum(['personality', 'shared']).optional(),
     })
     .optional(),
   /** Governed-learning approval dial. 'auto' applies evolved Expression
@@ -273,6 +276,9 @@ const PersonalityUpdateInput = z.object({
       min_tool_calls: z.number().int().min(1).max(20).optional(),
       cooldown_minutes: z.number().int().min(0).optional(),
       model: z.string().optional(),
+      evolve_existing: z.boolean().optional(),
+      promotion: z.enum(['review', 'auto']).optional(),
+      scope: z.enum(['personality', 'shared']).optional(),
     })
     .optional(),
   /** Per-personality safety dial. Only `approvalMode` is editable from the

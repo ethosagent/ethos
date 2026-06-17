@@ -274,6 +274,23 @@ export interface PersonalityConfig {
     min_tool_calls?: number;
     cooldown_minutes?: number;
     model?: string;
+    /**
+     * Improve existing skills during eval-driven evolution (the rewrite
+     * branch). Distinct from `enabled`, which gates new-skill creation.
+     * Unset = follows `enabled`. Inert on the nightly create-only path.
+     */
+    evolve_existing?: boolean;
+    /**
+     * Promotion gate for a drafted skill. `'review'` queues it for human
+     * approval; `'auto'` promotes it automatically after validation. Unset =
+     * fall back to the `evolution_approval_mode`-based gate.
+     */
+    promotion?: 'review' | 'auto';
+    /**
+     * Where a promoted skill is written. `'shared'` (default) = the global
+     * skills dir; `'personality'` = the per-personality skills dir.
+     */
+    scope?: 'personality' | 'shared';
   };
   /**
    * E5 — Workspace-aware context layering. Controls how the file-context

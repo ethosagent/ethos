@@ -441,6 +441,9 @@ export interface CreatePersonalityInput {
     min_tool_calls?: number;
     cooldown_minutes?: number;
     model?: string;
+    evolve_existing?: boolean;
+    promotion?: 'review' | 'auto';
+    scope?: 'personality' | 'shared';
   };
   dreaming?: import('@ethosagent/types').DreamingConfig;
   evolution_approval_mode?: 'auto' | 'user';
@@ -1306,7 +1309,12 @@ function buildSkillEvolution(
   const minToolCalls = cfg['skill_evolution.min_tool_calls'];
   const cooldown = cfg['skill_evolution.cooldown_minutes'];
   const model = cfg['skill_evolution.model'];
-  if (!enabled && !minToolCalls && !cooldown && !model) return undefined;
+  const evolveExisting = cfg['skill_evolution.evolve_existing'];
+  const promotion = cfg['skill_evolution.promotion'];
+  const scope = cfg['skill_evolution.scope'];
+  if (!enabled && !minToolCalls && !cooldown && !model && !evolveExisting && !promotion && !scope) {
+    return undefined;
+  }
   const out: NonNullable<PersonalityConfig['skill_evolution']> = {};
   if (enabled === 'true') out.enabled = true;
   else if (enabled === 'false') out.enabled = false;
@@ -1317,6 +1325,10 @@ function buildSkillEvolution(
     out.cooldown_minutes = Number.parseInt(cooldown, 10);
   }
   if (model) out.model = model;
+  if (evolveExisting === 'true') out.evolve_existing = true;
+  else if (evolveExisting === 'false') out.evolve_existing = false;
+  if (promotion === 'review' || promotion === 'auto') out.promotion = promotion;
+  if (scope === 'personality' || scope === 'shared') out.scope = scope;
   return out;
 }
 
@@ -1677,6 +1689,10 @@ function renderConfigYaml(input: RenderConfigInput): string {
     if (se.cooldown_minutes !== undefined)
       lines.push(`skill_evolution.cooldown_minutes: ${se.cooldown_minutes}`);
     if (se.model !== undefined) lines.push(`skill_evolution.model: ${yamlScalar(se.model)}`);
+    if (se.evolve_existing !== undefined)
+      lines.push(`skill_evolution.evolve_existing: ${se.evolve_existing}`);
+    if (se.promotion !== undefined) lines.push(`skill_evolution.promotion: ${se.promotion}`);
+    if (se.scope !== undefined) lines.push(`skill_evolution.scope: ${se.scope}`);
   }
   if (input.memory !== undefined) {
     lines.push(`memory.provider: ${yamlScalar(input.memory.provider)}`);

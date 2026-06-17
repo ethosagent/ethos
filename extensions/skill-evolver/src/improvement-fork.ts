@@ -188,7 +188,10 @@ export class ImprovementFork {
       if (this.opts.autoApprove?.()) {
         const filename = `${proposedSkillId}.md`;
         const pendingPath = join(pendingDir, filename);
-        const liveDir = join(this.opts.dataDir, 'skills');
+        const liveDir =
+          personality.skill_evolution?.scope === 'personality'
+            ? join(this.opts.dataDir, 'personalities', personality.id, 'skills')
+            : join(this.opts.dataDir, 'skills');
         const livePath = join(liveDir, filename);
         const content = await this.opts.storage.read(pendingPath);
         if (content) {

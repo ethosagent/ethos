@@ -184,6 +184,8 @@ function buildDeps(args: {
       const result = await proposeSkillFromEvidence({
         personalityId: id,
         approvalMode: cfg.evolution_approval_mode,
+        promotion: cfg.skill_evolution?.promotion,
+        scope: cfg.skill_evolution?.scope,
         evidenceDigest: evidence.evidenceDigest,
         windowEnd: evidence.windowEnd,
         dataDir: ethosDir,

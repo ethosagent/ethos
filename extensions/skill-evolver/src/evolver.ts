@@ -18,6 +18,13 @@ export interface EvolveOptions {
   llm: LLMProvider;
   /** Storage backend. Defaults to FsStorage. */
   storage?: Storage;
+  /**
+   * Improve existing skills (the rewrite branch). Defaults to `true` —
+   * today's behavior. Set `false` to skip rewrites while still creating new
+   * skills. Mirrors `skill_evolution.evolve_existing` for callers that have a
+   * personality config source.
+   */
+  evolveExisting?: boolean;
 }
 
 export interface EvolveResult {
@@ -33,6 +40,7 @@ export class SkillEvolver {
   async evolve(): Promise<EvolveResult> {
     const { evalOutputPath, skillsDir, pendingDir, config, llm } = this.options;
     const storage = this.options.storage ?? new FsStorage();
+    const evolveExisting = this.options.evolveExisting ?? true;
 
     const src = await storage.read(evalOutputPath);
     if (!src) throw new Error(`eval output not found: ${evalOutputPath}`);
@@ -45,7 +53,8 @@ export class SkillEvolver {
     const newSkillsWritten: string[] = [];
     const skipped: EvolveResult['skipped'] = [];
 
-    for (const candidate of plan.rewriteCandidates) {
+    const rewriteCandidates = evolveExisting ? plan.rewriteCandidates : [];
+    for (const candidate of rewriteCandidates) {
       const prompt = renderRewritePrompt(candidate);
       const raw = await callLLM(llm, prompt);
       const parsed = parseRewriteResponse(raw);

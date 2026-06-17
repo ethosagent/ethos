@@ -41,6 +41,16 @@ export interface ProposeSkillInput {
   personalityId: string;
   /** Approval gate. Absent/'user' = manual (queue only); 'auto' = validate + maybe promote. */
   approvalMode: ApprovalMode | undefined;
+  /**
+   * Promotion gate override. `'auto'` promotes after validation; `'review'`
+   * queues for human approval. When unset, falls back to `approvalMode`.
+   */
+  promotion?: 'review' | 'auto';
+  /**
+   * Where a promoted skill is written. `'shared'` (default) = <dataDir>/skills/;
+   * `'personality'` = <dataDir>/personalities/<id>/skills/.
+   */
+  scope?: 'personality' | 'shared';
   /** Compact prose digest of the night's interactions (NightlyEvidence.evidenceDigest). */
   evidenceDigest: string;
   /** Stable window marker — used to namespace the candidate so re-runs are idempotent. */
@@ -86,7 +96,10 @@ export async function proposeSkillFromEvidence(
 ): Promise<NightlySkillProposalResult> {
   const fileName = candidateFileName(input.windowEnd);
   const pendingDir = join(input.dataDir, 'skills', '.pending', input.personalityId);
-  const liveDir = join(input.dataDir, 'skills');
+  const liveDir =
+    input.scope === 'personality'
+      ? join(input.dataDir, 'personalities', input.personalityId, 'skills')
+      : join(input.dataDir, 'skills');
   const pendingPath = join(pendingDir, fileName);
   const livePath = join(liveDir, fileName);
 
@@ -116,8 +129,12 @@ export async function proposeSkillFromEvidence(
 
   const body = `${parsed.content}\n`;
 
-  // Manual gate (unset or 'user'): queue only, never promote.
-  if (input.approvalMode !== 'auto') {
+  // Promotion gate. The explicit `promotion` knob wins when set; otherwise
+  // fall back to the legacy `approvalMode`-based gate. 'review' === manual.
+  const auto = input.promotion ? input.promotion === 'auto' : input.approvalMode === 'auto';
+
+  // Manual gate (review / unset 'user'): queue only, never promote.
+  if (!auto) {
     await input.storage.mkdir(pendingDir);
     await input.storage.write(pendingPath, body);
     return { decision: 'queued', fileName, reason: 'manual approval — queued for review' };

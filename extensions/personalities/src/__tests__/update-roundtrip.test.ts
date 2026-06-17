@@ -265,6 +265,50 @@ describe('skill_evolution round-trip', () => {
     expect(se?.min_tool_calls).toBe(5);
     expect(se?.cooldown_minutes).toBe(15);
   });
+
+  it('persists evolve_existing, promotion, and scope through update and re-load', async () => {
+    await seedPersonality('skill-p5', 'name: SkillP5\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('skill-p5', {
+      skill_evolution: { evolve_existing: false, promotion: 'auto', scope: 'personality' },
+    });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const se = fresh.get('skill-p5')?.skill_evolution;
+    expect(se?.evolve_existing).toBe(false);
+    expect(se?.promotion).toBe('auto');
+    expect(se?.scope).toBe('personality');
+  });
+
+  it('a promotion-only patch preserves enabled/min/cooldown/model siblings', async () => {
+    await seedPersonality(
+      'skill-p5-preserve',
+      [
+        'name: SkillP5Preserve',
+        'skill_evolution.enabled: true',
+        'skill_evolution.min_tool_calls: 5',
+        'skill_evolution.cooldown_minutes: 15',
+        'skill_evolution.model: m',
+        '',
+      ].join('\n'),
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('skill-p5-preserve', { skill_evolution: { promotion: 'review' } });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const se = fresh.get('skill-p5-preserve')?.skill_evolution;
+    expect(se?.promotion).toBe('review');
+    expect(se?.enabled).toBe(true);
+    expect(se?.min_tool_calls).toBe(5);
+    expect(se?.cooldown_minutes).toBe(15);
+    expect(se?.model).toBe('m');
+  });
 });
 
 describe('governed-learning settings round-trip', () => {

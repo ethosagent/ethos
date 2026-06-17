@@ -160,6 +160,133 @@ describe('proposeSkillFromEvidence', () => {
     expect(calls()).toBe(1);
   });
 
+  it('promotion unset falls back to approvalMode=user (queues)', async () => {
+    const storage = new InMemoryStorage();
+    const { llm } = makeLLM(GOOD_DRAFT);
+
+    const result = await proposeSkillFromEvidence({
+      personalityId: PID,
+      approvalMode: 'user',
+      promotion: undefined,
+      evidenceDigest: 'digest',
+      windowEnd: WINDOW,
+      dataDir: DATA_DIR,
+      storage,
+      llm,
+      validate: async () => true,
+    });
+
+    expect(result.decision).toBe('queued');
+    expect(await storage.read(pendingPath)).not.toBeNull();
+    expect(await storage.read(livePath)).toBeNull();
+  });
+
+  it('promotion unset falls back to approvalMode=auto (promotes)', async () => {
+    const storage = new InMemoryStorage();
+    const { llm } = makeLLM(GOOD_DRAFT);
+
+    const result = await proposeSkillFromEvidence({
+      personalityId: PID,
+      approvalMode: 'auto',
+      promotion: undefined,
+      evidenceDigest: 'digest',
+      windowEnd: WINDOW,
+      dataDir: DATA_DIR,
+      storage,
+      llm,
+      validate: async () => true,
+    });
+
+    expect(result.decision).toBe('promoted');
+    expect(await storage.read(livePath)).not.toBeNull();
+  });
+
+  it("promotion='auto' promotes even when approvalMode is user", async () => {
+    const storage = new InMemoryStorage();
+    const { llm } = makeLLM(GOOD_DRAFT);
+
+    const result = await proposeSkillFromEvidence({
+      personalityId: PID,
+      approvalMode: 'user',
+      promotion: 'auto',
+      evidenceDigest: 'digest',
+      windowEnd: WINDOW,
+      dataDir: DATA_DIR,
+      storage,
+      llm,
+      validate: async () => true,
+    });
+
+    expect(result.decision).toBe('promoted');
+    expect(await storage.read(livePath)).not.toBeNull();
+  });
+
+  it("promotion='review' queues even when approvalMode is auto", async () => {
+    const storage = new InMemoryStorage();
+    const { llm } = makeLLM(GOOD_DRAFT);
+
+    const result = await proposeSkillFromEvidence({
+      personalityId: PID,
+      approvalMode: 'auto',
+      promotion: 'review',
+      evidenceDigest: 'digest',
+      windowEnd: WINDOW,
+      dataDir: DATA_DIR,
+      storage,
+      llm,
+      validate: async () => true,
+    });
+
+    expect(result.decision).toBe('queued');
+    expect(await storage.read(pendingPath)).not.toBeNull();
+    expect(await storage.read(livePath)).toBeNull();
+  });
+
+  it("scope='personality' promotes under personalities/<id>/skills/", async () => {
+    const storage = new InMemoryStorage();
+    const { llm } = makeLLM(GOOD_DRAFT);
+
+    const result = await proposeSkillFromEvidence({
+      personalityId: PID,
+      approvalMode: 'auto',
+      scope: 'personality',
+      evidenceDigest: 'digest',
+      windowEnd: WINDOW,
+      dataDir: DATA_DIR,
+      storage,
+      llm,
+      validate: async () => true,
+    });
+
+    expect(result.decision).toBe('promoted');
+    const scopedPath = join(DATA_DIR, 'personalities', PID, 'skills', CANDIDATE);
+    expect(await storage.read(scopedPath)).toContain('When asked to X, do Y.');
+    // Not written to the shared dir.
+    expect(await storage.read(livePath)).toBeNull();
+  });
+
+  it("scope unset / 'shared' promotes under the shared skills dir", async () => {
+    const storage = new InMemoryStorage();
+    const { llm } = makeLLM(GOOD_DRAFT);
+
+    const result = await proposeSkillFromEvidence({
+      personalityId: PID,
+      approvalMode: 'auto',
+      scope: 'shared',
+      evidenceDigest: 'digest',
+      windowEnd: WINDOW,
+      dataDir: DATA_DIR,
+      storage,
+      llm,
+      validate: async () => true,
+    });
+
+    expect(result.decision).toBe('promoted');
+    expect(await storage.read(livePath)).toContain('When asked to X, do Y.');
+    const scopedPath = join(DATA_DIR, 'personalities', PID, 'skills', CANDIDATE);
+    expect(await storage.read(scopedPath)).toBeNull();
+  });
+
   it('idempotency: a re-run after promotion does not re-promote or re-draft', async () => {
     const storage = new InMemoryStorage();
     const { llm, calls } = makeLLM(GOOD_DRAFT);

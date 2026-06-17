@@ -21,6 +21,7 @@ import {
   type MenuProps,
   Modal,
   Popconfirm,
+  Segmented,
   Select,
   Spin,
   Switch,
@@ -1490,6 +1491,9 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
     dreamingMaxPerDay: number;
     evolutionApprovalMode: 'auto' | 'user';
     skillEvolutionEnabled: boolean;
+    skillEvolutionEvolveExisting: boolean;
+    skillEvolutionPromotion: 'review' | 'auto';
+    skillEvolutionScope: 'personality' | 'shared';
     skillEvolutionMinToolCalls: number;
     skillEvolutionCooldownMinutes: number;
     skillEvolutionModel: string;
@@ -1520,6 +1524,12 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
       dreamingMaxPerDay: personality.dreaming?.maxPerDay ?? 1,
       evolutionApprovalMode: personality.evolution_approval_mode ?? 'user',
       skillEvolutionEnabled: personality.skill_evolution?.enabled ?? false,
+      skillEvolutionEvolveExisting:
+        personality.skill_evolution?.evolve_existing ??
+        personality.skill_evolution?.enabled ??
+        false,
+      skillEvolutionPromotion: personality.skill_evolution?.promotion ?? 'review',
+      skillEvolutionScope: personality.skill_evolution?.scope ?? 'shared',
       skillEvolutionMinToolCalls: personality.skill_evolution?.min_tool_calls ?? 3,
       skillEvolutionCooldownMinutes: personality.skill_evolution?.cooldown_minutes ?? 30,
       skillEvolutionModel: personality.skill_evolution?.model ?? '',
@@ -1545,6 +1555,9 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
       dreamingMaxPerDay: number;
       evolutionApprovalMode: 'auto' | 'user';
       skillEvolutionEnabled: boolean;
+      skillEvolutionEvolveExisting: boolean;
+      skillEvolutionPromotion: 'review' | 'auto';
+      skillEvolutionScope: 'personality' | 'shared';
       skillEvolutionMinToolCalls: number;
       skillEvolutionCooldownMinutes: number;
       skillEvolutionModel: string;
@@ -1577,6 +1590,9 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
         evolution_approval_mode: values.evolutionApprovalMode,
         skill_evolution: {
           enabled: values.skillEvolutionEnabled,
+          evolve_existing: values.skillEvolutionEvolveExisting,
+          promotion: values.skillEvolutionPromotion,
+          scope: values.skillEvolutionScope,
           min_tool_calls: values.skillEvolutionMinToolCalls,
           cooldown_minutes: values.skillEvolutionCooldownMinutes,
           ...(values.skillEvolutionModel ? { model: values.skillEvolutionModel } : {}),
@@ -1616,6 +1632,9 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
           dreamingMaxPerDay: values.dreamingMaxPerDay ?? 1,
           evolutionApprovalMode: values.evolutionApprovalMode ?? 'user',
           skillEvolutionEnabled: values.skillEvolutionEnabled ?? false,
+          skillEvolutionEvolveExisting: values.skillEvolutionEvolveExisting ?? false,
+          skillEvolutionPromotion: values.skillEvolutionPromotion ?? 'review',
+          skillEvolutionScope: values.skillEvolutionScope ?? 'shared',
           skillEvolutionMinToolCalls: values.skillEvolutionMinToolCalls ?? 3,
           skillEvolutionCooldownMinutes: values.skillEvolutionCooldownMinutes ?? 30,
           skillEvolutionModel: values.skillEvolutionModel ?? '',
@@ -1743,15 +1762,46 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
           ]}
         />
       </Form.Item>
-      <Form.Item label="Skill learning" style={{ marginBottom: 8 }}>
+      <Form.Item label="Skill creation" style={{ marginBottom: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Form.Item name="skillEvolutionEnabled" valuePropName="checked" noStyle>
             <Switch size="small" />
           </Form.Item>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Propose new skills automatically from repeated tool-call patterns.
+            Auto-generate new skills from repeated task patterns.
           </Typography.Text>
         </div>
+      </Form.Item>
+      <Form.Item label="Skill evolution" style={{ marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Form.Item name="skillEvolutionEvolveExisting" valuePropName="checked" noStyle>
+            <Switch size="small" />
+          </Form.Item>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Improve existing skills during eval-driven evolution. Does not affect the nightly create
+            path.
+          </Typography.Text>
+        </div>
+      </Form.Item>
+      <Form.Item
+        label="Promotion"
+        name="skillEvolutionPromotion"
+        extra="Review queues a new skill for your approval; Auto promotes it automatically."
+      >
+        <Segmented
+          options={[
+            { label: 'Review', value: 'review' },
+            { label: 'Auto', value: 'auto' },
+          ]}
+        />
+      </Form.Item>
+      <Form.Item label="Scope" name="skillEvolutionScope" extra="Where a promoted skill is saved.">
+        <Segmented
+          options={[
+            { label: 'This personality', value: 'personality' },
+            { label: 'Shared', value: 'shared' },
+          ]}
+        />
       </Form.Item>
       <Form.Item
         label="Minimum tool calls"

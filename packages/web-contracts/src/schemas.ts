@@ -123,6 +123,9 @@ export const PersonalitySchema = z.object({
       min_tool_calls: z.number().int().optional(),
       cooldown_minutes: z.number().int().optional(),
       model: z.string().optional(),
+      evolve_existing: z.boolean().optional(),
+      promotion: z.enum(['review', 'auto']).optional(),
+      scope: z.enum(['personality', 'shared']).optional(),
     })
     .optional(),
   /** Per-personality safety dial. Optional (omitted when unset) so the editor

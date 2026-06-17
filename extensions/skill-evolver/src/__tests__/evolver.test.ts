@@ -168,6 +168,57 @@ describe('SkillEvolver', () => {
     expect(dirEntries).toEqual([]);
   });
 
+  it('evolveExisting:false skips the rewrite branch while still creating new skills', async () => {
+    // Seed a low-scoring existing skill (rewrite candidate) AND a high-score
+    // zero-skill bundle (new-skill candidate) in the same eval output.
+    await writeFile(join(skillsDir, 'json.md'), 'old content', 'utf-8');
+
+    const lines: object[] = [];
+    for (let i = 0; i < 12; i++) {
+      lines.push(
+        {
+          schema_version: '1.0',
+          task_id: `r${i}`,
+          turn: 0,
+          role: 'assistant',
+          content: `a${i}`,
+          score: 0.2,
+          skill_files_used: ['json.md'],
+        },
+        {
+          schema_version: '1.0',
+          task_id: `n${i}`,
+          turn: 0,
+          role: 'assistant',
+          content: `answer${i}`,
+          score: 1,
+          skill_files_used: [],
+        },
+      );
+    }
+    await writeFile(evalPath, jsonl(...lines), 'utf-8');
+
+    // Only the new-skill draft should be requested; the rewrite is skipped.
+    const llm = makeLLM([
+      '<filename>map-over-loops.md</filename>\n<skill>\nPrefer map().\n</skill>',
+    ]);
+
+    const evolver = new SkillEvolver({
+      evalOutputPath: evalPath,
+      skillsDir,
+      pendingDir,
+      config: DEFAULT_EVOLVE_CONFIG,
+      llm,
+      evolveExisting: false,
+    });
+
+    const result = await evolver.evolve();
+    expect(result.rewritesWritten).toEqual([]);
+    expect(result.newSkillsWritten).toEqual(['map-over-loops.md']);
+    // The rewrite candidate was identified by analysis but never written.
+    expect(result.plan.rewriteCandidates.length).toBeGreaterThan(0);
+  });
+
   it('avoids overwriting an existing skill with a duplicate filename', async () => {
     await writeFile(join(skillsDir, 'shared.md'), 'preexisting', 'utf-8');
 
