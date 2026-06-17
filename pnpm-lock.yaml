@@ -890,6 +890,9 @@ importers:
 
   extensions/nightly-loop:
     dependencies:
+      '@ethosagent/personality-judge':
+        specifier: workspace:*
+        version: link:../personality-judge
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
