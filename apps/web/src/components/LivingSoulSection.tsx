@@ -62,7 +62,7 @@ function ExpressionPanel({ label, text }: { label: string; text: string }) {
       <div
         style={{
           border: '1px solid var(--border-subtle, #2A2A2A)',
-          borderRadius: 8,
+          borderRadius: 'var(--radius-md)',
           padding: '8px 12px',
           maxHeight: 320,
           overflowY: 'auto',
@@ -216,7 +216,7 @@ export function LivingSoulSection({ personalityId }: { personalityId: string }) 
           <div
             style={{
               border: '1px solid var(--border-subtle, #2A2A2A)',
-              borderRadius: 8,
+              borderRadius: 'var(--radius-md)',
               padding: '8px 12px',
               maxHeight: 280,
               overflowY: 'auto',
@@ -315,7 +315,7 @@ export function LivingSoulSection({ personalityId }: { personalityId: string }) 
               <div
                 style={{
                   border: '1px solid var(--border-subtle, #2A2A2A)',
-                  borderRadius: 8,
+                  borderRadius: 'var(--radius-md)',
                   padding: '8px 12px',
                   maxHeight: 200,
                   overflowY: 'auto',
