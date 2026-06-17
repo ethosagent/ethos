@@ -34,6 +34,7 @@ import { ConfigService } from './services/config.service';
 import { CronService } from './services/cron.service';
 import { refreshSinglePanel } from './services/dashboard-refresh';
 import { DashboardsService } from './services/dashboards.service';
+import { DigestService } from './services/digest.service';
 import { EvolverService } from './services/evolver.service';
 import { GoalsService } from './services/goals.service';
 import { KanbanService } from './services/kanban.service';
@@ -264,6 +265,8 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     mcpJsonStore: sharedMcpJsonStore,
     ...(opts.personalitiesLlm ? { llm: opts.personalitiesLlm } : {}),
     sessions: opts.sessionStore,
+    storage,
+    dataDir: opts.dataDir,
   });
   const configService = new ConfigService({ config: configRepo, secrets });
   const onboardingService = new OnboardingService({
@@ -292,6 +295,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   });
   const kanbanService = new KanbanService();
   const apiKeysService = new ApiKeysService(opts.apiKeys ?? null);
+  const digestService = new DigestService({ storage, dataDir: opts.dataDir });
   const debugService = new DebugService({ sessionStore: opts.sessionStore, agentLoop });
   // Project-level plugins (`<cwd>/.ethos/plugins/`) are out of scope
   // for v1; user-level only is the standard install path. Threading
@@ -497,6 +501,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       completions: completionsService,
       debug: debugService,
       apiKeys: apiKeysService,
+      digest: digestService,
       toolRegistry: opts.toolRegistry,
       dashboards: dashboardsService,
       pluginLoader: opts.pluginLoader,

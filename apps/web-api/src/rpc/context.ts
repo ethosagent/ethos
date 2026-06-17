@@ -10,6 +10,7 @@ import type { ApprovalsService } from '../services/approvals.service';
 import type { ConfigService } from '../services/config.service';
 import type { CronService } from '../services/cron.service';
 import type { DashboardsService } from '../services/dashboards.service';
+import type { DigestService } from '../services/digest.service';
 import type { EvolverService } from '../services/evolver.service';
 import type { GoalsService } from '../services/goals.service';
 import type { KanbanService } from '../services/kanban.service';
@@ -53,6 +54,7 @@ export interface RpcContext {
   lab: LabService;
   kanban: KanbanService;
   apiKeys: ApiKeysService;
+  digest: DigestService;
   toolRegistry?: ToolRegistry;
   dashboards?: DashboardsService;
   pluginLoader?: PluginLoader;

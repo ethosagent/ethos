@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import {
   type CreatePersonalityInput,
   type DescribedPersonality,
@@ -9,8 +10,17 @@ import {
 import { draftExpressionUpdate, draftSoulSplit } from '@ethosagent/skill-evolver';
 import type { PersonalitySkillRecord, SkillsLibrary } from '@ethosagent/skills';
 import { type McpJsonStore, mcpTokenSecretRef } from '@ethosagent/tools-mcp';
-import { EthosError, type LearningLogEntry } from '@ethosagent/types';
+import { EthosError, type LearningLogEntry, type Storage } from '@ethosagent/types';
 import type { McpPolicy, Personality, PersonalitySkill } from '@ethosagent/web-contracts';
+
+/** Latest Personality-Judge alignment, mapped from `.judge-history/state.json`. */
+interface JudgeWire {
+  alignmentScore: number;
+  signal: 'drift' | 'underspecified_soul' | null;
+  lowStreak: number;
+  at?: string;
+  perDimension?: Array<{ dimension: string; score: number }>;
+}
 
 // Personalities service. Calls into FilePersonalityRegistry for the
 // directory-level CRUD (create/update/delete/duplicate) and into
@@ -26,6 +36,10 @@ export interface PersonalitiesServiceOptions {
   llm?: () => Promise<import('@ethosagent/types').LLMProvider>;
   /** Session store — supplies recent-interaction evidence for Expression drafts. */
   sessions?: import('@ethosagent/types').SessionStore;
+  /** Storage + data dir — used to read the personality's Personality-Judge
+   *  alignment sidecar. Both omitted → `livingSoul` returns no `judge` block. */
+  storage?: Storage;
+  dataDir?: string;
 }
 
 export class PersonalitiesService {
@@ -219,10 +233,62 @@ export class PersonalitiesService {
   // Governed learning — Living Soul Expression evolution (Phase 3a)
   // ---------------------------------------------------------------------------
 
-  async livingSoul(
-    id: string,
-  ): Promise<{ core: string; expression: string; learningLog: LearningLogEntry[] }> {
-    return this.opts.personalities.readLivingSoul(id);
+  async livingSoul(id: string): Promise<{
+    core: string;
+    expression: string;
+    learningLog: LearningLogEntry[];
+    judge?: JudgeWire;
+  }> {
+    const soul = await this.opts.personalities.readLivingSoul(id);
+    const judge = await this.readJudge(id);
+    return judge ? { ...soul, judge } : soul;
+  }
+
+  /**
+   * Read the latest Personality-Judge alignment from
+   * `<dataDir>/personalities/<id>/.judge-history/state.json`. Tolerant — a
+   * missing dir/file, malformed JSON, or an unexpected shape returns null
+   * (the `judge` block is then omitted). Never throws; never `as`-casts the
+   * untrusted JSON (validates field-by-field, mirroring the digest readers).
+   */
+  private async readJudge(id: string): Promise<JudgeWire | null> {
+    const { storage, dataDir } = this.opts;
+    if (!storage || !dataDir) return null;
+    const path = join(dataDir, 'personalities', id, '.judge-history', 'state.json');
+    const raw = await storage.read(path);
+    if (!raw) return null;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      const obj = parsed as Record<string, unknown>;
+      const lastResult = obj.lastResult;
+      if (!lastResult || typeof lastResult !== 'object') return null;
+      const result = lastResult as Record<string, unknown>;
+      const alignmentScore = result.alignmentScore;
+      if (typeof alignmentScore !== 'number') return null;
+      const signal = result.signal;
+      const perDimension = Array.isArray(result.perDimension)
+        ? result.perDimension.flatMap((d) => {
+            if (!d || typeof d !== 'object') return [];
+            const dim = d as Record<string, unknown>;
+            const score = dim.score;
+            // On disk the field is `id` (the dimension key). Surface it as
+            // `dimension` for the wire shape.
+            const dimension = dim.id ?? dim.dimension;
+            if (typeof dimension !== 'string' || typeof score !== 'number') return [];
+            return [{ dimension, score }];
+          })
+        : undefined;
+      return {
+        alignmentScore,
+        signal: signal === 'drift' || signal === 'underspecified_soul' ? signal : null,
+        lowStreak: typeof obj.lowStreak === 'number' ? obj.lowStreak : 0,
+        ...(typeof obj.at === 'string' ? { at: obj.at } : {}),
+        ...(perDimension && perDimension.length > 0 ? { perDimension } : {}),
+      };
+    } catch {
+      return null;
+    }
   }
 
   async proposeExpression(id: string): Promise<{

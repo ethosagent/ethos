@@ -10,6 +10,7 @@ import {
   CredentialKeyInfoSchema,
   CronJobSchema,
   CronRunSchema,
+  DigestLatestSchema,
   EvalRunInfoSchema,
   EvalScorerSchema,
   EvolveConfigSchema,
@@ -340,11 +341,22 @@ const LearningLogEntrySchema = z.object({
   prevExpressionRef: z.string(),
 });
 
+const PersonalityJudgeSchema = z.object({
+  alignmentScore: z.number(),
+  signal: z.enum(['drift', 'underspecified_soul']).nullable(),
+  lowStreak: z.number(),
+  at: z.string().optional(),
+  perDimension: z.array(z.object({ dimension: z.string(), score: z.number() })).optional(),
+});
+
 const PersonalityLivingSoulInput = z.object({ id: z.string().min(1) });
 const PersonalityLivingSoulOutput = z.object({
   core: z.string(),
   expression: z.string(),
   learningLog: z.array(LearningLogEntrySchema),
+  /** Latest Personality-Judge alignment read from
+   *  `.judge-history/state.json`. Omitted when no judge run is recorded. */
+  judge: PersonalityJudgeSchema.optional(),
 });
 
 const PersonalityProposeExpressionInput = z.object({ id: z.string().min(1) });
@@ -1691,6 +1703,20 @@ const goals = {
 };
 
 // ---------------------------------------------------------------------------
+// Digest — read-only view of the most recent weekly governed-learning digest
+//
+// The weekly digest writes Markdown to `~/.ethos/digests/<ISO-week>.md`.
+// `digest.latest` returns the newest file (or null when none exist).
+// Generation runs out-of-band (weekly cron / `ethos digest run`) — a
+// "generate now" action is deferred.
+// ---------------------------------------------------------------------------
+
+/** @experimental */
+const digest = {
+  latest: oc.output(DigestLatestSchema.nullable()),
+};
+
+// ---------------------------------------------------------------------------
 // Root contract — every namespace mounted under one symbol
 // ---------------------------------------------------------------------------
 
@@ -1722,6 +1748,7 @@ export const contract = {
   context,
   files,
   goals,
+  digest,
 };
 
 export type Contract = typeof contract;

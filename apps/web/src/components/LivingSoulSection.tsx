@@ -36,6 +36,76 @@ function formatAt(iso: string): string {
 
 const MONO = 'Geist Mono, monospace';
 
+const LABEL_STYLE = {
+  display: 'block',
+  fontSize: 11,
+  fontWeight: 500,
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  marginBottom: 8,
+} as const;
+
+type Judge = {
+  alignmentScore: number;
+  signal: 'drift' | 'underspecified_soul' | null;
+  lowStreak: number;
+  at?: string;
+  perDimension?: Array<{ dimension: string; score: number }>;
+};
+
+function signalGloss(signal: NonNullable<Judge['signal']>): string {
+  return signal === 'underspecified_soul'
+    ? 'underspecified soul — the Core/Expression may be too thin to align against'
+    : 'drift — recent responses are pulling away from Core';
+}
+
+function AlignmentBlock({ judge }: { judge?: Judge }) {
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <Typography.Text type="secondary" style={LABEL_STYLE}>
+        Alignment
+      </Typography.Text>
+      {!judge ? (
+        <Typography.Text type="secondary">No alignment checks yet.</Typography.Text>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+            <Typography.Text style={{ fontFamily: MONO, fontSize: 13 }}>
+              Alignment {judge.alignmentScore.toFixed(2)}
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontFamily: MONO, fontSize: 12 }}>
+              low-streak {judge.lowStreak}
+            </Typography.Text>
+            {judge.at ? (
+              <Typography.Text type="secondary" style={{ fontFamily: MONO, fontSize: 11 }}>
+                {formatAt(judge.at)}
+              </Typography.Text>
+            ) : null}
+          </div>
+          {judge.signal ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Signal: {signalGloss(judge.signal)}
+            </Typography.Text>
+          ) : null}
+          {judge.perDimension && judge.perDimension.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {judge.perDimension.map((d) => (
+                <Typography.Text
+                  key={d.dimension}
+                  type="secondary"
+                  style={{ fontFamily: MONO, fontSize: 12 }}
+                >
+                  {d.dimension} {d.score.toFixed(2)}
+                </Typography.Text>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 type Proposal = {
   currentExpression: string;
   newExpression: string;
@@ -163,7 +233,7 @@ export function LivingSoulSection({ personalityId }: { personalityId: string }) 
   }
   if (!data) return null;
 
-  const { expression, learningLog } = data;
+  const { expression, learningLog, judge } = data;
 
   return (
     <div style={{ marginBottom: 32 }}>
@@ -198,18 +268,10 @@ export function LivingSoulSection({ personalityId }: { personalityId: string }) 
         agent revises from session evidence.
       </Typography.Text>
 
+      <AlignmentBlock judge={judge} />
+
       <div style={{ marginBottom: 20 }}>
-        <Typography.Text
-          type="secondary"
-          style={{
-            display: 'block',
-            fontSize: 11,
-            fontWeight: 500,
-            letterSpacing: '0.08em',
-            textTransform: 'uppercase',
-            marginBottom: 8,
-          }}
-        >
+        <Typography.Text type="secondary" style={LABEL_STYLE}>
           Current Expression
         </Typography.Text>
         {expression.trim() ? (

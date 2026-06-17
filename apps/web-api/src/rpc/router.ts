@@ -18,6 +18,7 @@ import { configRouter } from './config';
 import { contextRouter, filesRouter } from './context-resolve';
 import { cronRouter } from './cron';
 import { dashboardsRouter } from './dashboards';
+import { digestRouter } from './digest';
 import { evalRouter } from './eval';
 import { evolverRouter } from './evolver';
 import { goalsRouter } from './goals';
@@ -99,6 +100,7 @@ export const apiRouter = {
   context: contextRouter,
   files: filesRouter,
   goals: goalsRouter,
+  digest: digestRouter,
 };
 
 export type ApiRouter = typeof apiRouter;

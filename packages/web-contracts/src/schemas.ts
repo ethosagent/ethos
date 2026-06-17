@@ -1063,3 +1063,21 @@ export const GoalSchema = z.object({
   maxRecoveryAttempts: z.number().int().min(0).nullable().optional(),
 });
 export type GoalWire = z.infer<typeof GoalSchema>;
+
+// ---------------------------------------------------------------------------
+// Digest — weekly governed-learning report (read-only)
+//
+// The CLI / cron writes Markdown to `~/.ethos/digests/<ISO-week>.md`.
+// `digest.latest` returns the newest file's body, its `<ISO-week>` label
+// (filename minus `.md`), and the file mtime as an ISO-8601 string.
+// ---------------------------------------------------------------------------
+
+export const DigestLatestSchema = z.object({
+  /** Filename minus `.md`, e.g. `2026-W07`. */
+  label: z.string(),
+  /** Full Markdown body of the digest file. */
+  markdown: z.string(),
+  /** File mtime as ISO-8601. */
+  generatedAt: z.string(),
+});
+export type DigestLatest = z.infer<typeof DigestLatestSchema>;

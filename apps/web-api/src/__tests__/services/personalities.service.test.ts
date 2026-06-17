@@ -326,6 +326,79 @@ describe('PersonalitiesService', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Living Soul judge alignment — reads `.judge-history/state.json` (Phase 3).
+  // -------------------------------------------------------------------------
+  describe('living soul judge alignment', () => {
+    const STATE_PATH = join(DATA, 'personalities', 'agent', '.judge-history', 'state.json');
+
+    async function makeJudgeService(stateRaw?: string): Promise<PersonalitiesService> {
+      const storage = new InMemoryStorage();
+      const dir = join(DATA, 'personalities', 'agent');
+      await storage.mkdir(dir);
+      await storage.write(join(dir, 'config.yaml'), 'name: Agent\n');
+      await storage.write(join(dir, 'SOUL.md'), '# Core\nI am the agent.\n\n# Expression\nHi.\n');
+      if (stateRaw !== undefined) {
+        await storage.mkdir(join(dir, '.judge-history'));
+        await storage.write(STATE_PATH, stateRaw);
+      }
+      const registry = new FilePersonalityRegistry(storage, DATA);
+      await registry.loadFromDirectory(join(DATA, 'personalities'));
+      const library = new SkillsLibrary({ dataDir: DATA, storage });
+      return new PersonalitiesService({ personalities: registry, library, storage, dataDir: DATA });
+    }
+
+    it('includes judge with parsed values when state is present', async () => {
+      const service = await makeJudgeService(
+        JSON.stringify({
+          lowStreak: 2,
+          lastResult: {
+            alignmentScore: 0.82,
+            signal: 'drift',
+            sampleCount: 5,
+            perDimension: [{ id: 'core_expression_alignment', score: 0.82, evidence: 'ok' }],
+          },
+          at: '2026-06-17T00:00:00.000Z',
+        }),
+      );
+      const soul = await service.livingSoul('agent');
+      expect(soul.judge).toEqual({
+        alignmentScore: 0.82,
+        signal: 'drift',
+        lowStreak: 2,
+        at: '2026-06-17T00:00:00.000Z',
+        perDimension: [{ dimension: 'core_expression_alignment', score: 0.82 }],
+      });
+    });
+
+    it('omits judge when no state file exists', async () => {
+      const service = await makeJudgeService();
+      const soul = await service.livingSoul('agent');
+      expect(soul.judge).toBeUndefined();
+    });
+
+    it('omits judge when the state JSON is malformed (no throw)', async () => {
+      const service = await makeJudgeService('{not json');
+      const soul = await service.livingSoul('agent');
+      expect(soul.judge).toBeUndefined();
+      expect(soul.expression).toContain('Hi.');
+    });
+
+    it('omits judge when storage / dataDir are not wired', async () => {
+      const storage = new InMemoryStorage();
+      const dir = join(DATA, 'personalities', 'agent');
+      await storage.mkdir(dir);
+      await storage.write(join(dir, 'config.yaml'), 'name: Agent\n');
+      await storage.write(join(dir, 'SOUL.md'), '# Core\nx\n');
+      const registry = new FilePersonalityRegistry(storage, DATA);
+      await registry.loadFromDirectory(join(DATA, 'personalities'));
+      const library = new SkillsLibrary({ dataDir: DATA, storage });
+      const service = new PersonalitiesService({ personalities: registry, library });
+      const soul = await service.livingSoul('agent');
+      expect(soul.judge).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Governed-learning settings — evolution_approval_mode + skill_evolution
   // round-trip through create/update → config.yaml → toWire.
   // -------------------------------------------------------------------------

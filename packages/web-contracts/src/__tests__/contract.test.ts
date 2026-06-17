@@ -200,6 +200,7 @@ describe('contract router', () => {
       'cron',
       'dashboards',
       'debug',
+      'digest',
       'eval',
       'evolver',
       'files',

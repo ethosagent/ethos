@@ -1,4 +1,5 @@
 import { BUILTIN_SKIN_NAMES, BUILTIN_SKINS } from '@ethosagent/design-tokens';
+import { ContentRenderer } from '@ethosagent/ui-components';
 import type { ApiKeyMetadata, ApiKeyScope, ProviderEntry } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -607,10 +608,64 @@ export function Settings() {
         <Button onClick={() => navigate('/onboarding')}>Run setup wizard</Button>
       </Card>
 
+      <LatestDigestSection />
+
       <ApiKeysSection />
 
       {isDesktop ? <DesktopSettings /> : null}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Latest digest — read-only view of the most recent weekly governed-learning
+// report. Generation runs out-of-band (weekly cron / `ethos digest run`); a
+// "generate now" action is deferred.
+// ---------------------------------------------------------------------------
+
+function formatDigestDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function LatestDigestSection() {
+  const digestQuery = useQuery({
+    queryKey: ['digest', 'latest'],
+    queryFn: () => rpc.digest.latest(),
+  });
+
+  return (
+    <Card title="Latest digest" size="small" style={{ maxWidth: 640, marginTop: 32 }}>
+      {digestQuery.isLoading ? (
+        <div style={{ display: 'grid', placeItems: 'center', height: 80 }}>
+          <Spin />
+        </div>
+      ) : !digestQuery.data ? (
+        <Typography.Text type="secondary">
+          No digest generated yet — runs weekly, or via{' '}
+          <Typography.Text code>ethos digest run</Typography.Text>.
+        </Typography.Text>
+      ) : (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12 }}>
+            <Typography.Text strong style={{ fontFamily: 'Geist Mono, monospace', fontSize: 13 }}>
+              {digestQuery.data.label}
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {formatDigestDate(digestQuery.data.generatedAt)}
+            </Typography.Text>
+          </div>
+          <ContentRenderer content={digestQuery.data.markdown} format="markdown" />
+        </div>
+      )}
+    </Card>
   );
 }
 
