@@ -102,4 +102,19 @@ describe('renderCharacterSheet', () => {
     expect(sheet).toContain('## Capabilities');
     expect(sheet).toMatch(/## Capabilities\n- \(none\)/);
   });
+
+  it('renders the Living Soul section for a sectioned soul', () => {
+    const livingSoulMd =
+      '# Core\nI am the engineer. This never changes.\n\n# Expression\nI write terse, code-first replies.\n\n# Learning Log\n- 2026-06-17T00:00:00.000Z · expr-rev-1 · "tightened tone" · evidence: sessions:3 · prev: expr-rev-1\n';
+    const sheet = renderCharacterSheet(fullConfig, livingSoulMd);
+    expect(sheet).toContain('## Living Soul');
+    expect(sheet).toContain('I write terse, code-first replies.');
+    expect(sheet).toContain('expr-rev-1');
+    expect(sheet).toContain('tightened tone');
+  });
+
+  it('renders no Living Soul section for a flat soul', () => {
+    const sheet = renderCharacterSheet(fullConfig, soulMd);
+    expect(sheet).not.toContain('## Living Soul');
+  });
 });

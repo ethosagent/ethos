@@ -4,6 +4,7 @@ import {
   assertSafeId,
   type DreamingConfig,
   EthosError,
+  type LearningLogEntry,
   type LivingSoul,
   type ModelTierConfig,
   type PersonalityConfig,
@@ -12,7 +13,11 @@ import {
   type PersonalitySafetyConfig,
   type Storage,
 } from '@ethosagent/types';
-import { parseLivingSoul } from './living-soul';
+import {
+  applyExpressionUpdate,
+  parseLivingSoul,
+  revertExpression as revertExpressionBody,
+} from './living-soul';
 
 export { firstParagraph, renderCharacterSheet } from './character-sheet';
 
@@ -550,6 +555,76 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
   async readLivingSoul(id: string): Promise<LivingSoul> {
     const body = await this.readSoulMd(id);
     return parseLivingSoul(body);
+  }
+
+  async evolveExpression(
+    id: string,
+    newExpression: string,
+    opts: { summary: string; evidenceRef: string },
+  ): Promise<{ entry: LearningLogEntry; soul: LivingSoul }> {
+    const existing = this.requireMutable(id);
+    const dir = this.dirOf(existing);
+    const body = (await this.storage.read(join(dir, 'SOUL.md'))) ?? '';
+    const current = parseLivingSoul(body);
+    const revisionId = `expr-rev-${current.learningLog.length + 1}`;
+    const historyDir = join(dir, '.expression-history');
+    await this.storage.mkdir(historyDir);
+    await this.storage.writeAtomic(join(historyDir, `${revisionId}.md`), current.expression);
+    const entry: LearningLogEntry = {
+      revisionId,
+      at: new Date().toISOString(),
+      summary: opts.summary,
+      evidenceRef: opts.evidenceRef,
+      prevExpressionRef: revisionId,
+    };
+    const next = applyExpressionUpdate(body, newExpression, entry);
+    await this.storage.writeAtomic(join(dir, 'SOUL.md'), next);
+    this.fingerprintCache.delete(dir);
+    await this.refreshUserDir();
+    return { entry, soul: parseLivingSoul(next) };
+  }
+
+  async revertExpression(id: string, revisionId: string): Promise<LivingSoul> {
+    const existing = this.requireMutable(id);
+    const dir = this.dirOf(existing);
+    const priorExpression = await this.storage.read(
+      join(dir, '.expression-history', `${revisionId}.md`),
+    );
+    if (priorExpression === null) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: `No expression snapshot "${revisionId}" found for personality "${id}".`,
+        action:
+          'Run `ethos personality revert <id>` without args to see available revisions, or check the Learning Log.',
+      });
+    }
+    const body = (await this.storage.read(join(dir, 'SOUL.md'))) ?? '';
+    const current = parseLivingSoul(body);
+    const newRevisionId = `expr-rev-${current.learningLog.length + 1}`;
+    const historyDir = join(dir, '.expression-history');
+    await this.storage.mkdir(historyDir);
+    await this.storage.writeAtomic(join(historyDir, `${newRevisionId}.md`), current.expression);
+    const entry: LearningLogEntry = {
+      revisionId: newRevisionId,
+      at: new Date().toISOString(),
+      summary: `reverted to ${revisionId}`,
+      evidenceRef: revisionId,
+      prevExpressionRef: newRevisionId,
+    };
+    const next = revertExpressionBody(body, priorExpression, entry);
+    await this.storage.writeAtomic(join(dir, 'SOUL.md'), next);
+    this.fingerprintCache.delete(dir);
+    await this.refreshUserDir();
+    return parseLivingSoul(next);
+  }
+
+  async listExpressionSnapshots(id: string): Promise<string[]> {
+    const existing = this.requireMutable(id);
+    const dir = this.dirOf(existing);
+    const names = await this.storage.list(join(dir, '.expression-history'));
+    const ids = names.filter((n) => n.endsWith('.md')).map((n) => n.slice(0, -'.md'.length));
+    ids.sort((a, b) => expressionRevNumber(b) - expressionRevNumber(a));
+    return ids;
   }
 
   async create(input: CreatePersonalityInput): Promise<DescribedPersonality> {
@@ -1097,6 +1172,11 @@ function isStorageLike(v: unknown): v is Storage {
 
 function titleCase(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function expressionRevNumber(s: string): number {
+  const m = /(\d+)$/.exec(s);
+  return m ? Number.parseInt(m[1], 10) : 0;
 }
 
 function buildContextLayering(

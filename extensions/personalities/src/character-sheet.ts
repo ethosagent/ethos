@@ -1,4 +1,5 @@
 import { type PersonalityConfig, resolveModelDisplay } from '@ethosagent/types';
+import { parseLivingSoul } from './living-soul';
 
 // The generated character sheet — the "tight character sheet" promise from
 // SOUL.md made into a real artifact. One Markdown screen per personality:
@@ -86,6 +87,29 @@ export function renderCharacterSheet(config: PersonalityConfig, soulMd: string):
     lines.push(`- Write: ${write.length > 0 ? write.join(', ') : '(none)'}`);
   } else {
     lines.push('- (default — personality directory only)');
+  }
+
+  const soul = parseLivingSoul(soulMd);
+  const isLivingSoul = soul.expression !== '' || soul.learningLog.length > 0;
+  if (isLivingSoul) {
+    lines.push('');
+    lines.push('## Living Soul');
+    const coreLineCount = soul.core.split('\n').filter((l) => l.trim() !== '').length;
+    lines.push(
+      `- Core: immutable identity (${coreLineCount} line${coreLineCount === 1 ? '' : 's'})`,
+    );
+    lines.push('');
+    lines.push('### Expression');
+    lines.push(soul.expression.trim() === '' ? '(empty)' : soul.expression.trim());
+    lines.push('');
+    lines.push('### Learning Log');
+    if (soul.learningLog.length === 0) {
+      lines.push('- (no changes yet)');
+    } else {
+      for (const e of soul.learningLog) {
+        lines.push(`- ${e.at} · ${e.revisionId} · ${e.summary}`);
+      }
+    }
   }
 
   return `${lines.join('\n')}\n`;

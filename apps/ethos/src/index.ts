@@ -331,6 +331,12 @@ try {
         await runPersonalityShow(args.slice(2));
       } else if (sub === 'diff') {
         await runPersonalityDiff(args.slice(2));
+      } else if (sub === 'evolve') {
+        const { runPersonalityEvolve } = await import('./commands/personality-evolve');
+        await runPersonalityEvolve(args.slice(2));
+      } else if (sub === 'revert') {
+        const { runPersonalityRevert } = await import('./commands/personality-evolve');
+        await runPersonalityRevert(args.slice(2));
       } else if (sub === 'export') {
         const { runPersonalityExport } = await import('./commands/personality-export');
         await runPersonalityExport(args.slice(2));
@@ -339,7 +345,7 @@ try {
         await runPersonalityImport(args.slice(2));
       } else {
         console.log(
-          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | diff <a> <b> | set <id> | duplicate <src> <dst> | export <id> [--output <path>] | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
+          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | diff <a> <b> | evolve <id> | revert <id> | set <id> | duplicate <src> <dst> | export <id> [--output <path>] | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
         );
       }
       break;
@@ -984,7 +990,7 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
 // Minimal unified diff — LCS-based, no external dependency.
 // ---------------------------------------------------------------------------
 
-function unifiedDiff(a: string, b: string, labelA: string, labelB: string): string {
+export function unifiedDiff(a: string, b: string, labelA: string, labelB: string): string {
   const linesA = a.split('\n');
   const linesB = b.split('\n');
 

@@ -18,6 +18,11 @@ export {
 } from './evolve-helpers';
 export type { EvolveOptions, EvolveResult } from './evolver';
 export { SkillEvolver } from './evolver';
+export {
+  draftExpressionUpdate,
+  type ExpressionDraft,
+  type ExpressionDraftInput,
+} from './expression-draft';
 export { buildForkContext } from './fork-context';
 export {
   ImprovementFork,
