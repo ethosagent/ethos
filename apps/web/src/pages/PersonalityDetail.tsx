@@ -20,7 +20,8 @@ import { ConnectMcpModal } from '../components/mcp/ConnectMcpModal';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { rpc } from '../rpc';
 import {
-  EditModal,
+  ConfigEditor,
+  IdentityEditor,
   initialSelectionFor,
   ServerToolChecklist,
   type ServerToolState,
@@ -948,8 +949,6 @@ function ToolsSection({ toolset }: { toolset: string[] }) {
 export function PersonalityDetail() {
   const { id = '' } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const qc = useQueryClient();
-  const [editModalOpen, setEditModalOpen] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['personalities', 'get', id],
@@ -973,32 +972,48 @@ export function PersonalityDetail() {
 
   const { personality } = data;
 
-  const tabItems = [
-    {
-      key: 'overview',
-      label: 'Overview',
-      children: <OverviewSection personality={personality} />,
-    },
-    {
-      key: 'tools',
-      label: 'Tools',
-      children: <ToolsSection toolset={personality.toolset ?? []} />,
-    },
-  ];
-  if (!personality.builtin) {
-    tabItems.push(
-      {
-        key: 'soul',
-        label: 'Living Soul',
-        children: <LivingSoulSection personalityId={id} />,
-      },
-      {
-        key: 'mcp',
-        label: 'MCP',
-        children: <McpSection personalityId={id} mcpPolicy={data.mcpPolicy} />,
-      },
-    );
-  }
+  // Settings: editable governance form for user personalities; the labeled
+  // read-only overview for built-ins (which cannot be edited from here).
+  const tabItems = personality.builtin
+    ? [
+        {
+          key: 'settings',
+          label: 'Settings',
+          children: <OverviewSection personality={personality} />,
+        },
+        {
+          key: 'tools',
+          label: 'Tools',
+          children: <ToolsSection toolset={personality.toolset ?? []} />,
+        },
+      ]
+    : [
+        {
+          key: 'settings',
+          label: 'Settings',
+          children: <ConfigEditor id={id} personality={personality} />,
+        },
+        {
+          key: 'identity',
+          label: 'Identity',
+          children: <IdentityEditor id={id} initialSoulMd={data.soulMd} />,
+        },
+        {
+          key: 'tools',
+          label: 'Tools',
+          children: <ToolsSection toolset={personality.toolset ?? []} />,
+        },
+        {
+          key: 'soul',
+          label: 'Living Soul',
+          children: <LivingSoulSection personalityId={id} />,
+        },
+        {
+          key: 'mcp',
+          label: 'MCP',
+          children: <McpSection personalityId={id} mcpPolicy={data.mcpPolicy} />,
+        },
+      ];
 
   return (
     <div style={{ padding: 24, maxWidth: 960 }}>
@@ -1024,9 +1039,6 @@ export function PersonalityDetail() {
               {personality.id}
             </Typography.Text>
           </div>
-          <Button style={{ marginLeft: 'auto' }} onClick={() => setEditModalOpen(true)}>
-            Edit personality
-          </Button>
         </div>
 
         {personality.description ? (
@@ -1037,16 +1049,6 @@ export function PersonalityDetail() {
       </div>
 
       <Tabs items={tabItems} />
-
-      {editModalOpen ? (
-        <EditModal
-          id={id}
-          onClose={() => {
-            setEditModalOpen(false);
-            qc.invalidateQueries({ queryKey: ['personalities', 'get', id] });
-          }}
-        />
-      ) : null}
     </div>
   );
 }

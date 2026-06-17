@@ -1253,66 +1253,89 @@ export function EditModal({ id, onClose }: { id: string; onClose: () => void }) 
         <div style={{ display: 'grid', placeItems: 'center', height: 240 }}>
           <Spin />
         </div>
-      ) : data.personality.builtin ? (
-        <>
-          <Alert
-            type="info"
-            showIcon
-            style={{ marginBottom: 16 }}
-            message="This personality is built-in and cannot be edited. Duplicate to make a writable copy."
-            action={
-              <Button
-                size="small"
-                onClick={() => {
-                  onClose();
-                }}
-              >
-                Duplicate
-              </Button>
-            }
-          />
-          <CharacterSheetPanel id={id} />
-        </>
       ) : (
-        <Tabs
-          defaultActiveKey="characterSheet"
-          items={[
-            {
-              key: 'characterSheet',
-              label: 'Character sheet',
-              children: <CharacterSheetPanel id={id} />,
-            },
-            {
-              key: 'identity',
-              label: 'Identity',
-              children: <IdentityEditor id={id} initialSoulMd={data.soulMd} />,
-            },
-            {
-              key: 'toolset',
-              label: 'Toolset',
-              children: <ToolsetEditor id={id} initialToolset={data.personality.toolset ?? []} />,
-            },
-            {
-              key: 'config',
-              label: 'Config',
-              children: <ConfigEditor id={id} personality={data.personality} />,
-            },
-            {
-              key: 'skills',
-              label: 'Skills',
-              children: <PersonalitySkillsPanel personalityId={id} />,
-            },
-            {
-              key: 'plugins',
-              label: 'Plugins',
-              children: (
-                <PluginsAttachPanel id={id} initialPlugins={data.personality.plugins ?? []} />
-              ),
-            },
-          ]}
+        <PersonalityEditor
+          id={id}
+          personality={data.personality}
+          soulMd={data.soulMd}
+          onDuplicate={onClose}
         />
       )}
     </Modal>
+  );
+}
+
+// The editing body for a single personality — the same Tabs the list-page
+// modal and the detail page both render. Built-ins are read-only: they show
+// the character sheet plus a "duplicate to edit" notice.
+export function PersonalityEditor({
+  id,
+  personality,
+  soulMd,
+  onDuplicate,
+}: {
+  id: string;
+  personality: Personality;
+  soulMd: string;
+  onDuplicate?: () => void;
+}) {
+  if (personality.builtin) {
+    return (
+      <>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="This personality is built-in and cannot be edited. Duplicate to make a writable copy."
+          action={
+            onDuplicate ? (
+              <Button size="small" onClick={onDuplicate}>
+                Duplicate
+              </Button>
+            ) : undefined
+          }
+        />
+        <CharacterSheetPanel id={id} />
+      </>
+    );
+  }
+
+  return (
+    <Tabs
+      defaultActiveKey="characterSheet"
+      items={[
+        {
+          key: 'characterSheet',
+          label: 'Character sheet',
+          children: <CharacterSheetPanel id={id} />,
+        },
+        {
+          key: 'identity',
+          label: 'Identity',
+          children: <IdentityEditor id={id} initialSoulMd={soulMd} />,
+        },
+        {
+          key: 'toolset',
+          label: 'Toolset',
+          children: <ToolsetEditor id={id} initialToolset={personality.toolset ?? []} />,
+        },
+        {
+          key: 'config',
+          label: 'Config',
+          children: <ConfigEditor id={id} personality={personality} />,
+        },
+        {
+          key: 'skills',
+          label: 'Skills',
+          children: <PersonalitySkillsPanel personalityId={id} />,
+        },
+        {
+          key: 'plugins',
+          label: 'Plugins',
+          children: <PluginsAttachPanel id={id} initialPlugins={personality.plugins ?? []} />,
+        },
+      ]}
+    />
   );
 }
 
@@ -1353,7 +1376,7 @@ function CharacterSheetPanel({ id }: { id: string }) {
   );
 }
 
-function IdentityEditor({ id, initialSoulMd }: { id: string; initialSoulMd: string }) {
+export function IdentityEditor({ id, initialSoulMd }: { id: string; initialSoulMd: string }) {
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
   const [draft, setDraft] = useState(initialSoulMd);
@@ -1448,7 +1471,7 @@ function ToolsetEditor({ id, initialToolset }: { id: string; initialToolset: str
 // biome-ignore lint/suspicious/noTemplateCurlyInString: literal placeholder text for the UI, not a template variable
 const FS_REACH_READ_PLACEHOLDER = 'e.g. /data, ${self}/docs';
 
-function ConfigEditor({ id, personality }: { id: string; personality: Personality }) {
+export function ConfigEditor({ id, personality }: { id: string; personality: Personality }) {
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
   const [form] = Form.useForm<{
