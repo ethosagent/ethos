@@ -399,6 +399,63 @@ describe('PersonalitiesService', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Living Soul nightly status — reads `.nightly-state.json` (Phase 3).
+  // -------------------------------------------------------------------------
+  describe('living soul nightly status', () => {
+    const STATE_PATH = join(DATA, 'personalities', 'agent', '.nightly-state.json');
+
+    async function makeNightlyService(stateRaw?: string): Promise<PersonalitiesService> {
+      const storage = new InMemoryStorage();
+      const dir = join(DATA, 'personalities', 'agent');
+      await storage.mkdir(dir);
+      await storage.write(join(dir, 'config.yaml'), 'name: Agent\n');
+      await storage.write(join(dir, 'SOUL.md'), '# Core\nI am the agent.\n\n# Expression\nHi.\n');
+      if (stateRaw !== undefined) {
+        await storage.write(STATE_PATH, stateRaw);
+      }
+      const registry = new FilePersonalityRegistry(storage, DATA);
+      await registry.loadFromDirectory(join(DATA, 'personalities'));
+      const library = new SkillsLibrary({ dataDir: DATA, storage });
+      return new PersonalitiesService({ personalities: registry, library, storage, dataDir: DATA });
+    }
+
+    it('includes nightly with parsed values when state is present', async () => {
+      const service = await makeNightlyService(
+        JSON.stringify({
+          windowEnd: '2026-06-17T00:00:00.000Z',
+          completed: ['judge', 'dream'],
+        }),
+      );
+      const soul = await service.livingSoul('agent');
+      expect(soul.nightly).toEqual({
+        windowEnd: '2026-06-17T00:00:00.000Z',
+        completed: ['judge', 'dream'],
+      });
+    });
+
+    it('omits nightly when no state file exists', async () => {
+      const service = await makeNightlyService();
+      const soul = await service.livingSoul('agent');
+      expect(soul.nightly).toBeUndefined();
+    });
+
+    it('omits nightly when the state JSON is malformed (no throw)', async () => {
+      const service = await makeNightlyService('{not json');
+      const soul = await service.livingSoul('agent');
+      expect(soul.nightly).toBeUndefined();
+      expect(soul.expression).toContain('Hi.');
+    });
+
+    it('omits nightly when the shape is wrong (no throw)', async () => {
+      const service = await makeNightlyService(
+        JSON.stringify({ windowEnd: 123, completed: ['ok'] }),
+      );
+      const soul = await service.livingSoul('agent');
+      expect(soul.nightly).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Governed-learning settings — evolution_approval_mode + skill_evolution
   // round-trip through create/update → config.yaml → toWire.
   // -------------------------------------------------------------------------
@@ -456,6 +513,26 @@ describe('PersonalitiesService', () => {
         min_tool_calls: 7,
         cooldown_minutes: 45,
       });
+    });
+
+    it('update persists dreaming limits + skill_evolution.model and toWire reflects them', async () => {
+      const { service } = await makeRealService();
+      await service.create({ id: 'agent', name: 'Agent', toolset: [], soulMd: '# Agent' });
+
+      const { personality } = await service.update('agent', {
+        dreaming: { enable: true, idleMinutes: 30, maxPerDay: 3 },
+        skill_evolution: { model: 'gpt-4o-mini' },
+      });
+      expect(personality.dreaming).toEqual({ enable: true, idleMinutes: 30, maxPerDay: 3 });
+      expect(personality.skill_evolution?.model).toBe('gpt-4o-mini');
+
+      const reloaded = await service.get('agent');
+      expect(reloaded.personality.dreaming).toEqual({
+        enable: true,
+        idleMinutes: 30,
+        maxPerDay: 3,
+      });
+      expect(reloaded.personality.skill_evolution?.model).toBe('gpt-4o-mini');
     });
   });
 

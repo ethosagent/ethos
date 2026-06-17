@@ -440,6 +440,7 @@ export interface CreatePersonalityInput {
     enabled?: boolean;
     min_tool_calls?: number;
     cooldown_minutes?: number;
+    model?: string;
   };
   dreaming?: import('@ethosagent/types').DreamingConfig;
   evolution_approval_mode?: 'auto' | 'user';
@@ -456,8 +457,10 @@ export interface UpdatePersonalityPatch {
   capabilities?: string[];
   provider?: string;
   fs_reach?: { read?: string[]; write?: string[] };
-  /** Full dreaming config — overwrites enable + cadence wholesale. */
-  dreaming?: import('@ethosagent/types').DreamingConfig;
+  /** Partial dreaming config — shallow-merged onto the existing dreaming block
+   *  so a patch that carries only `enable` (or only a cadence number) never
+   *  drops sibling fields. */
+  dreaming?: Partial<import('@ethosagent/types').DreamingConfig>;
   /** Enable-only dreaming toggle. Merges `enable` into the existing dreaming
    *  cadence (idleMinutes / maxPerDay), defaulting cadence when none exists.
    *  Used by the web editor's toggle so flipping it never resets cadence. */
@@ -465,7 +468,8 @@ export interface UpdatePersonalityPatch {
   /** Governed-learning approval dial. 'auto' applies evolved Expression
    *  automatically; 'user' holds it for human approval. */
   evolution_approval_mode?: 'auto' | 'user';
-  /** Skill-evolution tuning — overwrites the existing config wholesale. */
+  /** Skill-evolution tuning — shallow-merged onto the existing config so a
+   *  patch to one knob (e.g. `model`) never drops sibling fields. */
   skill_evolution?: import('@ethosagent/types').PersonalityConfig['skill_evolution'];
   /** Per-personality safety config (e.g. approval mode). Merged onto the
    *  existing safety block so a partial patch never drops sibling fields. */
@@ -774,11 +778,22 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
           }
         }
       }
-      // Resolve dreaming: a full `dreaming` patch wins; otherwise an enable-only
-      // toggle merges into the existing cadence (defaulting when none exists);
+      // Resolve dreaming: a `dreaming` patch is shallow-merged onto the existing
+      // block (so a patch carrying only `enable` or only a cadence number keeps
+      // its siblings, and vice-versa), defaulting cadence when none exists;
+      // otherwise an enable-only toggle merges into the existing cadence;
       // otherwise the existing config is carried through untouched.
-      let mergedDreaming = patch.dreaming ?? config.dreaming;
-      if (patch.dreaming === undefined && patch.dreamingEnable !== undefined) {
+      let mergedDreaming = config.dreaming;
+      if (patch.dreaming !== undefined) {
+        const prev = config.dreaming;
+        const prompt = patch.dreaming.prompt ?? prev?.prompt;
+        mergedDreaming = {
+          enable: patch.dreaming.enable ?? prev?.enable ?? false,
+          idleMinutes: patch.dreaming.idleMinutes ?? prev?.idleMinutes ?? 60,
+          maxPerDay: patch.dreaming.maxPerDay ?? prev?.maxPerDay ?? 1,
+          ...(prompt !== undefined ? { prompt } : {}),
+        };
+      } else if (patch.dreamingEnable !== undefined) {
         const prev = config.dreaming;
         mergedDreaming = {
           enable: patch.dreamingEnable,
@@ -787,6 +802,12 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
           ...(prev?.prompt !== undefined ? { prompt: prev.prompt } : {}),
         };
       }
+      // Skill-evolution: shallow-merge the patch onto the existing config so a
+      // patch to one knob (e.g. `model`) never drops sibling fields.
+      const mergedSkillEvolution =
+        patch.skill_evolution === undefined
+          ? config.skill_evolution
+          : { ...config.skill_evolution, ...patch.skill_evolution };
       // Carry the FULL existing config and overlay only the patched fields,
       // so an update to one field never drops the rest. `id`, `soulFile`, and
       // `skillsDirs` are loader-populated and excluded from config.yaml.
@@ -804,7 +825,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         fs_reach: patch.fs_reach === undefined ? config.fs_reach : patch.fs_reach,
         dreaming: mergedDreaming,
         evolution_approval_mode: patch.evolution_approval_mode ?? config.evolution_approval_mode,
-        skill_evolution: patch.skill_evolution ?? config.skill_evolution,
+        skill_evolution: mergedSkillEvolution,
         safety: patch.safety === undefined ? config.safety : { ...config.safety, ...patch.safety },
         memory: patch.memory === undefined ? config.memory : { ...config.memory, ...patch.memory },
       };
@@ -1284,7 +1305,8 @@ function buildSkillEvolution(
   const enabled = cfg['skill_evolution.enabled'];
   const minToolCalls = cfg['skill_evolution.min_tool_calls'];
   const cooldown = cfg['skill_evolution.cooldown_minutes'];
-  if (!enabled && !minToolCalls && !cooldown) return undefined;
+  const model = cfg['skill_evolution.model'];
+  if (!enabled && !minToolCalls && !cooldown && !model) return undefined;
   const out: NonNullable<PersonalityConfig['skill_evolution']> = {};
   if (enabled === 'true') out.enabled = true;
   else if (enabled === 'false') out.enabled = false;
@@ -1294,6 +1316,7 @@ function buildSkillEvolution(
   if (cooldown && /^\d+$/.test(cooldown)) {
     out.cooldown_minutes = Number.parseInt(cooldown, 10);
   }
+  if (model) out.model = model;
   return out;
 }
 
@@ -1653,6 +1676,7 @@ function renderConfigYaml(input: RenderConfigInput): string {
       lines.push(`skill_evolution.min_tool_calls: ${se.min_tool_calls}`);
     if (se.cooldown_minutes !== undefined)
       lines.push(`skill_evolution.cooldown_minutes: ${se.cooldown_minutes}`);
+    if (se.model !== undefined) lines.push(`skill_evolution.model: ${yamlScalar(se.model)}`);
   }
   if (input.memory !== undefined) {
     lines.push(`memory.provider: ${yamlScalar(input.memory.provider)}`);

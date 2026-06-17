@@ -22,6 +22,12 @@ interface JudgeWire {
   perDimension?: Array<{ dimension: string; score: number }>;
 }
 
+/** Latest nightly-pass status, mapped from `.nightly-state.json`. */
+interface NightlyWire {
+  windowEnd: string;
+  completed: string[];
+}
+
 // Personalities service. Calls into FilePersonalityRegistry for the
 // directory-level CRUD (create/update/delete/duplicate) and into
 // SkillsLibrary for the per-personality skills/ subdir. Both extensions
@@ -238,10 +244,16 @@ export class PersonalitiesService {
     expression: string;
     learningLog: LearningLogEntry[];
     judge?: JudgeWire;
+    nightly?: NightlyWire;
   }> {
     const soul = await this.opts.personalities.readLivingSoul(id);
     const judge = await this.readJudge(id);
-    return judge ? { ...soul, judge } : soul;
+    const nightly = await this.readNightly(id);
+    return {
+      ...soul,
+      ...(judge ? { judge } : {}),
+      ...(nightly ? { nightly } : {}),
+    };
   }
 
   /**
@@ -286,6 +298,37 @@ export class PersonalitiesService {
         ...(typeof obj.at === 'string' ? { at: obj.at } : {}),
         ...(perDimension && perDimension.length > 0 ? { perDimension } : {}),
       };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Read the latest nightly-pass status from
+   * `<dataDir>/personalities/<id>/.nightly-state.json`. Tolerant — a missing
+   * file, malformed JSON, or an unexpected shape returns null (the `nightly`
+   * block is then omitted). Never throws; never `as`-casts the untrusted JSON
+   * (validates field-by-field, mirroring `readNightlyState` in @ethosagent/digest).
+   */
+  private async readNightly(id: string): Promise<NightlyWire | null> {
+    const { storage, dataDir } = this.opts;
+    if (!storage || !dataDir) return null;
+    const path = join(dataDir, 'personalities', id, '.nightly-state.json');
+    const raw = await storage.read(path);
+    if (!raw) return null;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      const obj = parsed as Record<string, unknown>;
+      const windowEnd = obj.windowEnd;
+      const completed = obj.completed;
+      if (typeof windowEnd !== 'string' || !Array.isArray(completed)) return null;
+      const steps: string[] = [];
+      for (const c of completed) {
+        if (typeof c !== 'string') return null;
+        steps.push(c);
+      }
+      return { windowEnd, completed: steps };
     } catch {
       return null;
     }
@@ -431,7 +474,15 @@ function toWire(d: DescribedPersonality): Personality {
     fs_reach: c.fs_reach
       ? { read: c.fs_reach.read ?? null, write: c.fs_reach.write ?? null }
       : null,
-    ...(c.dreaming ? { dreaming: { enable: c.dreaming.enable } } : {}),
+    ...(c.dreaming
+      ? {
+          dreaming: {
+            enable: c.dreaming.enable,
+            idleMinutes: c.dreaming.idleMinutes,
+            maxPerDay: c.dreaming.maxPerDay,
+          },
+        }
+      : {}),
     ...(c.evolution_approval_mode !== undefined
       ? { evolution_approval_mode: c.evolution_approval_mode }
       : {}),

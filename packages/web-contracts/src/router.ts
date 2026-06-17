@@ -254,9 +254,15 @@ const PersonalityUpdateInput = z.object({
       write: z.array(z.string()).optional(),
     })
     .optional(),
-  /** Idle-time dreaming toggle. Enable-only from the editor; idleMinutes /
-   *  maxPerDay keep their persisted (or default) values. */
-  dreaming: z.object({ enable: z.boolean() }).optional(),
+  /** Idle-time dreaming controls. `enable` toggles dreaming; idleMinutes /
+   *  maxPerDay tune the cadence (kept at their persisted values when omitted). */
+  dreaming: z
+    .object({
+      enable: z.boolean(),
+      idleMinutes: z.number().int().min(0).optional(),
+      maxPerDay: z.number().int().min(0).optional(),
+    })
+    .optional(),
   /** Governed-learning approval dial. 'auto' applies evolved Expression
    *  automatically; 'user' holds it for human approval. */
   evolution_approval_mode: z.enum(['auto', 'user']).optional(),
@@ -266,6 +272,7 @@ const PersonalityUpdateInput = z.object({
       enabled: z.boolean().optional(),
       min_tool_calls: z.number().int().min(1).max(20).optional(),
       cooldown_minutes: z.number().int().min(0).optional(),
+      model: z.string().optional(),
     })
     .optional(),
   /** Per-personality safety dial. Only `approvalMode` is editable from the
@@ -354,6 +361,11 @@ const PersonalityJudgeSchema = z.object({
   perDimension: z.array(z.object({ dimension: z.string(), score: z.number() })).optional(),
 });
 
+const PersonalityNightlySchema = z.object({
+  windowEnd: z.string(),
+  completed: z.array(z.string()),
+});
+
 const PersonalityLivingSoulInput = z.object({ id: z.string().min(1) });
 const PersonalityLivingSoulOutput = z.object({
   core: z.string(),
@@ -362,6 +374,9 @@ const PersonalityLivingSoulOutput = z.object({
   /** Latest Personality-Judge alignment read from
    *  `.judge-history/state.json`. Omitted when no judge run is recorded. */
   judge: PersonalityJudgeSchema.optional(),
+  /** Latest nightly-pass status read from `.nightly-state.json`. Omitted when
+   *  no nightly pass has run (missing or malformed file). */
+  nightly: PersonalityNightlySchema.optional(),
 });
 
 const PersonalityProposeExpressionInput = z.object({ id: z.string().min(1) });

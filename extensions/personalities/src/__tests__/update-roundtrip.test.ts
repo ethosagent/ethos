@@ -196,6 +196,75 @@ describe('dreaming round-trip', () => {
     // buildDreamingConfig treats enable!=='true' as off → dreaming is undefined.
     expect(fresh.get('dream-toggle')?.dreaming?.enable).not.toBe(true);
   });
+
+  it('persists a full dreaming patch with cadence through update and re-load', async () => {
+    await seedPersonality('dream-cadence', 'name: DreamCadence\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('dream-cadence', {
+      dreaming: { enable: true, idleMinutes: 30, maxPerDay: 3 },
+    });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const config = fresh.get('dream-cadence');
+    expect(config?.dreaming?.enable).toBe(true);
+    expect(config?.dreaming?.idleMinutes).toBe(30);
+    expect(config?.dreaming?.maxPerDay).toBe(3);
+  });
+
+  it('a partial dreaming patch preserves sibling cadence fields', async () => {
+    await seedPersonality(
+      'dream-partial',
+      'name: DreamPartial\ndreaming.enable: true\ndreaming.idleMinutes: 45\ndreaming.maxPerDay: 2\n',
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    // Patch only maxPerDay — enable + idleMinutes must survive.
+    await registry.update('dream-partial', { dreaming: { maxPerDay: 5 } });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const config = fresh.get('dream-partial');
+    expect(config?.dreaming?.enable).toBe(true);
+    expect(config?.dreaming?.idleMinutes).toBe(45);
+    expect(config?.dreaming?.maxPerDay).toBe(5);
+  });
+});
+
+describe('skill_evolution round-trip', () => {
+  it('persists skill_evolution.model through update and re-load', async () => {
+    await seedPersonality('skill-model', 'name: SkillModel\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('skill-model', { skill_evolution: { model: 'x' } });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    expect(fresh.get('skill-model')?.skill_evolution?.model).toBe('x');
+  });
+
+  it('a skill_evolution.model patch preserves sibling fields', async () => {
+    await seedPersonality(
+      'skill-preserve',
+      'name: SkillPreserve\nskill_evolution.enabled: true\nskill_evolution.min_tool_calls: 5\nskill_evolution.cooldown_minutes: 15\n',
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('skill-preserve', { skill_evolution: { model: 'y' } });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const se = fresh.get('skill-preserve')?.skill_evolution;
+    expect(se?.model).toBe('y');
+    expect(se?.enabled).toBe(true);
+    expect(se?.min_tool_calls).toBe(5);
+    expect(se?.cooldown_minutes).toBe(15);
+  });
 });
 
 describe('governed-learning settings round-trip', () => {

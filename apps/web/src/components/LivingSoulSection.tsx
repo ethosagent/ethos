@@ -106,6 +106,29 @@ function AlignmentBlock({ judge }: { judge?: Judge }) {
   );
 }
 
+type Nightly = {
+  windowEnd: string;
+  completed: string[];
+};
+
+function NightlyLine({ nightly }: { nightly?: Nightly }) {
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <Typography.Text type="secondary" style={LABEL_STYLE}>
+        Nightly pass
+      </Typography.Text>
+      {!nightly ? (
+        <Typography.Text type="secondary">No nightly pass has run yet.</Typography.Text>
+      ) : (
+        <Typography.Text type="secondary" style={{ fontFamily: MONO, fontSize: 12 }}>
+          Last nightly pass: {nightly.windowEnd} · steps:{' '}
+          {nightly.completed.length > 0 ? nightly.completed.join(', ') : 'none'}
+        </Typography.Text>
+      )}
+    </div>
+  );
+}
+
 type Proposal = {
   currentExpression: string;
   newExpression: string;
@@ -233,7 +256,7 @@ export function LivingSoulSection({ personalityId }: { personalityId: string }) 
   }
   if (!data) return null;
 
-  const { expression, learningLog, judge } = data;
+  const { expression, learningLog, judge, nightly } = data;
 
   return (
     <div style={{ marginBottom: 32 }}>
@@ -269,6 +292,8 @@ export function LivingSoulSection({ personalityId }: { personalityId: string }) 
       </Typography.Text>
 
       <AlignmentBlock judge={judge} />
+
+      <NightlyLine nightly={nightly} />
 
       <div style={{ marginBottom: 20 }}>
         <Typography.Text type="secondary" style={LABEL_STYLE}>

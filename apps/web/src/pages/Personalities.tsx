@@ -1486,10 +1486,13 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
     fsReachRead: string[];
     fsReachWrite: string[];
     dreaming: boolean;
+    dreamingIdleMinutes: number;
+    dreamingMaxPerDay: number;
     evolutionApprovalMode: 'auto' | 'user';
     skillEvolutionEnabled: boolean;
     skillEvolutionMinToolCalls: number;
     skillEvolutionCooldownMinutes: number;
+    skillEvolutionModel: string;
     safetyApprovalMode: 'manual' | 'smart' | 'off';
     memoryProvider: string;
   }>();
@@ -1513,10 +1516,13 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
       fsReachRead: personality.fs_reach?.read ?? [],
       fsReachWrite: personality.fs_reach?.write ?? [],
       dreaming: personality.dreaming?.enable ?? false,
+      dreamingIdleMinutes: personality.dreaming?.idleMinutes ?? 60,
+      dreamingMaxPerDay: personality.dreaming?.maxPerDay ?? 1,
       evolutionApprovalMode: personality.evolution_approval_mode ?? 'user',
       skillEvolutionEnabled: personality.skill_evolution?.enabled ?? false,
       skillEvolutionMinToolCalls: personality.skill_evolution?.min_tool_calls ?? 3,
       skillEvolutionCooldownMinutes: personality.skill_evolution?.cooldown_minutes ?? 30,
+      skillEvolutionModel: personality.skill_evolution?.model ?? '',
       safetyApprovalMode: personality.safety?.approvalMode ?? 'manual',
       memoryProvider: personality.memory?.provider ?? 'markdown',
     });
@@ -1535,10 +1541,13 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
       fsReachRead: string[];
       fsReachWrite: string[];
       dreaming: boolean;
+      dreamingIdleMinutes: number;
+      dreamingMaxPerDay: number;
       evolutionApprovalMode: 'auto' | 'user';
       skillEvolutionEnabled: boolean;
       skillEvolutionMinToolCalls: number;
       skillEvolutionCooldownMinutes: number;
+      skillEvolutionModel: string;
       safetyApprovalMode: 'manual' | 'smart' | 'off';
       memoryProvider: string;
     }) => {
@@ -1560,12 +1569,17 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
         provider: values.provider || '',
         capabilities: values.capabilities,
         fs_reach: { read: values.fsReachRead, write: values.fsReachWrite },
-        dreaming: { enable: values.dreaming },
+        dreaming: {
+          enable: values.dreaming,
+          idleMinutes: values.dreamingIdleMinutes,
+          maxPerDay: values.dreamingMaxPerDay,
+        },
         evolution_approval_mode: values.evolutionApprovalMode,
         skill_evolution: {
           enabled: values.skillEvolutionEnabled,
           min_tool_calls: values.skillEvolutionMinToolCalls,
           cooldown_minutes: values.skillEvolutionCooldownMinutes,
+          ...(values.skillEvolutionModel ? { model: values.skillEvolutionModel } : {}),
         },
         safety: { approvalMode: values.safetyApprovalMode },
         memory: { provider: values.memoryProvider },
@@ -1598,10 +1612,13 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
           fsReachRead: values.fsReachRead ?? [],
           fsReachWrite: values.fsReachWrite ?? [],
           dreaming: values.dreaming ?? false,
+          dreamingIdleMinutes: values.dreamingIdleMinutes ?? 60,
+          dreamingMaxPerDay: values.dreamingMaxPerDay ?? 1,
           evolutionApprovalMode: values.evolutionApprovalMode ?? 'user',
           skillEvolutionEnabled: values.skillEvolutionEnabled ?? false,
           skillEvolutionMinToolCalls: values.skillEvolutionMinToolCalls ?? 3,
           skillEvolutionCooldownMinutes: values.skillEvolutionCooldownMinutes ?? 30,
+          skillEvolutionModel: values.skillEvolutionModel ?? '',
           safetyApprovalMode: values.safetyApprovalMode ?? 'manual',
           memoryProvider: values.memoryProvider ?? 'markdown',
         })
@@ -1682,7 +1699,7 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
       >
         <Select mode="tags" allowClear placeholder="add capability tags" tokenSeparators={[',']} />
       </Form.Item>
-      <Form.Item label="Dreaming" style={{ marginBottom: 16 }}>
+      <Form.Item label="Dreaming" style={{ marginBottom: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Form.Item name="dreaming" valuePropName="checked" noStyle>
             <Switch size="small" />
@@ -1691,6 +1708,28 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
             Periodic background memory consolidation for this personality.
           </Typography.Text>
         </div>
+      </Form.Item>
+      <Form.Item noStyle shouldUpdate={(prev, cur) => prev.dreaming !== cur.dreaming}>
+        {({ getFieldValue }) =>
+          getFieldValue('dreaming') ? (
+            <>
+              <Form.Item
+                label="Idle minutes"
+                name="dreamingIdleMinutes"
+                extra="How long idle before a background dream turn."
+              >
+                <InputNumber min={0} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="Max per day"
+                name="dreamingMaxPerDay"
+                extra="Cap on dream turns per rolling 24h."
+              >
+                <InputNumber min={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </>
+          ) : null
+        }
       </Form.Item>
       <Form.Item
         label="Approval mode"
@@ -1727,6 +1766,13 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
         extra="Minimum time between skill proposals to avoid noise."
       >
         <InputNumber min={0} step={5} style={{ width: '100%' }} />
+      </Form.Item>
+      <Form.Item
+        label="Model"
+        name="skillEvolutionModel"
+        extra="Model the skill evolver uses. Leave empty for the engine default."
+      >
+        <Input placeholder="engine default" />
       </Form.Item>
       <Form.Item
         label="Approval mode (safety)"

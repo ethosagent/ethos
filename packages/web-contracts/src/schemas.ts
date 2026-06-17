@@ -104,8 +104,14 @@ export const PersonalitySchema = z.object({
     })
     .nullable(),
   /** Idle-time dreaming state. Optional (omitted when unset) so the editor
-   *  can read the current toggle without affecting other surfaces. */
-  dreaming: z.object({ enable: z.boolean() }).optional(),
+   *  can read the current toggle and cadence without affecting other surfaces. */
+  dreaming: z
+    .object({
+      enable: z.boolean(),
+      idleMinutes: z.number().int().optional(),
+      maxPerDay: z.number().int().optional(),
+    })
+    .optional(),
   /** Governed-learning approval dial. Optional (omitted when unset) so the
    *  editor can read the current value to populate its form. */
   evolution_approval_mode: z.enum(['auto', 'user']).optional(),
@@ -116,6 +122,7 @@ export const PersonalitySchema = z.object({
       enabled: z.boolean().optional(),
       min_tool_calls: z.number().int().optional(),
       cooldown_minutes: z.number().int().optional(),
+      model: z.string().optional(),
     })
     .optional(),
   /** Per-personality safety dial. Optional (omitted when unset) so the editor

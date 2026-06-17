@@ -37,13 +37,13 @@ export const personalitiesRouter = {
   ),
 
   update: os.personalities.update.handler(async ({ input, context }) => {
-    // Exclude `mcp_tools` (an off-schema mcp.yaml sibling), `dreaming` (wire
-    // enable-only shape), and `memory` (wire `provider` is optional, the patch
-    // requires it) from the patch; everything else maps 1:1.
-    const { id, mcp_tools, dreaming, memory, ...rest } = input;
+    // Exclude `mcp_tools` (an off-schema mcp.yaml sibling) and `memory` (wire
+    // `provider` is optional, the patch requires it) from the patch; everything
+    // else maps 1:1. `dreaming` carries enable + optional cadence and is
+    // shallow-merged by the registry onto the existing block.
+    const { id, mcp_tools, memory, ...rest } = input;
     const result = await context.personalities.update(id, {
       ...rest,
-      ...(dreaming !== undefined ? { dreamingEnable: dreaming.enable } : {}),
       ...(memory?.provider !== undefined ? { memory: { provider: memory.provider } } : {}),
     });
     // Per-server MCP tool subsets are written after the config update. Ignored
