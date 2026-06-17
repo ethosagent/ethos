@@ -61,6 +61,10 @@ export interface CreateWebApiOptions {
   /** SQLite-backed session store, already initialised. Shared with ACP /
    *  gateway so the same DB rows back every surface. */
   sessionStore: SessionStore;
+  /** Lazy LLM factory for governed-learning drafts (Living Soul Expression
+   *  evolution, Soul split). Omitted in onboarding mode — those RPCs then
+   *  return NOT_CONFIGURED. */
+  personalitiesLlm?: () => Promise<import('@ethosagent/types').LLMProvider>;
   /** Memory provider for scoped read/write. Construct via
    *  `createMemoryProvider` from `@ethosagent/wiring`. */
   memoryProvider: MemoryProvider;
@@ -258,6 +262,8 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     library: skillsLibrary,
     secrets,
     mcpJsonStore: sharedMcpJsonStore,
+    ...(opts.personalitiesLlm ? { llm: opts.personalitiesLlm } : {}),
+    sessions: opts.sessionStore,
   });
   const configService = new ConfigService({ config: configRepo, secrets });
   const onboardingService = new OnboardingService({

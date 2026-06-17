@@ -6,9 +6,10 @@ import {
   SYSTEM_PERSONALITY_IDS,
   type UpdatePersonalityPatch,
 } from '@ethosagent/personalities';
+import { draftExpressionUpdate, draftSoulSplit } from '@ethosagent/skill-evolver';
 import type { PersonalitySkillRecord, SkillsLibrary } from '@ethosagent/skills';
 import { type McpJsonStore, mcpTokenSecretRef } from '@ethosagent/tools-mcp';
-import { EthosError } from '@ethosagent/types';
+import { EthosError, type LearningLogEntry } from '@ethosagent/types';
 import type { McpPolicy, Personality, PersonalitySkill } from '@ethosagent/web-contracts';
 
 // Personalities service. Calls into FilePersonalityRegistry for the
@@ -21,6 +22,10 @@ export interface PersonalitiesServiceOptions {
   library: SkillsLibrary;
   secrets?: import('@ethosagent/types').SecretsResolver;
   mcpJsonStore?: McpJsonStore;
+  /** Lazy LLM factory — drafts Expression updates and Soul splits (Phase 3a). */
+  llm?: () => Promise<import('@ethosagent/types').LLMProvider>;
+  /** Session store — supplies recent-interaction evidence for Expression drafts. */
+  sessions?: import('@ethosagent/types').SessionStore;
 }
 
 export class PersonalitiesService {
@@ -193,6 +198,119 @@ export class PersonalitiesService {
     await scoped.delete(mcpTokenSecretRef(server));
   }
 
+  // ---------------------------------------------------------------------------
+  // Governed learning — Living Soul Expression evolution (Phase 3a)
+  // ---------------------------------------------------------------------------
+
+  async livingSoul(
+    id: string,
+  ): Promise<{ core: string; expression: string; learningLog: LearningLogEntry[] }> {
+    return this.opts.personalities.readLivingSoul(id);
+  }
+
+  async proposeExpression(id: string): Promise<{
+    currentExpression: string;
+    newExpression: string;
+    rationale: string;
+    evidence: string;
+  }> {
+    if (!this.opts.llm) throw llmNotConfigured();
+    const evidence = await this.gatherEvidence(id);
+    const soul = await this.opts.personalities.readLivingSoul(id);
+    const llm = await this.opts.llm();
+    const draft = await draftExpressionUpdate(
+      { core: soul.core, currentExpression: soul.expression, evidence },
+      llm,
+    );
+    return {
+      currentExpression: soul.expression,
+      newExpression: draft.newExpression,
+      rationale: draft.rationale,
+      evidence,
+    };
+  }
+
+  async applyExpression(
+    id: string,
+    newExpression: string,
+    summary: string,
+    evidenceRef: string,
+  ): Promise<{ revisionId: string }> {
+    const { entry } = await this.opts.personalities.evolveExpression(id, newExpression, {
+      summary,
+      evidenceRef,
+    });
+    return { revisionId: entry.revisionId };
+  }
+
+  async revertExpression(id: string): Promise<{ ok: true; revertedTo: string }> {
+    const soul = await this.opts.personalities.readLivingSoul(id);
+    if (soul.learningLog.length === 0) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: 'Nothing to revert',
+        action: 'Evolve the Expression at least once before reverting.',
+      });
+    }
+    const last = soul.learningLog[soul.learningLog.length - 1];
+    if (!last) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: 'Nothing to revert',
+        action: 'Evolve the Expression at least once before reverting.',
+      });
+    }
+    await this.opts.personalities.revertExpression(id, last.prevExpressionRef);
+    return { ok: true, revertedTo: last.prevExpressionRef };
+  }
+
+  async proposeSoulSplit(
+    soulMd: string,
+  ): Promise<{ core: string; expression: string; rationale: string }> {
+    if (!this.opts.llm) throw llmNotConfigured();
+    const llm = await this.opts.llm();
+    return draftSoulSplit(soulMd, llm);
+  }
+
+  /**
+   * Build a newest-first digest of recent session interactions for a
+   * personality, capped at 20 messages / 4000 chars. Mirrors the CLI's
+   * `ethos personality evolve` evidence logic. Returns '' when no session
+   * store is wired.
+   */
+  private async gatherEvidence(id: string): Promise<string> {
+    const store = this.opts.sessions;
+    if (!store) return '';
+    let sessions = await store.listSessions({ personalityId: id });
+    if (sessions.length === 0) sessions = await store.listSessions();
+    if (sessions.length === 0) return '';
+    sessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+
+    const MAX_MSGS = 20;
+    const MAX_CHARS = 4000;
+    const digestLines: string[] = [];
+    let totalChars = 0;
+    let capped = false;
+    for (const s of sessions) {
+      if (capped) break;
+      const msgs = await store.getMessages(s.id, { limit: 20 });
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (!m) continue;
+        if (m.role !== 'user' && m.role !== 'assistant') continue;
+        const line = `${m.role}: ${oneLine(m.content)}`;
+        if (digestLines.length >= MAX_MSGS || totalChars + line.length > MAX_CHARS) {
+          digestLines.push('… [evidence truncated]');
+          capped = true;
+          break;
+        }
+        digestLines.push(line);
+        totalChars += line.length;
+      }
+    }
+    return digestLines.join('\n');
+  }
+
   private requirePersonality(id: string): void {
     if (!this.opts.personalities.describe(id)) {
       throw new EthosError({
@@ -234,6 +352,19 @@ function toWire(d: DescribedPersonality): Personality {
     builtin: d.builtin,
     version: 1,
   };
+}
+
+function oneLine(content: string): string {
+  const collapsed = content.replace(/\s+/g, ' ').trim();
+  return collapsed.length > 400 ? `${collapsed.slice(0, 400)}…` : collapsed;
+}
+
+function llmNotConfigured(): EthosError {
+  return new EthosError({
+    code: 'NOT_CONFIGURED',
+    cause: 'LLM not configured for this server',
+    action: 'Start the server with a provider configured in ~/.ethos/config.yaml.',
+  });
 }
 
 function notFound(id: string): EthosError {

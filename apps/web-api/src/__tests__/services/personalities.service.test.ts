@@ -2,9 +2,29 @@ import { join } from 'node:path';
 import { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { SkillsLibrary } from '@ethosagent/skills';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
+import type { CompletionChunk, LLMProvider, Message } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { PersonalitiesService } from '../../services/personalities.service';
 import { makeStubPersonalityRegistry } from '../test-helpers';
+
+function stubLLM(response: string): LLMProvider {
+  return {
+    name: 'mock',
+    model: 'mock',
+    maxContextTokens: 100_000,
+    supportsCaching: false,
+    supportsThinking: false,
+    complete(_messages: Message[], _tools: unknown[]): AsyncIterable<CompletionChunk> {
+      return (async function* () {
+        yield { type: 'text_delta', text: response };
+        yield { type: 'done', finishReason: 'end_turn' };
+      })();
+    },
+    async countTokens() {
+      return 0;
+    },
+  };
+}
 
 // Service tests cover both the repository (via real SOUL.md reads from
 // InMemoryStorage) and the wire-shape mapping.
@@ -219,6 +239,89 @@ describe('PersonalitiesService', () => {
       const { mcpPolicy } = await service.get('agent');
       expect(mcpPolicy?.servers?.linear?.tools).toEqual(['list_issues']);
       expect(mcpPolicy?.servers?.linear?.reject_args?.save_issue?.status).toEqual(['Done']);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Governed learning — Living Soul Expression evolution (Phase 3a)
+  // -------------------------------------------------------------------------
+  describe('governed learning', () => {
+    async function makeSoulService(opts: {
+      llm?: LLMProvider;
+      soulMd?: string;
+    }): Promise<{ service: PersonalitiesService; storage: InMemoryStorage }> {
+      const storage = new InMemoryStorage();
+      const dir = join(DATA, 'personalities', 'agent');
+      await storage.mkdir(dir);
+      await storage.write(join(dir, 'config.yaml'), 'name: Agent\n');
+      await storage.write(
+        join(dir, 'SOUL.md'),
+        opts.soulMd ?? '# Core\nI am the agent.\n\n# Expression\nI speak plainly.\n',
+      );
+      const registry = new FilePersonalityRegistry(storage, DATA);
+      await registry.loadFromDirectory(join(DATA, 'personalities'));
+      const library = new SkillsLibrary({ dataDir: DATA, storage });
+      const service = new PersonalitiesService({
+        personalities: registry,
+        library,
+        ...(opts.llm ? { llm: async () => opts.llm as LLMProvider } : {}),
+      });
+      return { service, storage };
+    }
+
+    it('proposeSoulSplit parses a canned CORE/EXPRESSION/RATIONALE split', async () => {
+      const llm = stubLLM(
+        'CORE:\nI am the agent.\n\nEXPRESSION:\nI speak plainly.\n\nRATIONALE: clean split.',
+      );
+      const { service } = await makeSoulService({ llm });
+      const result = await service.proposeSoulSplit('I am the agent. I speak plainly.');
+      expect(result.core).toContain('I am the agent.');
+      expect(result.expression).toContain('I speak plainly.');
+      expect(result.rationale).toBe('clean split.');
+    });
+
+    it('proposeSoulSplit throws NOT_CONFIGURED when no llm is configured', async () => {
+      const { service } = await makeSoulService({});
+      await expect(service.proposeSoulSplit('whatever')).rejects.toMatchObject({
+        code: 'NOT_CONFIGURED',
+      });
+    });
+
+    it('proposeExpression throws NOT_CONFIGURED when no llm is configured', async () => {
+      const { service } = await makeSoulService({});
+      await expect(service.proposeExpression('agent')).rejects.toMatchObject({
+        code: 'NOT_CONFIGURED',
+      });
+    });
+
+    it('applyExpression writes a revision and returns its id', async () => {
+      const { service } = await makeSoulService({});
+      const { revisionId } = await service.applyExpression(
+        'agent',
+        'I speak even more plainly.\n',
+        'tighten voice',
+        'sessions:test',
+      );
+      expect(revisionId).toBe('expr-rev-1');
+      const soul = await service.livingSoul('agent');
+      expect(soul.expression).toContain('I speak even more plainly.');
+      expect(soul.learningLog).toHaveLength(1);
+    });
+
+    it('revertExpression on an empty learning log throws INVALID_INPUT', async () => {
+      const { service } = await makeSoulService({});
+      await expect(service.revertExpression('agent')).rejects.toMatchObject({
+        code: 'INVALID_INPUT',
+      });
+    });
+
+    it('revertExpression restores the prior snapshot after an apply', async () => {
+      const { service } = await makeSoulService({});
+      await service.applyExpression('agent', 'changed voice.\n', 'summary', 'sessions:test');
+      const result = await service.revertExpression('agent');
+      expect(result.ok).toBe(true);
+      const soul = await service.livingSoul('agent');
+      expect(soul.expression).toContain('I speak plainly.');
     });
   });
 });

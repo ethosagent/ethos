@@ -1,8 +1,11 @@
 import { os } from './context';
+import { personalitiesLearningRouter } from './personalities-learning';
 
 // Personalities namespace — list/get/create/update/delete/duplicate
 // plus per-personality skills CRUD + import-from-global. Handlers stay
-// thin; mutations route through PersonalitiesService.
+// thin; mutations route through PersonalitiesService. Governed-learning
+// procedures (Living Soul Expression evolution) live in the sibling
+// `personalities-learning.ts` and are spread in below.
 
 export const personalitiesRouter = {
   list: os.personalities.list.handler(({ context }) => context.personalities.list()),
@@ -112,4 +115,5 @@ export const personalitiesRouter = {
     await context.personalities.mcpDeleteToken(input.personalityId, input.server);
     return { ok: true as const };
   }),
+  ...personalitiesLearningRouter,
 };

@@ -393,6 +393,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const created = createWebApi({
     dataDir: dir,
     sessionStore: session,
+    personalitiesLlm: () => createLLM(config),
     memoryProvider: createMemoryProvider({ dataDir: dir }),
     identityMap,
     agentLoop: loop,
