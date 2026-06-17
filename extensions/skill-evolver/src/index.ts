@@ -36,6 +36,7 @@ export {
   renderNewSkillPrompt,
   renderRewritePrompt,
 } from './prompts';
+export { draftSoulSplit, type SoulSplitProposal } from './soul-split';
 export { createSkillProposeTool, createSkillReadTool } from './tools';
 export type {
   EvalRecord,

@@ -315,6 +315,50 @@ const PersonalityMcpDeleteTokenInput = z.object({
 });
 const PersonalityMcpDeleteTokenOutput = z.object({ ok: z.literal(true) });
 
+const LearningLogEntrySchema = z.object({
+  revisionId: z.string(),
+  at: z.string(),
+  summary: z.string(),
+  evidenceRef: z.string(),
+  prevExpressionRef: z.string(),
+});
+
+const PersonalityLivingSoulInput = z.object({ id: z.string().min(1) });
+const PersonalityLivingSoulOutput = z.object({
+  core: z.string(),
+  expression: z.string(),
+  learningLog: z.array(LearningLogEntrySchema),
+});
+
+const PersonalityProposeExpressionInput = z.object({ id: z.string().min(1) });
+const PersonalityProposeExpressionOutput = z.object({
+  currentExpression: z.string(),
+  newExpression: z.string(),
+  rationale: z.string(),
+  evidence: z.string(),
+});
+
+const PersonalityApplyExpressionInput = z.object({
+  id: z.string().min(1),
+  newExpression: z.string(),
+  summary: z.string(),
+  evidenceRef: z.string(),
+});
+const PersonalityApplyExpressionOutput = z.object({ revisionId: z.string() });
+
+const PersonalityRevertExpressionInput = z.object({ id: z.string().min(1) });
+const PersonalityRevertExpressionOutput = z.object({
+  ok: z.literal(true),
+  revertedTo: z.string(),
+});
+
+const PersonalityProposeSoulSplitInput = z.object({ soulMd: z.string() });
+const PersonalityProposeSoulSplitOutput = z.object({
+  core: z.string(),
+  expression: z.string(),
+  rationale: z.string(),
+});
+
 /** @stable v1 */
 const personalities = {
   list: oc.input(PersonalityListInput).output(PersonalityListOutput),
@@ -332,6 +376,19 @@ const personalities = {
   skillsImportGlobal: oc.input(PersonalitySkillsImportInput).output(PersonalitySkillsImportOutput),
   mcpSetToken: oc.input(PersonalityMcpSetTokenInput).output(PersonalityMcpSetTokenOutput),
   mcpDeleteToken: oc.input(PersonalityMcpDeleteTokenInput).output(PersonalityMcpDeleteTokenOutput),
+  livingSoul: oc.input(PersonalityLivingSoulInput).output(PersonalityLivingSoulOutput),
+  proposeExpression: oc
+    .input(PersonalityProposeExpressionInput)
+    .output(PersonalityProposeExpressionOutput),
+  applyExpression: oc
+    .input(PersonalityApplyExpressionInput)
+    .output(PersonalityApplyExpressionOutput),
+  revertExpression: oc
+    .input(PersonalityRevertExpressionInput)
+    .output(PersonalityRevertExpressionOutput),
+  proposeSoulSplit: oc
+    .input(PersonalityProposeSoulSplitInput)
+    .output(PersonalityProposeSoulSplitOutput),
 };
 
 // ---------------------------------------------------------------------------
