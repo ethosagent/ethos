@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { PersonalityConfig } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import { buildWeeklyDigest, isoWeek, isoWeekLabel } from '../commands/digest';
+import { buildWeeklyDigest, isoWeek, isoWeekLabel } from '../index';
 
 const DATA_DIR = '/tmp/ethos-digest-test';
 

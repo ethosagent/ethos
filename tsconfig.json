@@ -85,6 +85,7 @@
       "@ethosagent/personality-judge": ["./extensions/personality-judge/src"],
       "@ethosagent/memory-vector": ["./extensions/memory-vector/src"],
       "@ethosagent/nightly-loop": ["./extensions/nightly-loop/src"],
+      "@ethosagent/digest": ["./extensions/digest/src"],
       "@ethosagent/skill-evolver": ["./extensions/skill-evolver/src"],
       "@ethosagent/claw-migrate": ["./extensions/claw-migrate/src"],
       "@ethosagent/secrets-aws": ["./extensions/secrets-aws/src"],

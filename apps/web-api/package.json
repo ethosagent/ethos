@@ -17,6 +17,7 @@
     "@ethosagent/agent-bridge": "workspace:*",
     "@ethosagent/agent-mesh": "workspace:*",
     "@ethosagent/core": "workspace:*",
+    "@ethosagent/digest": "workspace:*",
     "@ethosagent/batch-runner": "workspace:*",
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/eval-harness": "workspace:*",

@@ -636,13 +636,44 @@ function formatDigestDate(iso: string): string {
 }
 
 function LatestDigestSection() {
+  const qc = useQueryClient();
+  const { notification } = AntApp.useApp();
   const digestQuery = useQuery({
     queryKey: ['digest', 'latest'],
     queryFn: () => rpc.digest.latest(),
   });
 
+  const generateMut = useMutation({
+    mutationFn: () => rpc.digest.generate(),
+    onSuccess: (data) => {
+      if (data === null) {
+        notification.info({
+          message: 'No user personalities to build a digest for.',
+          placement: 'topRight',
+        });
+        return;
+      }
+      qc.setQueryData(['digest', 'latest'], data);
+      qc.invalidateQueries({ queryKey: ['digest', 'latest'] });
+    },
+    onError: (err) =>
+      notification.error({
+        message: 'Failed to generate digest',
+        description: (err as Error).message,
+      }),
+  });
+
   return (
-    <Card title="Latest digest" size="small" style={{ maxWidth: 640, marginTop: 32 }}>
+    <Card
+      title="Latest digest"
+      size="small"
+      style={{ maxWidth: 640, marginTop: 32 }}
+      extra={
+        <Button size="small" loading={generateMut.isPending} onClick={() => generateMut.mutate()}>
+          Generate now
+        </Button>
+      }
+    >
       {digestQuery.isLoading ? (
         <div style={{ display: 'grid', placeItems: 'center', height: 80 }}>
           <Spin />

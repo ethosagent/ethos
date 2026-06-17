@@ -1707,13 +1707,15 @@ const goals = {
 //
 // The weekly digest writes Markdown to `~/.ethos/digests/<ISO-week>.md`.
 // `digest.latest` returns the newest file (or null when none exist).
-// Generation runs out-of-band (weekly cron / `ethos digest run`) — a
-// "generate now" action is deferred.
+// `digest.generate` builds + writes the current ISO week's digest on demand
+// (the same generator the weekly cron / `ethos digest run` drives), returning
+// it — or null when there are no user personalities to report on.
 // ---------------------------------------------------------------------------
 
 /** @experimental */
 const digest = {
   latest: oc.output(DigestLatestSchema.nullable()),
+  generate: oc.output(DigestLatestSchema.nullable()),
 };
 
 // ---------------------------------------------------------------------------

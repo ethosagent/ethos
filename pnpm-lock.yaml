@@ -170,6 +170,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/digest':
+        specifier: workspace:*
+        version: link:../../extensions/digest
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -453,6 +456,9 @@ importers:
       '@ethosagent/cron':
         specifier: workspace:*
         version: link:../../extensions/cron
+      '@ethosagent/digest':
+        specifier: workspace:*
+        version: link:../../extensions/digest
       '@ethosagent/eval-harness':
         specifier: workspace:*
         version: link:../../extensions/eval-harness
@@ -739,6 +745,16 @@ importers:
       croner:
         specifier: ^9.0.0
         version: 9.1.0
+
+  extensions/digest:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
 
   extensions/eval-harness:
     dependencies:

@@ -295,7 +295,11 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   });
   const kanbanService = new KanbanService();
   const apiKeysService = new ApiKeysService(opts.apiKeys ?? null);
-  const digestService = new DigestService({ storage, dataDir: opts.dataDir });
+  const digestService = new DigestService({
+    storage,
+    dataDir: opts.dataDir,
+    personalities: opts.personalities,
+  });
   const debugService = new DebugService({ sessionStore: opts.sessionStore, agentLoop });
   // Project-level plugins (`<cwd>/.ethos/plugins/`) are out of scope
   // for v1; user-level only is the standard install path. Threading
