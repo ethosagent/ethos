@@ -30,6 +30,7 @@ import {
   type MessagingSendFn,
 } from '@ethosagent/wiring';
 import Database from 'better-sqlite3';
+import { Cron } from 'croner';
 import { ApprovalCoordinator, createSlackApprovalHook } from '../approval-coordinator';
 import {
   applyPlatformShim,
@@ -682,6 +683,37 @@ export async function runGatewayStart(): Promise<void> {
   scheduler.start();
   console.log(`${c.dim}Cron scheduler running (checks every 60s)${c.reset}`);
 
+  // Governed-learning nightly pass (Phase 3c E). Default-off: only when an
+  // operator sets `nightlyPass.enabled: true` do we create a recurring job;
+  // the absent/disabled path adds zero timers. This is now the canonical
+  // nightly mechanism — the dormant `DreamExecutor`
+  // (extensions/gateway/src/dream-executor.ts) it supersedes is unwired and
+  // kept for one release.
+  let nightlyJob: Cron | null = null;
+  if (config.nightlyPass?.enabled) {
+    const expr = config.nightlyPass.cron ?? '0 3 * * *';
+    try {
+      nightlyJob = new Cron(expr, { protect: true }, async () => {
+        try {
+          // Lazy import: the nightly orchestrator pulls in the heavy
+          // skill-evolver / judge graph; only load it when a pass fires.
+          const { runNightlyOnce } = await import('./nightly');
+          await runNightlyOnce(config);
+        } catch (e) {
+          console.error(
+            `[gateway] nightly pass failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      });
+    } catch (e) {
+      console.error(
+        `${c.yellow}⚠${c.reset} invalid nightlyPass.cron "${expr}" — nightly pass disabled: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
   // Start all adapters
   await Promise.all(adapters.map((a) => a.start()));
 
@@ -760,6 +792,7 @@ export async function runGatewayStart(): Promise<void> {
     clearInterval(pruneTimer);
     clearInterval(heartbeatTimer);
     scheduler.stop();
+    if (nightlyJob) nightlyJob.stop();
     await storage.remove(gatewayHealthPath()).catch(() => {});
     await gateway.shutdown({
       notify:

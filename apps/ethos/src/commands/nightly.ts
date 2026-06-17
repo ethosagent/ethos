@@ -188,19 +188,66 @@ function buildDeps(args: {
   };
 }
 
+// Reusable entry shared by the `ethos nightly` CLI command and the
+// serve/gateway schedulers. Builds the real per-personality dependencies and
+// runs the pass for one id (`opts.id`) or every user personality. Each
+// personality's pass is wrapped so one failure prints and the run continues.
+export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }): Promise<void> {
+  const id = opts?.id;
+  const { createPersonalityRegistry } = await import('@ethosagent/personalities');
+  const { ethosDir } = await import('../config');
+  const { createMemoryProvider } = await import('@ethosagent/wiring');
+
+  const storage = getStorage();
+  const dir = ethosDir();
+  const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: dir });
+  await reg.loadFromDirectory(join(dir, 'personalities'));
+
+  // Resolve targets: the given id, or all user (mutable, non-builtin) ones.
+  let targets: string[];
+  if (id) {
+    const described = reg.describe(id);
+    if (!described) {
+      console.error(`Unknown personality: ${id}`);
+      console.error('Run `ethos personality list` to see available ids.');
+      process.exit(1);
+    }
+    targets = [id];
+  } else {
+    targets = reg
+      .describeAll()
+      .filter((d) => !d.builtin)
+      .map((d) => d.config.id);
+    if (targets.length === 0) {
+      console.log('No user personalities to run the nightly pass for.');
+      return;
+    }
+  }
+
+  const llm = await createLLM(config);
+  const memory = createMemoryProvider({ dataDir: dir });
+  const deps = buildDeps({ config, ethosDir: dir, reg, llm, memory });
+
+  for (const target of targets) {
+    try {
+      const result = await runNightlyPass(target, deps);
+      console.log(`\n=== Nightly pass: ${target} (window ${result.windowEnd}) ===`);
+      for (const step of result.steps) {
+        console.log(`  ${step.step.padEnd(12)} ${step.status.padEnd(8)} ${step.detail}`);
+      }
+    } catch (err) {
+      const e = toEthosError(err);
+      console.error(`\n✗ Nightly pass failed for ${target}: ${e.cause}`);
+    }
+  }
+}
+
 export async function runNightly(argv: string[]): Promise<void> {
   const id = argv.find((a) => !a.startsWith('-'));
 
   try {
-    const { createPersonalityRegistry } = await import('@ethosagent/personalities');
-    const { ethosDir, readConfig } = await import('../config');
+    const { readConfig } = await import('../config');
     const { getSecretsResolver } = await import('../wiring');
-    const { createMemoryProvider } = await import('@ethosagent/wiring');
-
-    const storage = getStorage();
-    const dir = ethosDir();
-    const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: dir });
-    await reg.loadFromDirectory(join(dir, 'personalities'));
 
     const config = await readConfig(getStorage(), await getSecretsResolver());
     if (!config) {
@@ -208,43 +255,7 @@ export async function runNightly(argv: string[]): Promise<void> {
       process.exit(1);
     }
 
-    // Resolve targets: the given id, or all user (mutable, non-builtin) ones.
-    let targets: string[];
-    if (id) {
-      const described = reg.describe(id);
-      if (!described) {
-        console.error(`Unknown personality: ${id}`);
-        console.error('Run `ethos personality list` to see available ids.');
-        process.exit(1);
-      }
-      targets = [id];
-    } else {
-      targets = reg
-        .describeAll()
-        .filter((d) => !d.builtin)
-        .map((d) => d.config.id);
-      if (targets.length === 0) {
-        console.log('No user personalities to run the nightly pass for.');
-        return;
-      }
-    }
-
-    const llm = await createLLM(config);
-    const memory = createMemoryProvider({ dataDir: dir });
-    const deps = buildDeps({ config, ethosDir: dir, reg, llm, memory });
-
-    for (const target of targets) {
-      try {
-        const result = await runNightlyPass(target, deps);
-        console.log(`\n=== Nightly pass: ${target} (window ${result.windowEnd}) ===`);
-        for (const step of result.steps) {
-          console.log(`  ${step.step.padEnd(12)} ${step.status.padEnd(8)} ${step.detail}`);
-        }
-      } catch (err) {
-        const e = toEthosError(err);
-        console.error(`\n✗ Nightly pass failed for ${target}: ${e.cause}`);
-      }
-    }
+    await runNightlyOnce(config, id ? { id } : {});
   } catch (err) {
     surface(err);
   }

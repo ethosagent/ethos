@@ -195,3 +195,46 @@ describe('writeConfig round-trip — previously dropped fields', () => {
     });
   });
 });
+
+// Phase 3c E — nightlyPass scheduler config block.
+describe('nightlyPass config parsing', () => {
+  async function load(yaml: string) {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(join(ethosDir(), 'config.yaml'), yaml);
+    return readRawConfig(storage);
+  }
+
+  const base = ['provider: anthropic', 'model: claude-opus-4-7', 'apiKey: sk', 'personality: p'];
+
+  it('is undefined when absent (default-off)', async () => {
+    const cfg = await load(base.join('\n'));
+    expect(cfg?.nightlyPass).toBeUndefined();
+  });
+
+  it('parses enabled and cron', async () => {
+    const cfg = await load(
+      [...base, 'nightlyPass.enabled: true', 'nightlyPass.cron: 0 4 * * *'].join('\n'),
+    );
+    expect(cfg?.nightlyPass).toEqual({ enabled: true, cron: '0 4 * * *' });
+  });
+
+  it('parses enabled: false', async () => {
+    const cfg = await load([...base, 'nightlyPass.enabled: false'].join('\n'));
+    expect(cfg?.nightlyPass).toEqual({ enabled: false });
+  });
+
+  it('round-trips through writeConfig', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await writeConfig(storage, {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      apiKey: 'sk-test',
+      personality: 'researcher',
+      nightlyPass: { enabled: true, cron: '0 3 * * *' },
+    });
+    const roundTripped = await readRawConfig(storage);
+    expect(roundTripped?.nightlyPass).toEqual({ enabled: true, cron: '0 3 * * *' });
+  });
+});

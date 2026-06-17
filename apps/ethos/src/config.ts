@@ -464,6 +464,15 @@ export interface EthosConfig {
    * default false. Config key: admin.enabled
    */
   admin?: { enabled?: boolean };
+  /**
+   * Governed-learning nightly pass scheduler (Phase 3c E). Default-off: when
+   * absent or `enabled !== true`, no timer is created and behavior is
+   * unchanged. When enabled, `ethos serve` / `ethos gateway start` fire the
+   * nightly pass on `cron` (default `0 3 * * *`). Config keys:
+   *   nightlyPass.enabled: true
+   *   nightlyPass.cron: 0 3 * * *
+   */
+  nightlyPass?: { enabled?: boolean; cron?: string };
 }
 
 export function ethosDir(): string {
@@ -685,6 +694,11 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   if (config.pluginsAutoInstall !== undefined)
     lines.push(`plugins.auto_install: ${config.pluginsAutoInstall}`);
   if (config.admin?.enabled !== undefined) lines.push(`admin.enabled: ${config.admin.enabled}`);
+  if (config.nightlyPass) {
+    if (config.nightlyPass.enabled !== undefined)
+      lines.push(`nightlyPass.enabled: ${config.nightlyPass.enabled}`);
+    if (config.nightlyPass.cron) lines.push(`nightlyPass.cron: ${config.nightlyPass.cron}`);
+  }
   await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`, { mode: 0o600 });
 }
 
@@ -966,6 +980,12 @@ function parseConfigYaml(src: string): EthosConfig {
       kv['admin.enabled'] = adm[1].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // nightlyPass.<field>: <value>
+    const np = line.match(/^nightlyPass\.(\w+):\s*(.+)$/);
+    if (np) {
+      kv[`nightlyPass.${np[1]}`] = np[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     const m = line.match(/^(\w+):\s*(.+)$/);
     if (m) kv[m[1].trim()] = m[2].trim().replace(/^["']|["']$/g, '');
   }
@@ -1145,6 +1165,15 @@ function parseConfigYaml(src: string): EthosConfig {
     pluginsAutoInstall,
     admin:
       kv['admin.enabled'] !== undefined ? { enabled: kv['admin.enabled'] === 'true' } : undefined,
+    nightlyPass:
+      kv['nightlyPass.enabled'] !== undefined || kv['nightlyPass.cron'] !== undefined
+        ? {
+            ...(kv['nightlyPass.enabled'] !== undefined
+              ? { enabled: kv['nightlyPass.enabled'] === 'true' }
+              : {}),
+            ...(kv['nightlyPass.cron'] ? { cron: kv['nightlyPass.cron'] } : {}),
+          }
+        : undefined,
   };
   // Stash parse errors so the strict loader can surface them at boot.
   // readRawConfig (used by CLI commands that don't gateway-boot) ignores them

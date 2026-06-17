@@ -18,6 +18,7 @@ import {
   createSessionStore,
   IdentityMap,
 } from '@ethosagent/wiring';
+import { Cron } from 'croner';
 import { type EthosConfig, ethosDir, readConfig } from '../config';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
@@ -383,6 +384,38 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // `chatService` to the value returned by createWebApi below.
   if (cronScheduler) cronScheduler.start();
 
+  // Governed-learning nightly pass (Phase 3c E). Default-off: only when an
+  // operator sets `nightlyPass.enabled: true` do we create a recurring job;
+  // the absent/disabled path adds zero timers. This is now the canonical
+  // nightly mechanism — the dormant `DreamExecutor`
+  // (extensions/gateway/src/dream-executor.ts) it supersedes is unwired and
+  // kept for one release.
+  let nightlyJob: Cron | null = null;
+  if (config.nightlyPass?.enabled) {
+    const expr = config.nightlyPass.cron ?? '0 3 * * *';
+    try {
+      const cfg = config;
+      nightlyJob = new Cron(expr, { protect: true }, async () => {
+        try {
+          // Lazy import: the nightly orchestrator pulls in the heavy
+          // skill-evolver / judge graph; only load it when a pass fires.
+          const { runNightlyOnce } = await import('./nightly');
+          await runNightlyOnce(cfg);
+        } catch (e) {
+          console.error(
+            `[serve] nightly pass failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      });
+    } catch (e) {
+      console.error(
+        `[serve] invalid nightlyPass.cron "${expr}" — nightly pass disabled: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
   // OpenAI-compat surface (F1+F2). Shares sessions.db so `ethos api-key`
   // and `ethos serve` see the same rows.
   const apiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
@@ -460,6 +493,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     stopHeartbeat();
     await mesh.unregister(agentId);
     if (cronScheduler) cronScheduler.stop();
+    if (nightlyJob) nightlyJob.stop();
     if (webShutdown) await webShutdown();
     process.exit(0);
   };
