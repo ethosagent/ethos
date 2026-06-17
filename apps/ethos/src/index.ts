@@ -58,7 +58,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | dashboard | status | run-all | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | nightly | plugin | skills | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive | systemd-unit | usage] [--version | --help]';
+  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | dashboard | status | run-all | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | nightly | digest | plugin | skills | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive | systemd-unit | usage] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -717,6 +717,12 @@ try {
       } else {
         console.log('Usage: ethos nightly run [<id>]');
       }
+      break;
+    }
+
+    case 'digest': {
+      const { runDigest } = await import('./commands/digest');
+      await runDigest(args.slice(1));
       break;
     }
 

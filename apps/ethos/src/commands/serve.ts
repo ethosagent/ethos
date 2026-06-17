@@ -416,6 +416,33 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     }
   }
 
+  // Weekly governed-learning digest (Phase 3e). Default-off: only when an
+  // operator sets `weeklyDigest.enabled: true` do we create a recurring job;
+  // the absent/disabled path adds zero timers.
+  let digestJob: Cron | null = null;
+  if (config.weeklyDigest?.enabled) {
+    const expr = config.weeklyDigest.cron ?? '0 9 * * 1';
+    try {
+      const cfg = config;
+      digestJob = new Cron(expr, { protect: true }, async () => {
+        try {
+          const { runDigestOnce } = await import('./digest');
+          await runDigestOnce(cfg, { email: !!cfg.weeklyDigest?.recipients?.length });
+        } catch (e) {
+          console.error(
+            `[serve] weekly digest failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      });
+    } catch (e) {
+      console.error(
+        `[serve] invalid weeklyDigest.cron "${expr}" — weekly digest disabled: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
   // OpenAI-compat surface (F1+F2). Shares sessions.db so `ethos api-key`
   // and `ethos serve` see the same rows.
   const apiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
@@ -494,6 +521,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     await mesh.unregister(agentId);
     if (cronScheduler) cronScheduler.stop();
     if (nightlyJob) nightlyJob.stop();
+    if (digestJob) digestJob.stop();
     if (webShutdown) await webShutdown();
     process.exit(0);
   };

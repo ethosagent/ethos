@@ -714,6 +714,32 @@ export async function runGatewayStart(): Promise<void> {
     }
   }
 
+  // Weekly governed-learning digest (Phase 3e). Default-off: only when an
+  // operator sets `weeklyDigest.enabled: true` do we create a recurring job;
+  // the absent/disabled path adds zero timers.
+  let digestJob: Cron | null = null;
+  if (config.weeklyDigest?.enabled) {
+    const expr = config.weeklyDigest.cron ?? '0 9 * * 1';
+    try {
+      digestJob = new Cron(expr, { protect: true }, async () => {
+        try {
+          const { runDigestOnce } = await import('./digest');
+          await runDigestOnce(config, { email: !!config.weeklyDigest?.recipients?.length });
+        } catch (e) {
+          console.error(
+            `[gateway] weekly digest failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      });
+    } catch (e) {
+      console.error(
+        `${c.yellow}⚠${c.reset} invalid weeklyDigest.cron "${expr}" — weekly digest disabled: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
   // Start all adapters
   await Promise.all(adapters.map((a) => a.start()));
 
@@ -793,6 +819,7 @@ export async function runGatewayStart(): Promise<void> {
     clearInterval(heartbeatTimer);
     scheduler.stop();
     if (nightlyJob) nightlyJob.stop();
+    if (digestJob) digestJob.stop();
     await storage.remove(gatewayHealthPath()).catch(() => {});
     await gateway.shutdown({
       notify:

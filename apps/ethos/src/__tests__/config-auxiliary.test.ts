@@ -238,3 +238,59 @@ describe('nightlyPass config parsing', () => {
     expect(roundTripped?.nightlyPass).toEqual({ enabled: true, cron: '0 3 * * *' });
   });
 });
+
+// Phase 3e — weeklyDigest scheduler config block.
+describe('weeklyDigest config parsing', () => {
+  async function load(yaml: string) {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(join(ethosDir(), 'config.yaml'), yaml);
+    return readRawConfig(storage);
+  }
+
+  const base = ['provider: anthropic', 'model: claude-opus-4-7', 'apiKey: sk', 'personality: p'];
+
+  it('is undefined when absent (default-off)', async () => {
+    const cfg = await load(base.join('\n'));
+    expect(cfg?.weeklyDigest).toBeUndefined();
+  });
+
+  it('parses enabled, cron, and recipients', async () => {
+    const cfg = await load(
+      [
+        ...base,
+        'weeklyDigest.enabled: true',
+        'weeklyDigest.cron: 0 8 * * 1',
+        'weeklyDigest.recipients: alice@example.com, bob@example.com',
+      ].join('\n'),
+    );
+    expect(cfg?.weeklyDigest).toEqual({
+      enabled: true,
+      cron: '0 8 * * 1',
+      recipients: ['alice@example.com', 'bob@example.com'],
+    });
+  });
+
+  it('parses enabled: false', async () => {
+    const cfg = await load([...base, 'weeklyDigest.enabled: false'].join('\n'));
+    expect(cfg?.weeklyDigest).toEqual({ enabled: false });
+  });
+
+  it('round-trips through writeConfig', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await writeConfig(storage, {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      apiKey: 'sk-test',
+      personality: 'researcher',
+      weeklyDigest: { enabled: true, cron: '0 9 * * 1', recipients: ['a@example.com'] },
+    });
+    const roundTripped = await readRawConfig(storage);
+    expect(roundTripped?.weeklyDigest).toEqual({
+      enabled: true,
+      cron: '0 9 * * 1',
+      recipients: ['a@example.com'],
+    });
+  });
+});

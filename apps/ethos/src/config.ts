@@ -473,6 +473,17 @@ export interface EthosConfig {
    *   nightlyPass.cron: 0 3 * * *
    */
   nightlyPass?: { enabled?: boolean; cron?: string };
+  /**
+   * Weekly governed-learning digest scheduler (Phase 3e). Default-off: when
+   * absent or `enabled !== true`, no timer is created and behavior is
+   * unchanged. When enabled, `ethos serve` / `ethos gateway start` build the
+   * digest on `cron` (default `0 9 * * 1` — Monday 9am). `recipients` is the
+   * email allowlist for the optional `--email` delivery path. Config keys:
+   *   weeklyDigest.enabled: true
+   *   weeklyDigest.cron: 0 9 * * 1
+   *   weeklyDigest.recipients: alice@example.com, bob@example.com
+   */
+  weeklyDigest?: { enabled?: boolean; cron?: string; recipients?: string[] };
 }
 
 export function ethosDir(): string {
@@ -698,6 +709,13 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
     if (config.nightlyPass.enabled !== undefined)
       lines.push(`nightlyPass.enabled: ${config.nightlyPass.enabled}`);
     if (config.nightlyPass.cron) lines.push(`nightlyPass.cron: ${config.nightlyPass.cron}`);
+  }
+  if (config.weeklyDigest) {
+    if (config.weeklyDigest.enabled !== undefined)
+      lines.push(`weeklyDigest.enabled: ${config.weeklyDigest.enabled}`);
+    if (config.weeklyDigest.cron) lines.push(`weeklyDigest.cron: ${config.weeklyDigest.cron}`);
+    if (config.weeklyDigest.recipients && config.weeklyDigest.recipients.length > 0)
+      lines.push(`weeklyDigest.recipients: ${config.weeklyDigest.recipients.join(',')}`);
   }
   await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`, { mode: 0o600 });
 }
@@ -986,6 +1004,12 @@ function parseConfigYaml(src: string): EthosConfig {
       kv[`nightlyPass.${np[1]}`] = np[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // weeklyDigest.<field>: <value>
+    const wd = line.match(/^weeklyDigest\.(\w+):\s*(.+)$/);
+    if (wd) {
+      kv[`weeklyDigest.${wd[1]}`] = wd[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     const m = line.match(/^(\w+):\s*(.+)$/);
     if (m) kv[m[1].trim()] = m[2].trim().replace(/^["']|["']$/g, '');
   }
@@ -1172,6 +1196,25 @@ function parseConfigYaml(src: string): EthosConfig {
               ? { enabled: kv['nightlyPass.enabled'] === 'true' }
               : {}),
             ...(kv['nightlyPass.cron'] ? { cron: kv['nightlyPass.cron'] } : {}),
+          }
+        : undefined,
+    weeklyDigest:
+      kv['weeklyDigest.enabled'] !== undefined ||
+      kv['weeklyDigest.cron'] !== undefined ||
+      kv['weeklyDigest.recipients'] !== undefined
+        ? {
+            ...(kv['weeklyDigest.enabled'] !== undefined
+              ? { enabled: kv['weeklyDigest.enabled'] === 'true' }
+              : {}),
+            ...(kv['weeklyDigest.cron'] ? { cron: kv['weeklyDigest.cron'] } : {}),
+            ...(kv['weeklyDigest.recipients']
+              ? {
+                  recipients: kv['weeklyDigest.recipients']
+                    .split(/[,\s]+/)
+                    .map((r) => r.trim())
+                    .filter((r) => r.length > 0),
+                }
+              : {}),
           }
         : undefined,
   };
