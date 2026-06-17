@@ -928,6 +928,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/personality-judge:
+    dependencies:
+      '@ethosagent/batch-runner':
+        specifier: workspace:*
+        version: link:../batch-runner
+      '@ethosagent/eval-harness':
+        specifier: workspace:*
+        version: link:../eval-harness
+
   extensions/platform-discord:
     dependencies:
       '@ethosagent/core':
