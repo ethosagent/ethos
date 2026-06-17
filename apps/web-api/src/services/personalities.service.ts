@@ -180,6 +180,75 @@ export class PersonalitiesService {
     return { imported: records.map(toWirePersonalitySkill) };
   }
 
+  // ---------------------------------------------------------------------------
+  // Pending skill-candidate review queue. The nightly skill-evolver (manual
+  // mode) drafts candidates into `<dataDir>/skills/.pending/<id>/<file>.md`
+  // and leaves them for a human. Approving promotes the file into the live
+  // skills dir (`<dataDir>/skills/<file>.md`); rejecting deletes it. Paths
+  // mirror `proposeSkillFromEvidence` in @ethosagent/skill-evolver exactly.
+  // ---------------------------------------------------------------------------
+
+  async skillCandidatesList(
+    personalityId: string,
+  ): Promise<{ candidates: Array<{ fileName: string; content: string }> }> {
+    this.requirePersonality(personalityId);
+    const { storage, dataDir } = this.opts;
+    if (!storage || !dataDir) return { candidates: [] };
+    const pendingDir = join(dataDir, 'skills', '.pending', personalityId);
+    const names = (await storage.list(pendingDir)).filter((n) => n.endsWith('.md'));
+    const candidates: Array<{ fileName: string; content: string }> = [];
+    for (const fileName of names) {
+      const content = await storage.read(join(pendingDir, fileName));
+      if (content !== null) candidates.push({ fileName, content });
+    }
+    return { candidates };
+  }
+
+  async skillCandidateApprove(
+    personalityId: string,
+    fileName: string,
+  ): Promise<{ ok: true; promotedTo: string }> {
+    this.requirePersonality(personalityId);
+    const { storage, dataDir } = this.opts;
+    if (!storage || !dataDir) throw storageNotConfigured();
+    this.assertCandidateFileName(fileName);
+    const pendingPath = join(dataDir, 'skills', '.pending', personalityId, fileName);
+    const liveDir = join(dataDir, 'skills');
+    const livePath = join(liveDir, fileName);
+    const body = await storage.read(pendingPath);
+    if (body === null) throw candidateNotFound(personalityId, fileName);
+    // If the live file already exists, treat the candidate as already promoted:
+    // skip the (re)write but still clear the pending file so the queue drains.
+    if (!(await storage.exists(livePath))) {
+      await storage.mkdir(liveDir);
+      await storage.writeAtomic(livePath, body);
+    }
+    await storage.remove(pendingPath);
+    return { ok: true, promotedTo: livePath };
+  }
+
+  async skillCandidateReject(personalityId: string, fileName: string): Promise<void> {
+    this.requirePersonality(personalityId);
+    const { storage, dataDir } = this.opts;
+    if (!storage || !dataDir) throw storageNotConfigured();
+    this.assertCandidateFileName(fileName);
+    const pendingPath = join(dataDir, 'skills', '.pending', personalityId, fileName);
+    // Idempotent: a missing file is already in the desired state.
+    if (await storage.exists(pendingPath)) await storage.remove(pendingPath);
+  }
+
+  /** Reject anything that is not a bare `<name>.md` (no path separators, no
+   *  `..`) so a candidate name can never escape the pending dir. */
+  private assertCandidateFileName(fileName: string): void {
+    if (!/^[a-zA-Z0-9_-]+\.md$/.test(fileName)) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: `Invalid skill-candidate file name "${fileName}".`,
+        action: 'Pass a bare "<name>.md" file name with no path separators.',
+      });
+    }
+  }
+
   async mcpSetToken(personalityId: string, server: string, token: string): Promise<void> {
     this.requirePersonality(personalityId);
     const described = this.opts.personalities.describe(personalityId);
@@ -507,6 +576,22 @@ function llmNotConfigured(): EthosError {
     code: 'NOT_CONFIGURED',
     cause: 'LLM not configured for this server',
     action: 'Start the server with a provider configured in ~/.ethos/config.yaml.',
+  });
+}
+
+function storageNotConfigured(): EthosError {
+  return new EthosError({
+    code: 'NOT_CONFIGURED',
+    cause: 'Storage not configured for this server',
+    action: 'Start the server with a data dir + storage wired in.',
+  });
+}
+
+function candidateNotFound(personalityId: string, fileName: string): EthosError {
+  return new EthosError({
+    code: 'SKILL_NOT_FOUND',
+    cause: `Skill candidate "${fileName}" not found for personality "${personalityId}".`,
+    action: 'Use personalities.skillCandidatesList to see pending candidates.',
   });
 }
 

@@ -1,5 +1,6 @@
 import { os } from './context';
 import { personalitiesLearningRouter } from './personalities-learning';
+import { personalitiesSkillCandidatesRouter } from './personalities-skill-candidates';
 
 // Personalities namespace — list/get/create/update/delete/duplicate
 // plus per-personality skills CRUD + import-from-global. Handlers stay
@@ -110,4 +111,5 @@ export const personalitiesRouter = {
     return { ok: true as const };
   }),
   ...personalitiesLearningRouter,
+  ...personalitiesSkillCandidatesRouter,
 };

@@ -537,6 +537,111 @@ describe('PersonalitiesService', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Pending skill-candidate review queue — list / approve (promote) / reject.
+  // Pending dir mirrors the nightly skill-evolver: <DATA>/skills/.pending/<id>.
+  // -------------------------------------------------------------------------
+  describe('skill-candidate review queue', () => {
+    const PENDING = join(DATA, 'skills', '.pending', 'agent');
+    const LIVE = join(DATA, 'skills');
+
+    async function makeCandidateService(): Promise<{
+      service: PersonalitiesService;
+      storage: InMemoryStorage;
+    }> {
+      const storage = new InMemoryStorage();
+      const dir = join(DATA, 'personalities', 'agent');
+      await storage.mkdir(dir);
+      await storage.write(join(dir, 'config.yaml'), 'name: Agent\n');
+      await storage.write(join(dir, 'SOUL.md'), '# Core\nx\n');
+      const registry = new FilePersonalityRegistry(storage, DATA);
+      await registry.loadFromDirectory(join(DATA, 'personalities'));
+      const library = new SkillsLibrary({ dataDir: DATA, storage });
+      const service = new PersonalitiesService({
+        personalities: registry,
+        library,
+        storage,
+        dataDir: DATA,
+      });
+      return { service, storage };
+    }
+
+    it('lists pending .md candidates', async () => {
+      const { service, storage } = await makeCandidateService();
+      await storage.mkdir(PENDING);
+      await storage.write(join(PENDING, 'nightly-a.md'), '# A\nbody a\n');
+      await storage.write(join(PENDING, 'nightly-b.md'), '# B\nbody b\n');
+      await storage.write(join(PENDING, 'notes.txt'), 'ignored');
+
+      const { candidates } = await service.skillCandidatesList('agent');
+      const byName = Object.fromEntries(candidates.map((c) => [c.fileName, c.content]));
+      expect(Object.keys(byName).sort()).toEqual(['nightly-a.md', 'nightly-b.md']);
+      expect(byName['nightly-a.md']).toContain('body a');
+    });
+
+    it('returns [] when no pending dir exists', async () => {
+      const { service } = await makeCandidateService();
+      const { candidates } = await service.skillCandidatesList('agent');
+      expect(candidates).toEqual([]);
+    });
+
+    it('approve writes the live file and removes the pending one', async () => {
+      const { service, storage } = await makeCandidateService();
+      await storage.mkdir(PENDING);
+      await storage.write(join(PENDING, 'nightly-a.md'), '# A\nbody a\n');
+
+      const result = await service.skillCandidateApprove('agent', 'nightly-a.md');
+      expect(result).toEqual({ ok: true, promotedTo: join(LIVE, 'nightly-a.md') });
+      expect(await storage.read(join(LIVE, 'nightly-a.md'))).toContain('body a');
+      expect(await storage.exists(join(PENDING, 'nightly-a.md'))).toBe(false);
+    });
+
+    it('approve on a missing candidate throws SKILL_NOT_FOUND', async () => {
+      const { service } = await makeCandidateService();
+      await expect(service.skillCandidateApprove('agent', 'nope.md')).rejects.toMatchObject({
+        code: 'SKILL_NOT_FOUND',
+      });
+    });
+
+    it('approve drains the pending file even if the live skill already exists', async () => {
+      const { service, storage } = await makeCandidateService();
+      await storage.mkdir(LIVE);
+      await storage.write(join(LIVE, 'nightly-a.md'), 'EXISTING live body\n');
+      await storage.mkdir(PENDING);
+      await storage.write(join(PENDING, 'nightly-a.md'), 'NEW candidate body\n');
+
+      await service.skillCandidateApprove('agent', 'nightly-a.md');
+      // Live file is left untouched; pending is cleared.
+      expect(await storage.read(join(LIVE, 'nightly-a.md'))).toContain('EXISTING live body');
+      expect(await storage.exists(join(PENDING, 'nightly-a.md'))).toBe(false);
+    });
+
+    it('reject removes the pending file', async () => {
+      const { service, storage } = await makeCandidateService();
+      await storage.mkdir(PENDING);
+      await storage.write(join(PENDING, 'nightly-a.md'), '# A\n');
+
+      await service.skillCandidateReject('agent', 'nightly-a.md');
+      expect(await storage.exists(join(PENDING, 'nightly-a.md'))).toBe(false);
+    });
+
+    it('reject on a missing candidate succeeds idempotently', async () => {
+      const { service } = await makeCandidateService();
+      await expect(service.skillCandidateReject('agent', 'nightly-a.md')).resolves.toBeUndefined();
+    });
+
+    it('rejects a traversal file name and writes nothing', async () => {
+      const { service, storage } = await makeCandidateService();
+      await expect(service.skillCandidateApprove('agent', '../evil.md')).rejects.toMatchObject({
+        code: 'INVALID_INPUT',
+      });
+      await expect(service.skillCandidateReject('agent', 'a/b.md')).rejects.toMatchObject({
+        code: 'INVALID_INPUT',
+      });
+      expect(await storage.exists(join(LIVE, 'evil.md'))).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Per-personality safety + memory overrides — approvalMode + memory.provider
   // round-trip through update → config.yaml → toWire.
   // -------------------------------------------------------------------------

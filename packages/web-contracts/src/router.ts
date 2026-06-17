@@ -331,6 +331,27 @@ const PersonalitySkillsImportInput = z.object({
 });
 const PersonalitySkillsImportOutput = z.object({ imported: z.array(PersonalitySkillSchema) });
 
+// Pending skill-candidate review queue. The nightly skill-evolver (manual
+// mode) drafts candidates into `<dataDir>/skills/.pending/<personalityId>/`;
+// these procedures let a human list / approve (promote to the live skills
+// dir) / reject (delete) them.
+const PersonalitySkillCandidateFileName = z
+  .string()
+  .min(1)
+  .regex(/^[a-zA-Z0-9_-]+\.md$/);
+const PersonalitySkillCandidatesListInput = z.object({ personalityId: z.string().min(1) });
+const PersonalitySkillCandidatesListOutput = z.object({
+  candidates: z.array(z.object({ fileName: z.string(), content: z.string() })),
+});
+const PersonalitySkillCandidateActionInput = z.object({
+  personalityId: z.string().min(1),
+  fileName: PersonalitySkillCandidateFileName,
+});
+const PersonalitySkillCandidateApproveOutput = z.object({
+  ok: z.literal(true),
+  promotedTo: z.string(),
+});
+
 // Per-personality MCP bearer-token management (headless gap 4).
 const PersonalityMcpSetTokenInput = z.object({
   personalityId: z.string().min(1),
@@ -423,6 +444,13 @@ const personalities = {
   skillsUpdate: oc.input(PersonalitySkillsUpdateInput).output(PersonalitySkillsUpdateOutput),
   skillsDelete: oc.input(PersonalitySkillsDeleteInput).output(PersonalityOkOutput),
   skillsImportGlobal: oc.input(PersonalitySkillsImportInput).output(PersonalitySkillsImportOutput),
+  skillCandidatesList: oc
+    .input(PersonalitySkillCandidatesListInput)
+    .output(PersonalitySkillCandidatesListOutput),
+  skillCandidateApprove: oc
+    .input(PersonalitySkillCandidateActionInput)
+    .output(PersonalitySkillCandidateApproveOutput),
+  skillCandidateReject: oc.input(PersonalitySkillCandidateActionInput).output(PersonalityOkOutput),
   mcpSetToken: oc.input(PersonalityMcpSetTokenInput).output(PersonalityMcpSetTokenOutput),
   mcpDeleteToken: oc.input(PersonalityMcpDeleteTokenInput).output(PersonalityMcpDeleteTokenOutput),
   livingSoul: oc.input(PersonalityLivingSoulInput).output(PersonalityLivingSoulOutput),
