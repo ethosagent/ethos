@@ -730,6 +730,30 @@ function SoulMdStep({
   state: WizardState;
   setState: React.Dispatch<React.SetStateAction<WizardState>>;
 }) {
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [core, setCore] = useState('');
+  const [expression, setExpression] = useState('');
+  const [rationale, setRationale] = useState('');
+
+  const splitMut = useMutation({
+    mutationFn: () => rpc.personalities.proposeSoulSplit({ soulMd: state.soulMd }),
+    onSuccess: (data) => {
+      setCore(data.core);
+      setExpression(data.expression);
+      setRationale(data.rationale);
+      setReviewOpen(true);
+    },
+  });
+
+  const notConfigured = splitMut.isError && errorCode(splitMut.error) === 'NOT_CONFIGURED';
+
+  function applySplit() {
+    const sectioned = `# Core\n${core.trim()}\n\n# Expression\n${expression.trim()}\n`;
+    setState((s) => ({ ...s, soulMd: sectioned }));
+    setReviewOpen(false);
+    splitMut.reset();
+  }
+
   return (
     <Form layout="vertical">
       <Typography.Paragraph type="secondary">
@@ -744,8 +768,87 @@ function SoulMdStep({
           onChange={(e) => setState((s) => ({ ...s, soulMd: e.target.value }))}
         />
       </Form.Item>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <Button
+          disabled={state.soulMd.trim().length === 0}
+          loading={splitMut.isPending}
+          onClick={() => splitMut.mutate()}
+        >
+          Refine soul
+        </Button>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Proposes a Core / Expression split for you to review before it's applied.
+        </Typography.Text>
+      </div>
+      {notConfigured ? (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginTop: 12 }}
+          message="Soul refinement needs an LLM configured on the server"
+        />
+      ) : splitMut.isError ? (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginTop: 12 }}
+          message="Couldn't propose a split"
+          description={(splitMut.error as Error).message}
+        />
+      ) : null}
+
+      <Modal
+        open={reviewOpen}
+        title="Review Core / Expression split"
+        onCancel={() => setReviewOpen(false)}
+        width={680}
+        destroyOnClose
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Button onClick={() => setReviewOpen(false)}>Cancel</Button>
+            <Button type="primary" onClick={applySplit}>
+              Apply split
+            </Button>
+          </div>
+        }
+      >
+        <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+          {rationale}
+        </Typography.Paragraph>
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+          Core is your immutable identity; Expression is the voice that can evolve later. Adjust the
+          partition below before applying.
+        </Typography.Paragraph>
+        <Form layout="vertical">
+          <Form.Item label="Core">
+            <Input.TextArea
+              value={core}
+              autoSize={{ minRows: 6, maxRows: 16 }}
+              style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12.5 }}
+              onChange={(e) => setCore(e.target.value)}
+            />
+          </Form.Item>
+          <Form.Item label="Expression">
+            <Input.TextArea
+              value={expression}
+              autoSize={{ minRows: 6, maxRows: 16 }}
+              style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12.5 }}
+              onChange={(e) => setExpression(e.target.value)}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
     </Form>
   );
+}
+
+/** Reads the structured `code` off an oRPC client error, if present. */
+function errorCode(err: unknown): string | undefined {
+  if (err && typeof err === 'object' && 'code' in err) {
+    const code = (err as { code: unknown }).code;
+    return typeof code === 'string' ? code : undefined;
+  }
+  return undefined;
 }
 
 function WizardSkillsStep({

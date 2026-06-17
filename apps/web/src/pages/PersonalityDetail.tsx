@@ -14,6 +14,7 @@ import {
 } from 'antd';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { LivingSoulSection } from '../components/LivingSoulSection';
 import { ConnectMcpModal } from '../components/mcp/ConnectMcpModal';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { rpc } from '../rpc';
@@ -751,6 +752,8 @@ export function PersonalityDetail() {
           <Button onClick={() => setEditModalOpen(true)}>Edit personality</Button>
         </div>
       </div>
+
+      {!personality.builtin && <LivingSoulSection personalityId={id} />}
 
       {!personality.builtin && <McpSection personalityId={id} mcpPolicy={data.mcpPolicy} />}
 
