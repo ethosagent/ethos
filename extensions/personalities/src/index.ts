@@ -4,6 +4,7 @@ import {
   assertSafeId,
   type DreamingConfig,
   EthosError,
+  type LivingSoul,
   type ModelTierConfig,
   type PersonalityConfig,
   type PersonalityObservabilityConfig,
@@ -11,6 +12,7 @@ import {
   type PersonalitySafetyConfig,
   type Storage,
 } from '@ethosagent/types';
+import { parseLivingSoul } from './living-soul';
 
 export { firstParagraph, renderCharacterSheet } from './character-sheet';
 
@@ -408,6 +410,7 @@ export interface CreatePersonalityInput {
     min_tool_calls?: number;
     cooldown_minutes?: number;
   };
+  evolution_approval_mode?: 'auto' | 'user';
 }
 
 export interface UpdatePersonalityPatch {
@@ -544,6 +547,11 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     return (await this.storage.read(config.soulFile)) ?? '';
   }
 
+  async readLivingSoul(id: string): Promise<LivingSoul> {
+    const body = await this.readSoulMd(id);
+    return parseLivingSoul(body);
+  }
+
   async create(input: CreatePersonalityInput): Promise<DescribedPersonality> {
     assertSafeId(input.id, 'personalityId');
     if (this.personalities.get(input.id)) {
@@ -653,6 +661,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         capabilities: patch.capabilities === undefined ? config.capabilities : patch.capabilities,
         provider: patch.provider === undefined ? config.provider : patch.provider,
         fs_reach: patch.fs_reach === undefined ? config.fs_reach : patch.fs_reach,
+        evolution_approval_mode: config.evolution_approval_mode,
       };
       await this.storage.write(join(dir, 'config.yaml'), renderConfigYaml(merged));
     }
@@ -982,6 +991,10 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
 
     // E4 — context_engine + context_engine_options.* dotted keys.
     const contextEngine = cfg.context_engine || undefined;
+    const evolutionApprovalMode =
+      cfg.evolution_approval_mode === 'auto' || cfg.evolution_approval_mode === 'user'
+        ? cfg.evolution_approval_mode
+        : undefined;
     const contextEngineOptions = buildContextEngineOptions(cfg);
 
     // E3 — skill_evolution.* dotted keys.
@@ -1020,6 +1033,9 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       ...(memoryConfig !== undefined ? { memory: memoryConfig } : {}),
       ...(mcpExport !== undefined ? { mcp_export: mcpExport } : {}),
       ...(outboundPolicy !== undefined ? { outbound_policy: outboundPolicy } : {}),
+      ...(evolutionApprovalMode !== undefined
+        ? { evolution_approval_mode: evolutionApprovalMode }
+        : {}),
     };
 
     validateUnsafeCombinations(id, config);
@@ -1362,6 +1378,9 @@ function renderConfigYaml(input: CreatePersonalityInput): string {
       lines.push(`skill_evolution.min_tool_calls: ${se.min_tool_calls}`);
     if (se.cooldown_minutes !== undefined)
       lines.push(`skill_evolution.cooldown_minutes: ${se.cooldown_minutes}`);
+  }
+  if (input.evolution_approval_mode !== undefined) {
+    lines.push(`evolution_approval_mode: ${yamlScalar(input.evolution_approval_mode)}`);
   }
   return `${lines.join('\n')}\n`;
 }

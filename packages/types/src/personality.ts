@@ -142,6 +142,20 @@ export function resolveModelDisplay(
   return model.default ?? fallback;
 }
 
+export interface LearningLogEntry {
+  revisionId: string; // monotonic, e.g. "expr-rev-7"
+  at: string; // ISO timestamp
+  summary: string; // short human description of the change
+  evidenceRef: string; // pointer to the evidence that justified the change
+  prevExpressionRef: string; // id of the prior-Expression snapshot, enables one-click revert
+}
+
+export interface LivingSoul {
+  core: string; // raw Core section — NEVER written by the evolution loop
+  expression: string; // raw Expression section — the only auto-editable region
+  learningLog: LearningLogEntry[];
+}
+
 // Phase 30.8 — this schema is FROZEN.
 //
 // Adding a top-level field to `PersonalityConfig` requires:
@@ -307,6 +321,17 @@ export interface PersonalityConfig {
    * per rolling 24-hour window. Counts as ONE field for the schema-freeze gate.
    */
   dreaming?: DreamingConfig;
+  /**
+   * Phase 3a — Governance dial for Expression self-evolution, distinct from
+   * `safety.approvalMode` (which gates tool calls, not evolution). Do NOT
+   * overload safety.approvalMode.
+   *   `user` (default when absent): every Expression change is drafted and
+   *     applied only on explicit user approval.
+   *   `auto`: reserved for phase-3b (requires the Personality Judge); inert
+   *     for now — treat the same as `user` until 3b wires it.
+   * Counts as ONE field for the schema-freeze gate.
+   */
+  evolution_approval_mode?: 'auto' | 'user';
 }
 
 /**
