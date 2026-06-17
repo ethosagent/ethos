@@ -106,6 +106,18 @@ export const PersonalitySchema = z.object({
   /** Idle-time dreaming state. Optional (omitted when unset) so the editor
    *  can read the current toggle without affecting other surfaces. */
   dreaming: z.object({ enable: z.boolean() }).optional(),
+  /** Governed-learning approval dial. Optional (omitted when unset) so the
+   *  editor can read the current value to populate its form. */
+  evolution_approval_mode: z.enum(['auto', 'user']).optional(),
+  /** Skill-evolution tuning. Optional (omitted when unset) so the editor can
+   *  read the current values to populate its form. */
+  skill_evolution: z
+    .object({
+      enabled: z.boolean().optional(),
+      min_tool_calls: z.number().int().optional(),
+      cooldown_minutes: z.number().int().optional(),
+    })
+    .optional(),
   system: z.boolean(),
   /** True when the personality lives in the package's built-in data directory
    *  (read-only). User-created personalities under `~/.ethos/personalities/`

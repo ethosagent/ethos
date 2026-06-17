@@ -366,6 +366,10 @@ function toWire(d: DescribedPersonality): Personality {
       ? { read: c.fs_reach.read ?? null, write: c.fs_reach.write ?? null }
       : null,
     ...(c.dreaming ? { dreaming: { enable: c.dreaming.enable } } : {}),
+    ...(c.evolution_approval_mode !== undefined
+      ? { evolution_approval_mode: c.evolution_approval_mode }
+      : {}),
+    ...(c.skill_evolution !== undefined ? { skill_evolution: c.skill_evolution } : {}),
     system: d.builtin && SYSTEM_PERSONALITY_IDS.has(c.id),
     builtin: d.builtin,
     version: 1,

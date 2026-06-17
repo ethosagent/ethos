@@ -462,6 +462,11 @@ export interface UpdatePersonalityPatch {
    *  cadence (idleMinutes / maxPerDay), defaulting cadence when none exists.
    *  Used by the web editor's toggle so flipping it never resets cadence. */
   dreamingEnable?: boolean;
+  /** Governed-learning approval dial. 'auto' applies evolved Expression
+   *  automatically; 'user' holds it for human approval. */
+  evolution_approval_mode?: 'auto' | 'user';
+  /** Skill-evolution tuning — overwrites the existing config wholesale. */
+  skill_evolution?: import('@ethosagent/types').PersonalityConfig['skill_evolution'];
 }
 
 export class FilePersonalityRegistry implements PersonalityRegistry {
@@ -700,7 +705,9 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       patch.provider !== undefined ||
       patch.fs_reach !== undefined ||
       patch.dreaming !== undefined ||
-      patch.dreamingEnable !== undefined
+      patch.dreamingEnable !== undefined ||
+      patch.evolution_approval_mode !== undefined ||
+      patch.skill_evolution !== undefined
     ) {
       const config = existing.config;
       if (patch.provider !== undefined && patch.provider !== '') {
@@ -788,6 +795,8 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         provider: patch.provider === undefined ? config.provider : patch.provider,
         fs_reach: patch.fs_reach === undefined ? config.fs_reach : patch.fs_reach,
         dreaming: mergedDreaming,
+        evolution_approval_mode: patch.evolution_approval_mode ?? config.evolution_approval_mode,
+        skill_evolution: patch.skill_evolution ?? config.skill_evolution,
       };
       await this.storage.write(join(dir, 'config.yaml'), renderConfigYaml(merged));
     }

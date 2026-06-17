@@ -222,6 +222,9 @@ const PersonalityCreateInput = z.object({
       cooldown_minutes: z.number().int().min(0).optional(),
     })
     .optional(),
+  /** Governed-learning approval dial. 'auto' applies evolved Expression
+   *  automatically; 'user' holds it for human approval. */
+  evolution_approval_mode: z.enum(['auto', 'user']).optional(),
 });
 const PersonalityCreateOutput = z.object({ personality: PersonalitySchema });
 
@@ -253,6 +256,17 @@ const PersonalityUpdateInput = z.object({
   /** Idle-time dreaming toggle. Enable-only from the editor; idleMinutes /
    *  maxPerDay keep their persisted (or default) values. */
   dreaming: z.object({ enable: z.boolean() }).optional(),
+  /** Governed-learning approval dial. 'auto' applies evolved Expression
+   *  automatically; 'user' holds it for human approval. */
+  evolution_approval_mode: z.enum(['auto', 'user']).optional(),
+  /** Skill-evolution tuning. Retunable after creation. */
+  skill_evolution: z
+    .object({
+      enabled: z.boolean().optional(),
+      min_tool_calls: z.number().int().min(1).max(20).optional(),
+      cooldown_minutes: z.number().int().min(0).optional(),
+    })
+    .optional(),
 });
 const PersonalityUpdateOutput = z.object({ personality: PersonalitySchema });
 

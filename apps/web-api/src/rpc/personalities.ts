@@ -30,6 +30,9 @@ export const personalitiesRouter = {
       ...(input.plugins !== undefined ? { plugins: input.plugins } : {}),
       ...(input.fs_reach !== undefined ? { fs_reach: input.fs_reach } : {}),
       ...(input.skill_evolution !== undefined ? { skill_evolution: input.skill_evolution } : {}),
+      ...(input.evolution_approval_mode !== undefined
+        ? { evolution_approval_mode: input.evolution_approval_mode }
+        : {}),
     }),
   ),
 

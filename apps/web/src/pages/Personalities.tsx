@@ -17,6 +17,7 @@ import {
   Empty,
   Form,
   Input,
+  InputNumber,
   type MenuProps,
   Modal,
   Popconfirm,
@@ -339,6 +340,7 @@ interface WizardState {
   skillEvolutionEnabled: boolean;
   skillEvolutionMinToolCalls: number;
   skillEvolutionCooldownMinutes: number;
+  evolutionApprovalMode: 'auto' | 'user';
 }
 
 const SOUL_TEMPLATE = `# About me\n\nI am a {role}. I {what I do}. I {how I work}.\n\n## How I respond\n\n- {tone / shape}\n- {tone / shape}\n- {tone / shape}\n`;
@@ -366,6 +368,7 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
     skillEvolutionEnabled: true,
     skillEvolutionMinToolCalls: 3,
     skillEvolutionCooldownMinutes: 30,
+    evolutionApprovalMode: 'user',
   });
 
   const createMut = useMutation({
@@ -398,6 +401,7 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
           min_tool_calls: state.skillEvolutionMinToolCalls,
           cooldown_minutes: state.skillEvolutionCooldownMinutes,
         },
+        evolution_approval_mode: state.evolutionApprovalMode,
       }),
     onSuccess: async () => {
       if (state.skills.length > 0) {
@@ -717,6 +721,19 @@ function SkillLearningStep({
             const v = Number(e.target.value);
             if (v >= 0) setState((s) => ({ ...s, skillEvolutionCooldownMinutes: v }));
           }}
+        />
+      </Form.Item>
+      <Form.Item
+        label="Approval mode"
+        help="Whether evolved voice updates apply automatically or wait for your approval."
+      >
+        <Select
+          value={state.evolutionApprovalMode}
+          onChange={(v) => setState((s) => ({ ...s, evolutionApprovalMode: v }))}
+          options={[
+            { label: 'Automatic', value: 'auto' },
+            { label: 'Requires approval', value: 'user' },
+          ]}
         />
       </Form.Item>
     </Form>
@@ -1446,6 +1463,10 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
     fsReachRead: string[];
     fsReachWrite: string[];
     dreaming: boolean;
+    evolutionApprovalMode: 'auto' | 'user';
+    skillEvolutionEnabled: boolean;
+    skillEvolutionMinToolCalls: number;
+    skillEvolutionCooldownMinutes: number;
   }>();
   const [tieredMode, setTieredMode] = useState(
     typeof personality.model === 'object' && personality.model !== null,
@@ -1467,6 +1488,10 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
       fsReachRead: personality.fs_reach?.read ?? [],
       fsReachWrite: personality.fs_reach?.write ?? [],
       dreaming: personality.dreaming?.enable ?? false,
+      evolutionApprovalMode: personality.evolution_approval_mode ?? 'user',
+      skillEvolutionEnabled: personality.skill_evolution?.enabled ?? false,
+      skillEvolutionMinToolCalls: personality.skill_evolution?.min_tool_calls ?? 3,
+      skillEvolutionCooldownMinutes: personality.skill_evolution?.cooldown_minutes ?? 30,
     });
   }, [personality, form]);
 
@@ -1483,6 +1508,10 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
       fsReachRead: string[];
       fsReachWrite: string[];
       dreaming: boolean;
+      evolutionApprovalMode: 'auto' | 'user';
+      skillEvolutionEnabled: boolean;
+      skillEvolutionMinToolCalls: number;
+      skillEvolutionCooldownMinutes: number;
     }) => {
       let model: string | ModelTierConfigWire;
       if (tieredMode) {
@@ -1503,6 +1532,12 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
         capabilities: values.capabilities,
         fs_reach: { read: values.fsReachRead, write: values.fsReachWrite },
         dreaming: { enable: values.dreaming },
+        evolution_approval_mode: values.evolutionApprovalMode,
+        skill_evolution: {
+          enabled: values.skillEvolutionEnabled,
+          min_tool_calls: values.skillEvolutionMinToolCalls,
+          cooldown_minutes: values.skillEvolutionCooldownMinutes,
+        },
       });
     },
     onSuccess: () => {
@@ -1532,6 +1567,10 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
           fsReachRead: values.fsReachRead ?? [],
           fsReachWrite: values.fsReachWrite ?? [],
           dreaming: values.dreaming ?? false,
+          evolutionApprovalMode: values.evolutionApprovalMode ?? 'user',
+          skillEvolutionEnabled: values.skillEvolutionEnabled ?? false,
+          skillEvolutionMinToolCalls: values.skillEvolutionMinToolCalls ?? 3,
+          skillEvolutionCooldownMinutes: values.skillEvolutionCooldownMinutes ?? 30,
         })
       }
     >
@@ -1619,6 +1658,42 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
             Periodic background memory consolidation for this personality.
           </Typography.Text>
         </div>
+      </Form.Item>
+      <Form.Item
+        label="Approval mode"
+        name="evolutionApprovalMode"
+        extra="Whether evolved voice updates apply automatically or wait for your approval."
+      >
+        <Select
+          options={[
+            { label: 'Automatic', value: 'auto' },
+            { label: 'Requires approval', value: 'user' },
+          ]}
+        />
+      </Form.Item>
+      <Form.Item label="Skill learning" style={{ marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Form.Item name="skillEvolutionEnabled" valuePropName="checked" noStyle>
+            <Switch size="small" />
+          </Form.Item>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Propose new skills automatically from repeated tool-call patterns.
+          </Typography.Text>
+        </div>
+      </Form.Item>
+      <Form.Item
+        label="Minimum tool calls"
+        name="skillEvolutionMinToolCalls"
+        extra="Tool calls in a turn before the evolver considers proposing a skill (1-20)."
+      >
+        <InputNumber min={1} max={20} style={{ width: '100%' }} />
+      </Form.Item>
+      <Form.Item
+        label="Cooldown (minutes)"
+        name="skillEvolutionCooldownMinutes"
+        extra="Minimum time between skill proposals to avoid noise."
+      >
+        <InputNumber min={0} step={5} style={{ width: '100%' }} />
       </Form.Item>
       <Alert
         type="warning"

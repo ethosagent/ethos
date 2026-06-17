@@ -324,4 +324,65 @@ describe('PersonalitiesService', () => {
       expect(soul.expression).toContain('I speak plainly.');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Governed-learning settings — evolution_approval_mode + skill_evolution
+  // round-trip through create/update → config.yaml → toWire.
+  // -------------------------------------------------------------------------
+  describe('governed-learning settings round-trip', () => {
+    async function makeRealService() {
+      const storage = new InMemoryStorage();
+      const registry = new FilePersonalityRegistry(storage, DATA);
+      const library = new SkillsLibrary({ dataDir: DATA, storage });
+      const service = new PersonalitiesService({ personalities: registry, library });
+      return { service, storage };
+    }
+
+    it('persists evolution_approval_mode + skill_evolution on create and reads them back', async () => {
+      const { service } = await makeRealService();
+      const { personality } = await service.create({
+        id: 'agent',
+        name: 'Agent',
+        toolset: [],
+        soulMd: '# Agent',
+        evolution_approval_mode: 'auto',
+        skill_evolution: { enabled: true, min_tool_calls: 5, cooldown_minutes: 30 },
+      });
+      expect(personality.evolution_approval_mode).toBe('auto');
+      expect(personality.skill_evolution).toEqual({
+        enabled: true,
+        min_tool_calls: 5,
+        cooldown_minutes: 30,
+      });
+      const reloaded = await service.get('agent');
+      expect(reloaded.personality.evolution_approval_mode).toBe('auto');
+      expect(reloaded.personality.skill_evolution).toEqual({
+        enabled: true,
+        min_tool_calls: 5,
+        cooldown_minutes: 30,
+      });
+    });
+
+    it('update mutates evolution_approval_mode + skill_evolution and toWire reflects it', async () => {
+      const { service } = await makeRealService();
+      await service.create({
+        id: 'agent',
+        name: 'Agent',
+        toolset: [],
+        soulMd: '# Agent',
+        evolution_approval_mode: 'user',
+        skill_evolution: { enabled: false, min_tool_calls: 3, cooldown_minutes: 10 },
+      });
+      const { personality } = await service.update('agent', {
+        evolution_approval_mode: 'auto',
+        skill_evolution: { enabled: true, min_tool_calls: 7, cooldown_minutes: 45 },
+      });
+      expect(personality.evolution_approval_mode).toBe('auto');
+      expect(personality.skill_evolution).toEqual({
+        enabled: true,
+        min_tool_calls: 7,
+        cooldown_minutes: 45,
+      });
+    });
+  });
 });

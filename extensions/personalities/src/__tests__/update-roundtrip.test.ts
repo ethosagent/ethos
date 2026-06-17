@@ -198,6 +198,67 @@ describe('dreaming round-trip', () => {
   });
 });
 
+describe('governed-learning settings round-trip', () => {
+  it('persists evolution_approval_mode through update and re-load', async () => {
+    await seedPersonality('gl-mode', 'name: GLMode\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('gl-mode', { evolution_approval_mode: 'auto' });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    expect(fresh.get('gl-mode')?.evolution_approval_mode).toBe('auto');
+  });
+
+  it('persists skill_evolution through update and re-load', async () => {
+    await seedPersonality('gl-skill', 'name: GLSkill\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('gl-skill', {
+      skill_evolution: { enabled: true, min_tool_calls: 7, cooldown_minutes: 45 },
+    });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    expect(fresh.get('gl-skill')?.skill_evolution).toEqual({
+      enabled: true,
+      min_tool_calls: 7,
+      cooldown_minutes: 45,
+    });
+  });
+
+  it('preserves evolution_approval_mode + skill_evolution when an unrelated field is updated', async () => {
+    await seedPersonality(
+      'gl-preserve',
+      [
+        'name: GLPreserve',
+        'evolution_approval_mode: user',
+        'skill_evolution.enabled: true',
+        'skill_evolution.min_tool_calls: 5',
+        'skill_evolution.cooldown_minutes: 30',
+        '',
+      ].join('\n'),
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('gl-preserve', { description: 'changed' });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const after = fresh.get('gl-preserve');
+    expect(after?.description).toBe('changed');
+    expect(after?.evolution_approval_mode).toBe('user');
+    expect(after?.skill_evolution).toEqual({
+      enabled: true,
+      min_tool_calls: 5,
+      cooldown_minutes: 30,
+    });
+  });
+});
+
 describe('lossless update — full config round-trip', () => {
   // A config.yaml that populates EVERY droppable PersonalityConfig field with
   // realistic values. The syntax of each key mirrors what parseConfigYaml /
