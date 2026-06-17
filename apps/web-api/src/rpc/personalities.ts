@@ -34,28 +34,17 @@ export const personalitiesRouter = {
   ),
 
   update: os.personalities.update.handler(async ({ input, context }) => {
-    const { id, mcp_servers, mcp_tools, plugins, capabilities, provider, fs_reach, ...rest } =
-      input;
+    // Exclude `mcp_tools` (an off-schema mcp.yaml sibling) and `dreaming` (wire
+    // enable-only shape) from the patch; everything else maps 1:1.
+    const { id, mcp_tools, dreaming, ...rest } = input;
     const result = await context.personalities.update(id, {
       ...rest,
-      ...(mcp_servers !== undefined ? { mcp_servers } : {}),
-      ...(plugins !== undefined ? { plugins } : {}),
-      ...(capabilities !== undefined ? { capabilities } : {}),
-      ...(provider !== undefined ? { provider } : {}),
-      ...(fs_reach !== undefined ? { fs_reach } : {}),
+      ...(dreaming !== undefined ? { dreamingEnable: dreaming.enable } : {}),
     });
-    // Per-server MCP tool subsets are an off-schema sibling (`mcp.yaml`),
-    // written after the config update. Ignored unless `mcp_servers` was
-    // also supplied — `mcp_tools` alone has no attached servers to scope.
-    if (mcp_servers !== undefined && mcp_tools !== undefined) {
-      const subsets: Record<string, string[] | null> = {};
-      for (const server of mcp_servers) {
-        // A server with an explicit subset → write the list; a server with
-        // every tool selected is omitted from `mcp_tools` by the UI → null
-        // clears any prior subset back to default-allow.
-        subsets[server] = mcp_tools[server] ?? null;
-      }
-      await context.personalities.writeMcpToolSubsets(id, subsets);
+    // Per-server MCP tool subsets are written after the config update. Ignored
+    // unless `mcp_servers` was also supplied — `mcp_tools` alone has no servers.
+    if (rest.mcp_servers !== undefined && mcp_tools !== undefined) {
+      await context.personalities.writeMcpToolSubsetsFor(id, rest.mcp_servers, mcp_tools);
     }
     return result;
   }),

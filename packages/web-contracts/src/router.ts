@@ -250,6 +250,9 @@ const PersonalityUpdateInput = z.object({
       write: z.array(z.string()).optional(),
     })
     .optional(),
+  /** Idle-time dreaming toggle. Enable-only from the editor; idleMinutes /
+   *  maxPerDay keep their persisted (or default) values. */
+  dreaming: z.object({ enable: z.boolean() }).optional(),
 });
 const PersonalityUpdateOutput = z.object({ personality: PersonalitySchema });
 

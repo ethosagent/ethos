@@ -77,6 +77,23 @@ export class PersonalitiesService {
     await this.opts.personalities.writeMcpToolSubsets(id, subsets);
   }
 
+  /**
+   * Build per-server tool subsets from the editor's `mcp_tools` map and write
+   * them. A server with every tool selected is omitted from `mcpTools` by the
+   * UI → `null` clears any prior subset back to default-allow.
+   */
+  async writeMcpToolSubsetsFor(
+    id: string,
+    servers: string[],
+    mcpTools: Record<string, string[]>,
+  ): Promise<void> {
+    const subsets: Record<string, string[] | null> = {};
+    for (const server of servers) {
+      subsets[server] = mcpTools[server] ?? null;
+    }
+    await this.opts.personalities.writeMcpToolSubsets(id, subsets);
+  }
+
   async delete(id: string): Promise<void> {
     await this.opts.personalities.deletePersonality(id);
   }
@@ -348,6 +365,7 @@ function toWire(d: DescribedPersonality): Personality {
     fs_reach: c.fs_reach
       ? { read: c.fs_reach.read ?? null, write: c.fs_reach.write ?? null }
       : null,
+    ...(c.dreaming ? { dreaming: { enable: c.dreaming.enable } } : {}),
     system: d.builtin && SYSTEM_PERSONALITY_IDS.has(c.id),
     builtin: d.builtin,
     version: 1,

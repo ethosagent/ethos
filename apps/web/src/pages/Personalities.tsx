@@ -1445,6 +1445,7 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
     capabilities: string[];
     fsReachRead: string[];
     fsReachWrite: string[];
+    dreaming: boolean;
   }>();
   const [tieredMode, setTieredMode] = useState(
     typeof personality.model === 'object' && personality.model !== null,
@@ -1465,6 +1466,7 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
       capabilities: personality.capabilities ?? [],
       fsReachRead: personality.fs_reach?.read ?? [],
       fsReachWrite: personality.fs_reach?.write ?? [],
+      dreaming: personality.dreaming?.enable ?? false,
     });
   }, [personality, form]);
 
@@ -1480,6 +1482,7 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
       capabilities: string[];
       fsReachRead: string[];
       fsReachWrite: string[];
+      dreaming: boolean;
     }) => {
       let model: string | ModelTierConfigWire;
       if (tieredMode) {
@@ -1499,6 +1502,7 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
         provider: values.provider || '',
         capabilities: values.capabilities,
         fs_reach: { read: values.fsReachRead, write: values.fsReachWrite },
+        dreaming: { enable: values.dreaming },
       });
     },
     onSuccess: () => {
@@ -1527,6 +1531,7 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
           capabilities: values.capabilities ?? [],
           fsReachRead: values.fsReachRead ?? [],
           fsReachWrite: values.fsReachWrite ?? [],
+          dreaming: values.dreaming ?? false,
         })
       }
     >
@@ -1604,6 +1609,16 @@ function ConfigEditor({ id, personality }: { id: string; personality: Personalit
         extra="Free-form labels used by the mesh router and operator filtering. e.g. triage, release, cost-sensitive."
       >
         <Select mode="tags" allowClear placeholder="add capability tags" tokenSeparators={[',']} />
+      </Form.Item>
+      <Form.Item label="Dreaming" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Form.Item name="dreaming" valuePropName="checked" noStyle>
+            <Switch size="small" />
+          </Form.Item>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Periodic background memory consolidation for this personality.
+          </Typography.Text>
+        </div>
       </Form.Item>
       <Alert
         type="warning"

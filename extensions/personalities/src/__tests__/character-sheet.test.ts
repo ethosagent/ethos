@@ -49,6 +49,17 @@ describe('renderCharacterSheet', () => {
     expect(sheet).toContain('anthropic');
   });
 
+  it('renders dreaming off when unset', () => {
+    const sheet = renderCharacterSheet(fullConfig, soulMd);
+    expect(sheet).toContain('Dreaming: off');
+  });
+
+  it('renders dreaming on when enabled', () => {
+    const config = { ...fullConfig, dreaming: { enable: true, idleMinutes: 60, maxPerDay: 1 } };
+    const sheet = renderCharacterSheet(config, soulMd);
+    expect(sheet).toContain('Dreaming: on');
+  });
+
   it('renders the memory scope', () => {
     const sheet = renderCharacterSheet(fullConfig, soulMd);
     expect(sheet).toMatch(/Memory scope.*personality:engineer/i);

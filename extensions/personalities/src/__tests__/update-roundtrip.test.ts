@@ -137,3 +137,63 @@ describe('fs_reach round-trip', () => {
     expect(raw).toContain('fs_reach.write: /data/output');
   });
 });
+
+describe('dreaming round-trip', () => {
+  it('does NOT drop dreaming when an unrelated field is updated', async () => {
+    await seedPersonality(
+      'dream-preserve',
+      'name: DreamPreserve\ndreaming.enable: true\ndreaming.idleMinutes: 45\ndreaming.maxPerDay: 2\n',
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    expect(registry.get('dream-preserve')?.dreaming?.enable).toBe(true);
+
+    // Update an UNRELATED field — dreaming must survive the config.yaml rewrite.
+    await registry.update('dream-preserve', { description: 'changed' });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const config = fresh.get('dream-preserve');
+    expect(config?.description).toBe('changed');
+    expect(config?.dreaming?.enable).toBe(true);
+    expect(config?.dreaming?.idleMinutes).toBe(45);
+    expect(config?.dreaming?.maxPerDay).toBe(2);
+  });
+
+  it('persists a dreaming patch through update and re-load', async () => {
+    await seedPersonality('dream-set', 'name: DreamSet\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    expect(registry.get('dream-set')?.dreaming).toBeUndefined();
+
+    await registry.update('dream-set', {
+      dreaming: { enable: true, idleMinutes: 60, maxPerDay: 1 },
+    });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const config = fresh.get('dream-set');
+    expect(config?.dreaming?.enable).toBe(true);
+    expect(config?.dreaming?.idleMinutes).toBe(60);
+    expect(config?.dreaming?.maxPerDay).toBe(1);
+  });
+
+  it('toggling dreaming back to disabled persists as off', async () => {
+    await seedPersonality(
+      'dream-toggle',
+      'name: DreamToggle\ndreaming.enable: true\ndreaming.idleMinutes: 30\n',
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    expect(registry.get('dream-toggle')?.dreaming?.enable).toBe(true);
+
+    await registry.update('dream-toggle', {
+      dreaming: { enable: false, idleMinutes: 30, maxPerDay: 1 },
+    });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    // buildDreamingConfig treats enable!=='true' as off → dreaming is undefined.
+    expect(fresh.get('dream-toggle')?.dreaming?.enable).not.toBe(true);
+  });
+});

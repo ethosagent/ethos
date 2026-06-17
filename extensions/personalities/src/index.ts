@@ -415,6 +415,7 @@ export interface CreatePersonalityInput {
     min_tool_calls?: number;
     cooldown_minutes?: number;
   };
+  dreaming?: import('@ethosagent/types').DreamingConfig;
   evolution_approval_mode?: 'auto' | 'user';
 }
 
@@ -429,6 +430,12 @@ export interface UpdatePersonalityPatch {
   capabilities?: string[];
   provider?: string;
   fs_reach?: { read?: string[]; write?: string[] };
+  /** Full dreaming config — overwrites enable + cadence wholesale. */
+  dreaming?: import('@ethosagent/types').DreamingConfig;
+  /** Enable-only dreaming toggle. Merges `enable` into the existing dreaming
+   *  cadence (idleMinutes / maxPerDay), defaulting cadence when none exists.
+   *  Used by the web editor's toggle so flipping it never resets cadence. */
+  dreamingEnable?: boolean;
 }
 
 export class FilePersonalityRegistry implements PersonalityRegistry {
@@ -665,7 +672,9 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       patch.plugins !== undefined ||
       patch.capabilities !== undefined ||
       patch.provider !== undefined ||
-      patch.fs_reach !== undefined
+      patch.fs_reach !== undefined ||
+      patch.dreaming !== undefined ||
+      patch.dreamingEnable !== undefined
     ) {
       const config = existing.config;
       if (patch.provider !== undefined && patch.provider !== '') {
@@ -724,6 +733,19 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
           }
         }
       }
+      // Resolve dreaming: a full `dreaming` patch wins; otherwise an enable-only
+      // toggle merges into the existing cadence (defaulting when none exists);
+      // otherwise the existing config is carried through untouched.
+      let mergedDreaming = patch.dreaming ?? config.dreaming;
+      if (patch.dreaming === undefined && patch.dreamingEnable !== undefined) {
+        const prev = config.dreaming;
+        mergedDreaming = {
+          enable: patch.dreamingEnable,
+          idleMinutes: prev?.idleMinutes ?? 60,
+          maxPerDay: prev?.maxPerDay ?? 1,
+          ...(prev?.prompt !== undefined ? { prompt: prev.prompt } : {}),
+        };
+      }
       const merged = {
         id: config.id,
         name: patch.name ?? config.name,
@@ -736,6 +758,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         capabilities: patch.capabilities === undefined ? config.capabilities : patch.capabilities,
         provider: patch.provider === undefined ? config.provider : patch.provider,
         fs_reach: patch.fs_reach === undefined ? config.fs_reach : patch.fs_reach,
+        dreaming: mergedDreaming,
         evolution_approval_mode: config.evolution_approval_mode,
       };
       await this.storage.write(join(dir, 'config.yaml'), renderConfigYaml(merged));
@@ -1458,6 +1481,13 @@ function renderConfigYaml(input: CreatePersonalityInput): string {
       lines.push(`skill_evolution.min_tool_calls: ${se.min_tool_calls}`);
     if (se.cooldown_minutes !== undefined)
       lines.push(`skill_evolution.cooldown_minutes: ${se.cooldown_minutes}`);
+  }
+  if (input.dreaming !== undefined) {
+    const d = input.dreaming;
+    lines.push(`dreaming.enable: ${d.enable}`);
+    if (d.idleMinutes !== undefined) lines.push(`dreaming.idleMinutes: ${d.idleMinutes}`);
+    if (d.maxPerDay !== undefined) lines.push(`dreaming.maxPerDay: ${d.maxPerDay}`);
+    if (d.prompt !== undefined) lines.push(`dreaming.prompt: ${yamlScalar(d.prompt)}`);
   }
   if (input.evolution_approval_mode !== undefined) {
     lines.push(`evolution_approval_mode: ${yamlScalar(input.evolution_approval_mode)}`);

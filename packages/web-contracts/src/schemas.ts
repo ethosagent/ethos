@@ -103,6 +103,9 @@ export const PersonalitySchema = z.object({
       write: z.array(z.string()).nullable(),
     })
     .nullable(),
+  /** Idle-time dreaming state. Optional (omitted when unset) so the editor
+   *  can read the current toggle without affecting other surfaces. */
+  dreaming: z.object({ enable: z.boolean() }).optional(),
   system: z.boolean(),
   /** True when the personality lives in the package's built-in data directory
    *  (read-only). User-created personalities under `~/.ethos/personalities/`

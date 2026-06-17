@@ -52,6 +52,7 @@ export function renderCharacterSheet(config: PersonalityConfig, soulMd: string):
   lines.push('## Routing');
   lines.push(`- Model: ${resolveModelDisplay(config.model, '(engine default)')}`);
   lines.push(`- Provider: ${config.provider ?? '(engine default)'}`);
+  lines.push(`- Dreaming: ${config.dreaming?.enable ? 'on' : 'off'}`);
   lines.push('');
 
   lines.push('## Capabilities');
