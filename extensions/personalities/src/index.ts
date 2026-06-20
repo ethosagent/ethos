@@ -84,6 +84,43 @@ function parseNestedBlock(
   return { obj, endIdx: i };
 }
 
+/**
+ * Extract the verbatim text of the `safety:` block from a config.yaml source.
+ *
+ * Captures from the `safety:` line through all subsequent indented child lines,
+ * stopping at the first zero-indent non-blank, non-comment line (a new top-level
+ * key) or EOF. Trailing blank lines inside the captured range are trimmed so we
+ * do not emit stray blank lines. Returns '' if no safety block is found, and the
+ * block WITHOUT a trailing newline (the caller adds spacing). This mirrors what
+ * parseConfigYaml/parseNestedBlock consume, so it round-trips losslessly —
+ * including sub-keys the read path does not parse (network, injectionDefense, …).
+ */
+function extractRawSafetyBlock(src: string): string {
+  const lines = src.split('\n');
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    if (/^safety:\s*$/.test(line) || /^safety:\s*\{\}\s*$/.test(line)) {
+      start = i;
+      break;
+    }
+  }
+  if (start === -1) return '';
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    if (line.trim() === '' || /^\s*#/.test(line)) continue;
+    const indent = line.match(/^(\s*)/)?.[1]?.length ?? 0;
+    if (indent === 0) {
+      end = i;
+      break;
+    }
+  }
+  const block = lines.slice(start, end);
+  while (block.length > 1 && (block[block.length - 1] ?? '').trim() === '') block.pop();
+  return block.join('\n');
+}
+
 interface ParsedConfigYaml {
   flat: Record<string, string>;
   nested: Partial<Record<NestedBlockName, Record<string, unknown>>>;
@@ -658,7 +695,16 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         provider: patch.provider === undefined ? config.provider : patch.provider,
         fs_reach: patch.fs_reach === undefined ? config.fs_reach : patch.fs_reach,
       };
-      await this.storage.write(join(dir, 'config.yaml'), renderConfigYaml(merged));
+      // renderConfigYaml + the merged object both omit the safety: block, so a
+      // naive rewrite would silently delete it (ARCHITECTURE.md §V S7). Preserve
+      // the existing block verbatim — this is lossless for sub-keys the read path
+      // does not parse (network, injectionDefense, …) and leaves buildSafetyConfig
+      // untouched.
+      const rendered = renderConfigYaml(merged);
+      const existingRaw = await this.storage.read(join(dir, 'config.yaml'));
+      const safetyBlock = existingRaw ? extractRawSafetyBlock(existingRaw) : '';
+      const finalConfig = safetyBlock ? `${rendered}${safetyBlock}\n` : rendered;
+      await this.storage.write(join(dir, 'config.yaml'), finalConfig);
     }
     if (patch.toolset !== undefined) {
       await this.storage.write(join(dir, 'toolset.yaml'), renderToolsetYaml(patch.toolset));
