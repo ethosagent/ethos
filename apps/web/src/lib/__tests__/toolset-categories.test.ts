@@ -22,7 +22,10 @@ describe('toolset categories', () => {
 
   it('every known toolset group declares a category (exhaustive — fails if a group is unmapped)', () => {
     for (const group of ALL_TOOLSET_GROUPS) {
-      expect(GROUP_TO_CATEGORY[group], `group "${group}" is missing from GROUP_TO_CATEGORY`).toBeDefined();
+      expect(
+        GROUP_TO_CATEGORY[group],
+        `group "${group}" is missing from GROUP_TO_CATEGORY`,
+      ).toBeDefined();
     }
   });
 
