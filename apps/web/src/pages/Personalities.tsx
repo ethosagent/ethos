@@ -27,6 +27,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -600,6 +601,18 @@ function ToolsetStep({
     });
   };
 
+  const descMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const g of catalogQuery.data?.groups ?? []) {
+      for (const tool of g.tools) {
+        if (typeof tool.description === 'string' && tool.description.length > 0) {
+          map.set(tool.name, tool.description);
+        }
+      }
+    }
+    return map;
+  }, [catalogQuery.data]);
+
   if (catalogQuery.isLoading) {
     return (
       <div style={{ display: 'grid', placeItems: 'center', height: 120 }}>
@@ -712,14 +725,18 @@ function ToolsetStep({
                       {group.tools.map((tool) => {
                         const enabled = state.toolset.includes(tool);
                         return (
-                          <Tag.CheckableTag
+                          <Tooltip
                             key={tool}
-                            checked={enabled}
-                            onChange={() => toggle(tool)}
-                            style={{ padding: '4px 10px', fontSize: 12 }}
+                            title={descMap.get(tool) ?? 'No description available'}
                           >
-                            {tool}
-                          </Tag.CheckableTag>
+                            <Tag.CheckableTag
+                              checked={enabled}
+                              onChange={() => toggle(tool)}
+                              style={{ padding: '4px 10px', fontSize: 12 }}
+                            >
+                              {tool}
+                            </Tag.CheckableTag>
+                          </Tooltip>
                         );
                       })}
                     </div>

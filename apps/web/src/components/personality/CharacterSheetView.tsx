@@ -1,6 +1,8 @@
 import type { ExecutionPostureWire, Personality } from '@ethosagent/web-contracts';
 import { useQuery } from '@tanstack/react-query';
-import { Spin, Tag, Typography } from 'antd';
+import { Spin, Tag, Tooltip, Typography } from 'antd';
+import { useMemo } from 'react';
+import { useToolCatalog } from '../../features/settings/api/queries';
 import { postureBadge, postureColorVar, postureWhy } from '../../lib/execution-posture';
 import { rpc } from '../../rpc';
 
@@ -34,6 +36,19 @@ export function CharacterSheetView({ personality }: { personality: Personality }
     queryKey: ['personalities', 'characterSheet', personality.id],
     queryFn: () => rpc.personalities.characterSheet({ id: personality.id }),
   });
+
+  const { data: catalog } = useToolCatalog();
+  const toolDescriptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const g of catalog?.groups ?? []) {
+      for (const tool of g.tools) {
+        if (typeof tool.description === 'string' && tool.description.length > 0) {
+          map.set(tool.name, tool.description);
+        }
+      }
+    }
+    return map;
+  }, [catalog]);
 
   const m = personality.model;
   const modelDisplay =
@@ -112,9 +127,9 @@ export function CharacterSheetView({ personality }: { personality: Personality }
             </Typography.Text>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {toolset.map((t) => (
-                <Tag key={t} style={{ fontFamily: MONO, fontSize: 11 }}>
-                  {t}
-                </Tag>
+                <Tooltip key={t} title={toolDescriptions.get(t) ?? 'No description available'}>
+                  <Tag style={{ fontFamily: MONO, fontSize: 11 }}>{t}</Tag>
+                </Tooltip>
               ))}
             </div>
           </>
