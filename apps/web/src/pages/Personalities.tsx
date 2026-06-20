@@ -30,7 +30,7 @@ import {
   Typography,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ExecutionTab } from '../components/personality/ExecutionTab';
 import { PersonalityRingAvatar } from '../components/ui/PersonalityRingAvatar';
 import { toolAffordance } from '../lib/execution-posture';
@@ -106,7 +106,13 @@ export function Personalities() {
       render: (name: string, p: Personality) => (
         <div>
           <div style={{ fontWeight: 500 }}>
-            {name} {p.id === defaultId ? <Tag color="blue">default</Tag> : null}{' '}
+            <Link
+              to={`/personalities/${p.id}`}
+              style={{ fontWeight: 500, color: 'var(--text-primary)' }}
+            >
+              {name}
+            </Link>{' '}
+            {p.id === defaultId ? <Tag color="blue">default</Tag> : null}{' '}
             {p.builtin ? <Tag>built-in</Tag> : null}
           </div>
           <div style={{ color: 'var(--ethos-text-dim)', fontSize: 11 }}>{p.id}</div>
