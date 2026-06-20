@@ -4,7 +4,7 @@
 // is loaded from `~/.ethos/constitution.yaml` and enforced at wiring time.
 //
 // Failure modes and the SAFE MODE recovery path are documented in the runbook:
-//   docs/content/operating/how-to/safe-mode.md
+//   docs/content/using/how-to/safe-mode.md
 //
 // Layering: this extension imports `@ethosagent/types` only. The `substitute`
 // helper is REPLICATED locally (mirrors core's scoped-storage helper) rather

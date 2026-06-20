@@ -183,7 +183,7 @@ export async function buildInfrastructure(
   let effectiveActivePerson = activePerson;
   if (constLoad.status === 'malformed') {
     log.error(
-      `Constitution malformed — entering SAFE MODE: ${constLoad.error} (see docs/content/operating/how-to/safe-mode.md)`,
+      `Constitution malformed — entering SAFE MODE: ${constLoad.error} (see docs/content/using/how-to/safe-mode.md)`,
     );
     const safe = applySafeMode(personalities.list(), BUILTIN_PERSONALITY_IDS);
     const survivors = new Set(safe.map((p) => p.id));

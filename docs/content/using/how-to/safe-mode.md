@@ -51,3 +51,22 @@ You'll see an error on startup naming the parse or validation failure.
 
 To run without any constitution at all, delete `~/.ethos/constitution.yaml` —
 a missing file is treated as a permissive default, not an error.
+
+## Verify
+
+Confirm safe mode has cleared:
+
+1. Restart Ethos. The startup log no longer shows the `entering SAFE MODE`
+   error — a clean start means the constitution parsed.
+
+2. Confirm a custom (non-built-in) personality is back with its full toolset:
+
+   ```
+   ethos personality show <personality-id>
+   ```
+
+   The character sheet lists the personality's declared tools — not just the
+   read-only file/web/memory reads that safe mode leaves behind.
+
+3. Start a chat and run a tool that safe mode strips (a terminal command or a
+   file write). It executes instead of being rejected as outside the toolset.
