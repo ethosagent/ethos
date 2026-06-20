@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { LOG_MAX_BYTES, rotateLogIfNeeded, spawnDetached } from '../spawn';
+import { LOG_MAX_BYTES, minimalHostEnv, rotateLogIfNeeded, spawnDetached } from '../spawn';
 
 let dataDir: string;
 const spawnedPids: number[] = [];
@@ -103,6 +103,63 @@ describe('spawnDetached', () => {
         .trim(),
     );
     expect(pgid).toBe(result.pid);
+  });
+});
+
+describe('minimalHostEnv (F3 — no host secret leak)', () => {
+  it('forwards only the passthrough allowlist, not arbitrary host secrets', () => {
+    process.env.ETHOS_TEST_SECRET = 'super-secret-token';
+    try {
+      const env = minimalHostEnv(undefined);
+      expect(env.ETHOS_TEST_SECRET).toBeUndefined();
+      // PATH is on the allowlist (when present on the host) so toolchains work.
+      if (process.env.PATH) expect(env.PATH).toBe(process.env.PATH);
+    } finally {
+      process.env.ETHOS_TEST_SECRET = undefined;
+    }
+  });
+
+  it('merges the caller-explicit env on top of the allowlist', () => {
+    const env = minimalHostEnv({ MY_VAR: 'v' });
+    expect(env.MY_VAR).toBe('v');
+  });
+});
+
+describe('spawnDetached env (F3)', () => {
+  it('does not expose a host secret env var to the spawned child', async () => {
+    process.env.ETHOS_LEAK_PROBE = 'leaked-value';
+    try {
+      const out = join(dataDir, 'env-out.txt');
+      // The child prints the probe var; with the clean env it must be empty.
+      const result = spawnDetached(
+        'envtest',
+        `printf '%s' "$ETHOS_LEAK_PROBE" > ${JSON.stringify(out)}`,
+        dataDir,
+        undefined,
+        dataDir,
+      );
+      spawnedPids.push(result.pid);
+      await waitFor(() => existsSync(out));
+      // Give the redirect a beat to flush.
+      await new Promise((r) => setTimeout(r, 100));
+      expect(readFileSync(out, 'utf8')).toBe('');
+    } finally {
+      process.env.ETHOS_LEAK_PROBE = undefined;
+    }
+  });
+
+  it('forwards an explicitly-opted env var to the spawned child', async () => {
+    const out = join(dataDir, 'env-explicit.txt');
+    const result = spawnDetached(
+      'envexplicit',
+      `printf '%s' "$EXPLICIT_VAR" > ${JSON.stringify(out)}`,
+      dataDir,
+      { EXPLICIT_VAR: 'explicit-ok' },
+      dataDir,
+    );
+    spawnedPids.push(result.pid);
+    await waitFor(() => existsSync(out) && readFileSync(out, 'utf8').length > 0);
+    expect(readFileSync(out, 'utf8')).toBe('explicit-ok');
   });
 });
 

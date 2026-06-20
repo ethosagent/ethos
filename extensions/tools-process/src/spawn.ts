@@ -7,14 +7,59 @@ import { spawn } from 'node:child_process';
 // stat/unlink/mkdir) on the dataDir. These could migrate to ctx.scopedFs once the
 // tool threads ctx through to spawnDetached, but the function is also called from
 // non-tool code paths (operations.ts rotate-on-touch). Deferred.
-import { closeSync, mkdirSync, openSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import {
+  appendFileSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+} from 'node:fs';
 import { join } from 'node:path';
+import type { ExecSession, ExecutionBackend, PersonalityConfig } from '@ethosagent/types';
 import { updateEntryIf } from './registry';
 
 export interface SpawnResult {
   pid: number;
   stdoutLog: string;
   stderrLog: string;
+}
+
+/**
+ * Host env vars passed through to a spawned child. The full `process.env`
+ * carries the host's secrets (API keys, tokens, cloud creds) — forwarding it
+ * into an exec-bearing tool's child process leaks them to arbitrary commands
+ * the agent runs (review #3, clean-env intent). We forward only the minimal set
+ * needed for a shell + common toolchains to function, then layer the caller's
+ * explicitly-opted `env` on top. Anything secret the command genuinely needs
+ * must be passed explicitly via the tool's `env` arg, not inherited silently.
+ */
+const PASSTHROUGH_ENV_KEYS = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'LC_ALL',
+  'TERM',
+  'TMPDIR',
+  'TZ',
+] as const;
+
+/**
+ * Build the minimal base env for a host child process: the passthrough
+ * allowlist drawn from `process.env`, with the caller's explicit `env` merged
+ * on top (explicit wins). Host secrets outside the allowlist are not forwarded.
+ */
+export function minimalHostEnv(env: Record<string, string> | undefined): Record<string, string> {
+  const base: Record<string, string> = {};
+  for (const key of PASSTHROUGH_ENV_KEYS) {
+    const val = process.env[key];
+    if (val !== undefined) base[key] = val;
+  }
+  return env ? { ...base, ...env } : base;
 }
 
 /** Per-log-file size ceiling. At rotation a file is renamed to `.log.1`. */
@@ -102,7 +147,9 @@ export function spawnDetached(
     shell: true,
     detached: true,
     cwd,
-    env: env ? { ...process.env, ...env } : process.env,
+    // F3 — minimal explicit env: forward only the passthrough allowlist plus the
+    // caller's explicit vars, never the host's full secret-bearing process.env.
+    env: minimalHostEnv(env),
     stdio: ['ignore', outFd, errFd],
   });
 
@@ -140,4 +187,94 @@ export function spawnDetached(
   }
 
   return { pid: child.pid, stdoutLog, stderrLog };
+}
+
+/** Sentinel pid for backend-routed (containerized) processes — they have no
+ * host pid. `isAlive(SENTINEL)` is false, so liveness for these entries is
+ * driven by the registry status (flipped on stream completion), not host pid
+ * polling. process_stop/process_watch special-case this pid. */
+export const BACKEND_ROUTED_PID = -1;
+
+/**
+ * Live handle to a backend-routed process's session, keyed by process id. Lets
+ * process_stop deliver a real signal to the in-container process and lets the
+ * drain loop be unblocked. Cleared once the stream completes. In-process only —
+ * a backend-routed process cannot outlive the host that spawned it (the
+ * container is torn down on dispose), so cross-process recovery is N/A.
+ */
+const routedSessions = new Map<string, ExecSession>();
+
+/** Resolve the live session for a backend-routed process, if still running. */
+export function routedSessionFor(id: string): ExecSession | undefined {
+  return routedSessions.get(id);
+}
+
+/**
+ * Route a long-running process through an ExecutionBackend session (review c).
+ * Streams the session's stdout/stderr into the same per-process log files that
+ * `spawnDetached` writes, so process_list/process_logs keep working. Output is
+ * appended as the stream yields; `onExit` fires once the stream completes.
+ *
+ * Lane C2: the session is registered in `routedSessions` so process_stop can
+ * deliver a real signal to the in-container process via `session.stop()`, and
+ * process_watch can tail the live log + observe terminal state via the
+ * registry. The handle is removed once the stream ends.
+ */
+export function spawnViaBackend(
+  id: string,
+  command: string,
+  cwd: string,
+  env: Record<string, string> | undefined,
+  dataDir: string,
+  backend: ExecutionBackend,
+  personality: PersonalityConfig | undefined,
+  onExit?: (result: { exitCode: number | null; signal: NodeJS.Signals | null }) => void,
+): SpawnResult {
+  const dir = join(dataDir, 'processes', id);
+  mkdirSync(dir, { recursive: true });
+  const stdoutLog = join(dir, 'stdout.log');
+  const stderrLog = join(dir, 'stderr.log');
+  rotateLogIfNeeded(stdoutLog);
+  rotateLogIfNeeded(stderrLog);
+
+  const session = backend.spawnSession(personality?.id ?? 'unknown');
+  routedSessions.set(id, session);
+  // Clean env by default (review #3): only explicitly-opted vars cross in.
+  const stream = session.exec(command, { cwd, env: env ?? {}, personality });
+
+  // Drain the stream in the background, appending to the log files. A detached
+  // host child is not created; the registry entry is flipped to terminal when
+  // the stream ends (or errors). The exit chunk (Lane C2) carries the real exit
+  // code; absent it (older backend), fall back to 0 on clean completion.
+  void (async () => {
+    let errored = false;
+    let exitCode = 0;
+    try {
+      for await (const chunk of stream) {
+        if (chunk.stream === 'exit') {
+          exitCode = chunk.code;
+          continue;
+        }
+        const target = chunk.stream === 'stdout' ? stdoutLog : stderrLog;
+        try {
+          appendFileSync(target, chunk.data);
+        } catch {
+          // best-effort log capture
+        }
+      }
+    } catch {
+      errored = true;
+    } finally {
+      routedSessions.delete(id);
+      await session.dispose().catch(() => {});
+      const finalExit = errored ? -1 : exitCode;
+      updateEntryIf(dataDir, id, (e) => e.status === 'running', {
+        status: 'exited' as const,
+        exitCode: finalExit,
+      }).catch(() => {});
+      onExit?.({ exitCode: finalExit, signal: null });
+    }
+  })();
+
+  return { pid: BACKEND_ROUTED_PID, stdoutLog, stderrLog };
 }

@@ -3,10 +3,12 @@
 
 export * from './agent-event';
 export * from './clarify';
+export * from './constitution';
 export * from './context-engine';
 export * from './diagnostics';
 export * from './errors';
 export * from './evaluator';
+export * from './execution';
 export * from './goal';
 export * from './hooks';
 export * from './id-validation';

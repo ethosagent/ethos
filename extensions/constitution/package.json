@@ -1,0 +1,26 @@
+{
+  "name": "@ethosagent/constitution",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts",
+      "production": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts"
+  },
+  "dependencies": {
+    "@ethosagent/types": "workspace:*",
+    "yaml": "^2.7.1"
+  },
+  "devDependencies": {
+    "@ethosagent/core": "workspace:*",
+    "@ethosagent/safety-injection": "workspace:*",
+    "@ethosagent/safety-redact": "workspace:*",
+    "@ethosagent/storage-fs": "workspace:*"
+  }
+}

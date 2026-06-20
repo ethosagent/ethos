@@ -15,6 +15,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ConnectMcpModal } from '../components/mcp/ConnectMcpModal';
+import { CharacterSheetView } from '../components/personality/CharacterSheetView';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { rpc } from '../rpc';
 import {
@@ -682,13 +683,6 @@ export function PersonalityDetail() {
   }
 
   const { personality } = data;
-  const model = personality.model;
-  const modelDisplay =
-    typeof model === 'string'
-      ? model
-      : model
-        ? (model.default ?? model.trivial ?? model.deep ?? null)
-        : null;
 
   return (
     <div style={{ padding: 24, maxWidth: 960 }}>
@@ -714,42 +708,15 @@ export function PersonalityDetail() {
               {personality.id}
             </Typography.Text>
           </div>
+          <div style={{ flex: 1 }} />
+          <Button onClick={() => setEditModalOpen(true)}>Edit personality</Button>
         </div>
 
         {personality.description ? (
           <Typography.Paragraph type="secondary">{personality.description}</Typography.Paragraph>
         ) : null}
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'auto 1fr',
-            gap: '8px 24px',
-            fontSize: 14,
-          }}
-        >
-          {modelDisplay ? (
-            <>
-              <Typography.Text type="secondary">Model</Typography.Text>
-              <Typography.Text code>{modelDisplay}</Typography.Text>
-            </>
-          ) : null}
-          {personality.fs_reach !== undefined && personality.fs_reach !== null ? (
-            <>
-              <Typography.Text type="secondary">FS reach</Typography.Text>
-              <Typography.Text>
-                {[
-                  ...(personality.fs_reach.read ?? []).map((p: string) => `R ${p}`),
-                  ...(personality.fs_reach.write ?? []).map((p: string) => `W ${p}`),
-                ].join(', ') || 'none'}
-              </Typography.Text>
-            </>
-          ) : null}
-        </div>
-
-        <div style={{ marginTop: 16 }}>
-          <Button onClick={() => setEditModalOpen(true)}>Edit personality</Button>
-        </div>
+        <CharacterSheetView personality={personality} />
       </div>
 
       {!personality.builtin && <McpSection personalityId={id} mcpPolicy={data.mcpPolicy} />}

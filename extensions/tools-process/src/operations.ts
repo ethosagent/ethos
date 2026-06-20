@@ -14,7 +14,7 @@ import {
   updateEntry,
   withRegistryLock,
 } from './registry';
-import { rotateLogIfNeeded } from './spawn';
+import { BACKEND_ROUTED_PID, rotateLogIfNeeded, routedSessionFor } from './spawn';
 
 // Shared list/logs/stop logic, factored out so both the `process` tool family
 // and the `ethos process` CLI command call the exact same code path. The tools
@@ -232,6 +232,36 @@ export async function stopProcess(
       stopped: false,
       ...(entry.exitCode !== undefined && { exit_code: entry.exitCode }),
     };
+  }
+
+  // Backend-routed (containerized) process: there is no host pid. Signal the
+  // in-container process(es) via the live session handle, then wait for the
+  // drain loop to flip the registry entry to terminal (it observes the exec
+  // stream end). SIGTERM escalates to SIGKILL after the grace window.
+  if (entry.pid === BACKEND_ROUTED_PID) {
+    const session = routedSessionFor(id);
+    if (!session?.stop) {
+      // No live handle (host restarted, or backend without stop()) — mark
+      // orphan so the caller sees it is no longer reachable.
+      await updateEntry(dataDir, id, { status: 'orphan' });
+      return { ok: true, stopped: false };
+    }
+    await session.stop(signal).catch(() => {});
+    const terminal = async (): Promise<boolean> => loadRegistry(dataDir)[id]?.status !== 'running';
+    if (signal === 'SIGTERM') {
+      const deadline = Date.now() + SIGTERM_GRACE_MS;
+      while (Date.now() < deadline) {
+        await sleep(WAIT_POLL_MS);
+        if (await terminal()) break;
+      }
+      if (!(await terminal())) {
+        await session.stop('SIGKILL').catch(() => {});
+      }
+    }
+    const finalEntry = loadRegistry(dataDir)[id];
+    const exitCode = finalEntry?.exitCode;
+    await updateEntry(dataDir, id, { status: 'killed' });
+    return { ok: true, stopped: true, ...(exitCode !== undefined && { exit_code: exitCode }) };
   }
 
   try {

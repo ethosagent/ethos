@@ -24,6 +24,9 @@ const srcAliases = {
   '@ethosagent/tools-mcp': resolve('./extensions/tools-mcp/src'),
   '@ethosagent/agent-bridge': resolve('./packages/agent-bridge/src'),
   '@ethosagent/plugin-loader': resolve('./extensions/plugin-loader/src'),
+  '@ethosagent/execution-local': resolve('./extensions/execution-local/src'),
+  '@ethosagent/execution-docker': resolve('./extensions/execution-docker/src'),
+  '@ethosagent/execution-ssh': resolve('./extensions/execution-ssh/src'),
 };
 
 export default defineConfig({

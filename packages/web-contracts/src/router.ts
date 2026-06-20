@@ -187,11 +187,44 @@ const PersonalityGetOutput = z.object({
 });
 
 const PersonalityCharacterSheetInput = z.object({ id: z.string() });
+
+// Structured execution posture (Phase 2a, lane E1). Mirrors the
+// `ExecutionPosture` / `DockerAbsentDecision` contracts in
+// `@ethosagent/types`; the web Execution UI consumes this directly rather than
+// re-computing posture from the toolset (single source of truth = the resolver
+// behind `buildExecutionPosture`).
+const DockerAbsentSchema = z.object({
+  blocked: z.literal(true),
+  canInstall: z.literal(true),
+  canConsentLocal: z.boolean(),
+  consentForbiddenReason: z.string().optional(),
+});
+const ExecutionPostureSchema = z.object({
+  backend: z.enum(['docker', 'local', 'ssh', 'none']),
+  networkMode: z.enum(['none', 'bridge']),
+  memoryMb: z.number(),
+  containerized: z.boolean(),
+  mounts: z.array(
+    z.object({
+      hostPath: z.string(),
+      containerPath: z.string(),
+      mode: z.enum(['ro', 'rw']),
+    }),
+  ),
+  scratchPaths: z.array(z.string()),
+  dockerAbsent: DockerAbsentSchema.optional(),
+});
+/** Wire shape of the resolved execution posture (Phase 2a, lane E1). */
+export type ExecutionPostureWire = z.infer<typeof ExecutionPostureSchema>;
+export type DockerAbsentWire = z.infer<typeof DockerAbsentSchema>;
 const PersonalityCharacterSheetOutput = z.object({
   /** Generated Markdown character sheet — the same artifact `ethos personality
    *  show` prints. Regenerated on each call; see `renderCharacterSheet` in
    *  @ethosagent/personalities. */
   markdown: z.string(),
+  /** Resolved execution posture (Phase 2a, lane E1). Null when the server has
+   *  no data directory wired and therefore cannot resolve the posture. */
+  posture: ExecutionPostureSchema.nullable(),
 });
 
 const PersonalityIdRegex = /^[a-z0-9_-]+$/;

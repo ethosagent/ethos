@@ -501,6 +501,9 @@ importers:
       '@ethosagent/web-contracts':
         specifier: workspace:*
         version: link:../../packages/web-contracts
+      '@ethosagent/wiring':
+        specifier: workspace:*
+        version: link:../../packages/wiring
       '@hono/node-server':
         specifier: ^2.0.0
         version: 2.0.4(hono@4.12.23)
@@ -719,6 +722,28 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/constitution:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      yaml:
+        specifier: ^2.7.1
+        version: 2.9.0
+    devDependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ethosagent/safety-injection':
+        specifier: workspace:*
+        version: link:../../packages/safety/injection
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../../packages/safety/redact
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+
   extensions/cron:
     dependencies:
       '@ethosagent/logger':
@@ -745,6 +770,24 @@ importers:
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
+  extensions/execution-docker:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
+  extensions/execution-local:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
+  extensions/execution-ssh:
+    dependencies:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1538,12 +1581,24 @@ importers:
 
   packages/wiring:
     dependencies:
+      '@ethosagent/constitution':
+        specifier: workspace:*
+        version: link:../../extensions/constitution
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../core
       '@ethosagent/cron':
         specifier: workspace:*
         version: link:../../extensions/cron
+      '@ethosagent/execution-docker':
+        specifier: workspace:*
+        version: link:../../extensions/execution-docker
+      '@ethosagent/execution-local':
+        specifier: workspace:*
+        version: link:../../extensions/execution-local
+      '@ethosagent/execution-ssh':
+        specifier: workspace:*
+        version: link:../../extensions/execution-ssh
       '@ethosagent/goal-runner':
         specifier: workspace:*
         version: link:../../extensions/goal-runner

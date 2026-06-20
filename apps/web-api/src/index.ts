@@ -181,6 +181,14 @@ export interface CreateWebApiOptions {
    * Fire-and-forget — errors never fail the onboarding RPC.
    */
   onSetupComplete?: () => void;
+  /**
+   * Whether a Docker execution backend can be built in this process (F1). Pass
+   * `false` from the desktop in-process backend (`disableDocker: true`) so the
+   * character sheet honestly renders a `local` (un-sandboxed) posture instead
+   * of claiming "Sandboxed · Docker" while execution actually runs on the host.
+   * Defaults to `true`.
+   */
+  dockerBuildable?: boolean;
 }
 
 export interface CreateWebApiResult {
@@ -258,6 +266,8 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     library: skillsLibrary,
     secrets,
     mcpJsonStore: sharedMcpJsonStore,
+    dataDir: opts.dataDir,
+    ...(opts.dockerBuildable === false ? { dockerBuildable: false } : {}),
   });
   const configService = new ConfigService({ config: configRepo, secrets });
   const onboardingService = new OnboardingService({
