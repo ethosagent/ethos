@@ -26,9 +26,13 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/constitution": "workspace:*",
     "@ethosagent/core": "workspace:*",
     "@ethosagent/safety-network": "workspace:*",
     "@ethosagent/cron": "workspace:*",
+    "@ethosagent/execution-docker": "workspace:*",
+    "@ethosagent/execution-local": "workspace:*",
+    "@ethosagent/execution-ssh": "workspace:*",
     "@ethosagent/llm-anthropic": "workspace:*",
     "@ethosagent/llm-azure": "workspace:*",
     "@ethosagent/llm-codex": "workspace:*",

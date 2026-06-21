@@ -1003,7 +1003,15 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
     });
     return;
   }
-  console.log(`\n${renderCharacterSheet(described.config, soulMd)}`);
+  // Resolve the execution posture so `## Execution` renders on the sheet
+  // (Phase 2a, lane E1). Read-only — no daemon probe here; the static posture
+  // (backend / network / memory / mounts / macOS caveat) is what `show` audits.
+  const { buildExecutionPosture } = await import('@ethosagent/wiring');
+  const posture = await buildExecutionPosture({
+    personality: described.config,
+    substitutionVars: { ethosHome: ethosDir(), cwd: process.cwd() },
+  });
+  console.log(`\n${renderCharacterSheet(described.config, soulMd, { posture })}`);
 }
 
 // ---------------------------------------------------------------------------

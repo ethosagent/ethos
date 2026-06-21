@@ -638,3 +638,103 @@ describe('lossless update — full config round-trip', () => {
     expect(after?.description).toBe('changed');
   });
 });
+
+describe('safety block preservation', () => {
+  it('preserves the full safety block when an unrelated field is updated', async () => {
+    const cfg = `${[
+      'name: Guarded',
+      'description: Has a rich safety block',
+      'safety:',
+      '  approvalMode: smart',
+      '  network:',
+      '    allow: - api.example.com',
+      '    - cdn.example.com',
+      '    allow_private_urls: true',
+      '  observability:',
+      '    storeToolArgs: redacted',
+      '    redactPatterns: - secret',
+      '    - token',
+    ].join('\n')}\n`;
+    await seedPersonality('safety-rich', cfg);
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('safety-rich', { name: 'Renamed' });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const config = fresh.get('safety-rich');
+    expect(config?.name).toBe('Renamed');
+    expect(config?.safety?.approvalMode).toBe('smart');
+    expect(config?.safety?.observability?.storeToolArgs).toBe('redacted');
+    expect(config?.safety?.observability?.redactPatterns).toEqual(['secret', 'token']);
+
+    // The network sub-block is dropped on READ, so the only proof it survived is
+    // the raw written config.yaml retaining it verbatim. This is the
+    // security-critical assertion.
+    const raw = await readFile(
+      join(testDir, 'personalities', 'safety-rich', 'config.yaml'),
+      'utf-8',
+    );
+    expect(raw).toContain('network:');
+    expect(raw).toContain('api.example.com');
+    expect(raw).toContain('cdn.example.com');
+    expect(raw).toContain('allow_private_urls: true');
+  });
+
+  it('updates fine and stays safety-free when there is no safety block', async () => {
+    await seedPersonality('safety-none', 'name: Plain\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('safety-none', { name: 'Plain2' });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    expect(fresh.get('safety-none')?.name).toBe('Plain2');
+    expect(fresh.get('safety-none')?.safety).toBeUndefined();
+
+    const raw = await readFile(
+      join(testDir, 'personalities', 'safety-none', 'config.yaml'),
+      'utf-8',
+    );
+    expect(raw).not.toContain('safety:');
+  });
+
+  it('keeps the safety block intact across repeated rewrites', async () => {
+    const cfg = `${[
+      'name: Guarded',
+      'description: Has a rich safety block',
+      'safety:',
+      '  approvalMode: smart',
+      '  network:',
+      '    allow: - api.example.com',
+      '    - cdn.example.com',
+      '    allow_private_urls: true',
+      '  observability:',
+      '    storeToolArgs: redacted',
+      '    redactPatterns: - secret',
+      '    - token',
+    ].join('\n')}\n`;
+    await seedPersonality('safety-twice', cfg);
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('safety-twice', { name: 'Renamed' });
+    const second = makeRegistry();
+    await second.loadFromDirectory(join(testDir, 'personalities'));
+    await second.update('safety-twice', { description: 'updated again' });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    const config = fresh.get('safety-twice');
+    expect(config?.safety?.approvalMode).toBe('smart');
+    expect(config?.safety?.observability?.storeToolArgs).toBe('redacted');
+
+    const raw = await readFile(
+      join(testDir, 'personalities', 'safety-twice', 'config.yaml'),
+      'utf-8',
+    );
+    expect(raw).toContain('api.example.com');
+  });
+});

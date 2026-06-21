@@ -696,3 +696,17 @@ export {
   EthosObservability,
   type EthosTraceKind,
 } from './observability/ethos-observability';
+export { resolveExecutionBackendName } from './resolve-execution-backend';
+export {
+  type BuildExecutionPostureInput,
+  buildExecutionPosture,
+  type ContainerizedDetection,
+  type ContainerizedDetectionInput,
+  type ContainerizedSignal,
+  constitutionForbidsLocal,
+  detectContainerized,
+  hasExecTool,
+  isExecTool,
+  type ResolveExecutionPostureInput,
+  resolveExecutionPosture,
+} from './resolve-execution-posture';

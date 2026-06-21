@@ -1,4 +1,4 @@
-import type { McpPolicy, Personality } from '@ethosagent/web-contracts';
+import type { McpPolicy } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   App as AntApp,
@@ -8,20 +8,18 @@ import {
   Result,
   Spin,
   Switch,
-  Tabs,
   Tag,
   Tooltip,
   Typography,
 } from 'antd';
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { LivingSoulSection } from '../components/LivingSoulSection';
 import { ConnectMcpModal } from '../components/mcp/ConnectMcpModal';
+import { CharacterSheetView } from '../components/personality/CharacterSheetView';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { rpc } from '../rpc';
 import {
-  ConfigEditor,
-  IdentityEditor,
+  EditModal,
   initialSelectionFor,
   ServerToolChecklist,
   type ServerToolState,
@@ -655,300 +653,14 @@ function McpSection({
 }
 
 // ---------------------------------------------------------------------------
-// Overview — labeled read-only view of the personality config. Each row is
-// annotated with what it's for so a reader understands the personality without
-// opening Edit. Rows with no data are omitted.
-// ---------------------------------------------------------------------------
-
-function OverviewRow({
-  label,
-  gloss,
-  children,
-}: {
-  label: string;
-  gloss?: string;
-  children: ReactNode;
-}) {
-  return (
-    <>
-      <div>
-        <Typography.Text type="secondary">{label}</Typography.Text>
-        {gloss ? (
-          <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: 0 }}>
-            {gloss}
-          </Typography.Paragraph>
-        ) : null}
-      </div>
-      <div>{children}</div>
-    </>
-  );
-}
-
-function OverviewSection({ personality }: { personality: Personality }) {
-  const model = personality.model;
-  const tiered = model && typeof model !== 'string' ? model : null;
-  const flatModel = typeof model === 'string' ? model : null;
-
-  const fsRead = personality.fs_reach?.read ?? [];
-  const fsWrite = personality.fs_reach?.write ?? [];
-  const hasFsReach = fsRead.length > 0 || fsWrite.length > 0;
-
-  const skillEvo = personality.skill_evolution;
-
-  return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(160px, auto) 1fr',
-        gap: '16px 24px',
-        fontSize: 14,
-        alignItems: 'start',
-      }}
-    >
-      <OverviewRow label="Provider" gloss="LLM backend that runs this personality">
-        <Typography.Text code>{personality.provider ?? 'engine default'}</Typography.Text>
-      </OverviewRow>
-
-      {flatModel ? (
-        <OverviewRow label="Model" gloss="Model used for every turn">
-          <Typography.Text code>{flatModel}</Typography.Text>
-        </OverviewRow>
-      ) : null}
-
-      {tiered ? (
-        <OverviewRow label="Model routing" gloss="Per-difficulty model selection">
-          <div style={{ display: 'grid', gap: 4 }}>
-            {tiered.trivial ? (
-              <div>
-                <Typography.Text code>{tiered.trivial}</Typography.Text>{' '}
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Trivial — simple, low-effort turns
-                </Typography.Text>
-              </div>
-            ) : null}
-            {tiered.default ? (
-              <div>
-                <Typography.Text code>{tiered.default}</Typography.Text>{' '}
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Default — the everyday turn
-                </Typography.Text>
-              </div>
-            ) : null}
-            {tiered.deep ? (
-              <div>
-                <Typography.Text code>{tiered.deep}</Typography.Text>{' '}
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Deep — hard, high-reasoning turns
-                </Typography.Text>
-              </div>
-            ) : null}
-          </div>
-        </OverviewRow>
-      ) : null}
-
-      <OverviewRow
-        label="Memory scope"
-        gloss="Which memory store this personality reads and writes"
-      >
-        <Typography.Text code>personality:{personality.id}</Typography.Text>
-      </OverviewRow>
-
-      {personality.capabilities && personality.capabilities.length > 0 ? (
-        <OverviewRow label="Capabilities" gloss="Capability tokens declared by this personality">
-          <span style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {personality.capabilities.map((c) => (
-              <Tag key={c} bordered={false}>
-                {c}
-              </Tag>
-            ))}
-          </span>
-        </OverviewRow>
-      ) : null}
-
-      {personality.dreaming ? (
-        <OverviewRow label="Dreaming" gloss="Idle-time memory consolidation">
-          <Typography.Text>{personality.dreaming.enable ? 'On' : 'Off'}</Typography.Text>
-        </OverviewRow>
-      ) : null}
-
-      {personality.evolution_approval_mode ? (
-        <OverviewRow
-          label="Evolution approval"
-          gloss={
-            personality.evolution_approval_mode === 'auto'
-              ? 'Learned changes apply automatically'
-              : 'Learned changes wait for your approval'
-          }
-        >
-          <Typography.Text>
-            {personality.evolution_approval_mode === 'auto' ? 'Automatic' : 'Requires approval'}
-          </Typography.Text>
-        </OverviewRow>
-      ) : null}
-
-      {skillEvo ? (
-        <OverviewRow
-          label="Skill evolution"
-          gloss="When the agent proposes new skills from repeated tool patterns"
-        >
-          <div style={{ display: 'grid', gap: 2 }}>
-            <Typography.Text>{skillEvo.enabled ? 'Enabled' : 'Disabled'}</Typography.Text>
-            {skillEvo.min_tool_calls !== undefined ? (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Min tool calls: {skillEvo.min_tool_calls}
-              </Typography.Text>
-            ) : null}
-            {skillEvo.cooldown_minutes !== undefined ? (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Cooldown: {skillEvo.cooldown_minutes} min
-              </Typography.Text>
-            ) : null}
-          </div>
-        </OverviewRow>
-      ) : null}
-
-      {personality.plugins && personality.plugins.length > 0 ? (
-        <OverviewRow label="Plugins" gloss="Attached plugin contract surfaces">
-          <span style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {personality.plugins.map((p) => (
-              <Tag key={p} bordered={false}>
-                {p}
-              </Tag>
-            ))}
-          </span>
-        </OverviewRow>
-      ) : null}
-
-      {hasFsReach ? (
-        <OverviewRow label="Filesystem reach" gloss="Paths this personality may read or write">
-          <div style={{ display: 'grid', gap: 2 }}>
-            {fsRead.length > 0 ? (
-              <Typography.Text style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12 }}>
-                Read: {fsRead.join(', ')}
-              </Typography.Text>
-            ) : null}
-            {fsWrite.length > 0 ? (
-              <Typography.Text style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12 }}>
-                Write: {fsWrite.join(', ')}
-              </Typography.Text>
-            ) : null}
-          </div>
-        </OverviewRow>
-      ) : null}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Tools — the personality's allowed tools, grouped by toolset, annotated with
-// descriptions from the tool catalog (`tools.catalog`). Tools in the allowlist
-// that the catalog doesn't know about render name-only.
-// ---------------------------------------------------------------------------
-
-function ToolsSection({ toolset }: { toolset: string[] }) {
-  const { data, isLoading } = useQuery({
-    queryKey: ['tools', 'catalog'],
-    queryFn: () => rpc.tools.catalog({}),
-  });
-
-  if (toolset.length === 0) {
-    return (
-      <Typography.Text type="secondary">
-        This personality has no tools in its toolset.
-      </Typography.Text>
-    );
-  }
-
-  if (isLoading) {
-    return (
-      <div style={{ display: 'grid', placeItems: 'center', height: 120 }}>
-        <Spin />
-      </div>
-    );
-  }
-
-  // Build name -> { group, description } from the catalog.
-  const meta = new Map<string, { group: string; description?: string }>();
-  for (const g of data?.groups ?? []) {
-    for (const t of g.tools) {
-      meta.set(t.name, {
-        group: g.group,
-        ...(t.description ? { description: t.description } : {}),
-      });
-    }
-  }
-
-  // Group the personality's allowed tools by their catalog group.
-  const grouped = new Map<string, { name: string; description?: string }[]>();
-  const ungrouped = 'Other';
-  for (const name of toolset) {
-    const m = meta.get(name);
-    const group = m?.group ?? ungrouped;
-    let arr = grouped.get(group);
-    if (!arr) {
-      arr = [];
-      grouped.set(group, arr);
-    }
-    arr.push({ name, ...(m?.description ? { description: m.description } : {}) });
-  }
-
-  const hasUnknownTools = toolset.some((name) => !meta.get(name)?.description);
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {!data || data.groups.length === 0 ? (
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          Tool descriptions appear after the agent's first session loads the tool registry.
-        </Typography.Text>
-      ) : hasUnknownTools ? (
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          Some tools have no catalog description yet — they show name-only.
-        </Typography.Text>
-      ) : null}
-
-      {[...grouped.entries()].map(([group, tools]) => (
-        <div key={group}>
-          <Typography.Text
-            type="secondary"
-            style={{
-              textTransform: 'uppercase',
-              letterSpacing: '0.08em',
-              fontSize: 11,
-              fontWeight: 500,
-            }}
-          >
-            {group}
-          </Typography.Text>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-            {tools.map((t) => (
-              <div key={t.name}>
-                <Typography.Text code style={{ fontSize: 13 }}>
-                  {t.name}
-                </Typography.Text>
-                {t.description ? (
-                  <Typography.Paragraph
-                    type="secondary"
-                    style={{ fontSize: 13, margin: '2px 0 0' }}
-                  >
-                    {t.description}
-                  </Typography.Paragraph>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // PersonalityDetail page
 // ---------------------------------------------------------------------------
 
 export function PersonalityDetail() {
   const { id = '' } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [editModalOpen, setEditModalOpen] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['personalities', 'get', id],
@@ -972,49 +684,6 @@ export function PersonalityDetail() {
 
   const { personality } = data;
 
-  // Settings: editable governance form for user personalities; the labeled
-  // read-only overview for built-ins (which cannot be edited from here).
-  const tabItems = personality.builtin
-    ? [
-        {
-          key: 'settings',
-          label: 'Settings',
-          children: <OverviewSection personality={personality} />,
-        },
-        {
-          key: 'tools',
-          label: 'Tools',
-          children: <ToolsSection toolset={personality.toolset ?? []} />,
-        },
-      ]
-    : [
-        {
-          key: 'settings',
-          label: 'Settings',
-          children: <ConfigEditor id={id} personality={personality} />,
-        },
-        {
-          key: 'identity',
-          label: 'Identity',
-          children: <IdentityEditor id={id} initialSoulMd={data.soulMd} />,
-        },
-        {
-          key: 'tools',
-          label: 'Tools',
-          children: <ToolsSection toolset={personality.toolset ?? []} />,
-        },
-        {
-          key: 'soul',
-          label: 'Living Soul',
-          children: <LivingSoulSection personalityId={id} />,
-        },
-        {
-          key: 'mcp',
-          label: 'MCP',
-          children: <McpSection personalityId={id} mcpPolicy={data.mcpPolicy} />,
-        },
-      ];
-
   return (
     <div style={{ padding: 24, maxWidth: 960 }}>
       <Button
@@ -1025,7 +694,7 @@ export function PersonalityDetail() {
         &larr; Personalities
       </Button>
 
-      <div style={{ marginBottom: 24 }}>
+      <div style={{ marginBottom: 32 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
           <PersonalityMark personalityId={personality.id} size={48} />
           <div>
@@ -1039,16 +708,28 @@ export function PersonalityDetail() {
               {personality.id}
             </Typography.Text>
           </div>
+          <div style={{ flex: 1 }} />
+          <Button onClick={() => setEditModalOpen(true)}>Edit personality</Button>
         </div>
 
         {personality.description ? (
-          <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            {personality.description}
-          </Typography.Paragraph>
+          <Typography.Paragraph type="secondary">{personality.description}</Typography.Paragraph>
         ) : null}
+
+        <CharacterSheetView personality={personality} />
       </div>
 
-      <Tabs items={tabItems} />
+      {!personality.builtin && <McpSection personalityId={id} mcpPolicy={data.mcpPolicy} />}
+
+      {editModalOpen ? (
+        <EditModal
+          id={id}
+          onClose={() => {
+            setEditModalOpen(false);
+            qc.invalidateQueries({ queryKey: ['personalities', 'get', id] });
+          }}
+        />
+      ) : null}
     </div>
   );
 }

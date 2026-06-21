@@ -10,7 +10,12 @@ import {
 import { draftExpressionUpdate, draftSoulSplit } from '@ethosagent/skill-evolver';
 import type { PersonalitySkillRecord, SkillsLibrary } from '@ethosagent/skills';
 import { type McpJsonStore, mcpTokenSecretRef } from '@ethosagent/tools-mcp';
-import { EthosError, type LearningLogEntry, type Storage } from '@ethosagent/types';
+import {
+  EthosError,
+  type ExecutionPosture,
+  type LearningLogEntry,
+  type Storage,
+} from '@ethosagent/types';
 import type { McpPolicy, Personality, PersonalitySkill } from '@ethosagent/web-contracts';
 
 /** Latest Personality-Judge alignment, mapped from `.judge-history/state.json`. */
@@ -42,10 +47,23 @@ export interface PersonalitiesServiceOptions {
   llm?: () => Promise<import('@ethosagent/types').LLMProvider>;
   /** Session store — supplies recent-interaction evidence for Expression drafts. */
   sessions?: import('@ethosagent/types').SessionStore;
-  /** Storage + data dir — used to read the personality's Personality-Judge
-   *  alignment sidecar. Both omitted → `livingSoul` returns no `judge` block. */
+  /** Storage — used to read the personality's Personality-Judge
+   *  alignment sidecar. Omitted → `livingSoul` returns no `judge` block. */
   storage?: Storage;
+  /**
+   * Root data directory (`~/.ethos`). Used to read the Personality-Judge
+   * alignment sidecar and to derive the `fs_reach` mount set for the character
+   * sheet's `## Execution` section (Phase 2a, lane E1). When absent, the sheet
+   * renders without the Execution block.
+   */
   dataDir?: string;
+  /**
+   * Whether a Docker backend can be built in this process (F1). False for the
+   * desktop in-process backend (`disableDocker: true`), so the character sheet
+   * honestly shows a `local` (un-sandboxed) posture instead of claiming Docker.
+   * Defaults to `true` (server deployments where Docker is available).
+   */
+  dockerBuildable?: boolean;
 }
 
 export class PersonalitiesService {
@@ -69,12 +87,31 @@ export class PersonalitiesService {
   }
 
   /** Generated Markdown character sheet — the same artifact `ethos personality
-   *  show` prints, rendered for the Web Personalities tab. */
-  async characterSheet(id: string): Promise<{ markdown: string }> {
+   *  show` prints, rendered for the Web Personalities tab. Also returns the
+   *  structured `ExecutionPosture` (Phase 2a, lane E1) so the web Execution UI
+   *  renders the posture the resolver produced rather than recomputing it. */
+  async characterSheet(
+    id: string,
+  ): Promise<{ markdown: string; posture: ExecutionPosture | null }> {
     const described = this.opts.personalities.describe(id);
     if (!described) throw notFound(id);
     const soulMd = await this.opts.personalities.readSoulMd(id);
-    return { markdown: renderCharacterSheet(described.config, soulMd) };
+    const dataDir = this.opts.dataDir;
+    if (!dataDir) {
+      return { markdown: renderCharacterSheet(described.config, soulMd), posture: null };
+    }
+    // Same posture resolver + renderer the CLI `personality show` uses — one
+    // artifact, no second renderer (Phase 2a, lane E1).
+    const { buildExecutionPosture } = await import('@ethosagent/wiring');
+    const posture = await buildExecutionPosture({
+      personality: described.config,
+      substitutionVars: { ethosHome: dataDir, cwd: process.cwd() },
+      ...(this.opts.dockerBuildable === false ? { dockerBuildable: false } : {}),
+    });
+    return {
+      markdown: renderCharacterSheet(described.config, soulMd, { posture }),
+      posture,
+    };
   }
 
   async create(input: CreatePersonalityInput): Promise<{ personality: Personality }> {

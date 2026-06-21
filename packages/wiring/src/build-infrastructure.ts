@@ -1,7 +1,14 @@
 import { join } from 'node:path';
 import {
+  applySafeMode,
+  BUILTIN_PERSONALITY_IDS,
+  enforceConstitution,
+  loadConstitution,
+} from '@ethosagent/constitution';
+import {
   type CapabilityBackends,
   ClarifyBridge,
+  DefaultExecutionBackendRegistry,
   DefaultHookRegistry,
   DefaultLLMProviderRegistry,
   DefaultMemoryProviderRegistry,
@@ -9,6 +16,9 @@ import {
   DefaultToolResultReducerRegistry,
   FileClarifyStore,
 } from '@ethosagent/core';
+import { DockerExecutionBackend } from '@ethosagent/execution-docker';
+import { LocalExecutionBackend } from '@ethosagent/execution-local';
+import { SshExecutionBackend } from '@ethosagent/execution-ssh';
 import { AnthropicProvider } from '@ethosagent/llm-anthropic';
 import { AzureOpenAIProvider } from '@ethosagent/llm-azure';
 import { CodexProvider, ensureValidToken } from '@ethosagent/llm-codex';
@@ -24,6 +34,9 @@ import { readFileReducer } from '@ethosagent/tools-code/reducers/read-file';
 import { kanbanListReducer } from '@ethosagent/tools-kanban/reducers/kanban-list';
 import { bashReducer } from '@ethosagent/tools-terminal/reducers/bash';
 import type {
+  Constitution,
+  ConstitutionEnforcement,
+  ExecutionBackendRegistry,
   HookRegistry,
   LLMProviderFactoryContext,
   LLMProviderRegistry,
@@ -41,6 +54,7 @@ const AZURE_DEFAULT_API_VERSION = '2024-12-01-preview';
 
 export interface InfrastructureResult {
   llmProviders: LLMProviderRegistry;
+  executionBackends: ExecutionBackendRegistry;
   memoryProviders: MemoryProviderRegistry;
   personalities: PersonalityCompose['personalities'];
   activePerson: PersonalityConfig;
@@ -50,6 +64,14 @@ export interface InfrastructureResult {
   capabilityBackends: CapabilityBackends;
   tools: DefaultToolRegistry;
   clarifyBridge: ClarifyBridge;
+  constitutionEnforcement?: ConstitutionEnforcement;
+  /**
+   * The loaded operator constitution. `undefined` only in SAFE MODE (malformed
+   * constitution). Threaded to compose-tools so the execution-posture resolver
+   * and docker backend enforce `execution.*` and `filesystem.*` at runtime, not
+   * just at load time.
+   */
+  constitution?: Constitution;
 }
 
 /**
@@ -124,6 +146,13 @@ export async function buildInfrastructure(
     llmProviders.register(id, openaiCompatFactory);
   }
 
+  // Execution backend registry — built-ins registered here.
+  // backends resolved on demand in Lane B/c
+  const executionBackends = new DefaultExecutionBackendRegistry();
+  executionBackends.register('local', (ctx) => new LocalExecutionBackend(ctx));
+  executionBackends.register('docker', (ctx) => new DockerExecutionBackend(ctx));
+  executionBackends.register('ssh', (ctx) => new SshExecutionBackend(ctx));
+
   // Memory provider registry — built-ins registered here; plugins add more via
   // registerMemoryProvider.
   const memoryProviders = new DefaultMemoryProviderRegistry();
@@ -142,6 +171,37 @@ export async function buildInfrastructure(
   const { personalities, activePerson } = await composePersonalities(wiringCtx, {
     personality: config.personality,
   });
+
+  // ---------------------------------------------------------------------------
+  // Constitution — operator-authoritative ceiling layered over personalities.
+  // Malformed constitution → SAFE MODE: only built-ins load, read-only tools.
+  // Hard violations throw ConstitutionViolationError and abort the run.
+  // ---------------------------------------------------------------------------
+  const constLoad = await loadConstitution(wiringCtx.storage, dataDir);
+  let constitutionEnforcement: ConstitutionEnforcement | undefined;
+  let constitution: Constitution | undefined;
+  let effectiveActivePerson = activePerson;
+  if (constLoad.status === 'malformed') {
+    log.error(
+      `Constitution malformed — entering SAFE MODE: ${constLoad.error} (see docs/content/using/how-to/safe-mode.md)`,
+    );
+    const safe = applySafeMode(personalities.list(), BUILTIN_PERSONALITY_IDS);
+    const survivors = new Set(safe.map((p) => p.id));
+    for (const p of personalities.list()) {
+      if (!survivors.has(p.id)) personalities.remove(p.id);
+    }
+    effectiveActivePerson = personalities.getDefault();
+  } else {
+    constitution = constLoad.constitution;
+    const result = enforceConstitution({
+      constitution: constLoad.constitution,
+      personalities: personalities.list(),
+      ethosHome: dataDir,
+      workingDir: wiringCtx.workingDir,
+      log,
+    });
+    constitutionEnforcement = result.enforcement;
+  }
 
   // -------------------------------------------------------------------------
   // Sandbox — shared by browser and code tools
@@ -191,10 +251,10 @@ export async function buildInfrastructure(
     },
     storage: new FsStorage(),
     personalityFsReach: {
-      read: activePerson.fs_reach?.read ?? [],
-      write: activePerson.fs_reach?.write ?? [],
+      read: effectiveActivePerson.fs_reach?.read ?? [],
+      write: effectiveActivePerson.fs_reach?.write ?? [],
     },
-    personalityNetworkPolicy: activePerson.safety?.network ?? {},
+    personalityNetworkPolicy: effectiveActivePerson.safety?.network ?? {},
     safeFetch,
     alwaysDenyPaths: defaultAlwaysDeny(),
     attachmentCache: new FsAttachmentCache(new FsStorage(), join(dataDir, 'cache', 'attachments')),
@@ -220,14 +280,17 @@ export async function buildInfrastructure(
 
   return {
     llmProviders,
+    executionBackends,
     memoryProviders,
     personalities,
-    activePerson,
+    activePerson: effectiveActivePerson,
     sandbox,
     hooks,
     sessionCompose,
     capabilityBackends,
     tools,
     clarifyBridge,
+    constitutionEnforcement,
+    constitution,
   };
 }

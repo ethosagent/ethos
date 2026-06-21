@@ -1,6 +1,7 @@
 import { closeSync, type FSWatcher, fstatSync, openSync, readSync, watch } from 'node:fs';
 import { join } from 'node:path';
 import { isAlive, loadRegistry } from './registry';
+import { BACKEND_ROUTED_PID } from './spawn';
 
 export type WatchMatch = {
   pattern: string;
@@ -137,9 +138,19 @@ export function watchLogs(config: WatchConfig): Promise<WatchResult> {
       }
     }
 
+    // Backend-routed processes have no host pid (-1); their liveness is the
+    // registry status, flipped to terminal by the spawnViaBackend drain loop
+    // when the exec stream ends. Host-pid processes use the signal(0) probe.
+    function isProcessDead(): boolean {
+      if (pid === BACKEND_ROUTED_PID) {
+        return loadRegistry(dataDir)[id]?.status !== 'running';
+      }
+      return !isAlive(pid);
+    }
+
     function checkLiveness() {
       if (resolved) return;
-      if (!isAlive(pid)) {
+      if (isProcessDead()) {
         for (const lf of logFiles) {
           readNewLines(lf.path, lf.label);
           if (resolved) return;
