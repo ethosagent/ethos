@@ -1356,6 +1356,9 @@ importers:
       '@ethosagent/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@ethosagent/oauth-core':
+        specifier: workspace:*
+        version: link:../../packages/oauth-core
       '@ethosagent/safety-network':
         specifier: workspace:*
         version: link:../../packages/safety/network

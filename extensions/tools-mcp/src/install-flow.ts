@@ -39,6 +39,7 @@ import type { SecretsResolver } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 import type { McpManager, McpServerConfig, McpServerInfo } from './index';
 import type { McpJsonStore } from './mcp-json-store';
+import { generateCodeChallenge, generateCodeVerifier } from '@ethosagent/oauth-core';
 import {
   buildAuthorizationUrl,
   type DcrResponse,
@@ -46,8 +47,6 @@ import {
   type DiscoveredOAuthMetadata,
   discoverOAuthMetadata,
   exchangeCode,
-  generateCodeChallenge,
-  generateCodeVerifier,
   type OAuthConfig,
   registerOAuthClient,
   storeTokens,

@@ -104,9 +104,7 @@ describe('discoverOAuthMetadata', () => {
       await discoverOAuthMetadata('https://mcp.example.com/api');
     } catch (err) {
       expect(err).toBeInstanceOf(OAuthDiscoveryError);
-      expect((err as OAuthDiscoveryError).message).toContain(
-        'missing required authorization_endpoint',
-      );
+      expect((err as OAuthDiscoveryError).message).toContain('authorization_endpoint');
     }
   });
 
@@ -175,7 +173,7 @@ describe('discoverOAuthMetadata', () => {
       expect.unreachable('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(OAuthDiscoveryError);
-      expect((err as OAuthDiscoveryError).message).toContain('insecure protocol');
+      expect((err as OAuthDiscoveryError).message).toContain('protocol');
     }
   });
 

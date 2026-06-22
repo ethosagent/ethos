@@ -1,5 +1,17 @@
-import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { randomBytes } from 'node:crypto';
+import {
+  buildAuthorizationUrl as coreAuthUrl,
+  buildOAuthMetadataUrl,
+  buildProtectedResourceMetadataUrl,
+  buildRefreshParams,
+  buildRevocationParams,
+  buildTokenExchangeParams,
+  generateCodeChallenge,
+  generateCodeVerifier,
+  parseOAuthServerMetadata,
+  parseTokenResponse,
+} from '@ethosagent/oauth-core';
 import { validateUrl as validateSsrfUrl } from '@ethosagent/core';
 import { safeFetch } from '@ethosagent/safety-network';
 import type { SecretsResolver } from '@ethosagent/types';
@@ -108,13 +120,7 @@ export interface DcrResponse {
 // PKCE helpers
 // ---------------------------------------------------------------------------
 
-export function generateCodeVerifier(): string {
-  return randomBytes(32).toString('base64url');
-}
-
-export function generateCodeChallenge(verifier: string): string {
-  return createHash('sha256').update(verifier).digest('base64url');
-}
+export { generateCodeChallenge, generateCodeVerifier } from '@ethosagent/oauth-core';
 
 // ---------------------------------------------------------------------------
 // Secret key helpers (TOCTOU-safe: single get/set per operation)
@@ -342,18 +348,14 @@ export function buildAuthorizationUrl(
   state: string,
   codeChallenge: string,
 ): string {
-  const params = new URLSearchParams({
-    response_type: 'code',
-    client_id: config.client_id,
-    redirect_uri: redirectUri,
+  return coreAuthUrl({
+    authorizationEndpoint: config.authorization_endpoint,
+    clientId: config.client_id,
+    redirectUri,
     state,
-    code_challenge: codeChallenge,
-    code_challenge_method: 'S256',
+    codeChallenge,
+    scopes: config.scopes,
   });
-  if (config.scopes?.length) {
-    params.set('scope', config.scopes.join(' '));
-  }
-  return `${config.authorization_endpoint}?${params.toString()}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -366,22 +368,20 @@ export async function exchangeCode(
   redirectUri: string,
   codeVerifier: string,
 ): Promise<TokenSet> {
-  // SSRF gate: validate token endpoint before sending credentials
   validateSsrfUrl(config.token_endpoint);
 
-  const body = new URLSearchParams({
-    grant_type: 'authorization_code',
+  const { body, headers } = buildTokenExchangeParams({
     code,
-    redirect_uri: redirectUri,
-    client_id: config.client_id,
-    code_verifier: codeVerifier,
+    redirectUri,
+    clientId: config.client_id,
+    codeVerifier,
   });
 
   const fetchResult = await safeFetch(config.token_endpoint, {
     policy: {},
     init: {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers,
       body: body.toString(),
     },
   });
@@ -393,17 +393,12 @@ export async function exchangeCode(
     throw new Error(`Token exchange failed (${resp.status}): ${text}`);
   }
 
-  const data = (await resp.json()) as {
-    access_token: string;
-    refresh_token?: string;
-    expires_in?: number;
-  };
+  const data = await resp.json();
+  const parsed = parseTokenResponse(data);
 
-  const tokens: TokenSet = { access_token: data.access_token };
-  if (data.refresh_token) tokens.refresh_token = data.refresh_token;
-  if (data.expires_in) {
-    tokens.expires_at = new Date(Date.now() + data.expires_in * 1000).toISOString();
-  }
+  const tokens: TokenSet = { access_token: parsed.access_token };
+  if (parsed.refresh_token) tokens.refresh_token = parsed.refresh_token;
+  if (parsed.expires_at) tokens.expires_at = parsed.expires_at;
   return tokens;
 }
 
@@ -425,17 +420,16 @@ export async function refreshToken(
     throw new Error(`No refresh token available for MCP server '${serverName}'`);
   }
 
-  const body = new URLSearchParams({
-    grant_type: 'refresh_token',
-    refresh_token: currentRefreshToken,
-    client_id: config.client_id,
+  const { body, headers: refreshHeaders } = buildRefreshParams({
+    refreshToken: currentRefreshToken,
+    clientId: config.client_id,
   });
 
   const refreshFetchResult = await safeFetch(config.token_endpoint, {
     policy: {},
     init: {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: refreshHeaders,
       body: body.toString(),
     },
   });
@@ -483,9 +477,9 @@ export async function revokeToken(
     validateSsrfUrl(config.revocation_endpoint);
     const token = await secrets.get(accessTokenRef(serverName));
     if (token) {
-      const body = new URLSearchParams({
+      const { body } = buildRevocationParams({
         token,
-        client_id: config.client_id,
+        clientId: config.client_id,
       });
       // Best-effort revocation — don't fail if endpoint is down or blocked
       await safeFetch(config.revocation_endpoint, {
@@ -505,17 +499,11 @@ export async function revokeToken(
 // OAuth discovery (RFC 8414 + MCP protected-resource)
 // ---------------------------------------------------------------------------
 
-function buildWellKnownUrl(baseUrl: string, suffix: string): string {
-  const parsed = new URL(baseUrl);
-  const path = parsed.pathname === '/' ? '' : parsed.pathname;
-  return `${parsed.origin}/.well-known/${suffix}${path}`;
-}
-
 export async function discoverOAuthMetadata(mcpUrl: string): Promise<DiscoveredOAuthMetadata> {
   const attemptedUrls: { url: string; status: number | null }[] = [];
 
   let issuer = new URL(mcpUrl).origin;
-  const protectedResourceUrl = buildWellKnownUrl(mcpUrl, 'oauth-protected-resource');
+  const protectedResourceUrl = buildProtectedResourceMetadataUrl(mcpUrl);
   try {
     const prFetchResult = await safeFetch(protectedResourceUrl, { policy: {} });
     if (prFetchResult.ok) {
@@ -535,7 +523,7 @@ export async function discoverOAuthMetadata(mcpUrl: string): Promise<DiscoveredO
     attemptedUrls.push({ url: protectedResourceUrl, status: null });
   }
 
-  const asMeta = buildWellKnownUrl(issuer, 'oauth-authorization-server');
+  const asMeta = buildOAuthMetadataUrl(issuer);
   try {
     const asFetchResult = await safeFetch(asMeta, { policy: {} });
     if (!asFetchResult.ok) {
@@ -547,49 +535,27 @@ export async function discoverOAuthMetadata(mcpUrl: string): Promise<DiscoveredO
     if (!asResp.ok) {
       throw new OAuthDiscoveryError(attemptedUrls);
     }
-    const data = (await asResp.json()) as DiscoveredOAuthMetadata;
+    const raw = await asResp.json();
 
-    if (!data.authorization_endpoint || !data.token_endpoint) {
+    let validated: ReturnType<typeof parseOAuthServerMetadata>;
+    try {
+      validated = parseOAuthServerMetadata(raw);
+    } catch (parseErr) {
       throw new OAuthDiscoveryError(
         attemptedUrls,
-        'OAuth metadata missing required authorization_endpoint or token_endpoint',
+        parseErr instanceof Error ? parseErr.message : String(parseErr),
       );
     }
 
-    if (
-      data.code_challenge_methods_supported &&
-      !data.code_challenge_methods_supported.includes('S256')
-    ) {
-      throw new OAuthDiscoveryError(
-        attemptedUrls,
-        'OAuth server does not support S256 code challenge method',
-      );
-    }
-
-    const endpointsToCheck = [
-      data.authorization_endpoint,
-      data.token_endpoint,
-      data.registration_endpoint,
-      data.revocation_endpoint,
-      data.introspection_endpoint,
-    ].filter(Boolean) as string[];
-
-    for (const ep of endpointsToCheck) {
-      try {
-        const epUrl = new URL(ep);
-        if (epUrl.protocol !== 'https:') {
-          throw new OAuthDiscoveryError(
-            attemptedUrls,
-            `Discovered endpoint ${ep} uses insecure protocol ${epUrl.protocol}`,
-          );
-        }
-      } catch (err) {
-        if (err instanceof OAuthDiscoveryError) throw err;
-        throw new OAuthDiscoveryError(attemptedUrls, `Invalid endpoint URL: ${ep}`);
-      }
-    }
-
-    return data;
+    return {
+      authorization_endpoint: validated.authorization_endpoint,
+      token_endpoint: validated.token_endpoint,
+      registration_endpoint: validated.registration_endpoint,
+      revocation_endpoint: validated.revocation_endpoint,
+      introspection_endpoint: validated.introspection_endpoint,
+      scopes_supported: validated.scopes_supported,
+      code_challenge_methods_supported: validated.code_challenge_methods_supported,
+    };
   } catch (err) {
     if (err instanceof OAuthDiscoveryError) throw err;
     attemptedUrls.push({ url: asMeta, status: null });
