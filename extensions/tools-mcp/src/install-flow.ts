@@ -34,12 +34,12 @@
 // sessions and expired terminal sessions are dropped from the map.
 
 import { randomBytes } from 'node:crypto';
+import { generateCodeChallenge, generateCodeVerifier } from '@ethosagent/oauth-core';
 import { PersonalityScopedSecrets } from '@ethosagent/storage-fs';
 import type { SecretsResolver } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 import type { McpManager, McpServerConfig, McpServerInfo } from './index';
 import type { McpJsonStore } from './mcp-json-store';
-import { generateCodeChallenge, generateCodeVerifier } from '@ethosagent/oauth-core';
 import {
   buildAuthorizationUrl,
   type DcrResponse,

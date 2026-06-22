@@ -1,5 +1,6 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { validateUrl as validateSsrfUrl } from '@ethosagent/core';
 import {
   buildAuthorizationUrl as coreAuthUrl,
   buildOAuthMetadataUrl,
@@ -12,7 +13,6 @@ import {
   parseOAuthServerMetadata,
   parseTokenResponse,
 } from '@ethosagent/oauth-core';
-import { validateUrl as validateSsrfUrl } from '@ethosagent/core';
 import { safeFetch } from '@ethosagent/safety-network';
 import type { SecretsResolver } from '@ethosagent/types';
 
