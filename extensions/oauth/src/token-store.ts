@@ -1,4 +1,4 @@
-import type { TokenSet, CredentialRef } from '@ethosagent/oauth-core';
+import type { CredentialRef, TokenSet } from '@ethosagent/oauth-core';
 import type { Storage } from '@ethosagent/types';
 
 const SAFE_SEGMENT = /^[a-zA-Z0-9_-]+$/;
@@ -37,7 +37,9 @@ export class OAuthTokenStore {
     }
   }
 
-  async status(ref: CredentialRef): Promise<{ present: boolean; expiresAt?: string; scopes?: string[] }> {
+  async status(
+    ref: CredentialRef,
+  ): Promise<{ present: boolean; expiresAt?: string; scopes?: string[] }> {
     const tokens = await this.get(ref);
     if (!tokens) return { present: false };
     return {

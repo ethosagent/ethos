@@ -1,11 +1,11 @@
 export function buildAuthorizationUrl(params: {
-  authorizationEndpoint: string
-  clientId: string
-  redirectUri: string
-  state: string
-  codeChallenge: string
-  scopes?: string[]
-  audience?: string
+  authorizationEndpoint: string;
+  clientId: string;
+  redirectUri: string;
+  state: string;
+  codeChallenge: string;
+  scopes?: string[];
+  audience?: string;
 }): string {
   const query = new URLSearchParams({
     response_type: 'code',
@@ -14,12 +14,12 @@ export function buildAuthorizationUrl(params: {
     state: params.state,
     code_challenge: params.codeChallenge,
     code_challenge_method: 'S256',
-  })
+  });
   if (params.scopes?.length) {
-    query.set('scope', params.scopes.join(' '))
+    query.set('scope', params.scopes.join(' '));
   }
   if (params.audience) {
-    query.set('resource', params.audience)
+    query.set('resource', params.audience);
   }
-  return `${params.authorizationEndpoint}?${query.toString()}`
+  return `${params.authorizationEndpoint}?${query.toString()}`;
 }

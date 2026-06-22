@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { startLoopbackServer, type LoopbackServerResult } from '../loopback-server';
+import { afterEach, describe, expect, it } from 'vitest';
+import { type LoopbackServerResult, startLoopbackServer } from '../loopback-server';
 
 async function hitCallback(
   port: number,

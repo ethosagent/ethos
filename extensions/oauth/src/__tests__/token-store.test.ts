@@ -1,6 +1,6 @@
+import type { CredentialRef, TokenSet } from '@ethosagent/oauth-core';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { CredentialRef, TokenSet } from '@ethosagent/oauth-core';
 import { OAuthTokenStore } from '../token-store';
 
 const TOKENS: TokenSet = {

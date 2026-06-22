@@ -49,11 +49,10 @@ export function parseDcrResponse(data: unknown): DcrResponse {
   return {
     client_id: obj.client_id,
     client_secret: typeof obj.client_secret === 'string' ? obj.client_secret : undefined,
-    client_id_issued_at: typeof obj.client_id_issued_at === 'number' ? obj.client_id_issued_at : undefined,
+    client_id_issued_at:
+      typeof obj.client_id_issued_at === 'number' ? obj.client_id_issued_at : undefined,
     registration_access_token:
-      typeof obj.registration_access_token === 'string'
-        ? obj.registration_access_token
-        : undefined,
+      typeof obj.registration_access_token === 'string' ? obj.registration_access_token : undefined,
     registration_client_uri:
       typeof obj.registration_client_uri === 'string' ? obj.registration_client_uri : undefined,
   };

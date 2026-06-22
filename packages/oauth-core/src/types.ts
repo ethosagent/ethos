@@ -13,8 +13,9 @@ export interface OAuthProviderProfile {
     | { kind: 'mcp-protected-resource'; resourceUrl: string };
   clientId?: string;
   clientAuth?: 'none' | 'client_secret_post' | 'client_secret_basic' | 'private_key_jwt' | 'mtls';
-  registration?: { kind: 'dcr'; endpoint?: string }
-              | { kind: 'client-id-metadata-document'; url: string };
+  registration?:
+    | { kind: 'dcr'; endpoint?: string }
+    | { kind: 'client-id-metadata-document'; url: string };
   scopes?: string[];
   redirect?: RedirectStrategy;
   audience?: string;
@@ -36,8 +37,11 @@ export interface CredentialRef {
 }
 
 export interface OAuthService {
-  authorize(profile: OAuthProviderProfile, ref: CredentialRef,
-            opts?: { signal?: AbortSignal; onUserPrompt?: (p: UserPrompt) => void }): Promise<void>;
+  authorize(
+    profile: OAuthProviderProfile,
+    ref: CredentialRef,
+    opts?: { signal?: AbortSignal; onUserPrompt?: (p: UserPrompt) => void },
+  ): Promise<void>;
   getAccessToken(ref: CredentialRef): Promise<string>;
   revoke(ref: CredentialRef): Promise<void>;
   status(ref: CredentialRef): Promise<{ present: boolean; expiresAt?: string; scopes?: string[] }>;
